@@ -366,13 +366,13 @@ export class AgentSessionManager
     '    files are the HANDOFF a fresh, context-less engine reads to build AND review — capture the WHY and the',
     "    domain knowledge you extracted by grilling, especially in each section's `## Context`, not just the WHAT.)",
     '    MULTI-FILE — follow PLAN.MD STRUCTURE below:',
-    '      – `plan.md` — the INDEX (goal · overview · architecture/mermaid · the ordered track list);',
-    '      – `sections/NN-<slug>.md` — ONE file per track (its goal, context, approach, validation);',
+    '      – `plan.md` — the INDEX (goal · overview · architecture/mermaid · the ordered thread list);',
+    '      – `sections/NN-<slug>.md` — ONE file per thread (its goal, context, approach, validation);',
     '      – `data-model.md` — cross-cutting schema/migrations/ER diagram, when the work touches the schema.',
     '    The operator watches these fill in; revise as decisions change things.',
-    "    CADENCE — write a track's `sections/NN.md` (and grow the `plan.md` index) the MOMENT its shape settles",
+    "    CADENCE — write a thread's `sections/NN.md` (and grow the `plan.md` index) the MOMENT its shape settles",
     '    (its files are open and its decisions are logged), BEFORE you scope the next — the same rhythm as',
-    '    create_decision. By the time the last decision locks the spec files are near-complete. A track you have',
+    '    create_decision. By the time the last decision locks the spec files are near-complete. A thread you have',
     '    fully investigated but not yet written up as an execute-ready `## Approach` is unfinished work. The',
     '    `# <goal>` H1 may be revised until you submit.',
     '  • `/context/generated/` — SYSTEM-GENERATED and READ-ONLY (a read-only mount; you cannot write it). The',
@@ -397,16 +397,16 @@ export class AgentSessionManager
     'TWO PATHS — choose based on size/risk:',
     '',
     'FULL PATH — submit_plan (multi-thread build run by the deterministic driver). Use for anything beyond',
-    'a small, localized change. You author the ENTIRE plan up front — every track AND its section-file',
-    '`## Approach` at plan depth — during the conversation. `submit_plan` carries only the track list; when a',
-    'track runs, its orchestrator session reads that approach and decomposes it into a live task list, so the',
+    'a small, localized change. You author the ENTIRE plan up front — every thread AND its section-file',
+    '`## Approach` at plan depth — during the conversation. `submit_plan` carries only the thread list; when a',
+    'thread runs, its orchestrator session reads that approach and decomposes it into a live task list, so the',
     'depth you write IS what the build works from. By the time you call submit_plan, `/context/specs/plan.md`',
     'is already complete (per CADENCE above).',
     '',
-    "PLAN DEPTH (applies to each track's `## Approach`): the work must be buildable to the keystroke by a fresh",
+    "PLAN DEPTH (applies to each thread's `## Approach`): the work must be buildable to the keystroke by a fresh",
     "engine that will NOT ask you anything — aim at the altitude of a senior engineer's implementation diff,",
     'NOT a design summary. The approach covers:',
-    '  • touch points — every file the track changes, each anchored to an EXACT `path:line` you copied from a',
+    '  • touch points — every file the thread changes, each anchored to an EXACT `path:line` you copied from a',
     '    Read/Grep (never an estimate or "~line N"), with the symbol that lives at that line;',
     '  • concrete changes — for any non-trivial edit, the actual change, not prose: the new signature/type, a',
     '    short code skeleton (the 3–8 lines that matter), and any ordering/safety constraint (e.g. "set the',
@@ -422,23 +422,23 @@ export class AgentSessionManager
     '        ## Overview                (intent · stack · constraints · out of scope)',
     '        ## Architecture            (a mermaid diagram of the moving parts — default to one; see DIAGRAMS)',
     '        ## Decisions               (one line: "see decision-record.md" — generated; do not duplicate)',
-    '        ## Tracks                  (ordered list; each links its file + 1-line goal + type, e.g.',
+    '        ## Threads                  (ordered list; each links its file + 1-line goal + type, e.g.',
     '                                    "1. [Backend](sections/01-backend.md) — <slice> · type: backend")',
     '    /context/specs/data-model.md — cross-cutting schema/migrations + an ER mermaid (whenever the schema changes)',
-    '    /context/specs/sections/NN-<slug>.md — ONE per track:',
-    '        # Track N — <title>',
+    '    /context/specs/sections/NN-<slug>.md — ONE per thread:',
+    '        # Thread N — <title>',
     '        ## Goal                    (the demo-able slice, 1–2 lines)',
     '        ## Context                 (what exists today + EXACT path:line anchors + which decisions shaped it)',
-    "        ## Flow                    (PREFERRED — a mermaid sequence/flowchart of THIS track's behavior; see DIAGRAMS)",
+    "        ## Flow                    (PREFERRED — a mermaid sequence/flowchart of THIS thread's behavior; see DIAGRAMS)",
     '        ## Approach                (the work at PLAN DEPTH — concrete edits, signatures, hard ordering stated',
-    '                                    inline as PROSE; NOT a numbered step list — the running track turns it into tasks)',
-    '        ## Validation              (the demo-able outcome that closes the track)',
-    '  These files ARE the track-level plan the build reads; `submit_plan` carries only the structured track',
-    '  list (title + type). When a track runs, its orchestrator session reads this file and decomposes it into',
+    '                                    inline as PROSE; NOT a numbered step list — the running thread turns it into tasks)',
+    '        ## Validation              (the demo-able outcome that closes the thread)',
+    '  These files ARE the thread-level plan the build reads; `submit_plan` carries only the structured thread',
+    '  list (title + type). When a thread runs, its orchestrator session reads this file and decomposes it into',
     '  a LIVE TASK LIST — so write `## Approach` at PLAN DEPTH (exact path:line anchors, concrete code/signatures',
     '  for the hard edits) but do NOT pre-number steps or author concurrency/grouping — that is the running',
-    '  track\'s job. Do NOT write a "review" section: track self-review is a FIXED automatic stage selected by',
-    "  the track's TYPE; `## Validation` says what success looks like, not how it is reviewed.",
+    '  thread\'s job. Do NOT write a "review" section: thread self-review is a FIXED automatic stage selected by',
+    "  the thread's TYPE; `## Validation` says what success looks like, not how it is reviewed.",
     '',
     'DIAGRAMS — LEAN ON THEM. A plan the operator can SEE beats one they have to decode. Mermaid code fences',
     'render inline in the spec files and in the approval card, so a good diagram is the FASTEST way for the',
@@ -448,14 +448,14 @@ export class AgentSessionManager
     '  • `sequenceDiagram` — interactions over time across components or services (who calls whom, in what order);',
     '  • `erDiagram` — entities + relations whenever the schema changes (goes in data-model.md);',
     '  • `stateDiagram-v2` — a lifecycle or status machine (a thread/job/order moving through its states).',
-    "Put the system-level picture in plan.md `## Architecture`; put a track's own behavior in its section file",
+    "Put the system-level picture in plan.md `## Architecture`; put a thread's own behavior in its section file",
     '`## Flow`. Keep each diagram FOCUSED — the 5–12 nodes that matter, not every edge — and GROUND it in the',
     'real components you found while grilling (label nodes with the actual files/services/tables, never',
     'placeholders). A diagram is CONTEXT that illustrates the plan; it never replaces the execute-ready steps or',
     'a logged decision. For a trivial localized change (the DIRECT PATH below), skip them.',
     '',
     '`submit_plan` does NOT author the plan and does NOT post the approval card — it REQUESTS AN AUTOMATED',
-    'CODEX REVIEW of the plan you authored. Codex reads `/context/specs/` and grades your tracks + section plans; the',
+    'CODEX REVIEW of the plan you authored. Codex reads `/context/specs/` and grades your threads + section plans; the',
     'review runs in the background (it can take several minutes). When it finishes I relay its findings to you',
     'as a "Codex review" message. ADDRESS each finding — APPLY it (revise the specs + the structured plan), or',
     'PUSH BACK with reasoning — then either call `submit_plan` AGAIN to re-review the revised plan, or call',
@@ -469,22 +469,22 @@ export class AgentSessionManager
     '  - overview: intent + stack + constraints',
     "  - threads: the ordered build threads (lanes), each `{ title, type }`. `type` = the thread's scope — backend | frontend |",
     '    docs | testing | analytics | infra (or another short label if none fit); it SELECTS the review agents.',
-    '    Do NOT enumerate steps — a track carries no step list. When it runs, its orchestrator session reads the',
+    '    Do NOT enumerate steps — a thread carries no step list. When it runs, its orchestrator session reads the',
     '    section file and decomposes it into a LIVE TASK LIST; author the depth in `## Approach`, not here.',
     '  (No `decisions` arg — submit_plan reads the decisions you locked via create_decision. Pass `decisions`',
     '   ONLY to authoritatively replace the whole set, e.g. after request-changes pruned some.)',
-    'TRACK GRANULARITY: a TRACK is a SCOPE-TYPED layer that ends in a self-review/auto-fix pass — a slice you',
+    'THREAD GRANULARITY: a THREAD is a SCOPE-TYPED layer that ends in a self-review/auto-fix pass — a slice you',
     'could demo or review on its own, and its `type` (backend/frontend/docs/testing/analytics/infra) selects',
-    'the reviewers. Prefer FEW, BROAD tracks (≈1–4 for a typical feature); do NOT split one scope into several',
-    "tracks (backend is ONE track, not one per file). The per-step decomposition is the running track's job.",
+    'the reviewers. Prefer FEW, BROAD threads (≈1–4 for a typical feature); do NOT split one scope into several',
+    "threads (backend is ONE thread, not one per file). The per-step decomposition is the running thread's job.",
     'SELF-CHECK before submit_plan (from context — no get_decision_record needed): every applicable always-ask',
-    'decision locked? does each track have a `type`? could the running orchestrator build EACH TRACK from its',
+    'decision locked? does each thread have a `type`? could the running orchestrator build EACH THREAD from its',
     'section file `## Approach` ALONE — exact `path:line` anchors, concrete code/signatures for the hard edits,',
     'runnable verification — with ZERO further questions to you? is it grounded in files you actually opened',
-    '(not guessed)? is the `goal` a single clear line? Do NOT add an "investigate the codebase" track — tracks',
+    '(not guessed)? is the `goal` a single clear line? Do NOT add an "investigate the codebase" thread — threads',
     'are real build work.',
     '',
-    'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no tracks/steps).',
+    'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no threads/steps).',
     'Use only when the change is small and well-understood and touches NO uncovered always-ask decision.',
     'Args: { summary, changeOutline?: string[], decisions? }. summary = what you will change and why;',
     'changeOutline = a few bullet lines of the concrete edits. This posts a lightweight approval card. If it',
@@ -832,7 +832,7 @@ export class AgentSessionManager
     const next = prev
       .catch(() => undefined)
       .then(() => this.runChatTurn(stimulus));
-    // Track this as the tail; clear the map entry once it settles IF nothing newer queued behind it.
+    // Thread this as the tail; clear the map entry once it settles IF nothing newer queued behind it.
     this.turnQueues.set(
       key,
       next.finally(() => {
@@ -932,7 +932,7 @@ export class AgentSessionManager
       jobId: row.job_id,
       body: ctx.body,
       author: ctx.author,
-      replyRoute: { surfaceId: 'web', threadRef: row.job_id },
+      replyRoute: { surfaceId: 'web', jobRef: row.job_id },
       receivedAt: new Date(),
       ...(ctx.seed ? { seed: true } : {}),
       ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
@@ -1147,7 +1147,7 @@ export class AgentSessionManager
       repoId: stimulus.repoId,
       jobId: stimulus.jobId,
     });
-    const channel = route.channel ?? stimulus.replyRoute.threadRef;
+    const channel = route.channel ?? stimulus.replyRoute.jobRef;
     // The brain streams on the default `main` lane (no metaTag) — its blocks ARE the conversation.
     const streamer = this.turnHarness.create({
       jobId: stimulus.jobId,
@@ -1795,7 +1795,7 @@ export class AgentSessionManager
       },
 
       start_direct_build: async (args) => {
-        // FAST PATH — a small, localized change the brain implements ITSELF (no tracks/steps). Still
+        // FAST PATH — a small, localized change the brain implements ITSELF (no threads/steps). Still
         // gated by a lightweight approval; on approval an autonomous implementation turn runs.
         const summary = String(args['summary'] ?? '').trim();
         if (!summary) {
@@ -1835,7 +1835,7 @@ export class AgentSessionManager
           };
         }
 
-        // Persist a MINIMAL record (overview = summary, any locked decisions, NO tracks) and post the
+        // Persist a MINIMAL record (overview = summary, any locked decisions, NO threads) and post the
         // lightweight approval card. The build runs only after approval (kind: 'direct').
         const jobId = await this.ensureJob(stimulus, summary, 'feature');
         const { thread: job, decisionRecordId } = await this.store.persistPlan({
@@ -2524,8 +2524,8 @@ export class AgentSessionManager
       repoId: stimulus.repoId,
       jobId: stimulus.jobId,
     });
-    const channel = route.channel ?? stimulus.replyRoute.threadRef;
-    const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
+    const channel = route.channel ?? stimulus.replyRoute.jobRef;
+    const threadTs = route.threadTs ?? stimulus.replyRoute.jobRef;
 
     const handle = await this.approvals.request(
       { channel, threadTs, orgId: stimulus.orgId },
@@ -2638,7 +2638,7 @@ export class AgentSessionManager
    * Reconstructs the verdict effect from durable state alone: the job row + its decision record. Idempotent
    * — it only acts while the job is still `awaiting_approval`, so a stale/double click (or one that raced
    * the live path) is a no-op. `isDirect` is derived from the decision record (a direct build persists no
-   * track titles; the driver needs tracks to dispatch). Returns whether it acted.
+   * thread titles; the driver needs threads to dispatch). Returns whether it acted.
    */
   async resolveApprovalDurably(
     jobId: string,
@@ -2742,7 +2742,7 @@ export class AgentSessionManager
       trust: 'trusted',
       jobId,
       author: { id: 'atlas', displayName: 'Atlas' },
-      replyRoute: { surfaceId: 'web', threadRef: jobId },
+      replyRoute: { surfaceId: 'web', jobRef: jobId },
     };
     await this.handleChatTurn(stimulus);
   }
@@ -2773,7 +2773,7 @@ export class AgentSessionManager
       trust: 'trusted',
       jobId,
       author: { id: 'atlas', displayName: 'Atlas' },
-      replyRoute: { surfaceId: 'web', threadRef: jobId },
+      replyRoute: { surfaceId: 'web', jobRef: jobId },
     };
     await this.handleChatTurn(stimulus);
   }
@@ -2983,8 +2983,8 @@ export class AgentSessionManager
       repoId: stimulus.repoId,
       jobId: stimulus.jobId,
     });
-    const channel = route.channel ?? stimulus.replyRoute.threadRef;
-    const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
+    const channel = route.channel ?? stimulus.replyRoute.jobRef;
+    const threadTs = route.threadTs ?? stimulus.replyRoute.jobRef;
     try {
       await this.surface.post(channel, text, {
         threadTs,
@@ -3010,8 +3010,8 @@ export class AgentSessionManager
       repoId: stimulus.repoId,
       jobId: stimulus.jobId,
     });
-    const channel = route.channel ?? stimulus.replyRoute.threadRef;
-    const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
+    const channel = route.channel ?? stimulus.replyRoute.jobRef;
+    const threadTs = route.threadTs ?? stimulus.replyRoute.jobRef;
     try {
       await this.surface.post(channel, text, {
         threadTs,
@@ -3107,7 +3107,7 @@ function harnessDeliveryStimulus(input: {
     trust: 'trusted',
     jobId: input.jobId,
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', threadRef: input.jobId },
+    replyRoute: { surfaceId: 'web', jobRef: input.jobId },
     seed: true,
   };
 }
@@ -3156,7 +3156,7 @@ function eventDeliveryStimulus(input: {
     trust: 'trusted',
     jobId: input.jobId,
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', threadRef: input.jobId },
+    replyRoute: { surfaceId: 'web', jobRef: input.jobId },
     seed: true,
   };
 }
@@ -3192,7 +3192,7 @@ function bootDeliveryStimulus(q: {
     trust: 'trusted',
     jobId: q.jobId,
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', threadRef: q.jobId },
+    replyRoute: { surfaceId: 'web', jobRef: q.jobId },
     seed: true,
     // Tie the re-delivery to its exact card so the delivery turn stamps THAT card `deliveredAt` on success.
     seedQuestionId: q.questionId,
@@ -3422,10 +3422,10 @@ function errText(err: unknown): string {
 }
 
 /**
- * Normalize the `submit_plan` `tracks` arg into ordered tracks: `{ title, type }`. Steps are NO LONGER
- * authored up front (the running track's orchestrator decomposes into a live task list), so `steps` is
+ * Normalize the `submit_plan` `threads` arg into ordered threads: `{ title, type }`. Steps are NO LONGER
+ * authored up front (the running thread's orchestrator decomposes into a live task list), so `steps` is
  * OPTIONAL — parsed if a caller still supplies `{ title, brief }` items (back-compat: those lock + skip the
- * driver's JIT plan), else `[]`. A track with an empty/whitespace title is dropped; a supplied step missing
+ * driver's JIT plan), else `[]`. A thread with an empty/whitespace title is dropped; a supplied step missing
  * a title OR a brief is dropped.
  */
 function normalizeThreads(

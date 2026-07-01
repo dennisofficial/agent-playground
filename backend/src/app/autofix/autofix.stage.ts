@@ -34,9 +34,9 @@ const FIX_SYSTEM_PROMPT =
 
 /**
  * W7 — the AUTO-FIX STAGE. A fan-out of N parallel read-only review passes (one per lens) over a
- * track's (or the whole feature's) diff → aggregate + dedupe the findings → ONE execute turn that
+ * thread's (or the whole feature's) diff → aggregate + dedupe the findings → ONE execute turn that
  * applies the fixes confined to the worktree → a `LocalGitService` commit. Two entry points share the
- * core: `autofixThread` (after a track's steps) and `autofixPullRequest` (PR-tail, over the whole
+ * core: `autofixThread` (after a thread's steps) and `autofixPullRequest` (PR-tail, over the whole
  * accumulated diff before handing the PR to the human).
  *
  * Design properties:
@@ -70,15 +70,15 @@ export class AutoFixStage {
   }
 
   /**
-   * Per-track auto-fix — run after a track's steps complete, over that track's change set.
-   * `ctx.diff`/`ctx.gitRange` should scope to the track (e.g. the track's start sha `..HEAD`).
+   * Per-thread auto-fix — run after a thread's steps complete, over that thread's change set.
+   * `ctx.diff`/`ctx.gitRange` should scope to the thread (e.g. the thread's start sha `..HEAD`).
    */
   async autofixThread(ctx: AutoFixContext, options: AutoFixOptions = {}): Promise<AutoFixSummary> {
-    return this.run('track', ctx, options);
+    return this.run('thread', ctx, options);
   }
 
   /**
-   * PR-tail auto-fix — run once after all tracks, over the WHOLE accumulated feature diff (e.g.
+   * PR-tail auto-fix — run once after all threads, over the WHOLE accumulated feature diff (e.g.
    * `ctx.gitRange = 'origin/<base>...HEAD'`), before the PR is handed to the human reviewer.
    */
   async autofixPullRequest(
@@ -91,7 +91,7 @@ export class AutoFixStage {
   // ── core ─────────────────────────────────────────────────────────────────────────────────────
 
   private async run(
-    mode: 'track' | 'pull_request',
+    mode: 'thread' | 'pull_request',
     rawCtx: AutoFixContext,
     options: AutoFixOptions,
   ): Promise<AutoFixSummary> {
@@ -105,7 +105,7 @@ export class AutoFixStage {
     const ctx = await this.ensureDiff(rawCtx);
     const label = ctx.label ?? mode;
 
-    // Nothing changed in this scope → there is nothing to review. A track that only investigated (or
+    // Nothing changed in this scope → there is nothing to review. A thread that only investigated (or
     // otherwise committed nothing) would otherwise burn N review turns on an empty diff and find nothing.
     // Deterministic short-circuit: skip the lens fan-out + fix turn and return a clean summary.
     if (!ctx.changedFiles?.length) {
@@ -233,7 +233,7 @@ export class AutoFixStage {
   private async applyAndCommit(
     ctx: AutoFixContext,
     findings: ReviewFinding[],
-    mode: 'track' | 'pull_request',
+    mode: 'thread' | 'pull_request',
     engine: AutoFixOptions['engine'],
     options: AutoFixOptions,
   ): Promise<{ fixReport: string; commits: AutoFixCommit[] }> {
@@ -265,7 +265,7 @@ export class AutoFixStage {
     const message =
       mode === 'pull_request'
         ? `chore(autofix): PR-tail review fixes${label}`
-        : `chore(autofix): track review fixes${label}`;
+        : `chore(autofix): thread review fixes${label}`;
     const sha = await this.git.commitAll(ctx.worktreePath, message);
     if (!sha) {
       return { fixReport, commits: [] };
@@ -275,7 +275,7 @@ export class AutoFixStage {
   }
 
   /**
-   * Ensure `ctx.diff` is populated. The driver normally supplies it (it already holds the track's
+   * Ensure `ctx.diff` is populated. The driver normally supplies it (it already holds the thread's
    * diff); when absent we derive one from the worktree git state via `ctx.gitRange` (else `HEAD`),
    * and backfill `changedFiles` from `--name-only`. Best-effort — a failed derivation leaves the diff
    * empty and the review prompt instructs the engine to inspect the tree itself.

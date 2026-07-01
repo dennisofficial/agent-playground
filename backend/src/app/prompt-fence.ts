@@ -1,6 +1,6 @@
 /**
  * Prompt input FENCING. When we hand a model a piece of externally-sourced text — a proposed decision, a
- * diff, an operator message, a track brief — we wrap it in a named `<tag>…</tag>` boundary so the model
+ * diff, an operator message, a thread brief — we wrap it in a named `<tag>…</tag>` boundary so the model
  * sees an unambiguous edge between OUR instructions and ITS data. This is for clarity first (the model
  * knows exactly where the decision text / diff / message starts and ends, the idiomatic XML-tag prompt
  * shape) and injection-resistance second (text that's visibly fenced as data is much harder to mistake

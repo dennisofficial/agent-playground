@@ -150,7 +150,7 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
 
     it('returns undefined for missing/non-approval blocks', () => {
       expect(parseApprovalMeta(undefined)).toBeUndefined();
-      expect(parseApprovalMeta([{ type: 'track', text: { type: 'mrkdwn', text: 'x' } }])).toBeUndefined();
+      expect(parseApprovalMeta([{ type: 'thread', text: { type: 'mrkdwn', text: 'x' } }])).toBeUndefined();
     });
   });
 });

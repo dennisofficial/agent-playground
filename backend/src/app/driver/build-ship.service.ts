@@ -40,13 +40,13 @@ export interface ShipInput {
 
 /**
  * The shared TERMINAL "ship" sequence — extracted from the thread-driver's PR-tail so BOTH the full
- * track build and the direct-build fast path finalize identically:
+ * thread build and the direct-build fast path finalize identically:
  *
  *   PR-tail auto-fix (whole accumulated diff) → push the branch → open ONE PR (idempotent; a re-run
  *   finds the existing PR) → record `pr_url`/`pr_number` on the THREAD (which flips it to `done`, so the
  *   merge poll watches it) → relay "PR ready".
  *
- * References NO tracks/steps — its only inputs are the job row, the (optional) decision record, the
+ * References NO threads/steps — its only inputs are the job row, the (optional) decision record, the
  * resolved repo, and the sandbox. Returns the opened PR, or `null` when no GitHub token is configured
  * (the caller is notified; the thread stays `running` so a later token + re-run can ship it).
  */

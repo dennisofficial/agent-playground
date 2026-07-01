@@ -188,7 +188,7 @@ function assemble(
   // each deep-delete AND removes the thread row (mirroring the real teardown) so the drain loop converges.
   const deepDeleted: Array<{ jobId: string; orgId: string }> = [];
   const threadLifecycle = {
-    deleteThreadDeep: async (jobId: string, orgId: string) => {
+    deleteJobDeep: async (jobId: string, orgId: string) => {
       deepDeleted.push({ jobId, orgId });
       await threads.repo.delete({ id: jobId, org_id: orgId });
     },
@@ -366,9 +366,9 @@ describe('OnboardingService', () => {
       threads.rows.push({ id: 't1', repo_id: connected.id, org_id: 'T1' });
 
       // Simulate a concurrent create: the first deep-delete inserts one more thread row mid-cascade.
-      const original = threadLifecycle.deleteThreadDeep;
+      const original = threadLifecycle.deleteJobDeep;
       let injected = false;
-      threadLifecycle.deleteThreadDeep = async (jobId, orgId) => {
+      threadLifecycle.deleteJobDeep = async (jobId, orgId) => {
         await original(jobId, orgId);
         if (!injected) {
           injected = true;

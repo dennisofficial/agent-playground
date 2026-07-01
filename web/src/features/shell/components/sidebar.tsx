@@ -72,7 +72,7 @@ export function Sidebar() {
   // Owned-first, then joined — a stable order independent of thread recency.
   const orgs = useMemo(() => [...owned, ...joined], [owned, joined]);
 
-  // Every connected repo grouped under its org, first-seen order (matches the create-thread picker order).
+  // Every connected repo grouped under its org, first-seen order (matches the create-job picker order).
   // Any repo referenced by a thread but absent from the connected list (a just-connected repo not yet in
   // cache, or a transient id mismatch) is appended so a thread never silently vanishes from the tree.
   const reposByOrg = useMemo(() => {

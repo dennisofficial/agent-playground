@@ -4,7 +4,7 @@
  *
  * A thread is addressed by its real `org/repo/thread` coordinate — every thread API call is org+repo
  * scoped, and the cross-org inbox (`/web/threads`) carries all three ids per row. The triple is encoded
- * into the single `[threadKey]` path segment so the route shape (`/workspace/:threadKey`) is stable.
+ * into the single `[jobKey]` path segment so the route shape (`/workspace/:jobKey`) is stable.
  */
 
 /** The ids needed to address one thread against the org → repo → thread API. */
@@ -24,9 +24,9 @@ export function encodeJobRef(ref: ThreadRefParts): string {
   return [ref.orgId, ref.repoId, ref.jobId].map(encodeURIComponent).join(REF_SEP);
 }
 
-/** Decode a `[threadKey]` segment back to its ids; `null` if it isn't a well-formed triple. */
-export function decodeJobRef(threadKey: string): ThreadRefParts | null {
-  const parts = threadKey.split(REF_SEP);
+/** Decode a `[jobKey]` segment back to its ids; `null` if it isn't a well-formed triple. */
+export function decodeJobRef(jobKey: string): ThreadRefParts | null {
+  const parts = jobKey.split(REF_SEP);
   if (parts.length !== 3) return null;
   try {
     const [orgId, repoId, jobId] = parts.map(decodeURIComponent);
@@ -52,7 +52,7 @@ export const ROUTES = {
     signedOut: () => '/auth/signed-out',
   },
   workspace: () => '/workspace',
-  thread: (threadKey: string) => `/workspace/${threadKey}`,
+  thread: (jobKey: string) => `/workspace/${jobKey}`,
   /** Create-thread route. Optionally pre-select an org (and repo) — used by the sidebar's per-org/repo ＋. */
   newThread: (opts?: { orgId?: string; repoId?: string }) => {
     const p = new URLSearchParams();

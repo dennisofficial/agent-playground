@@ -25,7 +25,7 @@ export class JobTitleService {
     @Inject(JOB_TITLE_CHAIN) private readonly chainFor: JobTitleChainFactory,
     private readonly surface: WebSurface,
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
   ) {}
 
   /** Generate a title from a message, or `undefined` when no Anthropic key resolves / the model errors. */
@@ -50,7 +50,7 @@ export class JobTitleService {
     try {
       const title = await this.generate({ message, orgId });
       if (!title || title === placeholder) return;
-      const res = await this.threads.update(
+      const res = await this.jobs.update(
         { id: jobId, org_id: orgId, title: placeholder === null ? IsNull() : placeholder },
         { title },
       );

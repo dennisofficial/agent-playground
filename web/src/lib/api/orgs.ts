@@ -240,8 +240,8 @@ export function useDeleteOrg(orgId: string) {
 }
 
 // ── Repos (the settings Repos tab — connect / re-validate / edit / disconnect) ─────────────────────
-// The list itself (`GET /web/orgs/:orgId/repos`) is read via `useOrgRepos` (`./thread-queries`), which
-// also feeds the create-thread picker; it returns the enriched `RepoView` (with `threadCount` +
+// The list itself (`GET /web/orgs/:orgId/repos`) is read via `useOrgRepos` (`./job-queries`), which
+// also feeds the create-job picker; it returns the enriched `RepoView` (with `threadCount` +
 // `accessCheckedAt`). These mutations all invalidate `qk.orgRepos(orgId)` so that enriched list refetches
 // — their own responses (`ConnectedRepo`) deliberately do NOT carry those derived fields. Connect /
 // disconnect / re-validate can also flip the org `onboarding`↔`active`, so they invalidate `qk.session()`.

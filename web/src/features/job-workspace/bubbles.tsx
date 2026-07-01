@@ -6,8 +6,8 @@ import type { SystemTone } from './classify';
 import { Markdown } from './markdown';
 import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import { SubagentCard, indexLiveSubagents, subagentNode } from './subagents';
-import type { JobMessage } from '@/lib/api/thread-api';
-import type { LiveBlock, LiveTurn } from '@/lib/api/thread-stream';
+import type { JobMessage } from '@/lib/api/job-api';
+import type { LiveBlock, LiveTurn } from '@/lib/api/job-stream';
 import { formatClockTime, formatTokens } from '@/lib/org-display';
 
 /** Per-type tone for {@link MessageTime} — distinct colors so the operator can tell turn boundaries from
@@ -273,7 +273,7 @@ export function TurnMetaDivider({ message }: { message: JobMessage }) {
 /**
  * A context-window occupancy ring (Claude-Code style) — a small SVG arc + center %. `tokens` is the last
  * turn's input-token count (≈ what's resident in context); `limit` is the model's window. Turns amber/red
- * as it fills. The model/limit come from the latest `turn_meta` block, so it tracks whatever model ran.
+ * as it fills. The model/limit come from the latest `turn_meta` block, so it threads whatever model ran.
  */
 export function ContextMeter({ tokens, limit, model }: { tokens: number; limit: number; model?: string }) {
   const pct = limit > 0 ? Math.min(1, Math.max(0, tokens / limit)) : 0;

@@ -71,7 +71,7 @@ export class TestBridgeController {
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
   ) {}
@@ -131,8 +131,8 @@ export class TestBridgeController {
     // is the durable handle (the chat bridge resolves inbound by this id).
     let jobId = body.threadTs;
     if (!jobId) {
-      const thread = await this.threads.save(
-        this.threads.create({
+      const thread = await this.jobs.save(
+        this.jobs.create({
           org_id: repo.org_id,
           repo_id: repo.id,
           origin: 'chat',
@@ -185,7 +185,7 @@ export class TestBridgeController {
   @Get('job')
   async job(@Query('jobId') jobId: string): Promise<JobView> {
     this.assertEnabled();
-    const row = await this.threads.findOne({ where: { id: jobId } });
+    const row = await this.jobs.findOne({ where: { id: jobId } });
     if (!row) throw new NotFoundException(`No thread ${jobId}`);
     return {
       id: row.id,

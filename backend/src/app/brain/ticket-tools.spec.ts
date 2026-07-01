@@ -16,7 +16,7 @@ const STIMULUS: ChatStimulus = {
   jobId: 'thread-REAL',
   author: { id: 'U1', displayName: 'Op' },
   text: 'hi',
-  replyRoute: { threadRef: 'thread-REAL' },
+  replyRoute: { jobRef: 'thread-REAL' },
 } as unknown as ChatStimulus;
 
 function makeManager(tickets: Partial<TicketService>) {

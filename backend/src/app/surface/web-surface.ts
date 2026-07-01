@@ -301,18 +301,18 @@ function detectAndConvertApprovalCard(
   }
   if (!meta) return undefined;
 
-  // Extract summary (first track block text) and threads (numbered list in a later track block).
+  // Extract summary (first thread block text) and threads (numbered list in a later thread block).
   let summary = '';
   const threads: string[] = [];
   let decisions: ApprovalDecision[] = [];
   let planUrl: string | undefined;
   // The headline is either "*Plan proposal — <title>*" (full ceremony) or "*Direct build — <title>*"
-  // (fast path); the list block is labelled "*Tracks*" or "*Changes*" to match.
+  // (fast path); the list block is labelled "*Threads*" or "*Changes*" to match.
   let kind: 'plan' | 'direct' = 'plan';
   let title = text.replace(/^(?:Plan proposal|Direct build)\s*[—-]\s*/, '').trim() || text;
 
   for (const block of blocks) {
-    if (block.type === 'track') {
+    if (block.type === 'thread') {
       const t = block.text as Record<string, unknown> | undefined;
       const raw = typeof t?.text === 'string' ? (t.text as string) : '';
       if (raw.startsWith('*Plan proposal') || raw.startsWith('*Direct build')) {
@@ -322,9 +322,9 @@ function detectAndConvertApprovalCard(
         if (match) title = match[1].trim();
       } else if (!summary) {
         summary = raw;
-      } else if (raw.startsWith('*Tracks*') || raw.startsWith('*Changes*')) {
-        // Parse the numbered track / change-outline list.
-        const lines = raw.split('\n').slice(1); // drop the "*Tracks*"/"*Changes*" header line
+      } else if (raw.startsWith('*Threads*') || raw.startsWith('*Changes*')) {
+        // Parse the numbered thread / change-outline list.
+        const lines = raw.split('\n').slice(1); // drop the "*Threads*"/"*Changes*" header line
         for (const line of lines) {
           const m = /^\d+\.\s+(.+)$/.exec(line.trim());
           if (m) threads.push(m[1]);

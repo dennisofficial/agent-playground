@@ -124,9 +124,9 @@ export class OrganizationService {
   }
 
   /**
-   * Delete an org and EVERYTHING under it. Two layers, matching `JobLifecycleService.deleteThreadDeep`:
+   * Delete an org and EVERYTHING under it. Two layers, matching `JobLifecycleService.deleteJobDeep`:
    *
-   *   1. PHYSICAL teardown per thread — `deleteThreadDeep` reclaims each thread's container + git worktree
+   *   1. PHYSICAL teardown per thread — `deleteJobDeep` reclaims each thread's container + git worktree
    *      (side effects no DB cascade can do) and deletes the thread row, which cascades that thread's
    *      children. Resolve the driver service lazily (see the constructor note on the module cycle);
    *      `strict: false` searches the whole app. The `.js` extension: a relative dynamic `import()` carries
@@ -148,7 +148,7 @@ export class OrganizationService {
     const { JobLifecycleService } = await import('../driver/job-lifecycle.service.js');
     const threadLifecycle = this.moduleRef.get(JobLifecycleService, { strict: false });
     for (const { id } of threads) {
-      await threadLifecycle.deleteThreadDeep(id, orgId);
+      await threadLifecycle.deleteJobDeep(id, orgId);
     }
 
     // The org row delete cascades all remaining org-scoped rows via FK ON DELETE CASCADE.

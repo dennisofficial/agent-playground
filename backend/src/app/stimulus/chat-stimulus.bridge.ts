@@ -42,7 +42,7 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly intake: StimulusIntake,
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -92,7 +92,7 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
       author: { id: msg.authorId, displayName: msg.authorName },
       replyRoute: {
         surfaceId: this.surface.name,
-        threadRef: thread.id,
+        jobRef: thread.id,
       },
       receivedAt: msg.ts,
       ...(msg.seed ? { seed: true } : {}),
@@ -108,12 +108,12 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
    */
   private async resolveThread(msg: InboundChatMessage): Promise<JobEntity | null> {
     if (msg.threadTs) {
-      const existing = await this.threads.findOne({ where: { id: msg.threadTs } });
+      const existing = await this.jobs.findOne({ where: { id: msg.threadTs } });
       if (existing) return existing;
     }
     if (!msg.orgId || !msg.channel) return null;
-    return this.threads.save(
-      this.threads.create({
+    return this.jobs.save(
+      this.jobs.create({
         org_id: msg.orgId,
         repo_id: msg.channel,
         origin: 'chat',

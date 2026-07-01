@@ -76,7 +76,7 @@ const DEFAULT_HUMAN_ID = 'U-E2E';
  * mode (HTTP listening) and exercises the THREE plan scenarios, printing PASS/FAIL per step like the gate:
  *
  *   1. FEATURE (chat-initiated): drive `sendFromHuman` → grill loop → approve the decision-record card →
- *      driver runs tracks → assert ONE PR url is produced (the `pr_ready` job state).
+ *      driver runs threads → assert ONE PR url is produced (the `pr_ready` job state).
  *   2. EVENT (notification): POST a correctly-signed synthetic GitHub `workflow_run` FAILURE to the real
  *      HTTP edge (`POST /ingress/github`, HMAC over the raw body) → assert it seeds exactly ONE thread
  *      with an operator-visible `system_event` message (an event is now the OPENING harness message to the
@@ -233,7 +233,7 @@ export class E2eHarness {
    */
   private async purgePriorRun(): Promise<void> {
     const q = (sql: string, params: unknown[]) => this.dataSource.query(sql, params);
-    // Threads/messages/stimuli/jobs/tracks/steps/decision-records hang off team/project.
+    // Threads/messages/stimuli/jobs/threads/steps/decision-records hang off team/project.
     await q(`DELETE FROM steps WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(`DELETE FROM threads WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(`DELETE FROM decision_records WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
@@ -331,7 +331,7 @@ export class E2eHarness {
       jobId: FEATURE_THREAD_ID,
       body: 'Please add a short note to the README about the project.',
       author: { id: DEFAULT_HUMAN_ID, displayName: 'Dennis (e2e)' },
-      replyRoute: { surfaceId: 'agent', threadRef: CHANNEL_REF },
+      replyRoute: { surfaceId: 'agent', jobRef: CHANNEL_REF },
       receivedAt: new Date(),
     };
 
@@ -344,23 +344,23 @@ export class E2eHarness {
     // Call submit_plan directly — goes through persistPlan → planReview (skipped: no sandbox) →
     // requestApprovalAndAct → approval card posted.
     const result = await tools.submit_plan({
-      goal: 'Add an "About" track to the README',
+      goal: 'Add an "About" thread to the README',
       overview: 'Add a short note to the README describing what this project does and how to run it.',
       decisions: [
         {
           decisionClass: 'cross_cutting',
           title: 'README format',
-          ruling: 'Append a "## About" track to the existing README.md; keep it to ≤5 lines.',
+          ruling: 'Append a "## About" thread to the existing README.md; keep it to ≤5 lines.',
         },
       ],
-      tracks: [
+      threads: [
         {
-          title: 'Update README.md with a short "About" track and a one-line run instruction.',
+          title: 'Update README.md with a short "About" thread and a one-line run instruction.',
           steps: [
             {
-              title: 'Append the About track',
+              title: 'Append the About thread',
               brief:
-                'Append a "## About" track (≤5 lines) to README.md describing what this project does, ' +
+                'Append a "## About" thread (≤5 lines) to README.md describing what this project does, ' +
                 'followed by a one-line "how to run it" instruction. Then read the file back to confirm it is well-formed.',
             },
           ],

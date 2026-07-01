@@ -182,7 +182,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     jobId: THREAD_ID,
     body: 'Add rate limiting to the API',
     author: { id: 'U-OP', displayName: 'Operator' },
-    replyRoute: { surfaceId: 'agent', threadRef: 'ts-r3gate-001' },
+    replyRoute: { surfaceId: 'agent', jobRef: 'ts-r3gate-001' },
   };
 
   const FAKE_JOB_ID = 'job-r3gate-001';
@@ -330,7 +330,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         ruling: "Return { error: 'rate_limited', retryAfterSeconds: N } with a Retry-After header.",
       },
     ];
-    // Each track carries its authored steps (title + keystroke-level brief).
+    // Each thread carries its authored steps (title + keystroke-level brief).
     const threads = [
       {
         title: 'RateLimiter guard',
@@ -347,7 +347,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     const result = await tools['submit_plan']({ goal, overview, decisions, threads });
 
-    // 1. persistPlan gets the track titles AND the per-track authored steps + title=goal, and persists
+    // 1. persistPlan gets the thread titles AND the per-thread authored steps + title=goal, and persists
     //    as `plan_review` (NOT awaiting_approval — submit_plan requests a review, it does not post a card).
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -466,7 +466,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistArgs.threadTitles).toEqual(['S']);
     expect(persistArgs.threadTypes).toEqual(['backend']);
-    // No authored steps → `stepsByThread` omitted so persistPlan leaves the driver to JIT-plan the track.
+    // No authored steps → `stepsByThread` omitted so persistPlan leaves the driver to JIT-plan the thread.
     expect(persistArgs.stepsByThread).toBeUndefined();
   });
 
@@ -909,7 +909,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     jobId: THREAD_ID,
     body: 'Explain the build step',
     author: { id: 'U-OP', displayName: 'Operator' },
-    replyRoute: { surfaceId: 'web', threadRef: 'ts-stream-001' },
+    replyRoute: { surfaceId: 'web', jobRef: 'ts-stream-001' },
   };
 
   function makeManager(opts: {
@@ -1290,7 +1290,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
     jobId: THREAD,
     body: 'Do thing A, then a follow-up for thing B',
     author: { id: 'U-OP', displayName: 'Operator' },
-    replyRoute: { surfaceId: 'web', threadRef: THREAD },
+    replyRoute: { surfaceId: 'web', jobRef: THREAD },
   };
 
   function makeManager(storeOverrides: Record<string, unknown> = {}) {

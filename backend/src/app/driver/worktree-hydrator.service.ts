@@ -75,7 +75,7 @@ export class WorktreeHydrator {
     const { manifest } = loadWorktreeManifest(worktreePath);
     const versions = await this.secrets.secretVersions(orgId);
     const grantList = repoDbId ? await this.secrets.listGrants(orgId, repoDbId) : [];
-    // Rendering is grant-driven, so the sig must track the GRANTED secrets' versions (a rotated value
+    // Rendering is grant-driven, so the sig must thread the GRANTED secrets' versions (a rotated value
     // bumps `updated_at` → the sig changes → the next attach re-renders it) plus the grant set itself
     // (name → path), NOT the manifest's legacy `secrets[]`.
     const referenced = grantList.map((g) => `${g.name}:${versions[g.name] ?? 0}`).sort();

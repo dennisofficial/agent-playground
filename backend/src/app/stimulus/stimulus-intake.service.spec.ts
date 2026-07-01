@@ -147,7 +147,7 @@ describe('StimulusIntake.intakeChat', () => {
       body: 'hey atlas',
       jobId: 'thread-9',
       author: { id: 'U1', displayName: 'Dennis' },
-      replyRoute: { surfaceId: 'slack', threadRef: '100.1' },
+      replyRoute: { surfaceId: 'slack', jobRef: '100.1' },
       receivedAt: new Date(),
     };
     const store = { recordChatStimulus: vi.fn(async () => recorded) } as unknown as StimulusStoreService;
@@ -171,7 +171,7 @@ describe('StimulusIntake.intakeChat', () => {
       body: '<system_notification>The operator answered your question "X": A</system_notification>',
       jobId: 'thread-9',
       author: { id: 'U-OPERATOR', displayName: 'Operator' },
-      replyRoute: { surfaceId: 'web', threadRef: 'thread-9' },
+      replyRoute: { surfaceId: 'web', jobRef: 'thread-9' },
       receivedAt: new Date(),
       seed: true,
     };

@@ -38,7 +38,7 @@ export class SurfaceOrchestration {
   constructor(
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
   ) {}
 
   /**
@@ -46,7 +46,7 @@ export class SurfaceOrchestration {
    * (the conversation handle) or undefined when nothing was posted (surface inert / thread missing).
    */
   async announceEvent(input: AnnounceEventInput): Promise<string | undefined> {
-    const thread = await this.threads.findOne({ where: { id: input.jobId } });
+    const thread = await this.jobs.findOne({ where: { id: input.jobId } });
     if (!thread) return undefined;
 
     const headline = `${SEVERITY_EMOJI[input.severity]} *[${input.source}]* ${input.title}`;

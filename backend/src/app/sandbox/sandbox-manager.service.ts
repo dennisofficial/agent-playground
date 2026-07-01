@@ -398,7 +398,7 @@ export class SandboxManager implements SandboxProvider {
    * The HOST path of a thread's durable `/context` shared folder — the same dir bind-mounted into the
    * container at {@link CONTAINER_CONTEXT}. Keyed by `jobId` so it is STABLE across the container's
    * lifecycle (recreate, idle-reap, cold re-attach) and never deleted by container teardown (only by a
-   * deep thread delete). The brain authors plan/track specs here and reads them back via this path;
+   * deep thread delete). The brain authors plan/thread specs here and reads them back via this path;
    * the build sessions read it as shared context. Sandboxes WITHOUT a thread (gate runs) fall back to a
    * name-keyed dir — never resolved by the brain, just keeps the mount uniform.
    */

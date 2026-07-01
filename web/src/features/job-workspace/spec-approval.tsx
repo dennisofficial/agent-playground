@@ -2,8 +2,8 @@
 
 import { Check, ClipboardCheck, Lock } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
-import { useApprove } from '@/lib/api/thread-queries';
-import type { JobRef } from '@/lib/api/thread-api';
+import { useApprove } from '@/lib/api/job-queries';
+import type { JobRef } from '@/lib/api/job-api';
 import { APPROVE_ACTION_ID } from '@/lib/api/types';
 
 /**
@@ -25,8 +25,8 @@ import { APPROVE_ACTION_ID } from '@/lib/api/types';
 const RULED_BY = 'U-OPERATOR';
 
 /** Shared approve action — POSTs the approve verdict for the thread's whole spec set (idempotent). */
-function useApprovePlan(threadRef: JobRef, value: string) {
-  const approve = useApprove(threadRef);
+function useApprovePlan(jobRef: JobRef, value: string) {
+  const approve = useApprove(jobRef);
   const submit = () => {
     if (!value || approve.isPending || approve.isSuccess) return;
     approve.mutate({ actionId: APPROVE_ACTION_ID, value, ruledBy: RULED_BY });
@@ -39,8 +39,8 @@ function useApprovePlan(threadRef: JobRef, value: string) {
  * The navigator callout — sits above the SPECS header. Title row ("Plan ready for review") + a full-width
  * green Approve button. No spec/step counts (removed deliberately); the spec list renders below as usual.
  */
-export function NavigatorApprovalCallout({ threadRef, value }: { threadRef: JobRef; value: string }) {
-  const { submit, pending, approved, error } = useApprovePlan(threadRef, value);
+export function NavigatorApprovalCallout({ jobRef, value }: { jobRef: JobRef; value: string }) {
+  const { submit, pending, approved, error } = useApprovePlan(jobRef, value);
   return (
     <div
       className="mx-1.5 mb-3 rounded-lg border"
@@ -68,8 +68,8 @@ export function NavigatorApprovalCallout({ threadRef, value }: { threadRef: JobR
 // ── Navigator header approve button (just the button) ──────────────────────────────────────────────
 /** The bare full-width green Approve button — pinned as the LAST item in the navigator's sticky header
  *  (no card/title). Same idempotent verdict as the other surfaces. */
-export function NavigatorApproveButton({ threadRef, value }: { threadRef: JobRef; value: string }) {
-  const { submit, pending, approved, error } = useApprovePlan(threadRef, value);
+export function NavigatorApproveButton({ jobRef, value }: { jobRef: JobRef; value: string }) {
+  const { submit, pending, approved, error } = useApprovePlan(jobRef, value);
   return (
     <>
       <ApproveButton
@@ -92,17 +92,17 @@ export function NavigatorApproveButton({ threadRef, value }: { threadRef: JobRef
  * trailing green Approve button.
  */
 export function PersistentApprovalBar({
-  threadRef,
+  jobRef,
   value,
   specCount,
   stepCount,
 }: {
-  threadRef: JobRef;
+  jobRef: JobRef;
   value: string;
   specCount: number;
   stepCount: number;
 }) {
-  const { submit, pending, approved, error } = useApprovePlan(threadRef, value);
+  const { submit, pending, approved, error } = useApprovePlan(jobRef, value);
   return (
     <div
       className="flex shrink-0 items-center gap-[11px] border-t"

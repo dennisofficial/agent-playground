@@ -87,7 +87,7 @@ function makeSvc(
   // is pulled lazily via `ModuleRef.get(...)` in `deleteOrg`, so the mock ref just hands back this fake.
   const deepDeleted: Array<{ jobId: string; orgId: string }> = [];
   const threadLifecycle = {
-    deleteThreadDeep: async (jobId: string, orgId: string) => {
+    deleteJobDeep: async (jobId: string, orgId: string) => {
       deepDeleted.push({ jobId, orgId });
     },
   };

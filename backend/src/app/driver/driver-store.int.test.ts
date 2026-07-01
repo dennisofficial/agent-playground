@@ -2,7 +2,7 @@
  * DriverStoreService.getPipelineState — the web `/pipeline` read model.
  *
  * Proves (against live Postgres) that the payload the operator console renders the navigator from now
- * carries the track's STEPS (the execute folder's leaves) + the track `hasPlan` flag, and the
+ * carries the thread's STEPS (the execute folder's leaves) + the thread `hasPlan` flag, and the
  * thread's PR + branch on the job — the fields the thread-sidebar handoff added. Additive over the old
  * shape (id/ordinal/brief/status), so the brain's `get_pipeline_state` passthrough is unaffected.
  *
@@ -85,8 +85,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     await ds.query('TRUNCATE steps, threads, jobs RESTART IDENTITY CASCADE');
   });
 
-  it('returns steps + hasPlan per track and the PR + branch on the job', async () => {
-    const thread = await jobs.save(
+  it('returns steps + hasPlan per thread and the PR + branch on the job', async () => {
+    const job = await jobs.save(
       jobs.create({
         org_id: ORG_ID,
         repo_id: repoId,
@@ -100,9 +100,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         pr_number: 43,
       }),
     );
-    const track = await threads.save(
+    const thread = await threads.save(
       threads.create({
-        job_id: thread.id,
+        job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,
         brief: 'Backend — wire the webhook handler',
@@ -112,8 +112,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     await steps.save([
       steps.create({
-        thread_id: track.id,
-        job_id: thread.id,
+        thread_id: thread.id,
+        job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,
         title: 'replay',
@@ -122,8 +122,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         status: 'building',
       }),
       steps.create({
-        thread_id: track.id,
-        job_id: thread.id,
+        thread_id: thread.id,
+        job_id: job.id,
         org_id: ORG_ID,
         ordinal: 20,
         title: 'sync',
@@ -133,7 +133,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       }),
     ]);
 
-    const state = (await store.getPipelineState(thread.id, ORG_ID)) as {
+    const state = (await store.getPipelineState(job.id, ORG_ID)) as {
       status: string;
       prUrl: string | null;
       prNumber: number | null;
@@ -157,8 +157,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.threads).toHaveLength(1);
     const [sec] = state.threads;
     expect(sec.hasPlan).toBe(true);
-    // The review-agent run list is exposed per track (fixed set today; navigator renders it dynamically).
-    // An un-reviewed track (empty `review_agents`) falls back to the default lens set at `pending`.
+    // The review-agent run list is exposed per thread (fixed set today; navigator renders it dynamically).
+    // An un-reviewed thread (empty `review_agents`) falls back to the default lens set at `pending`.
     expect(sec.reviewAgents.map((a) => a.id)).toEqual(['best_practices', 'correctness', 'consistency']);
     expect(sec.reviewAgents.every((a) => a.status === 'pending')).toBe(true);
     expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
@@ -167,7 +167,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   });
 
   it('seeds, transitions, and finalizes per-agent review status (surfaced by getPipelineState)', async () => {
-    const thread = await jobs.save(
+    const job = await jobs.save(
       jobs.create({
         org_id: ORG_ID,
         repo_id: repoId,
@@ -178,9 +178,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    const track = await threads.save(
+    const thread = await threads.save(
       threads.create({
-        job_id: thread.id,
+        job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,
         brief: 'Backend — review status',
@@ -189,17 +189,17 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
 
     // Seed at pending → run + pass one lens (with a finding count) → finalize the rest.
-    await store.seedReviewAgents(track.id, [
+    await store.seedReviewAgents(thread.id, [
       { id: 'best_practices', label: 'BP', status: 'pending' },
       { id: 'correctness', label: 'C', status: 'pending' },
       { id: 'consistency', label: 'Cs', status: 'pending' },
     ]);
-    await store.setReviewAgentStatus(track.id, 'best_practices', 'running');
-    await store.setReviewAgentStatus(track.id, 'best_practices', 'passed', 2);
+    await store.setReviewAgentStatus(thread.id, 'best_practices', 'running');
+    await store.setReviewAgentStatus(thread.id, 'best_practices', 'passed', 2);
     // correctness ran (in lensesRun) but never reached terminal → passed; consistency didn't run → skipped.
-    await store.finalizeReviewAgents(track.id, ['best_practices', 'correctness']);
+    await store.finalizeReviewAgents(thread.id, ['best_practices', 'correctness']);
 
-    const state = (await store.getPipelineState(thread.id, ORG_ID)) as {
+    const state = (await store.getPipelineState(job.id, ORG_ID)) as {
       threads: Array<{ reviewAgents: Array<{ id: string; status: string; findings?: number }> }>;
     };
     const byId = new Map(state.threads[0].reviewAgents.map((a) => [a.id, a]));
@@ -209,7 +209,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   });
 
   it('still reports `no_job` for a thread that has not entered the build lifecycle', async () => {
-    const thread = await jobs.save(
+    const job = await jobs.save(
       jobs.create({
         org_id: ORG_ID,
         repo_id: repoId,
@@ -219,6 +219,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    expect(await store.getPipelineState(thread.id, ORG_ID)).toEqual({ status: 'no_job' });
+    expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({ status: 'no_job' });
   });
 });

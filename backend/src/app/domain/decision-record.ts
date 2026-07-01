@@ -1,14 +1,14 @@
 /**
  * The locked DECISION RECORD — the upfront grill's output. Atlas grills Dennis once → the
- * architecture/system calls + the high-level track list, approved ONCE. Sections then auto-run; a
- * track planner parks & asks async only when it hits an ALWAYS-ASK decision class NOT already
- * covered by the record. The record is the durable "what we agreed" that grounds every track's
+ * architecture/system calls + the high-level thread list, approved ONCE. Sections then auto-run; a
+ * thread planner parks & asks async only when it hits an ALWAYS-ASK decision class NOT already
+ * covered by the record. The record is the durable "what we agreed" that grounds every thread's
  * just-in-time plan and the decision-class gate. This is the in-memory shape (separate from the
  * `decision_records` row).
  */
 
 /**
- * The ALWAYS-ASK decision classes — the ones a track planner must park on if not already covered by
+ * The ALWAYS-ASK decision classes — the ones a thread planner must park on if not already covered by
  * a locked decision. The boundary doubles as a security control (injected "go change X" in an
  * untrusted event body touches one of these → park, never execute).
  *
@@ -60,7 +60,7 @@ export interface Decision {
    * by id). Keeping it optional also lets the many `Decision` literals across specs compile unchanged.
    */
   id?: string;
-  /** Which always-ask class this decision settles (so a track planner can skip parking on it). */
+  /** Which always-ask class this decision settles (so a thread planner can skip parking on it). */
   decisionClass: DecisionClass;
   /** A short human label for the decision. */
   title: string;
@@ -88,7 +88,7 @@ export interface Decision {
 /** The record's lifecycle. Approved ONCE upfront, then immutable for the thread's build duration. */
 export type DecisionRecordStatus = 'draft' | 'approved' | 'superseded';
 
-/** The upfront grill's locked output: the system calls + the high-level track list. */
+/** The upfront grill's locked output: the system calls + the high-level thread list. */
 export interface DecisionRecord {
   /** Stable id (`decision_records.id`). */
   id: string;
@@ -100,14 +100,14 @@ export interface DecisionRecord {
   jobId: string;
   status: DecisionRecordStatus;
   /**
-   * The agreed overview — the feature's intent, stack, constraints, and how the tracks fit
-   * together. Seeded into EVERY track's just-in-time plan prompt so each track is grounded in the
+   * The agreed overview — the feature's intent, stack, constraints, and how the threads fit
+   * together. Seeded into EVERY thread's just-in-time plan prompt so each thread is grounded in the
    * whole, not just its one-line brief.
    */
   overview: string;
   /** The locked architecture/system calls. */
   decisions: Decision[];
-  /** The high-level track list (briefs) approved upfront — drives the thread's `Track` rows. */
+  /** The high-level thread list (briefs) approved upfront — drives the thread's `Thread` rows. */
   threadTitles: string[];
   /** Who approved it (Dennis's id); null until approved. */
   approvedBy: string | null;

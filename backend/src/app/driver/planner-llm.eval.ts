@@ -4,7 +4,7 @@ import { PlannerChains, type PlanThreadInput, type PlannedStep } from './planner
 import { DATASET } from './planner-llm.ai.data';
 
 /**
- * Real-LLM eval for the track planner (`PlannerChains.MODEL`, currently Opus 4.8).
+ * Real-LLM eval for the thread planner (`PlannerChains.MODEL`, currently Opus 4.8).
  * Run from `backend/`: `pnpm eval planner` (real calls, costs money) or `pnpm eval:check planner`
  * (loads + validates the module WITHOUT any LLM call).
  *
@@ -50,13 +50,13 @@ const wellFormed = scorer<PlanThreadInput, PlannedStep[]>({
   },
 });
 
-// Delete-guard invariant — only for the 'delete-track' case: an early step must PROVE the
+// Delete-guard invariant — only for the 'delete-thread' case: an early step must PROVE the
 // target unused before any step removes it.
 const deleteProvesUnused = scorer<PlanThreadInput, PlannedStep[]>({
   key: 'delete-proves-unused',
   threshold: 1,
   run: ({ output: steps, label }) => {
-    if (label !== 'delete-track') return []; // skip other cases
+    if (label !== 'delete-thread') return []; // skip other cases
     const text = (s: PlannedStep) => `${s.title} ${s.brief}`.toLowerCase();
     const provesIdx = steps.findIndex((s) =>
       /(unused|no (importers|callers|references|usages)|find (all )?(importers|callers|references|usages|referenc)|search for (references|usages|callers)|grep|dead code|prove .*(unused|not used)|nothing (imports|references|calls))/.test(
@@ -84,17 +84,17 @@ const groundedness = llmJudge<PlanThreadInput, PlannedStep[]>({
   key: 'groundedness',
   threshold: 0.8,
   judge: new ChatAnthropic({ apiKey: anthropicKey(), model: 'claude-haiku-4-5-20251001', maxTokens: 1024 }),
-  prompt: `You are grading Atlas's TRACK PLANNER. It turns one track of an approved feature into an
+  prompt: `You are grading Atlas's THREAD PLANNER. It turns one thread of an approved feature into an
 ordered list of implementation STEPS (each: a title + a concrete brief). It must respect the LOCKED
 decision record and NOT re-litigate it.
 
-The planner's inputs (feature overview, locked decisions, this track's brief, prior handoff):
+The planner's inputs (feature overview, locked decisions, this thread's brief, prior handoff):
 <inputs>{inputs}</inputs>
 
 The planner's output (the ordered steps):
 <outputs>{outputs}</outputs>
 
-Score TRUE if the plan is a defensible, coherent decomposition of THIS track's brief that:
+Score TRUE if the plan is a defensible, coherent decomposition of THIS thread's brief that:
 - stays within the locked decisions (e.g. if a decision says "reuse Redis, no new infra" or "jsonb
   column, no new table", the steps must not introduce a new datastore/table);
 - does NOT re-litigate or contradict a locked decision;
@@ -108,7 +108,7 @@ step granularity — do not penalize a plan for having one more or one fewer ste
 });
 
 export default defineModule<PlanThreadInput, PlannedStep[]>({
-  name: 'planner · track planner (Opus 4.8)',
+  name: 'planner · thread planner (Opus 4.8)',
   dataset: () => DATASET,
   runnable: () =>
     PlannerChains.planThread(

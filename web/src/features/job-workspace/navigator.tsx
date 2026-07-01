@@ -21,14 +21,14 @@ import { Dot, KindBadge, StatusPie } from '@/components/ui/badges';
 import { STATUS_META } from '@/lib/api/status';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { pipelineJob } from '@/lib/api/thread-api';
-import { useRetryThread } from '@/lib/api/thread-queries';
+import { pipelineJob } from '@/lib/api/job-api';
+import { useRetryJob } from '@/lib/api/job-queries';
 import { Divider, PipelineTree, haltThreadIdx } from './pipeline-tree';
 import { NavigatorApproveButton } from './spec-approval';
-import type { ContextFile, PipelineJob, PipelineState, ThreadContext, JobKind, JobStatus } from '@/lib/api/types';
-import type { JobMessage, JobRef } from '@/lib/api/thread-api';
+import type { ContextFile, PipelineJob, PipelineState, JobContext, JobKind, JobStatus } from '@/lib/api/types';
+import type { JobMessage, JobRef } from '@/lib/api/job-api';
 
-export interface ThreadMeta {
+export interface JobMeta {
   title: string;
   kind: JobKind;
   status: JobStatus;
@@ -47,7 +47,7 @@ export interface ThreadMeta {
  * never restructures; only the signals inside change (dot color, dimming, the selected row, per-region notes).
  *
  * "Job" is the operator-facing name for what the API still calls a thread; a job's lanes ("Threads") are the
- * Main conversation + the build tracks. PORTS is a design-stage mock (no backend port-exposure yet) — kept
+ * Main conversation + the build threads. PORTS is a design-stage mock (no backend port-exposure yet) — kept
  * behind {@link PORTS_MOCK} so it is trivial to wire to real sandbox ports later.
  */
 export function Navigator({
@@ -58,7 +58,7 @@ export function Navigator({
   contextLoading,
   laneNode,
   detailNode,
-  threadRef,
+  jobRef,
   approveValue,
   onConversation,
   onSelectNode,
@@ -66,20 +66,20 @@ export function Navigator({
   onDelete,
   deleting,
 }: {
-  meta: ThreadMeta;
+  meta: JobMeta;
   pipeline: PipelineState | undefined;
   /** The job's durable transcript — the pipeline tree derives each lane-session's writer-subagent runs
    *  from it (the `/pipeline` read model doesn't carry them; see `thread-subagents.ts`). */
   messages: JobMessage[];
   /** The job's `/context` files (specs + generated + artifacts) — feeds the OUTPUTS region. */
-  context: ThreadContext | undefined;
+  context: JobContext | undefined;
   contextLoading?: boolean;
   /** The LEFT pane's open THREADS lane (`?lane=`; `null` = Main) — highlighted ORANGE. */
   laneNode: string | null;
   /** The RIGHT pane's open detail node (`?node=`; OUTPUT / port / doc) — highlighted BLUE. */
   detailNode: string | null;
   /** The open job — for the in-place "Approve plan" callout. */
-  threadRef: JobRef;
+  jobRef: JobRef;
   /** The approval card's verbatim approve `value`, when the job is awaiting approval (else ''). Drives
    *  the navigator approval callout. */
   approveValue: string;
@@ -123,7 +123,7 @@ export function Navigator({
           </span>
           <div className="flex-1" />
           {onDelete || onRename ? (
-            <ThreadMenu
+            <JobMenu
               onStartRename={onRename ? () => setEditing(true) : undefined}
               onDelete={onDelete}
               deleting={deleting}
@@ -205,7 +205,7 @@ export function Navigator({
         {/* Approve — pinned as the last header item while the plan is awaiting approval. */}
         {st === 'awaiting_approval' && approveValue ? (
           <div className="mt-2">
-            <NavigatorApproveButton threadRef={threadRef} value={approveValue} />
+            <NavigatorApproveButton jobRef={jobRef} value={approveValue} />
           </div>
         ) : null}
       </div>
@@ -214,7 +214,7 @@ export function Navigator({
              carry their own px, so each is a full-width band (design "Atlas Workspace HiFi") and the
              selected `.nav-selected` band + left accent bar can run flush to the rail edge. ─────────── */}
       <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto py-3">
-        <StateBanner status={st} job={job} threadRef={threadRef} onConversation={onConversation} />
+        <StateBanner status={st} job={job} jobRef={jobRef} onConversation={onConversation} />
 
         {/* THREADS — the Main planning lane + each build lane. No section header (flat list); selecting one
             opens it in the LEFT pane (orange highlight). */}
@@ -223,11 +223,11 @@ export function Navigator({
           running={st === 'running' || st === 'planning'}
           onClick={onConversation}
         />
-        <ThreadsTracks
+        <ThreadRows
           status={st}
           job={job}
           messages={messages}
-          jobId={threadRef.jobId}
+          jobId={jobRef.jobId}
           laneNode={laneNode}
           onSelectNode={onSelectNode}
         />
@@ -273,7 +273,7 @@ function MainLaneRow({ active, running, onClick }: { active: boolean; running: b
  *  approval) the draft threads. Flows directly under the Main lane row (no section header); the first OUTPUTS
  *  sub-group divider below separates it from the outputs. Each thread's subitems are its live task list (the
  *  SDK task tools) — see {@link PipelineTree}; submit-plan shows only the threads (no steps). */
-function ThreadsTracks({
+function ThreadRows({
   status,
   job,
   messages,
@@ -335,7 +335,7 @@ function OutputsRegion({
   onSelectNode,
 }: {
   status: JobStatus;
-  context: ThreadContext | undefined;
+  context: JobContext | undefined;
   loading?: boolean;
   detailNode: string | null;
   onSelectNode: (node: string) => void;
@@ -539,15 +539,15 @@ function PortsRegion({
 function StateBanner({
   status,
   job,
-  threadRef,
+  jobRef,
   onConversation,
 }: {
   status: JobStatus;
   job: PipelineJob | null;
-  threadRef: JobRef;
+  jobRef: JobRef;
   onConversation: () => void;
 }) {
-  const retry = useRetryThread(threadRef);
+  const retry = useRetryJob(jobRef);
   // Re-drive the halted build, then drop to the conversation to watch it resume.
   const onRetry = () => {
     retry.mutate(undefined, { onSuccess: onConversation });
@@ -705,7 +705,7 @@ function LoadingRow({ label }: { label: string }) {
 }
 
 /** Kebab → "Rename job" + a two-click "Delete job" (real `PATCH` / `DELETE …/threads/:id`). */
-function ThreadMenu({
+function JobMenu({
   onStartRename,
   onDelete,
   deleting,

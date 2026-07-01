@@ -10,7 +10,7 @@ import type { TurnRegistry } from './turn-registry.service';
 import type { ContainerEngine } from './container-engine.port';
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
-const fakeActivity = { track: (_id: string, fn: () => unknown) => fn() } as unknown as SandboxActivityRegistry;
+const fakeActivity = { thread: (_id: string, fn: () => unknown) => fn() } as unknown as SandboxActivityRegistry;
 
 function fakeRegistry() {
   return {

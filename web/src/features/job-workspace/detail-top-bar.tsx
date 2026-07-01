@@ -3,7 +3,7 @@
 import type React from 'react';
 
 /**
- * The single top bar shared by the main conversation AND every lane/detail pane (build track/step, subagent
+ * The single top bar shared by the main conversation AND every lane/detail pane (build thread/step, subagent
  * runs, plan/decision/diff/file views). Left = a lane-style title + optional subtitle; right = the standard
  * action buttons (search / copy / diff / resume). Both the conversation and the lane views render THIS, so the
  * header is identical everywhere — no more per-view header drift.

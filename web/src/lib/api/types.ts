@@ -1,10 +1,10 @@
 /**
  * Contracts for the Atlas web surface (`/web/*`). These MIRROR the backend shapes verbatim:
  *  - `WebApprovalCard` / `WebVerdictCard` — the approval-card payload carried on a message's `card`.
- *  - `PipelineState` — `DriverStoreService.getPipelineState` (job + tracks + per-track steps; carries
+ *  - `PipelineState` — `DriverStoreService.getPipelineState` (job + threads + per-thread steps; carries
  *    the thread's PR url/number + feature/base branch — the navigator's ARTIFACTS + header read them).
  *
- * The live message + request shapes are owned by `thread-api.ts` (the org → repo → thread client).
+ * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
 import type { JobStatus as WireJobStatus } from '@workspace/shared';
@@ -135,7 +135,7 @@ export interface WebSecretInputCard {
 export type WebCard = WebApprovalCard | WebVerdictCard | WebQuestionCard | WebSecretInputCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
-/** One step of a track's locked plan — the execute folder's leaf (a Claude Code session). */
+/** One step of a thread's locked plan — the execute folder's leaf (a Claude Code session). */
 export interface PipelineStep {
   id: string;
   ordinal: number;
@@ -144,7 +144,7 @@ export interface PipelineStep {
   /** The resumable cursor within the step ('build' | 'review' | 'fix'). */
   stage: string;
   status: StepStatus;
-  /** The execution batch this step belongs to within its track; null until the track first executes. */
+  /** The execution batch this step belongs to within its thread; null until the thread first executes. */
   batchOrdinal: number | null;
   /**
    * The ANCHOR step id of this step's batch — a batch runs as ONE engine turn whose transcript is tagged
@@ -156,8 +156,8 @@ export interface PipelineStep {
   batchStepIds: string[];
 }
 
-/** One post-build review agent over a track's diff: id + human label + its per-agent status. `pending`
- *  before the track is reviewed, transitioned by the auto-fix stage, `skipped` when the diff was empty. */
+/** One post-build review agent over a thread's diff: id + human label + its per-agent status. `pending`
+ *  before the thread is reviewed, transitioned by the auto-fix stage, `skipped` when the diff was empty. */
 export interface ReviewAgent {
   id: string;
   label: string;
@@ -170,17 +170,17 @@ export interface PipelineThread {
   id: string;
   ordinal: number;
   brief: string;
-  /** The track's scope type (backend/frontend/docs/…) — selects the review agents. */
+  /** The thread's scope type (backend/frontend/docs/…) — selects the review agents. */
   type: string;
   status: ThreadStatus;
   /**
-   * The review agents selected to run over this track's diff (a fixed set today; backend-selected).
+   * The review agents selected to run over this thread's diff (a fixed set today; backend-selected).
    * The navigator's review folder renders one leaf per agent — never hard-code this list.
    */
   reviewAgents: ReviewAgent[];
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
   hasPlan: boolean;
-  /** The track's steps (execute folder leaves), ordinal-sorted. */
+  /** The thread's steps (execute folder leaves), ordinal-sorted. */
   steps: PipelineStep[];
 }
 
@@ -194,7 +194,7 @@ export interface PipelineJob {
   /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
   prUrl: string | null;
   prNumber: number | null;
-  /** The feature branch all tracks stack on (header), or null before the sandbox is cut. */
+  /** The feature branch all threads stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   baseBranch: string | null;
   threads: PipelineThread[];
@@ -215,7 +215,7 @@ export interface ContextFile {
  * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams) and
  * `artifacts` (outputs — preview HTML, screenshots). A bucket is `[]` before the agent writes anything.
  */
-export interface ThreadContext {
+export interface JobContext {
   specs: ContextFile[];
   /** System-GENERATED, read-only files (e.g. decision-record.md) — written by tool calls, never by hand. */
   generated: ContextFile[];

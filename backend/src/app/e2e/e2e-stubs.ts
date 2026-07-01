@@ -28,7 +28,7 @@ import type {
  */
 
 /**
- * Fake `PLANNER_LLM`. Returns a single, deterministic step per track (the same degraded-but-
+ * Fake `PLANNER_LLM`. Returns a single, deterministic step per thread (the same degraded-but-
  * correct shape the real driver falls back to key-less), and surfaces NO notable decisions (so the
  * feature path's gate stays clean and never parks). Handoff is a terse canned line.
  */
@@ -48,7 +48,7 @@ export class FakePlannerLlm implements PlannerLlm {
   }
 
   async handoff(): Promise<string | undefined> {
-    return '(e2e fake) track complete.';
+    return '(e2e fake) thread complete.';
   }
 
   async batchSteps(input: { steps: PlannedStep[] }): Promise<number[][] | undefined> {
@@ -128,7 +128,7 @@ export class FakeEngineRunner {
  * Fake `LocalGitService`. No real clone / worktree / commit / push — returns deterministic in-memory
  * handles so the driver + acceptance flow run fully in-process. `commitAll` always returns a synthetic
  * sha (so the pipeline treats the change as real); `hasChanges` is true once; `push`/`removeSandbox`
- * are no-ops. Tracks calls so the harness can assert no real outward git op happened.
+ * are no-ops. Threads calls so the harness can assert no real outward git op happened.
  */
 export class FakeLocalGitService {
   private commitSeq = 0;

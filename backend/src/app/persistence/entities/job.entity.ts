@@ -34,7 +34,7 @@ export interface ThreadPipelineAwareness {
 /**
  * A THREAD — the unit of work. One intent (a feature or a bugfix) = one sandbox = one worktree = one
  * feature branch = ONE PR. A thread may stay a plain conversation (`status='open'`) or enter the build
- * lifecycle; when it builds, the `tracks`/`steps` rows hang directly off it (the former `jobs` layer
+ * lifecycle; when it builds, the `threads`/`steps` rows hang directly off it (the former `jobs` layer
  * is folded in here). `decision_records` (1:many — the draft→superseded proposal trail) reference it.
  * `messages` partition by `job_id`. Threads are isolated for context hygiene — cross-thread coherence
  * is shared memory only, never transcript sharing.
@@ -94,7 +94,7 @@ export class JobEntity extends TimestampedEntity {
   ticket?: TicketEntity | null;
 
   // ── build lifecycle (folded in from the former `jobs` table) ───────────────────────────────────────
-  /** Build intent: 'feature' (many tracks) | 'bugfix' (one). Null until the thread is scoped. */
+  /** Build intent: 'feature' (many threads) | 'bugfix' (one). Null until the thread is scoped. */
   @Column({ type: 'text', nullable: true })
   kind!: string | null;
 
@@ -144,7 +144,7 @@ export class JobEntity extends TimestampedEntity {
   @JoinColumn({ name: 'decision_record_id' })
   decisionRecord?: DecisionRecordEntity | null;
 
-  /** The feature branch all tracks stack on; null until the branch is cut. */
+  /** The feature branch all threads stack on; null until the branch is cut. */
   @Column({ type: 'text', nullable: true })
   feature_branch!: string | null;
 

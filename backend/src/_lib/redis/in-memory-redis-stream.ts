@@ -8,7 +8,7 @@ import type { RedisStreamPort, StreamEntry } from './redis.port';
  *  - streams are append-only ordered logs with monotonic `<seq>-0` ids;
  *  - `xadd` wakes any blocked `xread`/`xreadGroup` waiting on that stream (so a daemon consumer loop
  *    and a host event-tail interleave correctly within one process/event-loop);
- *  - consumer groups track a per-group cursor (last delivered id) so `'>'` reads only NEW entries, a
+ *  - consumer groups thread a per-group cursor (last delivered id) so `'>'` reads only NEW entries, a
  *    pending-entries list (PEL) holds delivered-but-un-acked entries, `ack` removes them, and
  *    `claimStale` reassigns idle ones (XAUTOCLAIM) — the crash-recovery slice the tool-bridge needs;
  *  - `xread` resumes strictly AFTER `lastId`, exactly like real Redis, so the host's resume-after-
@@ -204,7 +204,7 @@ export class InMemoryRedisStream implements RedisStreamPort {
       const timer = setTimeout(finishEmpty, blockMs);
       // Don't keep the test process alive on a pending block window.
       if (typeof timer.unref === 'function') timer.unref();
-      // Track for eager release (test teardown) — resolving as a timeout (empty).
+      // Thread for eager release (test teardown) — resolving as a timeout (empty).
       const handle = { resolve: finishEmpty };
       this.blockTimers.add(handle);
       set.add(onWake);

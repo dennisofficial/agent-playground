@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
 import { BranchPicker, Dropdown } from '@/components/branch-picker';
 import { useOrgs } from '@/lib/api/me';
-import { useOrgRepos, useCreateThread } from '@/lib/api/thread-queries';
+import { useOrgRepos, useCreateThread } from '@/lib/api/job-queries';
 import { orgSwatch, orgInitials } from '@/lib/org-display';
 import { ROUTES, threadHref } from '@/lib/routes';
 

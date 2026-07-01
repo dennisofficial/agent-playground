@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { ArrowRight, FileText, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
-import { useContextFile, useSay } from '@/lib/api/thread-queries';
+import { useContextFile, useSay } from '@/lib/api/job-queries';
 import { threadTitle } from '@/lib/thread-title';
 import { VerdictButtons } from './approval-card';
 import { Markdown } from './markdown';
@@ -23,10 +23,10 @@ import {
   subagentModel,
   type SubBlock,
 } from './subagents';
-import { useLiveTurn, type LiveTurn } from '@/lib/api/thread-stream';
+import { useLiveTurn, type LiveTurn } from '@/lib/api/job-stream';
 import { durablePhaseBlocks, indexPhaseBlocks, livePhaseBlocks, phaseLane } from './phases';
 import { DetailTopBar } from './detail-top-bar';
-import { pipelineJob, type JobMessage, type JobRef } from '@/lib/api/thread-api';
+import { pipelineJob, type JobMessage, type JobRef } from '@/lib/api/job-api';
 import {
   APPROVE_ACTION_ID,
   type ContextFileContent,
@@ -39,12 +39,12 @@ import {
 /**
  * Step mode — the work column when a navigator node is selected. The plan / decision docs and the build
  * transcript/diff/logs render REAL data where the web API exposes it (the approved plan card's decisions +
- * tracks; the thread's `build_event` relays) and clearly-labeled PLACEHOLDERS where it doesn't (no
+ * threads; the thread's `build_event` relays) and clearly-labeled PLACEHOLDERS where it doesn't (no
  * per-step transcript/diff/logs endpoint, no plan.md/decision-record content endpoint — see
  * `web/BACKEND_GAPS.md`).
  */
 export function PhaseView({
-  threadRef,
+  jobRef,
   pipeline,
   pipelineLoading,
   pipelineError,
@@ -54,7 +54,7 @@ export function PhaseView({
   onConversation,
   onSelectNode,
 }: {
-  threadRef: JobRef;
+  jobRef: JobRef;
   pipeline: PipelineState | undefined;
   /** The pipeline query's loading / error state — needed to tell "still loading" from "node is gone". */
   pipelineLoading?: boolean;
@@ -68,15 +68,15 @@ export function PhaseView({
   onSelectNode?: (node: string) => void;
 }) {
   // Subagent sub-pages stream live (a running subagent) and fall back to the durable transcript afterward.
-  const liveTurn = useLiveTurn(threadRef.jobId);
+  const liveTurn = useLiveTurn(jobRef.jobId);
   const job = pipelineJob(pipeline);
-  const track = job?.threads.find((s) => s.id === selectedNode) ?? null;
-  // A step leaf (execute folder) — find which track owns it + its 1-based index, for the label.
+  const thread = job?.threads.find((s) => s.id === selectedNode) ?? null;
+  // A step leaf (execute folder) — find which thread owns it + its 1-based index, for the label.
   const owningSection = job?.threads.find((s) => s.steps.some((p) => p.id === selectedNode)) ?? null;
   const phaseIndex = owningSection ? owningSection.steps.findIndex((p) => p.id === selectedNode) : -1;
   const step = owningSection?.steps[phaseIndex] ?? null;
 
-  // A `?node=` URL can outlive the node it names (deleted spec, a track/step id from before a re-plan).
+  // A `?node=` URL can outlive the node it names (deleted spec, a thread/step id from before a re-plan).
   // Resolve EVERY job-derived token against the live job so a stale link shows NodeNotFound rather than a
   // misleading generic placeholder or a silently-empty build view. `spec:`/`artifact:` self-handle a 404
   // inside FileView; `plan`/`decision`/`diff` render from card/derived data and are always resolvable.
@@ -91,7 +91,7 @@ export function PhaseView({
       : selectedNode.startsWith('artifact:')
         ? `artifacts/${selectedNode.slice('artifact:'.length)}`
         : null;
-  const fileQuery = useContextFile(threadRef, filePath);
+  const fileQuery = useContextFile(jobRef, filePath);
 
   // The detail pane's header (title + subtitle) lives in the top bar — each branch supplies it alongside
   // its body so the scrolling content no longer repeats it.
@@ -108,15 +108,15 @@ export function PhaseView({
   } else if (selectedNode === 'plan') {
     const n = (approvalCard?.threads ?? job?.threads.map((s) => s.brief) ?? []).length;
     title = job?.title ?? approvalCard?.title ?? 'Plan';
-    subtitle = `${n} track${n === 1 ? '' : 's'} · plan.md`;
-    body = <PlanDoc card={approvalCard} tracks={job?.threads.map((s) => s.brief)} threadRef={threadRef} />;
+    subtitle = `${n} thread${n === 1 ? '' : 's'} · plan.md`;
+    body = <PlanDoc card={approvalCard} threads={job?.threads.map((s) => s.brief)} jobRef={jobRef} />;
   } else if (selectedNode === 'decision') {
     title = 'Decision record';
     subtitle = "locked at approval · the build's input contract";
     body = <DecisionDoc card={approvalCard} />;
   } else if (selectedNode === 'diff') {
     title = 'Diff';
-    subtitle = 'the accumulated change across all tracks';
+    subtitle = 'the accumulated change across all threads';
     body = <DiffView />;
   } else if (selectedNode.startsWith('port:')) {
     const portMeta = PORT_META[selectedNode.slice('port:'.length)];
@@ -139,12 +139,12 @@ export function PhaseView({
   } else if (filePath) {
     title = filePath.split('/').pop() ?? filePath;
     subtitle = fileQuery.data ? `${filePath} · ${formatBytes(fileQuery.data.size)}` : filePath;
-    body = <FileView threadRef={threadRef} path={filePath} onSelectNode={onSelectNode} />;
+    body = <FileView jobRef={jobRef} path={filePath} onSelectNode={onSelectNode} />;
   } else if (selectedNode.startsWith('secplan:')) {
     const id = selectedNode.slice('secplan:'.length);
     const sec = job?.threads.find((s) => s.id === id) ?? null;
-    title = sec ? threadTitle(sec.brief) : 'Track plan';
-    subtitle = 'track plan';
+    title = sec ? threadTitle(sec.brief) : 'Thread plan';
+    subtitle = 'thread plan';
     body = <SectionPlanDoc />;
   } else if (selectedNode.startsWith('rev:')) {
     const [, threadId, lensId = 'review'] = selectedNode.split(':');
@@ -152,22 +152,22 @@ export function PhaseView({
     const agent = revThread?.reviewAgents?.find((a) => a.id === lensId) ?? null;
     const lensLabel = agent?.label ?? lensId;
     title = lensLabel;
-    subtitle = agent ? `review agent · ${agent.status}` : 'review agent · over the track diff';
+    subtitle = agent ? `review agent · ${agent.status}` : 'review agent · over the thread diff';
     body = <ReviewView lens={lensLabel} />;
   } else if (step) {
     title = `step ${phaseIndex + 1}${step.title ? ` · ${step.title}` : ''}`;
     subtitle = 'Claude · execute';
     // A batch runs as ONE turn whose transcript is tagged with the ANCHOR step id — remap so a non-anchor
     // step in the batch resolves the same transcript (and live lane) instead of rendering empty.
-    body = <BuildView threadRef={threadRef} messages={messages} anchorStepId={step.anchorStepId} />;
-  } else if (track) {
-    title = `§ ${threadTitle(track.brief)}`;
+    body = <BuildView jobRef={jobRef} messages={messages} anchorStepId={step.anchorStepId} />;
+  } else if (thread) {
+    title = `§ ${threadTitle(thread.brief)}`;
     subtitle = 'Claude · execute';
-    body = <BuildView threadRef={threadRef} messages={messages} />;
+    body = <BuildView jobRef={jobRef} messages={messages} />;
   } else {
     title = 'Build';
     subtitle = 'Claude · execute';
-    body = <BuildView threadRef={threadRef} messages={messages} />;
+    body = <BuildView jobRef={jobRef} messages={messages} />;
   }
 
   return (
@@ -187,18 +187,18 @@ export function PhaseView({
  * over after the turn ends.
  */
 function BuildView({
-  threadRef,
+  jobRef,
   messages,
   anchorStepId,
 }: {
-  threadRef: JobRef;
+  jobRef: JobRef;
   messages: JobMessage[];
-  /** The batch's ANCHOR step id — its transcript tag + live lane. Unset = the track/whole-build view. */
+  /** The batch's ANCHOR step id — its transcript tag + live lane. Unset = the thread/whole-build view. */
   anchorStepId?: string;
 }) {
   const index = indexPhaseBlocks(messages);
   // The live lane for THIS phase. Hooks can't be conditional, so an unset anchor reads a dead lane (→ none).
-  const live = useLiveTurn(threadRef.jobId, anchorStepId ? phaseLane(anchorStepId) : '__none__');
+  const live = useLiveTurn(jobRef.jobId, anchorStepId ? phaseLane(anchorStepId) : '__none__');
   const active = Boolean(live?.active);
 
   // The build instruction the engine received — the turn's "first message". Persisted on the `build_anchor`
@@ -211,7 +211,7 @@ function BuildView({
     // Prefer durable (post-turn); fall back to the live lane while building (mirrors SubagentView).
     blocks = durable.length ? durable : live ? livePhaseBlocks(live.blocks) : [];
   } else {
-    // Track / whole-build view: every phase's durable transcript, in message order (no single live lane).
+    // Thread / whole-build view: every phase's durable transcript, in message order (no single live lane).
     blocks = durableSubBlocks(messages.filter((m) => m.meta?.phaseId != null && m.kind !== 'build_anchor'));
   }
 
@@ -239,7 +239,7 @@ function BuildView({
         </div>
       </div>
 
-      <InterjectBar threadRef={threadRef} />
+      <InterjectBar jobRef={jobRef} />
     </div>
   );
 }
@@ -374,8 +374,8 @@ function SubagentTranscript({ blocks, active }: { blocks: SubBlock[]; active: bo
 }
 
 /** Talks to the build session (via the thread). Pause / Revert are UI-only (no backend op route). */
-function InterjectBar({ threadRef }: { threadRef: JobRef }) {
-  const say = useSay(threadRef);
+function InterjectBar({ jobRef }: { jobRef: JobRef }) {
+  const say = useSay(jobRef);
   const [text, setText] = useState('');
   const [queued, setQueued] = useState<string[]>([]);
 
@@ -445,15 +445,15 @@ function InterjectBar({ threadRef }: { threadRef: JobRef }) {
 // ── Docs ─────────────────────────────────────────────────────────────────────────────────────────
 function PlanDoc({
   card,
-  tracks,
-  threadRef,
+  threads,
+  jobRef,
 }: {
   card: WebApprovalCard | null;
-  tracks?: string[];
-  threadRef: JobRef;
+  threads?: string[];
+  jobRef: JobRef;
 }) {
   const decisions = card?.decisions ?? [];
-  const sectionList = card?.threads ?? tracks ?? [];
+  const sectionList = card?.threads ?? threads ?? [];
   const value = card?.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ?? '';
 
   return (
@@ -495,7 +495,7 @@ function PlanDoc({
 
         {card && value ? (
           <div className="mt-6">
-            <VerdictButtons threadRef={threadRef} value={value} approveLabel="Approve & build →" size="md" />
+            <VerdictButtons jobRef={jobRef} value={value} approveLabel="Approve & build →" size="md" />
           </div>
         ) : null}
       </div>
@@ -537,8 +537,8 @@ function SectionPlanDoc() {
     <div className="h-full overflow-y-auto px-8 py-7">
       <div className="max-w-[720px]">
         <Placeholder
-          title="Track plan"
-          body="The just-in-time track plan (its build steps) isn't exposed by the web surface yet. The planning step decides the step split when the track starts."
+          title="Thread plan"
+          body="The just-in-time thread plan (its build steps) isn't exposed by the web surface yet. The planning step decides the step split when the thread starts."
         />
       </div>
     </div>
@@ -558,14 +558,14 @@ function DiffView() {
   );
 }
 
-/** One review-agent lens (a self-review pass over the track diff). Findings are ephemeral (relayed to chat). */
+/** One review-agent lens (a self-review pass over the thread diff). Findings are ephemeral (relayed to chat). */
 function ReviewView({ lens }: { lens: string }) {
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
       <div className="max-w-[720px]">
         <Placeholder
           title={`${lens} review`}
-          body="Review lenses run as parallel self-review passes over the track's diff; their findings are relayed into the conversation rather than persisted, so they aren't browsable here yet."
+          body="Review lenses run as parallel self-review passes over the thread's diff; their findings are relayed into the conversation rather than persisted, so they aren't browsable here yet."
         />
       </div>
     </div>
@@ -751,15 +751,15 @@ function ServerPortView() {
 // ── Context file viewer (specs / artifacts) ───────────────────────────────────────────────────────
 /** Render one real `/context` file: markdown → prose, images → inline, anything else → mono text. */
 function FileView({
-  threadRef,
+  jobRef,
   path,
   onSelectNode,
 }: {
-  threadRef: JobRef;
+  jobRef: JobRef;
   path: string;
   onSelectNode?: (node: string) => void;
 }) {
-  const { data, isLoading, error } = useContextFile(threadRef, path);
+  const { data, isLoading, error } = useContextFile(jobRef, path);
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
       <div className="max-w-[820px]">
@@ -849,7 +849,7 @@ const ID_FREE_NODES = new Set(['plan', 'decision', 'diff']);
 
 /**
  * Classify a `?node=` token against the live job. Job-derived tokens (`secplan:`/`rev:` carry a
- * track id; a bare token is a track or step id) become `not_found` when their id is gone — otherwise a
+ * thread id; a bare token is a thread or step id) become `not_found` when their id is gone — otherwise a
  * stale URL would render a misleading generic placeholder or a silently-empty build view. `spec:`/`artifact:`
  * self-handle a missing file inside `FileView`, so they stay `found` here.
  */
@@ -865,7 +865,7 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
   if (error || !job) return 'not_found';
 
   if (node.startsWith('secplan:')) return hasSection(job, node.slice('secplan:'.length)) ? 'found' : 'not_found';
-  // `rev:<threadId>:<agentId>` — found only when the track still exists AND still selects that review
+  // `rev:<threadId>:<agentId>` — found only when the thread still exists AND still selects that review
   // agent. With the agent list now dynamic, a stale agent id must not render a plausible-but-wrong page.
   if (node.startsWith('rev:')) {
     const [, threadId, lensId] = node.split(':');
@@ -874,7 +874,7 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
       ? 'found'
       : 'not_found';
   }
-  // Bare token — a track or a step leaf.
+  // Bare token — a thread or a step leaf.
   const matches = job.threads.some((s) => s.id === node || s.steps.some((p) => p.id === node));
   return matches ? 'found' : 'not_found';
 }
@@ -883,7 +883,7 @@ function hasSection(job: PipelineJob, id: string): boolean {
   return id.length > 0 && job.threads.some((s) => s.id === id);
 }
 
-/** A `?node=` that no longer resolves (deleted file, re-planned track/step). Placeholder styling — the
+/** A `?node=` that no longer resolves (deleted file, re-planned thread/step). Placeholder styling — the
  *  designer will restyle/replace this. */
 function NodeNotFound({ node, onConversation }: { node: string; onConversation: () => void }) {
   return (
@@ -913,19 +913,19 @@ function NodeNotFound({ node, onConversation }: { node: string; onConversation: 
  * node's short label (null when the sub was opened over an empty pane).
  */
 export function SubagentPane({
-  threadRef,
+  jobRef,
   messages,
   parentId,
   base,
   onBack,
 }: {
-  threadRef: JobRef;
+  jobRef: JobRef;
   messages: JobMessage[];
   parentId: string;
   base: string | null;
   onBack: () => void;
 }) {
-  const liveTurn = useLiveTurn(threadRef.jobId);
+  const liveTurn = useLiveTurn(jobRef.jobId);
   const summary =
     indexDurableSubagents(messages).summaryById.get(parentId) ??
     (liveTurn ? indexLiveSubagents(liveTurn.blocks).summaryById.get(parentId) : undefined);
@@ -965,7 +965,7 @@ export function SubagentPane({
 
 /**
  * The detail pane's resting state. The right pane is a CONSTANT container that never closes — when no
- * navigator node is selected it shows this instead of collapsing. Picking a file, track, or step from the
+ * navigator node is selected it shows this instead of collapsing. Picking a file, thread, or step from the
  * navigator fills it. Matches the PhaseView shell (header bar + body) so the container looks consistent.
  */
 export function EmptyPane() {
@@ -980,7 +980,7 @@ export function EmptyPane() {
         </div>
         <p className="text-[14px] font-semibold text-text">Nothing selected</p>
         <p className="mt-1.5 max-w-xs text-[12.5px] leading-relaxed text-dim">
-          Pick a file, track, or step from the navigator and it opens here. The conversation stays pinned on
+          Pick a file, thread, or step from the navigator and it opens here. The conversation stays pinned on
           the left.
         </p>
       </div>

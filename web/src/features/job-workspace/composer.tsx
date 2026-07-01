@@ -2,8 +2,8 @@
 
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, ChevronDown, Plus } from 'lucide-react';
-import { useSay } from '@/lib/api/thread-queries';
-import type { JobRef } from '@/lib/api/thread-api';
+import { useSay } from '@/lib/api/job-queries';
+import type { JobRef } from '@/lib/api/job-api';
 import { ContextMeter } from './bubbles';
 
 /**
@@ -15,19 +15,19 @@ import { ContextMeter } from './bubbles';
  * design and are intentionally static for now (no backend wiring) — see `web/BACKEND_GAPS.md`.
  */
 export function Composer({
-  threadRef,
+  jobRef,
   placeholder = 'Message Atlas — ask, plan, or steer…',
   onHeightChange,
   context,
 }: {
-  threadRef: JobRef;
+  jobRef: JobRef;
   placeholder?: string;
   /** Reports the composer overlay's rendered height so the transcript can reserve matching space. */
   onHeightChange?: (height: number) => void;
   /** The thread's context-window occupancy (latest turn) — rendered as the bottom-right ring, Claude-Code style. */
   context?: { tokens: number; limit: number; model?: string } | null;
 }) {
-  const say = useSay(threadRef);
+  const say = useSay(jobRef);
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -41,7 +41,7 @@ export function Composer({
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
-  // Measure the overlay so the transcript spacer tracks it as the box grows/shrinks.
+  // Measure the overlay so the transcript spacer threads it as the box grows/shrinks.
   useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el || !onHeightChange) return;

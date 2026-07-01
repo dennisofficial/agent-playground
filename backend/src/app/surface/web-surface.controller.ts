@@ -249,7 +249,7 @@ export class WebSurfaceController {
     private readonly threadLifecycle: JobLifecycleService,
     private readonly orgService: OrganizationService,
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
@@ -287,7 +287,7 @@ export class WebSurfaceController {
     if (orgs.length === 0) return [];
     const orgIds = orgs.map((o) => o.id);
     const [threads, repos] = await Promise.all([
-      this.threads.find({
+      this.jobs.find({
         where: { org_id: In(orgIds) },
         order: { created_at: 'DESC' },
       }),
@@ -353,7 +353,7 @@ export class WebSurfaceController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('repoId') repoId: string,
   ): Promise<unknown[]> {
-    const rows = await this.threads.find({
+    const rows = await this.jobs.find({
       where: { org_id: org.id, repo_id: repoId },
       order: { created_at: 'DESC' },
     });
@@ -376,7 +376,7 @@ export class WebSurfaceController {
   /** `POST …/repos/:repoId/jobs` — create a thread + inject its first message. Returns the real id. */
   @Post('orgs/:orgId/repos/:repoId/jobs')
   @UseGuards(OrgMembershipGuard)
-  async createThread(
+  async createJob(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('repoId') repoId: string,
     @Body() body: CreateThreadDto,
@@ -389,8 +389,8 @@ export class WebSurfaceController {
     // The frontend-derived first line seeds the row as an INSTANT placeholder; the mini-model upgrades it
     // below (compare-and-set keyed off this exact placeholder, so a fast rename is never clobbered).
     const placeholder = body.title ?? null;
-    const thread = await this.threads.save(
-      this.threads.create({
+    const thread = await this.jobs.save(
+      this.jobs.create({
         org_id: org.id,
         repo_id: repo.id,
         origin: 'control',
@@ -800,7 +800,7 @@ export class WebSurfaceController {
   /** `PATCH …/threads/:jobId` — rename a thread (the only thread Update op). Org-scoped. */
   @Patch('orgs/:orgId/repos/:repoId/jobs/:jobId')
   @UseGuards(OrgMembershipGuard)
-  async renameThread(
+  async renameJob(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('jobId') jobId: string,
     @Body() body: RenameThreadDto,
@@ -808,7 +808,7 @@ export class WebSurfaceController {
     const title = body?.title?.trim().slice(0, 200);
     if (!title) throw new BadRequestException('title is required');
     // Scope the update to the caller's org (defense in depth beyond the membership guard).
-    const result = await this.threads.update(
+    const result = await this.jobs.update(
       { id: jobId, org_id: org.id },
       { title },
     );
@@ -826,9 +826,9 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean }> {
     // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable.
     await this.requireThread(jobId, org.id);
-    // Full cascade in app code: tear down the sandbox AND sweep messages/tracks/steps/
+    // Full cascade in app code: tear down the sandbox AND sweep messages/threads/steps/
     // decision_records/stimuli/sandbox before the thread row (the live schema has no FK cascades).
-    await this.threadLifecycle.deleteThreadDeep(jobId, org.id);
+    await this.threadLifecycle.deleteJobDeep(jobId, org.id);
     this.logger.log(`web deleted thread ${jobId} (org ${org.id})`);
     return { ok: true };
   }
@@ -840,7 +840,7 @@ export class WebSurfaceController {
     jobId: string,
     orgId: string,
   ): Promise<JobEntity> {
-    const thread = await this.threads.findOne({
+    const thread = await this.jobs.findOne({
       where: { id: jobId, org_id: orgId },
     });
     if (!thread) throw new NotFoundException('thread not found');

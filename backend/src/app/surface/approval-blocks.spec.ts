@@ -17,7 +17,7 @@ const card: DecisionApprovalCard = {
 };
 
 describe('decisionApprovalBlocks', () => {
-  it('renders headline, summary, numbered track list, and verdict buttons', () => {
+  it('renders headline, summary, numbered thread list, and verdict buttons', () => {
     const blocks = decisionApprovalBlocks(card);
     const json = JSON.stringify(blocks);
     expect(json).toContain('Plan proposal — Payments');

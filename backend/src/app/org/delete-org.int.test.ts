@@ -12,7 +12,7 @@
  * table is added without an FK), the orphan assertions below fail.
  *
  * Integration: real Postgres (the dedicated `*_test` DB), an in-memory fake git (no actual clone) and a
- * fake docker-ish sandbox provider (no Docker). The real `JobLifecycleService` runs `deleteThreadDeep`
+ * fake docker-ish sandbox provider (no Docker). The real `JobLifecycleService` runs `deleteJobDeep`
  * per thread; `OrganizationService` resolves it via `ModuleRef` exactly as in production.
  */
 
@@ -144,11 +144,11 @@ async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
 /** Seed one row in every child/org-scoped table for `jobId` under (`orgId`, `repoId`). */
 async function seedThreadChildren(orgId: string, repoIdArg: string, jobId: string): Promise<void> {
   await ds.query(`INSERT INTO messages (job_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [jobId]);
-  const [track] = await ds.query(
+  const [thread] = await ds.query(
     `INSERT INTO threads (job_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
     [jobId, orgId],
   );
-  await ds.query(`INSERT INTO steps (thread_id, job_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`, [track.id, jobId, orgId]);
+  await ds.query(`INSERT INTO steps (thread_id, job_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`, [thread.id, jobId, orgId]);
   await ds.query(`INSERT INTO decision_records (org_id, repo_id, job_id, overview) VALUES ($1, $2, $3, 'o')`, [orgId, repoIdArg, jobId]);
   await ds.query(`INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`, [orgId, repoIdArg, jobId]);
 }
@@ -230,8 +230,8 @@ afterEach(async () => {
 describe('deleteOrg cascade (live Postgres + fakes)', () => {
   it('removes every org-scoped row across all tables, leaving zero orphans', async () => {
     // Two real jobs (each provisions a job_sandboxes row + fake worktree).
-    const t1 = await threadLifecycle.createThread({ orgId: ORG_ID, repoId, baseBranch: 'main', displayName: 'A' });
-    const t2 = await threadLifecycle.createThread({ orgId: ORG_ID, repoId, baseBranch: 'main', displayName: 'B' });
+    const t1 = await threadLifecycle.createJob({ orgId: ORG_ID, repoId, baseBranch: 'main', displayName: 'A' });
+    const t2 = await threadLifecycle.createJob({ orgId: ORG_ID, repoId, baseBranch: 'main', displayName: 'B' });
     await seedThreadChildren(ORG_ID, repoId, t1.jobId);
     await seedThreadChildren(ORG_ID, repoId, t2.jobId);
     await seedOrgDirect(ORG_ID, repoId, 'tok-del', 'evt-del');
@@ -265,7 +265,7 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
   });
 
   it('is scoped to the target org — a sibling org and its data are untouched', async () => {
-    const survivor = await threadLifecycle.createThread({ orgId: OTHER_ORG_ID, repoId: otherRepoId, baseBranch: 'main', displayName: 'keep' });
+    const survivor = await threadLifecycle.createJob({ orgId: OTHER_ORG_ID, repoId: otherRepoId, baseBranch: 'main', displayName: 'keep' });
     await seedThreadChildren(OTHER_ORG_ID, otherRepoId, survivor.jobId);
     await seedOrgDirect(OTHER_ORG_ID, otherRepoId, 'tok-keep', 'evt-keep');
 

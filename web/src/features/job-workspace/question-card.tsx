@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { CheckCircle2, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useAnswerQuestion } from '@/lib/api/thread-queries';
-import type { JobRef } from '@/lib/api/thread-api';
+import { useAnswerQuestion } from '@/lib/api/job-queries';
+import type { JobRef } from '@/lib/api/job-api';
 import type { WebQuestionCard } from '@/lib/api/types';
 
 const ANSWERED_BY = 'U-OPERATOR';
@@ -15,8 +15,8 @@ const ANSWERED_BY = 'U-OPERATOR';
  * answered state and fires the brain's next turn. Once `card.answer` is set, renders the compact
  * answered state (so a reload still shows what was asked + chosen).
  */
-export function QuestionCardView({ card, threadRef }: { card: WebQuestionCard; threadRef: JobRef }) {
-  const answer = useAnswerQuestion(threadRef);
+export function QuestionCardView({ card, jobRef }: { card: WebQuestionCard; jobRef: JobRef }) {
+  const answer = useAnswerQuestion(jobRef);
   const [other, setOther] = useState('');
   const [showOther, setShowOther] = useState(false);
   const pending = answer.isPending;

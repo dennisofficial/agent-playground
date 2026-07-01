@@ -4,14 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, GitBranch, Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { useRepoBranches } from '@/lib/api/thread-queries';
+import { useRepoBranches } from '@/lib/api/job-queries';
 
 /**
- * A click-away dropdown (trigger button + a render-prop menu). Shared by the create-thread pickers and
+ * A click-away dropdown (trigger button + a render-prop menu). Shared by the create-job pickers and
  * the repo-settings base-branch picker.
  *
  * The menu renders in a `document.body` PORTAL with fixed positioning anchored to the trigger, so it
- * escapes any `overflow-hidden` ancestor (the repo card / the create-thread modal both clip) instead of
+ * escapes any `overflow-hidden` ancestor (the repo card / the create-job modal both clip) instead of
  * being trapped inside it. Events from the portal still bubble through the React tree, so a portaled menu
  * inside the modal won't trip the modal's backdrop-close.
  */

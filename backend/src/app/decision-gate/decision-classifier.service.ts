@@ -11,7 +11,7 @@ import type {
  * W5 — the DECISION-CLASS CLASSIFIER. Given a proposed decision + the locked decision record, returns
  * one of three verdicts (see `DecisionVerdict`):
  *
- *   1. `covered`  — the record already settles this class (the track planner proceeds silently).
+ *   1. `covered`  — the record already settles this class (the thread planner proceeds silently).
  *   2. `proceed`  — a NEVER-ASK call (internal structure, naming, file placement, test layout, refactor
  *                   mechanics) — proceed but surface in the posted plan.
  *   3. `ask`      — an UNCOVERED always-ask class — park & ask.
@@ -34,7 +34,7 @@ export class DecisionClassifier {
 
   /**
    * Classify ONE proposed decision against the record.
-   * @param proposed the decision the track planner wants to make.
+   * @param proposed the decision the thread planner wants to make.
    * @param record   the locked decision record (the `decisions` slice is all that's read).
    * @param orgId   the tenant whose Anthropic key backs the ambiguous-tail LLM call (omit → env).
    */

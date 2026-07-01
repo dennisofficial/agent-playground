@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useApprove } from '@/lib/api/thread-queries';
-import type { JobRef } from '@/lib/api/thread-api';
+import { useApprove } from '@/lib/api/job-queries';
+import type { JobRef } from '@/lib/api/job-api';
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
@@ -29,11 +29,11 @@ const NOTE_PROMPT: Partial<Record<ApprovalActionId, string>> = {
  */
 export function ApprovalCardView({
   card,
-  threadRef,
+  jobRef,
   onOpenPlan,
 }: {
   card: WebApprovalCard;
-  threadRef: JobRef;
+  jobRef: JobRef;
   onOpenPlan?: () => void;
 }) {
   const value = card.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ?? card.actions[0]?.value ?? '';
@@ -95,7 +95,7 @@ export function ApprovalCardView({
       ) : null}
 
       <div className="border-t border-border bg-surface-2 px-4 py-3">
-        <VerdictButtons threadRef={threadRef} value={value} />
+        <VerdictButtons jobRef={jobRef} value={value} />
       </div>
     </div>
   );
@@ -103,17 +103,17 @@ export function ApprovalCardView({
 
 /** The three plan-verdict buttons. Negative verdicts reveal an optional `note` before submitting. */
 export function VerdictButtons({
-  threadRef,
+  jobRef,
   value,
   approveLabel = 'Approve',
   size = 'sm',
 }: {
-  threadRef: JobRef;
+  jobRef: JobRef;
   value: string;
   approveLabel?: string;
   size?: 'sm' | 'md';
 }) {
-  const approve = useApprove(threadRef);
+  const approve = useApprove(jobRef);
   const pending = approve.isPending;
   const [drafting, setDrafting] = useState<ApprovalActionId | null>(null);
   const [note, setNote] = useState('');

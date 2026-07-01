@@ -4,14 +4,14 @@ import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-resizable-panels';
 import { useAllJobs } from '@/lib/api/inbox';
-import { useThreadMessages, usePipeline, useThreadContext, useDeleteThread, useRenameThread, useSay } from '@/lib/api/thread-queries';
-import { useThreadEvents } from '@/lib/api/thread-events';
+import { useJobMessages, usePipeline, useJobContext, useDeleteJob, useRenameJob, useSay } from '@/lib/api/job-queries';
+import { useJobEvents } from '@/lib/api/job-events';
 import { toJobStatus } from '@/lib/api/status';
 import { orgSwatch } from '@/lib/org-display';
 import { ROUTES } from '@/lib/routes';
-import { pipelineJob, type JobRef } from '@/lib/api/thread-api';
+import { pipelineJob, type JobRef } from '@/lib/api/job-api';
 import { APPROVE_ACTION_ID, type JobKind, type JobStatus, type WebApprovalCard } from '@/lib/api/types';
-import { Navigator, type ThreadMeta } from './navigator';
+import { Navigator, type JobMeta } from './navigator';
 import { Conversation } from './conversation';
 import { MarkdownActionsProvider } from './markdown';
 import { PhaseView, EmptyPane, SubagentPane } from './step-view';
@@ -23,17 +23,17 @@ import { useSelectedNode } from './use-selected-node';
  * Step). Resolves its own data from the org → repo → thread API. The shell's "needs you" dots come from
  * the server-owned thread-list fields (no longer fed from here); this just renders the open thread.
  */
-export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
+export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const router = useRouter();
   const ref = useMemo<JobRef>(() => ({ orgId, repoId, jobId }), [orgId, repoId, jobId]);
 
   const { data: inbox } = useAllJobs();
-  const { data: messages = [], isLoading: messagesLoading } = useThreadMessages(ref);
+  const { data: messages = [], isLoading: messagesLoading } = useJobMessages(ref);
   const { data: pipeline, isLoading: pipelineLoading, isError: pipelineError } = usePipeline(ref);
-  const { data: context, isLoading: contextLoading } = useThreadContext(ref);
-  const del = useDeleteThread(ref);
-  const rename = useRenameThread(ref);
-  useThreadEvents(ref);
+  const { data: context, isLoading: contextLoading } = useJobContext(ref);
+  const del = useDeleteJob(ref);
+  const rename = useRenameJob(ref);
+  useJobEvents(ref);
 
   // One send-into-this-thread action, shared by every `Markdown` in the workspace (conversation AND the
   // detail-pane spec viewer) — that's why a broken mermaid diagram's "send to Atlas" button appears in
@@ -42,7 +42,7 @@ export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
   const markdownActions = useMemo(() => ({ sendToThread: (text: string) => sayMutate(text) }), [sayMutate]);
 
   // Two independent selections: `laneNode` (?lane=) drives the LEFT pane (a THREADS lane — Main or a build
-  // track/step); `detailNode` (?node=) drives the RIGHT pane (an OUTPUT / port / subagent / doc). A thread
+  // thread/step); `detailNode` (?node=) drives the RIGHT pane (an OUTPUT / port / subagent / doc). A thread
   // switch navigates to a fresh clean URL with no query, so both reset — no reset effect needed.
   const { laneNode, detailNode, subNode, selectNode, openConversation, closeDetail, closeSub } = useSelectedNode();
 
@@ -94,7 +94,7 @@ export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
   const specCount = context?.specs?.length ?? 0;
   const stepCount = job?.threads.reduce((n, t) => n + (t.steps?.length ?? 0), 0) ?? 0;
 
-  const meta: ThreadMeta = {
+  const meta: JobMeta = {
     title: inboxThread?.title ?? job?.title ?? 'Thread',
     kind,
     status,
@@ -125,7 +125,7 @@ export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
         contextLoading={contextLoading}
         laneNode={laneNode}
         detailNode={detailNode}
-        threadRef={ref}
+        jobRef={ref}
         approveValue={awaitingApproval ? approveValue : ''}
         onConversation={onConversation}
         onSelectNode={onSelectNode}
@@ -145,12 +145,12 @@ export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
         onLayoutChanged={onLayoutChanged}
         className="min-w-0 flex-1 bg-surface"
       >
-        {/* LEFT pane — the Main brain conversation by default; a selected THREADS lane (build track/step)
+        {/* LEFT pane — the Main brain conversation by default; a selected THREADS lane (build thread/step)
             replaces it with that lane's transcript. */}
         <Panel id="conversation" minSize="28%" className="flex min-w-0 flex-col">
           {laneNode ? (
             <PhaseView
-              threadRef={ref}
+              jobRef={ref}
               pipeline={pipeline}
               pipelineLoading={pipelineLoading}
               pipelineError={pipelineError}
@@ -162,7 +162,7 @@ export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
             />
           ) : (
             <Conversation
-              threadRef={ref}
+              jobRef={ref}
               messages={messages}
               isLoading={messagesLoading}
               live={status === 'running' || status === 'plan_review'}
@@ -188,7 +188,7 @@ export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
               // A sub-agent stacked on top of the right pane — a second-level page with a breadcrumb back to
               // the base detail node (which stays selected in the navigator underneath).
               <SubagentPane
-                threadRef={ref}
+                jobRef={ref}
                 messages={messages}
                 parentId={subNode}
                 base={detailNode ? baseCrumbLabel(detailNode) : null}
@@ -196,7 +196,7 @@ export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
               />
             ) : detailNode ? (
               <PhaseView
-                threadRef={ref}
+                jobRef={ref}
                 pipeline={pipeline}
                 pipelineLoading={pipelineLoading}
                 pipelineError={pipelineError}
@@ -211,7 +211,7 @@ export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
             )}
           </div>
           {awaitingApproval ? (
-            <PersistentApprovalBar threadRef={ref} value={approveValue} specCount={specCount} stepCount={stepCount} />
+            <PersistentApprovalBar jobRef={ref} value={approveValue} specCount={specCount} stepCount={stepCount} />
           ) : null}
         </Panel>
       </Group>
@@ -221,7 +221,7 @@ export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
 }
 
 /** Short label for the base detail node, shown in a stacked sub-agent's breadcrumb (`‹ 02-webhooks.md ▸ …`).
- *  Detail nodes are files/docs/ports (never bare track ids — those open in the left pane), so no job lookup
+ *  Detail nodes are files/docs/ports (never bare thread ids — those open in the left pane), so no job lookup
  *  is needed. */
 function baseCrumbLabel(node: string): string {
   if (node === 'diff') return 'Diff';

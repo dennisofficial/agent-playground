@@ -62,7 +62,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
   let sandbox: FeatureSandbox;
   let manager1: SandboxManager;
 
-  // Track the container id so afterAll can force-remove it if the test fails mid-flight.
+  // Thread the container id so afterAll can force-remove it if the test fails mid-flight.
   let attachedContainerId: string | undefined;
 
   beforeAll(() => {

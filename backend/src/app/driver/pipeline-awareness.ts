@@ -13,10 +13,10 @@ export type { PipelineMarker };
  *
  * Two sources, by design (see `ARCHITECTURE.md` / the buffer column doc):
  *  - the STATE SIGNATURE — the net "where things stand now" spine. Self-healing across restarts, but the
- *    driver overwrites track/step status in place, so it can only report the CURRENT state, never the
+ *    driver overwrites thread/step status in place, so it can only report the CURRENT state, never the
  *    transient stages it passed through.
  *  - explicit MARKERS (durable, in the buffer) — the transient moments the signature can't reconstruct
- *    (plan approved, dispatched, a track/guard stage finished, auto-fix applied).
+ *    (plan approved, dispatched, a thread/guard stage finished, auto-fix applied).
  */
 
 /** The slice of the `get_pipeline_state` read model this module reads. Everything optional — the model is
@@ -25,7 +25,7 @@ interface PipelineStateView {
   status?: string;
   decisionRecordId?: string | null;
   prUrl?: string | null;
-  tracks?: Array<{
+  threads?: Array<{
     id?: string;
     ordinal?: number;
     brief?: string;
@@ -44,14 +44,14 @@ function isLivePipeline(s: PipelineStateView | null | undefined): s is PipelineS
 /**
  * A deterministic signature of the net pipeline state — the watermark the next turn diffs against. Returns
  * null when there is no build to report (so nothing is ever conveyed for a plain conversation). Scoped by
- * `decisionRecordId`, so a RE-PROPOSAL (which mints a new record + fresh track rows) naturally changes
- * the signature and re-conveys, with no stale ordinal/track-id watermark to reset.
+ * `decisionRecordId`, so a RE-PROPOSAL (which mints a new record + fresh thread rows) naturally changes
+ * the signature and re-conveys, with no stale ordinal/thread-id watermark to reset.
  */
 export function pipelineStateSignature(state: unknown): string | null {
   const s = state as PipelineStateView;
   if (!isLivePipeline(s)) return null;
   const parts = [`dr:${s.decisionRecordId ?? ''}`, `st:${s.status}`, `pr:${s.prUrl ?? ''}`];
-  for (const sec of s.tracks ?? []) {
+  for (const sec of s.threads ?? []) {
     parts.push(`s${sec.ordinal ?? '?'}:${sec.status ?? '?'}`);
     for (const p of sec.steps ?? []) {
       parts.push(`p${(p.id ?? '').slice(0, 8)}:${p.stage ?? '?'}/${p.status ?? '?'}`);
@@ -70,12 +70,12 @@ export function renderPipelineStateSummary(state: unknown): string {
   if (!isLivePipeline(s)) return '';
   const lines = [`Current build state: ${s.status}.`];
   if (s.prUrl) lines.push(`PR: ${s.prUrl}`);
-  for (const sec of s.tracks ?? []) {
+  for (const sec of s.threads ?? []) {
     const steps = sec.steps ?? [];
     const phaseBit = steps.length
       ? ` [${steps.filter((p) => p.status === 'done').length}/${steps.length} steps done]`
       : '';
-    lines.push(`  • Track ${sec.ordinal ?? '?'} "${sec.brief ?? ''}": ${sec.status ?? '?'}${phaseBit}`);
+    lines.push(`  • Thread ${sec.ordinal ?? '?'} "${sec.brief ?? ''}": ${sec.status ?? '?'}${phaseBit}`);
   }
   return lines.join('\n');
 }

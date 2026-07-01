@@ -47,7 +47,7 @@ export interface ChatStimulus extends BaseStimulus {
   /** Who authored the message — display name + scope id. */
   author: { id: string; displayName: string };
   /** Where the system replies: the surface id + the surface-native thread coordinate (the web thread ref). */
-  replyRoute: { surfaceId: string; threadRef: string };
+  replyRoute: { surfaceId: string; jobRef: string };
   /**
    * SYSTEM SEED: a system-injected context turn (e.g. an `ask_question` answer framed as
    * `<system_notification>`), not a human chat message. Runs a brain turn but is NOT persisted as a

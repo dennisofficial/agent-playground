@@ -193,12 +193,12 @@ describe('parsePlanFindings', () => {
   it('extracts FINDING: lines stripping the prefix', () => {
     const output = [
       'Here is my review.',
-      'FINDING: Track 1 brief is too vague to implement without re-asking.',
+      'FINDING: Thread 1 brief is too vague to implement without re-asking.',
       'FINDING: Missing error-handling decision for OAuth callback failures.',
       'Looks otherwise ok.',
     ].join('\n');
     const result = parsePlanFindings(output);
-    expect(result).toContain('Track 1 brief is too vague');
+    expect(result).toContain('Thread 1 brief is too vague');
     expect(result).toContain('Missing error-handling decision');
     expect(result.split('\n')).toHaveLength(2);
   });
@@ -239,14 +239,14 @@ describe('PlanReviewService.start', () => {
     expect(rows[0].status).toBe('running');
     expect(rows[0].job_id).toBe('th-r4-001');
     // The prompt is STRUCTURED: it leads with the operator's intent (goal) and embeds the overview +
-    // tracks so a boot re-run needs no reconstruction.
+    // threads so a boot re-run needs no reconstruction.
     expect(rows[0].prompt).toContain('<intent>');
     expect(rows[0].prompt).toContain(
       'GOAL: Add OAuth2 login to the public API',
     );
     expect(rows[0].prompt).toContain('<authored_plan>');
     expect(rows[0].prompt).toContain('Add OAuth2 login to the API.'); // overview
-    expect(rows[0].prompt).toContain('OAuth2 callback handler'); // a track
+    expect(rows[0].prompt).toContain('OAuth2 callback handler'); // a thread
   });
 
   it('includes the originating ticket in the intent when present', async () => {
@@ -358,7 +358,7 @@ describe('PlanReviewService.runReview', () => {
   it('runs ONE read-only Codex turn and stamps the row complete with findings', async () => {
     const { repo, rows } = makeReviewsRepo();
     const { engine, calls } = fakeEngine(
-      'FINDING: The callback track brief is too vague.',
+      'FINDING: The callback thread brief is too vague.',
     );
     const service = new PlanReviewService(
       engine,
@@ -377,9 +377,9 @@ describe('PlanReviewService.runReview', () => {
     expect(calls[0].mode).toBe('review');
     expect(calls[0].task).toContain('OAuth2 callback handler'); // ran against the stored prompt
     expect(out.status).toBe('complete');
-    expect(out.findings).toContain('callback track brief is too vague');
+    expect(out.findings).toContain('callback thread brief is too vague');
     expect(rows[0].status).toBe('complete');
-    expect(rows[0].findings).toContain('callback track brief is too vague');
+    expect(rows[0].findings).toContain('callback thread brief is too vague');
     expect(rows[0].completed_at).toBeInstanceOf(Date);
   });
 
@@ -557,12 +557,12 @@ describe('PlanReviewService — delivery + boot reconciliation', () => {
 describe('renderFindingsDelivery', () => {
   it('with findings: shows them + instructs submit_plan / finalize_plan', () => {
     const body = renderFindingsDelivery(
-      '• Track 1 too vague.\n• Missing decision.',
+      '• Thread 1 too vague.\n• Missing decision.',
       1,
       false,
     );
     expect(body).toContain('Codex plan review');
-    expect(body).toContain('Track 1 too vague');
+    expect(body).toContain('Thread 1 too vague');
     expect(body).toContain('Missing decision');
     expect(body).toContain('submit_plan');
     expect(body).toContain('finalize_plan');

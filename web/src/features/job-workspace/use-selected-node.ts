@@ -8,7 +8,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
  * (design "Atlas Workspace HiFi"):
  *
  *  - the LEFT pane (`?lane=`) is a THREADS lane — the Main brain conversation (no param) or a build
- *    track/step transcript. Highlighted ORANGE in the navigator.
+ *    thread/step transcript. Highlighted ORANGE in the navigator.
  *  - the RIGHT pane (`?node=`) is a DETAIL node — an OUTPUT (spec/artifact/generated), a sandbox port, the
  *    diff/plan/decision docs, a review lens. Highlighted BLUE in the navigator.
  *  - a SUB-AGENT (`?sub=`) STACKS on top of the right pane: opening one keeps `?node=` (its nav row stays
@@ -17,14 +17,14 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
  *
  * All three live in the URL as separate params so they're independent (Main + a spec + a sub-agent can all
  * be open at once), deep-linkable, refresh-stable, and Back-aware. A param change is a query-only navigation
- * on the same `[threadKey]` route, so `ThreadWorkspace` stays mounted and its live SSE connection
- * (`useThreadEvents`) is NOT torn down — only a real thread switch (different `[threadKey]`) reconnects.
+ * on the same `[jobKey]` route, so `JobWorkspace` stays mounted and its live SSE connection
+ * (`useJobEvents`) is NOT torn down — only a real thread switch (different `[jobKey]`) reconnects.
  */
 const LANE_PARAM = 'lane';
 const NODE_PARAM = 'node';
 const SUB_PARAM = 'sub';
 
-/** DETAIL nodes render in the RIGHT pane; every other (bare track/step id) is a LANE for the LEFT pane.
+/** DETAIL nodes render in the RIGHT pane; every other (bare thread/step id) is a LANE for the LEFT pane.
  *  (`subagent:` is neither — it stacks via `?sub=`, handled in `selectNode`.) */
 const DETAIL_LITERALS = new Set(['plan', 'decision', 'diff']);
 const DETAIL_PREFIX = /^(spec|gen|artifact|port|rev|secplan):/;
@@ -35,7 +35,7 @@ export function isDetailNode(node: string): boolean {
 }
 
 export interface SelectedNode {
-  /** The LEFT pane's open lane (`?lane=`) — a track/step id, or `null` for the Main conversation. */
+  /** The LEFT pane's open lane (`?lane=`) — a thread/step id, or `null` for the Main conversation. */
   laneNode: string | null;
   /** The RIGHT pane's open detail node (`?node=`), or `null` for the empty detail pane. */
   detailNode: string | null;

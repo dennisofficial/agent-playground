@@ -17,8 +17,8 @@ import { cn } from '@/lib/cn';
 import { threadHref, type SettingsSection } from '@/lib/routes';
 import { BranchPicker } from '@/components/branch-picker';
 import { Spinner } from '@/components/ui/spinner';
-import { useOrgRepos } from '@/lib/api/thread-queries';
-import type { RepoView } from '@/lib/api/thread-api';
+import { useOrgRepos } from '@/lib/api/job-queries';
+import type { RepoView } from '@/lib/api/job-api';
 import {
   useOrgCredentials,
   useConnectRepo,

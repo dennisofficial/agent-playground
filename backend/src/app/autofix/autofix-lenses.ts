@@ -57,14 +57,14 @@ export interface ReviewAgentInfo {
 }
 
 /**
- * The review agents SELECTED TO RUN over a track's diff — the list the navigator renders. Seam-only
- * today: every track gets the fixed `DEFAULT_LENSES` set (the auto-fix fan-out runs exactly these), so
- * the rendered list matches what actually executes. The `track` arg is the future hook point for
- * scope-/condition-based selection (review agents chosen like skills, gated per track); it is
+ * The review agents SELECTED TO RUN over a thread's diff — the list the navigator renders. Seam-only
+ * today: every thread gets the fixed `DEFAULT_LENSES` set (the auto-fix fan-out runs exactly these), so
+ * the rendered list matches what actually executes. The `thread` arg is the future hook point for
+ * scope-/condition-based selection (review agents chosen like skills, gated per thread); it is
  * intentionally unused now. This is the SELECTED RUN LIST, not a public catalog — the lens definitions,
  * focuses, and any future gating metadata stay private to the backend.
  */
-export function reviewAgentsForThread(_track?: { type?: string }): ReviewAgentInfo[] {
+export function reviewAgentsForThread(_thread?: { type?: string }): ReviewAgentInfo[] {
   return DEFAULT_LENSES.map((l) => ({ id: l.id, label: l.label }));
 }
 

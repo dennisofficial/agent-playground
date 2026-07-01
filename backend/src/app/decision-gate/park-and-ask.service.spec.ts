@@ -128,8 +128,8 @@ describe('ParkAndAskService', () => {
 
   it('cancel rejects a pending park', async () => {
     const handle = await svc.ask({ channel: 'C1', threadTs: 't' }, 'q?');
-    svc.cancel(handle.id, 'track aborted');
-    await expect(handle.answer).rejects.toThrow('track aborted');
+    svc.cancel(handle.id, 'thread aborted');
+    await expect(handle.answer).rejects.toThrow('thread aborted');
     expect(svc.pending).toBe(0);
   });
 

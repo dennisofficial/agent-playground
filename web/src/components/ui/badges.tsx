@@ -129,7 +129,7 @@ export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: nu
       </>
     );
   } else if (shape === 'working') {
-    // Faint track + a rotating accent arc — a true spinner for "AI is working".
+    // Faint thread + a rotating accent arc — a true spinner for "AI is working".
     kids = (
       <>
         {ring('var(--border-2)', { opacity: 0.5 })}

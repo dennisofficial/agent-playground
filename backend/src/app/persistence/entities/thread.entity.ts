@@ -4,8 +4,8 @@ import { OrganizationEntity } from './organization.entity';
 import { JobEntity } from './job.entity';
 
 /**
- * One TRACK of a thread's build — a SCOPE-TYPED slice (backend/frontend/docs/testing/analytics/infra)
- * that becomes a set of steps and is reviewed by agents matched to its `type`. Tracks stack on the
+ * One THREAD of a thread's build — a SCOPE-TYPED slice (backend/frontend/docs/testing/analytics/infra)
+ * that becomes a set of steps and is reviewed by agents matched to its `type`. Threads stack on the
  * thread's one feature branch and run sequentially (ORDER BY ordinal). `status` is the explicit,
  * resumable cursor. Gap-numbered ordinals so a re-plan can splice without renumbering.
  */
@@ -36,12 +36,12 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'int' })
   ordinal!: number;
 
-  /** The one-line brief (title) from the upfront track list. */
+  /** The one-line brief (title) from the upfront thread list. */
   @Column({ type: 'text' })
   brief!: string;
 
   /**
-   * The scope TYPE of this track (backend/frontend/docs/testing/analytics/infra/…) — selects the
+   * The scope TYPE of this thread (backend/frontend/docs/testing/analytics/infra/…) — selects the
    * review agents that check it. A fixed vocabulary (THREAD_TYPES) with an allow-other escape hatch;
    * defaults to 'general' for arg-less callers (bugfix/direct build).
    */
@@ -52,11 +52,11 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   plan!: string | null;
 
-  /** The prior track's handoff note threaded into this track's plan prompt. */
+  /** The prior thread's handoff note threaded into this thread's plan prompt. */
   @Column({ type: 'text', nullable: true })
   handoff_in!: string | null;
 
-  /** This track's handoff note for the next track; null until done. */
+  /** This thread's handoff note for the next thread; null until done. */
   @Column({ type: 'text', nullable: true })
   handoff_out!: string | null;
 
@@ -65,9 +65,9 @@ export class ThreadEntity extends TimestampedEntity {
   status!: string;
 
   /**
-   * The post-build review agents (lenses) and their per-agent status — seeded when the track enters
+   * The post-build review agents (lenses) and their per-agent status — seeded when the thread enters
    * `auto_fixing`, transitioned by the auto-fix stage, surfaced by `getPipelineState` so the navigator's
-   * review folder can show each agent's state. `[]` until the track is reviewed (getPipelineState falls
+   * review folder can show each agent's state. `[]` until the thread is reviewed (getPipelineState falls
    * back to the default lens set for an empty array). LITERAL default — a `() => '[]'::jsonb` function
    * default makes `migration:generate` loop forever (see the jsonb-default-loop memory).
    */
@@ -75,7 +75,7 @@ export class ThreadEntity extends TimestampedEntity {
   review_agents!: ReviewAgentState[];
 }
 
-/** One post-build review agent's persisted state on a track. */
+/** One post-build review agent's persisted state on a thread. */
 export interface ReviewAgentState {
   id: string;
   label: string;

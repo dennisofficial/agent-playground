@@ -197,7 +197,7 @@ describe('WebSurface — approval card conversion', () => {
   });
 
   it('post() with non-approval blocks does NOT produce a card', async () => {
-    const blocks = [{ type: 'track', text: { type: 'mrkdwn', text: 'Hello' } }];
+    const blocks = [{ type: 'thread', text: { type: 'mrkdwn', text: 'Hello' } }];
     await surface.post('C-web', 'Hello', { blocks });
     expect(surface.outbox[0].card).toBeUndefined();
   });

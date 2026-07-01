@@ -26,7 +26,7 @@ import type { PlannedStep } from './planner-llm';
 const ORDINAL_GAP = 10;
 
 /**
- * The track shape the driver works with — the domain `Track` plus the denormalized `orgId` the step
+ * The thread shape the driver works with — the domain `Thread` plus the denormalized `orgId` the step
  * rows need (steps carry `org_id`). The driver never reaches a repository, so the store carries the one
  * extra field rather than the driver re-querying the thread for it.
  */
@@ -42,23 +42,23 @@ export interface JobRoute {
 }
 
 /**
- * W4 — the DRIVER's persistence. The single place the track driver reads/writes the track + step
+ * W4 — the DRIVER's persistence. The single place the thread driver reads/writes the thread + step
  * rows (and resolves the decision record + thread route) on the 'app' connection. The THREAD is the build
  * unit (the former `jobs` layer is folded into it), so the "job" methods here operate on the thread row.
- * Keeps `ThreadDriver` a legible pipeline that speaks DOMAIN shapes (`Track`, `Step`) — this maps
+ * Keeps `ThreadDriver` a legible pipeline that speaks DOMAIN shapes (`Thread`, `Step`) — this maps
  * them to/from rows and owns the explicit, resumable `status`/`step` transitions.
  *
- * The brain (W3) already wrote the high-level track BRIEFS (`pending`, no plan). This fills the
- * just-in-time detail: the track `plan`, its step rows, and the status cursors the driver re-enters
+ * The brain (W3) already wrote the high-level thread BRIEFS (`pending`, no plan). This fills the
+ * just-in-time detail: the thread `plan`, its step rows, and the status cursors the driver re-enters
  * at on restart. Zero v1 imports.
  */
 @Injectable()
 export class DriverStoreService {
   constructor(
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly tracks: Repository<ThreadEntity>,
+    private readonly threads: Repository<ThreadEntity>,
     @InjectRepository(StepEntity, DB_CONNECTION)
     private readonly steps: Repository<StepEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
@@ -70,23 +70,23 @@ export class DriverStoreService {
   /** Load one thread as the domain shape. */
   async loadJob(jobId: string): Promise<Job> {
     return toJob(
-      await this.threads.findOneOrFail({ where: { id: jobId } }),
+      await this.jobs.findOneOrFail({ where: { id: jobId } }),
     );
   }
 
   /** Every thread currently in `running` — the boot-reconciliation worklist. */
   async runningJobs(): Promise<Job[]> {
-    const rows = await this.threads.find({ where: { status: 'running' } });
+    const rows = await this.jobs.find({ where: { status: 'running' } });
     return rows.map(toJob);
   }
 
   async setJobStatus(jobId: string, status: JobStatus): Promise<void> {
-    await this.threads.update({ id: jobId }, { status });
+    await this.jobs.update({ id: jobId }, { status });
   }
 
-  /** Record the feature branch all tracks stack on (set once, when the sandbox is cut). */
+  /** Record the feature branch all threads stack on (set once, when the sandbox is cut). */
   async setFeatureBranch(jobId: string, branch: string): Promise<void> {
-    await this.threads.update({ id: jobId }, { feature_branch: branch });
+    await this.jobs.update({ id: jobId }, { feature_branch: branch });
   }
 
   /** Record the opened PR (url + number) + flip the thread to its terminal `done`. */
@@ -95,7 +95,7 @@ export class DriverStoreService {
     prUrl: string,
     prNumber?: number,
   ): Promise<void> {
-    await this.threads.update(
+    await this.jobs.update(
       { id: jobId },
       {
         pr_url: prUrl,
@@ -115,7 +115,7 @@ export class DriverStoreService {
    * `complete` is NOT re-claimed here — but the resumable `finishWithPr` re-runs `running` idempotently.
    */
   async claimLedgerPromotion(jobId: string): Promise<boolean> {
-    const res = await this.threads
+    const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
       .set({ ledger_promotion_status: 'running' })
@@ -132,7 +132,7 @@ export class DriverStoreService {
     jobId: string,
     status: string,
   ): Promise<void> {
-    await this.threads.update(
+    await this.jobs.update(
       { id: jobId },
       { ledger_promotion_status: status },
     );
@@ -140,7 +140,7 @@ export class DriverStoreService {
 
   /** Mark the ledger promotion COMPLETE — stamped ONLY after the promotion turn AND the commit succeed. */
   async markLedgerPromoted(jobId: string): Promise<void> {
-    await this.threads.update(
+    await this.jobs.update(
       { id: jobId },
       { ledger_promotion_status: 'complete', ledger_promoted_at: new Date() },
     );
@@ -157,11 +157,11 @@ export class DriverStoreService {
     return row ? toRecord(row) : null;
   }
 
-  // ── tracks ─────────────────────────────────────────────────────────────────────────────────
+  // ── threads ─────────────────────────────────────────────────────────────────────────────────
 
-  /** The thread's tracks in execution order (ORDER BY ordinal). */
-  async tracksForJob(jobId: string): Promise<DriverThread[]> {
-    const rows = await this.tracks.find({
+  /** The thread's threads in execution order (ORDER BY ordinal). */
+  async threadsForJob(jobId: string): Promise<DriverThread[]> {
+    const rows = await this.threads.find({
       where: { job_id: jobId },
       order: { ordinal: 'ASC' },
     });
@@ -169,35 +169,35 @@ export class DriverStoreService {
   }
 
   async setThreadStatus(threadId: string, status: ThreadStatus): Promise<void> {
-    await this.tracks.update({ id: threadId }, { status });
+    await this.threads.update({ id: threadId }, { status });
   }
 
-  /** Persist the just-in-time plan prose + the prior track's handoff onto the track. */
+  /** Persist the just-in-time plan prose + the prior thread's handoff onto the thread. */
   async setThreadPlan(
     threadId: string,
     plan: string,
     handoffIn: string | null,
   ): Promise<void> {
-    await this.tracks.update({ id: threadId }, { plan, handoff_in: handoffIn });
+    await this.threads.update({ id: threadId }, { plan, handoff_in: handoffIn });
   }
 
-  /** Record the track's handoff note for the next track (set when the track is done). */
+  /** Record the thread's handoff note for the next thread (set when the thread is done). */
   async setThreadHandoffOut(threadId: string, handoffOut: string): Promise<void> {
-    await this.tracks.update({ id: threadId }, { handoff_out: handoffOut });
+    await this.threads.update({ id: threadId }, { handoff_out: handoffOut });
   }
 
   // ── review agents (post-build review fan-out, per-agent status) ────────────────────────────────
 
-  /** Seed the track's review agents at `pending` from the selected lens set — call before the auto-fix
+  /** Seed the thread's review agents at `pending` from the selected lens set — call before the auto-fix
    *  pass so the navigator can show the agents queued, then transitioned as each lens runs. */
   async seedReviewAgents(
     threadId: string,
     agents: ReviewAgentState[],
   ): Promise<void> {
-    await this.tracks.update({ id: threadId }, { review_agents: agents });
+    await this.threads.update({ id: threadId }, { review_agents: agents });
   }
 
-  /** Transition ONE review agent's status (read-modify-write the jsonb array). A no-op if the track or the
+  /** Transition ONE review agent's status (read-modify-write the jsonb array). A no-op if the thread or the
    *  lens id isn't found (best-effort display state, never sinks the build). */
   async setReviewAgentStatus(
     threadId: string,
@@ -205,14 +205,14 @@ export class DriverStoreService {
     status: ReviewAgentState['status'],
     findings?: number,
   ): Promise<void> {
-    const track = await this.tracks.findOne({ where: { id: threadId } });
-    if (!track) return;
-    const agents = (track.review_agents ?? []).map((a) =>
+    const thread = await this.threads.findOne({ where: { id: threadId } });
+    if (!thread) return;
+    const agents = (thread.review_agents ?? []).map((a) =>
       a.id === lensId
         ? { ...a, status, ...(findings != null ? { findings } : {}) }
         : a,
     );
-    await this.tracks.update({ id: threadId }, { review_agents: agents });
+    await this.threads.update({ id: threadId }, { review_agents: agents });
   }
 
   /** Resolve any review agent still `pending`/`running` once the pass is over — `passed` if its lens ran,
@@ -221,10 +221,10 @@ export class DriverStoreService {
     threadId: string,
     lensesRun: string[],
   ): Promise<void> {
-    const track = await this.tracks.findOne({ where: { id: threadId } });
-    if (!track) return;
+    const thread = await this.threads.findOne({ where: { id: threadId } });
+    if (!thread) return;
     const ran = new Set(lensesRun);
-    const agents = (track.review_agents ?? []).map((a) =>
+    const agents = (thread.review_agents ?? []).map((a) =>
       a.status === 'pending' || a.status === 'running'
         ? {
             ...a,
@@ -232,12 +232,12 @@ export class DriverStoreService {
           }
         : a,
     );
-    await this.tracks.update({ id: threadId }, { review_agents: agents });
+    await this.threads.update({ id: threadId }, { review_agents: agents });
   }
 
   // ── steps ───────────────────────────────────────────────────────────────────────────────────
 
-  /** A track's steps in execution order. */
+  /** A thread's steps in execution order. */
   async stepsForThread(threadId: string): Promise<Step[]> {
     const rows = await this.steps.find({
       where: { thread_id: threadId },
@@ -247,18 +247,18 @@ export class DriverStoreService {
   }
 
   /**
-   * Lock a track's steps: persist the planned step list as `steps` rows (gap-numbered,
+   * Lock a thread's steps: persist the planned step list as `steps` rows (gap-numbered,
    * `pending`/step `build`). Idempotent across a resume — if rows already exist (the plan locked before
    * the restart) the existing rows are returned untouched, so steps never double-create.
    */
-  async lockSteps(track: DriverThread, planned: PlannedStep[]): Promise<Step[]> {
-    const existing = await this.stepsForThread(track.id);
+  async lockSteps(thread: DriverThread, planned: PlannedStep[]): Promise<Step[]> {
+    const existing = await this.stepsForThread(thread.id);
     if (existing.length > 0) return existing;
     const rows = planned.map((p, i) =>
       this.steps.create({
-        thread_id: track.id,
-        job_id: track.jobId,
-        org_id: track.orgId,
+        thread_id: thread.id,
+        job_id: thread.jobId,
+        org_id: thread.orgId,
         ordinal: (i + 1) * ORDINAL_GAP,
         title: p.title,
         brief: p.brief,
@@ -286,8 +286,8 @@ export class DriverStoreService {
   }
 
   /**
-   * Persist the batch grouping for a track's steps — the resumable batching cursor. Assigned ONCE,
-   * the first time a track executes (all its steps have null `batch_ordinal`); after this a restart
+   * Persist the batch grouping for a thread's steps — the resumable batching cursor. Assigned ONCE,
+   * the first time a thread executes (all its steps have null `batch_ordinal`); after this a restart
    * reads the stored ordinals and re-groups identically, so a resumed engine session keeps the SAME
    * batch membership (no second `batchSteps` call, no drift). Each tuple is `[stepId, batchOrdinal]`.
    */
@@ -300,20 +300,20 @@ export class DriverStoreService {
   // ── brain read helpers ───────────────────────────────────────────────────────────────────────
 
   /**
-   * R3 — `get_pipeline_state` tool impl. Returns the current build + track state for a thread, or
+   * R3 — `get_pipeline_state` tool impl. Returns the current build + thread state for a thread, or
    * `{ status: 'no_job' }` if the thread hasn't entered the build lifecycle. Used by the in-sandbox
    * AgentSessionManager brain session.
    */
   async getPipelineState(jobId: string, orgId: string): Promise<unknown> {
-    const thread = await this.threads.findOne({
+    const thread = await this.jobs.findOne({
       where: { id: jobId, org_id: orgId },
     });
     if (!thread || thread.status === 'open') return { status: 'no_job' };
-    const tracks = await this.tracks.find({
+    const threads = await this.threads.find({
       where: { job_id: thread.id },
       order: { ordinal: 'ASC' },
     });
-    // All the thread's steps in one query (avoid N+1), grouped by track for the nav folder tree.
+    // All the thread's steps in one query (avoid N+1), grouped by thread for the nav folder tree.
     const steps = await this.steps.find({
       where: { job_id: thread.id },
       order: { ordinal: 'ASC' },
@@ -334,16 +334,16 @@ export class DriverStoreService {
       prNumber: thread.pr_number,
       featureBranch: thread.feature_branch,
       baseBranch: thread.base_branch,
-      threads: tracks.map((s) => ({
+      threads: threads.map((s) => ({
         id: s.id,
         ordinal: s.ordinal,
         brief: s.brief,
         type: s.type,
         status: s.status,
         hasPlan: s.plan != null,
-        // The review agents that run over this track's diff, with per-agent status. Once the track is
+        // The review agents that run over this thread's diff, with per-agent status. Once the thread is
         // reviewed `review_agents` carries the live state; before that (the `[]` default for an unseeded /
-        // pre-feature track) fall back to the selected lens set at `pending` so the folder still lists them.
+        // pre-feature thread) fall back to the selected lens set at `pending` so the folder still lists them.
         // Emptiness check (not nullish) — `[]` is the column default.
         reviewAgents:
           Array.isArray(s.review_agents) && s.review_agents.length > 0
@@ -362,7 +362,7 @@ export class DriverStoreService {
    * thread's `decision_record_id`), or null. Used by the in-sandbox brain session.
    */
   async getDecisionRecord(jobId: string): Promise<unknown> {
-    const thread = await this.threads.findOne({ where: { id: jobId } });
+    const thread = await this.jobs.findOne({ where: { id: jobId } });
     if (!thread?.decision_record_id) return null;
     const record = await this.records.findOne({
       where: { id: thread.decision_record_id },
@@ -386,7 +386,7 @@ export class DriverStoreService {
 }
 
 /**
- * Map a track's step rows for the `/pipeline` read model, resolving each step's BATCH so the web can find
+ * Map a thread's step rows for the `/pipeline` read model, resolving each step's BATCH so the web can find
  * the batch's transcript. A batch runs as ONE engine turn whose transcript is tagged with the ANCHOR step
  * id (the first/lowest-ordinal step in the batch), so a non-anchor step page must remap to `anchorStepId`
  * before filtering durable phase blocks / choosing the live `phase:<id>` lane. Steps not yet batched

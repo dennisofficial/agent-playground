@@ -11,7 +11,7 @@ import {
   StimulusStoreService,
 } from './stimulus-store.service';
 
-/** A minimal repo fake that mints ids on save + tracks create/save/delete. */
+/** A minimal repo fake that mints ids on save + threads create/save/delete. */
 function fakeRepo<T extends { id?: string }>(prefix: string) {
   const rows: T[] = [];
   let seq = 0;
@@ -99,7 +99,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       repoId: 'web',
       jobId: 'thread-9',
       author: { id: 'U1', displayName: 'Dennis' },
-      replyRoute: { surfaceId: 'slack', threadRef: '100.1' },
+      replyRoute: { surfaceId: 'slack', jobRef: '100.1' },
       body: 'hey',
     });
 
@@ -111,6 +111,6 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       jobId: 'thread-9',
       author: { id: 'U1', displayName: 'Dennis' },
     });
-    expect(chat.replyRoute).toEqual({ surfaceId: 'slack', threadRef: '100.1' });
+    expect(chat.replyRoute).toEqual({ surfaceId: 'slack', jobRef: '100.1' });
   });
 });

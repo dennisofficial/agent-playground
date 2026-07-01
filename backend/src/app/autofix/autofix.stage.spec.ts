@@ -115,7 +115,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     expect(summary.fixesAttempted).toBe(true);
     expect(summary.fixReport).toBe('I fixed finding A.');
     expect(summary.commits).toEqual([
-      { sha: 'commitsha1', message: expect.stringContaining('track review fixes') },
+      { sha: 'commitsha1', message: expect.stringContaining('thread review fixes') },
     ]);
   });
 
@@ -185,7 +185,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
   });
 
   it('skips the lens fan-out entirely when nothing changed (0 changed files)', async () => {
-    // A track that only investigated commits nothing → the derived change set is empty. The stage must
+    // A thread that only investigated commits nothing → the derived change set is empty. The stage must
     // short-circuit: no review turns, no fix turn — a clean summary with zero wasted LLM calls. (`/tmp`
     // is not a git repo, so the diff derivation yields [].)
     const { engine, calls } = mockEngine({ reviewReports: {} });

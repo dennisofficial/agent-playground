@@ -110,7 +110,7 @@ export interface EngineUsage {
 /**
  * Per-model context-window size (max input tokens), keyed by a substring of the real model id the turn
  * reported in {@link EngineUsage.model}. The web renders a context-occupancy ring against this, so it
- * tracks whatever model the brain runs — never hardcoded on the client.
+ * threads whatever model the brain runs — never hardcoded on the client.
  *
  * Current official windows (Anthropic docs): Opus 4.x and Sonnet 4.x are 1M, Haiku is 200k. The
  * authoritative long-term source is the Models API `max_input_tokens`; this static map is the v1 proxy

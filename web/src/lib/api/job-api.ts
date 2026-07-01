@@ -7,7 +7,7 @@ import type {
   ContextFileContent,
   PipelineJob,
   PipelineState,
-  ThreadContext,
+  JobContext,
   WebCard,
 } from './types';
 
@@ -184,7 +184,7 @@ export function provideSecret(
 }
 
 /** Re-drive a halted (failed/paused) build — the navigator "Retry" button. No-op if not retryable. */
-export function retryThread(ref: JobRef): Promise<{ ok: boolean; status: string }> {
+export function retryJob(ref: JobRef): Promise<{ ok: boolean; status: string }> {
   return webJson(threadPath(ref, '/retry'), { method: 'POST' });
 }
 
@@ -201,8 +201,8 @@ export function pipelineJob(state: PipelineState | undefined): PipelineJob | nul
 
 // ── Context (specs + artifacts files) ────────────────────────────────────────────────────────────
 /** List the thread's `/context` files, grouped into `specs` (plan) + `artifacts` (outputs). */
-export function fetchThreadContext(ref: JobRef): Promise<ThreadContext> {
-  return webJson<ThreadContext>(threadPath(ref, '/context'));
+export function fetchThreadContext(ref: JobRef): Promise<JobContext> {
+  return webJson<JobContext>(threadPath(ref, '/context'));
 }
 
 /** Read one `/context` file's content (`path` is bucket-relative, e.g. `specs/plan.md`). */
@@ -213,7 +213,7 @@ export function fetchContextFile(ref: JobRef, path: string): Promise<ContextFile
 }
 
 // ── Rename (the only thread Update op) ───────────────────────────────────────────────────────────
-export function renameThread(ref: JobRef, title: string): Promise<{ ok: boolean; title: string }> {
+export function renameJob(ref: JobRef, title: string): Promise<{ ok: boolean; title: string }> {
   return webJson(threadPath(ref), { method: 'PATCH', body: JSON.stringify({ title }) });
 }
 
@@ -222,7 +222,7 @@ export function deleteThread(ref: JobRef): Promise<{ ok: boolean }> {
   return webJson(threadPath(ref), { method: 'DELETE' });
 }
 
-// ── Repos (create-thread picker + the settings Repos tab) ────────────────────────────────────────
+// ── Repos (create-job picker + the settings Repos tab) ────────────────────────────────────────
 export interface RepoView {
   id: string;
   slug: string;
@@ -249,7 +249,7 @@ export interface RepoBranches {
   defaultBranch: string;
 }
 
-/** A repo's branches (default first) for the create-thread base-branch picker. */
+/** A repo's branches (default first) for the create-job base-branch picker. */
 export function fetchRepoBranches(orgId: string, repoId: string): Promise<RepoBranches> {
   return webJson<RepoBranches>(`/orgs/${orgId}/repos/${repoId}/branches`);
 }
@@ -260,7 +260,7 @@ export interface CreateThreadBody {
   baseBranch?: string;
 }
 
-export function createThread(
+export function createJob(
   orgId: string,
   repoId: string,
   body: CreateThreadBody,

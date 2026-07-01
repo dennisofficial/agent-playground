@@ -55,10 +55,10 @@ export type PlanReviewStartInput = {
   overview: string;
   /** The locked decisions from the plan. */
   decisions: Decision[];
-  /** The high-level track briefs (titles) from the plan. */
+  /** The high-level thread briefs (titles) from the plan. */
   threadTitles: string[];
   /**
-   * The steps Atlas authored under each track, aligned by track index (`stepsByThread[i]` = steps for
+   * The steps Atlas authored under each thread, aligned by thread index (`stepsByThread[i]` = steps for
    * `threadTitles[i]`). Present on the full-plan path so the reviewer grades the EXECUTION detail, not
    * just titles. Absent on step-less paths (the reviewer then sees titles only).
    */
@@ -90,8 +90,8 @@ const REVIEW_SYSTEM = [
   '<plan_location>',
   'The full plan is authored under `/context/specs/` — READ THESE before judging (they are authoritative;',
   'the <authored_plan> summary in the task is just an index):',
-  '  - `plan.md` — goal · overview · architecture/diagrams · the ordered track list',
-  '  - `sections/NN-<slug>.md` — ONE per track: its goal, context, execute-ready steps, validation',
+  '  - `plan.md` — goal · overview · architecture/diagrams · the ordered thread list',
+  '  - `sections/NN-<slug>.md` — ONE per thread: its goal, context, execute-ready steps, validation',
   '  - `data-model.md` — cross-cutting schema/migrations (when the work touches the schema)',
   '  - `generated/decision-record.md` — the locked always-ask decisions',
   'Then read the codebase files the steps reference to verify the plan is GROUNDED in what actually exists.',
@@ -106,7 +106,7 @@ const REVIEW_SYSTEM = [
   '     exist, or builds against an API/pattern this repo does not actually have. Verify against the code.',
   '  3. MISSING / CONTRADICTORY decisions — an always-ask decision (data model, API contract, dependency,',
   '     infra, cross-cutting pattern, one-way door) the plan needs but never locks, or two that conflict.',
-  '  4. ORDERING / INTEGRATION risk — track/step ordering that breaks the build (e.g. a step depends on a',
+  '  4. ORDERING / INTEGRATION risk — thread/step ordering that breaks the build (e.g. a step depends on a',
   '     migration a later step creates).',
   '  5. UNBUILDABLE step — too vague to build without re-asking the operator, or with no real verification.',
   '     Atlas authors the FULL implementation detail up front (there is no later "step planning"), so grade',
@@ -142,7 +142,7 @@ function renderPlanForReview(input: PlanReviewStartInput): string {
         .join('\n')
     : '  (none)';
 
-  const tracks = input.threadTitles.length
+  const threads = input.threadTitles.length
     ? input.threadTitles
         .map((b, i) => {
           const steps = input.stepsByThread?.[i] ?? [];
@@ -190,9 +190,9 @@ function renderPlanForReview(input: PlanReviewStartInput): string {
     decisions,
     '',
     hasPhases
-      ? 'TRACKS (each with its execute-ready steps — the build runs these directly):'
-      : 'TRACKS (high-level briefs):',
-    tracks,
+      ? 'THREADS (each with its execute-ready steps — the build runs these directly):'
+      : 'THREADS (high-level briefs):',
+    threads,
     '</authored_plan>',
   ];
 

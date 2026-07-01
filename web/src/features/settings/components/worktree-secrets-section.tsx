@@ -10,7 +10,7 @@ import {
   useWorktreeSecrets,
   type WorktreeSecretGrant,
 } from '@/lib/api/orgs';
-import { useOrgRepos } from '@/lib/api/thread-queries';
+import { useOrgRepos } from '@/lib/api/job-queries';
 
 /**
  * Worktree secrets — named, encrypted secret files (`.env`, `.env.keys`, a service-account JSON, …) the

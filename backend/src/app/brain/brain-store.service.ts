@@ -32,31 +32,31 @@ export interface PersistedPlan {
   decisionRecordId: string;
 }
 
-/** Track briefs are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
+/** Thread briefs are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;
 
 /**
  * W3 — the BRAIN's persistence. The single place the brain reads the thread transcript and writes the
- * locked plan (decision record + track rows) on the 'app' connection. The THREAD is the build unit
+ * locked plan (decision record + thread rows) on the 'app' connection. The THREAD is the build unit
  * (the former `jobs` layer is folded into it), so "open a job" / "load a job" here are thread status
  * transitions on the same row. Keeps the conversational brain free of repository wiring — it speaks
  * domain shapes, this maps them to rows.
  *
- * The detailed per-track PHASE plan is W4's job, NOT the brain's: this writes the high-level track
- * BRIEFS (each a `pending` track with no `plan` yet); W4's driver fills `plan` + the step rows
+ * The detailed per-thread PHASE plan is W4's job, NOT the brain's: this writes the high-level thread
+ * BRIEFS (each a `pending` thread with no `plan` yet); W4's driver fills `plan` + the step rows
  * just-in-time. Zero v1 imports.
  */
 @Injectable()
 export class BrainStoreService {
   constructor(
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly tracks: Repository<ThreadEntity>,
+    private readonly threads: Repository<ThreadEntity>,
     @InjectRepository(StepEntity, DB_CONNECTION)
     private readonly steps: Repository<StepEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
@@ -448,7 +448,7 @@ export class BrainStoreService {
    */
   async reconcileOpenQuestionCounts(): Promise<void> {
     const messagesTable = this.messages.metadata.tablePath;
-    const threadsTable = this.threads.metadata.tablePath;
+    const threadsTable = this.jobs.metadata.tablePath;
     await this.dataSource.query(
       `UPDATE ${threadsTable} t SET open_question_count = (
          SELECT COUNT(*)::int FROM ${messagesTable} m
@@ -513,7 +513,7 @@ export class BrainStoreService {
 
   /** The requestId this thread is awaiting a secret value for (the gate pointer), or null. */
   async awaitingSecretId(jobId: string): Promise<string | null> {
-    const row = await this.threads.findOne({ where: { id: jobId } });
+    const row = await this.jobs.findOne({ where: { id: jobId } });
     return row?.awaiting_secret_id ?? null;
   }
 
@@ -551,7 +551,7 @@ export class BrainStoreService {
     jobId: string,
     requestId: string,
   ): Promise<void> {
-    await this.threads.update(
+    await this.jobs.update(
       { id: jobId, awaiting_secret_id: requestId },
       { awaiting_secret_id: null },
     );
@@ -573,7 +573,7 @@ export class BrainStoreService {
       path: string;
     }[]
   > {
-    const rows = await this.threads.find({
+    const rows = await this.jobs.find({
       where: { awaiting_secret_id: Not(IsNull()) },
     });
     const out: {
@@ -604,7 +604,7 @@ export class BrainStoreService {
 
   /** Read a thread's working-set decisions logged so far (the `pending_decisions` jsonb). */
   async pendingDecisions(jobId: string): Promise<Decision[]> {
-    const row = await this.threads.findOne({ where: { id: jobId } });
+    const row = await this.jobs.findOne({ where: { id: jobId } });
     return row?.pending_decisions ?? [];
   }
 
@@ -619,11 +619,11 @@ export class BrainStoreService {
     jobId: string,
     input: Omit<Decision, 'id'>,
   ): Promise<{ decision: Decision; all: Decision[] }> {
-    const row = await this.threads.findOneOrFail({ where: { id: jobId } });
+    const row = await this.jobs.findOneOrFail({ where: { id: jobId } });
     const current = row.pending_decisions ?? [];
     const decision: Decision = { ...input, id: nextDecisionId(current) };
     const all = [...current, decision];
-    await this.threads.update({ id: jobId }, { pending_decisions: all });
+    await this.jobs.update({ id: jobId }, { pending_decisions: all });
     return { decision, all };
   }
 
@@ -641,13 +641,13 @@ export class BrainStoreService {
       >
     >,
   ): Promise<{ decision: Decision; all: Decision[] } | null> {
-    const row = await this.threads.findOneOrFail({ where: { id: jobId } });
+    const row = await this.jobs.findOneOrFail({ where: { id: jobId } });
     const current = row.pending_decisions ?? [];
     const idx = current.findIndex((d) => d.id === id);
     if (idx < 0) return null;
     const decision: Decision = { ...current[idx], ...patch };
     const all = current.map((d, i) => (i === idx ? decision : d));
-    await this.threads.update({ id: jobId }, { pending_decisions: all });
+    await this.jobs.update({ id: jobId }, { pending_decisions: all });
     return { decision, all };
   }
 
@@ -659,11 +659,11 @@ export class BrainStoreService {
     jobId: string,
     id: string,
   ): Promise<{ removed: boolean; all: Decision[] }> {
-    const row = await this.threads.findOneOrFail({ where: { id: jobId } });
+    const row = await this.jobs.findOneOrFail({ where: { id: jobId } });
     const current = row.pending_decisions ?? [];
     const all = current.filter((d) => d.id !== id);
     if (all.length === current.length) return { removed: false, all };
-    await this.threads.update({ id: jobId }, { pending_decisions: all });
+    await this.jobs.update({ id: jobId }, { pending_decisions: all });
     return { removed: true, all };
   }
 
@@ -673,7 +673,7 @@ export class BrainStoreService {
    * here must never break the turn itself (the caller swallows errors).
    */
   async setTurnActive(jobId: string, active: boolean): Promise<void> {
-    await this.threads.update({ id: jobId }, { turn_active: active });
+    await this.jobs.update({ id: jobId }, { turn_active: active });
   }
 
   /**
@@ -683,7 +683,7 @@ export class BrainStoreService {
    * completion). Returns thread ids.
    */
   async threadsWithActiveTurn(): Promise<string[]> {
-    const rows = await this.threads.find({
+    const rows = await this.jobs.find({
       where: { turn_active: true },
       select: { id: true },
     });
@@ -696,7 +696,7 @@ export class BrainStoreService {
    * the "needs you" dot. Returns the number of rows reset.
    */
   async resetAllTurnActive(): Promise<number> {
-    const res = await this.threads.update(
+    const res = await this.jobs.update(
       { turn_active: true },
       { turn_active: false },
     );
@@ -718,7 +718,7 @@ export class BrainStoreService {
    * continues ONE build rather than re-anchoring per message. Null otherwise.
    */
   async openJobOnThread(jobId: string): Promise<string | null> {
-    const row = await this.threads.findOne({
+    const row = await this.jobs.findOne({
       where: { id: jobId, status: 'planning' },
     });
     return row?.id ?? null;
@@ -732,7 +732,7 @@ export class BrainStoreService {
     title: string;
     kind: JobKind;
   }): Promise<string> {
-    await this.threads.update(
+    await this.jobs.update(
       { id: input.jobId },
       { kind: input.kind, status: 'planning', title: input.title },
     );
@@ -740,8 +740,8 @@ export class BrainStoreService {
   }
 
   /**
-   * Persist a LOCKED plan: the decision record (draft) + the track rows + flip the thread to
-   * `awaiting_approval`. Writes the high-level track BRIEFS (titles); the full plan (plan.md,
+   * Persist a LOCKED plan: the decision record (draft) + the thread rows + flip the thread to
+   * `awaiting_approval`. Writes the high-level thread BRIEFS (titles); the full plan (plan.md,
    * decisions, diagrams) lives in the thread's `/context/specs` folder, which the build sessions read.
    * Returns the thread (domain shape) + the decision record id.
    */
@@ -755,17 +755,17 @@ export class BrainStoreService {
     decisions: Decision[];
     threadTitles: string[];
     /**
-     * OPTIONAL — the scope type per track (backend/frontend/…), aligned by track index. Selects the
-     * review agents. Defaults to `'general'` per track when absent (the autonomous bugfix / direct-build
+     * OPTIONAL — the scope type per thread (backend/frontend/…), aligned by thread index. Selects the
+     * review agents. Defaults to `'general'` per thread when absent (the autonomous bugfix / direct-build
      * callers pass no types) — matches the DB column default.
      */
     threadTypes?: string[];
     /**
-     * OPTIONAL — the steps Atlas authored up front for each track, aligned by track index
+     * OPTIONAL — the steps Atlas authored up front for each thread, aligned by thread index
      * (`stepsByThread[i]` = steps for `threadTitles[i]`). When present, the step rows are LOCKED
-     * here so the driver finds them already present and skips its just-in-time plan turn; `track.plan`
+     * here so the driver finds them already present and skips its just-in-time plan turn; `thread.plan`
      * is set from them so the pipeline view shows the plan. ABSENT (direct-build / bugfix dispatch) →
-     * no step rows created, exactly as before — the driver JIT-plans those tracks.
+     * no step rows created, exactly as before — the driver JIT-plans those threads.
      */
     stepsByThread?: PlannedStep[][];
     /**
@@ -781,21 +781,21 @@ export class BrainStoreService {
     // the transaction (one network call, fail-soft to a trimmed first line) so the txn stays fast.
     const title = await this.titler.titleFor(input.title, input.orgId);
 
-    // The whole persist runs in ONE transaction: delete prior draft tracks (their steps cascade),
-    // supersede the prior draft record, write the new record + tracks (+ authored step rows), and
+    // The whole persist runs in ONE transaction: delete prior draft threads (their steps cascade),
+    // supersede the prior draft record, write the new record + threads (+ authored step rows), and
     // flip the thread — so a crash mid-write can never leave a half-proposed plan. A re-propose
     // (request_changes → reopenPlanning → propose again) reuses the SAME thread, so prior DRAFT
-    // tracks/record are cleared first; idempotent on the first proposal.
+    // threads/record are cleared first; idempotent on the first proposal.
     const decisionRecordId = await this.dataSource.transaction(async (m) => {
-      const threads = m.getRepository(JobEntity);
+      const jobs = m.getRepository(JobEntity);
       const records = m.getRepository(DecisionRecordEntity);
-      const tracks = m.getRepository(ThreadEntity);
+      const threads = m.getRepository(ThreadEntity);
       const steps = m.getRepository(StepEntity);
 
-      // tracks MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(job_id, ordinal)
+      // threads MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(job_id, ordinal)
       // collision); `steps.thread_id ON DELETE CASCADE` clears their step rows too. The prior draft
       // record is marked `superseded` (audit trail, never an approved one).
-      await tracks.delete({ job_id: input.jobId });
+      await threads.delete({ job_id: input.jobId });
       await records.update(
         { job_id: input.jobId, status: 'draft' },
         { status: 'superseded' },
@@ -815,12 +815,12 @@ export class BrainStoreService {
         }),
       );
 
-      // Save tracks first (to get ids), setting `plan` from any authored steps so `hasPlan` is true
+      // Save threads first (to get ids), setting `plan` from any authored steps so `hasPlan` is true
       // in the pipeline view (the authored path never hits the driver's `setThreadPlan`).
-      const savedSections = await tracks.save(
+      const savedSections = await threads.save(
         input.threadTitles.map((brief, i) => {
           const authored = input.stepsByThread?.[i];
-          return tracks.create({
+          return threads.create({
             job_id: input.jobId,
             org_id: input.orgId,
             ordinal: (i + 1) * ORDINAL_GAP,
@@ -840,10 +840,10 @@ export class BrainStoreService {
       // driver's resume/fast-forward cursor reads them identically. Order of savedSections matches the
       // input order (single save call), so index alignment holds.
       if (input.stepsByThread?.length) {
-        const phaseRows = savedSections.flatMap((track, i) =>
+        const phaseRows = savedSections.flatMap((thread, i) =>
           (input.stepsByThread?.[i] ?? []).map((p, j) =>
             steps.create({
-              thread_id: track.id,
+              thread_id: thread.id,
               job_id: input.jobId,
               org_id: input.orgId,
               ordinal: (j + 1) * ORDINAL_GAP,
@@ -857,7 +857,7 @@ export class BrainStoreService {
         if (phaseRows.length) await steps.save(phaseRows);
       }
 
-      await threads.update(
+      await jobs.update(
         { id: input.jobId },
         {
           kind: input.kind,
@@ -879,13 +879,13 @@ export class BrainStoreService {
    * Atlas has addressed the Codex review (the plan was persisted as `plan_review` by `submit_plan`).
    */
   async markAwaitingApproval(jobId: string): Promise<void> {
-    await this.threads.update(
+    await this.jobs.update(
       { id: jobId },
       { status: 'awaiting_approval' },
     );
   }
 
-  /** Load a draft/approved decision record (overview + decisions + track titles) for the approval card. */
+  /** Load a draft/approved decision record (overview + decisions + thread titles) for the approval card. */
   async loadDecisionRecord(decisionRecordId: string): Promise<{
     overview: string;
     decisions: Decision[];
@@ -911,29 +911,29 @@ export class BrainStoreService {
       { id: decisionRecordId },
       { status: 'approved', approved_by: approvedBy, approved_at: now },
     );
-    await this.threads.update({ id: jobId }, { status: 'running' });
+    await this.jobs.update({ id: jobId }, { status: 'running' });
     return this.loadJob(jobId);
   }
 
   /** Flip a thread back to `planning` (a rejected / change-requested plan returns to the grill). */
   async reopenPlanning(jobId: string): Promise<void> {
-    await this.threads.update({ id: jobId }, { status: 'planning' });
+    await this.jobs.update({ id: jobId }, { status: 'planning' });
   }
 
   /** Cancel a thread's build (a denied plan). */
   async cancel(jobId: string): Promise<void> {
-    await this.threads.update({ id: jobId }, { status: 'cancelled' });
+    await this.jobs.update({ id: jobId }, { status: 'cancelled' });
   }
 
   /** The ticket a thread was promoted from / works (`threads.ticket_id`), or null. */
   async threadTicketId(jobId: string): Promise<string | null> {
-    const row = await this.threads.findOne({ where: { id: jobId } });
+    const row = await this.jobs.findOne({ where: { id: jobId } });
     return row?.ticket_id ?? null;
   }
 
   /** Load a thread row as the domain `Thread` shape. */
   async loadJob(jobId: string): Promise<Job> {
-    const row = await this.threads.findOneOrFail({ where: { id: jobId } });
+    const row = await this.jobs.findOneOrFail({ where: { id: jobId } });
     return toThread(row);
   }
 
@@ -941,7 +941,7 @@ export class BrainStoreService {
 
   /** Mark a thread's ledger promotion COMPLETE — stamped only after the promotion turn + commit succeed. */
   async markLedgerPromoted(jobId: string): Promise<void> {
-    await this.threads.update(
+    await this.jobs.update(
       { id: jobId },
       { ledger_promotion_status: 'complete', ledger_promoted_at: new Date() },
     );
@@ -954,14 +954,14 @@ export class BrainStoreService {
    * PR merges + the worktree is torn down, there's nothing to write and the sweep skips it.
    */
   async threadsAwaitingLedgerPromotion(): Promise<Job[]> {
-    const rows = await this.threads.find({
+    const rows = await this.jobs.find({
       where: {
         pr_url: Not(IsNull()),
         ledger_promotion_status: Not('complete'),
       },
     });
     // `Not('complete')` excludes NULLs in SQL, so add the never-started rows explicitly.
-    const nullRows = await this.threads.find({
+    const nullRows = await this.jobs.find({
       where: { pr_url: Not(IsNull()), ledger_promotion_status: IsNull() },
     });
     return [...rows, ...nullRows].map(toThread);
@@ -990,8 +990,8 @@ export class BrainStoreService {
       input.title && input.kind !== 'onboarding'
         ? await this.titler.titleFor(input.title, input.orgId)
         : input.title;
-    const row = await this.threads.save(
-      this.threads.create({
+    const row = await this.jobs.save(
+      this.jobs.create({
         org_id: input.orgId,
         repo_id: input.repoId,
         origin: 'control',

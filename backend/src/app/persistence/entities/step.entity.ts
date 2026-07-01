@@ -5,11 +5,11 @@ import { ThreadEntity } from './thread.entity';
 import { JobEntity } from './job.entity';
 
 /**
- * One STEP of a track's plan — runs as a FRESH session on the feature branch (fresh context per step
+ * One STEP of a thread's plan — runs as a FRESH session on the feature branch (fresh context per step
  * keeps the window small + avoids hallucination; the shared checkout lets later steps build on earlier
  * code). `stage` + `status` are the EXPLICIT, resumable cursor — the deterministic driver re-enters
  * here on restart rather than re-deriving control flow from statuses. Strictly sequential within a
- * track; gap-numbered.
+ * thread; gap-numbered.
  */
 @Entity({ name: 'steps' })
 @Index(['thread_id'])
@@ -19,21 +19,21 @@ export class StepEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  /** The owning track (FK → tracks.id). */
+  /** The owning thread/lane (FK → threads.id). */
   @Column({ type: 'uuid' })
   thread_id!: string;
 
   @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'thread_id' })
-  track?: ThreadEntity;
+  thread?: ThreadEntity;
 
-  /** The owning thread (denormalized for thread-scoped boot recovery; FK → threads.id). */
+  /** The owning job/container (denormalized for job-scoped boot recovery; FK → jobs.id). */
   @Column({ type: 'uuid' })
   job_id!: string;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'job_id' })
-  thread?: JobEntity;
+  job?: JobEntity;
 
   /** The tenant (org id) — denormalized for org-scoped queries (FK → organizations.id). */
   @Column({ type: 'uuid' })
@@ -43,7 +43,7 @@ export class StepEntity extends TimestampedEntity {
   @JoinColumn({ name: 'org_id' })
   org?: OrganizationEntity;
 
-  /** Execution order within the track, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
+  /** Execution order within the thread, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
   @Column({ type: 'int' })
   ordinal!: number;
 
@@ -71,9 +71,9 @@ export class StepEntity extends TimestampedEntity {
   session_id!: string | null;
 
   /**
-   * Which execution BATCH this step belongs to within its track. A fresh-context step packs the ordered
+   * Which execution BATCH this step belongs to within its thread. A fresh-context step packs the ordered
    * steps into consecutive groups; every step in one group runs in ONE engine session. Null until the
-   * track first executes; assigned + persisted then so a resumed/restarted track re-groups IDENTICALLY
+   * thread first executes; assigned + persisted then so a resumed/restarted thread re-groups IDENTICALLY
    * — the resume cursor keys off the group's anchor step `session_id`, so batch membership MUST be
    * stable across a restart.
    */

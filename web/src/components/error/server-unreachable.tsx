@@ -10,7 +10,7 @@ import { env } from '@/lib/env';
  * Full-screen backend-outage state (design: `Atlas Server Unreachable.dc.html`). Rendered by the
  * auth guards / root redirect hub when `AuthState.backendUnreachable` is set. Auto-retries on a
  * countdown and re-probes the backend via `auth.recheck()`; on success the auth state flips and the
- * parent guard unmounts this screen. Token-driven, so it tracks the daylight/terminal/warm themes.
+ * parent guard unmounts this screen. Token-driven, so it threads the daylight/terminal/warm themes.
  */
 export function ServerUnreachable() {
   const [retrying, setRetrying] = useState(false);

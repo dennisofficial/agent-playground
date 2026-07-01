@@ -1,5 +1,5 @@
 import type { WebApprovalCard, WebQuestionCard, WebSecretInputCard, WebVerdictCard } from '@/lib/api/types';
-import type { JobMessage } from '@/lib/api/thread-api';
+import type { JobMessage } from '@/lib/api/job-api';
 
 /**
  * The conversation bubble kinds the work column renders. `approval`/`verdict` are STRUCTURED (the card

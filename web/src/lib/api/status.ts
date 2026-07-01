@@ -72,7 +72,7 @@ export function toJobKind(kind: WireJobKind): JobKind {
   return kind === 'bugfix' ? 'fix' : 'feat';
 }
 
-/** Per-track dot color for the navigator pipeline tree. */
+/** Per-thread dot color for the navigator pipeline tree. */
 export function threadColor(status: ThreadStatus): { color: string; pulse: boolean } {
   switch (status) {
     case 'done':
@@ -93,7 +93,7 @@ export function threadColor(status: ThreadStatus): { color: string; pulse: boole
 }
 
 /**
- * Per-step / per-session dot for the navigator's execute-folder leaves. Same dot grammar as tracks
+ * Per-step / per-session dot for the navigator's execute-folder leaves. Same dot grammar as threads
  * (handoff §Dots): active = accent + pulse, done = green, failed = red, skipped = faint, pending = the
  * neutral pending dot. `skipped` is rendered as a hollow ring + strikethrough at the call site.
  */

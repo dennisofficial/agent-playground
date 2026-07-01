@@ -1,10 +1,10 @@
 'use client';
 
 import { Suspense } from 'react';
-import { CreateThread } from '@/features/create/components/create-thread';
+import { CreateThread } from '@/features/create/components/create-job';
 
 /**
- * Full-page `/new` — the create-thread fallback for a hard load (the intercepted modal handles in-app
+ * Full-page `/new` — the create-job fallback for a hard load (the intercepted modal handles in-app
  * navigation). Same form, same source.
  */
 export default function NewThreadPage() {

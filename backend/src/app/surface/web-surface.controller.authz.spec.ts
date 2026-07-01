@@ -6,7 +6,7 @@ import { WebSurfaceController } from './web-surface.controller';
 /**
  * Cross-tenant isolation regression (the hole Codex flagged): `OrgMembershipGuard` only proves the
  * caller is a member of `:orgId`, but thread-keyed ops act on a `jobId`. Without scoping, a member of
- * ANY org with a leaked thread id could read/write/DELETE another org's thread — and `deleteThreadDeep`
+ * ANY org with a leaked thread id could read/write/DELETE another org's thread — and `deleteJobDeep`
  * would then wipe that tenant's thread + all its children. `requireThread(jobId, org.id)` closes it:
  * every thread-keyed op resolves the thread scoped to the caller's org or 404s.
  *
@@ -14,7 +14,7 @@ import { WebSurfaceController } from './web-surface.controller';
  * when its `org_id` matches, emulating the scoped query.
  */
 function makeController(threadOrgId: string) {
-  const deleteThreadDeep = vi.fn(async () => undefined);
+  const deleteJobDeep = vi.fn(async () => undefined);
   const threads = {
     findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) =>
       where.org_id === threadOrgId ? { id: where.id, org_id: threadOrgId, repo_id: 'repo-1' } : null,
@@ -27,7 +27,7 @@ function makeController(threadOrgId: string) {
     {} as never, // surface
     {} as never, // liveTurns
     {} as never, // driverStore
-    { deleteThreadDeep } as never, // threadLifecycle
+    { deleteJobDeep } as never, // threadLifecycle
     {} as never, // orgService
     threads as never,
     messages as never,
@@ -39,18 +39,18 @@ function makeController(threadOrgId: string) {
     { dispatch: async () => undefined } as never, // dispatcher (JOB_DISPATCHER)
     { write: async () => undefined, grant: async () => undefined } as never, // secrets (WorktreeSecretStore)
   );
-  return { controller, deleteThreadDeep, threads, messages };
+  return { controller, deleteJobDeep, threads, messages };
 }
 
 describe('WebSurfaceController — cross-tenant authz', () => {
   const orgB: CurrentOrgCtx = { id: 'orgB', role: 'owner' };
 
   it("deleteThread on another org's thread 404s and never tears it down", async () => {
-    const { controller, deleteThreadDeep } = makeController('orgA'); // thread belongs to org A
+    const { controller, deleteJobDeep } = makeController('orgA'); // thread belongs to org A
     await expect(controller.deleteThread(orgB, 'leaked-thread-id')).rejects.toBeInstanceOf(
       NotFoundException,
     );
-    expect(deleteThreadDeep).not.toHaveBeenCalled();
+    expect(deleteJobDeep).not.toHaveBeenCalled();
   });
 
   it("messageHistory on another org's thread 404s and never reads messages", async () => {
@@ -62,8 +62,8 @@ describe('WebSurfaceController — cross-tenant authz', () => {
   });
 
   it("deleteThread on the caller's OWN thread proceeds (full org-scoped cascade)", async () => {
-    const { controller, deleteThreadDeep } = makeController('orgB'); // thread belongs to org B
+    const { controller, deleteJobDeep } = makeController('orgB'); // thread belongs to org B
     await controller.deleteThread(orgB, 'my-thread-id');
-    expect(deleteThreadDeep).toHaveBeenCalledWith('my-thread-id', 'orgB');
+    expect(deleteJobDeep).toHaveBeenCalledWith('my-thread-id', 'orgB');
   });
 });

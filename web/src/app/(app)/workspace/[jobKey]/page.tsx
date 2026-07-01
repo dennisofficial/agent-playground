@@ -3,17 +3,17 @@
 import { Suspense, use } from 'react';
 import Link from 'next/link';
 import { decodeJobRef, ROUTES } from '@/lib/routes';
-import { ThreadWorkspace } from '@/features/thread-workspace/thread-workspace';
+import { JobWorkspace } from '@/features/job-workspace/job-workspace';
 import { Spinner } from '@/components/ui/spinner';
 
 /**
- * The thread workspace — navigator + work column (Conversation / Phase). The `[threadKey]` segment
+ * The thread workspace — navigator + work column (Conversation / Phase). The `[jobKey]` segment
  * encodes the `org/repo/thread` triple (see `routes.ts`); a malformed key shows a recover link rather
  * than crashing.
  */
-export default function ThreadPage({ params }: { params: Promise<{ threadKey: string }> }) {
-  const { threadKey } = use(params);
-  const ref = decodeJobRef(threadKey);
+export default function ThreadPage({ params }: { params: Promise<{ jobKey: string }> }) {
+  const { jobKey } = use(params);
+  const ref = decodeJobRef(jobKey);
 
   if (!ref) {
     return (
@@ -33,7 +33,7 @@ export default function ThreadPage({ params }: { params: Promise<{ threadKey: st
     );
   }
 
-  // `ThreadWorkspace` reads the selected node from `?node=` via `useSearchParams`, which needs a Suspense
+  // `JobWorkspace` reads the selected node from `?node=` via `useSearchParams`, which needs a Suspense
   // boundary (else a statically-rendered route bails to client rendering). Keep it tight — just this reader.
   return (
     <Suspense
@@ -43,7 +43,7 @@ export default function ThreadPage({ params }: { params: Promise<{ threadKey: st
         </div>
       }
     >
-      <ThreadWorkspace orgId={ref.orgId} repoId={ref.repoId} jobId={ref.jobId} />
+      <JobWorkspace orgId={ref.orgId} repoId={ref.repoId} jobId={ref.jobId} />
     </Suspense>
   );
 }

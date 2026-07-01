@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { ChevronRight, Sparkles } from 'lucide-react';
-import type { JobMessage } from '@/lib/api/thread-api';
-import type { LiveBlock } from '@/lib/api/thread-stream';
+import type { JobMessage } from '@/lib/api/job-api';
+import type { LiveBlock } from '@/lib/api/job-stream';
 
 /**
  * Subagent (Task) activity is peeled OUT of the main conversation and rendered as its own node/sub-page.

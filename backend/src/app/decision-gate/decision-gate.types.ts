@@ -1,7 +1,7 @@
 /**
  * W5 — the decision-class GATE. Local domain types for the always-ask / never-ask classifier and the
  * park-and-ask mechanism. Kept in THIS subfolder (not `domain/index.ts`) — these are W5-internal shapes
- * the track driver (W4) consumes; they reference the shared `DecisionRecord`/`DecisionClass` from
+ * the thread driver (W4) consumes; they reference the shared `DecisionRecord`/`DecisionClass` from
  * `../domain` (W3's locked record) but add nothing to it.
  *
  * Zero v1 imports: nothing here reaches `@harness/**` or the v1 `slack-app` surface.
@@ -23,11 +23,11 @@ import type { DecisionClass, DecisionRecord } from '../domain';
  */
 export type DecisionVerdict = 'covered' | 'proceed' | 'ask';
 
-/** A decision the track planner wants to make, handed to the classifier. */
+/** A decision the thread planner wants to make, handed to the classifier. */
 export interface ProposedDecision {
   /** One-line description of the call ("add a `deleted_at` column to users"). */
   description: string;
-  /** Any relevant context that helps classify (the track brief, surrounding plan text). Optional. */
+  /** Any relevant context that helps classify (the thread brief, surrounding plan text). Optional. */
   context?: string;
 }
 

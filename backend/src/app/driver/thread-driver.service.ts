@@ -43,13 +43,13 @@ import { JobLifecycleService } from './job-lifecycle.service';
 
 /**
  * W4 — the SECTION/PHASE DRIVER. The legible, deterministic, resumable replacement for v1's implicit
- * status-FSM. Read it top-to-bottom: `dispatch` kicks the build off async, `runJob` walks the tracks
+ * status-FSM. Read it top-to-bottom: `dispatch` kicks the build off async, `runJob` walks the threads
  * in order, `runThread` does plan → review → gate → execute steps → auto-fix → handoff, `executeSteps`
  * runs each step as a fresh engine session on the shared feature branch, and `finishWithPr` runs the
  * PR-tail auto-fix and opens ONE PR. `resume` re-enters the SAME straight functions on boot, fast-
  * forwarding completed work — no signal racing, no status-enum re-derivation.
  *
- * The "dynamism" (how many tracks/steps) is DATA the planner emits; the control flow is a plain
+ * The "dynamism" (how many threads/steps) is DATA the planner emits; the control flow is a plain
  * `await`-each-step loop. Explicit `status`/`step` rows exist ONLY for resumability — the live path is a
  * straight function. Bound as the real `JOB_DISPATCHER` (overriding W3's logging no-op). Zero v1 imports.
  */
@@ -115,40 +115,40 @@ export class ThreadDriver implements JobDispatcher {
       );
   }
 
-  /** Sanity ceiling on a job's tracks — a malformed plan can't drive an unbounded build. */
+  /** Sanity ceiling on a job's threads — a malformed plan can't drive an unbounded build. */
   private get maxThreads(): number {
     return this.env.get('MAX_SECTIONS') ?? 12;
   }
 
-  /** Sanity ceiling on a track's steps — a longer planner output is truncated to this. */
+  /** Sanity ceiling on a thread's steps — a longer planner output is truncated to this. */
   private get maxStepsPerThread(): number {
     return this.env.get('MAX_PHASES_PER_SECTION') ?? 8;
   }
 
   /** Hard cap on how many steps a single execution BATCH may contain — the deterministic envelope
-   *  around the LLM batcher so a group can never swallow a whole large track (keeps the fresh-context
+   *  around the LLM batcher so a group can never swallow a whole large thread (keeps the fresh-context
    *  safety reachable). Default 5. */
   private get maxStepsPerBatch(): number {
     const raw = Number(this.env.get('MAX_PHASES_PER_BATCH'));
     return Number.isFinite(raw) && raw > 0 ? raw : 5;
   }
 
-  /** ORCHESTRATE mode (default ON): run each track as ONE Opus orchestrator session that fans the
+  /** ORCHESTRATE mode (default ON): run each thread as ONE Opus orchestrator session that fans the
    *  implementation out to writer subagents, instead of the old programmatic per-step batching. Set
-   *  `ORCHESTRATE_TRACKS=off` to fall back to the legacy LLM-batched per-step path. */
+   *  `ORCHESTRATE_THREADS=off` to fall back to the legacy LLM-batched per-step path. */
   private get orchestrate(): boolean {
-    return (this.env.get('ORCHESTRATE_TRACKS') ?? '').toLowerCase() !== 'off';
+    return (this.env.get('ORCHESTRATE_THREADS') ?? '').toLowerCase() !== 'off';
   }
 
   /** Per-step wall-clock budget — a single engine turn that runs away is aborted + relayed. Default 20m.
-   *  In orchestrate mode one turn spans the WHOLE track + its writer fan-out, so the budget is larger. */
+   *  In orchestrate mode one turn spans the WHOLE thread + its writer fan-out, so the budget is larger. */
   private get phaseTimeoutMs(): number {
     const raw = Number(this.env.get('PHASE_TIMEOUT_MS'));
     if (Number.isFinite(raw) && raw > 0) return raw;
     return this.orchestrate ? 60 * 60_000 : 20 * 60_000;
   }
 
-  /** Per-job wall-clock budget (checked at track boundaries) — backstop against an unbounded build. Default 60m. */
+  /** Per-job wall-clock budget (checked at thread boundaries) — backstop against an unbounded build. Default 60m. */
   private get jobTimeoutMs(): number {
     const raw = Number(this.env.get('JOB_TIMEOUT_MS'));
     return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000;
@@ -179,7 +179,7 @@ export class ThreadDriver implements JobDispatcher {
 
   /**
    * BOOT RECONCILIATION (legible, not signal-racing). For every job still `running`, re-enter the SAME
-   * straight drive: `runJob` fast-forwards tracks/steps already `done` and continues at the first
+   * straight drive: `runJob` fast-forwards threads/steps already `done` and continues at the first
    * unfinished one. An interrupted `executing` step is reopened (re-run) by `executeSteps`. No web of
    * signals — just "read the persisted cursor, continue the function".
    */
@@ -224,7 +224,7 @@ export class ThreadDriver implements JobDispatcher {
 
   /**
    * Operator RETRY (the halted-build "Retry" button). Re-drive a `failed` OR `paused` build: flip it back
-   * to `running` and re-enter the SAME resumable drive — `runJob` fast-forwards `done` tracks/steps and
+   * to `running` and re-enter the SAME resumable drive — `runJob` fast-forwards `done` threads/steps and
    * batches that already carry a `commit_sha`, then continues at the first unfinished one (the interrupted
    * step resumes its persisted engine `session_id` rather than restarting). Idempotent: a no-op when the
    * job isn't retryable (already running/done) or is being driven right now. Returns promptly.
@@ -331,10 +331,10 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * Walk a job's tracks in order. The whole build flow lives here, readable top-to-bottom:
-   *   load the job + record + route → ensure the feature sandbox → for each track: runThread (which
-   *   carries the prior handoff forward) → after all tracks: finishWithPr (PR-tail auto-fix + open PR).
-   * Fast-forwards `done` tracks (resume): a finished track just yields its persisted handoff_out.
+   * Walk a job's threads in order. The whole build flow lives here, readable top-to-bottom:
+   *   load the job + record + route → ensure the feature sandbox → for each thread: runThread (which
+   *   carries the prior handoff forward) → after all threads: finishWithPr (PR-tail auto-fix + open PR).
+   * Fast-forwards `done` threads (resume): a finished thread just yields its persisted handoff_out.
    */
   private async runJob(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId);
@@ -353,34 +353,34 @@ export class ThreadDriver implements JobDispatcher {
       `job=${jobId} on branch ${sandbox.branch} @ ${sandbox.worktreePath}`,
     );
 
-    const allSections = await this.store.tracksForJob(jobId);
-    const tracks = allSections.slice(0, this.maxThreads);
-    if (allSections.length > tracks.length) {
+    const allSections = await this.store.threadsForJob(jobId);
+    const threads = allSections.slice(0, this.maxThreads);
+    if (allSections.length > threads.length) {
       this.logger.warn(
-        `job=${jobId} has ${allSections.length} tracks > MAX_SECTIONS (${this.maxThreads}) — capping`,
+        `job=${jobId} has ${allSections.length} threads > MAX_SECTIONS (${this.maxThreads}) — capping`,
       );
     }
-    const pending = tracks.filter((s) => s.status !== 'done').length;
+    const pending = threads.filter((s) => s.status !== 'done').length;
     if (pending > 0) {
       await this.post(
         route,
-        `:rocket: Starting the build — ${pending} track(s) on \`${sandbox.branch}\`.`,
+        `:rocket: Starting the build — ${pending} thread(s) on \`${sandbox.branch}\`.`,
       );
     }
 
-    // Per-job wall-clock backstop (issue #3) — checked at each track boundary; the per-step timeout
-    // guards within a track. A breach aborts + relays (caught in drive()).
+    // Per-job wall-clock backstop (issue #3) — checked at each thread boundary; the per-step timeout
+    // guards within a thread. A breach aborts + relays (caught in drive()).
     const deadline = Date.now() + this.jobTimeoutMs;
     let handoff: string | null = null;
-    for (const track of tracks) {
-      if (track.status === 'done') {
-        // Already built (a resume) — carry its persisted handoff to the next track, don't re-run.
-        handoff = track.handoffOut ?? handoff;
+    for (const thread of threads) {
+      if (thread.status === 'done') {
+        // Already built (a resume) — carry its persisted handoff to the next thread, don't re-run.
+        handoff = thread.handoffOut ?? handoff;
         continue;
       }
       if (Date.now() > deadline) {
         throw new Error(
-          `job exceeded JOB_TIMEOUT_MS (${this.jobTimeoutMs}ms) before track "${track.brief}"`,
+          `job exceeded JOB_TIMEOUT_MS (${this.jobTimeoutMs}ms) before thread "${thread.brief}"`,
         );
       }
       handoff = await this.runThread(
@@ -389,7 +389,7 @@ export class ThreadDriver implements JobDispatcher {
         route,
         repo,
         sandbox,
-        track,
+        thread,
         handoff,
       );
     }
@@ -398,14 +398,14 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * Run ONE track, returning its handoff for the next. The per-track flow, in order:
+   * Run ONE thread, returning its handoff for the next. The per-thread flow, in order:
    *   a. plan just-in-time (an engine plan turn → steps), or resume the locked plan;
    *   b. one Codex-style review → revise pass (clean single loop);
    *   c. the decision gate — classify notable decisions; an uncovered always-ask PARKS & awaits a human;
    *   d. post the plan for visibility (non-blocking);
    *   e. execute the steps (fresh session each) on the shared branch;
-   *   f. per-track auto-fix over the track's diff;
-   *   g. summarize the handoff for the next track.
+   *   f. per-thread auto-fix over the thread's diff;
+   *   g. summarize the handoff for the next thread.
    */
   private async runThread(
     job: Job,
@@ -413,13 +413,13 @@ export class ThreadDriver implements JobDispatcher {
     route: JobRoute,
     repo: ResolvedRepo,
     sandbox: FeatureSandbox,
-    track: DriverThread,
+    thread: DriverThread,
     handoffIn: string | null,
   ): Promise<string | null> {
-    this.logger.log(`track ${track.ordinal} "${track.brief}" — planning`);
+    this.logger.log(`thread ${thread.ordinal} "${thread.brief}" — planning`);
     await this.post(
       route,
-      `:hammer_and_wrench: Planning track — *${track.brief}*`,
+      `:hammer_and_wrench: Planning thread — *${thread.brief}*`,
     );
 
     // a. PLAN (just-in-time) — or reuse the locked plan on a resume (steps already exist).
@@ -427,14 +427,14 @@ export class ThreadDriver implements JobDispatcher {
       job,
       record,
       sandbox,
-      track,
+      thread,
       handoffIn,
     );
 
     // b. REVIEW → revise once (only when freshly planned this run; a resumed lock skips it).
     //    (The locked step ROWS are the source of truth; review only reshapes a fresh plan's prose.)
     if (planned)
-      await this.reviewPlan(record, track, handoffIn, planned, job.orgId);
+      await this.reviewPlan(record, thread, handoffIn, planned, job.orgId);
 
     // The plan view the gate + visibility read — derived from the locked step rows (resume-safe).
     const planView = steps.map(asPlannedStep);
@@ -444,7 +444,7 @@ export class ThreadDriver implements JobDispatcher {
       job,
       route,
       record,
-      track,
+      thread,
       planView,
     );
 
@@ -453,7 +453,7 @@ export class ThreadDriver implements JobDispatcher {
       channel: route.channel ?? '',
       ...(route.threadTs ? { threadTs: route.threadTs } : {}),
       ...(route.orgId ? { orgId: route.orgId } : {}),
-      title: track.brief,
+      title: thread.brief,
       plan: renderPlan(planView),
       decisions: classifications,
     });
@@ -462,20 +462,20 @@ export class ThreadDriver implements JobDispatcher {
     const sectionStartSha = await this.git
       .headSha(sandbox.worktreePath)
       .catch(() => undefined);
-    await this.store.setThreadStatus(track.id, 'executing');
-    const reports = await this.executeSteps(job, route, sandbox, track, record);
+    await this.store.setThreadStatus(thread.id, 'executing');
+    const reports = await this.executeSteps(job, route, sandbox, thread, record);
 
-    // f. AUTO-FIX — fan-out review → fix over this track's diff.
-    await this.store.setThreadStatus(track.id, 'auto_fixing');
+    // f. AUTO-FIX — fan-out review → fix over this thread's diff.
+    await this.store.setThreadStatus(thread.id, 'auto_fixing');
     // Seed the review agents at `pending` so the navigator shows them queued; the stage's onLensStatus hook
     // transitions each as it runs, and the `finally` resolves any left pending/running (empty diff / throw).
-    // `reviewAgentsForThread` selects by track type; the domain `DriverThread` doesn't carry it, and the
+    // `reviewAgentsForThread` selects by thread type; the domain `DriverThread` doesn't carry it, and the
     // selection is a fixed set today, so call it argless (it ignores the arg).
     const reviewAgents = reviewAgentsForThread().map((a) => ({
       ...a,
       status: 'pending' as const,
     }));
-    await this.store.seedReviewAgents(track.id, reviewAgents);
+    await this.store.seedReviewAgents(thread.id, reviewAgents);
     let lensesRun: string[] = [];
     try {
       const summary = await this.autofix.autofixThread(
@@ -483,8 +483,8 @@ export class ThreadDriver implements JobDispatcher {
           worktreePath: sandbox.worktreePath,
           sandboxKey: sandboxKey(sandbox),
           ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
-          intent: `${record?.overview ?? ''}\n\nSection: ${track.brief}`.trim(),
-          label: track.brief,
+          intent: `${record?.overview ?? ''}\n\nSection: ${thread.brief}`.trim(),
+          label: thread.brief,
           ...(sandbox.containerId
             ? {
                 containerId: sandbox.containerId,
@@ -495,7 +495,7 @@ export class ThreadDriver implements JobDispatcher {
         {
           onLensStatus: (lensId, status, findings) => {
             void this.store
-              .setReviewAgentStatus(track.id, lensId, status, findings)
+              .setReviewAgentStatus(thread.id, lensId, status, findings)
               .catch((err) =>
                 this.logger.warn(
                   `review-agent status write failed (ignored): ${err}`,
@@ -506,72 +506,72 @@ export class ThreadDriver implements JobDispatcher {
       );
       lensesRun = summary.lensesRun;
     } catch (err) {
-      this.logger.warn(`track auto-fix failed (continuing): ${err}`);
+      this.logger.warn(`thread auto-fix failed (continuing): ${err}`);
     } finally {
       // Resolve any agent still pending/running: passed if its lens ran, else skipped. Never leave a stuck
-      // pending/running agent once the track leaves auto_fixing.
+      // pending/running agent once the thread leaves auto_fixing.
       await this.store
-        .finalizeReviewAgents(track.id, lensesRun)
+        .finalizeReviewAgents(thread.id, lensesRun)
         .catch((err) =>
           this.logger.warn(`review-agent finalize failed (ignored): ${err}`),
         );
     }
-    // Passive milestone: auto-fix is a transient stage (track status is overwritten to `done` next), so
+    // Passive milestone: auto-fix is a transient stage (thread status is overwritten to `done` next), so
     // the net-state snapshot can't reconstruct that it ran — record it explicitly for the brain.
     await this.recordMilestone(
       job.id,
-      `track:${track.id}:autofix`,
-      `Auto-fix pass applied over the diff for track "${track.brief}".`,
+      `thread:${thread.id}:autofix`,
+      `Auto-fix pass applied over the diff for thread "${thread.brief}".`,
     );
 
-    // g. HANDOFF — summarize what this track produced for the next.
+    // g. HANDOFF — summarize what this thread produced for the next.
     const handoffOut = await this.summarizeHandoff(
-      track,
+      thread,
       steps,
       reports,
       job.orgId,
     );
-    await this.store.setThreadHandoffOut(track.id, handoffOut);
-    await this.store.setThreadStatus(track.id, 'done');
-    this.logger.log(`track ${track.ordinal} done`);
+    await this.store.setThreadHandoffOut(thread.id, handoffOut);
+    await this.store.setThreadStatus(thread.id, 'done');
+    this.logger.log(`thread ${thread.ordinal} done`);
     await this.recordMilestone(
       job.id,
-      `track:${track.id}:done`,
-      `Track "${track.brief}" finished building.`,
+      `thread:${thread.id}:done`,
+      `Thread "${thread.brief}" finished building.`,
     );
-    await this.post(route, `:white_check_mark: Track done — *${track.brief}*`);
+    await this.post(route, `:white_check_mark: Thread done — *${thread.brief}*`);
     return handoffOut;
   }
 
   /**
-   * Produce (or resume) the track's locked steps. On a fresh run: an engine PLAN turn in the sandbox
+   * Produce (or resume) the thread's locked steps. On a fresh run: an engine PLAN turn in the sandbox
    * grounded in the record + handoff → the planner LLM shapes the step list (fallback: a single step
-   * whose brief is the track brief) → persisted. On a resume: the steps already exist, so reuse them
+   * whose brief is the thread brief) → persisted. On a resume: the steps already exist, so reuse them
    * (returns `planned: undefined` to signal "no re-review needed").
    */
   private async planThread(
     job: Job,
     record: DecisionRecord | null,
     sandbox: FeatureSandbox,
-    track: DriverThread,
+    thread: DriverThread,
     handoffIn: string | null,
   ): Promise<{ steps: Step[]; planned: PlannedStep[] | null }> {
-    const existing = await this.store.stepsForThread(track.id);
+    const existing = await this.store.stepsForThread(thread.id);
     if (existing.length > 0) {
       this.logger.log(
-        `track ${track.ordinal}: ${existing.length} step(s) already locked — resuming`,
+        `thread ${thread.ordinal}: ${existing.length} step(s) already locked — resuming`,
       );
       return { steps: existing, planned: null };
     }
 
-    await this.store.setThreadStatus(track.id, 'planning');
+    await this.store.setThreadStatus(thread.id, 'planning');
 
     // An engine PLAN turn explores the worktree read-only; its plan text grounds the structured planner.
     // The full plan (plan.md, decisions, diagrams) lives in /context/specs — the plan turn reads it there.
     const planInput = {
       overview: record?.overview ?? '',
       decisions: record?.decisions ?? [],
-      brief: track.brief,
+      brief: thread.brief,
       handoffIn,
       orgId: job.orgId,
     };
@@ -584,67 +584,67 @@ export class ThreadDriver implements JobDispatcher {
         sandbox,
         engine: 'claude',
         mode: 'plan',
-        systemPrompt: TRACK_PLAN_SYSTEM,
+        systemPrompt: THREAD_PLAN_SYSTEM,
         task: renderPlanTask(planInput),
         auth: await this.creds.engineAuth(job.orgId, 'claude'),
       },
-      `track ${track.ordinal} plan turn`,
+      `thread ${thread.ordinal} plan turn`,
     ).catch((err) => {
       this.logger.warn(
-        `track ${track.ordinal} plan turn failed (continuing): ${err}`,
+        `thread ${thread.ordinal} plan turn failed (continuing): ${err}`,
       );
       return undefined;
     });
 
     const planned = (
       (await this.planner.planThread(planInput).catch(() => undefined)) ??
-      fallbackSteps(track.brief, planTurn?.planText ?? planTurn?.report)
+      fallbackSteps(thread.brief, planTurn?.planText ?? planTurn?.report)
     ).slice(0, this.maxStepsPerThread);
 
-    await this.store.setThreadPlan(track.id, renderPlan(planned), handoffIn);
-    const steps = await this.store.lockSteps(track, planned);
+    await this.store.setThreadPlan(thread.id, renderPlan(planned), handoffIn);
+    const steps = await this.store.lockSteps(thread, planned);
     return { steps, planned };
   }
 
   /**
    * ONE Codex-style review → revise pass over the freshly-drafted plan (a clean single loop). When the
-   * reviewer returns a revision it RE-PERSISTS the track's plan prose; the locked step rows stay the
+   * reviewer returns a revision it RE-PERSISTS the thread's plan prose; the locked step rows stay the
    * execution source of truth (they're already gap-numbered + resumable). Best-effort — a failed review
    * leaves the original plan.
    */
   private async reviewPlan(
     record: DecisionRecord | null,
-    track: DriverThread,
+    thread: DriverThread,
     handoffIn: string | null,
     draft: PlannedStep[],
     orgId?: string,
   ): Promise<void> {
-    await this.store.setThreadStatus(track.id, 'reviewing');
+    await this.store.setThreadStatus(thread.id, 'reviewing');
     const revised = await this.planner
       .reviewPlan({
         overview: record?.overview ?? '',
         decisions: record?.decisions ?? [],
-        brief: track.brief,
+        brief: thread.brief,
         handoffIn,
         draft,
         ...(orgId ? { orgId } : {}),
       })
       .catch(() => undefined);
     if (revised)
-      await this.store.setThreadPlan(track.id, renderPlan(revised), handoffIn);
+      await this.store.setThreadPlan(thread.id, renderPlan(revised), handoffIn);
   }
 
   /**
    * The DECISION GATE (W5). Mine the plan for notable decisions, classify each against the record. An
-   * uncovered always-ask (`verdict === 'ask'`) PARKS the track: post the question in-thread and AWAIT
-   * the human (the track suspends; resumable across restart). Covered/proceed continue. Returns the
+   * uncovered always-ask (`verdict === 'ask'`) PARKS the thread: post the question in-thread and AWAIT
+   * the human (the thread suspends; resumable across restart). Covered/proceed continue. Returns the
    * non-ask classifications for the visibility post.
    */
   private async gateSection(
     job: Job,
     route: JobRoute,
     record: DecisionRecord | null,
-    track: DriverThread,
+    thread: DriverThread,
     planned: PlannedStep[],
   ): Promise<DecisionClassification[]> {
     const decisions =
@@ -652,8 +652,8 @@ export class ThreadDriver implements JobDispatcher {
         .extractDecisions({
           overview: record?.overview ?? '',
           decisions: record?.decisions ?? [],
-          brief: track.brief,
-          handoffIn: track.handoffIn,
+          brief: thread.brief,
+          handoffIn: thread.handoffIn,
           steps: planned,
           orgId: job.orgId,
         })
@@ -667,9 +667,9 @@ export class ThreadDriver implements JobDispatcher {
         job.orgId,
       );
       if (c.verdict === 'ask') {
-        await this.store.setThreadStatus(track.id, 'awaiting_approval');
+        await this.store.setThreadStatus(thread.id, 'awaiting_approval');
         this.logger.log(
-          `track ${track.ordinal} parks on: ${proposed.description}`,
+          `thread ${thread.ordinal} parks on: ${proposed.description}`,
         );
         const handle = await this.park.ask(
           {
@@ -677,9 +677,9 @@ export class ThreadDriver implements JobDispatcher {
             ...(route.threadTs ? { threadTs: route.threadTs } : {}),
             ...(route.orgId ? { orgId: route.orgId } : {}),
           },
-          parkQuestion(track.brief, proposed.description, c.reason),
+          parkQuestion(thread.brief, proposed.description, c.reason),
         );
-        // AWAIT the human — the track is suspended here, the process is not. Bounded by a wall-clock
+        // AWAIT the human — the thread is suspended here, the process is not. Bounded by a wall-clock
         // budget so an unanswered park can't hang the build forever (the job/step timeouts don't cover a
         // park, which is between steps): on expiry it throws → the job fails + relays (issue #2/#3).
         const answer = await this.awaitAnswer(
@@ -687,14 +687,14 @@ export class ThreadDriver implements JobDispatcher {
           proposed.description,
         );
         this.logger.log(
-          `track ${track.ordinal} unparked: ${answer.text.slice(0, 80)}`,
+          `thread ${thread.ordinal} unparked: ${answer.text.slice(0, 80)}`,
         );
         // Passive milestone: a guard parked on a decision and the human answered it — a transient moment
-        // the net-state snapshot can't reconstruct (the track status moves on). Deduped by the decision.
+        // the net-state snapshot can't reconstruct (the thread status moves on). Deduped by the decision.
         await this.recordMilestone(
           job.id,
-          `track:${track.id}:gate:${proposed.description.slice(0, 60)}`,
-          `While planning track "${track.brief}" a decision was raised and the operator answered it: ${proposed.description}`,
+          `thread:${thread.id}:gate:${proposed.description.slice(0, 60)}`,
+          `While planning thread "${thread.brief}" a decision was raised and the operator answered it: ${proposed.description}`,
         );
         // The human answered → treat the always-ask as now-settled and continue (it was visible + ruled).
       } else {
@@ -759,10 +759,10 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * Execute a track's steps. A fresh-context step packs the ordered steps into execution BATCHES —
+   * Execute a thread's steps. A fresh-context step packs the ordered steps into execution BATCHES —
    * one engine session per batch (fewer sessions than one-per-step, but bounded by `maxStepsPerBatch`
-   * so a batch can't swallow a large track and lose the small-context safety). The grouping is
-   * assigned + PERSISTED (`batch_ordinal`) the first time the track runs and reused verbatim on
+   * so a batch can't swallow a large thread and lose the small-context safety). The grouping is
+   * assigned + PERSISTED (`batch_ordinal`) the first time the thread runs and reused verbatim on
    * resume, so a restarted/halted batch re-groups identically (the resume cursor keys off the batch's
    * anchor-step `session_id`). Each batch: fresh session in the SAME worktree → verify → ONE commit →
    * mark every step in it done. Returns one report per batch.
@@ -771,17 +771,17 @@ export class ThreadDriver implements JobDispatcher {
     job: Job,
     route: JobRoute,
     sandbox: FeatureSandbox,
-    track: DriverThread,
+    thread: DriverThread,
     record: DecisionRecord | null,
   ): Promise<string[]> {
-    let steps = await this.store.stepsForThread(track.id);
+    let steps = await this.store.stepsForThread(thread.id);
 
-    // First execute of this track (a not-yet-run step is still un-batched): ask the planner how to
+    // First execute of this thread (a not-yet-run step is still un-batched): ask the planner how to
     // pack the ordered steps, run it through the deterministic guardrail, and PERSIST the grouping over
     // ALL steps. On resume every step already has a batch_ordinal → skip the LLM and re-group from the
     // stored values (stable membership — the in-flight engine session keeps the same task on restart).
     if (steps.some((p) => p.status !== 'done' && p.batchOrdinal == null)) {
-      // ORCHESTRATE: the whole track is ONE batch (one orchestrator session that owns the fan-out) — no
+      // ORCHESTRATE: the whole thread is ONE batch (one orchestrator session that owns the fan-out) — no
       // LLM batcher, no per-step split. LEGACY: ask the planner how to pack the ordered steps, run it
       // through the deterministic guardrail. Either way the grouping is PERSISTED over ALL steps so a
       // resume re-groups identically.
@@ -793,7 +793,7 @@ export class ThreadDriver implements JobDispatcher {
               .batchSteps({
                 steps: steps.map(asPlannedStep),
                 overview: record?.overview ?? '',
-                brief: track.brief,
+                brief: thread.brief,
                 orgId: job.orgId,
               })
               .catch(() => undefined),
@@ -804,10 +804,10 @@ export class ThreadDriver implements JobDispatcher {
       );
       await this.store.setBatchOrdinals(assignments);
       this.logger.log(
-        `track ${track.ordinal}: ${steps.length} step(s) packed into ${groups.length} batch(es)` +
+        `thread ${thread.ordinal}: ${steps.length} step(s) packed into ${groups.length} batch(es)` +
           (this.orchestrate ? ' (orchestrate)' : ''),
       );
-      steps = await this.store.stepsForThread(track.id);
+      steps = await this.store.stepsForThread(thread.id);
     }
 
     // Group the NOT-done steps by their persisted batch_ordinal (done steps fast-forward on resume).
@@ -838,7 +838,7 @@ export class ThreadDriver implements JobDispatcher {
         continue;
       }
       reports.push(
-        await this.runBatch(job, route, sandbox, track, record, batch),
+        await this.runBatch(job, route, sandbox, thread, record, batch),
       );
     }
     return reports;
@@ -875,7 +875,7 @@ export class ThreadDriver implements JobDispatcher {
     job: Job,
     route: JobRoute,
     sandbox: FeatureSandbox,
-    track: DriverThread,
+    thread: DriverThread,
     record: DecisionRecord | null,
     steps: Step[],
   ): Promise<string> {
@@ -885,11 +885,11 @@ export class ThreadDriver implements JobDispatcher {
         ? (anchor.title ?? anchor.brief ?? `step ${anchor.ordinal}`)
         : `${steps.length} steps (${steps.map((p) => p.title ?? `#${p.ordinal}`).join(', ')})`;
     this.logger.log(
-      `track ${track.ordinal} batch [${steps.map((p) => p.ordinal).join(',')}] — building`,
+      `thread ${thread.ordinal} batch [${steps.map((p) => p.ordinal).join(',')}] — building`,
     );
     for (const p of steps)
       await this.store.setStepState(p.id, 'build', 'building');
-    await this.post(route, `:gear: ${track.brief} — building: ${label}`);
+    await this.post(route, `:gear: ${thread.brief} — building: ${label}`);
 
     // The build turn rides the shared transcript spine on its own `phase:<anchorStepId>` lane, tagging every
     // durable block with `phaseId` so the web peels it into the step sub-page (like a subagent). A batch is
@@ -901,13 +901,13 @@ export class ThreadDriver implements JobDispatcher {
     // The instruction the engine receives — the build turn's "first message". Computed once here so it
     // can both kick off the turn AND be persisted on the anchor row (the web renders it like a subagent's
     // Task prompt, so the step transcript shows what was asked, not just the engine's reply).
-    const task = renderBatchTask(record, track, steps, this.orchestrate);
+    const task = renderBatchTask(record, thread, steps, this.orchestrate);
     // Synthetic anchor row at batch START — the in-conversation `BuildStepCard` latches onto this (a phase
     // has no spawning Task tool block), and it sorts the card at the batch's chronological position.
     await this.blockSink
       .appendBlock(job.id, {
         kind: 'build_anchor',
-        text: `${track.brief} — ${label}`,
+        text: `${thread.brief} — ${label}`,
         meta: {
           phaseId: anchor.id,
           ...(batchOrdinal != null ? { batchOrdinal } : {}),
@@ -982,13 +982,13 @@ export class ThreadDriver implements JobDispatcher {
     // ONE commit for the whole batch onto the shared feature branch.
     const sha = await this.git.commitAll(
       sandbox.worktreePath,
-      `${track.brief} — ${steps.map((p) => p.title ?? `step ${p.ordinal}`).join(' + ')}`,
+      `${thread.brief} — ${steps.map((p) => p.title ?? `step ${p.ordinal}`).join(' + ')}`,
     );
     this.logger.log(`batch committed ${sha ? sha.slice(0, 8) : '(nothing)'}`);
 
     // Atomic-resume marker (#6): stamp the commit on the ANCHOR step FIRST, then flip the steps to done.
     // A crash between the two ⇒ resume sees the commit_sha and fast-forwards (executeSteps) instead of
-    // re-running the whole track against an already-committed tree. Empty sha (nothing changed) still
+    // re-running the whole thread against an already-committed tree. Empty sha (nothing changed) still
     // marks complete so the batch never re-runs. `NOTHING` is the sentinel for an empty commit.
     await this.store.setStepCommit(anchor.id, sha || NOTHING_COMMITTED);
     for (const p of steps) await this.store.setStepState(p.id, 'done', 'done');
@@ -996,7 +996,7 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * PR-TAIL. After all tracks: one auto-fix pass over the WHOLE accumulated diff, push the branch,
+   * PR-TAIL. After all threads: one auto-fix pass over the WHOLE accumulated diff, push the branch,
    * open ONE PR per feature (idempotent — a re-run finds the existing PR), record the url, mark the job
    * done, and post "PR ready" in-thread. Sections stacked on one branch ⇒ one PR.
    */
@@ -1008,7 +1008,7 @@ export class ThreadDriver implements JobDispatcher {
     sandbox: FeatureSandbox,
   ): Promise<void> {
     this.logger.log(
-      `job=${job.id} all tracks done — promoting decisions + shipping`,
+      `job=${job.id} all threads done — promoting decisions + shipping`,
     );
     // Promote durable decisions into `.atlas/decisions/` BEFORE shipping, so they ride the build commit.
     // Resumable + idempotent: a re-entered `finishWithPr` (driver resume) just re-promotes/overwrites.
@@ -1093,9 +1093,9 @@ export class ThreadDriver implements JobDispatcher {
     return ensured.sandbox;
   }
 
-  /** Summarize a track's handoff (LLM, with a terse rule-based fallback). */
+  /** Summarize a thread's handoff (LLM, with a terse rule-based fallback). */
   private async summarizeHandoff(
-    track: DriverThread,
+    thread: DriverThread,
     steps: Step[],
     reports: string[],
     orgId?: string,
@@ -1103,7 +1103,7 @@ export class ThreadDriver implements JobDispatcher {
     const planned = steps.map(asPlannedStep);
     const llm = await this.planner
       .handoff({
-        brief: track.brief,
+        brief: thread.brief,
         steps: planned,
         reports,
         ...(orgId ? { orgId } : {}),
@@ -1111,7 +1111,7 @@ export class ThreadDriver implements JobDispatcher {
       .catch(() => undefined);
     if (llm) return llm;
     const built = steps.map((p) => p.title ?? p.brief).join('; ');
-    return `Track "${track.brief}" complete. Built: ${built || '(see commits)'}.`;
+    return `Thread "${thread.brief}" complete. Built: ${built || '(see commits)'}.`;
   }
 
   /** Post into the job's thread (best-effort — visibility never breaks the pipeline). */
@@ -1130,9 +1130,9 @@ export class ThreadDriver implements JobDispatcher {
 
 // ── pure render helpers ──────────────────────────────────────────────────────────────────────────
 
-const TRACK_PLAN_SYSTEM =
-  'You are Atlas planning ONE track of an approved feature. Explore the codebase read-only and produce ' +
-  'a concrete phased plan for this track, respecting the locked decision record. Do not write any files. ' +
+const THREAD_PLAN_SYSTEM =
+  'You are Atlas planning ONE thread of an approved feature. Explore the codebase read-only and produce ' +
+  'a concrete phased plan for this thread, respecting the locked decision record. Do not write any files. ' +
   'DOCS BEFORE GREP: if the repo has orienting docs (CLAUDE.md, AGENTS.md, README.md, ARCHITECTURE.md, ' +
   'CONTRIBUTING.md, docs/), read those FIRST to skip a grep-storm rediscovering where things live and how ' +
   'this codebase does things, then Grep/Read to confirm the exact files you will touch. Docs may be stale — ' +
@@ -1187,7 +1187,7 @@ const BATCH_EXECUTE_SYSTEM =
 const NOTHING_COMMITTED = '(nothing)';
 
 // Orchestrator note — the LIVE task list. The orchestrator maintains its decomposition via the task tools
-// so the operator can watch progress in the navigator (which derives the per-track checklist from these
+// so the operator can watch progress in the navigator (which derives the per-thread checklist from these
 // calls). Used by ORCHESTRATE_EXECUTE_SYSTEM.
 const ORCHESTRATOR_TASKLIST_NOTE =
   ' Maintain a LIVE TASK LIST as your visible decomposition: at kickoff `TaskCreate` one task per unit of ' +
@@ -1204,10 +1204,10 @@ const ORCHESTRATOR_SUBAGENTS_NOTE =
   '`explore` (trace the code/own docs), `docs` (external library docs), `review` (a second pass on a ' +
   'diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw logs).';
 
-// The PER-TRACK ORCHESTRATOR system prompt (orchestrate mode): one Opus session owns the whole track and
+// The PER-THREAD ORCHESTRATOR system prompt (orchestrate mode): one Opus session owns the whole thread and
 // fans the implementation out to writer subagents, integrating + verifying as it goes.
 const ORCHESTRATE_EXECUTE_SYSTEM =
-  'You are Atlas, the ORCHESTRATOR for ONE track of an approved plan, working in a feature worktree. The ' +
+  'You are Atlas, the ORCHESTRATOR for ONE thread of an approved plan, working in a feature worktree. The ' +
   'steps below are your plan and your suggested decomposition — YOU own the fan-out. For each step (or a ' +
   'cluster of tightly-related steps), DELEGATE the actual file changes to a writer subagent via the Task ' +
   'tool — `implement` (Opus) for code that needs judgment, `implement-fast` (Sonnet) for mechanical, ' +
@@ -1240,23 +1240,23 @@ function renderPlanTask(input: {
         .join('\n')
     : '(none)';
   const handoff = input.handoffIn
-    ? `\n\nPrior track handoff:\n${input.handoffIn}`
+    ? `\n\nPrior thread handoff:\n${input.handoffIn}`
     : '';
   return [
     `Feature overview:\n${input.overview}`,
     `\nLocked decisions (respect these):\n${decisions}`,
-    `\nPlan THIS track:\n${input.brief}${handoff}`,
+    `\nPlan THIS thread:\n${input.brief}${handoff}`,
     '\nYour grounding is the READ-ONLY directory `/context/specs/` (a folder, not a file): read its' +
-      " `plan.md` index, this track's `sections/NN-*.md` file, and `data-model.md` before planning steps.",
+      " `plan.md` index, this thread's `sections/NN-*.md` file, and `data-model.md` before planning steps.",
     '\nProduce an ordered list of steps. Do not write files.',
   ].join('\n');
 }
 
 /** Render the execute task for a BATCH of 1+ ordered steps (the unit a single fresh session runs).
- *  In orchestrate mode the batch is the WHOLE track and the steps are the orchestrator's fan-out menu. */
+ *  In orchestrate mode the batch is the WHOLE thread and the steps are the orchestrator's fan-out menu. */
 function renderBatchTask(
   record: DecisionRecord | null,
-  track: DriverThread,
+  thread: DriverThread,
   steps: Step[],
   orchestrate = false,
 ): string {
@@ -1271,18 +1271,18 @@ function renderBatchTask(
     )
     .join('\n\n');
   const intro = orchestrate
-    ? `Implement this track. The ${steps.length} step(s) below are your plan + suggested decomposition` +
+    ? `Implement this thread. The ${steps.length} step(s) below are your plan + suggested decomposition` +
       ' — delegate them IN ORDER to writer subagents (one at a time), making small edits yourself where' +
-      ' a subagent would be overkill, then verify the whole track:'
+      ' a subagent would be overkill, then verify the whole thread:'
     : steps.length === 1
       ? 'Implement this step:'
       : `Implement these ${steps.length} steps IN ORDER (each builds on the previous):`;
   return [
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
-    `\nThread: ${track.brief}`,
+    `\nThread: ${thread.brief}`,
     `\nYour grounding is the READ-ONLY directory \`/context/specs/\` (a folder): read its \`plan.md\`` +
-      ` index, this track's \`sections/NN-*.md\` file, and \`data-model.md\`. Make ALL code changes under` +
+      ` index, this thread's \`sections/NN-*.md\` file, and \`data-model.md\`. Make ALL code changes under` +
       ` \`/workspace\` — never edit anything in \`/context\`.`,
     `\n${intro}\n\n${blocks}`,
   ].join('\n');

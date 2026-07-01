@@ -9,11 +9,11 @@ import { ParkAndAskService } from './park-and-ask.service';
 import { PlanVisibilityService } from './plan-visibility.service';
 
 /**
- * W5 — the DECISION-CLASS GATE module. Bundles the three W5 services so W4's track driver can import
+ * W5 — the DECISION-CLASS GATE module. Bundles the three W5 services so W4's thread driver can import
  * one module:
  *   - `DecisionClassifier` — always-ask / never-ask / covered classification (rules + LLM fallback);
- *   - `ParkAndAskService` — park a track & ask in-thread, resolve on the human's reply;
- *   - `PlanVisibilityService` — post a track's plan for non-blocking visibility.
+ *   - `ParkAndAskService` — park a thread & ask in-thread, resolve on the human's reply;
+ *   - `PlanVisibilityService` — post a thread's plan for non-blocking visibility.
  *
  * The classifier's ambiguous-case LLM is bound behind `CLASSIFIER_LLM` (a declarative chain on a cheap
  * hardcoded Haiku, keyed off `ANTHROPIC_API_KEY`; key-less → returns undefined → gate defaults to

@@ -272,9 +272,9 @@ export interface IEnvConfig {
   // PARK_TIMEOUT_MS: how long a mid-build park waits for the human before it fails + relays
   // (a park is between phases, so the phase/job timeouts don't cover it). Default 3600000 (60 min).
   PARK_TIMEOUT_MS?: number;
-  // ORCHESTRATE_TRACKS: run each track as ONE orchestrator session that fans implementation out to
+  // ORCHESTRATE_THREADS: run each thread as ONE orchestrator session that fans implementation out to
   // writer subagents (default ON). Set to "off" to fall back to the legacy LLM-batched per-step path.
-  ORCHESTRATE_TRACKS?: string;
+  ORCHESTRATE_THREADS?: string;
   // ── Atlas v2 scoping / grill (W3 — issue #1 tuning) ──────────────────────────────────────────
   // SCOPING_MODE: how the brain investigates the repo to GROUND the grill. 'read_only_tools'
   // (default) runs a strict read-only engine pass (Read/Glob/Grep, no Bash) over the clone; 'native_plan'
@@ -472,7 +472,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   PHASE_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   JOB_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   PARK_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
-  ORCHESTRATE_TRACKS: Joi.string().optional(),
+  ORCHESTRATE_THREADS: Joi.string().optional(),
   // Atlas v2 scoping / grill (W3 — issue #1)
   SCOPING_MODE: Joi.string().valid('read_only_tools', 'native_plan').optional(),
   SCOPING_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),

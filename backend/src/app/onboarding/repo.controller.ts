@@ -63,7 +63,7 @@ export class RepoController {
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
   ) {}
 
   @Post()
@@ -89,7 +89,7 @@ export class RepoController {
       order: { created_at: 'ASC' },
     });
     // One grouped count for the whole org's repos (drives the disconnect gate + UI badge).
-    const counts = await this.threads
+    const counts = await this.jobs
       .createQueryBuilder('t')
       .select('t.repo_id', 'repoId')
       .addSelect('COUNT(*)', 'count')
@@ -112,7 +112,7 @@ export class RepoController {
   }
 
   /**
-   * `GET …/repos/:repoId/branches` — the repo's branches (default first) for the create-thread
+   * `GET …/repos/:repoId/branches` — the repo's branches (default first) for the create-job
    * base-branch picker. Any member can read (creating threads is a member action).
    */
   @Get(':repoId/branches')

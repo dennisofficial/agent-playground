@@ -20,8 +20,13 @@ import { useEffect, useRef, useState } from 'react';
  *
  * Pass a `deps` array that changes whenever new content lands (block count, a streamed-text length
  * signature, an "is streaming" flag) — the re-scroll fires on those changes, mirroring the conversation.
+ *
+ * `pin` overrides HOW we snap to the bottom. The default (`endRef.scrollIntoView`) assumes every row above
+ * is real DOM so `scrollHeight` is exact. A VIRTUALIZED caller (the main conversation) renders off-screen
+ * rows with ESTIMATED heights, so `scrollIntoView` can land short — it passes a `pin` that drives the
+ * virtualizer's own scroll-to-index instead. When `pin` is set it also backs `jumpToLatest`.
  */
-export function useTailFollow(deps: React.DependencyList) {
+export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   // Whether the view is "tailing" — pinned at (or near) the bottom. We only auto-scroll on new content
@@ -46,11 +51,14 @@ export function useTailFollow(deps: React.DependencyList) {
   const jumpToLatest = () => {
     stuckToBottom.current = true;
     setShowJump(false);
-    endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    if (pin) pin();
+    else endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   };
 
   useEffect(() => {
-    if (stuckToBottom.current) endRef.current?.scrollIntoView({ block: 'end' });
+    if (!stuckToBottom.current) return;
+    if (pin) pin();
+    else endRef.current?.scrollIntoView({ block: 'end' });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are supplied by the caller (content signal)
   }, deps);
 

@@ -291,7 +291,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await store.latestAnsweredQuestionCard(jobId)).toBeNull();
   }, 30_000);
 
-  it('persistPlan with stepsByThread locks step rows + sets track.plan; clears them on re-propose; omitting it creates none', async () => {
+  it('persistPlan with stepsByThread locks step rows + sets thread.plan; clears them on re-propose; omitting it creates none', async () => {
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
          VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
@@ -333,7 +333,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       ],
     });
 
-    // Step rows locked: 2 under the first track, 1 under the second, gap-numbered + pending/build.
+    // Step rows locked: 2 under the first thread, 1 under the second, gap-numbered + pending/build.
     const phases1 = await phasesFor(dataSource, jobId);
     expect(phases1.map((p) => p.brief)).toEqual([
       'add the entity at server.entity.ts:1',
@@ -341,7 +341,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       'add the page at page.tsx:1',
     ]);
     expect(phases1.every((p) => p.status === 'pending' && p.stage === 'build')).toBe(true);
-    // track.plan is set on BOTH threads (so the pipeline view reports hasPlan).
+    // thread.plan is set on BOTH threads (so the pipeline view reports hasPlan).
     const plans1 = await sectionPlans(dataSource, jobId);
     expect(plans1.every((p) => p != null && p.length > 0)).toBe(true);
 
@@ -361,7 +361,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
     expect(await phasesFor(dataSource, jobId)).toHaveLength(0);
     const plans2 = await sectionPlans(dataSource, jobId);
-    expect(plans2).toEqual([null]); // one track, no plan (no authored steps this time)
+    expect(plans2).toEqual([null]); // one thread, no plan (no authored steps this time)
   }, 30_000);
 
   it('the human-input gate: openQuestion stacks (counter), markQuestionAnswered is atomic/idempotent, answered→delivered drives boot recovery', async () => {

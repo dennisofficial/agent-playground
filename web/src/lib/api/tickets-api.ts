@@ -6,7 +6,7 @@ import { fetchWithRefresh } from './refresh';
 /**
  * The per-repo board/backlog web API (`/web/orgs/:orgId/repos/:repoId/tickets/...`). Credentialed via the
  * session cookie + `fetchWithRefresh` (re-ups an expired access cookie, retries once). Mirrors the
- * thread-api contract; the backend list is enriched with `blocked` / `blockedBy` / `linkedThreadId` so the
+ * job-api contract; the backend list is enriched with `blocked` / `blockedBy` / `linkedThreadId` so the
  * board renders without N detail fetches.
  */
 

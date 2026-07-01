@@ -1,15 +1,15 @@
 /**
  * The work model. A THREAD is the unit of work: ONE intent (a feature or a bugfix) = one sandbox =
  * one worktree = one feature branch = ONE PR. A thread may stay a plain conversation (`open`) or enter
- * the build lifecycle. When it builds, it owns an ordered list of TRACKS (e.g. backend → frontend →
- * devops); a bugfix is a 1-track / 1-step build, a feature is many — same deterministic driver.
+ * the build lifecycle. When it builds, it owns an ordered list of THREADS (e.g. backend → frontend →
+ * devops); a bugfix is a 1-thread / 1-step build, a feature is many — same deterministic driver.
  * Sections stack on the one feature branch; steps run as sequential FRESH sessions on that branch.
  *
  * Two-level planning: (1) upfront, once — Atlas grills Dennis → a locked `DecisionRecord` + the
- * high-level track list, approved once; (2) per-track, just-in-time — a detailed phased plan, with
+ * high-level thread list, approved once; (2) per-thread, just-in-time — a detailed phased plan, with
  * steps LOCKING once planned. The "dynamism" is the data (the list), not improvised control flow.
  *
- * These are the in-memory shapes (kept separate from the `threads` / `messages` / `tracks` / `steps`
+ * These are the in-memory shapes (kept separate from the `threads` / `messages` / `threads` / `steps`
  * rows). Threads are isolated for context hygiene — cross-thread coherence is SHARED MEMORY only, never
  * transcript sharing; one `messages` table is partitioned by `job_id`.
  */
@@ -56,7 +56,7 @@ export function deriveNeedsYou(
 }
 
 /**
- * Whether the thread builds a multi-track feature or a single-track bugfix (both run the same driver), or
+ * Whether the thread builds a multi-thread feature or a single-thread bugfix (both run the same driver), or
  * is a one-off `'onboarding'` thread that initialises a newly-connected repo (the Atlas-run `claude init`:
  * discovers env/secrets/setup + authors `.atlas/worktree.json`). An onboarding thread never builds/PRs via
  * the driver — its tools are gated and it has its own mission prompt.
@@ -84,7 +84,7 @@ export interface Job {
   status: JobStatus;
   /** The locked decision record's id (null until the upfront grill produces one). */
   decisionRecordId: string | null;
-  /** The feature branch all tracks stack on (null until the branch is cut). */
+  /** The feature branch all threads stack on (null until the branch is cut). */
   featureBranch: string | null;
   /** The opened PR url (null until the PR-tail stage opens one). */
   prUrl: string | null;
@@ -111,32 +111,32 @@ export interface Message {
   createdAt: Date;
 }
 
-/** A track's lifecycle — explicit, resumable. The driver `await`s each transition. */
+/** A thread's lifecycle — explicit, resumable. The driver `await`s each transition. */
 export type ThreadStatus =
   | 'pending' // not started
   | 'planning' // detailed phased plan being generated
   | 'reviewing' // Codex plan-review loop
   | 'awaiting_approval' // an always-ask decision parked & asked async
   | 'executing' // steps running
-  | 'auto_fixing' // per-track auto-fix stage
+  | 'auto_fixing' // per-thread auto-fix stage
   | 'done'
   | 'failed';
 
-/** One track of a thread's build — a coherent slice (e.g. backend) that becomes a phased plan. */
+/** One thread of a thread's build — a coherent slice (e.g. backend) that becomes a phased plan. */
 export interface Thread {
-  /** Stable track id (`tracks.id`). */
+  /** Stable thread id (`threads.id`). */
   id: string;
   /** The owning thread. */
   jobId: string;
   /** Execution order within the thread, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
   ordinal: number;
-  /** The one-line brief from the upfront track list. */
+  /** The one-line brief from the upfront thread list. */
   brief: string;
   /** The detailed just-in-time plan once generated (null while pending). */
   plan: string | null;
-  /** The prior track's handoff note threaded into this track's plan prompt. */
+  /** The prior thread's handoff note threaded into this thread's plan prompt. */
   handoffIn: string | null;
-  /** This track's handoff note for the next track (null until done). */
+  /** This thread's handoff note for the next thread (null until done). */
   handoffOut: string | null;
   status: ThreadStatus;
 }
@@ -151,18 +151,18 @@ export type StepStatus =
   | 'skipped';
 
 /**
- * One PHASE of a track's locked plan — runs as a fresh session on the feature branch (fresh context
+ * One PHASE of a thread's locked plan — runs as a fresh session on the feature branch (fresh context
  * per step keeps the window <300k and avoids hallucination; the shared checkout lets later steps
  * build on earlier code). `step` + `status` are the EXPLICIT resumable cursor — no implicit FSM.
  */
 export interface Step {
   /** Stable step id (`steps.id`). */
   id: string;
-  /** The owning track. */
+  /** The owning thread. */
   threadId: string;
   /** The owning thread (denormalized for thread-scoped boot recovery). */
   jobId: string;
-  /** Execution order within the track, GAP-NUMBERED so a re-plan can splice. */
+  /** Execution order within the thread, GAP-NUMBERED so a re-plan can splice. */
   ordinal: number;
   /** The step title from the plan. */
   title: string | null;
@@ -177,8 +177,8 @@ export interface Step {
   /** The engine session this step runs in (`SessionRef.id`); null until started. */
   sessionId: string | null;
   /**
-   * The execution batch this step belongs to within its track (consecutive steps packed into one
-   * fresh-context session); null until the track first executes. Stable across restart so a resumed
+   * The execution batch this step belongs to within its thread (consecutive steps packed into one
+   * fresh-context session); null until the thread first executes. Stable across restart so a resumed
    * batch re-groups identically.
    */
   batchOrdinal: number | null;

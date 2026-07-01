@@ -5,7 +5,7 @@ import { Spinner } from '@/components/ui/spinner';
 /**
  * Non-intrusive "reconnecting" banner — shown by <ConnectivityGate> while the backend is briefly
  * unreachable, before a sustained outage escalates to the full <ServerUnreachable> screen. Fixed,
- * top-center, accent-toned (not red — it's not a full outage) and token-driven so it tracks the active
+ * top-center, accent-toned (not red — it's not a full outage) and token-driven so it threads the active
  * daylight/terminal/warm theme. Transform-only entrance (handoff §5) and `pointer-events-none` so it
  * never blocks the workspace beneath it.
  */

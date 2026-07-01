@@ -42,9 +42,9 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
  * turns an approved `Job` into ONE PR:
  *   - `ThreadDriver` — the legible top-to-bottom driver (plan → review → gate → execute steps →
  *     auto-fix → handoff → one PR), bound as the REAL `JOB_DISPATCHER`.
- *   - `DriverStoreService` — the track/step row reads/writes (explicit, resumable `status`/`step`).
+ *   - `DriverStoreService` — the thread/step row reads/writes (explicit, resumable `status`/`step`).
  *   - `GitDriverRepoResolver` (behind `DRIVER_REPO`) — a job's project → a ready-to-use repo.
- *   - `PLANNER_LLM` — the track planner's chat-model port (a declarative chain on a hardcoded Sonnet,
+ *   - `PLANNER_LLM` — the thread planner's chat-model port (a declarative chain on a hardcoded Sonnet,
  *     keyed off `ANTHROPIC_API_KEY`; key-less → the driver falls back to a single-step plan).
  *
  * THE DISPATCH SEAM OVERRIDE: `BrainModule` no longer binds the `JOB_DISPATCHER` no-op (it kept

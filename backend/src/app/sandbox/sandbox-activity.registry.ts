@@ -34,7 +34,7 @@ export class SandboxActivityRegistry {
   }
 
   /** Run `fn` bracketed by {@link enter}/{@link leave} (the leave runs even if `fn` throws). */
-  async track<T>(containerId: string, fn: () => Promise<T>): Promise<T> {
+  async thread<T>(containerId: string, fn: () => Promise<T>): Promise<T> {
     this.enter(containerId);
     try {
       return await fn();

@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { ChevronRight, Hammer } from 'lucide-react';
-import type { JobMessage } from '@/lib/api/thread-api';
-import { useLiveTurn, type LiveBlock } from '@/lib/api/thread-stream';
+import type { JobMessage } from '@/lib/api/job-api';
+import { useLiveTurn, type LiveBlock } from '@/lib/api/job-stream';
 import { durableSubBlocks, type SubBlock } from './subagents';
 
 /**
@@ -24,7 +24,7 @@ export interface PhaseAnchor {
   phaseId: string;
   /** A human label (e.g. "Backend — 2 steps (…)"). */
   label: string;
-  /** The batch ordinal within its track (null if not recorded). */
+  /** The batch ordinal within its thread (null if not recorded). */
   batchOrdinal: number | null;
   /** Every step id packed into this batch (one transcript serves them all). */
   batchStepIds: string[];

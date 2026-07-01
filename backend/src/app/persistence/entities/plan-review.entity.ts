@@ -53,7 +53,7 @@ export class PlanReviewEntity extends TimestampedEntity {
   status!: string;
 
   /**
-   * The fully-rendered review input handed to Codex (overview + locked decisions + tracks & authored
+   * The fully-rendered review input handed to Codex (overview + locked decisions + threads & authored
    * steps). Stored so a boot-time re-run reconstructs the exact turn without re-deriving it from rows.
    */
   @Column({ type: 'text' })

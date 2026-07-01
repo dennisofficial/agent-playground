@@ -6,8 +6,8 @@ import { env } from '@/lib/env';
 import { qk } from './query-keys';
 import { subscribeSse } from './sse-manager';
 import type { InboxThread } from './inbox';
-import type { JobRef } from './thread-api';
-import { applyStreamFrame, endLiveTurn } from './thread-stream';
+import type { JobRef } from './job-api';
+import { applyStreamFrame, endLiveTurn } from './job-stream';
 import { clearQueuedSends } from './queued-sends';
 
 /** A frame off the repo SSE: a durable-post change-signal, a live engine-stream frame, or a meta update. */
@@ -43,7 +43,7 @@ const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts)\//;
  *    console.
  *  - `{ type: 'stream', jobId, event }` — a LIVE engine-stream frame (token deltas, thinking, tool
  *    calls/results, and a `turn_end` marker) for the in-sandbox session. Filtered to the OPEN thread and
- *    fed into the live-turn store (`thread-stream.ts`); on `turn_end` we refetch `/messages` (now holding
+ *    fed into the live-turn store (`job-stream.ts`); on `turn_end` we refetch `/messages` (now holding
  *    the persisted blocks) and THEN clear the live buffer (no flicker).
  *
  * Resilience (transient self-heal + a one-shot 401 refresh/reconnect) lives in the shared `sse-manager`.
@@ -53,7 +53,7 @@ const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts)\//;
  * repo (a thread switch no longer tears the SSE down + reopens it), which is what used to churn the
  * HTTP/1.1 connection pool and stall every fetch in dev.
  */
-export function useThreadEvents(ref: JobRef): void {
+export function useJobEvents(ref: JobRef): void {
   const qc = useQueryClient();
   const { orgId, repoId, jobId } = ref;
 

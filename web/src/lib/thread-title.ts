@@ -1,6 +1,6 @@
 /**
- * Render a readable label from a track `brief`. The brief is free-form text written by the thread brain
- * at `submit_plan`; normally it leads with the track title (`"Title — detail…"`), and the narrow nav /
+ * Render a readable label from a thread `brief`. The brief is free-form text written by the thread brain
+ * at `submit_plan`; normally it leads with the thread title (`"Title — detail…"`), and the narrow nav /
  * pipeline rows truncate it to the title. This also defensively de-JSONifies a brief that was persisted as
  * a raw `{"title":…,"details":…}` blob (older `submit_plan` runs serialized the whole object), so those
  * threads still show their title instead of JSON.

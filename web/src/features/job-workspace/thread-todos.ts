@@ -1,15 +1,15 @@
-import type { JobMessage } from '@/lib/api/thread-api';
-import type { LiveBlock } from '@/lib/api/thread-stream';
+import type { JobMessage } from '@/lib/api/job-api';
+import type { LiveBlock } from '@/lib/api/job-stream';
 
 /**
- * The orchestrator's LIVE TASK LIST — the per-track checklist the navigator shows in place of the
+ * The orchestrator's LIVE TASK LIST — the per-thread checklist the navigator shows in place of the
  * (dropped) pre-planned `plan` axis. The build orchestrator maintains it via the SDK task tools
  * (`TaskCreate` / `TaskUpdate`, the 0.3.x successors to `TodoWrite`); this module reconstructs the current
  * list by FOLDING those tool calls — a latest-snapshot would lose dropped items, but folding keeps a
  * `status:'deleted'` task visible as a struck-through "dropped" row (per the design).
  *
  * The join is the same one `thread-subagents.ts` uses: the turn harness stamps every execute-turn block with
- * `meta.phaseId` (the batch anchor step id), so a task call "belongs to" the track-session whose phaseId
+ * `meta.phaseId` (the batch anchor step id), so a task call "belongs to" the thread-session whose phaseId
  * tags it. Calls carrying `meta.parentToolUseId` are a writer subagent's, not the orchestrator's, and are
  * excluded — only the session's own task list shows.
  *

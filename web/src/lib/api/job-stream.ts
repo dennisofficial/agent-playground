@@ -12,7 +12,7 @@ import { useCallback, useSyncExternalStore } from 'react';
  *     keep streaming after a reconnect: the producing turn runs server-side independent of the
  *     connection, so on reconnect we catch up to the current state instead of seeing nothing.
  *   - delta kinds (`text_delta`/`thinking`/`tool_use`/`tool_result`/…) — applied on top, live.
- *   - `turn_end` — handled in `thread-events.ts` (refetch `/messages`, then `endLiveTurn`).
+ *   - `turn_end` — handled in `job-events.ts` (refetch `/messages`, then `endLiveTurn`).
  *
  * `seq` is a server-global monotonic counter. We keep the max applied `seq` per thread and ignore any
  * frame with `seq <= lastSeq`, so the snapshot-then-live merge (and any duplicate replay) is race-free.

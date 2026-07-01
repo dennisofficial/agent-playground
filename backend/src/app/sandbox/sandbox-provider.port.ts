@@ -57,7 +57,7 @@ export interface SandboxProvider {
   /**
    * The HOST path of a thread's durable `/context` shared folder (the same dir bind-mounted into the
    * container at `/context`). Outside the worktree, keyed by `jobId`, durable across container
-   * recreate. The brain authors plan/track specs here and reads them back via this path.
+   * recreate. The brain authors plan/thread specs here and reads them back via this path.
    */
   contextDirHost(orgId: string, jobId: string): string;
   /**

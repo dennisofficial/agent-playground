@@ -11,7 +11,7 @@ import { env } from '@/lib/env';
 import { qk } from './query-keys';
 import { subscribeSse } from './sse-manager';
 import { useOrgs } from './me';
-import { fetchOrgRepos, type RepoView } from './thread-api';
+import { fetchOrgRepos, type RepoView } from './job-api';
 import {
   addTicketDependency,
   createTicket,
@@ -175,7 +175,7 @@ export function useRepoTicketEvents(orgId: string, repoId: string): void {
       if (frame?.type === 'ticket_event') refetch();
     };
 
-    // Shares the ONE repo-events connection with `useThreadEvents` (same URL) via the SSE manager.
+    // Shares the ONE repo-events connection with `useJobEvents` (same URL) via the SSE manager.
     const url = `${env.NEXT_PUBLIC_HTTP_URL}/web/orgs/${orgId}/repos/${repoId}/events`;
     const unsubscribe = subscribeSse(url, { onFrame });
     return () => {

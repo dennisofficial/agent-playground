@@ -16,7 +16,7 @@ export const nativeShellHandler: ToolHandler = {
   match: (name) => name.toLowerCase() === 'bash',
   describe: (tool) => {
     const cmd = str(asRecord(tool.input).command);
-    // No line-count pill — shell output isn't a file read, so the count isn't meaningful to track.
+    // No line-count pill — shell output isn't a file read, so the count isn't meaningful to thread.
     return {
       icon: 'bash',
       label: 'Bash',

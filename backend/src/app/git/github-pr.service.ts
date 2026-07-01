@@ -183,7 +183,7 @@ export class GithubPrService {
   }
 
   /**
-   * List a repo's branch names with the token — feeds the create-thread base-branch picker. Paginated
+   * List a repo's branch names with the token — feeds the create-job base-branch picker. Paginated
    * (100/page) and capped so a repo with thousands of branches can't run the request away. Returns the
    * names in GitHub's order (the caller surfaces the default branch first); throws on a non-OK response.
    */

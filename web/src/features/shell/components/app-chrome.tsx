@@ -5,13 +5,13 @@ import { usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { TopBar } from './top-bar';
 import { CommandPalette } from './command-palette';
-import { useAllJobsRealtime } from '@/lib/api/all-threads-realtime';
+import { useAllJobsRealtime } from '@/lib/api/all-jobs-realtime';
 
 /**
  * The persistent app chrome (client). The app-wide TOP BAR (ATLAS lockup + Threads | Tickets nav + avatar)
  * spans everything; below it sit the two destinations: the threads workspace keeps its org → repo → thread
  * sidebar, while the tickets board brings its own repo sidebar (so the org sidebar is hidden there). Owns
- * the ⌘K palette; `dialog` is the `@dialog` parallel slot (the create-thread modal).
+ * the ⌘K palette; `dialog` is the `@dialog` parallel slot (the create-job modal).
  */
 export function AppChrome({ children, dialog }: { children: ReactNode; dialog: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);

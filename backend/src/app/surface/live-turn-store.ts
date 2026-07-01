@@ -152,7 +152,7 @@ export class LiveTurnStore {
     return s;
   }
 
-  /** Assemble cumulative blocks from engine events — identical logic to the web `thread-stream` store. */
+  /** Assemble cumulative blocks from engine events — identical logic to the web `job-stream` store. */
   private applyToState(state: TurnState, ev: { kind: string; [k: string]: unknown }): void {
     const blocks = state.blocks;
     const last = blocks[blocks.length - 1];

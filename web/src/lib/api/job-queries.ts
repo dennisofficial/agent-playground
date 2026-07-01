@@ -6,7 +6,7 @@ import {
   answerQuestion,
   provideSecret,
   approveThread,
-  createThread,
+  createJob,
   deleteThread,
   fetchContextFile,
   fetchMessages,
@@ -14,8 +14,8 @@ import {
   fetchRepoBranches,
   fetchPipeline,
   fetchThreadContext,
-  renameThread,
-  retryThread,
+  renameJob,
+  retryJob,
   sayMessage,
   type AnswerQuestionBody,
   type ProvideSecretBody,
@@ -23,16 +23,16 @@ import {
   type CreateThreadBody,
   type JobMessage,
   type JobRef,
-} from './thread-api';
+} from './job-api';
 import { addQueuedSend } from './queued-sends';
-import { isLiveTurnActive } from './thread-stream';
+import { isLiveTurnActive } from './job-stream';
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
 const hasRef = (ref: JobRef) => Boolean(ref.orgId && ref.repoId && ref.jobId);
 
-/** A thread's durable message log. SSE keeps it fresh via `useThreadEvents` (refetch on any frame). */
-export function useThreadMessages(ref: JobRef) {
+/** A thread's durable message log. SSE keeps it fresh via `useJobEvents` (refetch on any frame). */
+export function useJobMessages(ref: JobRef) {
   return useQuery({
     queryKey: qk.threadMessages(ref),
     queryFn: () => fetchMessages(ref),
@@ -41,7 +41,7 @@ export function useThreadMessages(ref: JobRef) {
   });
 }
 
-/** A thread's pipeline (job + tracks), or `{ status: 'no_job' }` before a plan is approved. */
+/** A thread's pipeline (job + threads), or `{ status: 'no_job' }` before a plan is approved. */
 export function usePipeline(ref: JobRef) {
   return useQuery({
     queryKey: qk.threadPipeline(ref),
@@ -51,8 +51,8 @@ export function usePipeline(ref: JobRef) {
   });
 }
 
-/** A thread's `/context` files (specs + artifacts). SSE keeps it fresh via `useThreadEvents`. */
-export function useThreadContext(ref: JobRef) {
+/** A thread's `/context` files (specs + artifacts). SSE keeps it fresh via `useJobEvents`. */
+export function useJobContext(ref: JobRef) {
   return useQuery({
     queryKey: qk.threadContext(ref),
     queryFn: () => fetchThreadContext(ref),
@@ -71,7 +71,7 @@ export function useContextFile(ref: JobRef, path: string | null) {
   });
 }
 
-/** An org's connected repos — the create-thread repo picker. */
+/** An org's connected repos — the create-job repo picker. */
 export function useOrgRepos(orgId: string) {
   return useQuery({
     queryKey: qk.orgRepos(orgId),
@@ -81,7 +81,7 @@ export function useOrgRepos(orgId: string) {
   });
 }
 
-/** A repo's branches — the create-thread base-branch picker (hits GitHub via the org token). */
+/** A repo's branches — the create-job base-branch picker (hits GitHub via the org token). */
 export function useRepoBranches(orgId: string, repoId: string) {
   return useQuery({
     queryKey: qk.repoBranches(orgId, repoId),
@@ -150,10 +150,10 @@ export function useApprove(ref: JobRef) {
 
 /** Re-drive a halted (failed/paused) build — the navigator "Retry"/"Re-ping" buttons. Refreshes the
  *  pipeline + conversation + inbox so the thread flips back to running. */
-export function useRetryThread(ref: JobRef) {
+export function useRetryJob(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => retryThread(ref),
+    mutationFn: () => retryJob(ref),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
@@ -190,7 +190,7 @@ export function useProvideSecret(ref: JobRef) {
 export function useCreateThread(orgId: string, repoId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: CreateThreadBody) => createThread(orgId, repoId, body),
+    mutationFn: (body: CreateThreadBody) => createJob(orgId, repoId, body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
@@ -198,10 +198,10 @@ export function useCreateThread(orgId: string, repoId: string) {
 }
 
 /** Rename a thread (the only thread Update op). Refreshes the inbox so the new title shows everywhere. */
-export function useRenameThread(ref: JobRef) {
+export function useRenameJob(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (title: string) => renameThread(ref, title),
+    mutationFn: (title: string) => renameJob(ref, title),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
@@ -209,7 +209,7 @@ export function useRenameThread(ref: JobRef) {
 }
 
 /** Delete a thread (closes its sandbox + removes its messages). Refreshes the inbox. */
-export function useDeleteThread(ref: JobRef) {
+export function useDeleteJob(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => deleteThread(ref),

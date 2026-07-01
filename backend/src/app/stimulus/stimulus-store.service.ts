@@ -52,7 +52,7 @@ export class StimulusStoreService {
 
   constructor(
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
@@ -74,8 +74,8 @@ export class StimulusStoreService {
     body: string;
     title: string;
   }): Promise<SeededEvent> {
-    const thread = await this.threads.save(
-      this.threads.create({
+    const thread = await this.jobs.save(
+      this.jobs.create({
         org_id: input.orgId,
         repo_id: input.repoId,
         origin: 'event',
@@ -120,7 +120,7 @@ export class StimulusStoreService {
         // A racing duplicate beat us to the unique index — roll back the thread/message we just
         // opened so we don't leave an orphan, then signal the caller to drop it.
         await this.messages.delete({ id: message.id }).catch(() => undefined);
-        await this.threads.delete({ id: thread.id }).catch(() => undefined);
+        await this.jobs.delete({ id: thread.id }).catch(() => undefined);
         throw new DuplicateStimulusError(input.dedupeKey);
       }
       throw err;
@@ -151,7 +151,7 @@ export class StimulusStoreService {
     repoId: string;
     jobId: string;
     author: { id: string; displayName: string };
-    replyRoute: { surfaceId: string; threadRef: string };
+    replyRoute: { surfaceId: string; jobRef: string };
     body: string;
   }): Promise<ChatStimulus> {
     await this.messages.save(

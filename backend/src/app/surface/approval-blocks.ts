@@ -2,7 +2,7 @@
  * The decision-record approval card's Block Kit surfaces — a clean-room rewrite of v1's
  * `approval-blocks.ts`, pure constants/builders with NO I/O and no v1 imports. The card is a
  * stateless rendering: the button `value` carries only the ids it needs (decision record + job), so
- * verdicts survive restarts. Only universal block types (track/context/actions). v1 was
+ * verdicts survive restarts. Only universal block types (thread/context/actions). v1 was
  * board-stateful (taskId-keyed); this is decision-record-keyed for the v2 approve-once gate.
  */
 
@@ -26,36 +26,36 @@ export interface ApprovalDecision {
   confirmedByOperator?: boolean;
 }
 
-/** The upfront approval proposal: the decision record + the high-level track list, approved once. */
+/** The upfront approval proposal: the decision record + the high-level thread list, approved once. */
 export interface DecisionApprovalCard {
   jobId: string;
   decisionRecordId?: string;
   title: string;
   /**
    * Which build path this approval gates:
-   * - `plan` (default) — the full ceremony: a multi-track build runs after approval.
+   * - `plan` (default) — the full ceremony: a multi-thread build runs after approval.
    * - `direct` — the fast path: the brain implements the change itself in-sandbox after approval.
-   *   `threads` then carries a short CHANGE OUTLINE rather than a track list.
+   *   `threads` then carries a short CHANGE OUTLINE rather than a thread list.
    */
   kind?: 'plan' | 'direct';
   /** The decision record summary (the architecture/system calls). */
   summary: string;
   /** The locked decisions (class + title + ruling) — the real calls being approved, not just a title. */
   decisions?: ApprovalDecision[];
-  /** The high-level track list (plan), or the change outline (direct), in order. */
+  /** The high-level thread list (plan), or the change outline (direct), in order. */
   threads: string[];
   /** Optional deep link to a full plan view. */
   planUrl?: string;
 }
 
-// Slack caps a track block's text at 3000 chars; stay under with room for the ellipsis line.
+// Slack caps a thread block's text at 3000 chars; stay under with room for the ellipsis line.
 const SUMMARY_MAX = 2900;
 
 const truncate = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max)}\n…(truncated)`;
 
 /**
- * The proposal card: headline, the decision-record summary, the track list, a context line, and
+ * The proposal card: headline, the decision-record summary, the thread list, a context line, and
  * the verdict buttons. When `planUrl` is given, a leading "📊 View full plan" link button opens the
  * web plan view.
  */
@@ -67,7 +67,7 @@ export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record
 
   const isDirect = card.kind === 'direct';
   const headline = isDirect ? `*Direct build — ${card.title}*` : `*Plan proposal — ${card.title}*`;
-  const listLabel = isDirect ? 'Changes' : 'Tracks';
+  const listLabel = isDirect ? 'Changes' : 'Threads';
   const contextLine = isDirect
     ? 'Approve to let Atlas implement this change directly. The verdict is Dennis’s call.'
     : 'Approve once — threads then auto-run. The verdict is Dennis’s call.';
@@ -123,23 +123,23 @@ export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record
 
   return [
     {
-      type: 'track',
+      type: 'thread',
       text: { type: 'mrkdwn', text: headline },
     },
     {
-      type: 'track',
+      type: 'thread',
       text: { type: 'mrkdwn', text: truncate(card.summary, SUMMARY_MAX) },
     },
     ...(decisionList
       ? [
           {
-            type: 'track',
+            type: 'thread',
             text: { type: 'mrkdwn', text: `*Decisions*\n${truncate(decisionList, SUMMARY_MAX)}` },
           },
         ]
       : []),
     {
-      type: 'track',
+      type: 'thread',
       text: { type: 'mrkdwn', text: `*${listLabel}*\n${truncate(sectionList, SUMMARY_MAX)}` },
     },
     {

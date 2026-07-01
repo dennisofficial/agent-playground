@@ -66,7 +66,7 @@ export class StimulusEntity extends TimestampedEntity {
 
   /** Where Atlas replies to a chat stimulus (surface id + thread coordinate, JSON); null for events. */
   @Column({ type: 'jsonb', nullable: true })
-  reply_route!: { surfaceId: string; threadRef: string } | null;
+  reply_route!: { surfaceId: string; jobRef: string } | null;
 
   // ─── event-only ─────────────────────────────────────────────────────────
   /** The gateway that produced an event, e.g. 'github' | 'webhook'; null for chat. */

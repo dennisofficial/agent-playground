@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { CheckCircle2, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useProvideSecret } from '@/lib/api/thread-queries';
-import type { JobRef } from '@/lib/api/thread-api';
+import { useProvideSecret } from '@/lib/api/job-queries';
+import type { JobRef } from '@/lib/api/job-api';
 import type { WebSecretInputCard } from '@/lib/api/types';
 
 /**
@@ -12,8 +12,8 @@ import type { WebSecretInputCard } from '@/lib/api/types';
  * value POSTs to `…/threads/:jobId/provide-secret`, which stores it encrypted + grants it. The value is
  * never echoed back or kept in the card. Once `provided_at` is set, renders the compact "provided" state.
  */
-export function SecretCardView({ card, threadRef }: { card: WebSecretInputCard; threadRef: JobRef }) {
-  const provide = useProvideSecret(threadRef);
+export function SecretCardView({ card, jobRef }: { card: WebSecretInputCard; jobRef: JobRef }) {
+  const provide = useProvideSecret(jobRef);
   const [value, setValue] = useState('');
   const pending = provide.isPending;
 

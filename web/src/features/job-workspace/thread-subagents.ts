@@ -1,14 +1,14 @@
-import type { JobMessage } from '@/lib/api/thread-api';
-import type { LiveBlock } from '@/lib/api/thread-stream';
+import type { JobMessage } from '@/lib/api/job-api';
+import type { LiveBlock } from '@/lib/api/job-stream';
 import { indexDurableSubagents, indexLiveSubagents, type SubagentSummary } from './subagents';
 
 /**
- * DATA GAP — which writer-subagent runs (`implement` / `implement-fast`) executed inside each track's
- * orchestrator session. This is the data the pipeline TREE needs to nest subagent runs under a track's
+ * DATA GAP — which writer-subagent runs (`implement` / `implement-fast`) executed inside each thread's
+ * orchestrator session. This is the data the pipeline TREE needs to nest subagent runs under a thread's
  * execute session (the `/pipeline` read model deliberately doesn't carry them — see below). It does NOT
  * render anything; the visual tree treatment that consumes it lands with the designer handoff.
  *
- * Why client-derived (not `/pipeline`): a track now runs as ONE Opus orchestrator session = ONE execute
+ * Why client-derived (not `/pipeline`): a thread now runs as ONE Opus orchestrator session = ONE execute
  * engine turn that streams on the `phase:<anchorStepId>` lane and fans implementation out to writer
  * subagents via Task. The backend turn harness merges its per-turn `metaTag` — `{ phaseId: anchorStepId,
  * … }` — into EVERY durable block of that turn, INCLUDING the subagent blocks (which ALSO carry
@@ -27,7 +27,7 @@ import { indexDurableSubagents, indexLiveSubagents, type SubagentSummary } from 
  * Durable: anchorStepId → the subagent runs that executed inside that session, in spawn order.
  *
  * Subagents spawned on the brain's main turn (e.g. an `explore` during planning) carry no `phaseId`, so
- * they belong to no build session and are correctly omitted — only the per-track execute fan-out appears.
+ * they belong to no build session and are correctly omitted — only the per-thread execute fan-out appears.
  */
 export function durableSubagentRunsByPhase(messages: JobMessage[]): Map<string, SubagentSummary[]> {
   const { summaryById } = indexDurableSubagents(messages);
@@ -61,7 +61,7 @@ export function durableSubagentRunsByPhase(messages: JobMessage[]): Map<string, 
 /**
  * Live: the subagent runs streaming on ONE phase lane (`phase:<anchorStepId>`), in spawn order. The lane
  * is already phase-scoped — every run on it belongs to that session — so no `phaseId` filtering is needed.
- * Only one track executes at a time, so the tree subscribes to just the active track's lane.
+ * Only one thread executes at a time, so the tree subscribes to just the active thread's lane.
  */
 export function liveSubagentRunsForPhase(laneBlocks: LiveBlock[]): SubagentSummary[] {
   return [...indexLiveSubagents(laneBlocks).summaryById.values()];

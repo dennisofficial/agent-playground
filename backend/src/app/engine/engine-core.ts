@@ -70,7 +70,7 @@ export interface EngineCoreConfig {
 /**
  * The agentic-engine model ids — CODE CONSTANTS, never env-configured (env vars are for per-environment
  * config; the model choice doesn't change across local/dev/staging/prod). A per-turn `args.model` still
- * overrides (e.g. the thread brain pins its own). The Claude id is the `'opus'` alias (auto-tracks latest
+ * overrides (e.g. the thread brain pins its own). The Claude id is the `'opus'` alias (auto-threads latest
  * Opus, like the brain); the Codex id is the Codex SDK's coding model.
  */
 const DEFAULT_WORKER_MODEL = 'opus';
@@ -112,7 +112,7 @@ const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 // `Task` spawns a subagent — see SUBAGENTS below (read-only, Sonnet-pinned) for token-cheap exploration.
 // The task tools (TaskCreate/TaskUpdate/TaskList/TaskGet — the SDK 0.3.x successors to the legacy
 // TodoWrite) let the orchestrator maintain a LIVE task list as its visible decomposition; the navigator
-// derives the per-track checklist from these calls (see web `thread-todos.ts`). `tools` is an allowlist, so
+// derives the per-thread checklist from these calls (see web `thread-todos.ts`). `tools` is an allowlist, so
 // they must be named even though task-mode is default-on. They have no FS/git side effects.
 const TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet'];
 const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'Task', ...TASK_TOOLS, ...WEB_TOOLS];

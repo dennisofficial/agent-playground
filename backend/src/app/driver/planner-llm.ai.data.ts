@@ -2,13 +2,13 @@ import type { EvalCase } from '@workspace/ai-testing';
 import type { PlanThreadInput, PlannedStep } from './planner-llm';
 
 /**
- * Dataset for the track planner (`PlannerChains.planThread`, running on Sonnet 5). Three cases
+ * Dataset for the thread planner (`PlannerChains.planThread`, running on Sonnet 5). Three cases
  * exercise the invariants the PLAN_SYSTEM prompt promises:
  *
- *  1. `feature-track`  — a normal build track. Expect 1–4 steps, last = verification.
- *  2. `delete-track`   — a removal track. An early step must PROVE the target unused (find
+ *  1. `feature-thread`  — a normal build thread. Expect 1–4 steps, last = verification.
+ *  2. `delete-thread`   — a removal thread. An early step must PROVE the target unused (find
  *                        importers/callers/references) BEFORE any step removes it.
- *  3. `respect-locked` — a track whose plan must honour a locked data_model decision and not
+ *  3. `respect-locked` — a thread whose plan must honour a locked data_model decision and not
  *                        re-litigate it (groundedness).
  *
  * `expected` is intentionally omitted — a plan has no single reference output; the evaluators
@@ -16,7 +16,7 @@ import type { PlanThreadInput, PlannedStep } from './planner-llm';
  */
 export const DATASET: EvalCase<PlanThreadInput, PlannedStep[]>[] = [
   {
-    label: 'feature-track',
+    label: 'feature-thread',
     input: {
       overview:
         'Add per-tenant rate limiting to the public API so a single org cannot exhaust shared capacity.',
@@ -40,7 +40,7 @@ export const DATASET: EvalCase<PlanThreadInput, PlannedStep[]>[] = [
     },
   },
   {
-    label: 'delete-track',
+    label: 'delete-thread',
     input: {
       overview:
         'Retire the legacy v1 webhook intake now that the v2 ingress path is live and carrying all traffic.',

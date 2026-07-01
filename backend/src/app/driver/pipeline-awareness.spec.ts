@@ -17,7 +17,7 @@ const RUNNING_STATE = {
   status: 'running',
   decisionRecordId: 'dr-1',
   prUrl: null,
-  tracks: [
+  threads: [
     {
       id: 'sec-aaaaaaaa',
       ordinal: 1,
@@ -50,13 +50,13 @@ describe('pipelineStateSignature', () => {
     expect(pipelineStateSignature(RUNNING_STATE)).toBe(pipelineStateSignature(RUNNING_STATE));
   });
 
-  it('changes when a track status advances (the in-place overwrite the snapshot CAN see)', () => {
+  it('changes when a thread status advances (the in-place overwrite the snapshot CAN see)', () => {
     const before = pipelineStateSignature(RUNNING_STATE);
     const after = pipelineStateSignature({
       ...RUNNING_STATE,
-      tracks: [
-        RUNNING_STATE.tracks[0],
-        { ...RUNNING_STATE.tracks[1], status: 'done' },
+      threads: [
+        RUNNING_STATE.threads[0],
+        { ...RUNNING_STATE.threads[1], status: 'done' },
       ],
     });
     expect(after).not.toBe(before);
@@ -76,11 +76,11 @@ describe('pipelineStateSignature', () => {
 });
 
 describe('renderPipelineStateSummary', () => {
-  it('renders the net current state — status, each track, and step progress', () => {
+  it('renders the net current state — status, each thread, and step progress', () => {
     const summary = renderPipelineStateSummary(RUNNING_STATE);
     expect(summary).toContain('Current build state: running.');
-    expect(summary).toContain('Track 1 "Backend": done [2/2 steps done]');
-    expect(summary).toContain('Track 2 "Frontend": executing [0/1 steps done]');
+    expect(summary).toContain('Thread 1 "Backend": done [2/2 steps done]');
+    expect(summary).toContain('Thread 2 "Frontend": executing [0/1 steps done]');
   });
 
   it('includes the PR url when present', () => {

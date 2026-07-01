@@ -93,7 +93,7 @@ export class OnboardingService {
     @InjectRepository(OrgCredentialsEntity, DB_CONNECTION)
     private readonly orgCreds: Repository<OrgCredentialsEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimuli: Repository<StimulusEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
@@ -212,7 +212,7 @@ export class OnboardingService {
       { onboarding_job_id: jobId },
     );
     if (!claim.affected) {
-      await this.threads.delete({ id: jobId, org_id: orgId }).catch(() => undefined);
+      await this.jobs.delete({ id: jobId, org_id: orgId }).catch(() => undefined);
       return;
     }
 
@@ -319,7 +319,7 @@ export class OnboardingService {
   }
 
   /**
-   * List a connected repo's branches with the org's GitHub token — the create-thread base-branch picker.
+   * List a connected repo's branches with the org's GitHub token — the create-job base-branch picker.
    * The repo's configured default branch is surfaced first, then the rest in GitHub's order (de-duped).
    * Scoped to the org (404 on a cross-tenant id).
    */
@@ -340,14 +340,14 @@ export class OnboardingService {
 
   /**
    * Disconnect a repo from the org, CASCADE-deleting everything under it — mirroring
-   * `OrganizationService.deleteOrg` (and consistent with single-thread `deleteThreadDeep`). The operator
+   * `OrganizationService.deleteOrg` (and consistent with single-thread `deleteJobDeep`). The operator
    * is warned in the UI before this runs; here we just tear it all down. Scoped to the org.
    *
    * The repo's threads are deep-deleted in a DRAIN loop (re-query until none remain) rather than a single
    * snapshot: threads can be created from several paths, and the live schema has NO foreign keys, so a
    * thread inserted mid-cascade would otherwise orphan. Each create path inserts one row between awaits,
    * so the loop converges immediately. The repo row stays present through the drain so each
-   * `deleteThreadDeep` can still resolve repo metadata for worktree/container teardown.
+   * `deleteJobDeep` can still resolve repo metadata for worktree/container teardown.
    */
   async disconnectRepo(orgId: string, repoId: string): Promise<{ ok: true; threadsDeleted: number }> {
     const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
@@ -360,13 +360,13 @@ export class OnboardingService {
     const lifecycle = this.moduleRef.get(JobLifecycleService, { strict: false });
     let threadsDeleted = 0;
     for (;;) {
-      const batch = await this.threads.find({
+      const batch = await this.jobs.find({
         where: { repo_id: repoId, org_id: orgId },
         select: { id: true },
       });
       if (batch.length === 0) break;
       for (const { id } of batch) {
-        await lifecycle.deleteThreadDeep(id, orgId);
+        await lifecycle.deleteJobDeep(id, orgId);
         threadsDeleted++;
       }
     }

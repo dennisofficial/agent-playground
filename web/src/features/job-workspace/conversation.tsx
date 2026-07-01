@@ -23,8 +23,8 @@ import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
 import { BuildStepCard, indexPhaseBlocks } from './phases';
 import { Composer } from './composer';
 import { DetailTopBar } from './detail-top-bar';
-import type { JobMessage, JobRef } from '@/lib/api/thread-api';
-import { useLiveTurn } from '@/lib/api/thread-stream';
+import type { JobMessage, JobRef } from '@/lib/api/job-api';
+import { useLiveTurn } from '@/lib/api/job-stream';
 import { useQueuedSends } from '@/lib/api/queued-sends';
 
 /**
@@ -32,14 +32,14 @@ import { useQueuedSends } from '@/lib/api/queued-sends';
  * live here. A centered 760px column of typed bubbles + the composer.
  */
 export function Conversation({
-  threadRef,
+  jobRef,
   messages,
   isLoading,
   live,
   onOpenPlan,
   onSelectNode,
 }: {
-  threadRef: JobRef;
+  jobRef: JobRef;
   messages: JobMessage[];
   isLoading: boolean;
   live: boolean;
@@ -47,10 +47,10 @@ export function Conversation({
   /** Open a node in the right detail pane (e.g. a subagent run's sub-page). */
   onSelectNode?: (node: string) => void;
 }) {
-  // The composer is a floating overlay; track its height so the transcript reserves matching space and
+  // The composer is a floating overlay; thread its height so the transcript reserves matching space and
   // the last line never slips under it as the box auto-grows.
   const [composerHeight, setComposerHeight] = useState(116);
-  const liveTurn = useLiveTurn(threadRef.jobId);
+  const liveTurn = useLiveTurn(jobRef.jobId);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
   const turnActive = liveTurn?.active ?? false;
   // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
@@ -63,7 +63,7 @@ export function Conversation({
   // Messages sent while a turn is streaming are QUEUED behind it (the brain serializes turns per thread).
   // Pull them out of the main log and render them below the live response with a "queued" treatment — so
   // a follow-up reads as "waiting its turn", not as an already-answered message in the wrong spot.
-  const queuedTexts = useQueuedSends(threadRef.jobId);
+  const queuedTexts = useQueuedSends(jobRef.jobId);
   const isQueued = (m: JobMessage): boolean =>
     m.author === 'user' && turnActive && (m.queued === true || queuedTexts.has(m.text));
   const log = messages.filter((m) => !isQueued(m));
@@ -96,7 +96,7 @@ export function Conversation({
               No messages yet — say something to Atlas below.
             </p>
           ) : (
-            renderLog(log, threadRef, onOpenPlan, onSelectNode)
+            renderLog(log, jobRef, onOpenPlan, onSelectNode)
           )}
           {liveTurn && liveBlockCount > 0 ? <LiveTurnView turn={liveTurn} onSelectNode={onSelectNode} /> : null}
           {live || turnActive ? <LiveIndicator /> : null}
@@ -104,13 +104,13 @@ export function Conversation({
             <UserBubble key={message.ts} text={message.text} queued />
           ))}
             {/* Spacer so the last line clears the floating composer when scrolled to the bottom.
-                Tracks the composer's live height so it grows with the auto-expanding box. */}
+                Threads the composer's live height so it grows with the auto-expanding box. */}
             <div className="shrink-0" style={{ height: composerHeight }} aria-hidden />
             <div ref={endRef} />
           </div>
         </div>
         {showJump ? <JumpToLatestButton onClick={jumpToLatest} style={{ bottom: composerHeight + 8 }} /> : null}
-        <Composer threadRef={threadRef} onHeightChange={setComposerHeight} context={contextMeta} />
+        <Composer jobRef={jobRef} onHeightChange={setComposerHeight} context={contextMeta} />
       </div>
     </div>
   );
@@ -123,7 +123,7 @@ export function Conversation({
  */
 function renderLog(
   log: JobMessage[],
-  threadRef: JobRef,
+  jobRef: JobRef,
   onOpenPlan?: () => void,
   onSelectNode?: (node: string) => void,
 ): React.ReactNode {
@@ -159,7 +159,7 @@ function renderLog(
         nodes.push(
           <BuildStepCard
             key={message.ts}
-            jobId={threadRef.jobId}
+            jobId={jobRef.jobId}
             anchor={anchor}
             durableToolCount={(phase.blocksByPhase.get(phaseId) ?? []).filter((m) => m.kind === 'tool').length}
             onOpen={() => onSelectNode?.(phaseId)}
@@ -217,16 +217,16 @@ function renderLog(
         nodes.push(<ThinkingBlock key={message.ts} text={message.text} time={message.postedAt} />);
         break;
       case 'approval':
-        nodes.push(<ApprovalCardView key={message.ts} card={c.card} threadRef={threadRef} onOpenPlan={onOpenPlan} />);
+        nodes.push(<ApprovalCardView key={message.ts} card={c.card} jobRef={jobRef} onOpenPlan={onOpenPlan} />);
         break;
       case 'verdict':
         nodes.push(<VerdictCardView key={message.ts} card={c.card} />);
         break;
       case 'question':
-        nodes.push(<QuestionCardView key={message.ts} card={c.card} threadRef={threadRef} />);
+        nodes.push(<QuestionCardView key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
       case 'secret':
-        nodes.push(<SecretCardView key={message.ts} card={c.card} threadRef={threadRef} />);
+        nodes.push(<SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
       case 'event':
         nodes.push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);

@@ -82,7 +82,7 @@ function PathArg({ arg, pathArg }: { arg: string; pathArg?: boolean }) {
 
 /**
  * The single clickable shell shared by a lone tool row AND a group header: leading disclosure chevron,
- * a flex content track (the `children`), and a trailing running-dot. Padding, gap, chevron size, and
+ * a flex content thread (the `children`), and a trailing running-dot. Padding, gap, chevron size, and
  * hover are defined ONCE here — change them in this one place and every tool-call row stays aligned.
  * `group` is always set so a child can opt into `group-hover:` (the header label uses it; rows ignore it).
  */

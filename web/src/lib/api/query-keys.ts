@@ -10,7 +10,7 @@ export const qk = {
   orgCredentials: (orgId: string) => ['org-credentials', orgId] as const,
   /** One org's worktree secret names + grants (`GET /web/orgs/:orgId/worktree-secrets`). */
   orgWorktreeSecrets: (orgId: string) => ['org-worktree-secrets', orgId] as const,
-  /** One org's connected repos (`GET /web/orgs/:orgId/repos`) — the create-thread picker. */
+  /** One org's connected repos (`GET /web/orgs/:orgId/repos`) — the create-job picker. */
   orgRepos: (orgId: string) => ['org-repos', orgId] as const,
   /** One repo's branches (`GET /web/orgs/:orgId/repos/:repoId/branches`) — the base-branch picker. */
   repoBranches: (orgId: string, repoId: string) => ['repo-branches', orgId, repoId] as const,

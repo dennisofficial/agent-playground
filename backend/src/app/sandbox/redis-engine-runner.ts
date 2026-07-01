@@ -121,7 +121,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     containerId: string,
     kickTarget: NonNullable<RunEngineArgs['target']> | undefined,
   ): Promise<EngineRunResult> {
-    return this.activity.track(containerId, async () => {
+    return this.activity.thread(containerId, async () => {
       const done = { value: false };
       try {
         // Tool-bridge turns: create the host consumer group up front so no tool_request is missed.

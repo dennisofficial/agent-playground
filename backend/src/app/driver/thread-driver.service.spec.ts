@@ -42,9 +42,9 @@ import type {
 
 /**
  * W4 — the SECTION/PHASE DRIVER unit tests. Every dependency is mocked (NO real LLM / git / network):
- * the driver walks a 2-track / multi-step job to ONE PR; an uncovered always-ask decision PARKS and
+ * the driver walks a 2-thread / multi-step job to ONE PR; an uncovered always-ask decision PARKS and
  * resumes on a simulated human answer; step step-state persists; `resume()` fast-forwards completed
- * work after a simulated restart; tracks share one branch ⇒ one PR.
+ * work after a simulated restart; threads share one branch ⇒ one PR.
  *
  * The store is an in-memory fake the test can re-instantiate a fresh driver against — that's how the
  * resumability test simulates a process restart (same rows, new driver). Zero real I/O.
@@ -55,7 +55,7 @@ import type {
 interface StoreState {
   job: Job;
   record: DecisionRecord | null;
-  tracks: DriverThread[];
+  threads: DriverThread[];
   steps: Step[];
   route: JobRoute;
 }
@@ -84,14 +84,14 @@ function makeStore(state: StoreState): {
     setLedgerPromotionStatus: vi.fn(async () => undefined),
     markLedgerPromoted: vi.fn(async () => undefined),
     decisionRecord: vi.fn(async () => state.record),
-    tracksForJob: vi.fn(async () => state.tracks.map((s) => ({ ...s }))),
+    threadsForJob: vi.fn(async () => state.threads.map((s) => ({ ...s }))),
     setThreadStatus: vi.fn(async (id: string, status: ThreadStatus) => {
-      const s = state.tracks.find((x) => x.id === id);
+      const s = state.threads.find((x) => x.id === id);
       if (s) s.status = status;
     }),
     setThreadPlan: vi.fn(
       async (id: string, plan: string, handoffIn: string | null) => {
-        const s = state.tracks.find((x) => x.id === id);
+        const s = state.threads.find((x) => x.id === id);
         if (s) {
           s.plan = plan;
           s.handoffIn = handoffIn;
@@ -99,7 +99,7 @@ function makeStore(state: StoreState): {
       },
     ),
     setThreadHandoffOut: vi.fn(async (id: string, handoffOut: string) => {
-      const s = state.tracks.find((x) => x.id === id);
+      const s = state.threads.find((x) => x.id === id);
       if (s) s.handoffOut = handoffOut;
     }),
     // Review-agent status writes — no-ops for the driver flow tests (display state only).
@@ -109,13 +109,13 @@ function makeStore(state: StoreState): {
     stepsForThread: vi.fn(async (threadId: string) =>
       state.steps.filter((p) => p.threadId === threadId).map((p) => ({ ...p })),
     ),
-    lockSteps: vi.fn(async (track: DriverThread, planned: PlannedStep[]) => {
-      const existing = state.steps.filter((p) => p.threadId === track.id);
+    lockSteps: vi.fn(async (thread: DriverThread, planned: PlannedStep[]) => {
+      const existing = state.steps.filter((p) => p.threadId === thread.id);
       if (existing.length) return existing.map((p) => ({ ...p }));
       const rows: Step[] = planned.map((p, i) => ({
-        id: `${track.id}-ph${i}`,
-        threadId: track.id,
-        jobId: track.jobId,
+        id: `${thread.id}-ph${i}`,
+        threadId: thread.id,
+        jobId: thread.jobId,
         ordinal: (i + 1) * 10,
         title: p.title,
         brief: p.brief,
@@ -252,7 +252,7 @@ function makeTurn(): {
   return { turn, calls };
 }
 
-/** A planner that emits a fixed 2-step plan per track. */
+/** A planner that emits a fixed 2-step plan per thread. */
 function makePlanner(): PlannerLlm {
   return {
     planThread: vi.fn(async (input: { brief: string }) => [
@@ -324,7 +324,7 @@ interface AutofixHandle {
   autofixPullRequest: ReturnType<typeof vi.fn>;
 }
 function makeAutofix(): AutofixHandle {
-  const autofixThread = vi.fn(async () => cleanSummary('track'));
+  const autofixThread = vi.fn(async () => cleanSummary('thread'));
   const autofixPullRequest = vi.fn(async () => cleanSummary('pull_request'));
   return {
     autofix: { autofixThread, autofixPullRequest } as unknown as AutoFixStage,
@@ -333,7 +333,7 @@ function makeAutofix(): AutofixHandle {
   };
 }
 
-function cleanSummary(mode: 'track' | 'pull_request') {
+function cleanSummary(mode: 'thread' | 'pull_request') {
   return {
     mode,
     lensesRun: [],
@@ -396,10 +396,10 @@ function makeRecord(): DecisionRecord {
 }
 
 function makeSections(): DriverThread[] {
-  return [track('sec-be', 10, 'Backend'), track('sec-fe', 20, 'Frontend')];
+  return [thread('sec-be', 10, 'Backend'), thread('sec-fe', 20, 'Frontend')];
 }
 
-function track(
+function thread(
   id: string,
   ordinal: number,
   brief: string,
@@ -564,12 +564,12 @@ function assemble(
 
 // ── tests ────────────────────────────────────────────────────────────────────────────────────────
 
-describe('ThreadDriver — the legible track/step pipeline', () => {
-  it('walks a 2-track / multi-step job to ONE PR (plan → execute steps → autofix → handoff → next → PR-tail)', async () => {
+describe('ThreadDriver — the legible thread/step pipeline', () => {
+  it('walks a 2-thread / multi-step job to ONE PR (plan → execute steps → autofix → handoff → next → PR-tail)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: makeSections(),
+      threads: makeSections(),
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -578,22 +578,22 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // Both tracks planned (one plan turn each). Orchestrate mode (default): each track runs as ONE
+    // Both threads planned (one plan turn each). Orchestrate mode (default): each thread runs as ONE
     // orchestrator execute turn that fans its steps out to writer subagents → 2 execute turns, not 4.
     const planTurns = h.calls.filter((c) => c.mode === 'plan');
     const execTurns = h.calls.filter((c) => c.mode === 'execute');
     expect(planTurns).toHaveLength(2);
-    expect(execTurns).toHaveLength(2); // 2 tracks × 1 orchestrator session
+    expect(execTurns).toHaveLength(2); // 2 threads × 1 orchestrator session
 
-    // Per-track auto-fix ran once per track; PR-tail ran exactly once.
+    // Per-thread auto-fix ran once per thread; PR-tail ran exactly once.
     expect(h.autofix.autofixThread).toHaveBeenCalledTimes(2);
     expect(h.autofix.autofixPullRequest).toHaveBeenCalledTimes(1);
 
-    // Both tracks are done with a handoff; the SECOND track received the first's handoff.
-    expect(state.tracks.every((s) => s.status === 'done')).toBe(true);
-    expect(state.tracks[1].handoffIn).toBe('handoff from Backend');
+    // Both threads are done with a handoff; the SECOND thread received the first's handoff.
+    expect(state.threads.every((s) => s.status === 'done')).toBe(true);
+    expect(state.threads[1].handoffIn).toBe('handoff from Backend');
 
-    // ONE branch, ONE push, ONE PR — tracks stacked on the same feature branch.
+    // ONE branch, ONE push, ONE PR — threads stacked on the same feature branch.
     expect(new Set(h.pushed).size).toBe(1);
     expect(h.opened).toHaveLength(1);
     expect(state.job.prUrl).toBe('https://github.com/acme/widget/pull/1');
@@ -644,7 +644,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: makeSections(),
+      threads: makeSections(),
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -695,7 +695,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
   });
 
   // ── §D fresh-context step batching ──────────────────────────────────────────────────────────────
-  // A single track PRE-LOCKED with N authored steps (the full-plan-up-front path): the driver finds
+  // A single thread PRE-LOCKED with N authored steps (the full-plan-up-front path): the driver finds
   // steps already present → skips JIT planning → packs the ordered steps into execution batches.
   function authoredState(n: number): StoreState {
     const steps: Step[] = Array.from({ length: n }, (_, i) => ({
@@ -714,7 +714,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     return {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps,
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -722,7 +722,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
 
   it('packs authored steps into batches: 5 steps → 2 sessions, one commit per batch, NO JIT plan turn', async () => {
     const state = authoredState(5);
-    const h = assemble(state, { env: { ORCHESTRATE_TRACKS: 'off' } }); // legacy LLM-batcher path
+    const h = assemble(state, { env: { ORCHESTRATE_THREADS: 'off' } }); // legacy LLM-batcher path
     (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([
       [0, 1, 2],
       [3, 4],
@@ -747,7 +747,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
 
   it('guardrail: an INVALID partition falls back to one batch per step', async () => {
     const state = authoredState(3);
-    const h = assemble(state, { env: { ORCHESTRATE_TRACKS: 'off' } }); // legacy LLM-batcher path
+    const h = assemble(state, { env: { ORCHESTRATE_THREADS: 'off' } }); // legacy LLM-batcher path
     (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([
       [0, 2],
     ]); // not covering [0,1,2]
@@ -762,7 +762,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
   it('guardrail: caps a too-large group at MAX_PHASES_PER_BATCH', async () => {
     const state = authoredState(5);
     const h = assemble(state, {
-      env: { MAX_PHASES_PER_BATCH: '2', ORCHESTRATE_TRACKS: 'off' },
+      env: { MAX_PHASES_PER_BATCH: '2', ORCHESTRATE_THREADS: 'off' },
     });
     (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([
       [0, 1, 2, 3, 4],
@@ -790,11 +790,11 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     expect(state.steps.every((p) => p.status === 'done')).toBe(true);
   });
 
-  it('every step ran in the SAME feature branch (tracks share one thread sandbox)', async () => {
+  it('every step ran in the SAME feature branch (threads share one thread sandbox)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: makeSections(),
+      threads: makeSections(),
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -802,7 +802,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // All tracks build on the thread's single durable sandbox, so the job adopts that one branch and
+    // All threads build on the thread's single durable sandbox, so the job adopts that one branch and
     // never cuts a per-feature worktree of its own.
     expect(state.job.featureBranch).toBe('atlas/feature-job-abcd');
     expect(h.git.createFeatureSandbox).not.toHaveBeenCalled();
@@ -812,20 +812,20 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     expect(state.steps.every((p) => p.status === 'done')).toBe(true);
   });
 
-  it('an uncovered always-ask decision PARKS the track and resumes on the human answer', async () => {
+  it('an uncovered always-ask decision PARKS the thread and resumes on the human answer', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
-    // A human reply we resolve LATER — the track must suspend on `handle.answer` until then.
+    // A human reply we resolve LATER — the thread must suspend on `handle.answer` until then.
     let resolveAnswer!: (r: ParkResolution) => void;
     const answer = new Promise<ParkResolution>((res) => {
       resolveAnswer = res;
     });
-    // The planner surfaces a notable decision; the classifier says ASK → the track parks.
+    // The planner surfaces a notable decision; the classifier says ASK → the thread parks.
     const h = assemble(state, { classifierVerdict: 'ask', parkAnswer: answer });
     (h.planner.extractDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([
       { description: 'add a new users table' },
@@ -834,12 +834,12 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flush();
 
-    // The track parked: ask was called, the track sits awaiting_approval, NO execute turn yet.
+    // The thread parked: ask was called, the thread sits awaiting_approval, NO execute turn yet.
     expect(h.ask).toHaveBeenCalledTimes(1);
-    expect(state.tracks[0].status).toBe('awaiting_approval');
+    expect(state.threads[0].status).toBe('awaiting_approval');
     expect(h.calls.some((c) => c.mode === 'execute')).toBe(false);
 
-    // The human replies → the track unparks and runs to completion.
+    // The human replies → the thread unparks and runs to completion.
     resolveAnswer({
       parkId: 'park1',
       text: 'yes, use a users table',
@@ -849,7 +849,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     await flushUntil(() => state.job.status === 'done');
 
     expect(h.calls.some((c) => c.mode === 'execute')).toBe(true);
-    expect(state.tracks[0].status).toBe('done');
+    expect(state.threads[0].status).toBe('done');
     expect(state.job.status).toBe('done');
   });
 
@@ -857,12 +857,12 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
-    // Legacy per-step path: asserts the interleaved building→done cursor (orchestrate runs one batch/track).
-    const h = assemble(state, { env: { ORCHESTRATE_TRACKS: 'off' } });
+    // Legacy per-step path: asserts the interleaved building→done cursor (orchestrate runs one batch/thread).
+    const h = assemble(state, { env: { ORCHESTRATE_THREADS: 'off' } });
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
@@ -879,15 +879,15 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     ).toEqual(['building', 'done', 'building', 'done']);
   });
 
-  it('resume() fast-forwards completed tracks/steps after a simulated restart (no re-execution)', async () => {
-    // Simulate a restart MID-JOB: track 1 (Backend) already done with a handoff + its steps done;
-    // track 2 (Frontend) still pending, no steps yet. Same store rows, a FRESH driver.
-    const doneBackend = track('sec-be', 10, 'Backend', 'done');
+  it('resume() fast-forwards completed threads/steps after a simulated restart (no re-execution)', async () => {
+    // Simulate a restart MID-JOB: thread 1 (Backend) already done with a handoff + its steps done;
+    // thread 2 (Frontend) still pending, no steps yet. Same store rows, a FRESH driver.
+    const doneBackend = thread('sec-be', 10, 'Backend', 'done');
     doneBackend.handoffOut = 'handoff from Backend';
     const state: StoreState = {
       job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
       record: makeRecord(),
-      tracks: [doneBackend, track('sec-fe', 20, 'Frontend')],
+      threads: [doneBackend, thread('sec-fe', 20, 'Frontend')],
       steps: [
         {
           id: 'sec-be-ph0',
@@ -919,17 +919,17 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
       route: { channel: 'C1', threadTs: 't1' },
     };
     // Legacy per-step path: the pre-locked Backend steps were batched 1-per-ordinal; Frontend runs 2 steps.
-    const h = assemble(state, { env: { ORCHESTRATE_TRACKS: 'off' } });
+    const h = assemble(state, { env: { ORCHESTRATE_THREADS: 'off' } });
 
     await h.driver.resume();
     await flushUntil(() => state.job.status === 'done');
 
-    // The done Backend track was NOT re-planned and NOT re-executed (no plan/exec turn for it).
-    // Only the Frontend track planned (1 plan turn) + ran (2 exec turns).
+    // The done Backend thread was NOT re-planned and NOT re-executed (no plan/exec turn for it).
+    // Only the Frontend thread planned (1 plan turn) + ran (2 exec turns).
     expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(1);
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2);
-    // The Frontend track received Backend's persisted handoff.
-    expect(state.tracks[1].handoffIn).toBe('handoff from Backend');
+    // The Frontend thread received Backend's persisted handoff.
+    expect(state.threads[1].handoffIn).toBe('handoff from Backend');
     // Still ONE PR.
     expect(h.opened).toHaveLength(1);
     expect(state.job.status).toBe('done');
@@ -941,7 +941,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend', 'executing')],
+      threads: [thread('sec-be', 10, 'Backend', 'executing')],
       steps: [
         {
           id: 'sec-be-ph0',
@@ -989,7 +989,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend', 'executing')],
+      threads: [thread('sec-be', 10, 'Backend', 'executing')],
       steps: [
         {
           id: 'sec-be-ph0',
@@ -1039,7 +1039,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob({ kind: 'bugfix' }),
       record: makeRecord(),
-      tracks: [track('sec-fix', 10, 'Fix the bug')],
+      threads: [thread('sec-fix', 10, 'Fix the bug')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1060,7 +1060,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: makeSections(),
+      threads: makeSections(),
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1071,7 +1071,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     expect(h.posts.some((p) => p.includes('Starting the build'))).toBe(true);
     expect(
       h.posts.some(
-        (p) => p.includes('Planning track') && p.includes('Backend'),
+        (p) => p.includes('Planning thread') && p.includes('Backend'),
       ),
     ).toBe(true);
     expect(h.posts.some((p) => p.toLowerCase().includes('building'))).toBe(
@@ -1084,7 +1084,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1115,7 +1115,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1154,7 +1154,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1184,7 +1184,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1224,7 +1224,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1256,7 +1256,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1284,7 +1284,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const running: StoreState = {
       job: makeJob({ status: 'done' }),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend', 'done')],
+      threads: [thread('sec-be', 10, 'Backend', 'done')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1296,7 +1296,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     const state: StoreState = {
       job: makeJob({ status: 'paused' }),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1307,11 +1307,11 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     expect(h.opened).toHaveLength(1);
   });
 
-  it('bounds a runaway track PLAN turn — aborts + falls back to the planner, no hang (issue #3)', async () => {
+  it('bounds a runaway thread PLAN turn — aborts + falls back to the planner, no hang (issue #3)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -1393,7 +1393,7 @@ describe('ThreadDriver — 401 auth recovery', () => {
     return {
       job: makeJob(),
       record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
+      threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };

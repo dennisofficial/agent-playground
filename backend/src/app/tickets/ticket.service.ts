@@ -102,7 +102,7 @@ export class TicketService {
     @InjectRepository(TicketDependencyEntity, DB_CONNECTION)
     private readonly deps: Repository<TicketDependencyEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly threads: Repository<JobEntity>,
+    private readonly jobs: Repository<JobEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly decisions: Repository<DecisionRecordEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
@@ -213,7 +213,7 @@ export class TicketService {
     const { orgId, repoId } = args;
     const [edges, threads, all] = await Promise.all([
       this.deps.find({ where: { org_id: orgId, repo_id: repoId } }),
-      this.threads.find({ where: { org_id: orgId, repo_id: repoId } }),
+      this.jobs.find({ where: { org_id: orgId, repo_id: repoId } }),
       this.tickets.find({ where: { org_id: orgId, repo_id: repoId } }),
     ]);
     const statusById = new Map(all.map((t) => [t.id, t.status]));
@@ -397,8 +397,8 @@ export class TicketService {
 
     let jobId: string;
     try {
-      const row = await this.threads.save(
-        this.threads.create({
+      const row = await this.jobs.save(
+        this.jobs.create({
           org_id: orgId,
           repo_id: repoId,
           origin: 'control',
@@ -430,7 +430,7 @@ export class TicketService {
 
   /** The thread currently linked to a ticket (org-scoped), or null. */
   async findLinkedThread(orgId: string, ticketId: string): Promise<string | null> {
-    const thread = await this.threads.findOne({ where: { ticket_id: ticketId, org_id: orgId } });
+    const thread = await this.jobs.findOne({ where: { ticket_id: ticketId, org_id: orgId } });
     return thread?.id ?? null;
   }
 
@@ -446,7 +446,7 @@ export class TicketService {
    */
   async revertForDeletedThread(args: { orgId: string; jobId: string }): Promise<void> {
     const { orgId, jobId } = args;
-    const thread = await this.threads.findOne({ where: { id: jobId, org_id: orgId } });
+    const thread = await this.jobs.findOne({ where: { id: jobId, org_id: orgId } });
     const ticketId = thread?.ticket_id;
     if (!ticketId) return; // thread gone, or never tied to a ticket → nothing to hand back.
 
@@ -460,7 +460,7 @@ export class TicketService {
    * (`in_progress`/`in_review`) whose linked thread no longer exists is STRANDED — nothing can advance it
    * (those lanes move only via a thread, and the board UI won't touch them by design). Hand each back to
    * `todo`. Covers the gaps the inline `revertForDeletedThread` can't: a crash mid-delete, a thread row
-   * gone by some other path, or the PR-abandoned `closeThread` path we deliberately left out. Idempotent
+   * gone by some other path, or the PR-abandoned `closeJob` path we deliberately left out. Idempotent
    * (a reverted ticket no longer matches). Org-wide (boot sweep). Returns how many were reverted.
    */
   async reconcileStrandedTickets(): Promise<number> {
@@ -579,7 +579,7 @@ export class TicketService {
   ): Promise<TicketOrigin | null> {
     const origin: TicketOrigin = {};
     if (jobId) {
-      const thread = await this.threads.findOne({ where: { id: jobId, org_id: orgId } });
+      const thread = await this.jobs.findOne({ where: { id: jobId, org_id: orgId } });
       if (thread?.title) origin.threadTitle = thread.title;
     }
     if (decisionRecordId) {
