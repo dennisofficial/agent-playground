@@ -371,7 +371,11 @@ export class PlanReviewService {
     }
     const sandbox = ensured.sandbox;
 
-    const sandboxKey = `plan-review-${row.org_id}-${reviewId}`;
+    // STABLE per JOB (not per review round): the Codex SDK stores its session transcript under the
+    // CODEX_HOME keyed by this sandboxKey, so resuming a prior round's session (see priorSessionId) only
+    // finds it when every round of a job shares ONE home. A per-reviewId key gave each round a fresh home,
+    // so `resumeThread` hit a missing transcript and Codex Exec exited 1. Mirrors the brain's per-job key.
+    const sandboxKey = `plan-review-${row.org_id}-${row.job_id}`;
     // Per-org Codex subscription secret (deployed); undefined locally → the in-container engine falls back
     // to CODEX_OAUTH_TOKEN. With neither set the turn throws and is caught below as "failed / no findings".
     const auth: EngineAuth | undefined = await this.creds.engineAuth(
@@ -396,97 +400,122 @@ export class PlanReviewService {
       select: { id: true, repo_id: true },
     });
     const channel = job?.repo_id ?? row.job_id;
-    const harness = this.turnHarness.create({
-      jobId: row.job_id,
-      channel,
-      lane: codexReviewLane(row.job_id),
-      metaTag: { codexReviewId: row.job_id, reviewRound: row.round },
-    });
-
-    // Watchdog: bound the turn so a HUNG engine can never leave the row stuck `running` forever (which
-    // would wedge the `finalize_plan` gate). The runner honors `signal`, so abort propagates and aborts
-    // the turn; the `Promise.race` is the belt-and-suspenders that lets `runReview` return even if a
-    // runner ignored the signal. On timeout we throw → the catch below stamps the row `failed`.
-    const ac = new AbortController();
-    let timedOut = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const watchdog = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        timedOut = true;
-        ac.abort();
-        reject(
-          new Error(
-            `Codex plan review timed out after ${Math.round(this.timeoutMs / 60_000)}m`,
-          ),
-        );
-      }, this.timeoutMs);
-    });
-
-    let reviewerOutput: string;
-    try {
-      const result = await Promise.race([
-        this.engine.run({
-          engine: 'codex',
-          task: row.prompt,
-          cwd: sandbox.worktreePath,
-          systemPrompt: REVIEW_SYSTEM,
-          sandboxKey,
-          mode: 'review',
-          // Review hard — pin max reasoning (subscription accounts accept this knob; verified by spike).
-          modelReasoningEffort: 'xhigh',
-          signal: ac.signal,
-          // Resume the same Codex thread when we have one (null → fresh thread on round 1).
-          ...(priorSessionId ? { sessionId: priorSessionId } : {}),
-          // Rich stream so the review lane captures Codex's reasoning + tool_use/tool_result (file reads,
-          // commands), not just prose. Capture the session id the moment it's known (crash-safe) so the
-          // next round can resume even if this turn later times out.
-          richStream: true,
-          onEvent: (e) => {
-            if (e.kind === 'session' && e.sessionId) {
-              void this.reviews
-                .update({ id: reviewId }, { codex_session_id: e.sessionId })
-                .catch(() => undefined);
-            }
-            harness.onEvent(e);
-          },
-          ...(auth ? { auth } : {}),
-          ...(sandbox.containerId
-            ? {
-                target: {
-                  containerId: sandbox.containerId,
-                  worktreeHost: sandbox.worktreePath,
-                },
+    // ONE Codex review turn wrapped in its OWN harness (durable + live SSE) + watchdog. `resumeSessionId`
+    // is the prior session to continue, or undefined for a fresh thread. Returns the reviewer output, or a
+    // failure descriptor (distinguishing a watchdog TIMEOUT from an ordinary error) — never throws, so the
+    // caller can decide whether to retry.
+    const attempt = async (
+      resumeSessionId: string | undefined,
+    ): Promise<
+      | { ok: true; output: string }
+      | { ok: false; error: string; timedOut: boolean }
+    > => {
+      const harness = this.turnHarness.create({
+        jobId: row.job_id,
+        channel,
+        lane: codexReviewLane(row.job_id),
+        metaTag: { codexReviewId: row.job_id, reviewRound: row.round },
+      });
+      // Watchdog: bound the turn so a HUNG engine can never leave the row stuck `running` forever (which
+      // would wedge the `finalize_plan` gate). The runner honors `signal`, so abort propagates; the
+      // `Promise.race` lets the attempt return even if a runner ignored the signal.
+      const ac = new AbortController();
+      let timedOut = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const watchdog = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          ac.abort();
+          reject(
+            new Error(
+              `Codex plan review timed out after ${Math.round(this.timeoutMs / 60_000)}m`,
+            ),
+          );
+        }, this.timeoutMs);
+      });
+      try {
+        const result = await Promise.race([
+          this.engine.run({
+            engine: 'codex',
+            task: row.prompt,
+            cwd: sandbox.worktreePath,
+            systemPrompt: REVIEW_SYSTEM,
+            sandboxKey,
+            mode: 'review',
+            // Review hard — pin max reasoning (subscription accounts accept this knob; verified by spike).
+            modelReasoningEffort: 'xhigh',
+            signal: ac.signal,
+            // Resume the same Codex thread when we have one (undefined → fresh thread).
+            ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
+            // Rich stream so the review lane captures Codex's reasoning + tool_use/tool_result (file reads,
+            // commands), not just prose. Capture the session id the moment it's known (crash-safe) so the
+            // next round can resume even if this turn later times out.
+            richStream: true,
+            onEvent: (e) => {
+              if (e.kind === 'session' && e.sessionId) {
+                void this.reviews
+                  .update({ id: reviewId }, { codex_session_id: e.sessionId })
+                  .catch(() => undefined);
               }
-            : {}),
-        }),
-        watchdog,
-      ]);
-      reviewerOutput = result.result;
-      await harness.finish(reviewerOutput, result.usage ? { usage: result.usage } : undefined);
-    } catch (err) {
-      const error = summarizeEngineError(err);
-      // Persist whatever streamed before the error/timeout + close the live lane (idempotent vs finish).
-      await harness.abort().catch(() => undefined);
-      if (!timedOut && this.election.isDraining()) {
+              harness.onEvent(e);
+            },
+            ...(auth ? { auth } : {}),
+            ...(sandbox.containerId
+              ? {
+                  target: {
+                    containerId: sandbox.containerId,
+                    worktreeHost: sandbox.worktreePath,
+                  },
+                }
+              : {}),
+          }),
+          watchdog,
+        ]);
+        await harness.finish(
+          result.result,
+          result.usage ? { usage: result.usage } : undefined,
+        );
+        return { ok: true, output: result.result };
+      } catch (err) {
+        // Persist whatever streamed before the error/timeout + close the live lane (idempotent vs finish).
+        await harness.abort().catch(() => undefined);
+        return { ok: false, error: summarizeEngineError(err), timedOut };
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+
+    let res = await attempt(priorSessionId);
+    // RESUME-FAILURE FALLBACK: if we tried to CONTINUE a prior session and it failed (not a watchdog
+    // timeout, not a shutdown drain), the session may be unresumable — a stale id, or the container was
+    // reaped between rounds so the in-container CODEX_HOME (which holds the session transcript) is gone.
+    // Retry ONCE with a FRESH thread so a resume glitch degrades to a fresh review instead of hard-failing
+    // every re-review for the job. A fresh first attempt (no priorSessionId) never retries.
+    if (!res.ok && priorSessionId && !res.timedOut && !this.election.isDraining()) {
+      this.logger.warn(
+        `plan-review: review=${reviewId} resume failed (${res.error}) — retrying with a fresh Codex thread`,
+      );
+      res = await attempt(undefined);
+    }
+
+    if (!res.ok) {
+      if (!res.timedOut && this.election.isDraining()) {
         // PROCESS SHUTDOWN (not a local timeout, not a real failure): the drain cut off the review turn.
-        // Leave the row 'running' so the boot reconcile (`findReviewsToReconcile`, status:'running')
-        // re-runs it; stamping 'failed' would strand it (terminal, never reconciled). `timedOut` aborts
-        // fire while still leader/follower, so they still fall through to the 'failed' stamp below.
+        // Leave the row 'running' so the boot reconcile (status:'running') re-runs it; stamping 'failed'
+        // would strand it. Timeout aborts fire while still leader/follower, so they fall through to 'failed'.
         this.logger.warn(
           `plan-review: review=${reviewId} left 'running' — aborted by shutdown drain; boot reconcile will re-run`,
         );
-        return { status: 'failed', findings: '', error };
+        return { status: 'failed', findings: '', error: res.error };
       }
       this.logger.warn(
-        `plan-review: Codex turn ${timedOut ? 'timed out' : 'failed'} for review=${reviewId} — recording failed: ${err}`,
+        `plan-review: Codex turn ${res.timedOut ? 'timed out' : 'failed'} for review=${reviewId} — recording failed: ${res.error}`,
       );
-      await this.stamp(row, 'failed', '', error);
-      return { status: 'failed', findings: '', error };
-    } finally {
-      if (timer) clearTimeout(timer);
+      await this.stamp(row, 'failed', '', res.error);
+      return { status: 'failed', findings: '', error: res.error };
     }
 
-    const findings = parsePlanFindings(reviewerOutput);
+    const findings = parsePlanFindings(res.output);
     await this.stamp(row, 'complete', findings, null);
     this.logger.log(
       findings

@@ -35,6 +35,8 @@ export interface WebInboundOptions {
   seed?: boolean;
   /** Delivery seed — the `ask_question` card id whose answer this seed delivers (see `InboundChatMessage.seedQuestionId`). */
   seedQuestionId?: string;
+  /** Delivery seed — the `request_file` card id whose uploaded file this seed confirms (see `InboundChatMessage.seedFileId`). */
+  seedFileId?: string;
 }
 
 const DEFAULT_TEAM_ID = 'a0a0a0a0-0000-4000-8000-000000000001'; // sentinel org uuid (web default tenant)
@@ -153,6 +155,7 @@ export class WebSurface implements ChatSurface {
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
       ...(opts.seed ? { seed: true } : {}),
       ...(opts.seedQuestionId ? { seedQuestionId: opts.seedQuestionId } : {}),
+      ...(opts.seedFileId ? { seedFileId: opts.seedFileId } : {}),
       ts: new Date(),
     };
     this.logger.debug(
@@ -171,7 +174,7 @@ export class WebSurface implements ChatSurface {
     channel: string,
     jobId: string,
     body: string,
-    opts: { orgId?: string; deliveredQuestionId?: string } = {},
+    opts: { orgId?: string; deliveredQuestionId?: string; deliveredFileId?: string } = {},
   ): string {
     return this.receiveFromClient(channel, wrapSystemNotification(body), {
       threadTs: jobId,
@@ -180,6 +183,7 @@ export class WebSurface implements ChatSurface {
       authorName: SYSTEM_SEED_AUTHOR.name,
       ...(opts.orgId ? { orgId: opts.orgId } : {}),
       ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),
+      ...(opts.deliveredFileId ? { seedFileId: opts.deliveredFileId } : {}),
     });
   }
 

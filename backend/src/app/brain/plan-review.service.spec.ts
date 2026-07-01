@@ -736,6 +736,32 @@ describe('PlanReviewService — session reuse + reply rounds', () => {
     expect(calls[1].sessionId).toBe('sess-A'); // resumed the SAME Codex thread
   });
 
+  it('resume failure falls back to a FRESH thread (one retry)', async () => {
+    const { repo, rows } = makeReviewsRepo();
+    const seen: Array<string | undefined> = [];
+    // Fails when asked to RESUME (mimics a lost/stale session → "Codex Exec exited with code 1"), but
+    // succeeds on a fresh thread.
+    const engine = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        seen.push(args.sessionId);
+        if (args.sessionId) {
+          throw new Error('Codex Exec exited with code 1: Reading prompt from stdin');
+        }
+        return { result: 'NO_FINDINGS', sessionId: 'fresh-sess' } as EngineRunResult;
+      }),
+    } as unknown as EngineRunnerPort;
+    const service = makeService(engine, repo);
+
+    await service.start(START_INPUT); // round 1
+    rows[0].codex_session_id = 'stale-sess'; // a captured session that no longer resumes
+    const r2 = await service.start(START_INPUT); // round 2 will try to resume it
+    if (!('reviewId' in r2)) throw new Error('expected round 2');
+    const out = await service.runReview(r2.reviewId);
+
+    expect(seen).toEqual(['stale-sess', undefined]); // resume attempt, then a fresh retry
+    expect(out.status).toBe('complete'); // the fresh retry produced a clean review, not a hard failure
+  });
+
   it('openReplyRound persists a running reply carrying the rebuttal', async () => {
     const { repo, rows } = makeReviewsRepo();
     const service = makeService(capturingEngine().engine, repo);

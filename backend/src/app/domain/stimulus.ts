@@ -61,6 +61,12 @@ export interface ChatStimulus extends BaseStimulus {
    * In-memory only — never persisted. Undefined for non-answer turns.
    */
   seedQuestionId?: string;
+  /**
+   * DELIVERY SEED (file variant): the `requestId` of the `request_file` card whose uploaded file THIS
+   * seed confirms. The delivery turn stamps that card `delivered_at` on its success tail (at-least-once,
+   * tied to the exact confirmation-carrying seed). In-memory only — never persisted. Undefined otherwise.
+   */
+  seedFileId?: string;
 }
 
 /**

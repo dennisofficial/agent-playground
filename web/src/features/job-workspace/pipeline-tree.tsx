@@ -6,7 +6,7 @@ import { Dot } from '@/components/ui/badges';
 import { threadColor } from '@/lib/api/status';
 import { threadTitle } from '@/lib/thread-title';
 import { useLiveTurn } from '@/lib/api/job-stream';
-import { phaseLane } from './phases';
+import { threadLane } from './phases';
 import { durableTaskListByPhase, liveTaskListForPhase, type TaskItem } from './thread-todos';
 import type { JobMessage } from '@/lib/api/job-api';
 import type { PipelineJob, PipelineThread, JobStatus, ThreadStatus } from '@/lib/api/types';
@@ -76,13 +76,6 @@ function threadAnchorIds(thread: PipelineThread): string[] {
   return out;
 }
 
-/** The live phase lane to subscribe to for an in-flight thread — the building step's anchor, else its first. */
-function liveAnchorOf(thread: PipelineThread): string | null {
-  const building = thread.steps.find((p) => p.status === 'building' || p.status === 'reviewing');
-  if (building) return building.anchorStepId;
-  return threadAnchorIds(thread)[0] ?? null;
-}
-
 // ── the THREADS tree — a flat thread list; the open/running thread expands to its live task list ─────
 
 export interface TreeProps {
@@ -114,14 +107,13 @@ export function PipelineTree({ job, status, messages, jobId, laneNode, onSelectN
   // Every thread-session's task list, folded once from the transcript's task-tool calls.
   const tasksByPhase = useMemo(() => durableTaskListByPhase(messages), [messages]);
 
-  // Only ONE thread executes at a time — a single live subscription (the active thread's phase lane) carries
+  // Only ONE thread executes at a time — a single live subscription (the active thread's STABLE lane) carries
   // its live task list. Hooks can't be conditional, so an inactive tree reads a dead lane.
   const activeThread = activeIdx === -1 ? null : threads[activeIdx];
-  const activeAnchor = activeThread ? liveAnchorOf(activeThread) : null;
-  const live = useLiveTurn(jobId, activeAnchor ? phaseLane(activeAnchor) : '__none__');
+  const live = useLiveTurn(jobId, activeThread ? threadLane(activeThread.id) : '__none__');
   const liveTasks = useMemo(
-    () => (activeAnchor && live ? liveTaskListForPhase(live.blocks) : []),
-    [activeAnchor, live],
+    () => (activeThread && live ? liveTaskListForPhase(live.blocks) : []),
+    [activeThread, live],
   );
 
   return (

@@ -319,7 +319,7 @@ export interface TurnMeta {
   orgId: string;
   /** SSE fan-out channel (repo id). */
   channel: string;
-  /** Transcript lane: 'main' | 'phase:<stepId>'. */
+  /** Transcript lane: 'main' (brain) | 'thread:<threadId>' (a build thread) | 'codex-review:<jobId>'. */
   lane: string;
   kind: 'brain' | 'step' | 'review' | 'gate' | 'autofix';
   /** Per-kind params needed to rebuild the turn on re-attach (author, prompt, route, timeouts, …). */

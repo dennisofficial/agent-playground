@@ -46,6 +46,7 @@ import { JobTitleService } from './job-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebQuestionCard } from './web-question-card';
 import type { WebSecretInputCard } from './web-secret-input-card';
+import type { WebFileRequestCard } from './web-file-request-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
@@ -208,6 +209,16 @@ interface ProvideSecretDto {
   requestId: string;
   /** The plaintext secret value — written to the encrypted store + granted, NEVER persisted in the card. */
   value: string;
+}
+/** Upload cap for `request_file` — file secrets are small config/key files (JSON, .pem, .env.keys), not blobs. */
+const MAX_FILE_UPLOAD_BYTES = 512 * 1024;
+interface ProvideFileDto {
+  /** The file-request card's id (its message `ts`). */
+  requestId: string;
+  /** The operator-chosen filename (metadata only — display/provenance, never the store key). */
+  filename: string;
+  /** The file's text contents — written to the encrypted store + granted, NEVER persisted in the card. */
+  content: string;
 }
 
 /** Operator-visible message provenance, by AUDIENCE. See the `/messages` mapping for the full rationale. */
@@ -712,6 +723,67 @@ export class WebSurfaceController {
       jobId,
       `The operator provided the secret \`${payload.name}\` (stored encrypted, granted to \`${payload.path}\`). Continue onboarding.`,
       { orgId: org.id },
+    );
+    return { ok: true, ts };
+  }
+
+  /**
+   * `POST …/threads/:jobId/provide-file` — upload the file for a brain `request_file` card during repo
+   * onboarding. Like `provide-secret` (owner-only; contents go straight to the encrypted store as a
+   * file-valued secret + an owner grant, NEVER onto the card / transcript / brain tool I/O), but the value
+   * arrives as an UPLOAD and the gate is PER-CARD (the card's own state — no single-slot thread pointer),
+   * so several file requests can be filled in any order. The store key is repo-scoped (`file:<repoId>:<path>`)
+   * so two repos wanting the same relative path don't collide at the org-scoped secret name.
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/provide-file')
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
+  async provideFile(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Body() body: ProvideFileDto,
+  ): Promise<{ ok: boolean; ts: string }> {
+    const content = body?.content;
+    const filename = body?.filename?.trim() || 'upload';
+    if (!body?.requestId || content == null || content === '') {
+      throw new BadRequestException(
+        'requestId and non-empty file content are required',
+      );
+    }
+    if (Buffer.byteLength(content, 'utf8') > MAX_FILE_UPLOAD_BYTES) {
+      throw new BadRequestException(
+        `file exceeds the ${Math.floor(MAX_FILE_UPLOAD_BYTES / 1024)} KB upload limit`,
+      );
+    }
+    const thread = await this.requireThread(jobId, org.id);
+    const card = await this.messages.findOne({
+      where: { job_id: jobId, ts: body.requestId, kind: 'card' },
+    });
+    const payload = card?.card as WebFileRequestCard | undefined;
+    if (!card || payload?.type !== 'file_request_card') {
+      throw new BadRequestException('no such file request on this thread');
+    }
+    // Per-card gate (same shape as answer-question): a delivered card is stale; an already-provided card is
+    // an idempotent no-op (double submit — a delivery turn is in flight / queued).
+    if (payload.delivered_at) return { ok: false, ts: '' };
+    if (payload.provided_at != null) return { ok: true, ts: '' };
+    // Write the contents to the ENCRYPTED store under a repo-scoped key + grant it to the destination path.
+    // This is the contents' only resting place; everything downstream is masked.
+    const storeKey = `file:${thread.repo_id}:${payload.path}`;
+    await this.secrets.write(org.id, storeKey, content);
+    await this.secrets.grant(org.id, thread.repo_id, storeKey, payload.path);
+    // Stamp the card PROVIDED (+ filename, no contents), then deliver a MASKED confirmation carrying this
+    // card's id so the delivery turn's success tail stamps exactly THIS card delivered (at-least-once).
+    card.card = {
+      ...(card.card ?? {}),
+      provided_at: new Date().toISOString(),
+      filename,
+    };
+    await this.messages.save(card);
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      `The operator uploaded the file for \`${payload.path}\` (stored encrypted, granted). Continue onboarding.`,
+      { orgId: org.id, deliveredFileId: body.requestId },
     );
     return { ok: true, ts };
   }

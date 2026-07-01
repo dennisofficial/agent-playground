@@ -47,7 +47,7 @@ export class ActiveTurnEntity extends TimestampedEntity {
   @Column({ type: 'text' })
   channel!: string;
 
-  /** Transcript lane: 'main' for the brain, 'phase:<stepId>' for a build step. */
+  /** Transcript lane: 'main' for the brain, 'thread:<threadId>' for a build thread. */
   @Column({ type: 'text', default: 'main' })
   lane!: string;
 

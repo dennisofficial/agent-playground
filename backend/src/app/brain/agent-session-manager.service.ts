@@ -28,6 +28,7 @@ import {
   TurnHarnessFactory,
   SYSTEM_SEED_AUTHOR,
   type WebQuestionCard,
+  webFileRequestCard,
   webQuestionCard,
   webSecretInputCard,
   wrapSystemNotification,
@@ -61,6 +62,7 @@ import {
   loadWorktreeManifest,
   type MountMode,
 } from '../driver/worktree-manifest';
+import { isReservedMountPath } from '../sandbox/container-paths';
 import { TicketService } from '../tickets';
 import type {
   TicketKind,
@@ -556,6 +558,7 @@ export class AgentSessionManager
     `  - mcp__${BRIDGE_SERVER_NAME}__recall              — retrieve relevant memory facts`,
     `  - mcp__${BRIDGE_SERVER_NAME}__remember            — store a durable memory fact about this repo`,
     `  - mcp__${BRIDGE_SERVER_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (see SECRETS)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__request_file        — ask the operator to UPLOAD a file (JSON/key file; see SECRETS)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — author .atlas/worktree.json (mounts + seed; NOT secrets)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: summarise + (if needed) open the config PR`,
     '',
@@ -566,10 +569,17 @@ export class AgentSessionManager
     'masked "✓ NAME provided" confirmation. Refer to secrets by NAME only. Request ONE secret at a time and',
     'wait for the confirmation before continuing. The onboarding worktree has NO real secrets rendered — work',
     'against .env.example / placeholders only.',
+    'For a value the operator must UPLOAD rather than type — a service-account JSON, a keystore/.pem, a',
+    'gitignored .env.keys — call request_file({ path, description }) instead: the operator uploads the file',
+    'through a secure field that stores its contents ENCRYPTED and grants them to `path`; you see only a',
+    'masked confirmation. Never ask them to paste file contents in chat. The destination MUST be gitignored',
+    '(else it would leak into the PR and will not render). request_file is per-card — you may open several.',
     '',
     'CONFIG — non-secret provisioning goes in .atlas/worktree.json via write_worktree_config({ mounts, seed }):',
     '  - mounts: cache dirs to persist across threads (e.g. [{ path: ".next/cache", mode: "per-thread" }]).',
     '  - seed: operator golden files to copy in (rare). Secrets do NOT go here — use request_secret.',
+    'The pnpm store and Node (via fnm) are AUTO-MANAGED and shared across threads — NEVER add `.pnpm-store`,',
+    '`node_modules`, or a Node version dir as a mount (it collides with the system bind and breaks the sandbox).',
     'Most repos need NO mounts/seed — only call write_worktree_config when there is something real to record.',
     '',
     'FINISH — when the repo is ready (deps install, required secrets registered, config recorded), call',
@@ -677,6 +687,34 @@ export class AgentSessionManager
       }
     } catch (err) {
       this.logger.warn(`secret-delivery reconciliation failed: ${err}`);
+    }
+
+    // 2c) Re-deliver any FILE the operator uploaded (contents durably stored + granted) but whose masked
+    //     confirmation turn a crash dropped. Per-card (no thread pointer), so the seed MUST carry the file
+    //     card id (`seedFileId`) for the delivery tail to stamp exactly that card delivered.
+    try {
+      const pendingFiles = await this.store.findUndeliveredProvidedFiles();
+      if (pendingFiles.length > 0) {
+        this.logger.log(
+          `Leader: re-delivering ${pendingFiles.length} provided-but-undelivered file(s)`,
+        );
+        for (const f of pendingFiles) {
+          const stimulus = harnessDeliveryStimulus({
+            jobId: f.jobId,
+            orgId: f.orgId,
+            repoId: f.repoId,
+            body: maskedFileNotice(f.path),
+            seedFileId: f.requestId,
+          });
+          void this.handleChatTurn(stimulus).catch((err) =>
+            this.logger.warn(
+              `boot file re-delivery failed for thread=${f.jobId}: ${err}`,
+            ),
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`file-delivery reconciliation failed: ${err}`);
     }
 
     // 3) Plan-review reconciliation (same at-least-once shape): re-run any review whose Codex turn was in
@@ -1062,6 +1100,19 @@ export class AgentSessionManager
         deliveredSecretId = awaitingSecret;
     }
 
+    // File-gate delivery (per-card, so keyed on the seed's `seedFileId`, NOT a thread pointer): if this
+    // seed confirms a PROVIDED, not-yet-DELIVERED `request_file` card, THIS turn is its masked-confirmation
+    // delivery turn. Stamped only on the success tail below, so a failed turn re-delivers (at-least-once).
+    let deliveredFileId: string | null = null;
+    if (stimulus.seedFileId) {
+      const card = await this.store.getFileCard(
+        stimulus.jobId,
+        stimulus.seedFileId,
+      );
+      if (card?.provided_at != null && card.delivered_at == null)
+        deliveredFileId = stimulus.seedFileId;
+    }
+
     // Lazily provision the thread's sandbox on its FIRST turn — the live create/seed paths insert bare
     // thread rows (no sandbox/branch). Subsequent turns no-op (the row already exists). Tell the operator
     // we're setting up so the first turn isn't a silent ~30s wait while we clone + start a container.
@@ -1103,11 +1154,26 @@ export class AgentSessionManager
     }
 
     // (Re-)attach a live container against the thread's durable worktree. Returns null only if the
-    // thread has no sandbox row (just provisioned above, so unexpected) or is closed.
-    const ensured = await this.lifecycle.ensureContainer(
-      stimulus.jobId,
-      stimulus.orgId,
-    );
+    // thread has no sandbox row (just provisioned above, so unexpected) or is closed. A container-CREATE
+    // failure (e.g. a bad Docker mount spec) THROWS here — catch it and surface a visible error instead
+    // of letting it escape to the chat bridge as a silent unhandled rejection (which looks like the brain
+    // "hanging"); returning cleanly also lets the turn queue drain so the thread isn't wedged.
+    let ensured: Awaited<ReturnType<JobLifecycleService['ensureContainer']>>;
+    try {
+      ensured = await this.lifecycle.ensureContainer(
+        stimulus.jobId,
+        stimulus.orgId,
+      );
+    } catch (err) {
+      this.logger.error(
+        `container attach failed for thread=${stimulus.jobId}: ${err}`,
+      );
+      await this.say(
+        stimulus,
+        `I couldn't start the workspace container for this thread. (${String(err).slice(0, 200)})`,
+      );
+      return;
+    }
     if (!ensured) {
       this.logger.warn(
         `No sandbox for thread=${stimulus.jobId} team=${stimulus.orgId} — cannot run in-sandbox turn`,
@@ -1328,6 +1394,14 @@ export class AgentSessionManager
       await this.store
         .clearAwaitingSecret(stimulus.jobId, deliveredSecretId)
         .catch((err) => this.logger.warn(`clearAwaitingSecret failed: ${err}`));
+    }
+
+    // SUCCESS TAIL — the file upload's masked confirmation reached the brain this turn (per-card gate; no
+    // pointer to clear). Boot sweep re-delivers if this turn never lands.
+    if (deliveredFileId) {
+      await this.store
+        .markFileDelivered(stimulus.jobId, deliveredFileId)
+        .catch((err) => this.logger.warn(`markFileDelivered failed: ${err}`));
     }
   }
 
@@ -2356,6 +2430,7 @@ export class AgentSessionManager
       recall: tools.recall,
       remember: tools.remember,
       request_secret: this.buildRequestSecretTool(stimulus),
+      request_file: this.buildRequestFileTool(stimulus),
       write_worktree_config: this.buildWriteWorktreeConfigTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
     };
@@ -2425,6 +2500,58 @@ export class AgentSessionManager
   }
 
   /**
+   * `request_file({ path, description })` — ask the operator to UPLOAD a file whose contents can't be
+   * typed (a service-account JSON, a keystore/`.pem`, a gitignored `.env.keys`). Posts a value-FREE card;
+   * the file arrives only at the owner-gated `provide-file` endpoint, which stores the contents ENCRYPTED
+   * (as a file-valued secret) + grants them to `path` for future build threads. PER-CARD (multiple may be
+   * open at once — no one-at-a-time gate). The brain only ever sees a masked confirmation. org/repo come
+   * from the closure (never tool args) — tenant safety. The destination MUST be gitignored, or the
+   * hydrator refuses to render it (it would leak into the PR).
+   */
+  private buildRequestFileTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const path = String(args['path'] ?? '').trim();
+      const description = String(args['description'] ?? '').trim();
+      if (!path || path.startsWith('/') || path.split('/').includes('..')) {
+        return {
+          ok: false,
+          reason:
+            'path must be a worktree-relative file path (e.g. .env.keys), no leading / or ..',
+        };
+      }
+      if (!description)
+        return {
+          ok: false,
+          reason: 'description is required (why the file is needed)',
+        };
+      const requestId = `f-${randomUUID()}`;
+      const card = webFileRequestCard({
+        jobId: stimulus.jobId,
+        requestId,
+        path,
+        description,
+      });
+      const opened = await this.store.openFileRequest(stimulus.jobId, {
+        requestId,
+        card,
+      });
+      if (!opened.ok)
+        return {
+          ok: false,
+          reason: 'Could not open the file request (thread not found).',
+        };
+      return {
+        ok: true,
+        requestId,
+        message:
+          `File-upload card posted for "${path}". The operator uploads the file through a secure field; ` +
+          'its contents go straight to encrypted storage and you will only see a masked confirmation. ' +
+          'Never ask them to paste file contents in chat. Ensure the destination is gitignored.',
+      };
+    };
+  }
+
+  /**
    * `write_worktree_config({ mounts, seed })` — author the repo's committed `.atlas/worktree.json` (the
    * NON-secret half: cache mounts + golden-seed files). Secrets are NEVER written here (they live as
    * encrypted grants); a `secrets` field is rejected. Validated against the manifest schema before write.
@@ -2438,7 +2565,9 @@ export class AgentSessionManager
             'secrets do not go in .atlas/worktree.json — use request_secret instead',
         };
       }
-      const mounts = this.normalizeMounts(args['mounts']);
+      const { mounts, warnings: mountWarnings } = this.normalizeMounts(
+        args['mounts'],
+      );
       const seed = this.normalizeSeed(args['seed']);
       const sandbox = await this.lifecycle.findSandbox(
         stimulus.jobId,
@@ -2451,7 +2580,10 @@ export class AgentSessionManager
       const body = JSON.stringify({ mounts, seed }, null, 2) + '\n';
       await writeFile(join(dir, 'worktree.json'), body, 'utf8');
       // Re-parse through the loader to surface any limit/shape warnings to the brain.
-      const { warnings } = loadWorktreeManifest(sandbox.worktreePath);
+      const { warnings: loadWarnings } = loadWorktreeManifest(
+        sandbox.worktreePath,
+      );
+      const warnings = [...mountWarnings, ...loadWarnings];
       return {
         ok: true,
         mounts: mounts.length,
@@ -2529,19 +2661,31 @@ export class AgentSessionManager
   }
 
   /** Coerce `write_worktree_config` mounts arg into validated {path, mode} specs (drops malformed entries). */
-  private normalizeMounts(raw: unknown): { path: string; mode: MountMode }[] {
-    if (!Array.isArray(raw)) return [];
+  private normalizeMounts(raw: unknown): {
+    mounts: { path: string; mode: MountMode }[];
+    warnings: string[];
+  } {
+    if (!Array.isArray(raw)) return { mounts: [], warnings: [] };
     const out: { path: string; mode: MountMode }[] = [];
+    const warnings: string[] = [];
     for (const e of raw) {
       const o = e as Record<string, unknown>;
       const path = String(o?.['path'] ?? '').trim();
       if (!path || path.startsWith('/') || path.split('/').includes('..'))
         continue;
+      // Reserved paths (e.g. `.pnpm-store`) are bound by the system under /workspace; recording one here
+      // would collide at container-create time and wedge the thread — drop it and tell the brain.
+      if (isReservedMountPath(path)) {
+        warnings.push(
+          `mount "${path}" is auto-managed by the system (do not add it) — dropped`,
+        );
+        continue;
+      }
       const mode: MountMode =
         o?.['mode'] === 'shared-ro' ? 'shared-ro' : 'per-thread';
       out.push({ path, mode });
     }
-    return out;
+    return { mounts: out, warnings };
   }
 
   /** Coerce `write_worktree_config` seed arg into a list of worktree-relative paths (drops malformed). */
@@ -3182,6 +3326,15 @@ function maskedSecretNotice(name: string, path: string): string {
 }
 
 /**
+ * The masked confirmation for a `request_file` upload — the ONLY thing the brain ever sees about it (the
+ * contents went straight to the encrypted store + grant). Shared by the `provide-file` endpoint + the boot
+ * re-delivery sweep so the two read identically.
+ */
+function maskedFileNotice(path: string): string {
+  return `The operator uploaded the file for \`${path}\` (stored encrypted, granted). Continue onboarding.`;
+}
+
+/**
  * Build the synthetic SYSTEM-SEED stimulus that delivers a completed Codex review's findings to the brain
  * straight through `handleChatTurn`. Reuses the canonical host-seed convention (SYSTEM_SEED_AUTHOR + `seed`
  * + `<system_notification>` envelope, same as the `/answer-question` delivery) so it skips the operator-only
@@ -3193,6 +3346,8 @@ function harnessDeliveryStimulus(input: {
   orgId: string;
   repoId: string;
   body: string;
+  /** File-gate delivery: the `request_file` card id this seed confirms, so the tail stamps it delivered. */
+  seedFileId?: string;
 }): ChatStimulus {
   return {
     id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
@@ -3206,6 +3361,7 @@ function harnessDeliveryStimulus(input: {
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
     replyRoute: { surfaceId: 'web', jobRef: input.jobId },
     seed: true,
+    ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
   };
 }
 

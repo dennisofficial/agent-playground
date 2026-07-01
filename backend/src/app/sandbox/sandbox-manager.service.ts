@@ -77,6 +77,29 @@ const L_CFG = 'atlas.cfg';
  * Inner dockerd (DinD) comes from `--privileged` + a per-sandbox /var/lib/docker volume (proven in D0);
  * `attach` waits for it to report ready before returning so the first build turn can use it.
  */
+
+/**
+ * De-dupe Docker bind strings (`host:target[:opts]`) by their CONTAINER TARGET (the 2nd `:`-segment;
+ * both host + target are absolute so this is unambiguous). LAST occurrence wins — the caller appends
+ * SYSTEM binds after manifest-derived cache mounts, so last-wins gives the system authority over any
+ * stray worktree mount that collides. Docker hard-fails a create on a duplicate target ("Duplicate mount
+ * point"), so this is the last-line guard that keeps a bad mount from wedging every turn on a thread.
+ * Returns the deduped list (order = first appearance) + the dropped targets (for a warning). Pure.
+ */
+export function dedupeBindsByTarget(binds: string[]): {
+  binds: string[];
+  dropped: string[];
+} {
+  const byTarget = new Map<string, string>();
+  const dropped: string[] = [];
+  for (const b of binds) {
+    const target = b.split(':')[1] ?? b;
+    if (byTarget.has(target)) dropped.push(target);
+    byTarget.set(target, b); // last wins → system binds override a colliding cache mount
+  }
+  return { binds: [...byTarget.values()], dropped };
+}
+
 @Injectable()
 export class SandboxManager implements SandboxProvider {
   private readonly logger = new Logger(SandboxManager.name);
@@ -205,7 +228,7 @@ export class SandboxManager implements SandboxProvider {
       image,
       network,
       privileged: true,
-      binds,
+      binds: this.dedupeBindsByTarget(binds),
       volumes: [{ name: `${name}-dind`, path: '/var/lib/docker' }],
       labels: {
         [L_MANAGED]: '1',
@@ -437,6 +460,27 @@ export class SandboxManager implements SandboxProvider {
       binds.push(`${hostDir}:${CONTAINER_WORKTREE}/${m.path}${ro}`);
     }
     return binds;
+  }
+
+  /**
+   * De-dupe bind strings by their CONTAINER TARGET before container creation — Docker hard-fails the
+   * whole create on a duplicate target ("Duplicate mount point"), which would wedge every turn on the
+   * thread. A bind is `host:target[:opts]`; the target is the 2nd `:`-segment (both host + target are
+   * absolute). LAST occurrence wins: the system binds (shared pnpm/fnm store, context) are appended
+   * AFTER the manifest-derived cache mounts in `createSandbox`, so last-wins gives the system authority
+   * over any stray worktree mount that slipped through the manifest guards. Nested targets like
+   * `/context` and `/context/generated` differ, so both survive. Belt-and-suspenders behind the
+   * manifest/authoring reserved-path drops.
+   */
+  private dedupeBindsByTarget(binds: string[]): string[] {
+    const { binds: deduped, dropped } = dedupeBindsByTarget(binds);
+    if (dropped.length) {
+      this.logger.warn(
+        `dropped ${dropped.length} duplicate sandbox mount target(s): ` +
+          `${[...new Set(dropped)].join(', ')} (system bind wins)`,
+      );
+    }
+    return deduped;
   }
 
   /** mkdir -p a dir and chown it to the host uid/gid (best-effort) so in-container writes stay host-owned. */

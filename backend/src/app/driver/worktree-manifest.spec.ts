@@ -66,6 +66,23 @@ describe('loadWorktreeManifest', () => {
     expect(warnings.length).toBeGreaterThan(0);
   });
 
+  it('drops reserved (system-managed) mount paths so they cannot collide with a system bind', () => {
+    // `.pnpm-store` is bound by the system at /workspace/.pnpm-store; a manifest mount there would make
+    // Docker hard-fail container creation ("Duplicate mount point") and wedge every turn on the thread.
+    writeManifest(
+      JSON.stringify({
+        mounts: [
+          { path: '.pnpm-store', mode: 'per-thread' },
+          { path: './.pnpm-store/', mode: 'per-thread' },
+          { path: '.next/cache', mode: 'per-thread' },
+        ],
+      }),
+    );
+    const { manifest, warnings } = loadWorktreeManifest(wt);
+    expect(manifest.mounts).toEqual([{ path: '.next/cache', mode: 'per-thread' }]);
+    expect(warnings.filter((w) => w.includes('auto-managed')).length).toBe(2);
+  });
+
   it('ignores a manifest that exceeds the size limit', () => {
     writeManifest(JSON.stringify({ seed: ['x'.repeat(70 * 1024)] }));
     const { manifest, warnings } = loadWorktreeManifest(wt);

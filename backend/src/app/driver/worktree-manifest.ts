@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { isReservedMountPath } from '../sandbox/container-paths';
 
 /** Cache mount mode. There is deliberately NO shared read-write mode (cross-thread corruption risk). */
 export type MountMode = 'per-thread' | 'shared-ro';
@@ -105,6 +106,13 @@ function parseMounts(v: unknown, warnings: string[]): MountSpec[] {
     const mode = o?.mode === 'shared-ro' ? 'shared-ro' : 'per-thread';
     if (!o || !validPath(o.path)) {
       warnings.push('worktree manifest: dropped invalid mounts[] entry');
+      continue;
+    }
+    // Reserved paths (e.g. `.pnpm-store`) are bound by the system itself under /workspace; a manifest
+    // mount at the same target would collide → Docker "Duplicate mount point" → the sandbox can't be
+    // created → every turn on the thread wedges. Drop them here so a bad manifest can't hard-fail.
+    if (isReservedMountPath(o.path)) {
+      warnings.push(`worktree manifest: mounts[] entry "${o.path}" is auto-managed by the system — ignored`);
       continue;
     }
     if (o.mode !== undefined && o.mode !== 'per-thread' && o.mode !== 'shared-ro') {

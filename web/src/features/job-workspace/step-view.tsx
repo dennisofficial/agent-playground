@@ -23,7 +23,7 @@ import {
   type SubBlock,
 } from './subagents';
 import { useLiveTurn, type LiveTurn } from '@/lib/api/job-stream';
-import { phaseLane } from './phases';
+import { threadLane } from './phases';
 import { codexReviewLane } from './codex-review';
 import { TranscriptView } from './conversation';
 import { DetailTopBar } from './detail-top-bar';
@@ -174,13 +174,15 @@ export function PhaseView({
   } else if (step) {
     title = `step ${phaseIndex + 1}${step.title ? ` · ${step.title}` : ''}`;
     subtitle = 'Claude · execute';
-    // A batch runs as ONE turn whose transcript is tagged with the ANCHOR step id — the phase lane. The
-    // SAME renderer as Main; the build instruction shows as the opening input bubble.
+    // A batch runs as ONE turn on its thread's STABLE lane, tagged with the ANCHOR step id. Subscribe to the
+    // thread lane (live) and filter the durable log to this step's anchor. SAME renderer as Main; the build
+    // instruction shows as the opening input bubble.
     body = (
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
-        lane={phaseLane(step.anchorStepId)}
+        lane={owningSection ? threadLane(owningSection.id) : threadLane(step.anchorStepId)}
+        phaseIds={new Set([step.anchorStepId])}
         onSelectNode={onSelectNode}
         emptyText="No build activity yet — this step hasn’t run."
       />
@@ -188,16 +190,14 @@ export function PhaseView({
   } else if (thread) {
     title = `§ ${threadTitle(thread.brief)}`;
     subtitle = 'Claude · execute';
-    // A thread aggregates its steps' phases; subscribe to the building step's live lane, aggregate the rest.
+    // A build thread is a Claude Code session like Main — subscribe to its STABLE `thread:<id>` lane (no
+    // guessing the active phase from pipeline status) and aggregate its steps' durable transcripts.
     const phaseIds = new Set(thread.steps.map((s) => s.anchorStepId));
-    const building = thread.steps.find((s) => s.status === 'building' || s.status === 'reviewing');
-    const activeAnchor =
-      building?.anchorStepId ?? thread.steps[thread.steps.length - 1]?.anchorStepId ?? thread.id;
     body = (
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
-        lane={phaseLane(activeAnchor)}
+        lane={threadLane(thread.id)}
         phaseIds={phaseIds}
         onSelectNode={onSelectNode}
         emptyText="No build activity yet — this thread hasn’t run."

@@ -8,7 +8,7 @@ import type {
 } from './container-engine.port';
 import type { FeatureSandbox } from '../git';
 import { SandboxImageBuilder } from './sandbox-image.builder';
-import { SandboxManager } from './sandbox-manager.service';
+import { SandboxManager, dedupeBindsByTarget } from './sandbox-manager.service';
 
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
@@ -59,6 +59,29 @@ function fakeEngine(state: {
 
 const manager = (engine: ContainerEngine) =>
   new SandboxManager(engine, new SandboxImageBuilder(env(), engine), env());
+
+describe('dedupeBindsByTarget', () => {
+  it('drops a colliding target keeping the LAST occurrence (system bind wins)', () => {
+    // Cache mount (empty per-thread dir) pushed first, then the system shared store at the same target.
+    const { binds, dropped } = dedupeBindsByTarget([
+      '/caches/thread/.pnpm-store:/workspace/.pnpm-store',
+      '/agent-home/pnpm-store:/workspace/.pnpm-store',
+    ]);
+    expect(binds).toEqual(['/agent-home/pnpm-store:/workspace/.pnpm-store']);
+    expect(dropped).toEqual(['/workspace/.pnpm-store']);
+  });
+
+  it('keeps nested targets (a parent and its more-specific :ro child both survive)', () => {
+    const input = [
+      '/host/context:/context',
+      '/host/context/generated:/context/generated:ro',
+      '/host/store:/workspace/.pnpm-store',
+    ];
+    const { binds, dropped } = dedupeBindsByTarget(input);
+    expect(binds).toEqual(input);
+    expect(dropped).toEqual([]);
+  });
+});
 
 describe('SandboxManager.reapOrphanedArtifacts', () => {
   it('removes only atlas-sbx artifacts whose owning container is gone', async () => {

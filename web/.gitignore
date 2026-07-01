@@ -40,4 +40,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-.playwright-cli/
+.playwright-cli/.design-sync-build/
+
+# design-sync compiled-css + bundle-entry build artifact
+.design-sync-build/

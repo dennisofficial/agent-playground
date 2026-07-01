@@ -20,6 +20,7 @@ import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import { ApprovalCardView, VerdictCardView } from './approval-card';
 import { QuestionCardView } from './question-card';
 import { SecretCardView } from './secret-card';
+import { FileCardView } from './file-card';
 import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
 import { BuildStepCard, indexPhaseBlocks } from './phases';
 import { CodexReviewCard, codexReviewNode, indexCodexReviewBlocks } from './codex-review';
@@ -89,7 +90,7 @@ export function TranscriptView({
 }: {
   jobRef: JobRef;
   messages: JobMessage[];
-  /** Which lane's transcript this renders — `'main'` | `codex-review:<jobId>` | `phase:<stepId>`. */
+  /** Which lane's transcript this renders — `'main'` | `codex-review:<jobId>` | `thread:<threadId>`. */
   lane?: string;
   /** For a build THREAD lane: the phase anchor ids to aggregate (the `lane` still picks the live turn). */
   phaseIds?: Set<string>;
@@ -252,8 +253,9 @@ function buildLogItems(
 
   const isMain = lane === MAIN_LANE;
   const isCodexLane = lane.startsWith('codex-review:');
+  // A build thread/step lane streams on the STABLE `thread:<id>` lane and always passes `phaseIds` (the step
+  // anchors to render); the legacy `phase:<id>` derivation is a fallback for any old lane string.
   const phaseAnchor = lane.startsWith('phase:') ? lane.slice('phase:'.length) : null;
-  // A build lane renders one phase (a step) or several (a thread aggregate). `phaseIds` wins when given.
   const phaseSet: Set<string> | null =
     opts.phaseIds ?? (phaseAnchor ? new Set([phaseAnchor]) : null);
 
@@ -407,6 +409,9 @@ function buildLogItems(
         break;
       case 'secret':
         push(<SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        break;
+      case 'file':
+        push(<FileCardView key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
       case 'event':
         push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);

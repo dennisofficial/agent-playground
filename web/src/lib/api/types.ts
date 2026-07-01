@@ -132,7 +132,29 @@ export interface WebSecretInputCard {
   delivered_at?: string;
 }
 
-export type WebCard = WebApprovalCard | WebVerdictCard | WebQuestionCard | WebSecretInputCard;
+/**
+ * A secure FILE request the onboarding brain posed via `request_file` — rendered as a file picker. The
+ * operator's file is read as text and POSTs to `…/threads/:jobId/provide-file`, which stores the contents
+ * ENCRYPTED + grants them; the contents are NEVER part of this card. When `provided_at` is set the card
+ * renders a compact "uploaded" state. Mirrors the backend `WebFileRequestCard` (deliberately value-free).
+ */
+export interface WebFileRequestCard {
+  type: 'file_request_card';
+  jobId: string;
+  requestId: string;
+  path: string;
+  description: string;
+  filename?: string;
+  provided_at?: string;
+  delivered_at?: string;
+}
+
+export type WebCard =
+  | WebApprovalCard
+  | WebVerdictCard
+  | WebQuestionCard
+  | WebSecretInputCard
+  | WebFileRequestCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
 /** One step of a thread's locked plan — the execute folder's leaf (a Claude Code session). */

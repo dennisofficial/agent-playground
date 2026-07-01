@@ -16,12 +16,24 @@ import { durableSubBlocks, type SubBlock } from './subagents';
  * `kind:'build_anchor'` row per batch (at batch start) — that row is the card's anchor.
  */
 
-/** The live-stream lane a build phase streams on. */
+/**
+ * The live-stream lane a build THREAD streams on — STABLE per thread (like the brain's `main`), so the web
+ * subscribes by thread identity instead of guessing the active per-batch lane. Every batch of a thread
+ * streams on this one lane; durable blocks stay tagged with `meta.phaseId` for step-level attribution.
+ */
+export const threadLane = (threadId: string): string => `thread:${threadId}`;
+
+/**
+ * @deprecated build turns no longer stream on a per-phase lane — use {@link threadLane}. Kept only to derive
+ * a legacy `phase:` lane if one is ever encountered; the durable `meta.phaseId` attribution is unchanged.
+ */
 export const phaseLane = (anchorStepId: string): string => `phase:${anchorStepId}`;
 
 export interface PhaseAnchor {
   /** The anchor step id (== the batch's transcript tag + the navigator node). */
   phaseId: string;
+  /** The owning build thread's id — the STABLE live lane the batch streams on (`threadLane(threadId)`). */
+  threadId?: string;
   /** A human label (e.g. "Backend — 2 steps (…)"). */
   label: string;
   /** The batch ordinal within its thread (null if not recorded). */
@@ -58,6 +70,7 @@ export function indexPhaseBlocks(messages: JobMessage[]): PhaseIndex {
       anchorKeys.add(m.ts);
       anchorByPhase.set(phaseId, {
         phaseId,
+        ...(typeof m.meta?.threadId === 'string' ? { threadId: m.meta.threadId as string } : {}),
         label: typeof m.meta?.label === 'string' ? (m.meta.label as string) : m.text || 'Build step',
         batchOrdinal: typeof m.meta?.batchOrdinal === 'number' ? (m.meta.batchOrdinal as number) : null,
         batchStepIds: Array.isArray(m.meta?.batchStepIds) ? (m.meta.batchStepIds as string[]) : [phaseId],
@@ -105,7 +118,9 @@ export function BuildStepCard({
   onOpen: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const live = useLiveTurn(jobId, phaseLane(anchor.phaseId));
+  // Subscribe to the thread's STABLE live lane (falling back to the legacy phase lane only for old anchors
+  // persisted before the thread-lane cutover). This pulses "building" whenever the thread's batch is live.
+  const live = useLiveTurn(jobId, anchor.threadId ? threadLane(anchor.threadId) : phaseLane(anchor.phaseId));
   const running = live?.active ?? false;
   const toolCount = running ? live!.blocks.filter((b) => b.kind === 'tool').length : durableToolCount;
   const stepCount = anchor.batchStepIds.length;

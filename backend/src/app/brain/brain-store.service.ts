@@ -3,7 +3,11 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import type { Decision, Job, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
-import type { WebQuestionCard, WebSecretInputCard } from '../surface';
+import type {
+  WebFileRequestCard,
+  WebQuestionCard,
+  WebSecretInputCard,
+} from '../surface';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/planner-llm';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -610,6 +614,99 @@ export class BrainStoreService {
       }
     }
     return out;
+  }
+
+  // ── file-request gate (request_file lifecycle: requested → provided → delivered) ─────────────────────
+  // Like ask_question (PER-CARD, no single-slot thread pointer → several file requests may be open at
+  // once), but the value is an UPLOAD stored as a file-valued secret + grant (never on the card / in the
+  // transcript). No migration: all state lives on the card in the `messages` jsonb.
+
+  /** Post a value-free file-request card. No thread pointer + no one-at-a-time gate (multiple may be open). */
+  async openFileRequest(
+    jobId: string,
+    input: { requestId: string; card: WebFileRequestCard },
+  ): Promise<{ ok: boolean }> {
+    const thread = await this.jobs.findOne({ where: { id: jobId } });
+    if (!thread) return { ok: false };
+    await this.messages.save(
+      this.messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: `Requested file upload → \`${input.card.path}\``,
+        kind: 'card',
+        ts: input.requestId,
+        card: input.card as unknown as Record<string, unknown>,
+      }),
+    );
+    return { ok: true };
+  }
+
+  /** Fetch one thread's file-request card by id (the card's `ts`); null if absent / not a file card. */
+  async getFileCard(
+    jobId: string,
+    requestId: string,
+  ): Promise<WebFileRequestCard | null> {
+    const row = await this.messages.findOne({
+      where: { job_id: jobId, ts: requestId, kind: 'card' },
+    });
+    const card = row?.card as WebFileRequestCard | undefined;
+    return card?.type === 'file_request_card' ? card : null;
+  }
+
+  /** Stamp a file card PROVIDED (the operator uploaded it → encrypted store + grant). No contents stored. */
+  async markFileProvided(
+    jobId: string,
+    requestId: string,
+    filename: string,
+  ): Promise<void> {
+    await this.updateCardMessage(jobId, requestId, {
+      provided_at: new Date().toISOString(),
+      filename,
+    });
+  }
+
+  /** Stamp a file card DELIVERED (the masked confirmation reached the brain in a turn that ran). */
+  async markFileDelivered(jobId: string, requestId: string): Promise<void> {
+    await this.updateCardMessage(jobId, requestId, {
+      delivered_at: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Boot reconciliation: file cards the operator PROVIDED (contents stored + granted) but whose masked
+   * confirmation never reached the brain (`delivered_at` null) because the host died mid-delivery. The
+   * startup sweep re-delivers each (at-least-once). Contents are not returned (never stored on the card).
+   */
+  async findUndeliveredProvidedFiles(): Promise<
+    {
+      jobId: string;
+      orgId: string;
+      repoId: string;
+      requestId: string;
+      path: string;
+    }[]
+  > {
+    const messagesTable = this.messages.metadata.tablePath;
+    const threadsTable = this.jobs.metadata.tablePath;
+    const rows = (await this.dataSource.query(
+      `SELECT m.job_id AS "jobId", t.org_id AS "orgId", t.repo_id AS "repoId",
+              m.ts AS "requestId", m.card ->> 'path' AS "path"
+         FROM ${messagesTable} m
+         JOIN ${threadsTable} t ON t.id = m.job_id
+        WHERE m.kind = 'card'
+          AND m.card ->> 'type' = 'file_request_card'
+          AND m.card ->> 'provided_at' IS NOT NULL
+          AND m.card ->> 'delivered_at' IS NULL`,
+    )) as {
+      jobId: string;
+      orgId: string;
+      repoId: string;
+      requestId: string;
+      path: string;
+    }[];
+    return rows;
   }
 
   // ── pending decisions (the grilling working set; snapshotted into a record by submit_plan) ──────────

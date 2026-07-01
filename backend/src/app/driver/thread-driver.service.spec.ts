@@ -248,6 +248,8 @@ function makeTurn(): {
         };
       },
     ),
+    // Pipe-transport shape: no restart re-attach → the driver always kicks a fresh (session-resuming) turn.
+    canReattach: () => false,
   } as unknown as TurnRunnerService;
   return { turn, calls };
 }
@@ -426,6 +428,7 @@ function assemble(
     parkAnswer?: Promise<ParkResolution>;
     env?: Record<string, string>;
     turn?: TurnRunnerService;
+    turnRegistry?: Pick<import('../sandbox/turn-registry.service').TurnRegistry, 'listRunning'>;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -532,6 +535,11 @@ function assemble(
     } as unknown as LeaderElectionService,
     turnHarness,
     blockSink,
+    // TurnRegistry: no in-flight rows by default (fresh runs) — reattach lookup returns empty. A reattach
+    // test overrides `listRunning` to surface a matching in-flight `step` row.
+    (opts.turnRegistry ?? {
+      listRunning: async () => [],
+    }) as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
     // ModuleRef: the lazy brain lookup → a stub promoter (the ledger turn is exercised in the brain specs).
     {
       get: () => ({ promoteDurableDecisionsAtShip: async () => undefined }),
@@ -639,6 +647,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           };
         },
       ),
+      canReattach: () => false,
     } as unknown as TurnRunnerService;
 
     const state: StoreState = {
@@ -681,17 +690,90 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       ),
     ).toBe(true);
 
-    // The live phase lane was used (push called with a `phase:` lane arg).
+    // The STABLE thread lane was used (push called with a `thread:` lane arg) — like the brain's `main`.
     const pushCalls = (h.liveTurns.push as ReturnType<typeof vi.fn>).mock.calls;
     expect(
       pushCalls.some(
         (c) =>
-          typeof c[3] === 'string' && (c[3] as string).startsWith('phase:'),
+          typeof c[3] === 'string' && (c[3] as string).startsWith('thread:'),
       ),
     ).toBe(true);
 
     // The old `build_event` relay is gone — no build_event posts to the surface.
     expect(h.posts.every((p) => !p.includes('[tool]'))).toBe(true);
+  });
+
+  it('re-attaches a still-live build turn on resume instead of re-running it (recovery parity with the brain)', async () => {
+    // A single pre-locked thread whose ONLY batch already STARTED before a restart: its steps carry a
+    // persisted session + batch ordinal but no commit, so the driver re-enters runBatch for that batch.
+    const steps: Step[] = [0, 1].map((i) => ({
+      id: `sec-be-ph${i}`,
+      threadId: 'sec-be',
+      jobId: 'job-abcdef12',
+      ordinal: (i + 1) * 10,
+      title: `P${i}`,
+      brief: `do ${i}`,
+      stage: 'build' as const,
+      status: 'building' as StepStatus,
+      sessionId: 'sess-live', // persisted at turn start → the batch is a RESUME, not a fresh start
+      batchOrdinal: 1,
+      commitSha: null,
+    }));
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps,
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+
+    // A runner that CAN re-attach; `reattach` resolves the in-flight turn and `runTurn` is a spy that must
+    // NOT fire for the execute batch (no re-run).
+    const reattach = vi.fn(async () => ({
+      report: 'resumed build',
+      session: {
+        id: 'sess-live',
+        jobId: 'job-abcdef12',
+        stepId: 'sec-be-ph0',
+        engine: 'claude' as const,
+        mode: 'execute' as const,
+        branch: 'b',
+        worktreePath: '/wt/b',
+      },
+    }));
+    const runTurn = vi.fn();
+    const turn = { runTurn, reattach, canReattach: () => true } as unknown as TurnRunnerService;
+    // A matching in-flight registry row for the thread's batch (lane `thread:<threadId>`, ctx.anchorStepId).
+    const listRunning = vi.fn(async () => [
+      {
+        turn_id: 'turn-live',
+        job_id: 'job-abcdef12',
+        org_id: 'T1',
+        channel: 'C1',
+        lane: 'thread:sec-be',
+        kind: 'step',
+        container_id: 'ctr-1',
+        status: 'running',
+        ctx: { anchorStepId: 'sec-be-ph0' },
+      },
+    ]);
+
+    const h = assemble(state, { turn, turnRegistry: { listRunning } as never });
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // Re-attached the live turn (with the ORIGINAL turn id + container) — never re-ran the execute batch.
+    expect(reattach).toHaveBeenCalledTimes(1);
+    expect(reattach.mock.calls[0][0]).toMatchObject({
+      turnId: 'turn-live',
+      containerId: 'ctr-1',
+      stepId: 'sec-be-ph0',
+    });
+    expect(runTurn).not.toHaveBeenCalled();
+    // A resume never re-emits the batch's START markers (no duplicate build_anchor).
+    expect(h.sunk.filter((s) => s.block.kind === 'build_anchor')).toHaveLength(0);
+    // The resumed turn's transcript persisted + the batch committed → the run finishes to ONE PR.
+    expect(h.opened).toHaveLength(1);
   });
 
   // ── §D fresh-context step batching ──────────────────────────────────────────────────────────────
@@ -1386,6 +1468,7 @@ describe('ThreadDriver — 401 auth recovery', () => {
           };
         },
       ),
+      canReattach: () => false,
     } as unknown as TurnRunnerService;
   }
 

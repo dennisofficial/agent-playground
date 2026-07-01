@@ -122,7 +122,7 @@ export class AgentChatSurface implements ChatSurface {
     channel: string,
     jobId: string,
     body: string,
-    opts: { orgId?: string; deliveredQuestionId?: string } = {},
+    opts: { orgId?: string; deliveredQuestionId?: string; deliveredFileId?: string } = {},
   ): string {
     const ts = this.mintTs();
     this.inboundSubject.next({
@@ -136,6 +136,7 @@ export class AgentChatSurface implements ChatSurface {
       ts: new Date(),
       seed: true,
       ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),
+      ...(opts.deliveredFileId ? { seedFileId: opts.deliveredFileId } : {}),
     });
     return ts;
   }

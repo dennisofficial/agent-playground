@@ -183,6 +183,23 @@ export function provideSecret(
   return webJson(threadPath(ref, '/provide-secret'), { method: 'POST', body: JSON.stringify(body) });
 }
 
+// ── Secure file upload (repo onboarding) ─────────────────────────────────────────────────────────
+export interface ProvideFileBody {
+  /** The file-request card's id (its message ts). */
+  requestId: string;
+  /** The operator-chosen filename (metadata only — display/provenance). */
+  filename: string;
+  /** The file's text contents — sent once over HTTPS to the encrypted store; never round-tripped back. */
+  content: string;
+}
+
+export function provideFile(
+  ref: JobRef,
+  body: ProvideFileBody,
+): Promise<{ ok: boolean; ts: string }> {
+  return webJson(threadPath(ref, '/provide-file'), { method: 'POST', body: JSON.stringify(body) });
+}
+
 /** Re-drive a halted (failed/paused) build — the navigator "Retry" button. No-op if not retryable. */
 export function retryJob(ref: JobRef): Promise<{ ok: boolean; status: string }> {
   return webJson(threadPath(ref, '/retry'), { method: 'POST' });

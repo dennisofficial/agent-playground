@@ -5,6 +5,7 @@ import { qk } from './query-keys';
 import {
   answerQuestion,
   provideSecret,
+  provideFile,
   approveThread,
   createJob,
   deleteThread,
@@ -19,6 +20,7 @@ import {
   sayMessage,
   type AnswerQuestionBody,
   type ProvideSecretBody,
+  type ProvideFileBody,
   type ApproveBody,
   type CreateThreadBody,
   type JobMessage,
@@ -180,6 +182,18 @@ export function useProvideSecret(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ProvideSecretBody) => provideSecret(ref, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+    },
+  });
+}
+
+/** Upload a file for a `request_file` card (repo onboarding). The contents go straight to the encrypted
+ *  store; the card flips to "uploaded" and the brain continues. */
+export function useProvideFile(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ProvideFileBody) => provideFile(ref, body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
     },

@@ -1,4 +1,10 @@
-import type { WebApprovalCard, WebQuestionCard, WebSecretInputCard, WebVerdictCard } from '@/lib/api/types';
+import type {
+  WebApprovalCard,
+  WebFileRequestCard,
+  WebQuestionCard,
+  WebSecretInputCard,
+  WebVerdictCard,
+} from '@/lib/api/types';
 import type { JobMessage } from '@/lib/api/job-api';
 
 /**
@@ -18,6 +24,8 @@ export type ClassifiedMessage =
   | { kind: 'question'; message: JobMessage; card: WebQuestionCard }
   /** A secure secret request (repo onboarding) — rendered as a masked input card. */
   | { kind: 'secret'; message: JobMessage; card: WebSecretInputCard }
+  /** A secure file-upload request (repo onboarding) — rendered as a file picker card. */
+  | { kind: 'file'; message: JobMessage; card: WebFileRequestCard }
   | { kind: 'event'; message: JobMessage; tone: SystemTone }
   /** System→operator+Atlas review block (e.g. Codex plan-review findings). Rendered as a distinct panel. */
   | { kind: 'system_shared'; message: JobMessage }
@@ -69,6 +77,9 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
   }
   if (message.card?.type === 'secret_input_card') {
     return { kind: 'secret', message, card: message.card };
+  }
+  if (message.card?.type === 'file_request_card') {
+    return { kind: 'file', message, card: message.card };
   }
 
   // The driver's build relays are a real backend kind (`build_event`) — the only system-pill source.

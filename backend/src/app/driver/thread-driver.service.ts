@@ -23,6 +23,9 @@ import {
 import { CredentialResolver } from '../onboarding';
 import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
+// Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
+import { TurnRegistry } from '../sandbox/turn-registry.service';
+import type { ActiveTurnEntity } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import { BuildShipService, LEDGER_COMMIT_MESSAGE } from './build-ship.service';
@@ -93,6 +96,9 @@ export class ThreadDriver implements JobDispatcher {
     // renders a full transcript (thinking/prose/tool calls), exactly like a subagent run.
     private readonly turnHarness: TurnHarnessFactory,
     @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
+    // The durable registry of in-flight Redis-transport turns — lets a build batch RE-ATTACH its still-live
+    // engine stream after a restart (like the brain) instead of re-running. @Global via SandboxModule.
+    private readonly turnRegistry: TurnRegistry,
     // Lazily resolves the brain (AgentSessionManager) for the server-initiated ledger-promotion turn,
     // dodging the brain⇄driver constructor cycle.
     private readonly moduleRef: ModuleRef,
@@ -889,82 +895,67 @@ export class ThreadDriver implements JobDispatcher {
     );
     for (const p of steps)
       await this.store.setStepState(p.id, 'build', 'building');
-    await this.post(route, `:gear: ${thread.brief} — building: ${label}`);
 
-    // The build turn rides the shared transcript spine on its own `phase:<anchorStepId>` lane, tagging every
-    // durable block with `phaseId` so the web peels it into the step sub-page (like a subagent). A batch is
-    // ONE turn ⇒ ONE transcript tagged with the ANCHOR step id; every step in the batch maps to it. The
-    // channel falls back to the repo id so durable persistence works even if the route has no live channel.
+    // The build turn rides the shared transcript spine on the thread's STABLE `thread:<threadId>` lane —
+    // exactly like the brain's constant `main` — so the web subscribes to it by thread identity instead of
+    // guessing a per-batch lane (the old `phase:<stepId>` lane changed every batch, so a running build
+    // thread showed an empty transcript). Every durable block still carries `meta.phaseId` so the web peels
+    // it into the step sub-page (like a subagent). The channel falls back to the repo id so durable
+    // persistence works even if the route has no live channel.
     const channel = route.channel ?? job.repoId;
-    const lane = `phase:${anchor.id}`;
+    const lane = `thread:${thread.id}`;
     const batchOrdinal = anchor.batchOrdinal ?? null;
+    const metaTag: Record<string, unknown> = {
+      phaseId: anchor.id,
+      ...(batchOrdinal != null ? { batchOrdinal } : {}),
+    };
     // The instruction the engine receives — the build turn's "first message". Computed once here so it
     // can both kick off the turn AND be persisted on the anchor row (the web renders it like a subagent's
     // Task prompt, so the step transcript shows what was asked, not just the engine's reply).
     const task = renderBatchTask(record, thread, steps, this.orchestrate);
-    // Synthetic anchor row at batch START — the in-conversation `BuildStepCard` latches onto this (a phase
-    // has no spawning Task tool block), and it sorts the card at the batch's chronological position.
-    await this.blockSink
-      .appendBlock(job.id, {
-        kind: 'build_anchor',
-        text: `${thread.brief} — ${label}`,
-        meta: {
-          phaseId: anchor.id,
-          ...(batchOrdinal != null ? { batchOrdinal } : {}),
-          batchStepIds: steps.map((p) => p.id),
-          label,
-          prompt: task,
-        },
-      })
-      .catch((err) =>
-        this.logger.warn(
-          `build_anchor append failed for thread=${job.id}: ${err}`,
-        ),
-      );
-    const harness = this.turnHarness.create({
-      jobId: job.id,
-      channel,
-      lane,
-      metaTag: {
-        phaseId: anchor.id,
-        ...(batchOrdinal != null ? { batchOrdinal } : {}),
-      },
-    });
 
-    // Circuit breaker (#3): bound the engine turn. On breach it both signals the SDK to abort AND hard-
-    // rejects so the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute
-    // to the anchor step (a batch is one turn; minor observability coarsening for the step transcript).
-    let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
-    try {
-      result = await this.runTurnBounded(
-        {
-          jobId: job.id,
-          stepId: anchor.id,
-          sandbox,
-          engine: 'claude',
-          mode: 'execute',
-          systemPrompt: this.orchestrate
-            ? ORCHESTRATE_EXECUTE_SYSTEM
-            : steps.length === 1
-              ? STEP_EXECUTE_SYSTEM
-              : BATCH_EXECUTE_SYSTEM,
-          task,
-          auth: await this.creds.engineAuth(job.orgId, 'claude'),
-          richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
-          onEvent: (e) => {
-            if (e.kind === 'tool') this.logger.debug(`batch tool: ${e.name}`);
-            harness.onEvent(e);
+    // RE-ATTACH or KICK. After a backend restart the engine kept running detached (Redis transport) and is
+    // still writing to its streams — re-tail its live stream instead of re-running the batch, exactly like
+    // the brain. A reattach row exists only for a still-live batch, so look it up only on a RESUME (the
+    // anchor already has a persisted session) and only when the bound runner supports reattach (else the
+    // pipe transport falls through to a kick that resumes the persisted session — today's recovery).
+    const reattachRow =
+      this.turn.canReattach() && anchor.sessionId
+        ? await this.findReattachableTurn(job.id, lane, anchor.id)
+        : null;
+    // A batch that has never started (no persisted session, no live turn) is a FRESH start — emit its START
+    // markers (the :gear: milestone + the synthetic build_anchor the in-conversation BuildStepCard latches
+    // onto) exactly ONCE. On a resume/reattach they already exist (durable), so re-emitting would duplicate.
+    if (!reattachRow && !anchor.sessionId) {
+      await this.post(route, `:gear: ${thread.brief} — building: ${label}`);
+      await this.blockSink
+        .appendBlock(job.id, {
+          kind: 'build_anchor',
+          text: `${thread.brief} — ${label}`,
+          meta: {
+            phaseId: anchor.id,
+            threadId: thread.id,
+            ...(batchOrdinal != null ? { batchOrdinal } : {}),
+            batchStepIds: steps.map((p) => p.id),
+            label,
+            prompt: task,
           },
-        },
-        `batch "${label}"`,
-      );
-    } catch (err) {
-      // Timeout / auth / engine error — persist whatever partials streamed and end the lane exactly once.
-      await harness.abort();
-      throw err;
+        })
+        .catch((err) =>
+          this.logger.warn(`build_anchor append failed for thread=${job.id}: ${err}`),
+        );
     }
-    // Engine turn done — persist the transcript (+ fallback) and end the live lane.
-    await harness.finish(result.report);
+
+    // Re-attach the in-flight turn if one is live; else (fresh batch, or a re-attach that could no longer be
+    // tailed — engine finished + streams reaped, or the container is gone) KICK a fresh turn that resumes the
+    // persisted session. Both paths own their harness lifecycle and yield the same RunTurnResult.
+    let result: Awaited<ReturnType<TurnRunnerService['runTurn']>> | null = null;
+    if (reattachRow?.container_id) {
+      result = await this.reattachBatchTurn(job, thread, lane, metaTag, reattachRow, anchor.id);
+    }
+    if (!result) {
+      result = await this.kickBatchTurn(job, sandbox, thread, steps, task, lane, channel, metaTag, label);
+    }
 
     // Surface any off-spec deviations the engine flagged in its report (#7) — never silent.
     const deviations = extractDeviations(result.report);
@@ -993,6 +984,147 @@ export class ThreadDriver implements JobDispatcher {
     await this.store.setStepCommit(anchor.id, sha || NOTHING_COMMITTED);
     for (const p of steps) await this.store.setStepState(p.id, 'done', 'done');
     return result.report;
+  }
+
+  /**
+   * Find the still-running registry row for THIS batch's engine turn (restart re-attach), or null. Matches on
+   * (job_id, lane, ctx.anchorStepId) among running `step` turns — the lane is thread-scoped and a thread runs
+   * one batch at a time, so the match is unique; the anchor id disambiguates across a thread's batches.
+   */
+  private async findReattachableTurn(
+    jobId: string,
+    lane: string,
+    anchorStepId: string,
+  ): Promise<ActiveTurnEntity | null> {
+    const rows = await this.turnRegistry.listRunning().catch((err) => {
+      this.logger.warn(`reattach lookup failed (will kick a fresh turn): ${err}`);
+      return [] as ActiveTurnEntity[];
+    });
+    return (
+      rows.find(
+        (r) =>
+          r.kind === 'step' &&
+          r.job_id === jobId &&
+          r.lane === lane &&
+          (r.ctx as { anchorStepId?: string } | null)?.anchorStepId === anchorStepId,
+      ) ?? null
+    );
+  }
+
+  /**
+   * RE-ATTACH a batch's in-flight engine turn after a restart: re-tail its live stream (no re-kick) on the
+   * thread lane and persist the result — parity with the brain's boot re-attach. Returns null when the turn
+   * can no longer be tailed (finished + streams reaped, or the container is gone) so the caller re-runs it.
+   * Uses the ORIGINAL turn's channel so replayed frames land on the same SSE key.
+   */
+  private async reattachBatchTurn(
+    job: Job,
+    thread: DriverThread,
+    lane: string,
+    metaTag: Record<string, unknown>,
+    row: ActiveTurnEntity,
+    anchorStepId: string,
+  ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>> | null> {
+    this.logger.log(
+      `thread ${thread.ordinal} — re-attaching in-flight build turn ${row.turn_id} (container ${row.container_id})`,
+    );
+    const harness = this.turnHarness.create({
+      jobId: job.id,
+      channel: row.channel,
+      lane,
+      metaTag,
+    });
+    try {
+      const result = await this.turn.reattach({
+        turnId: row.turn_id,
+        containerId: row.container_id!,
+        jobId: job.id,
+        stepId: anchorStepId,
+        onEvent: (e) => harness.onEvent(e),
+      });
+      await harness.finish(result.report);
+      return result;
+    } catch (err) {
+      // The engine turn already finished (streams reaped) or its container is gone — persist partials, end
+      // the lane once, finalize the stale registry row (so the watchdog/reaper don't race it), and signal
+      // the caller to re-run the batch (resuming the persisted session).
+      await harness.abort();
+      await this.turnRegistry.finalize(row.turn_id, 'failed').catch(() => undefined);
+      this.logger.warn(`re-attach turn ${row.turn_id} failed; re-running the batch: ${err}`);
+      return null;
+    }
+  }
+
+  /**
+   * KICK a fresh engine turn for the batch — a first run, or a resume that reopens the persisted session on
+   * the thread lane. Registers the turn (`turnMeta`) so a later restart can RE-ATTACH it (see `runBatch`), and
+   * bounds it with the per-batch wall-clock circuit breaker. Owns its harness lifecycle.
+   */
+  private async kickBatchTurn(
+    job: Job,
+    sandbox: FeatureSandbox,
+    thread: DriverThread,
+    steps: Step[],
+    task: string,
+    lane: string,
+    channel: string,
+    metaTag: Record<string, unknown>,
+    label: string,
+  ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
+    const anchor = steps[0];
+    const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    // Circuit breaker (#3): bound the engine turn. On breach it both signals the SDK to abort AND hard-
+    // rejects so the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute
+    // to the anchor step (a batch is one turn; minor observability coarsening for the step transcript).
+    let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
+    try {
+      result = await this.runTurnBounded(
+        {
+          jobId: job.id,
+          stepId: anchor.id,
+          sandbox,
+          engine: 'claude',
+          mode: 'execute',
+          systemPrompt: this.orchestrate
+            ? ORCHESTRATE_EXECUTE_SYSTEM
+            : steps.length === 1
+              ? STEP_EXECUTE_SYSTEM
+              : BATCH_EXECUTE_SYSTEM,
+          task,
+          auth: await this.creds.engineAuth(job.orgId, 'claude'),
+          richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
+          // Register in `active_turns` so a fresh backend can RE-ATTACH this build turn's live stream after a
+          // restart (parity with the brain), not just re-run it. No toolBridge — a build turn's tools
+          // (Edit/Bash/Task) run in-sandbox, not over the host bridge.
+          turnMeta: {
+            jobId: job.id,
+            orgId: job.orgId,
+            channel,
+            lane,
+            kind: 'step',
+            ctx: {
+              repoId: job.repoId,
+              threadId: thread.id,
+              anchorStepId: anchor.id,
+              batchStepIds: steps.map((p) => p.id),
+              batchOrdinal: anchor.batchOrdinal ?? null,
+            },
+          },
+          onEvent: (e) => {
+            if (e.kind === 'tool') this.logger.debug(`batch tool: ${e.name}`);
+            harness.onEvent(e);
+          },
+        },
+        `batch "${label}"`,
+      );
+    } catch (err) {
+      // Timeout / auth / engine error — persist whatever partials streamed and end the lane exactly once.
+      await harness.abort();
+      throw err;
+    }
+    // Engine turn done — persist the transcript (+ fallback) and end the live lane.
+    await harness.finish(result.report);
+    return result;
   }
 
   /**

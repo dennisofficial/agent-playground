@@ -28,6 +28,34 @@ export const CONTAINER_GIT_COMMON = '/repo.git';
 export const CONTAINER_PNPM_STORE = `${CONTAINER_WORKTREE}/.pnpm-store`;
 
 /**
+ * Worktree-relative paths the SYSTEM already binds under {@link CONTAINER_WORKTREE} on its own. A
+ * repo's `.atlas/worktree.json` must NOT also request a cache mount at one of these, or two binds land
+ * on the same container target and Docker hard-fails container creation ("Duplicate mount point"),
+ * wedging every turn on the thread. `.pnpm-store` is the shared store bound at {@link
+ * CONTAINER_PNPM_STORE}; the fnm store (`/atlas-fnm`) and `/context` live OUTSIDE `/workspace` so a
+ * worktree-relative mount can't reach them. Reserved mounts are dropped (with a warning) both when the
+ * brain authors the manifest and when it is loaded at provision time.
+ */
+export const RESERVED_WORKTREE_MOUNTS: ReadonlySet<string> = new Set(['.pnpm-store']);
+
+/**
+ * Normalize a worktree-relative mount path for reserved-path comparison + bind construction: strip a
+ * leading `./`, collapse repeated slashes, and drop a trailing slash. So `./.pnpm-store`,
+ * `.pnpm-store/`, and `.pnpm-store` all compare equal to the reserved entry.
+ */
+export function normalizeMountPath(p: string): string {
+  return p
+    .replace(/^\.\//, '')
+    .replace(/\/{2,}/g, '/')
+    .replace(/\/+$/, '');
+}
+
+/** True if a worktree-relative mount path targets a system-managed location (see {@link RESERVED_WORKTREE_MOUNTS}). */
+export function isReservedMountPath(p: string): boolean {
+  return RESERVED_WORKTREE_MOUNTS.has(normalizeMountPath(p));
+}
+
+/**
  * The in-sandbox path of the SHARED fnm version store (= `FNM_DIR`, set in the sandbox Dockerfile). ONE
  * host dir is bound here for every org/repo/thread (not keyed), so a Node version a repo pins via
  * `.nvmrc`/`.node-version` is downloaded ONCE globally (`fnm use --install-if-missing`) and reused by

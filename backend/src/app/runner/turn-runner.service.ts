@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '../domain';
 import { ENGINE_RUNNER, EngineAuthError, SANDBOX_RESET_NOTICE, type EngineRunnerPort } from '../engine';
-import type { EngineAuth, EngineEvent, EngineRunResult, EngineUsage } from '../engine';
+import type { EngineAuth, EngineEvent, EngineRunResult, EngineUsage, TurnMeta } from '../engine';
 import type { FeatureSandbox } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { StepEntity } from '../persistence/entities';
@@ -34,6 +34,13 @@ export interface RunTurnInput {
   /** Progress callback. */
   onEvent?: (e: EngineEvent) => void;
   signal?: AbortSignal;
+  /**
+   * Registry context for a RESTART-SURVIVABLE Redis-transport turn. When set (and `ENGINE_TRANSPORT=redis`),
+   * the runner records an `active_turns` row so a fresh backend can RE-ATTACH this turn's live stream after a
+   * restart instead of re-running it. Ignored by the pipe runner. The brain always sets this; build turns
+   * set it so a build thread recovers like the brain (see `reattach`). See ADR 0001.
+   */
+  turnMeta?: TurnMeta;
 }
 
 /** The result of one turn — the engine report + the live SessionRef for the next turn. */
@@ -125,6 +132,8 @@ export class TurnRunnerService {
         ...(input.auth ? { auth: input.auth } : {}),
         ...(input.model ? { model: input.model } : {}),
         ...(input.richStream ? { richStream: true } : {}),
+        // Register the turn (Redis transport only) so a fresh backend can RE-ATTACH it after a restart.
+        ...(input.turnMeta ? { turnMeta: input.turnMeta } : {}),
         onEvent,
         ...(input.signal ? { signal: input.signal } : {}),
       });
@@ -157,6 +166,64 @@ export class TurnRunnerService {
       ...(result.planText ? { planText: result.planText } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
       session,
+    };
+  }
+
+  /**
+   * Whether the bound engine runner can RE-ATTACH an in-flight turn (Redis transport only). The pipe runner
+   * has no restart-survivable turns, so callers fall back to re-running the turn from its persisted session.
+   */
+  canReattach(): boolean {
+    return typeof this.engine.reattach === 'function';
+  }
+
+  /**
+   * RE-ATTACH an already-running turn's live stream after a restart — resume tailing its durable Redis
+   * streams WITHOUT re-kicking the engine (which kept running detached), persisting the resumed engine
+   * session id onto the step so a later re-run can still resume it. Returns the same {@link RunTurnResult}
+   * shape as {@link runTurn}. Throws if the bound runner has no `reattach` (guard with {@link canReattach}).
+   * Build turns pass no tool bridge (their tools run in-sandbox) — only `onEvent` is forwarded.
+   */
+  async reattach(input: {
+    turnId: string;
+    containerId: string;
+    jobId: string;
+    stepId?: string | null;
+    onEvent?: (e: EngineEvent) => void;
+    signal?: AbortSignal;
+  }): Promise<RunTurnResult> {
+    if (!this.engine.reattach) {
+      throw new Error('bound ENGINE_RUNNER has no reattach() — cannot re-attach turn');
+    }
+    const { turnId, containerId, stepId } = input;
+    const onEvent = (e: EngineEvent): void => {
+      if (e.kind === 'session' && stepId && e.sessionId) {
+        void this.steps.update({ id: stepId }, { session_id: e.sessionId }).catch(() => undefined);
+      }
+      input.onEvent?.(e);
+    };
+    this.logger.log(`Re-attach turn=${turnId} container=${containerId} step=${stepId ?? '-'}`);
+    const result = await this.engine.reattach(turnId, containerId, {
+      onEvent,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (stepId && result.sessionId) {
+      await this.steps.update({ id: stepId }, { session_id: result.sessionId }).catch(() => undefined);
+    }
+    return {
+      report: result.result,
+      ...(result.planText ? { planText: result.planText } : {}),
+      ...(result.usage ? { usage: result.usage } : {}),
+      // The driver's reattach continuation only reads `report`; the SessionRef is the legacy return shape.
+      session: {
+        id: result.sessionId ?? '',
+        jobId: input.jobId,
+        stepId: stepId ?? null,
+        engine: 'claude',
+        mode: 'execute',
+        branch: '',
+        worktreePath: '',
+      },
     };
   }
 }

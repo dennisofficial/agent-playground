@@ -48,6 +48,12 @@ export interface InboundChatMessage {
    * stamp it, and crash recovery re-seeds precisely). Undefined for non-answer seeds.
    */
   seedQuestionId?: string;
+  /**
+   * DELIVERY SEED (file variant): when this seed delivers a confirmation that the operator uploaded a
+   * `request_file` file, the file card's id (`requestId`). The delivery turn stamps THIS card
+   * `delivered_at` on success — same at-least-once bookkeeping as `seedQuestionId`. Undefined otherwise.
+   */
+  seedFileId?: string;
 }
 
 /** Options for an outbound post. */
@@ -135,6 +141,6 @@ export interface ChatSurface {
     channel: string,
     jobId: string,
     body: string,
-    opts?: { orgId?: string; deliveredQuestionId?: string },
+    opts?: { orgId?: string; deliveredQuestionId?: string; deliveredFileId?: string },
   ): string;
 }

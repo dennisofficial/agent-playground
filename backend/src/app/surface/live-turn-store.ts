@@ -29,7 +29,7 @@ export interface LiveTurnBlock {
 /** The cumulative state of one in-flight turn (a `(jobId, lane)` pair) — the RESUMABLE snapshot. */
 export interface LiveTurnSnapshot {
   jobId: string;
-  /** `'main'` = the brain turn; `'phase:<stepId>'` = a build turn. The client routes blocks by lane. */
+  /** `'main'` = the brain turn; `'thread:<threadId>'` = a build turn. The client routes blocks by lane. */
   lane: string;
   blocks: LiveTurnBlock[];
   active: boolean;
