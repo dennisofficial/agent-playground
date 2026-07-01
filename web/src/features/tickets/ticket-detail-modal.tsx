@@ -124,7 +124,7 @@ export function TicketDetailModal({
             >
               <Link2 size={15} className="text-accent" />
               <div className="min-w-0 flex-1">
-                <div className="text-[10px] font-semibold text-accent">Working in thread</div>
+                <div className="text-[10px] font-semibold text-accent">Working in job</div>
                 <div className="truncate text-[12.5px] font-semibold text-text">{row.title}</div>
               </div>
               <span className="flex-none font-mono text-[10px] text-accent">Open ↗</span>
@@ -139,10 +139,10 @@ export function TicketDetailModal({
                 style={{ background: 'linear-gradient(145deg, var(--accent), var(--accent-2))' }}
               >
                 <ArrowRight size={14} />
-                {promoting ? 'Promoting…' : 'Promote to thread'}
+                {promoting ? 'Promoting…' : 'Promote to job'}
               </button>
               <div className="mt-2 text-center text-[10.5px] leading-relaxed text-faint">
-                Spins up a working thread (sandbox · branch · PR) that starts on this ticket. The thread then
+                Spins up a working job (sandbox · branch · PR) that starts on this ticket. The job then
                 drives its status.
               </div>
             </div>
@@ -215,7 +215,7 @@ export function TicketDetailModal({
                   <div className="flex items-start gap-2">
                     <MessageSquare size={13} className="mt-px flex-none text-faint" />
                     <div className="text-[11.5px] leading-relaxed text-dim">
-                      Captured from thread <span className="font-semibold text-text">{row.origin.threadTitle}</span>
+                      Captured from job <span className="font-semibold text-text">{row.origin.threadTitle}</span>
                     </div>
                   </div>
                 ) : null}

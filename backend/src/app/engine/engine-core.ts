@@ -603,7 +603,8 @@ export class EngineCore {
   }
 
   private async runCodex(args: RunEngineArgs): Promise<EngineRunResult> {
-    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal } = args;
+    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream } =
+      args;
     const auth = this.resolveAuth('codex', args.auth);
     // Pass through ONLY an explicit caller override (none today); otherwise leave unset so
     // `codexThreadOptions` omits `model` and the subscription account's default is used (see note above).
@@ -639,26 +640,57 @@ export class EngineCore {
           break;
         case 'item.completed': {
           const item = event.item;
+          // Codex reports each item ONCE, already completed (with full command output / patch status), so
+          // under `richStream` we emit the authoritative tool_use→tool_result pair back-to-back (the shared
+          // TurnHarness pairs them by id) instead of the coarse `tool` event, which the durable transcript
+          // drops. Without `richStream` (every current Codex caller) the coarse behavior is preserved.
           switch (item.type) {
             case 'agent_message':
               onEvent?.({ kind: 'text', text: item.text });
               result = item.text;
               break;
             case 'reasoning':
-              onEvent?.({ kind: 'text', text: item.text });
+              onEvent?.(
+                richStream
+                  ? { kind: 'thinking', text: item.text }
+                  : { kind: 'text', text: item.text },
+              );
               break;
             case 'command_execution':
-              onEvent?.({ kind: 'tool', name: 'bash', detail: item.command });
+              if (richStream) {
+                const isError =
+                  item.status === 'failed' ||
+                  (item.exit_code != null && item.exit_code !== 0);
+                onEvent?.({ kind: 'tool_use', id: item.id, name: 'bash', input: { command: item.command } });
+                onEvent?.({ kind: 'tool_result', id: item.id, result: item.aggregated_output, isError });
+              } else {
+                onEvent?.({ kind: 'tool', name: 'bash', detail: item.command });
+              }
               break;
             case 'file_change':
-              onEvent?.({
-                kind: 'tool',
-                name: 'edit',
-                detail: item.changes.map((c) => `${c.kind} ${c.path}`).join(', '),
-              });
+              if (richStream) {
+                onEvent?.({ kind: 'tool_use', id: item.id, name: 'edit', input: { changes: item.changes } });
+                onEvent?.({
+                  kind: 'tool_result',
+                  id: item.id,
+                  result: item.status,
+                  isError: item.status === 'failed',
+                });
+              } else {
+                onEvent?.({
+                  kind: 'tool',
+                  name: 'edit',
+                  detail: item.changes.map((c) => `${c.kind} ${c.path}`).join(', '),
+                });
+              }
               break;
             case 'web_search':
-              onEvent?.({ kind: 'tool', name: 'web_search', detail: item.query });
+              if (richStream) {
+                onEvent?.({ kind: 'tool_use', id: item.id, name: 'web_search', input: { query: item.query } });
+                onEvent?.({ kind: 'tool_result', id: item.id, result: 'completed' });
+              } else {
+                onEvent?.({ kind: 'tool', name: 'web_search', detail: item.query });
+              }
               break;
             case 'error':
               onEvent?.({ kind: 'text', text: `error: ${item.message}` });

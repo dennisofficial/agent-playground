@@ -88,7 +88,7 @@ export function ReposSection({
     if (reonboard.isPending) return;
     reonboard.mutate(repo.id, {
       onSuccess: ({ jobId }) => {
-        setFlash({ tone: 'green', text: `Atlas is onboarding ${repo.name} — opening the thread…` });
+        setFlash({ tone: 'green', text: `Atlas is onboarding ${repo.name} — opening the job…` });
         router.push(threadHref({ orgId, repoId: repo.id, jobId }));
       },
       onError: (e) =>
@@ -103,7 +103,7 @@ export function ReposSection({
         <div className="min-w-0 flex-1">
           <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">Repos</h1>
           <p className="mt-1.5 text-[13px] text-dim">
-            GitHub repositories connected to {orgName}. Threads run on these.
+            GitHub repositories connected to {orgName}. Jobs run on these.
           </p>
         </div>
         {canManage && repos.length > 0 && !formOpen ? (
@@ -202,7 +202,7 @@ export function ReposSection({
           <p className="mt-3.5 text-[11.5px] leading-relaxed text-faint">
             {isMember
               ? 'Contact an owner to connect or change repos.'
-              : 'Disconnecting a repo permanently deletes its threads and all their work.'}
+              : 'Disconnecting a repo permanently deletes its jobs and all their work.'}
           </p>
         </>
       )}
@@ -341,7 +341,7 @@ function EmptyCard({ withToken }: { withToken: boolean }) {
       <div className="font-disp text-[16px] font-semibold text-text">No repositories connected yet</div>
       <div className="mt-1.5 max-w-[340px] text-[12.5px] leading-relaxed text-dim">
         {withToken
-          ? 'Connect a GitHub repo to start running threads on it.'
+          ? 'Connect a GitHub repo to start running jobs on it.'
           : `Connecting a repo needs a GitHub token for this org. Set one in Credentials first.`}
       </div>
     </div>
@@ -596,7 +596,7 @@ function RepoRow({
             style={{ color: hasThreads ? 'var(--dim)' : 'var(--faint)' }}
           >
             <MessageSquare size={12} />
-            {hasThreads ? `${threadCount} thread${threadCount === 1 ? '' : 's'}` : 'No threads'}
+            {hasThreads ? `${threadCount} job${threadCount === 1 ? '' : 's'}` : 'No jobs'}
           </span>
         </div>
       </div>
@@ -672,7 +672,7 @@ function RepoRow({
                 onClick={onDisconnect}
                 title={
                   hasThreads
-                    ? `Disconnect — deletes ${threadCount} thread${threadCount === 1 ? '' : 's'}`
+                    ? `Disconnect — deletes ${threadCount} job${threadCount === 1 ? '' : 's'}`
                     : 'Disconnect this repo'
                 }
                 className="rounded-sm border border-border-2 px-2.5 py-[5px] text-[11px] font-semibold text-dim transition hover:bg-surface-2 hover:text-red"
@@ -782,7 +782,7 @@ function DisconnectDialog({
   closeRef.current = onClose;
   const threadCount = repo.threadCount ?? 0;
   const hasThreads = threadCount > 0;
-  const threadLabel = `${threadCount} thread${threadCount === 1 ? '' : 's'}`;
+  const threadLabel = `${threadCount} job${threadCount === 1 ? '' : 's'}`;
 
   // Esc to dismiss.
   useEffect(() => {
@@ -831,7 +831,7 @@ function DisconnectDialog({
             </div>
           ) : (
             <div className="text-[12.5px] leading-relaxed text-dim">
-              This removes it from {orgName}. No threads are affected — there are none.
+              This removes it from {orgName}. No jobs are affected — there are none.
             </div>
           )}
           <div

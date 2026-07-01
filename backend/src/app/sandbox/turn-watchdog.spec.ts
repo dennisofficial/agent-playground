@@ -53,3 +53,37 @@ describe('TurnWatchdogService.sweep', () => {
     expect(registry.finalize).not.toHaveBeenCalled();
   });
 });
+
+describe('TurnWatchdogService boot grace', () => {
+  it('touches every running heartbeat BEFORE the first sweep on leader promotion', async () => {
+    const order: string[] = [];
+    const registry = {
+      touchAllRunningHeartbeats: vi.fn(async () => {
+        order.push('touch');
+      }),
+      findStale: vi.fn(async () => {
+        order.push('sweep');
+        return [];
+      }),
+      finalize: vi.fn(async () => undefined),
+    } as unknown as TurnRegistry;
+
+    let promote = () => {};
+    const promotableElection = {
+      onPromote: (cb: () => void) => {
+        promote = cb;
+        return { unsubscribe() {} };
+      },
+      onDemote: () => ({ unsubscribe() {} }),
+    } as unknown as LeaderElectionService;
+
+    const svc = new TurnWatchdogService(registry, promotableElection, env());
+    svc.onApplicationBootstrap(); // subscribes (not a *_test DB → watchdog on)
+    promote(); // fire start()
+    await new Promise((r) => setTimeout(r, 20)); // let the touch().finally(sweep) chain settle
+    svc.onApplicationShutdown(); // clear the interval
+
+    // The grace touch runs first, so a turn whose heartbeat froze across a restart survives the first sweep.
+    expect(order).toEqual(['touch', 'sweep']);
+  });
+});

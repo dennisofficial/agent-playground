@@ -327,6 +327,12 @@ export interface IEnvConfig {
   //  - TURN_STALE_MS: how long an `active_turns` heartbeat may go quiet before the leader watchdog
   //    finalizes the turn 'failed' (engine container died). Default 90000.
   TURN_STALE_MS?: number;
+  //  - TURN_STREAM_REAP_INTERVAL_MS: how often the leader reaper scans for orphaned `turn:*` Redis
+  //    streams (no `active_turns` row). Default 300000 (5min — orphans are hygiene, not urgent).
+  //  - TURN_STREAM_REAP_IDLE_MS: how long a turn's streams must be untouched before the reaper may
+  //    delete them — the guard against reaping a live/mid-registration turn. Default 300000.
+  TURN_STREAM_REAP_INTERVAL_MS?: number;
+  TURN_STREAM_REAP_IDLE_MS?: number;
 
   // ── Atlas v2 clustering / rolling-update ─────────────────────────────────────────────────────────
   //  The backend is a hard singleton (in-memory turn queues, provisioning lock, single realtime slot).
@@ -488,6 +494,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
   TURN_STALE_MS: Joi.number().integer().min(1000).optional(),
+  TURN_STREAM_REAP_INTERVAL_MS: Joi.number().integer().min(1000).optional(),
+  TURN_STREAM_REAP_IDLE_MS: Joi.number().integer().min(1000).optional(),
   // Atlas v2 clustering / rolling-update
   LEADER_POLL_INTERVAL_MS: Joi.number().integer().min(250).optional(),
   DRAIN_GRACE_MS: Joi.number().integer().min(0).optional(),

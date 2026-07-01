@@ -82,7 +82,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               setActive(0);
             }}
             onKeyDown={onKeyDown}
-            placeholder="Search threads across all organizations…"
+            placeholder="Search jobs across all organizations…"
             className="h-12 flex-1 bg-transparent text-[14px] text-text outline-none placeholder:text-faint"
           />
           <kbd className="rounded border border-border-2 bg-surface px-1.5 py-0.5 font-mono text-[9.5px] text-dim">
@@ -91,7 +91,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         </div>
         <div className="max-h-80 overflow-y-auto p-1.5">
           {results.length === 0 ? (
-            <p className="px-3 py-6 text-center text-[12.5px] text-faint">No matching threads</p>
+            <p className="px-3 py-6 text-center text-[12.5px] text-faint">No matching jobs</p>
           ) : (
             results.map((t, i) => (
               <button

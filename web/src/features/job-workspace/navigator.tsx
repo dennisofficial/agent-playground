@@ -25,7 +25,8 @@ import { pipelineJob } from '@/lib/api/job-api';
 import { useRetryJob } from '@/lib/api/job-queries';
 import { Divider, PipelineTree, haltThreadIdx } from './pipeline-tree';
 import { NavigatorApproveButton } from './spec-approval';
-import type { ContextFile, PipelineJob, PipelineState, JobContext, JobKind, JobStatus } from '@/lib/api/types';
+import { codexReviewNode } from './codex-review';
+import type { CodexReviewSummary, ContextFile, PipelineJob, PipelineState, JobContext, JobKind, JobStatus } from '@/lib/api/types';
 import type { JobMessage, JobRef } from '@/lib/api/job-api';
 
 export interface JobMeta {
@@ -223,6 +224,15 @@ export function Navigator({
           running={st === 'running' || st === 'planning'}
           onClick={onConversation}
         />
+        {/* Codex review — a lane directly under Main, shown once the plan has been submitted for review.
+            Opens the full round-by-round review dialogue in the detail pane (blue-highlighted, like a node). */}
+        {job?.codexReview ? (
+          <CodexReviewRow
+            review={job.codexReview}
+            active={laneNode === codexReviewNode(jobRef.jobId)}
+            onOpen={() => onSelectNode(codexReviewNode(jobRef.jobId))}
+          />
+        ) : null}
         <ThreadRows
           status={st}
           job={job}
@@ -265,6 +275,44 @@ function MainLaneRow({ active, running, onClick }: { active: boolean; running: b
       <Dot color="var(--green)" pulse={running} size={9} />
       <span className="flex-1 truncate text-[12px] font-semibold text-text">Main</span>
       <span className="font-mono text-[8px] text-faint">planning</span>
+    </button>
+  );
+}
+
+/** The Codex review lane — a lane like Main/build threads (LEFT pane), opening the full plan-review dialogue
+ *  in the same transcript renderer. Highlighted ORANGE (`nav-selected`), pulses while a round is running. */
+function CodexReviewRow({
+  review,
+  active,
+  onOpen,
+}: {
+  review: CodexReviewSummary;
+  active: boolean;
+  onOpen: () => void;
+}) {
+  const running = review.status === 'running';
+  const note = running
+    ? 'reviewing'
+    : review.status === 'failed'
+      ? 'error'
+      : review.findingsCount === 0
+        ? 'clean'
+        : `${review.findingsCount} finding${review.findingsCount === 1 ? '' : 's'}`;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={cn(
+        'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2',
+        active && 'nav-selected',
+      )}
+    >
+      <Dot color="var(--slate)" pulse={running} size={9} />
+      <span className="flex-1 truncate text-[12px] font-semibold text-text">Codex review</span>
+      {review.rounds > 1 ? (
+        <span className="font-mono text-[8px] text-faint">·{review.rounds}</span>
+      ) : null}
+      <span className="font-mono text-[8px] text-faint">{note}</span>
     </button>
   );
 }

@@ -35,8 +35,8 @@ export default function CoordinatorPage() {
           />
         ) : threads.length === 0 ? (
           <EmptyBoard
-            title="No threads yet"
-            body="None of your organizations have threads yet. Start one with “New thread” in the sidebar."
+            title="No jobs yet"
+            body="None of your organizations have jobs yet. Start one with “New job” in the sidebar."
           />
         ) : attention.length > 0 ? (
           <div className="mt-7">

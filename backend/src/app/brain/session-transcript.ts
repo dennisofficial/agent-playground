@@ -33,6 +33,28 @@ export interface RecoveredBlock {
   meta: Record<string, unknown>;
   /** The SDK line timestamp (turn-time), used to order the recovered rows after the operator prompt. */
   emittedAt?: Date;
+  /** `tool` blocks only: true once a `tool_result` line paired onto this call. Distinguishes an INTERRUPTED
+   *  tool call (no result ever arrived — a turn cut off mid-call, e.g. a dangling `ask_question`, which the
+   *  next turn re-issues) from a completed call whose result content happens to be null. */
+  toolPaired?: boolean;
+}
+
+/** One turn of a session transcript — the blocks after ONE operator prompt, up to the next prompt. */
+export interface TurnSlice {
+  /** The operator prompt that opened this turn (string content or joined text blocks). */
+  promptText?: string;
+  /** The recovered blocks of this turn (assistant text/thinking + tool_use with paired results). */
+  blocks: RecoveredBlock[];
+  /** Whether this turn's trailing assistant message reached `stop_reason:'end_turn'` (the turn COMPLETED). */
+  endedClean: boolean;
+}
+
+/** The whole session transcript, segmented into turns by operator prompt. */
+export interface SessionTranscript {
+  /** The session id read from the transcript (top-level `sessionId`), if present. */
+  sessionId?: string;
+  /** One entry per operator prompt, in order. Bookkeeping lines before the first prompt are ignored. */
+  turns: TurnSlice[];
 }
 
 export interface TranscriptTail {
@@ -76,13 +98,8 @@ function isOperatorPrompt(m: RawLine): boolean {
   return false;
 }
 
-/**
- * Parse a session transcript and return the TAIL — the blocks after the LAST operator prompt (the turn that
- * would have been lost) — plus whether that turn completed. A blank or unparseable trailing line (a turn
- * still being written by a live container, or a partial flush) is skipped, so a half-written final line never
- * throws or yields a corrupt block.
- */
-export function parseSessionTranscriptTail(jsonl: string): TranscriptTail {
+/** Parse the JSONL into raw lines, skipping blanks and any incomplete/corrupt (half-written) line. */
+function parseLines(jsonl: string): RawLine[] {
   const parsed: RawLine[] = [];
   for (const line of jsonl.split('\n')) {
     const t = line.trim();
@@ -93,24 +110,17 @@ export function parseSessionTranscriptTail(jsonl: string): TranscriptTail {
       // Incomplete/corrupt line (e.g. the container was still appending): ignore it.
     }
   }
+  return parsed;
+}
 
-  let lastPromptIdx = -1;
-  let operatorPromptCount = 0;
-  parsed.forEach((m, i) => {
-    if (isOperatorPrompt(m)) {
-      lastPromptIdx = i;
-      operatorPromptCount++;
-    }
-  });
-
-  const sessionId = parsed.find((m) => typeof m.sessionId === 'string')?.sessionId;
-  const promptText = lastPromptIdx >= 0 ? operatorPromptText(parsed[lastPromptIdx]) : undefined;
-  const tail = lastPromptIdx >= 0 ? parsed.slice(lastPromptIdx + 1) : [];
-
+/** Map ONE turn's raw lines (assistant content + `user` tool_result feedback) to durable blocks. Mirrors
+ *  the live mapping in engine-core / turn-harness: assistant → text/thinking/tool_use, user tool_result
+ *  paired onto the newest open tool block by id. */
+function mapTurnBlocks(lines: RawLine[]): { blocks: RecoveredBlock[]; endedClean: boolean } {
   const blocks: RecoveredBlock[] = [];
   let endedClean = false;
 
-  for (const m of tail) {
+  for (const m of lines) {
     const emittedAt = typeof m.timestamp === 'string' ? new Date(m.timestamp) : undefined;
     const uuid = typeof m.uuid === 'string' ? m.uuid : undefined;
     const base = (): Record<string, unknown> => ({ recovered: true, ...(uuid ? { sdkUuid: uuid } : {}) });
@@ -128,6 +138,7 @@ export function parseSessionTranscriptTail(jsonl: string): TranscriptTail {
           blocks.push({
             kind: 'tool',
             meta: { ...base(), id, name: block.name, input: block.input ?? null, result: null, isError: false, toolUseId: id },
+            toolPaired: false,
             ...(emittedAt ? { emittedAt } : {}),
           });
         }
@@ -143,7 +154,8 @@ export function parseSessionTranscriptTail(jsonl: string): TranscriptTail {
         // Pair with the newest still-unpaired tool block (mirrors engine-core / turn-harness pairing).
         for (let i = blocks.length - 1; i >= 0; i--) {
           const b = blocks[i];
-          if (b.kind === 'tool' && b.meta.result == null && (b.meta.toolUseId === toolUseId || toolUseId === '')) {
+          if (b.kind === 'tool' && !b.toolPaired && (b.meta.toolUseId === toolUseId || toolUseId === '')) {
+            b.toolPaired = true;
             b.meta.result = block.content ?? null;
             b.meta.isError = Boolean(block.is_error);
             if (Array.isArray(patch) && patch.length) b.meta.structuredPatch = patch;
@@ -154,12 +166,52 @@ export function parseSessionTranscriptTail(jsonl: string): TranscriptTail {
     }
   }
 
+  return { blocks, endedClean };
+}
+
+/**
+ * Parse the WHOLE session transcript into turns, segmented by operator prompt (each turn = the blocks after
+ * one prompt, up to the next). Used by the recovery backstop to back-fill a turn STRANDED in the middle of
+ * the session — one interrupted before `end_turn` that a later operator prompt superseded, so the tail no
+ * longer points at it. Bookkeeping lines before the first prompt are ignored; a half-written trailing line
+ * is skipped (never throws).
+ */
+export function parseSessionTranscriptTurns(jsonl: string): SessionTranscript {
+  const parsed = parseLines(jsonl);
+  const sessionId = parsed.find((m) => typeof m.sessionId === 'string')?.sessionId;
+
+  const promptIdx: number[] = [];
+  parsed.forEach((m, i) => {
+    if (isOperatorPrompt(m)) promptIdx.push(i);
+  });
+
+  const turns: TurnSlice[] = [];
+  for (let k = 0; k < promptIdx.length; k++) {
+    const start = promptIdx[k] + 1;
+    const end = k + 1 < promptIdx.length ? promptIdx[k + 1] : parsed.length;
+    const promptText = operatorPromptText(parsed[promptIdx[k]]);
+    const { blocks, endedClean } = mapTurnBlocks(parsed.slice(start, end));
+    turns.push({ ...(promptText != null ? { promptText } : {}), blocks, endedClean });
+  }
+
+  return { ...(sessionId ? { sessionId } : {}), turns };
+}
+
+/**
+ * Parse a session transcript and return the TAIL — the blocks after the LAST operator prompt (the turn that
+ * would have been lost) — plus whether that turn completed. A convenience view over
+ * {@link parseSessionTranscriptTurns} (the tail = the last turn); a blank or unparseable trailing line is
+ * skipped, so a half-written final line never throws or yields a corrupt block.
+ */
+export function parseSessionTranscriptTail(jsonl: string): TranscriptTail {
+  const { sessionId, turns } = parseSessionTranscriptTurns(jsonl);
+  const last = turns.length > 0 ? turns[turns.length - 1] : undefined;
   return {
     ...(sessionId ? { sessionId } : {}),
-    ...(promptText != null ? { promptText } : {}),
-    operatorPromptCount,
-    blocks,
-    endedClean,
+    ...(last?.promptText != null ? { promptText: last.promptText } : {}),
+    operatorPromptCount: turns.length,
+    blocks: last?.blocks ?? [],
+    endedClean: last?.endedClean ?? false,
   };
 }
 

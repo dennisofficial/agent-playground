@@ -25,6 +25,8 @@ import {
 } from './subagents';
 import { useLiveTurn, type LiveTurn } from '@/lib/api/job-stream';
 import { durablePhaseBlocks, indexPhaseBlocks, livePhaseBlocks, phaseLane } from './phases';
+import { codexReviewLane } from './codex-review';
+import { TranscriptView } from './conversation';
 import { DetailTopBar } from './detail-top-bar';
 import { pipelineJob, type JobMessage, type JobRef } from '@/lib/api/job-api';
 import {
@@ -136,6 +138,22 @@ export function PhaseView({
           .join(' · ')
       : parentId;
     body = <SubagentView messages={messages} liveTurn={liveTurn ?? null} parentId={parentId} />;
+  } else if (selectedNode.startsWith('codex-review:')) {
+    const review = job?.codexReview ?? null;
+    title = 'Codex review';
+    subtitle = review
+      ? [`${review.rounds} round${review.rounds === 1 ? '' : 's'}`, review.status].filter(Boolean).join(' · ')
+      : 'the plan-review dialogue';
+    // The SAME transcript renderer as Main — just no composer (Atlas replies to Codex via respond_to_review).
+    body = (
+      <TranscriptView
+        jobRef={jobRef}
+        messages={messages}
+        lane={codexReviewLane(jobRef.jobId)}
+        emptyText="No review activity yet — Codex’s reasoning appears here as it runs."
+        onSelectNode={onSelectNode}
+      />
+    );
   } else if (filePath) {
     title = filePath.split('/').pop() ?? filePath;
     subtitle = fileQuery.data ? `${filePath} · ${formatBytes(fileQuery.data.size)}` : filePath;
@@ -437,7 +455,7 @@ function InterjectBar({ jobRef }: { jobRef: JobRef }) {
           Interject
         </button>
       </div>
-      <p className="mt-1.5 text-center font-mono text-[9px] text-faint">interjecting one coding session — not the thread&apos;s brain</p>
+      <p className="mt-1.5 text-center font-mono text-[9px] text-faint">interjecting one coding session — not the job&apos;s brain</p>
     </div>
   );
 }
@@ -858,6 +876,8 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
   if (node.startsWith('spec:') || node.startsWith('gen:') || node.startsWith('artifact:')) return 'found';
   // Subagent runs aren't job nodes — they self-handle a missing run inside SubagentView. Always resolvable.
   if (node.startsWith('subagent:')) return 'found';
+  // The Codex review lane self-handles an empty transcript inside TranscriptView. Always resolvable.
+  if (node.startsWith('codex-review:')) return 'found';
   // Sandbox ports are a design-stage mock (no backend port-exposure yet) — always resolvable.
   if (node.startsWith('port:')) return 'found';
 

@@ -259,8 +259,8 @@ function OrgSection({
             href={ROUTES.newThread({ orgId: org.id })}
             onClick={(e) => e.stopPropagation()}
             className={cn(iconBtn, 'text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/org:opacity-[0.85]')}
-            title="New thread in this org"
-            aria-label={`New thread in ${org.name}`}
+            title="New job in this org"
+            aria-label={`New job in ${org.name}`}
           >
             <Plus size={13} strokeWidth={2.4} />
           </Link>
@@ -279,7 +279,7 @@ function OrgSection({
             <span
               className="h-1.5 w-1.5 flex-none rounded-full"
               style={{ background: 'var(--accent)' }}
-              title="Threads need your attention"
+              title="Jobs need your attention"
               aria-hidden
             />
           ) : null}
@@ -422,8 +422,8 @@ function RepoGroup({
         <Link
           href={ROUTES.newThread({ orgId, repoId: repo.repoId })}
           className={cn(iconBtn, 'text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/repo:opacity-90')}
-          title="New thread in this repo"
-          aria-label={`New thread in ${repo.repoName}`}
+          title="New job in this repo"
+          aria-label={`New job in ${repo.repoName}`}
         >
           <Plus size={13} strokeWidth={2.4} />
         </Link>
@@ -432,7 +432,7 @@ function RepoGroup({
           <span
             className="h-1.5 w-1.5 flex-none rounded-full"
             style={{ background: 'var(--accent)' }}
-            title="Threads need your attention"
+            title="Jobs need your attention"
             aria-hidden
           />
         ) : null}
@@ -455,7 +455,7 @@ function RepoGroup({
               href={ROUTES.newThread({ orgId, repoId: repo.repoId })}
               className="flex items-center gap-[7px] rounded-[4px] pb-[5px] pl-1 pr-[7px] pt-1 transition hover:bg-surface-2"
             >
-              <span className="flex-1 text-[10.5px] italic text-faint">No threads yet</span>
+              <span className="flex-1 text-[10.5px] italic text-faint">No jobs yet</span>
               <span className="flex-none font-mono text-[9.5px] font-semibold text-accent">Start one ＋</span>
             </Link>
           )

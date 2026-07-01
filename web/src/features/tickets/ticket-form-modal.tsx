@@ -154,7 +154,7 @@ export function TicketFormModal({
           <div className="font-mono text-[9.5px] text-faint">
             {mode === 'create'
               ? `Lands in the backlog · #${nextNumber ?? '—'} · captured by you`
-              : 'Editing metadata · status is driven by Atlas & threads'}
+              : 'Editing metadata · status is driven by Atlas & jobs'}
           </div>
           <div className="flex-1" />
           <button

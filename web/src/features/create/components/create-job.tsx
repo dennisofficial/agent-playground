@@ -72,7 +72,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     return (
       <EmptyState
         title="Create an organization first"
-        body="Threads live under an organization's repos. Set up an org and connect a repo to start steering work."
+        body="Jobs live under an organization's repos. Set up an org and connect a repo to start steering work."
       />
     );
   }
@@ -80,8 +80,8 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   function submit() {
     const text = message.trim();
     if (!orgId) return setError('Pick an organization.');
-    if (!repoId) return setError('Pick a repo to start a thread.');
-    if (!text) return setError('Add a first message — it starts the thread.');
+    if (!repoId) return setError('Pick a repo to start a job.');
+    if (!text) return setError('Add a first message — it starts the job.');
     setError(null);
     // Seed a title from the first line of the message so the thread isn't "Untitled" before the
     // brain renames it (the create endpoint takes an optional title).
@@ -93,7 +93,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           router.push(threadHref({ orgId, repoId, jobId }));
           onDone?.();
         },
-        onError: () => setError('Could not start the thread. Try again.'),
+        onError: () => setError('Could not start the job. Try again.'),
       },
     );
   }
@@ -163,7 +163,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           rows={4}
-          placeholder="Describe the work — sent as your first message the moment the thread is ready…"
+          placeholder="Describe the work — sent as your first message the moment the job is ready…"
           className="mt-1.5 w-full resize-none rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
         />
       </div>

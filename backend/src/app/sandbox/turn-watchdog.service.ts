@@ -55,7 +55,14 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
 
   private start(): void {
     if (this.timer) return;
-    void this.sweep(); // an immediate boot reconcile, then on an interval
+    // Boot grace: stamp a fresh heartbeat on every running turn BEFORE the first sweep, then reconcile.
+    // Heartbeats are relayed by an attached host, so a restart freezes them; without this, a turn whose
+    // engine is alive but whose DB heartbeat aged past the stale window would be finalized the instant we
+    // promote — racing (and beating) boot re-attach. The touch gives each a full stale window to re-attach.
+    void this.registry
+      .touchAllRunningHeartbeats()
+      .catch((err) => this.logger.debug(`watchdog boot heartbeat touch failed (ignored): ${err}`))
+      .finally(() => void this.sweep());
     this.timer = setInterval(() => void this.sweep(), SWEEP_INTERVAL_MS);
     if (typeof this.timer.unref === 'function') this.timer.unref();
     this.logger.log('turn watchdog started (leader)');

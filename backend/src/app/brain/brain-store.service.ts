@@ -193,6 +193,7 @@ export class BrainStoreService {
     jobId: string,
     reviewId: string,
     text: string,
+    anchor?: { round?: number; findingsCount?: number },
   ): Promise<boolean> {
     const ts = `review-${reviewId}`;
     const existing = await this.messages.findOne({
@@ -208,7 +209,18 @@ export class BrainStoreService {
         text,
         kind: 'chat',
         ts,
-        meta: { source: 'system_shared' },
+        meta: {
+          source: 'system_shared',
+          // ANCHOR: the web renders this summary as a compact, clickable card that OPENS the job's Codex
+          // review lane (the full reasoning/tool stream lives there, peeled out of Main). `codexReviewId`
+          // = jobId matches the lane key `codex-review:<jobId>`.
+          codexReviewAnchor: true,
+          codexReviewId: jobId,
+          ...(anchor?.round != null ? { reviewRound: anchor.round } : {}),
+          ...(anchor?.findingsCount != null
+            ? { findingsCount: anchor.findingsCount }
+            : {}),
+        },
       }),
     );
     return true;

@@ -39,6 +39,8 @@ export class InMemoryRedisStream implements RedisStreamPort {
   >();
   /** Pending block timers — released eagerly by `releaseBlockingReads()` (test teardown speed-up). */
   private readonly blockTimers = new Set<{ resolve: () => void }>();
+  /** Per-key last-access epoch-ms — the slice `OBJECT IDLETIME` needs (stamped on write + read touch). */
+  private readonly lastAccess = new Map<string, number>();
   private seq = 0;
 
   /**
@@ -50,6 +52,14 @@ export class InMemoryRedisStream implements RedisStreamPort {
     for (const t of [...this.blockTimers]) t.resolve();
   }
 
+  /**
+   * TEST HELPER: backdate a key's last-access so `objectIdleTime` reports at least `seconds` of idle,
+   * letting a test drive the reaper's idle-floor guard deterministically (production never calls this).
+   */
+  setKeyIdleForTest(key: string, seconds: number): void {
+    this.lastAccess.set(key, Date.now() - seconds * 1000);
+  }
+
   // ── streams ────────────────────────────────────────────────────────────────────────────────
 
   xadd(stream: string, data: unknown): Promise<string> {
@@ -57,6 +67,7 @@ export class InMemoryRedisStream implements RedisStreamPort {
     const log = this.streams.get(stream) ?? [];
     log.push({ id, data: clone(data) });
     this.streams.set(stream, log);
+    this.lastAccess.set(stream, Date.now());
     this.wake(stream);
     return Promise.resolve(id);
   }
@@ -66,8 +77,20 @@ export class InMemoryRedisStream implements RedisStreamPort {
       this.streams.delete(k);
       this.groups.delete(k);
       this.pending.delete(k);
+      this.lastAccess.delete(k);
     }
     return Promise.resolve();
+  }
+
+  scanKeys(match: string, _count?: number): Promise<string[]> {
+    const re = globToRegExp(match);
+    return Promise.resolve([...this.streams.keys()].filter((k) => re.test(k)));
+  }
+
+  objectIdleTime(key: string): Promise<number | null> {
+    if (!this.streams.has(key)) return Promise.resolve(null);
+    const last = this.lastAccess.get(key) ?? Date.now();
+    return Promise.resolve(Math.floor((Date.now() - last) / 1000));
   }
 
   ensureGroup(stream: string, group: string): Promise<void> {
@@ -85,6 +108,7 @@ export class InMemoryRedisStream implements RedisStreamPort {
     count: number;
     blockMs: number;
   }): Promise<StreamEntry[]> {
+    this.lastAccess.set(args.stream, Date.now());
     const take = (): StreamEntry[] => {
       const cursor = this.groups.get(args.stream)?.get(args.group) ?? '0-0';
       const log = this.streams.get(args.stream) ?? [];
@@ -161,6 +185,7 @@ export class InMemoryRedisStream implements RedisStreamPort {
     count: number;
     blockMs: number;
   }): Promise<StreamEntry[]> {
+    this.lastAccess.set(args.stream, Date.now());
     const take = (): StreamEntry[] => {
       const log = this.streams.get(args.stream) ?? [];
       return log
@@ -246,6 +271,12 @@ export class InMemoryRedisStream implements RedisStreamPort {
  * (mirrors the JSON round-trip a real Redis would impose). */
 function clone<T>(v: T): T {
   return v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T);
+}
+
+/** Minimal Redis-glob → RegExp (only `*` is used by callers here). Escapes all other regex metachars. */
+function globToRegExp(glob: string): RegExp {
+  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`);
 }
 
 /** Compare two `<seq>-<sub>` stream ids numerically (the fake only ever uses `-0`). */

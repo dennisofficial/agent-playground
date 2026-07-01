@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSessionTranscriptTail } from './session-transcript';
+import { parseSessionTranscriptTail, parseSessionTranscriptTurns } from './session-transcript';
 
 /** Build one JSONL line (the SDK writes one content block per line). */
 const line = (o: Record<string, unknown>): string => JSON.stringify(o);
@@ -68,5 +68,44 @@ describe('parseSessionTranscriptTail', () => {
     ].join('\n');
     const { blocks } = parseSessionTranscriptTail(twoTurns);
     expect(blocks.map((b) => b.text)).toEqual(['second reply']);
+  });
+});
+
+describe('parseSessionTranscriptTurns', () => {
+  it('segments the session into one turn per operator prompt, in order', () => {
+    const { sessionId, turns } = parseSessionTranscriptTurns(TRANSCRIPT);
+    expect(sessionId).toBe('sess-1');
+    expect(turns).toHaveLength(1);
+    expect(turns[0].promptText).toBe('Do a deep dive review.');
+    expect(turns[0].endedClean).toBe(true);
+    expect(turns[0].blocks.map((b) => b.kind)).toEqual(['thinking', 'chat', 'tool', 'chat']);
+  });
+
+  it('recovers a MIDDLE turn interrupted before end_turn, then superseded by a completed turn (the incident)', () => {
+    const stranded = [
+      line({ type: 'user', uuid: 'p1', message: { role: 'user', content: 'investigate' } }),
+      line({ type: 'assistant', uuid: 'i-text', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'looking' }] } }),
+      // dangling tool_use: no matching tool_result, no end_turn — the interruption point.
+      line({ type: 'assistant', uuid: 'i-ask', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'ask_question', input: {} }] } }),
+      line({ type: 'user', uuid: 'p2', message: { role: 'user', content: 'hello?' } }),
+      line({ type: 'assistant', uuid: 'h-final', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'sorry, finished' }] } }),
+    ].join('\n');
+    const { turns } = parseSessionTranscriptTurns(stranded);
+    expect(turns).toHaveLength(2);
+    // Turn 1 (the stranded investigation) never reached end_turn; turn 2 did.
+    expect(turns[0].endedClean).toBe(false);
+    expect(turns[1].endedClean).toBe(true);
+    expect(turns[0].blocks.map((b) => b.meta.sdkUuid)).toEqual(['i-text', 'i-ask']);
+    // The dangling tool_use is unpaired — the caller drops it (the next turn re-issues it).
+    const ask = turns[0].blocks.find((b) => b.kind === 'tool')!;
+    expect(ask.toolPaired).toBe(false);
+    expect(turns[1].blocks.map((b) => b.text)).toEqual(['sorry, finished']);
+  });
+
+  it('marks toolPaired=true once a tool_result lands on the tool_use', () => {
+    const { turns } = parseSessionTranscriptTurns(TRANSCRIPT);
+    const tool = turns[0].blocks.find((b) => b.kind === 'tool')!;
+    expect(tool.toolPaired).toBe(true);
+    expect(tool.meta).toMatchObject({ id: 'toolu_42', result: '# OrthoScribe' });
   });
 });

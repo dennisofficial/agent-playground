@@ -40,6 +40,35 @@ export class IoredisStreamAdapter implements RedisStreamPort {
     await this.client.del(...keys);
   }
 
+  async scanKeys(match: string, count = 256): Promise<string[]> {
+    const out = new Set<string>();
+    let cursor = '0';
+    // Bound the walk so a pathological keyspace can't spin forever (turn keyspace is small in practice).
+    for (let page = 0; page < 10_000; page++) {
+      const [next, keys] = (await this.client.scan(
+        cursor,
+        'MATCH',
+        match,
+        'COUNT',
+        count,
+      )) as [string, string[]];
+      for (const k of keys) out.add(k);
+      cursor = next;
+      if (cursor === '0') break; // a full cursor cycle returns to '0'
+    }
+    return [...out];
+  }
+
+  async objectIdleTime(key: string): Promise<number | null> {
+    try {
+      const idle = (await this.client.object('IDLETIME', key)) as number | null;
+      return typeof idle === 'number' ? idle : null;
+    } catch {
+      // OBJECT IDLETIME errors on a missing key — treat as "not present".
+      return null;
+    }
+  }
+
   async ensureGroup(stream: string, group: string): Promise<void> {
     try {
       await this.client.xgroup('CREATE', stream, group, '0', 'MKSTREAM');

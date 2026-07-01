@@ -14,6 +14,7 @@ import type {
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
+  PlanReviewEntity,
   StepEntity,
   ThreadEntity,
   JobEntity,
@@ -63,6 +64,8 @@ export class DriverStoreService {
     private readonly steps: Repository<StepEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
+    @InjectRepository(PlanReviewEntity, DB_CONNECTION)
+    private readonly reviews: Repository<PlanReviewEntity>,
   ) {}
 
   // ── thread (the build unit) ────────────────────────────────────────────────────────────────────
@@ -324,6 +327,25 @@ export class DriverStoreService {
       list.push(p);
       stepsByThread.set(p.thread_id, list);
     }
+    // The Codex plan-review dialogue (a lane under Main): summarize its rounds so the navigator can render
+    // the "Codex review" row + status/finding badge. Null when the plan was never submitted for review.
+    const reviewRows = await this.reviews.find({
+      where: { job_id: thread.id },
+      order: { round: 'ASC' },
+    });
+    const latestReview = reviewRows[reviewRows.length - 1];
+    const codexReview = latestReview
+      ? {
+          lane: `codex-review:${thread.id}`,
+          rounds: reviewRows.length,
+          latestRound: latestReview.round,
+          // 'running' | 'complete' | 'failed'
+          status: latestReview.status,
+          findingsCount: latestReview.findings
+            ? latestReview.findings.split('\n').filter((l) => l.trim()).length
+            : 0,
+        }
+      : null;
     return {
       jobId: thread.id,
       title: thread.title,
@@ -334,6 +356,7 @@ export class DriverStoreService {
       prNumber: thread.pr_number,
       featureBranch: thread.feature_branch,
       baseBranch: thread.base_branch,
+      codexReview,
       threads: threads.map((s) => ({
         id: s.id,
         ordinal: s.ordinal,

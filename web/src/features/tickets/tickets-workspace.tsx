@@ -254,7 +254,7 @@ function Board({
           <div className="font-disp text-[17px] font-semibold text-text">Nothing on the board yet</div>
           <div className="mt-2 text-[12.5px] leading-relaxed text-dim">
             {backlogCount > 0
-              ? `You have ${backlogCount} ticket${backlogCount === 1 ? '' : 's'} waiting in the backlog. Atlas commits them to Todo when they're ready — or promote one to start a thread now.`
+              ? `You have ${backlogCount} ticket${backlogCount === 1 ? '' : 's'} waiting in the backlog. Atlas commits them to Todo when they're ready — or promote one to start a job now.`
               : 'Atlas captures tickets into the backlog as you talk, then commits them here when they’re ready to work.'}
           </div>
           {backlogCount > 0 ? (
@@ -290,7 +290,7 @@ function Board({
                 <div className="flex-1" />
                 {threadDriven ? (
                   <span className="rounded border border-border px-1.5 py-px font-mono text-[8px] tracking-[0.06em] text-faint">
-                    THREAD-DRIVEN
+                    JOB-DRIVEN
                   </span>
                 ) : null}
               </div>
@@ -304,10 +304,10 @@ function Board({
                 {cards.length === 0 ? (
                   <div className="px-2.5 py-3.5 text-center text-[10.5px] italic leading-relaxed text-faint">
                     {col === 'todo'
-                      ? 'Committed tickets land here, waiting for a thread.'
+                      ? 'Committed tickets land here, waiting for a job.'
                       : col === 'done'
                         ? 'Merged tickets collect here.'
-                        : 'A thread moves a ticket here when it reaches this stage.'}
+                        : 'A job moves a ticket here when it reaches this stage.'}
                   </div>
                 ) : null}
               </div>
@@ -364,7 +364,7 @@ function BoardCard({ t, onOpen }: { t: TicketListRow; onOpen: () => void }) {
               className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[8.5px] font-semibold"
               style={{ color: 'var(--accent)', background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
             >
-              <Link2 size={9} /> in thread
+              <Link2 size={9} /> in job
             </span>
           ) : null}
         </div>
@@ -417,9 +417,9 @@ function Backlog({
           <EmptyIcon lines />
           <div className="font-disp text-[17px] font-semibold text-text">Your backlog is empty</div>
           <div className="mt-2 text-[12.5px] leading-relaxed text-dim">
-            Atlas drops tickets here while you talk in a thread —{' '}
+            Atlas drops tickets here while you talk in a job —{' '}
             <span className="text-text">&quot;do A now, push B for later.&quot;</span> They wait in the backlog until
-            you commit them to the board or promote one into its own thread. You can also add one yourself.
+            you commit them to the board or promote one into its own job. You can also add one yourself.
           </div>
           <button
             type="button"

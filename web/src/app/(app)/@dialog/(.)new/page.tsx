@@ -10,7 +10,7 @@ import { CreateThread } from '@/features/create/components/create-job';
  */
 export default function NewThreadModal() {
   return (
-    <Modal title="New thread" subtitle="Pick a repo and describe the work — Atlas starts the conversation.">
+    <Modal title="New job" subtitle="Pick a repo and describe the work — Atlas starts the conversation.">
       {/* `CreateThread` reads `?org=&repo=` via `useSearchParams`, which needs a Suspense boundary. */}
       <Suspense fallback={null}>
         <CreateThread />

@@ -90,6 +90,17 @@ export class TurnRegistry {
     await this.turns.update({ turn_id: turnId }, { events_last_id: lastEventId });
   }
 
+  /**
+   * Stamp a fresh heartbeat on EVERY running turn — the leader's boot grace touch. Heartbeats are relayed by
+   * an attached host, so a backend restart freezes `last_heartbeat_at`; without this, a turn whose engine is
+   * alive but whose DB heartbeat aged past the stale window is finalized by the watchdog the instant the
+   * leader promotes, before boot re-attach can resume it (and race it). Touching all running turns once at
+   * promotion gives each a full stale window to re-attach (resuming real heartbeats) or prove genuinely dead.
+   */
+  async touchAllRunningHeartbeats(at: Date = new Date()): Promise<void> {
+    await this.turns.update({ status: 'running' }, { last_heartbeat_at: at });
+  }
+
   /** Mark a turn terminal and drop it from the live set (the durable transcript lives in `messages`). */
   async finalize(turnId: string, status: 'done' | 'failed'): Promise<void> {
     // Stamp the terminal status first (audit/observability), then remove the live row.
@@ -105,6 +116,16 @@ export class TurnRegistry {
   /** Every turn still `running` — the boot re-attach worklist. */
   async listRunning(): Promise<ActiveTurnEntity[]> {
     return this.turns.find({ where: { status: 'running' } });
+  }
+
+  /**
+   * The turn ids of EVERY live row (all statuses) — the reaper's exclusion set. Including terminal
+   * `done`/`failed` rows (which normally get deleted immediately by `finalize`, but can briefly linger)
+   * keeps the reaper from racing a concurrent finalize and reaping a turn's streams out from under it.
+   */
+  async allTurnIds(): Promise<Set<string>> {
+    const rows = await this.turns.find({ select: { turn_id: true } });
+    return new Set(rows.map((r) => r.turn_id));
   }
 
   /**

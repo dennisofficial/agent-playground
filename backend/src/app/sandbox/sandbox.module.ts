@@ -5,6 +5,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { ActiveTurnEntity, ToolExecutionEntity } from '../persistence/entities';
 import { TurnRegistry } from './turn-registry.service';
 import { TurnWatchdogService } from './turn-watchdog.service';
+import { TurnStreamReaperService } from './turn-stream-reaper.service';
 import { CONTAINER_ENGINE } from './container-engine.port';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { RedisEngineRunner } from './redis-engine-runner';
@@ -40,6 +41,7 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
     SandboxActivityRegistry,
     TurnRegistry,
     TurnWatchdogService,
+    TurnStreamReaperService,
     RedisEngineRunner,
     SandboxManager,
     { provide: ENGINE_RUNNER, useExisting: RedisEngineRunner },

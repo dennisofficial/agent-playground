@@ -77,4 +77,14 @@ export class PlanReviewEntity extends TimestampedEntity {
   /** When the findings were delivered to Atlas in a turn that actually ran (null until delivered). */
   @Column({ type: 'timestamptz', nullable: true })
   delivered_at!: Date | null;
+
+  /**
+   * The Codex SDK thread/session id this review round ran on (captured at turn start). ONE conversation
+   * per job: round 1 starts a fresh Codex thread; every later round + every `respond_to_review` reply
+   * RESUMES the latest non-null id for the job, so Codex keeps its memory of prior findings and can judge
+   * whether Atlas's revision/pushback actually resolved them (vs re-reviewing blind each round). Null
+   * until the turn emits its session event.
+   */
+  @Column({ type: 'text', nullable: true })
+  codex_session_id!: string | null;
 }

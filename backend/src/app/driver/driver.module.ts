@@ -17,6 +17,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
+  PlanReviewEntity,
   StepEntity,
   RepoEntity,
   ThreadEntity,
@@ -72,6 +73,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
         RepoEntity,
         JobSandboxEntity,
         MessageEntity,
+        PlanReviewEntity,
         StimulusEntity,
       ],
       DB_CONNECTION,

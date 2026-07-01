@@ -22,15 +22,17 @@ import { QuestionCardView } from './question-card';
 import { SecretCardView } from './secret-card';
 import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
 import { BuildStepCard, indexPhaseBlocks } from './phases';
+import { CodexReviewCard, codexReviewNode, indexCodexReviewBlocks } from './codex-review';
 import { Composer } from './composer';
 import { DetailTopBar } from './detail-top-bar';
 import type { JobMessage, JobRef } from '@/lib/api/job-api';
-import { useLiveTurn } from '@/lib/api/job-stream';
+import { MAIN_LANE, useLiveTurn } from '@/lib/api/job-stream';
 import { useQueuedSends } from '@/lib/api/queued-sends';
 
 /**
- * Conversation mode — the thread's brain. One continuous session: intent, planning, and steering all
- * live here. A centered 760px column of typed bubbles + the composer.
+ * Conversation mode — the Main lane (the thread's brain). Just the shared {@link TranscriptView} with the
+ * composer turned on: intent, planning, and steering all live here. Every OTHER lane (Codex review, a build
+ * thread/step) renders the IDENTICAL TranscriptView without a composer — one renderer, no divergence.
  */
 export function Conversation({
   jobRef,
@@ -48,14 +50,64 @@ export function Conversation({
   /** Open a node in the right detail pane (e.g. a subagent run's sub-page). */
   onSelectNode?: (node: string) => void;
 }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-surface">
+      <ConversationTopBar />
+      <TranscriptView
+        jobRef={jobRef}
+        messages={messages}
+        lane={MAIN_LANE}
+        composer
+        isLoading={isLoading}
+        live={live}
+        onOpenPlan={onOpenPlan}
+        onSelectNode={onSelectNode}
+      />
+    </div>
+  );
+}
+
+/**
+ * THE ONE transcript renderer — every lane (Main, Codex review, a build thread/step) renders through this
+ * so they look and behave identically: the same typed bubbles, tool-call groups, thinking blocks,
+ * subagent/phase cards, token dividers, live streaming, tail-follow, and windowing. The ONLY per-lane
+ * differences are (a) which blocks feed it — `buildLogItems(log, { lane })` scopes membership + peeling —
+ * (b) which live lane it subscribes to (`useLiveTurn(jobId, lane)`), and (c) whether it shows a composer.
+ * It renders the scrolling body only; the caller supplies the surrounding shell (top bar / pane).
+ */
+export function TranscriptView({
+  jobRef,
+  messages,
+  lane = MAIN_LANE,
+  composer = false,
+  isLoading = false,
+  live = false,
+  emptyText,
+  onOpenPlan,
+  onSelectNode,
+}: {
+  jobRef: JobRef;
+  messages: JobMessage[];
+  /** Which lane's transcript this renders — `'main'` | `codex-review:<jobId>` | `phase:<stepId>`. */
+  lane?: string;
+  /** Show the composer + queued-send treatment (the Main lane only). Other lanes are read-only. */
+  composer?: boolean;
+  isLoading?: boolean;
+  live?: boolean;
+  /** The empty-state line when the lane has no activity yet. */
+  emptyText?: string;
+  onOpenPlan?: () => void;
+  onSelectNode?: (node: string) => void;
+}) {
   // The composer is a floating overlay; thread its height so the transcript reserves matching space and
-  // the last line never slips under it as the box auto-grows.
+  // the last line never slips under it as the box auto-grows. Read-only lanes just reserve a small pad.
   const [composerHeight, setComposerHeight] = useState(116);
-  const liveTurn = useLiveTurn(jobRef.jobId);
+  const bottomPad = composer ? composerHeight : 20;
+  const liveTurn = useLiveTurn(jobRef.jobId, lane);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
   const turnActive = liveTurn?.active ?? false;
   // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
-  // block boundaries (mirrors the subagent run view).
+  // block boundaries.
   const liveStreamSig = (liveTurn?.blocks ?? []).reduce(
     (n, b) => n + (b.kind === 'tool' ? 1 : b.text.length),
     0,
@@ -63,23 +115,23 @@ export function Conversation({
 
   // Messages sent while a turn is streaming are QUEUED behind it (the brain serializes turns per thread).
   // Pull them out of the main log and render them below the live response with a "queued" treatment — so
-  // a follow-up reads as "waiting its turn", not as an already-answered message in the wrong spot.
+  // a follow-up reads as "waiting its turn", not as an already-answered message in the wrong spot. Only the
+  // Main lane (composer) can enqueue sends.
   const queuedTexts = useQueuedSends(jobRef.jobId);
   const isQueued = (m: JobMessage): boolean =>
-    m.author === 'user' && turnActive && (m.queued === true || queuedTexts.has(m.text));
+    composer && m.author === 'user' && turnActive && (m.queued === true || queuedTexts.has(m.text));
   const log = messages.filter((m) => !isQueued(m));
-  const queued = messages.filter(isQueued);
+  const queued = composer ? messages.filter(isQueued) : [];
 
   // The context-window ring reads the MOST RECENT `turn_meta` block (the brain appends one per turn with
-  // the last request's occupancy + the model's window). Refreshes each turn end via the durable refetch.
-  const contextMeta = useMemo(() => latestContextMeta(messages), [messages]);
+  // the last request's occupancy + the model's window). Only the composer shows the ring.
+  const contextMeta = useMemo(() => (composer ? latestContextMeta(messages) : null), [messages, composer]);
 
   // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent/phase
-  // cards, bubbles). This array is what gets WINDOWED: on a long thread only the on-screen rows are
-  // actually rendered, so switching into this lane no longer re-parses every markdown bubble at once.
+  // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
   const items = useMemo(
-    () => buildLogItems(log, jobRef, onOpenPlan, onSelectNode),
-    [log, jobRef, onOpenPlan, onSelectNode],
+    () => buildLogItems(log, jobRef, { lane, onOpenPlan, onSelectNode }),
+    [log, jobRef, lane, onOpenPlan, onSelectNode],
   );
 
   // `pin` snaps the view to the bottom for the virtualized case (see useTailFollow). Assigned into a ref so
@@ -115,16 +167,14 @@ export function Conversation({
   const virtualItems = virtualizer.getVirtualItems();
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-surface">
-      <ConversationTopBar />
-      <div className="relative min-h-0 flex-1">
-        <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-7 pt-5">
-          <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
+    <div className="relative min-h-0 flex-1">
+      <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-7 pt-5">
+        <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
           {isLoading && messages.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">Loading conversation…</p>
           ) : messages.length === 0 && liveBlockCount === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">
-              No messages yet — say something to Atlas below.
+              {emptyText ?? 'No messages yet — say something to Atlas below.'}
             </p>
           ) : (
             // Windowed durable log: a single spacer sized to the full transcript, with only the on-screen
@@ -149,15 +199,13 @@ export function Conversation({
           {queued.map((message) => (
             <UserBubble key={message.ts} text={message.text} queued />
           ))}
-            {/* Spacer so the last line clears the floating composer when scrolled to the bottom.
-                Threads the composer's live height so it grows with the auto-expanding box. */}
-            <div className="shrink-0" style={{ height: composerHeight }} aria-hidden />
-            <div ref={endRef} />
-          </div>
+          {/* Spacer so the last line clears the floating composer (or just breathes on read-only lanes). */}
+          <div className="shrink-0" style={{ height: bottomPad }} aria-hidden />
+          <div ref={endRef} />
         </div>
-        {showJump ? <JumpToLatestButton onClick={jumpToLatest} style={{ bottom: composerHeight + 8 }} /> : null}
-        <Composer jobRef={jobRef} onHeightChange={setComposerHeight} context={contextMeta} />
       </div>
+      {showJump ? <JumpToLatestButton onClick={jumpToLatest} style={{ bottom: bottomPad + 8 }} /> : null}
+      {composer ? <Composer jobRef={jobRef} onHeightChange={setComposerHeight} context={contextMeta} /> : null}
     </div>
   );
 }
@@ -177,18 +225,28 @@ interface LogItem {
 function buildLogItems(
   log: JobMessage[],
   jobRef: JobRef,
-  onOpenPlan?: () => void,
-  onSelectNode?: (node: string) => void,
+  opts: {
+    /** Which lane to build items for — scopes membership + peeling. */
+    lane?: string;
+    onOpenPlan?: () => void;
+    onSelectNode?: (node: string) => void;
+  } = {},
 ): LogItem[] {
+  const { lane = MAIN_LANE, onOpenPlan, onSelectNode } = opts;
   const nodes: LogItem[] = [];
   let pending: Array<{ key: string; tool: ToolItem }> = [];
 
-  // Subagent activity is peeled out: its child blocks are hidden from the main log, and the spawning Task
-  // block renders as a card (opens the run's sub-page) instead of as a row in a tool group.
+  // Nesting indices — computed once, then interpreted RELATIVE to the current lane below. A block that is a
+  // "child" of a deeper lane is peeled out (hidden) here and rendered in ITS lane; the block that ANCHORS a
+  // deeper lane (a Task tool, a build_anchor, a Codex findings summary) renders as a compact card that opens
+  // that lane. This is the whole "all lanes are the same, just nested" model in one place.
   const sub = indexDurableSubagents(log);
-  // Build-phase activity is peeled out the same way: a phase's blocks are hidden, and its `build_anchor`
-  // row renders as a `BuildStepCard` (opens the step sub-page).
   const phase = indexPhaseBlocks(log);
+  const codex = indexCodexReviewBlocks(log);
+
+  const isMain = lane === MAIN_LANE;
+  const isCodexLane = lane.startsWith('codex-review:');
+  const phaseAnchor = lane.startsWith('phase:') ? lane.slice('phase:'.length) : null;
 
   const flush = () => {
     if (pending.length === 0) return;
@@ -199,48 +257,87 @@ function buildLogItems(
     pending = [];
   };
 
+  // The Task block that spawned a subagent → a compact card opening the run's sub-page (used in any lane
+  // that CONTAINS a subagent: Main, and a build phase lane).
+  const pushSubagentCard = (message: JobMessage) => {
+    flush();
+    const summary = sub.summaryById.get(String(message.meta?.id));
+    if (summary)
+      nodes.push({
+        key: message.ts,
+        node: (
+          <SubagentCard
+            key={message.ts}
+            summary={summary}
+            onOpen={() => onSelectNode?.(subagentNode(summary.parentId))}
+          />
+        ),
+      });
+  };
+
   for (const message of log) {
-    // A block produced BY a subagent — lives in the sub-page, not the main conversation.
-    if (sub.childKeys.has(message.ts)) continue;
-    // A block produced BY a build phase — lives in the step sub-page, not the main conversation.
-    if (phase.childKeys.has(message.ts)) continue;
-    // The synthetic `build_anchor` row — render its card (flush any open tool run first).
-    if (phase.anchorKeys.has(message.ts)) {
-      flush();
-      const phaseId = typeof message.meta?.phaseId === 'string' ? message.meta.phaseId : '';
-      const anchor = phase.anchorByPhase.get(phaseId);
-      if (anchor)
+    // ── lane membership: which blocks THIS lane renders + which anchors become cards ──
+    if (isMain) {
+      // Deeper lanes' blocks are peeled out; their anchors render as cards.
+      if (sub.childKeys.has(message.ts)) continue;
+      if (phase.childKeys.has(message.ts)) continue;
+      if (codex.childKeys.has(message.ts)) continue;
+      if (codex.anchorKeys.has(message.ts)) {
+        flush();
         nodes.push({
           key: message.ts,
           node: (
-            <BuildStepCard
+            <CodexReviewCard
               key={message.ts}
               jobId={jobRef.jobId}
-              anchor={anchor}
-              durableToolCount={(phase.blocksByPhase.get(phaseId) ?? []).filter((m) => m.kind === 'tool').length}
-              onOpen={() => onSelectNode?.(phaseId)}
+              message={message}
+              onOpen={() => onSelectNode?.(codexReviewNode(jobRef.jobId))}
             />
           ),
         });
-      continue;
+        continue;
+      }
+      if (phase.anchorKeys.has(message.ts)) {
+        flush();
+        const phaseId = typeof message.meta?.phaseId === 'string' ? message.meta.phaseId : '';
+        const anchor = phase.anchorByPhase.get(phaseId);
+        if (anchor)
+          nodes.push({
+            key: message.ts,
+            node: (
+              <BuildStepCard
+                key={message.ts}
+                jobId={jobRef.jobId}
+                anchor={anchor}
+                durableToolCount={(phase.blocksByPhase.get(phaseId) ?? []).filter((m) => m.kind === 'tool').length}
+                onOpen={() => onSelectNode?.(phaseId)}
+              />
+            ),
+          });
+        continue;
+      }
+      if (sub.anchorKeys.has(message.ts)) {
+        pushSubagentCard(message);
+        continue;
+      }
+    } else if (isCodexLane) {
+      // The Codex review lane shows ONLY its own review stream (the summary cards live in Main).
+      if (!codex.childKeys.has(message.ts)) continue;
+    } else if (phaseAnchor) {
+      // A build phase lane shows this phase's blocks; a subagent spawned within it peels to its own sub-page.
+      if (sub.childKeys.has(message.ts)) continue;
+      const inThisPhase =
+        phase.childKeys.has(message.ts) && message.meta?.phaseId === phaseAnchor;
+      if (!inThisPhase) continue;
+      if (sub.anchorKeys.has(message.ts)) {
+        pushSubagentCard(message);
+        continue;
+      }
+    } else {
+      continue; // an unknown lane renders nothing
     }
-    // The Task block that spawned a subagent — render its card (flush any open tool run first).
-    if (sub.anchorKeys.has(message.ts)) {
-      flush();
-      const summary = sub.summaryById.get(String(message.meta?.id));
-      if (summary)
-        nodes.push({
-          key: message.ts,
-          node: (
-            <SubagentCard
-              key={message.ts}
-              summary={summary}
-              onOpen={() => onSelectNode?.(subagentNode(summary.parentId))}
-            />
-          ),
-        });
-      continue;
-    }
+
+    // ── shared rendering (IDENTICAL across every lane) ──
 
     // A per-turn accounting block (token usage + context occupancy) — rendered as a turn-end divider.
     // Handled raw, BEFORE classifyMessage (which would otherwise fall this unknown kind through to a
@@ -336,5 +433,5 @@ function latestContextMeta(messages: JobMessage[]): { tokens: number; limit: num
  * lives in the composer's bottom-right, Claude-Code style.)
  */
 function ConversationTopBar() {
-  return <DetailTopBar title="Conversation" subtitle="the thread brain" />;
+  return <DetailTopBar title="Conversation" subtitle="the job brain" />;
 }

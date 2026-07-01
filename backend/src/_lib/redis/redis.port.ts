@@ -34,6 +34,20 @@ export interface RedisStreamPort {
   del(...keys: string[]): Promise<void>;
 
   /**
+   * Enumerate every key matching a glob `match` (non-blocking `SCAN` loop under the hood — never `KEYS`).
+   * Used by the orphan-stream reaper to find `turn:*` keys with no live `active_turns` row. The full
+   * cursor walk is paged internally (bounded) and the deduped key list is returned.
+   */
+  scanKeys(match: string, count?: number): Promise<string[]>;
+
+  /**
+   * Seconds since the key was last accessed (`OBJECT IDLETIME`), or `null` if the key does not exist.
+   * The reaper uses this as an "abandoned" floor: an orphan (no row) is never read/written, so its idle
+   * time grows monotonically, whereas a just-kicked turn's freshly-`xadd`ed keys read ~0 idle.
+   */
+  objectIdleTime(key: string): Promise<number | null>;
+
+  /**
    * Create a consumer group on a stream, idempotently (MKSTREAM creates the stream if absent; a
    * pre-existing group is swallowed). Safe to call on every consumer-loop boot.
    */

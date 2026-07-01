@@ -6,11 +6,9 @@ import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { MessageEntity, JobSandboxEntity } from '../persistence/entities';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox/sandbox-provider.port';
-import { parseSessionTranscriptTail, type RecoveredBlock, type TranscriptTail } from './session-transcript';
-
-/** How many trailing chars of the final reply we match against `messages` to decide "already persisted".
- *  Long enough to be unique to the turn, short enough to tolerate trivial trailing differences. */
-const FINAL_REPLY_FINGERPRINT_LEN = 160;
+import { TurnRegistry } from '../sandbox/turn-registry.service';
+import { parseSessionTranscriptTurns, type SessionTranscript } from './session-transcript';
+import { backfillThreadFromTurns } from './turn-backfill';
 
 /** Defaults for the mid-flight watcher: poll every 8s, give up after 20 min (longer than any brain turn). */
 const WATCH_INTERVAL_MS = 8_000;
@@ -24,24 +22,26 @@ type RecoverStatus =
   | 'absent'; // no transcript on disk for this thread
 
 /**
- * Crash recovery for a brain turn lost when the backend restarts mid-stream (e.g. a CI/CD deploy while
- * the operator is mid-chat). The turn runs inside the sandbox container via `docker exec`; the durable
- * transcript blocks are written to `messages` only at turn END (`TurnHarnessFactory.finish()`), so a
- * restart before that loses them — even though the engine's `docker exec` is reparented to the container's
- * init and KEEPS RUNNING to completion, writing its SDK session JSONL to the HOST-mounted agent-home bind.
+ * The GROUND-TRUTH JSONL fallback backstop for brain turns lost from `messages`. The primary durability path
+ * is now the Redis-streams transport (ADR 0001): a turn's live log is a durable Redis stream, and on boot the
+ * leader re-attaches in-flight turns (`reattachInFlightTurns`) and persists them. But a turn can still slip
+ * through — e.g. the watchdog finalizes a turn whose heartbeat went stale across a restart, deleting its
+ * stream before re-attach runs; or a mid-turn interrupt is superseded by a new operator prompt (the SDK
+ * session resumes fresh) — leaving the turn ONLY in the engine's SDK session JSONL (a HOST-mounted bind).
+ * This service reads that JSONL and back-fills anything missing.
  *
- * Two cooperating paths, both on leader promotion:
- *  - {@link recoverInterruptedTurns} — the immediate pass: for every non-closed sandbox thread, if its
- *    newest transcript already reached `end_turn` but its reply isn't in `messages`, back-fill it.
- *  - {@link finishAndRecover} — the deploy case: the turn was still GENERATING at restart. We watch the
- *    threads that were mid-flight (their `turn_active` flag was set) until their orphaned engine reaches
- *    `end_turn`, recover each as it finishes, then stop. Triggered by the restart, scoped to the affected
- *    threads, self-terminating — NOT a perpetual poll.
+ * It runs as a boot backstop AFTER re-attach, and only touches threads with NO live Redis turn
+ * (`candidateThreadIds` filters on `TurnRegistry.hasRunningForThread`) so it can never double-insert a turn
+ * re-attach is actively persisting. Unlike the tail-only original, it recovers turns STRANDED in the middle
+ * of the session (an interrupted turn followed by later completed ones) — see {@link backfillThreadFromTurns}.
  *
- * Detection reads the JSONL truth (not message ordering): a first/cold turn persists a "Setting up an
- * isolated workspace…" notice AFTER the operator prompt, so "last row is the operator" would wrongly skip
- * it. We instead key off whether the newest completed turn's FINAL reply is present in `messages`, and
- * dedupe individual blocks on the JSONL line `uuid` we stamp into `meta.sdkUuid`.
+ *  - {@link recoverInterruptedTurns} — the immediate pass: back-fill every candidate thread's newest session.
+ *  - {@link finishAndRecover} — the watcher: for a thread whose tail turn is still GENERATING, poll until it
+ *    reaches `end_turn`, back-filling as it completes, then stop. Self-terminating — NOT a perpetual poll.
+ *
+ * Detection reads the JSONL truth (not message ordering): each turn is back-filled unless its FINAL reply is
+ * already present in `messages`, and individual blocks dedupe on the JSONL line `uuid` (`meta.sdkUuid`) + the
+ * SDK tool_use id (`meta.id`). Interrupted (unpaired) tool calls are dropped — the next turn re-issues them.
  */
 @Injectable()
 export class TurnRecoveryService implements OnModuleDestroy {
@@ -55,6 +55,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
     @InjectRepository(JobSandboxEntity, DB_CONNECTION)
     private readonly sandboxRows: Repository<JobSandboxEntity>,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
+    private readonly turnRegistry: TurnRegistry,
   ) {}
 
   onModuleDestroy(): void {
@@ -138,55 +139,59 @@ export class TurnRecoveryService implements OnModuleDestroy {
     }
   }
 
-  /** Threads to inspect: every non-closed sandbox (a brain session exists or may exist on disk). */
+  /**
+   * Threads to inspect: every non-closed sandbox (a brain session exists or may exist on disk), MINUS any
+   * thread with a live Redis turn. This service is the ground-truth JSONL FALLBACK (see class doc) — it must
+   * never touch a turn the Redis path is actively re-attaching (`reattachOne` will persist it via its own
+   * harness), or the two would double-insert. A stranded/abandoned turn has no `running` registry row.
+   */
   private async candidateThreadIds(): Promise<string[]> {
     const rows = await this.sandboxRows
       .createQueryBuilder('s')
       .select('s.job_id', 'jobId')
       .where("s.lifecycle <> 'closed'")
       .getRawMany<{ jobId: string }>();
-    return rows.map((r) => r.jobId);
+    const out: string[] = [];
+    for (const { jobId } of rows) {
+      const live = await this.turnRegistry.hasRunningForThread(jobId).catch(() => false);
+      if (!live) out.push(jobId);
+    }
+    return out;
   }
 
-  /** Inspect a thread's NEWEST transcript and recover it if it's a completed-but-unpersisted turn. */
+  /**
+   * Inspect a thread's NEWEST transcript and back-fill every completed-but-unpersisted turn — including a
+   * turn STRANDED in the middle of the session (interrupted before `end_turn`, then superseded by a later
+   * operator prompt so it's no longer the tail). The last turn is back-filled ONLY when it reached
+   * `end_turn`: a not-yet-clean LAST turn may still be generating, so we leave it for the watcher / a later
+   * pass and report `incomplete`. Idempotency + dedup + dropping interrupted tool calls live in
+   * {@link backfillThreadFromTurns}.
+   */
   private async recoverThread(jobId: string): Promise<RecoverStatus> {
     const projectsDir = this.sandboxes.brainTranscriptProjectsDir(jobId);
     if (!projectsDir || !existsSync(projectsDir)) return 'absent';
 
-    const tail = this.latestTranscript(projectsDir);
-    if (!tail) return 'absent';
-    // Newest session reached end_turn? If not, the current turn is still generating — watch, don't recover.
-    if (!tail.endedClean || !tail.blocks.length) return 'incomplete';
+    const transcript = this.latestTranscript(projectsDir);
+    if (!transcript || transcript.turns.length === 0) return 'absent';
 
-    // Already persisted? The turn's FINAL reply text is the fingerprint — a normally-persisted turn has it
-    // in `messages`; an interrupted turn does not (the provisioning notice etc. never matches it).
-    const finalReply = [...tail.blocks].reverse().find((b) => b.kind === 'chat')?.text;
-    if (finalReply && (await this.finalReplyPersisted(jobId, finalReply))) return 'already';
+    // A non-last turn is always superseded (a later prompt exists) ⇒ complete-or-abandoned, safe to
+    // back-fill. The LAST turn is included only when it ended clean (else it may still be generating).
+    const turns = transcript.turns;
+    const lastEndedClean = turns[turns.length - 1].endedClean;
+    const recoverable = turns.filter((t, i) => t.endedClean || i < turns.length - 1);
 
-    // Per-block idempotency for recovery re-runs (keyed on the JSONL line uuid we stamp into meta).
-    const seen = await this.persistedSdkUuids(jobId);
-    const fresh = tail.blocks.filter((b) => {
-      const u = b.meta.sdkUuid;
-      return typeof u !== 'string' || !seen.has(u);
-    });
-    if (!fresh.length) return 'already';
+    const inserted = await backfillThreadFromTurns(this.messages, jobId, recoverable);
+    if (inserted > 0) this.logger.log(`Turn recovery: back-filled ${inserted} block(s) for thread=${jobId}`);
 
-    let lastMs = 0;
-    for (const b of fresh) {
-      // Strictly-monotonic created_at (mirrors TurnHarnessFactory.stamp) so the recovered rows sort in
-      // transcript order, after the operator prompt, even when SDK line timestamps tie.
-      const base = b.emittedAt instanceof Date && !Number.isNaN(b.emittedAt.getTime()) ? b.emittedAt.getTime() : Date.now();
-      lastMs = Math.max(base, lastMs + 1);
-      await this.appendBlock(jobId, b, new Date(lastMs));
-    }
-    this.logger.log(`Turn recovery: back-filled ${fresh.length} block(s) for thread=${jobId}`);
-    return 'recovered';
+    // `incomplete` keeps the watcher polling until the tail turn completes; otherwise recovered/already.
+    if (!lastEndedClean) return inserted > 0 ? 'recovered' : 'incomplete';
+    return inserted > 0 ? 'recovered' : 'already';
   }
 
   /** Parse the MOST-RECENTLY-MODIFIED session JSONL (a thread can have several from resets; the newest is
    *  the current/last turn). Returning the newest — even if it's mid-write and NOT yet `endedClean` — is
    *  deliberate: an in-flight turn must read as `incomplete`, never fall back to an older completed turn. */
-  private latestTranscript(projectsDir: string): TranscriptTail | null {
+  private latestTranscript(projectsDir: string): SessionTranscript | null {
     let newest: { path: string; mtimeMs: number } | null = null;
     for (const slug of this.safeReaddir(projectsDir)) {
       const slugDir = join(projectsDir, slug);
@@ -201,47 +206,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
         }
       }
     }
-    return newest ? parseSessionTranscriptTail(readFileSync(newest.path, 'utf8')) : null;
-  }
-
-  /** Whether the turn's final reply is already a durable Atlas message (the "already persisted" guard). */
-  private async finalReplyPersisted(jobId: string, finalReply: string): Promise<boolean> {
-    const needle = finalReply.trim().slice(-FINAL_REPLY_FINGERPRINT_LEN);
-    if (!needle) return false;
-    const count = await this.messages
-      .createQueryBuilder('m')
-      .where('m.job_id = :jobId', { jobId })
-      .andWhere("m.author_id = 'atlas'")
-      .andWhere('position(:needle in m.text) > 0', { needle })
-      .getCount();
-    return count > 0;
-  }
-
-  /** The set of SDK `uuid`s already represented in this thread's durable messages — recovery-re-run guard. */
-  private async persistedSdkUuids(jobId: string): Promise<Set<string>> {
-    const rows: Array<{ u: string | null }> = await this.messages
-      .createQueryBuilder('m')
-      .select("m.meta ->> 'sdkUuid'", 'u')
-      .where('m.job_id = :jobId', { jobId })
-      .andWhere("m.meta ->> 'sdkUuid' IS NOT NULL")
-      .getRawMany();
-    return new Set(rows.map((r) => r.u).filter((u): u is string => typeof u === 'string'));
-  }
-
-  /** Write one recovered block as an Atlas-authored durable row (byte-compatible with `MessageBlockSink`). */
-  private async appendBlock(jobId: string, block: RecoveredBlock, createdAt: Date): Promise<void> {
-    await this.messages.save(
-      this.messages.create({
-        job_id: jobId,
-        author: 'Atlas',
-        author_id: 'atlas',
-        author_bot_id: 'atlas',
-        text: block.text ?? '',
-        kind: block.kind,
-        meta: block.meta,
-        created_at: createdAt,
-      }),
-    );
+    return newest ? parseSessionTranscriptTurns(readFileSync(newest.path, 'utf8')) : null;
   }
 
   private clearWatch(): void {

@@ -19,8 +19,8 @@ export default function ThreadPage({ params }: { params: Promise<{ jobKey: strin
     return (
       <div className="flex h-full min-h-0 items-center justify-center px-6">
         <div className="max-w-md text-center">
-          <h2 className="font-disp text-[16px] font-semibold text-text">Thread not found</h2>
-          <p className="mt-2 text-[13px] leading-relaxed text-dim">That thread link is malformed.</p>
+          <h2 className="font-disp text-[16px] font-semibold text-text">Job not found</h2>
+          <p className="mt-2 text-[13px] leading-relaxed text-dim">That job link is malformed.</p>
           <Link
             href={ROUTES.workspace()}
             className="mt-5 inline-block rounded-md border px-3.5 py-2 text-[12.5px] font-medium text-accent"

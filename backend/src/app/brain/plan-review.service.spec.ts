@@ -10,7 +10,8 @@ import type { EngineRunnerPort, EngineRunResult, RunEngineArgs } from '../engine
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
-import type { PlanReviewEntity } from '../persistence/entities';
+import type { JobEntity, PlanReviewEntity } from '../persistence/entities';
+import type { TurnHarnessFactory } from '../surface';
 
 /** Creds stub: no per-org secret → the engine uses its env fallback (these tests stub the engine). */
 const fakeCreds = {
@@ -102,6 +103,20 @@ function fakeLifecycle(
   } as unknown as JobLifecycleService;
 }
 
+/** Jobs-repo stub: `runReview` reads the job's repo_id to key the review lane's live SSE channel. */
+const fakeJobs = {
+  findOne: vi.fn(async () => ({ id: 'th-r4-001', repo_id: 'repo-r4' })),
+} as unknown as Repository<JobEntity>;
+
+/** Turn-harness stub: the review lane streaming is a no-op in unit tests (its own spec covers it). */
+const fakeHarness = {
+  create: () => ({
+    onEvent: () => {},
+    finish: async () => {},
+    abort: async () => {},
+  }),
+} as unknown as TurnHarnessFactory;
+
 /** A tiny in-memory `plan_reviews` repository fake (only the methods the service uses). */
 function makeReviewsRepo() {
   const rows: PlanReviewEntity[] = [];
@@ -126,15 +141,24 @@ function makeReviewsRepo() {
     }),
     findOne: vi.fn(
       async (opts: {
-        where: { id?: string; job_id?: string; status?: string };
+        where: {
+          id?: string;
+          job_id?: string;
+          status?: string;
+          // `latestSessionId` passes `codex_session_id: Not(IsNull())` — the fake treats the key's mere
+          // PRESENCE as "must be non-null" (good enough; it never inspects the FindOperator).
+          codex_session_id?: unknown;
+        };
         order?: { round?: 'ASC' | 'DESC' };
       }) => {
         const { id, job_id, status } = opts.where;
         if (id) return rows.find((r) => r.id === id) ?? null;
+        const requireSession = 'codex_session_id' in opts.where;
         let matches = rows.filter(
           (r) =>
             (job_id === undefined || r.job_id === job_id) &&
-            (status === undefined || r.status === status),
+            (status === undefined || r.status === status) &&
+            (!requireSession || r.codex_session_id != null),
         );
         if (opts.order?.round) {
           const dir = opts.order.round === 'DESC' ? -1 : 1;
@@ -227,6 +251,8 @@ describe('PlanReviewService.start', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
 
@@ -256,6 +282,8 @@ describe('PlanReviewService.start', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
 
@@ -281,6 +309,8 @@ describe('PlanReviewService.start', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
 
@@ -303,6 +333,8 @@ describe('PlanReviewService.runningReview', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
 
@@ -365,6 +397,8 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
 
@@ -390,6 +424,8 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
 
@@ -408,6 +444,8 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
 
@@ -433,6 +471,8 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeJobs,
+      fakeHarness,
       drainingElection,
     );
 
@@ -456,6 +496,8 @@ describe('PlanReviewService.runReview', () => {
         fakeCreds,
         fakeLifecycle(FAKE_SANDBOX),
         repo,
+        fakeJobs,
+        fakeHarness,
         fakeElection,
       );
       const started = await service.start(START_INPUT);
@@ -481,6 +523,8 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle(null),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
 
@@ -503,6 +547,8 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle({ ...FAKE_SANDBOX, containerId: 'container-abc123' }),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
 
@@ -526,6 +572,8 @@ describe('PlanReviewService — delivery + boot reconciliation', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
     const started = await service.start(START_INPUT);
@@ -542,6 +590,8 @@ describe('PlanReviewService — delivery + boot reconciliation', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeJobs,
+      fakeHarness,
       fakeElection,
     );
     await service.start(START_INPUT); // status 'running'
@@ -616,5 +666,86 @@ describe('summarizeEngineError', () => {
     expect(summarizeEngineError('x'.repeat(500)).length).toBeLessThanOrEqual(
       300,
     );
+  });
+});
+
+// ── session reuse + reply rounds (respond_to_review) ─────────────────────────────────────────────────
+
+describe('PlanReviewService — session reuse + reply rounds', () => {
+  /** An engine that records the sessionId it was asked to resume (undefined = fresh thread) + richStream. */
+  function capturingEngine(output = 'NO_FINDINGS') {
+    const calls: Array<{ sessionId?: string; task: string; richStream?: boolean }> = [];
+    const engine = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        calls.push({ sessionId: args.sessionId, task: args.task, richStream: args.richStream });
+        return { result: output, sessionId: 'sess-new' } as EngineRunResult;
+      }),
+    } as unknown as EngineRunnerPort;
+    return { engine, calls };
+  }
+
+  function makeService(engine: EngineRunnerPort, repo: Repository<PlanReviewEntity>) {
+    return new PlanReviewService(
+      engine,
+      fakeCreds,
+      fakeLifecycle(FAKE_SANDBOX),
+      repo,
+      fakeJobs,
+      fakeHarness,
+      fakeElection,
+    );
+  }
+
+  it('round 1 starts a FRESH Codex thread; a later round RESUMES the captured session (rich stream)', async () => {
+    const { repo, rows } = makeReviewsRepo();
+    const { engine, calls } = capturingEngine();
+    const service = makeService(engine, repo);
+
+    const r1 = await service.start(START_INPUT);
+    if (!('reviewId' in r1)) throw new Error('expected round 1');
+    await service.runReview(r1.reviewId);
+    expect(calls[0].sessionId).toBeUndefined(); // fresh thread on round 1
+    expect(calls[0].richStream).toBe(true); // full stream for the review lane
+
+    // Round 1 captured a Codex session (the live onEvent path stamps it; set it here for the assertion).
+    rows[0].codex_session_id = 'sess-A';
+
+    const r2 = await service.start(START_INPUT);
+    if (!('reviewId' in r2)) throw new Error('expected round 2');
+    await service.runReview(r2.reviewId);
+    expect(calls[1].sessionId).toBe('sess-A'); // resumed the SAME Codex thread
+  });
+
+  it('openReplyRound persists a running reply carrying the rebuttal', async () => {
+    const { repo, rows } = makeReviewsRepo();
+    const service = makeService(capturingEngine().engine, repo);
+    await service.start(START_INPUT); // round 1 exists
+
+    const reply = await service.openReplyRound({
+      jobId: 'th-r4-001',
+      orgId: 'T-R4',
+      rebuttal: 'Finding 2 is wrong because the API already validates X.',
+    });
+    if (!('reviewId' in reply)) throw new Error('expected a reply round');
+    expect(reply.round).toBe(2);
+    const row = rows.find((r) => r.id === reply.reviewId)!;
+    expect(row.status).toBe('running');
+    expect(row.prompt).toContain('<author_response>');
+    expect(row.prompt).toContain('Finding 2 is wrong because the API already validates X.');
+  });
+
+  it('openReplyRound is bounded by the shared round cap', async () => {
+    const prev = process.env['PLAN_REVIEW_MAX_ROUNDS'];
+    process.env['PLAN_REVIEW_MAX_ROUNDS'] = '1'; // read at construction — set BEFORE makeService
+    try {
+      const { repo } = makeReviewsRepo();
+      const service = makeService(capturingEngine().engine, repo);
+      await service.start(START_INPUT); // round 1 == cap
+      const reply = await service.openReplyRound({ jobId: 'th-r4-001', orgId: 'T-R4', rebuttal: 'x' });
+      expect('capped' in reply).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env['PLAN_REVIEW_MAX_ROUNDS'];
+      else process.env['PLAN_REVIEW_MAX_ROUNDS'] = prev;
+    }
   });
 });

@@ -69,7 +69,7 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
                 <p>
                   Create a key in the{' '}
                   <HelpLink href="https://console.anthropic.com/settings/keys">Anthropic Console</HelpLink> under{' '}
-                  <strong>Settings → API keys</strong>. This powers one-shot prompts (thread titles, triage) — not the
+                  <strong>Settings → API keys</strong>. This powers one-shot prompts (job titles, triage) — not the
                   coding engine.
                 </p>
                 <p>

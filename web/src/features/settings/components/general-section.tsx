@@ -138,7 +138,7 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
         />
         <DangerRow
           title="Delete organization"
-          body={`Permanently delete ${org.name}, its repos and threads.`}
+          body={`Permanently delete ${org.name}, its repos and jobs.`}
           action={
             <button
               type="button"

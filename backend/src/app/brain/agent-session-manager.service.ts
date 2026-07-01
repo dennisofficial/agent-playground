@@ -203,12 +203,12 @@ export class AgentSessionManager
     'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
     'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
     '',
-    `You have 20 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
+    `You have 21 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
     `under its fully-qualified name "mcp__${BRIDGE_SERVER_NAME}__<tool>" — that is the ONLY name that works.`,
     `ALWAYS call the qualified name (e.g. mcp__${BRIDGE_SERVER_NAME}__submit_plan); the bare name`,
     '(e.g. submit_plan) is NOT a registered tool and will fail with "No such tool available". The prose',
     `below abbreviates these to short names for readability, but you must call the mcp__${BRIDGE_SERVER_NAME}__`,
-    'form. The 20 tools:',
+    'form. The 21 tools:',
     `  - mcp__${BRIDGE_SERVER_NAME}__ask_question         — ask the operator one focused question (renders as a card; you may have several open at once; see GRILLING)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__create_decision      — lock an always-ask decision (attaches the answered question — pass questionId to name which one, else the one just answered; set confirmedByOperator when the operator chose it, see GRILLING); returns its stable id`,
     `  - mcp__${BRIDGE_SERVER_NAME}__update_decision      — revise a locked decision BY ID (ruling/title/class)`,
@@ -218,6 +218,7 @@ export class AgentSessionManager
     `  - mcp__${BRIDGE_SERVER_NAME}__recall               — retrieve relevant memory facts (semantic search)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
     `  - mcp__${BRIDGE_SERVER_NAME}__submit_plan          — submit the full multi-thread plan for an async Codex review (FULL PATH; see below)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__respond_to_review    — push back on the last Codex findings on the SAME review thread, no re-plan (FULL PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__finalize_plan        — send the Codex-reviewed plan to the operator for approval (FULL PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
@@ -457,12 +458,17 @@ export class AgentSessionManager
     '`submit_plan` does NOT author the plan and does NOT post the approval card — it REQUESTS AN AUTOMATED',
     'CODEX REVIEW of the plan you authored. Codex reads `/context/specs/` and grades your threads + section plans; the',
     'review runs in the background (it can take several minutes). When it finishes I relay its findings to you',
-    'as a "Codex review" message. ADDRESS each finding — APPLY it (revise the specs + the structured plan), or',
-    'PUSH BACK with reasoning — then either call `submit_plan` AGAIN to re-review the revised plan, or call',
-    '`finalize_plan` to send the reviewed plan to the operator. Do NOT call `finalize_plan` until I have',
-    'relayed the Codex findings — while a review is still running it is refused. Only `finalize_plan` posts the approval card;',
-    'the operator is the FINAL GATE before the build runs, and they see any findings you pushed back on. (The',
-    'review is bounded to a few rounds; after the cap, finalize_plan over the remaining findings.) Ensure',
+    'as a "Codex review" message. ADDRESS each finding one of three ways: APPLY it (revise the specs + the',
+    'structured plan, then `submit_plan` AGAIN to re-review); PUSH BACK via `respond_to_review` when you',
+    'disagree or fixed it in place (this replies on the SAME Codex thread — Codex remembers its findings and',
+    'either concedes or holds firm, so you get a real adjudication, not a blind re-review — reserve `submit_plan`',
+    'for when the plan STRUCTURE materially changes); or, once findings are resolved, `finalize_plan` to send it',
+    'to the operator. Do NOT approve findings reflexively OR reject them reflexively — engage on the merits;',
+    'the whole exchange is visible to the operator in the Codex review lane. Do NOT call `finalize_plan` until I',
+    'have relayed the Codex findings — while a review or your response is still running it is refused. Only',
+    '`finalize_plan` posts the approval card; the operator is the FINAL GATE before the build runs, and they see',
+    'any findings you pushed back on. (The review is bounded to a few rounds — submit_plan re-reviews AND',
+    'respond_to_review replies share the cap; after it, finalize_plan over the remaining findings.) Ensure',
     '`/context/specs/plan.md` is complete and all always-ask decisions are locked via create_decision FIRST,',
     'then call submit_plan with:',
     '  - goal: the one-line goal of the whole thread (verbatim the plan.md `# <H1>`; becomes the thread title)',
@@ -762,6 +768,19 @@ export class AgentSessionManager
       }
     } catch (err) {
       this.logger.warn(`Boot manifest reconciliation failed: ${err}`);
+    }
+
+    // GROUND-TRUTH JSONL backstop (LAST — runs after Redis re-attach so it only sweeps up turns the primary
+    // path missed). Back-fills any brain turn present in a thread's SDK session JSONL but absent from
+    // `messages` — e.g. a mid-turn interrupt the watchdog finalized before re-attach, or one superseded by a
+    // new operator prompt. Skips threads with a live Redis turn (see `TurnRecoveryService.candidateThreadIds`)
+    // so it can never race re-attach's own persist. Best-effort, fail-soft.
+    try {
+      const recovered = await this.turnRecovery.recoverInterruptedTurns();
+      if (recovered > 0)
+        this.logger.log(`Leader: JSONL backstop back-filled ${recovered} lost turn(s)`);
+    } catch (err) {
+      this.logger.warn(`JSONL turn-recovery backstop failed: ${err}`);
     }
   }
 
@@ -1771,6 +1790,79 @@ export class AgentSessionManager
           message:
             'Plan sent to the operator for approval — the build will start automatically if approved. ' +
             'You can keep talking; if denied or changes are requested you will be told.',
+        };
+      },
+
+      respond_to_review: async (args) => {
+        // Push back on the LAST Codex review round WITHOUT resubmitting a whole plan. Atlas's rebuttal
+        // RESUMES the same Codex thread (which remembers its findings), so Codex adjudicates each point —
+        // conceding or holding firm — instead of re-reviewing blind. Use this to disagree with a finding or
+        // report an in-place fix; use submit_plan when the plan STRUCTURE materially changes.
+        const rebuttal = String(args['response'] ?? args['rebuttal'] ?? '').trim();
+        if (!rebuttal) {
+          return {
+            ok: false,
+            reason:
+              'response is required (your point-by-point reply to the Codex findings).',
+          };
+        }
+        const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+        if (!job || job.status !== 'plan_review') {
+          return {
+            ok: false,
+            reason:
+              `respond_to_review is only valid during plan review (status is '${job?.status ?? 'none'}'). ` +
+              `Call submit_plan first.`,
+          };
+        }
+        const last = await this.planReview.latestReview(job.id);
+        if (!last) {
+          return {
+            ok: false,
+            reason:
+              'No Codex review to respond to yet — call submit_plan first.',
+          };
+        }
+        // Do not open a reply while a round is still in flight (would race the delivery).
+        const running = await this.planReview.runningReview(job.id);
+        if (running) {
+          return {
+            ok: false,
+            reason:
+              `The Codex review (round ${running.round}) is still running — wait for its findings before responding.`,
+          };
+        }
+        const started = await this.planReview.openReplyRound({
+          jobId: job.id,
+          orgId: stimulus.orgId,
+          rebuttal,
+        });
+        if ('capped' in started) {
+          return {
+            ok: true,
+            jobId: job.id,
+            message:
+              `Review-round cap (${this.planReview.maxReviewRounds}) reached — no further Codex rounds. ` +
+              `Call finalize_plan to send the plan to the operator (they see any findings you pushed back ` +
+              `on), or submit_plan to revise.`,
+          };
+        }
+        await this.store
+          .appendSystemEvent(
+            job.id,
+            '🔍 Codex is considering your response — relaying its reply shortly.',
+          )
+          .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
+        // Fire-and-forget: resume the Codex thread with the rebuttal, then deliver its reply.
+        void this.runAndDeliverReview(started.reviewId);
+        return {
+          ok: true,
+          jobId: job.id,
+          reviewRound: started.round,
+          message:
+            'Sent your response to Codex on the same review thread. I will relay its reply (it may hold ' +
+            'firm or concede) as a Codex review message; then revise (submit_plan), respond again ' +
+            '(respond_to_review), or send it to the operator (finalize_plan).',
         };
       },
 
@@ -2817,6 +2909,9 @@ export class AgentSessionManager
 
     const capReached = review.round >= this.planReview.maxReviewRounds;
     const status = review.status === 'failed' ? 'failed' : 'complete';
+    const findingsCount = review.findings
+      ? review.findings.split('\n').filter((l) => l.trim()).length
+      : 0;
     const body = renderFindingsDelivery(
       review.findings ?? '',
       review.round,
@@ -2825,11 +2920,13 @@ export class AgentSessionManager
       review.error,
     );
 
-    // (1) The single operator-visible artifact (idempotent on the review id).
+    // (1) The single operator-visible artifact (idempotent on the review id) — carries the anchor meta so
+    // the web renders it as a card opening the full Codex review lane.
     await this.store.appendReviewFindingsMessage(
       review.job_id,
       review.id,
       body,
+      { round: review.round, findingsCount },
     );
 
     // (2) Deliver to the brain via a synthetic harness turn (skips the operator-only paths).

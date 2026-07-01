@@ -41,7 +41,7 @@ export function TopBar() {
       <span className="h-5 w-px" style={{ background: 'var(--border)' }} />
 
       <nav className="flex h-full items-stretch gap-[22px]">
-        <TopNavItem href={ROUTES.workspace()} active={onThreads} icon={<Network size={13} />} label="Threads" />
+        <TopNavItem href={ROUTES.workspace()} active={onThreads} icon={<Network size={13} />} label="Jobs" />
         <TopNavItem href={ROUTES.tickets()} active={onTickets} icon={<Ticket size={13} />} label="Tickets" />
       </nav>
 

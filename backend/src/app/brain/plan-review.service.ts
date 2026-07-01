@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, IsNull, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineAuth } from '../engine';
 import type { Decision } from '../domain';
@@ -9,7 +9,13 @@ import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { PlanReviewEntity } from '../persistence/entities';
+import { JobEntity, PlanReviewEntity } from '../persistence/entities';
+import { TurnHarnessFactory } from '../surface';
+
+/** The transcript lane a job's Codex review dialogue streams on (peeled out of Main by the web). */
+export function codexReviewLane(jobId: string): string {
+  return `codex-review:${jobId}`;
+}
 
 /**
  * R4 — ASYNC, DURABLE CODEX PLAN PRE-REVIEW.
@@ -206,6 +212,33 @@ function renderPlanForReview(input: PlanReviewStartInput): string {
 }
 
 /**
+ * Render the task for a `respond_to_review` REPLY turn — the input for a RESUMED Codex thread (so the
+ * `<role>`/`<what_to_hunt>`/`<output_contract>` from round 1 are already in history; only the reply is
+ * sent). Frames Atlas's rebuttal adversarially: Codex re-reads the live specs (evidence — not Atlas's
+ * prose about what changed), then concedes or HOLDS FIRM per prior finding, re-emitting anything that
+ * still stands via the same `FINDING:`/`NO_FINDINGS` contract the delivery path already parses.
+ */
+function renderReplyForReview(rebuttal: string): string {
+  return [
+    '<author_response>',
+    'The plan author ("Atlas") is responding to your PRIOR findings on this same plan — this is a',
+    'continuation of your review, and you remember what you flagged. Before judging, RE-READ the current',
+    '`/context/specs/` (the plan may have been revised since) and the referenced code; do NOT rely on the',
+    "author's description of what changed. For EACH prior finding decide: genuinely RESOLVED, or does it",
+    'STILL STAND? Concede only when actually fixed — otherwise HOLD FIRM and say why in one line. The',
+    'author is a motivated party (they want approval); weigh the argument on its merits, not its confidence.',
+    '',
+    "AUTHOR'S RESPONSE:",
+    rebuttal.trim() || '(no message provided)',
+    '</author_response>',
+    '',
+    'Now output per your <output_contract>: a `FINDING:` line for every issue that STILL STANDS (restate it',
+    'concisely) or is newly revealed by the revision, or EXACTLY `NO_FINDINGS` if everything is resolved and',
+    'the plan achieves the intent.',
+  ].join('\n');
+}
+
+/**
  * Parse the Codex reviewer's output into a trimmed findings string. Returns '' if the reviewer
  * reported NO_FINDINGS or produced no FINDING: lines.
  */
@@ -247,6 +280,11 @@ export class PlanReviewService {
     private readonly lifecycle: JobLifecycleService,
     @InjectRepository(PlanReviewEntity, DB_CONNECTION)
     private readonly reviews: Repository<PlanReviewEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly jobs: Repository<JobEntity>,
+    // The shared transcript spine: the review turn streams its full reasoning + tool reads onto the job's
+    // `codex-review:<jobId>` lane (durable + live SSE), so the operator can open the whole exchange.
+    private readonly turnHarness: TurnHarnessFactory,
     // Lets the turn catch tell a shutdown-induced abort (leave the row resumable) from a real failure.
     private readonly election: LeaderElectionService,
   ) {}
@@ -336,6 +374,26 @@ export class PlanReviewService {
       `plan-review: running Codex review turn for review=${reviewId} thread=${row.job_id}`,
     );
 
+    // Resume ONE Codex conversation per job: the latest round/reply that captured a session id. Round 1
+    // (none yet) starts a fresh thread; every later round + `respond_to_review` reply resumes it, so Codex
+    // keeps its memory of prior findings and grades whether the revision/pushback actually resolved them.
+    const priorSessionId = await this.latestSessionId(row.job_id);
+
+    // Stream the full review turn (reasoning + tool reads/commands + findings) onto the job's review lane —
+    // durable transcript + live SSE, reusing the shared spine every engine turn rides. `channel` MUST be
+    // the repo id: the web SSE endpoint fans by `channel === repoId`.
+    const job = await this.jobs.findOne({
+      where: { id: row.job_id },
+      select: { id: true, repo_id: true },
+    });
+    const channel = job?.repo_id ?? row.job_id;
+    const harness = this.turnHarness.create({
+      jobId: row.job_id,
+      channel,
+      lane: codexReviewLane(row.job_id),
+      metaTag: { codexReviewId: row.job_id, reviewRound: row.round },
+    });
+
     // Watchdog: bound the turn so a HUNG engine can never leave the row stuck `running` forever (which
     // would wedge the `finalize_plan` gate). The runner honors `signal`, so abort propagates and aborts
     // the turn; the `Promise.race` is the belt-and-suspenders that lets `runReview` return even if a
@@ -368,6 +426,20 @@ export class PlanReviewService {
           // Review hard — pin max reasoning (subscription accounts accept this knob; verified by spike).
           modelReasoningEffort: 'xhigh',
           signal: ac.signal,
+          // Resume the same Codex thread when we have one (null → fresh thread on round 1).
+          ...(priorSessionId ? { sessionId: priorSessionId } : {}),
+          // Rich stream so the review lane captures Codex's reasoning + tool_use/tool_result (file reads,
+          // commands), not just prose. Capture the session id the moment it's known (crash-safe) so the
+          // next round can resume even if this turn later times out.
+          richStream: true,
+          onEvent: (e) => {
+            if (e.kind === 'session' && e.sessionId) {
+              void this.reviews
+                .update({ id: reviewId }, { codex_session_id: e.sessionId })
+                .catch(() => undefined);
+            }
+            harness.onEvent(e);
+          },
           ...(auth ? { auth } : {}),
           ...(sandbox.containerId
             ? {
@@ -381,8 +453,11 @@ export class PlanReviewService {
         watchdog,
       ]);
       reviewerOutput = result.result;
+      await harness.finish(reviewerOutput, result.usage ? { usage: result.usage } : undefined);
     } catch (err) {
       const error = summarizeEngineError(err);
+      // Persist whatever streamed before the error/timeout + close the live lane (idempotent vs finish).
+      await harness.abort().catch(() => undefined);
       if (!timedOut && this.election.isDraining()) {
         // PROCESS SHUTDOWN (not a local timeout, not a real failure): the drain cut off the review turn.
         // Leave the row 'running' so the boot reconcile (`findReviewsToReconcile`, status:'running')
@@ -464,6 +539,69 @@ export class PlanReviewService {
   /** Stamp a review delivered (its findings reached Atlas in a turn that actually ran). */
   async markDelivered(reviewId: string): Promise<void> {
     await this.reviews.update({ id: reviewId }, { delivered_at: new Date() });
+  }
+
+  /** The latest review round on a job (any status) — for the `respond_to_review` gate. */
+  async latestReview(jobId: string): Promise<PlanReviewEntity | null> {
+    return this.reviews.findOne({
+      where: { job_id: jobId },
+      order: { round: 'DESC' },
+    });
+  }
+
+  /**
+   * The Codex thread id to RESUME for this job — the latest round/reply that captured one. Undefined until
+   * round 1 emits its session event (→ a fresh thread is started).
+   */
+  private async latestSessionId(jobId: string): Promise<string | undefined> {
+    const row = await this.reviews.findOne({
+      where: { job_id: jobId, codex_session_id: Not(IsNull()) },
+      order: { round: 'DESC' },
+    });
+    return row?.codex_session_id ?? undefined;
+  }
+
+  /**
+   * Open a REPLY round for `respond_to_review`: Atlas pushes back on the last round's findings WITHOUT
+   * re-submitting a whole plan. Persists a `running` row carrying the reply prompt (the rebuttal); the
+   * subsequent `runReview` RESUMES the job's Codex thread (see {@link latestSessionId}) so Codex adjudicates
+   * with full memory of what it flagged. Bounded by the same round cap as `submit_plan` re-reviews.
+   */
+  async openReplyRound(input: {
+    jobId: string;
+    orgId: string;
+    rebuttal: string;
+  }): Promise<PlanReviewStart> {
+    const prior = await this.reviews.count({
+      where: { job_id: input.jobId },
+    });
+    const round = prior + 1;
+    if (round > this.maxRounds) {
+      return { capped: true, round: prior };
+    }
+    // Carry the last round's decision record for audit continuity (a reply grades the same plan state).
+    const last = await this.reviews.findOne({
+      where: { job_id: input.jobId },
+      order: { round: 'DESC' },
+    });
+    const row = await this.reviews.save(
+      this.reviews.create({
+        job_id: input.jobId,
+        org_id: input.orgId,
+        decision_record_id: last?.decision_record_id ?? null,
+        round,
+        status: 'running',
+        prompt: renderReplyForReview(input.rebuttal),
+        findings: null,
+        completed_at: null,
+        delivered_at: null,
+        codex_session_id: null,
+      }),
+    );
+    this.logger.log(
+      `plan-review: opened REPLY round ${round} (review=${row.id}) for thread=${input.jobId}`,
+    );
+    return { reviewId: row.id, round };
   }
 
   /**
