@@ -454,15 +454,20 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
   });
 
-  it('(a) submit_plan: returns error if a track has no steps', async () => {
+  it('(a) submit_plan: step-free tracks persist (steps optional → driver JIT-plans)', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
       goal: 'g',
       overview: 'some overview',
-      tracks: [{ title: 'S', steps: [] }],
+      tracks: [{ title: 'S', type: 'backend' }],
     });
-    expect(result).toMatchObject({ ok: false });
-    expect(mockStore.persistPlan).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true });
+    expect(mockStore.persistPlan).toHaveBeenCalledOnce();
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(persistArgs.trackTitles).toEqual(['S']);
+    expect(persistArgs.trackTypes).toEqual(['backend']);
+    // No authored steps → `stepsByTrack` omitted so persistPlan leaves the driver to JIT-plan the track.
+    expect(persistArgs.stepsByTrack).toBeUndefined();
   });
 
   it('(a) submit_plan: returns error if overview is missing', async () => {

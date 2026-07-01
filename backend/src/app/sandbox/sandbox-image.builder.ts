@@ -1,8 +1,8 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { copyFileSync, existsSync, readFileSync } from 'node:fs';
+import { join, sep } from 'node:path';
 import { bundleEngine } from './bundle-engine';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 
@@ -63,6 +63,42 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
     return join(__dirname, 'image');
   }
 
+  /**
+   * The CANONICAL source of the static context files. Under ts-node/dev `contextDir()` already IS the
+   * source (`src/…/image`); in a compiled deploy `contextDir()` is under `dist/` and this points at the
+   * shipped `src/` sibling (the prod image ships `backend/src` too — see infra/backend.Dockerfile). Used
+   * to self-heal a `dist` context that's missing an asset nest-cli didn't copy.
+   */
+  private srcContextDir(): string {
+    const dir = this.contextDir();
+    return dir.includes(`${sep}dist${sep}`) ? dir.replace(`${sep}dist${sep}`, `${sep}src${sep}`) : dir;
+  }
+
+  /**
+   * Guarantee every static context file is present in the build-context dir BEFORE we hash or build it —
+   * self-healing from the source tree when nest-cli didn't copy an asset into `dist` (e.g. a dev watcher
+   * that never saw a pre-existing asset change, the exact gap that produced a raw ENOENT at provision).
+   * Throws a CLEAR, actionable error if a file is genuinely absent from both dist and src.
+   */
+  private ensureContextFiles(): void {
+    const dir = this.contextDir();
+    const src = this.srcContextDir();
+    for (const f of CONTEXT_FILES) {
+      const dest = join(dir, f);
+      if (existsSync(dest)) continue;
+      const from = join(src, f);
+      if (from !== dest && existsSync(from)) {
+        copyFileSync(from, dest);
+        this.logger.warn(`sandbox context file '${f}' missing from ${dir} — restored from ${src}`);
+        continue;
+      }
+      throw new Error(
+        `sandbox image build-context file '${f}' missing from ${dir} (no source at ${from}). ` +
+          'Run `pnpm build` (nest-cli copies the Dockerfile + image/*.sh into dist) or restart the dev server.',
+      );
+    }
+  }
+
   /** sha256 (12 hex) over the static build-context files — changes IFF the image definition changed, so
    *  it's the identity `ensureImage` compares against the built image's label to decide on a rebuild. */
   private contextHash(): string {
@@ -91,6 +127,7 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
 
   private async doEnsureImage(): Promise<string> {
     const tag = this.imageTag();
+    this.ensureContextFiles(); // self-heal a dist context missing a nest-cli asset before hashing/building
     const hash = this.contextHash();
     const forced = !!this.env.get('SANDBOX_REBUILD');
     if (!forced) {

@@ -397,23 +397,24 @@ export class AgentSessionManager
     'TWO PATHS — choose based on size/risk:',
     '',
     'FULL PATH — submit_plan (multi-track build run by the deterministic driver). Use for anything beyond',
-    'a small, localized change. You author the ENTIRE plan up front — every track AND all of its steps, each',
-    'step execute-ready — during the conversation. There is NO later "step planning" step: the detail you',
-    'write IS what the build runs. By the time you call submit_plan, `/context/specs/plan.md` is already',
-    'complete (per CADENCE above).',
+    'a small, localized change. You author the ENTIRE plan up front — every track AND its section-file',
+    '`## Approach` at plan depth — during the conversation. `submit_plan` carries only the track list; when a',
+    'track runs, its orchestrator session reads that approach and decomposes it into a live task list, so the',
+    'depth you write IS what the build works from. By the time you call submit_plan, `/context/specs/plan.md`',
+    'is already complete (per CADENCE above).',
     '',
-    'PLAN DEPTH (applies to each PHASE brief): a step must be buildable to the keystroke by a fresh engine',
-    "turn that will NOT ask you anything — aim at the altitude of a senior engineer's implementation diff, NOT",
-    'a design summary. Each step brief covers:',
-    '  • touch points — every file the step changes, each anchored to an EXACT `path:line` you copied from a',
+    "PLAN DEPTH (applies to each track's `## Approach`): the work must be buildable to the keystroke by a fresh",
+    "engine that will NOT ask you anything — aim at the altitude of a senior engineer's implementation diff,",
+    'NOT a design summary. The approach covers:',
+    '  • touch points — every file the track changes, each anchored to an EXACT `path:line` you copied from a',
     '    Read/Grep (never an estimate or "~line N"), with the symbol that lives at that line;',
     '  • concrete changes — for any non-trivial edit, the actual change, not prose: the new signature/type, a',
     '    short code skeleton (the 3–8 lines that matter), and any ordering/safety constraint (e.g. "set the',
     '    failure field BEFORE the early return"). A builder must not have to re-derive the code. Trivial edits',
     '    (a one-line add, a stub→real call) stay one sentence — do not pad them;',
-    '  • verify — the ACTUAL command(s) that prove the step works (test file/path, build or lint cmd) plus any',
+    '  • verify — the ACTUAL command(s) that prove the work (test file/path, build or lint cmd) plus any',
     '    non-obvious gotcha (must rebuild native, won\'t hot-reload, needs a generated migration). "Unit-test',
-    '    it" is a goal, not verification. Let detail follow difficulty — the hard step gets the depth.',
+    '    it" is a goal, not verification. Let detail follow difficulty — the hard part gets the depth.',
     '',
     'PLAN.MD STRUCTURE — the specs are MULTI-FILE; author them so build + operator read them the same way:',
     '    /context/specs/plan.md  — the INDEX:',
@@ -3421,10 +3422,11 @@ function errText(err: unknown): string {
 }
 
 /**
- * Normalize the `submit_plan` `tracks` arg into ordered tracks, each with the ordered step list
- * Atlas authored up front: `{ title, steps: [{ title, brief }] }`. `brief` = the keystroke-level
- * execute instructions for that step (what the build worker runs). Phases missing a title OR a brief
- * are dropped; a track with an empty/whitespace title is dropped. The caller enforces ≥1 step/track.
+ * Normalize the `submit_plan` `tracks` arg into ordered tracks: `{ title, type }`. Steps are NO LONGER
+ * authored up front (the running track's orchestrator decomposes into a live task list), so `steps` is
+ * OPTIONAL — parsed if a caller still supplies `{ title, brief }` items (back-compat: those lock + skip the
+ * driver's JIT plan), else `[]`. A track with an empty/whitespace title is dropped; a supplied step missing
+ * a title OR a brief is dropped.
  */
 function normalizeTracks(
   raw: unknown,
