@@ -11,7 +11,7 @@
 export interface ThreadRefParts {
   orgId: string;
   repoId: string;
-  threadId: string;
+  jobId: string;
 }
 
 // `~` is never present in a UUID (org/thread ids) or a repo slug, so it's a safe separator that keeps the
@@ -19,19 +19,19 @@ export interface ThreadRefParts {
 // normalized inconsistently by servers/Next and can break single-segment matching).
 const REF_SEP = '~';
 
-/** Encode `{ orgId, repoId, threadId }` into one URL path segment. */
-export function encodeThreadRef(ref: ThreadRefParts): string {
-  return [ref.orgId, ref.repoId, ref.threadId].map(encodeURIComponent).join(REF_SEP);
+/** Encode `{ orgId, repoId, jobId }` into one URL path segment. */
+export function encodeJobRef(ref: ThreadRefParts): string {
+  return [ref.orgId, ref.repoId, ref.jobId].map(encodeURIComponent).join(REF_SEP);
 }
 
 /** Decode a `[threadKey]` segment back to its ids; `null` if it isn't a well-formed triple. */
-export function decodeThreadRef(threadKey: string): ThreadRefParts | null {
+export function decodeJobRef(threadKey: string): ThreadRefParts | null {
   const parts = threadKey.split(REF_SEP);
   if (parts.length !== 3) return null;
   try {
-    const [orgId, repoId, threadId] = parts.map(decodeURIComponent);
-    if (!orgId || !repoId || !threadId) return null;
-    return { orgId, repoId, threadId };
+    const [orgId, repoId, jobId] = parts.map(decodeURIComponent);
+    if (!orgId || !repoId || !jobId) return null;
+    return { orgId, repoId, jobId };
   } catch {
     return null;
   }
@@ -39,7 +39,7 @@ export function decodeThreadRef(threadKey: string): ThreadRefParts | null {
 
 /** Full href to a thread workspace. */
 export function threadHref(ref: ThreadRefParts): string {
-  return `/workspace/${encodeThreadRef(ref)}`;
+  return `/workspace/${encodeJobRef(ref)}`;
 }
 
 export const ROUTES = {

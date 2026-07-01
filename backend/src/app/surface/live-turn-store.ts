@@ -26,9 +26,9 @@ export interface LiveTurnBlock {
   parentToolUseId?: string;
 }
 
-/** The cumulative state of one in-flight turn (a `(threadId, lane)` pair) — the RESUMABLE snapshot. */
+/** The cumulative state of one in-flight turn (a `(jobId, lane)` pair) — the RESUMABLE snapshot. */
 export interface LiveTurnSnapshot {
-  threadId: string;
+  jobId: string;
   /** `'main'` = the brain turn; `'phase:<stepId>'` = a build turn. The client routes blocks by lane. */
   lane: string;
   blocks: LiveTurnBlock[];
@@ -40,14 +40,14 @@ export interface LiveTurnSnapshot {
 /** A frame fanned to SSE: an engine delta, a `{kind:'snapshot'}`, or a `{kind:'turn_end'}` — all seq'd. */
 export interface LiveStreamFrame {
   channel: string;
-  threadId: string;
+  jobId: string;
   lane: string;
   seq: number;
   event: unknown;
 }
 
 interface TurnState {
-  threadId: string;
+  jobId: string;
   lane: string;
   blocks: LiveTurnBlock[];
   active: boolean;
@@ -81,7 +81,7 @@ export const MAIN_LANE = 'main';
 @Injectable()
 export class LiveTurnStore {
   private readonly subject = new Subject<LiveStreamFrame>();
-  /** channel (repoId) → `${threadId}::${lane}` → cumulative in-flight turn. */
+  /** channel (repoId) → `${jobId}::${lane}` → cumulative in-flight turn. */
   private readonly turns = new Map<string, Map<string, TurnState>>();
   private seq = 0;
   private blockSeq = 0;
@@ -94,29 +94,29 @@ export class LiveTurnStore {
   /** Apply one engine event to a turn's in-flight state (cumulative) AND fan it live with a fresh seq. */
   push(
     channel: string,
-    threadId: string,
+    jobId: string,
     event: { kind: string; [k: string]: unknown },
     lane: string = MAIN_LANE,
   ): void {
-    const state = this.ensure(channel, threadId, lane);
+    const state = this.ensure(channel, jobId, lane);
     this.applyToState(state, event);
     const seq = ++this.seq;
     state.lastSeq = seq;
-    this.subject.next({ channel, threadId, lane, seq, event });
+    this.subject.next({ channel, jobId, lane, seq, event });
   }
 
   /** End a turn: fan a `turn_end` marker (so the client reconciles against the durable log), then drop it. */
-  end(channel: string, threadId: string, lane: string = MAIN_LANE): void {
+  end(channel: string, jobId: string, lane: string = MAIN_LANE): void {
     const seq = ++this.seq;
-    this.subject.next({ channel, threadId, lane, seq, event: { kind: 'turn_end' } });
-    this.turns.get(channel)?.delete(this.key(threadId, lane));
+    this.subject.next({ channel, jobId, lane, seq, event: { kind: 'turn_end' } });
+    this.turns.get(channel)?.delete(this.key(jobId, lane));
   }
 
   /** The current cumulative snapshot for one turn lane (or null when no turn is in flight). */
-  snapshot(channel: string, threadId: string, lane: string = MAIN_LANE): LiveTurnSnapshot | null {
-    const state = this.turns.get(channel)?.get(this.key(threadId, lane));
+  snapshot(channel: string, jobId: string, lane: string = MAIN_LANE): LiveTurnSnapshot | null {
+    const state = this.turns.get(channel)?.get(this.key(jobId, lane));
     if (!state) return null;
-    return { threadId, lane, blocks: state.blocks, active: state.active, seq: state.lastSeq };
+    return { jobId, lane, blocks: state.blocks, active: state.active, seq: state.lastSeq };
   }
 
   /** Every in-flight turn lane for a repo — replayed to a client the moment its SSE connects. */
@@ -124,7 +124,7 @@ export class LiveTurnStore {
     const m = this.turns.get(channel);
     if (!m) return [];
     return [...m.values()].map((s) => ({
-      threadId: s.threadId,
+      jobId: s.jobId,
       lane: s.lane,
       blocks: s.blocks,
       active: s.active,
@@ -132,20 +132,20 @@ export class LiveTurnStore {
     }));
   }
 
-  private key(threadId: string, lane: string): string {
-    return `${threadId}::${lane}`;
+  private key(jobId: string, lane: string): string {
+    return `${jobId}::${lane}`;
   }
 
-  private ensure(channel: string, threadId: string, lane: string): TurnState {
+  private ensure(channel: string, jobId: string, lane: string): TurnState {
     let m = this.turns.get(channel);
     if (!m) {
       m = new Map();
       this.turns.set(channel, m);
     }
-    const k = this.key(threadId, lane);
+    const k = this.key(jobId, lane);
     let s = m.get(k);
     if (!s) {
-      s = { threadId, lane, blocks: [], active: true, lastSeq: 0 };
+      s = { jobId, lane, blocks: [], active: true, lastSeq: 0 };
       m.set(k, s);
     }
     s.active = true;

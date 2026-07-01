@@ -99,7 +99,7 @@ export interface Message {
   /** Stable message id (`messages.id`). */
   id: string;
   /** The thread this message belongs to (the partition key). */
-  threadId: string;
+  jobId: string;
   /** Author display name ("Dennis", "Atlas"). */
   author: string;
   /** Author scope id ("dennis", "atlas"). */
@@ -127,7 +127,7 @@ export interface Thread {
   /** Stable track id (`tracks.id`). */
   id: string;
   /** The owning thread. */
-  threadId: string;
+  jobId: string;
   /** Execution order within the thread, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
   ordinal: number;
   /** The one-line brief from the upfront track list. */
@@ -159,9 +159,9 @@ export interface Step {
   /** Stable step id (`steps.id`). */
   id: string;
   /** The owning track. */
-  trackId: string;
-  /** The owning thread (denormalized for thread-scoped boot recovery). */
   threadId: string;
+  /** The owning thread (denormalized for thread-scoped boot recovery). */
+  jobId: string;
   /** Execution order within the track, GAP-NUMBERED so a re-plan can splice. */
   ordinal: number;
   /** The step title from the plan. */

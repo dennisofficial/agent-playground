@@ -76,7 +76,7 @@ export interface WebApprovalCard {
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
-  tracks: string[];
+  threads: string[];
   planUrl?: string;
   actions: WebCardAction[];
 }
@@ -98,12 +98,12 @@ export interface WebQuestionOption {
 
 /**
  * A formal question the brain posed via `ask_question` — rendered as a card with one button per option
- * (+ optional free-text "Other"). The operator's pick POSTs to `…/threads/:threadId/answer-question`.
+ * (+ optional free-text "Other"). The operator's pick POSTs to `…/threads/:jobId/answer-question`.
  * When `answer` is set the card renders the compact answered state. Mirrors the backend `WebQuestionCard`.
  */
 export interface WebQuestionCard {
   type: 'question_card';
-  threadId: string;
+  jobId: string;
   questionId: string;
   header?: string;
   question: string;
@@ -117,13 +117,13 @@ export interface WebQuestionCard {
 
 /**
  * A secure SECRET request the onboarding brain posed via `request_secret` — rendered as a masked input.
- * The operator's value POSTs to `…/threads/:threadId/provide-secret`, which stores it ENCRYPTED + grants
+ * The operator's value POSTs to `…/threads/:jobId/provide-secret`, which stores it ENCRYPTED + grants
  * it; the value is NEVER part of this card. When `provided_at` is set the card renders a compact "provided"
  * state. Mirrors the backend `WebSecretInputCard` (deliberately value-free).
  */
 export interface WebSecretInputCard {
   type: 'secret_input_card';
-  threadId: string;
+  jobId: string;
   requestId: string;
   name: string;
   path: string;
@@ -134,7 +134,7 @@ export interface WebSecretInputCard {
 
 export type WebCard = WebApprovalCard | WebVerdictCard | WebQuestionCard | WebSecretInputCard;
 
-// ── Pipeline (`…/threads/:threadId/pipeline`) ────────────────────────────────────────────────────
+// ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
 /** One step of a track's locked plan — the execute folder's leaf (a Claude Code session). */
 export interface PipelineStep {
   id: string;
@@ -186,7 +186,7 @@ export interface PipelineThread {
 
 export interface PipelineJob {
   /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
-  threadId: string;
+  jobId: string;
   title: string;
   kind: WireJobKind;
   status: WireJobStatus;
@@ -197,12 +197,12 @@ export interface PipelineJob {
   /** The feature branch all tracks stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   baseBranch: string | null;
-  tracks: PipelineThread[];
+  threads: PipelineThread[];
 }
 
 export type PipelineState = PipelineJob | { status: 'no_job' };
 
-// ── Context files (`…/threads/:threadId/context`) ────────────────────────────────────────────────
+// ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────
 /** One file in a `/context` bucket — mirrors the backend `ContextFile`. */
 export interface ContextFile {
   name: string;

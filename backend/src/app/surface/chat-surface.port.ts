@@ -122,7 +122,7 @@ export interface ChatSurface {
    * place without a reload. `channel` is the repo coordinate the SSE stream filters on. The web
    * adapter emits on `threadMeta$`; the agent test surface omits this.
    */
-  emitThreadMeta?(channel: string, threadId: string, title: string): void;
+  emitThreadMeta?(channel: string, jobId: string, title: string): void;
   /**
    * Seed the thread's brain with a SYSTEM NOTIFICATION — host-originated context the brain should react
    * to (an answered `ask_question`, a pipeline milestone, an external event). Wraps `body` in
@@ -133,7 +133,7 @@ export interface ChatSurface {
    */
   seedSystemNotification?(
     channel: string,
-    threadId: string,
+    jobId: string,
     body: string,
     opts?: { orgId?: string; deliveredQuestionId?: string },
   ): string;

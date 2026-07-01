@@ -2,7 +2,7 @@
 
 import { Suspense, use } from 'react';
 import Link from 'next/link';
-import { decodeThreadRef, ROUTES } from '@/lib/routes';
+import { decodeJobRef, ROUTES } from '@/lib/routes';
 import { ThreadWorkspace } from '@/features/thread-workspace/thread-workspace';
 import { Spinner } from '@/components/ui/spinner';
 
@@ -13,7 +13,7 @@ import { Spinner } from '@/components/ui/spinner';
  */
 export default function ThreadPage({ params }: { params: Promise<{ threadKey: string }> }) {
   const { threadKey } = use(params);
-  const ref = decodeThreadRef(threadKey);
+  const ref = decodeJobRef(threadKey);
 
   if (!ref) {
     return (
@@ -43,7 +43,7 @@ export default function ThreadPage({ params }: { params: Promise<{ threadKey: st
         </div>
       }
     >
-      <ThreadWorkspace orgId={ref.orgId} repoId={ref.repoId} threadId={ref.threadId} />
+      <ThreadWorkspace orgId={ref.orgId} repoId={ref.repoId} jobId={ref.jobId} />
     </Suspense>
   );
 }

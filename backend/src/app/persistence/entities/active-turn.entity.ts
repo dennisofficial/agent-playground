@@ -73,7 +73,7 @@ export class ActiveTurnEntity extends TimestampedEntity {
 
   /**
    * Everything a fresh host needs to rebuild the turn's harness + (brain) `buildTools` closure on
-   * re-attach: orgId/repoId/threadId, author, the originating prompt, route, the resumable session id,
+   * re-attach: orgId/repoId/jobId, author, the originating prompt, route, the resumable session id,
    * timeouts, etc. Shape is per-`kind`; opaque jsonb here.
    */
   @Column({ type: 'jsonb', default: JSON.stringify({}) })

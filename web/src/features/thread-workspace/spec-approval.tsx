@@ -3,7 +3,7 @@
 import { Check, ClipboardCheck, Lock } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { useApprove } from '@/lib/api/thread-queries';
-import type { ThreadRef } from '@/lib/api/thread-api';
+import type { JobRef } from '@/lib/api/thread-api';
 import { APPROVE_ACTION_ID } from '@/lib/api/types';
 
 /**
@@ -25,7 +25,7 @@ import { APPROVE_ACTION_ID } from '@/lib/api/types';
 const RULED_BY = 'U-OPERATOR';
 
 /** Shared approve action — POSTs the approve verdict for the thread's whole spec set (idempotent). */
-function useApprovePlan(threadRef: ThreadRef, value: string) {
+function useApprovePlan(threadRef: JobRef, value: string) {
   const approve = useApprove(threadRef);
   const submit = () => {
     if (!value || approve.isPending || approve.isSuccess) return;
@@ -39,7 +39,7 @@ function useApprovePlan(threadRef: ThreadRef, value: string) {
  * The navigator callout — sits above the SPECS header. Title row ("Plan ready for review") + a full-width
  * green Approve button. No spec/step counts (removed deliberately); the spec list renders below as usual.
  */
-export function NavigatorApprovalCallout({ threadRef, value }: { threadRef: ThreadRef; value: string }) {
+export function NavigatorApprovalCallout({ threadRef, value }: { threadRef: JobRef; value: string }) {
   const { submit, pending, approved, error } = useApprovePlan(threadRef, value);
   return (
     <div
@@ -68,7 +68,7 @@ export function NavigatorApprovalCallout({ threadRef, value }: { threadRef: Thre
 // ── Navigator header approve button (just the button) ──────────────────────────────────────────────
 /** The bare full-width green Approve button — pinned as the LAST item in the navigator's sticky header
  *  (no card/title). Same idempotent verdict as the other surfaces. */
-export function NavigatorApproveButton({ threadRef, value }: { threadRef: ThreadRef; value: string }) {
+export function NavigatorApproveButton({ threadRef, value }: { threadRef: JobRef; value: string }) {
   const { submit, pending, approved, error } = useApprovePlan(threadRef, value);
   return (
     <>
@@ -97,7 +97,7 @@ export function PersistentApprovalBar({
   specCount,
   stepCount,
 }: {
-  threadRef: ThreadRef;
+  threadRef: JobRef;
   value: string;
   specCount: number;
   stepCount: number;

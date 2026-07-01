@@ -193,7 +193,7 @@ export function useRevokeWorktreeSecret(orgId: string) {
 
 // ── Org CRUD (create / rename / delete) ──────────────────────────────────────────────────────────
 // The org rail + settings read orgs off the SESSION (`GET /auth/session`), so every write invalidates
-// `qk.session()`. The cross-org inbox (`/web/threads`, `useAllThreads`) embeds `org.name` per row and
+// `qk.session()`. The cross-org inbox (`/web/threads`, `useAllJobs`) embeds `org.name` per row and
 // feeds the sidebar / workspace / command palette / rail badges, so rename + delete also invalidate it.
 
 /** Create an org — the caller becomes its owner; it starts in `onboarding`. */
@@ -222,7 +222,7 @@ export function useUpdateOrg(orgId: string) {
       webJson<OrgSummary>(`/orgs/${orgId}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.session() });
-      void qc.invalidateQueries({ queryKey: qk.allThreads() });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
   });
 }
@@ -234,7 +234,7 @@ export function useDeleteOrg(orgId: string) {
     mutationFn: () => webJson<{ ok: boolean }>(`/orgs/${orgId}`, { method: 'DELETE' }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.session() });
-      void qc.invalidateQueries({ queryKey: qk.allThreads() });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
   });
 }
@@ -300,7 +300,7 @@ export function useReonboardRepo(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (repoId: string) =>
-      webJson<{ threadId: string }>(`/orgs/${orgId}/repos/${repoId}/onboard`, { method: 'POST' }),
+      webJson<{ jobId: string }>(`/orgs/${orgId}/repos/${repoId}/onboard`, { method: 'POST' }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
     },
@@ -331,7 +331,7 @@ export function useUpdateRepo(orgId: string) {
 /**
  * Disconnect a repo (owner only). CASCADE-deletes the repo's threads (and their sandboxes / feature
  * branches / messages) server-side, returning how many were torn down — the UI warns first. Invalidates
- * the repo list, the cross-org thread inbox (threads were deleted → `useAllThreads` feeds the sidebar /
+ * the repo list, the cross-org thread inbox (threads were deleted → `useAllJobs` feeds the sidebar /
  * rail badges / command palette), and the session (disconnect can flip the org `active`↔`onboarding`).
  */
 export function useDisconnectRepo(orgId: string) {
@@ -343,7 +343,7 @@ export function useDisconnectRepo(orgId: string) {
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.allThreads() });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
       void qc.invalidateQueries({ queryKey: qk.session() });
     },
   });

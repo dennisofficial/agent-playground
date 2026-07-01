@@ -120,7 +120,7 @@ export class AgentChatSurface implements ChatSurface {
   /** Seed the thread's brain with a SYSTEM NOTIFICATION (see `ChatSurface.seedSystemNotification`). */
   seedSystemNotification(
     channel: string,
-    threadId: string,
+    jobId: string,
     body: string,
     opts: { orgId?: string; deliveredQuestionId?: string } = {},
   ): string {
@@ -132,7 +132,7 @@ export class AgentChatSurface implements ChatSurface {
       text: wrapSystemNotification(body),
       orgId: opts.orgId ?? this.orgId,
       channel,
-      threadTs: threadId,
+      threadTs: jobId,
       ts: new Date(),
       seed: true,
       ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),

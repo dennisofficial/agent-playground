@@ -29,18 +29,18 @@ export class PipelineAwarenessStore {
    * is dropped (the same stage fires repeatedly). Runs under a row lock so it can't lose a concurrent
    * drain's clear or another append. A missing thread is a no-op.
    */
-  async appendMarker(threadId: string, marker: PipelineMarker): Promise<void> {
+  async appendMarker(jobId: string, marker: PipelineMarker): Promise<void> {
     await this.ds.transaction(async (m) => {
       const rows: Array<{ a: unknown }> = await m.query(
         `SELECT pipeline_awareness AS a FROM jobs WHERE id = $1 FOR UPDATE`,
-        [threadId],
+        [jobId],
       );
       if (rows.length === 0) return;
       const a = normalize(rows[0].a);
       if (a.markerQueue.some((x) => x.id === marker.id)) return; // already queued — idempotent
       a.markerQueue.push(marker);
       await m.query(`UPDATE jobs SET pipeline_awareness = $2 WHERE id = $1`, [
-        threadId,
+        jobId,
         JSON.stringify(a),
       ]);
     });
@@ -54,13 +54,13 @@ export class PipelineAwarenessStore {
    * thread (or one not yet in the build lifecycle, `currentSig === null`) drains nothing.
    */
   async drainAndAdvance(
-    threadId: string,
+    jobId: string,
     currentSig: string | null,
   ): Promise<{ markers: PipelineMarker[]; stateChanged: boolean }> {
     return this.ds.transaction(async (m) => {
       const rows: Array<{ a: unknown }> = await m.query(
         `SELECT pipeline_awareness AS a FROM jobs WHERE id = $1 FOR UPDATE`,
-        [threadId],
+        [jobId],
       );
       if (rows.length === 0) return { markers: [], stateChanged: false };
       const a = normalize(rows[0].a);
@@ -73,7 +73,7 @@ export class PipelineAwarenessStore {
         conveyedStateSig: stateChanged ? currentSig : a.conveyedStateSig,
       };
       await m.query(`UPDATE jobs SET pipeline_awareness = $2 WHERE id = $1`, [
-        threadId,
+        jobId,
         JSON.stringify(next),
       ]);
       return { markers, stateChanged };

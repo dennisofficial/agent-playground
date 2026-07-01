@@ -3,13 +3,13 @@
 import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-resizable-panels';
-import { useAllThreads } from '@/lib/api/inbox';
+import { useAllJobs } from '@/lib/api/inbox';
 import { useThreadMessages, usePipeline, useThreadContext, useDeleteThread, useRenameThread, useSay } from '@/lib/api/thread-queries';
 import { useThreadEvents } from '@/lib/api/thread-events';
 import { toJobStatus } from '@/lib/api/status';
 import { orgSwatch } from '@/lib/org-display';
 import { ROUTES } from '@/lib/routes';
-import { pipelineJob, type ThreadRef } from '@/lib/api/thread-api';
+import { pipelineJob, type JobRef } from '@/lib/api/thread-api';
 import { APPROVE_ACTION_ID, type JobKind, type JobStatus, type WebApprovalCard } from '@/lib/api/types';
 import { Navigator, type ThreadMeta } from './navigator';
 import { Conversation } from './conversation';
@@ -23,11 +23,11 @@ import { useSelectedNode } from './use-selected-node';
  * Step). Resolves its own data from the org → repo → thread API. The shell's "needs you" dots come from
  * the server-owned thread-list fields (no longer fed from here); this just renders the open thread.
  */
-export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
+export function ThreadWorkspace({ orgId, repoId, jobId }: JobRef) {
   const router = useRouter();
-  const ref = useMemo<ThreadRef>(() => ({ orgId, repoId, threadId }), [orgId, repoId, threadId]);
+  const ref = useMemo<JobRef>(() => ({ orgId, repoId, jobId }), [orgId, repoId, jobId]);
 
-  const { data: inbox } = useAllThreads();
+  const { data: inbox } = useAllJobs();
   const { data: messages = [], isLoading: messagesLoading } = useThreadMessages(ref);
   const { data: pipeline, isLoading: pipelineLoading, isError: pipelineError } = usePipeline(ref);
   const { data: context, isLoading: contextLoading } = useThreadContext(ref);
@@ -55,7 +55,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   });
   const groupRef = useGroupRef();
 
-  const inboxThread = useMemo(() => inbox?.find((t) => t.id === threadId), [inbox, threadId]);
+  const inboxThread = useMemo(() => inbox?.find((t) => t.id === jobId), [inbox, jobId]);
   const job = pipelineJob(pipeline);
 
   const kind: JobKind = inboxThread?.kind ?? 'feat';
@@ -84,7 +84,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
     if (fromCard) return fromCard;
     if (job && status === 'awaiting_approval') {
       return JSON.stringify({
-        jobId: job.threadId,
+        jobId: job.jobId,
         ...(job.decisionRecordId ? { decisionRecordId: job.decisionRecordId } : {}),
       });
     }
@@ -92,7 +92,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   }, [approvalCard, job, status]);
   const awaitingApproval = status === 'awaiting_approval' && Boolean(approveValue);
   const specCount = context?.specs?.length ?? 0;
-  const stepCount = job?.tracks.reduce((n, t) => n + (t.steps?.length ?? 0), 0) ?? 0;
+  const stepCount = job?.threads.reduce((n, t) => n + (t.steps?.length ?? 0), 0) ?? 0;
 
   const meta: ThreadMeta = {
     title: inboxThread?.title ?? job?.title ?? 'Thread',

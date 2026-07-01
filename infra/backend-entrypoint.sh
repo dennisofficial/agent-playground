@@ -4,10 +4,10 @@
 # Why minimal: the engine bundle (engine-entrypoint.mjs) is handled entirely
 # in-process by the backend at boot time:
 #   1. bundleEngine() (sandbox/bundle-engine.ts) rebundles it via esbuild and
-#      writes it to dist/app/sandbox/image/ (the build context dir) AND mirrors
+#      writes it to the fixed backend/sandbox/ build-context dir AND mirrors
 #      it to ENGINE_BUNDLE_PATH (A8 from the plan).
 #   2. SandboxImageBuilder.ensureImage() builds atlas-sandbox:latest on the host
-#      Docker daemon from dist/app/sandbox/image/ if the tag is absent.
+#      Docker daemon from backend/sandbox/ if the tag is absent.
 # Both happen before the NestJS app starts accepting requests. No shell scripting
 # or extra file copies are needed here.
 #

@@ -2,7 +2,7 @@
  * Web QUESTION card payload — the structured, multiple-choice question the thread brain poses to the
  * operator via the `ask_question` tool (instead of asking in prose). The web client renders it like a
  * native "ask user question": a header + question + one button per option (+ an optional free-text
- * "Other"). The operator's pick is POSTed back to `…/threads/:threadId/answer-question`, which both
+ * "Other"). The operator's pick is POSTed back to `…/threads/:jobId/answer-question`, which both
  * stamps the durable answered state onto this card and injects the answer as a normal reply (firing the
  * next brain turn). When `answer` is set, the client renders the compact answered state.
  *
@@ -23,7 +23,7 @@ export interface WebQuestionOption {
 export interface WebQuestionCard {
   /** Discriminant — the web client checks `type` to decide which component to render. */
   type: 'question_card';
-  threadId: string;
+  jobId: string;
   /** Stable key for this question (the card row's `ts`); the answer POST echoes it back. */
   questionId: string;
   header?: string;
@@ -59,7 +59,7 @@ function slug(label: string): string {
 
 /** Build a `WebQuestionCard` from the brain's `ask_question` args (options normalized + id-filled). */
 export function webQuestionCard(input: {
-  threadId: string;
+  jobId: string;
   questionId: string;
   question: string;
   header?: string;
@@ -76,7 +76,7 @@ export function webQuestionCard(input: {
   });
   return {
     type: 'question_card',
-    threadId: input.threadId,
+    jobId: input.jobId,
     questionId: input.questionId,
     ...(input.header ? { header: input.header } : {}),
     question: input.question,

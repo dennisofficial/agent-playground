@@ -75,11 +75,11 @@ export class TurnRecoveryService implements OnModuleDestroy {
       return 0;
     }
     let recovered = 0;
-    for (const threadId of threadIds) {
+    for (const jobId of threadIds) {
       try {
-        if ((await this.recoverThread(threadId)) === 'recovered') recovered++;
+        if ((await this.recoverThread(jobId)) === 'recovered') recovered++;
       } catch (err) {
-        this.logger.warn(`turn recovery failed for thread=${threadId}: ${err}`);
+        this.logger.warn(`turn recovery failed for thread=${jobId}: ${err}`);
       }
     }
     return recovered;
@@ -124,17 +124,17 @@ export class TurnRecoveryService implements OnModuleDestroy {
   /** One watch tick: try to recover each pending thread; drop it unless it's still incomplete (and not
    *  past its deadline). */
   private async sweep(pending: Set<string>, deadline: number): Promise<void> {
-    for (const threadId of [...pending]) {
+    for (const jobId of [...pending]) {
       if (Date.now() > deadline) {
-        pending.delete(threadId);
-        this.logger.warn(`turn recovery: stopped watching thread=${threadId} (timed out before end_turn)`);
+        pending.delete(jobId);
+        this.logger.warn(`turn recovery: stopped watching thread=${jobId} (timed out before end_turn)`);
         continue;
       }
-      const status = await this.recoverThread(threadId).catch((err) => {
-        this.logger.warn(`turn recovery watch failed for thread=${threadId}: ${err}`);
+      const status = await this.recoverThread(jobId).catch((err) => {
+        this.logger.warn(`turn recovery watch failed for thread=${jobId}: ${err}`);
         return 'absent' as RecoverStatus;
       });
-      if (status !== 'incomplete') pending.delete(threadId); // recovered / already / absent → done watching
+      if (status !== 'incomplete') pending.delete(jobId); // recovered / already / absent → done watching
     }
   }
 
@@ -142,15 +142,15 @@ export class TurnRecoveryService implements OnModuleDestroy {
   private async candidateThreadIds(): Promise<string[]> {
     const rows = await this.sandboxRows
       .createQueryBuilder('s')
-      .select('s.job_id', 'threadId')
+      .select('s.job_id', 'jobId')
       .where("s.lifecycle <> 'closed'")
-      .getRawMany<{ threadId: string }>();
-    return rows.map((r) => r.threadId);
+      .getRawMany<{ jobId: string }>();
+    return rows.map((r) => r.jobId);
   }
 
   /** Inspect a thread's NEWEST transcript and recover it if it's a completed-but-unpersisted turn. */
-  private async recoverThread(threadId: string): Promise<RecoverStatus> {
-    const projectsDir = this.sandboxes.brainTranscriptProjectsDir(threadId);
+  private async recoverThread(jobId: string): Promise<RecoverStatus> {
+    const projectsDir = this.sandboxes.brainTranscriptProjectsDir(jobId);
     if (!projectsDir || !existsSync(projectsDir)) return 'absent';
 
     const tail = this.latestTranscript(projectsDir);
@@ -161,10 +161,10 @@ export class TurnRecoveryService implements OnModuleDestroy {
     // Already persisted? The turn's FINAL reply text is the fingerprint — a normally-persisted turn has it
     // in `messages`; an interrupted turn does not (the provisioning notice etc. never matches it).
     const finalReply = [...tail.blocks].reverse().find((b) => b.kind === 'chat')?.text;
-    if (finalReply && (await this.finalReplyPersisted(threadId, finalReply))) return 'already';
+    if (finalReply && (await this.finalReplyPersisted(jobId, finalReply))) return 'already';
 
     // Per-block idempotency for recovery re-runs (keyed on the JSONL line uuid we stamp into meta).
-    const seen = await this.persistedSdkUuids(threadId);
+    const seen = await this.persistedSdkUuids(jobId);
     const fresh = tail.blocks.filter((b) => {
       const u = b.meta.sdkUuid;
       return typeof u !== 'string' || !seen.has(u);
@@ -177,9 +177,9 @@ export class TurnRecoveryService implements OnModuleDestroy {
       // transcript order, after the operator prompt, even when SDK line timestamps tie.
       const base = b.emittedAt instanceof Date && !Number.isNaN(b.emittedAt.getTime()) ? b.emittedAt.getTime() : Date.now();
       lastMs = Math.max(base, lastMs + 1);
-      await this.appendBlock(threadId, b, new Date(lastMs));
+      await this.appendBlock(jobId, b, new Date(lastMs));
     }
-    this.logger.log(`Turn recovery: back-filled ${fresh.length} block(s) for thread=${threadId}`);
+    this.logger.log(`Turn recovery: back-filled ${fresh.length} block(s) for thread=${jobId}`);
     return 'recovered';
   }
 
@@ -205,12 +205,12 @@ export class TurnRecoveryService implements OnModuleDestroy {
   }
 
   /** Whether the turn's final reply is already a durable Atlas message (the "already persisted" guard). */
-  private async finalReplyPersisted(threadId: string, finalReply: string): Promise<boolean> {
+  private async finalReplyPersisted(jobId: string, finalReply: string): Promise<boolean> {
     const needle = finalReply.trim().slice(-FINAL_REPLY_FINGERPRINT_LEN);
     if (!needle) return false;
     const count = await this.messages
       .createQueryBuilder('m')
-      .where('m.job_id = :threadId', { threadId })
+      .where('m.job_id = :jobId', { jobId })
       .andWhere("m.author_id = 'atlas'")
       .andWhere('position(:needle in m.text) > 0', { needle })
       .getCount();
@@ -218,21 +218,21 @@ export class TurnRecoveryService implements OnModuleDestroy {
   }
 
   /** The set of SDK `uuid`s already represented in this thread's durable messages — recovery-re-run guard. */
-  private async persistedSdkUuids(threadId: string): Promise<Set<string>> {
+  private async persistedSdkUuids(jobId: string): Promise<Set<string>> {
     const rows: Array<{ u: string | null }> = await this.messages
       .createQueryBuilder('m')
       .select("m.meta ->> 'sdkUuid'", 'u')
-      .where('m.job_id = :threadId', { threadId })
+      .where('m.job_id = :jobId', { jobId })
       .andWhere("m.meta ->> 'sdkUuid' IS NOT NULL")
       .getRawMany();
     return new Set(rows.map((r) => r.u).filter((u): u is string => typeof u === 'string'));
   }
 
   /** Write one recovered block as an Atlas-authored durable row (byte-compatible with `MessageBlockSink`). */
-  private async appendBlock(threadId: string, block: RecoveredBlock, createdAt: Date): Promise<void> {
+  private async appendBlock(jobId: string, block: RecoveredBlock, createdAt: Date): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        job_id: threadId,
+        job_id: jobId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',

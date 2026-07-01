@@ -19,13 +19,13 @@ function makeRepo(rows: Partial<ActiveTurnEntity>[] = []) {
 
 const REGISTER = {
   turnId: 't1',
-  threadId: 'th1',
+  jobId: 'th1',
   orgId: 'org1',
   channel: 'repo1',
   lane: 'main',
   kind: 'brain' as const,
   containerId: 'c1',
-  ctx: { orgId: 'org1', repoId: 'repo1', threadId: 'th1', author: 'U1' },
+  ctx: { orgId: 'org1', repoId: 'repo1', jobId: 'th1', author: 'U1' },
 };
 
 describe('TurnRegistry', () => {

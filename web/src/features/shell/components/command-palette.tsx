@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { useAllThreads, type InboxThread } from '@/lib/api/inbox';
+import { useAllJobs, type InboxThread } from '@/lib/api/inbox';
 import { orgSwatch } from '@/lib/org-display';
 import { threadHref } from '@/lib/routes';
 
@@ -14,13 +14,13 @@ import { threadHref } from '@/lib/routes';
  */
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
-  const { data: threads = [] } = useAllThreads();
+  const { data: threads = [] } = useAllJobs();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   function openThread(t: InboxThread) {
-    router.push(threadHref({ orgId: t.org.id, repoId: t.repo.id, threadId: t.id }));
+    router.push(threadHref({ orgId: t.org.id, repoId: t.repo.id, jobId: t.id }));
     onClose();
   }
 

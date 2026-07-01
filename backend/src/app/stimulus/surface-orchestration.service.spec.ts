@@ -12,7 +12,7 @@ function threadsRepo(thread: Partial<JobEntity> | null) {
 const INPUT = {
   orgId: 'T1',
   repoId: 'web',
-  threadId: 'thread-1',
+  jobId: 'thread-1',
   source: 'github',
   severity: 'critical' as const,
   title: 'CI failed on main',

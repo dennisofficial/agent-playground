@@ -11,7 +11,7 @@ export interface AnnounceEventInput {
   orgId: string;
   repoId: string;
   /** The `threads` row id the event seeded. */
-  threadId: string;
+  jobId: string;
   /** The gateway that produced the event (for the headline). */
   source: string;
   severity: EventSeverity;
@@ -46,7 +46,7 @@ export class SurfaceOrchestration {
    * (the conversation handle) or undefined when nothing was posted (surface inert / thread missing).
    */
   async announceEvent(input: AnnounceEventInput): Promise<string | undefined> {
-    const thread = await this.threads.findOne({ where: { id: input.threadId } });
+    const thread = await this.threads.findOne({ where: { id: input.jobId } });
     if (!thread) return undefined;
 
     const headline = `${SEVERITY_EMOJI[input.severity]} *[${input.source}]* ${input.title}`;
@@ -59,7 +59,7 @@ export class SurfaceOrchestration {
       this.logger.warn(`announcement post failed (continuing): ${err}`);
       return undefined;
     }
-    this.logger.log(`announced event thread ${input.threadId} on repo ${thread.repo_id}`);
+    this.logger.log(`announced event thread ${input.jobId} on repo ${thread.repo_id}`);
     return thread.id;
   }
 }

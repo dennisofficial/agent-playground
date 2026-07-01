@@ -34,7 +34,7 @@ export class LoggingBrainSink implements BrainSink {
 
   async handleChat(stimulus: ChatStimulus): Promise<void> {
     this.logger.log(
-      `[no-op] CHAT ${stimulus.id} thread=${stimulus.threadId} ` +
+      `[no-op] CHAT ${stimulus.id} thread=${stimulus.jobId} ` +
         `author=${stimulus.author.displayName} project=${stimulus.repoId}`,
     );
   }
@@ -42,7 +42,7 @@ export class LoggingBrainSink implements BrainSink {
   async deliverEvent(stimulus: EventStimulus): Promise<void> {
     this.logger.log(
       `[no-op] EVENT ${stimulus.id} source=${stimulus.source} severity=${stimulus.severity} ` +
-        `thread=${stimulus.threadId} project=${stimulus.repoId} (untrusted)`,
+        `thread=${stimulus.jobId} project=${stimulus.repoId} (untrusted)`,
     );
   }
 }

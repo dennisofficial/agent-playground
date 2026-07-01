@@ -10,7 +10,7 @@ import { useSyncExternalStore } from 'react';
  * the text of such sends so the conversation can mark them "queued · sends when the current turn
  * finishes" and render them below the live response — distinct from a normal message.
  *
- * Lifecycle: added in `useSay` when `isLiveTurnActive(threadId)`; cleared on the blocking turn's
+ * Lifecycle: added in `useSay` when `isLiveTurnActive(jobId)`; cleared on the blocking turn's
  * `turn_end` (in `thread-events.ts`), at which point the queued message's own turn begins and its durable
  * row settles into chronological order. Matching is by text — adequate for the operator console (a rare
  * duplicate-text edge just clears one entry early).
@@ -23,30 +23,30 @@ class QueuedSendsStore {
   private snapshots = new Map<string, ReadonlySet<string>>();
   private readonly listeners = new Set<() => void>();
 
-  add(threadId: string, text: string): void {
-    if (!threadId || !text) return;
-    let set = this.map.get(threadId);
+  add(jobId: string, text: string): void {
+    if (!jobId || !text) return;
+    let set = this.map.get(jobId);
     if (!set) {
       set = new Set();
-      this.map.set(threadId, set);
+      this.map.set(jobId, set);
     }
     set.add(text);
-    this.refresh(threadId);
+    this.refresh(jobId);
   }
 
-  clear(threadId: string): void {
-    if (!this.map.has(threadId)) return;
-    this.map.delete(threadId);
-    this.refresh(threadId);
+  clear(jobId: string): void {
+    if (!this.map.has(jobId)) return;
+    this.map.delete(jobId);
+    this.refresh(jobId);
   }
 
-  get(threadId: string): ReadonlySet<string> {
-    return this.snapshots.get(threadId) ?? EMPTY;
+  get(jobId: string): ReadonlySet<string> {
+    return this.snapshots.get(jobId) ?? EMPTY;
   }
 
-  private refresh(threadId: string): void {
-    const set = this.map.get(threadId);
-    this.snapshots.set(threadId, set ? new Set(set) : EMPTY);
+  private refresh(jobId: string): void {
+    const set = this.map.get(jobId);
+    this.snapshots.set(jobId, set ? new Set(set) : EMPTY);
     this.listeners.forEach((l) => l());
   }
 
@@ -61,20 +61,20 @@ class QueuedSendsStore {
 const store = new QueuedSendsStore();
 
 /** Mark a just-sent message as queued behind the thread's running turn. */
-export function addQueuedSend(threadId: string, text: string): void {
-  store.add(threadId, text);
+export function addQueuedSend(jobId: string, text: string): void {
+  store.add(jobId, text);
 }
 
 /** Clear a thread's queued sends — call after the blocking turn ends + the durable refetch lands. */
-export function clearQueuedSends(threadId: string): void {
-  store.clear(threadId);
+export function clearQueuedSends(jobId: string): void {
+  store.clear(jobId);
 }
 
 /** Subscribe to the set of queued send texts for a thread (the conversation marks matching bubbles). */
-export function useQueuedSends(threadId: string): ReadonlySet<string> {
+export function useQueuedSends(jobId: string): ReadonlySet<string> {
   return useSyncExternalStore(
     store.subscribe,
-    () => store.get(threadId),
+    () => store.get(jobId),
     () => EMPTY,
   );
 }

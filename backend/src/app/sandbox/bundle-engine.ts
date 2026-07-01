@@ -17,17 +17,30 @@ import { dirname, join } from 'node:path';
  * `__dirname` resolves to `src/app/sandbox` under ts-node/tsx (dev) and `dist/app/sandbox` when compiled
  * — so the entry is taken from the TS source in dev and the compiled JS in a built deployment.
  */
-function imageDir(): string {
+function entrySourceDir(): string {
   return join(__dirname, 'image');
 }
 
 /**
- * The bundle's home INSIDE the image build context (`<imageDir>/engine-entrypoint.mjs`). `bundleEngine`
+ * The docker BUILD CONTEXT dir — a FIXED, checked-in `backend/sandbox/` that is IDENTICAL at build time
+ * and runtime, so it doesn't matter whether the process runs from `src` (dev) or `dist` (prod): no
+ * nest-cli asset copy, no dist/src divergence. It holds the static context (Dockerfile + `*.sh`, all
+ * committed) plus `engine-entrypoint.mjs` (written here at boot by {@link bundleEngine}; gitignored).
+ *
+ * Both `src/app/sandbox` and `dist/app/sandbox` sit exactly THREE levels under `backend/`, so the same
+ * relative hop from `__dirname` lands on `backend/sandbox` in either. Overridable via `SANDBOX_CONTEXT_DIR`.
+ */
+export function sandboxContextDir(): string {
+  return process.env.SANDBOX_CONTEXT_DIR ?? join(__dirname, '..', '..', '..', 'sandbox');
+}
+
+/**
+ * The bundle's home INSIDE the build context (`<sandboxContextDir>/engine-entrypoint.mjs`). `bundleEngine`
  * ALWAYS writes here, because the sandbox image Dockerfile `COPY`s it and the on-boot image build reads
  * it from this dir. This is also the default bind-mount source when no override is set.
  */
 function imageBundlePath(): string {
-  return join(imageDir(), 'engine-entrypoint.mjs');
+  return join(sandboxContextDir(), 'engine-entrypoint.mjs');
 }
 
 /**
@@ -46,7 +59,7 @@ export function engineBundlePath(): string {
  * fresh bundle without breaking the image-build `COPY`. Returns the live mount path.
  */
 export async function bundleEngine(): Promise<string> {
-  const dir = imageDir();
+  const dir = entrySourceDir();
   // Dev: bundle from the TS source. Built deployment: bundle from the compiled JS nest emits to dist.
   const tsEntry = join(dir, 'engine-entrypoint.ts');
   const jsEntry = join(dir, 'engine-entrypoint.js');
@@ -55,6 +68,7 @@ export async function bundleEngine(): Promise<string> {
     throw new Error(`no engine entrypoint source at ${tsEntry} or ${jsEntry}`);
   }
   const outfile = imageBundlePath();
+  mkdirSync(dirname(outfile), { recursive: true }); // the fixed context dir is committed, but be safe
   await build({
     entryPoints: [entry],
     outfile,

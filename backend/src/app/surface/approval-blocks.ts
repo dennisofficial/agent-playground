@@ -35,7 +35,7 @@ export interface DecisionApprovalCard {
    * Which build path this approval gates:
    * - `plan` (default) — the full ceremony: a multi-track build runs after approval.
    * - `direct` — the fast path: the brain implements the change itself in-sandbox after approval.
-   *   `tracks` then carries a short CHANGE OUTLINE rather than a track list.
+   *   `threads` then carries a short CHANGE OUTLINE rather than a track list.
    */
   kind?: 'plan' | 'direct';
   /** The decision record summary (the architecture/system calls). */
@@ -43,7 +43,7 @@ export interface DecisionApprovalCard {
   /** The locked decisions (class + title + ruling) — the real calls being approved, not just a title. */
   decisions?: ApprovalDecision[];
   /** The high-level track list (plan), or the change outline (direct), in order. */
-  tracks: string[];
+  threads: string[];
   /** Optional deep link to a full plan view. */
   planUrl?: string;
 }
@@ -70,13 +70,13 @@ export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record
   const listLabel = isDirect ? 'Changes' : 'Tracks';
   const contextLine = isDirect
     ? 'Approve to let Atlas implement this change directly. The verdict is Dennis’s call.'
-    : 'Approve once — tracks then auto-run. The verdict is Dennis’s call.';
+    : 'Approve once — threads then auto-run. The verdict is Dennis’s call.';
 
-  const sectionList = card.tracks.length
-    ? card.tracks.map((s, i) => `${i + 1}. ${s}`).join('\n')
+  const sectionList = card.threads.length
+    ? card.threads.map((s, i) => `${i + 1}. ${s}`).join('\n')
     : isDirect
       ? '_(see summary)_'
-      : '_(no tracks)_';
+      : '_(no threads)_';
 
   // A leading `[confirmed]`/`[authored]` provenance tag rides in the bullet text so the web surface can
   // recover it from these blocks (the web card is reconstructed by regex-parsing this format). Leading,

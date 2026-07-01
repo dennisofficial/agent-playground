@@ -139,7 +139,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       prNumber: number | null;
       featureBranch: string | null;
       baseBranch: string | null;
-      tracks: Array<{
+      threads: Array<{
         id: string;
         hasPlan: boolean;
         status: string;
@@ -154,8 +154,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.featureBranch).toBe('atlas/feature-stripe');
     expect(state.baseBranch).toBe(BASE_BRANCH);
 
-    expect(state.tracks).toHaveLength(1);
-    const [sec] = state.tracks;
+    expect(state.threads).toHaveLength(1);
+    const [sec] = state.threads;
     expect(sec.hasPlan).toBe(true);
     // The review-agent run list is exposed per track (fixed set today; navigator renders it dynamically).
     // An un-reviewed track (empty `review_agents`) falls back to the default lens set at `pending`.
@@ -200,9 +200,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     await store.finalizeReviewAgents(track.id, ['best_practices', 'correctness']);
 
     const state = (await store.getPipelineState(thread.id, ORG_ID)) as {
-      tracks: Array<{ reviewAgents: Array<{ id: string; status: string; findings?: number }> }>;
+      threads: Array<{ reviewAgents: Array<{ id: string; status: string; findings?: number }> }>;
     };
-    const byId = new Map(state.tracks[0].reviewAgents.map((a) => [a.id, a]));
+    const byId = new Map(state.threads[0].reviewAgents.map((a) => [a.id, a]));
     expect(byId.get('best_practices')).toMatchObject({ status: 'passed', findings: 2 });
     expect(byId.get('correctness')?.status).toBe('passed');
     expect(byId.get('consistency')?.status).toBe('skipped');

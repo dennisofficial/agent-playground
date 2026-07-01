@@ -179,7 +179,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     receivedAt: new Date('2026-06-21T00:00:00Z'),
     orgId: TEAM_ID,
     repoId: PROJECT_ID,
-    threadId: THREAD_ID,
+    jobId: THREAD_ID,
     body: 'Add rate limiting to the API',
     author: { id: 'U-OP', displayName: 'Operator' },
     replyRoute: { surfaceId: 'agent', threadRef: 'ts-r3gate-001' },
@@ -367,7 +367,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID, reviewRound: 1 });
     expect(mockPlanReview.start).toHaveBeenCalledOnce();
     const reviewArgs = (mockPlanReview.start as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(reviewArgs.threadId).toBe(FAKE_JOB_ID);
+    expect(reviewArgs.jobId).toBe(FAKE_JOB_ID);
     expect(reviewArgs.threadTitles).toEqual(['RateLimiter guard', 'Integration tests']);
 
     // 3. submit_plan does NOT post the approval card (that is finalize_plan's job). It repaints the
@@ -406,7 +406,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockApprovals.request).toHaveBeenCalledOnce();
     const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(approvalArgs.title).toBe('Add rate limiting to the API');
-    expect(approvalArgs.tracks).toEqual(['RateLimiter guard', 'Integration tests']);
+    expect(approvalArgs.threads).toEqual(['RateLimiter guard', 'Integration tests']);
     expect(approvalArgs.summary).toBe('Add token-bucket rate limiting.');
   });
 
@@ -509,7 +509,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     await new Promise((r) => setTimeout(r, 0));
     const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(approvalArgs.kind).toBe('direct');
-    expect(approvalArgs.tracks).toEqual(['adjust the slice bound in paginate()']);
+    expect(approvalArgs.threads).toEqual(['adjust the slice bound in paginate()']);
   });
 
   it('(c) start_direct_build: classifier ASK (uncovered always-ask) → refused, no persist', async () => {
@@ -906,7 +906,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     receivedAt: new Date('2026-06-24T00:00:00Z'),
     orgId: TEAM_ID,
     repoId: PROJECT_ID,
-    threadId: THREAD_ID,
+    jobId: THREAD_ID,
     body: 'Explain the build step',
     author: { id: 'U-OP', displayName: 'Operator' },
     replyRoute: { surfaceId: 'web', threadRef: 'ts-stream-001' },
@@ -1287,7 +1287,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
     receivedAt: new Date('2026-06-25T00:00:00Z'),
     orgId: ORG,
     repoId: REPO,
-    threadId: THREAD,
+    jobId: THREAD,
     body: 'Do thing A, then a follow-up for thing B',
     author: { id: 'U-OP', displayName: 'Operator' },
     replyRoute: { surfaceId: 'web', threadRef: THREAD },
@@ -1366,7 +1366,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       firstMessage: 'do the side task',
     });
 
-    expect(result).toMatchObject({ ok: true, threadId: 'th-followup' });
+    expect(result).toMatchObject({ ok: true, jobId: 'th-followup' });
     expect(mock(store.createFollowUpThread)).toHaveBeenCalledWith({
       orgId: ORG,
       repoId: REPO,
@@ -1395,7 +1395,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
     );
     expect(turn).toHaveBeenCalledOnce();
     const ran = (turn.mock.calls[0][0] as ChatStimulus);
-    expect(ran).toMatchObject({ threadId: 'th-followup', orgId: ORG, repoId: REPO, body: 'kick off the follow-up' });
+    expect(ran).toMatchObject({ jobId: 'th-followup', orgId: ORG, repoId: REPO, body: 'kick off the follow-up' });
   });
 });
 
@@ -1404,7 +1404,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     kind: 'event',
     trust: 'untrusted',
     id: 'stim-evt-001',
-    threadId: 'th-evt-001',
+    jobId: 'th-evt-001',
     receivedAt: new Date('2026-06-21T00:00:00Z'),
     orgId: 'T-EVT',
     repoId: 'evt-proj',
@@ -1439,7 +1439,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
 
     expect(spy).toHaveBeenCalledOnce();
     const delivered = spy.mock.calls[0][0] as ChatStimulus;
-    expect(delivered.threadId).toBe('th-evt-001');
+    expect(delivered.jobId).toBe('th-evt-001');
     expect(delivered.seed).toBe(true); // a seed turn → no duplicate operator bubble
     // Trusted framing OUTSIDE the fence, the untrusted event body INSIDE it.
     expect(delivered.body).toMatch(/no human sent it/i);

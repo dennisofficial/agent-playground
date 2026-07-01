@@ -87,9 +87,9 @@ export function ReposSection({
   function onReonboard(repo: RepoView) {
     if (reonboard.isPending) return;
     reonboard.mutate(repo.id, {
-      onSuccess: ({ threadId }) => {
+      onSuccess: ({ jobId }) => {
         setFlash({ tone: 'green', text: `Atlas is onboarding ${repo.name} — opening the thread…` });
-        router.push(threadHref({ orgId, repoId: repo.id, threadId }));
+        router.push(threadHref({ orgId, repoId: repo.id, jobId }));
       },
       onError: (e) =>
         setFlash({ tone: 'red', text: (e as Error)?.message || 'Could not start onboarding.' }),

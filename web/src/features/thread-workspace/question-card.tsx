@@ -4,18 +4,18 @@ import { useState } from 'react';
 import { CheckCircle2, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAnswerQuestion } from '@/lib/api/thread-queries';
-import type { ThreadRef } from '@/lib/api/thread-api';
+import type { JobRef } from '@/lib/api/thread-api';
 import type { WebQuestionCard } from '@/lib/api/types';
 
 const ANSWERED_BY = 'U-OPERATOR';
 
 /**
  * A formal question the brain posed via `ask_question`. Renders one button per option (+ optional
- * free-text "Other"); the pick POSTs to `…/threads/:threadId/answer-question`, which stamps the durable
+ * free-text "Other"); the pick POSTs to `…/threads/:jobId/answer-question`, which stamps the durable
  * answered state and fires the brain's next turn. Once `card.answer` is set, renders the compact
  * answered state (so a reload still shows what was asked + chosen).
  */
-export function QuestionCardView({ card, threadRef }: { card: WebQuestionCard; threadRef: ThreadRef }) {
+export function QuestionCardView({ card, threadRef }: { card: WebQuestionCard; threadRef: JobRef }) {
   const answer = useAnswerQuestion(threadRef);
   const [other, setOther] = useState('');
   const [showOther, setShowOther] = useState(false);

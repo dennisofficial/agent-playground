@@ -27,7 +27,7 @@ export interface SandboxAttachInput {
    * (`atlas-sbx-thread-<id>`) so it is STABLE across the thread's branch and across re-attach. Omitted
    * only by the acceptance gate, whose sandbox stays keyed by org+repo+branch (one container per branch).
    */
-  threadId?: string;
+  jobId?: string;
   /**
    * The repo's uuid (`repos.id`) — carried separately from the slug-valued `sandbox.repoId`. Used by the
    * provisioner for grant resolution; not needed by `attach` itself but threaded through for parity.
@@ -56,17 +56,17 @@ export interface SandboxProvider {
   teardown(sandbox: FeatureSandbox): Promise<void>;
   /**
    * The HOST path of a thread's durable `/context` shared folder (the same dir bind-mounted into the
-   * container at `/context`). Outside the worktree, keyed by `threadId`, durable across container
+   * container at `/context`). Outside the worktree, keyed by `jobId`, durable across container
    * recreate. The brain authors plan/track specs here and reads them back via this path.
    */
-  contextDirHost(orgId: string, threadId: string): string;
+  contextDirHost(orgId: string, jobId: string): string;
   /**
    * The HOST path of a thread BRAIN session's Claude transcript root (`<brainHome>/claude/projects`),
-   * located by `threadId`. Survives container reaping (host side of the agent-home bind), so crash
+   * located by `jobId`. Survives container reaping (host side of the agent-home bind), so crash
    * recovery can read a turn that completed in the container but was never persisted to `messages`.
    * Null when nothing is on disk for the thread yet.
    */
-  brainTranscriptProjectsDir(threadId: string): string | null;
+  brainTranscriptProjectsDir(jobId: string): string | null;
   /**
    * Reclaim a container by its DETERMINISTIC identity (the same `orgId · repo · thread/branch` key
    * `attach` uses to name it) even when its concrete id isn't known. This is the terminal-cleanup

@@ -132,7 +132,7 @@ export class StimulusStoreService {
       repoId: input.repoId,
       kind: 'event',
       trust: 'untrusted',
-      threadId: thread.id,
+      jobId: thread.id,
       body: input.body,
       source: input.source,
       dedupeKey: input.dedupeKey,
@@ -149,14 +149,14 @@ export class StimulusStoreService {
   async recordChatStimulus(input: {
     orgId: string;
     repoId: string;
-    threadId: string;
+    jobId: string;
     author: { id: string; displayName: string };
     replyRoute: { surfaceId: string; threadRef: string };
     body: string;
   }): Promise<ChatStimulus> {
     await this.messages.save(
       this.messages.create({
-        job_id: input.threadId,
+        job_id: input.jobId,
         author: input.author.displayName,
         author_id: input.author.id,
         author_bot_id: null,
@@ -171,7 +171,7 @@ export class StimulusStoreService {
         kind: 'chat',
         trust: 'trusted',
         body: input.body,
-        job_id: input.threadId,
+        job_id: input.jobId,
         author_id: input.author.id,
         reply_route: input.replyRoute,
         source: null,
@@ -187,7 +187,7 @@ export class StimulusStoreService {
       kind: 'chat',
       trust: 'trusted',
       body: input.body,
-      threadId: input.threadId,
+      jobId: input.jobId,
       author: input.author,
       replyRoute: input.replyRoute,
       receivedAt: row.created_at,

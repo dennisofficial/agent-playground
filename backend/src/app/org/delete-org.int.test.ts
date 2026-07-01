@@ -74,8 +74,8 @@ class FakeGitService {
       repoPath: `/tmp/delete-org-fake-repos/${input.repoId}`,
     };
   }
-  async createBaseWorktree(repo: ProjectRepo, threadId: string): Promise<FeatureSandbox> {
-    return { repoId: repo.repoId, branch: 'main', worktreePath: `${repo.repoPath}/.worktrees/thread-${threadId}`, gitUrl: repo.gitUrl };
+  async createBaseWorktree(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
+    return { repoId: repo.repoId, branch: 'main', worktreePath: `${repo.repoPath}/.worktrees/thread-${jobId}`, gitUrl: repo.gitUrl };
   }
   async switchBranch(sandbox: FeatureSandbox, _repo: ProjectRepo, featureBranch: string): Promise<FeatureSandbox> {
     return { ...sandbox, branch: featureBranch };
@@ -90,13 +90,13 @@ class FakeGitService {
 }
 
 class FakeSandboxProvider {
-  async attach({ sandbox, threadId }: { sandbox: FeatureSandbox; orgId: string; threadId?: string }): Promise<FeatureSandbox> {
-    return { ...sandbox, containerId: `fake-c-${threadId ?? sandbox.branch}`, warm: true };
+  async attach({ sandbox, jobId }: { sandbox: FeatureSandbox; orgId: string; jobId?: string }): Promise<FeatureSandbox> {
+    return { ...sandbox, containerId: `fake-c-${jobId ?? sandbox.branch}`, warm: true };
   }
   async teardown(): Promise<void> {}
   async teardownByIdentity(): Promise<void> {}
-  contextDirHost(orgId: string, threadId: string): string {
-    return `/fake/contexts/${orgId}/${threadId}`;
+  contextDirHost(orgId: string, jobId: string): string {
+    return `/fake/contexts/${orgId}/${jobId}`;
   }
 }
 
@@ -141,16 +141,16 @@ async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
   return rows[0].id;
 }
 
-/** Seed one row in every child/org-scoped table for `threadId` under (`orgId`, `repoId`). */
-async function seedThreadChildren(orgId: string, repoIdArg: string, threadId: string): Promise<void> {
-  await ds.query(`INSERT INTO messages (job_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [threadId]);
+/** Seed one row in every child/org-scoped table for `jobId` under (`orgId`, `repoId`). */
+async function seedThreadChildren(orgId: string, repoIdArg: string, jobId: string): Promise<void> {
+  await ds.query(`INSERT INTO messages (job_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [jobId]);
   const [track] = await ds.query(
     `INSERT INTO threads (job_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
-    [threadId, orgId],
+    [jobId, orgId],
   );
-  await ds.query(`INSERT INTO steps (thread_id, job_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`, [track.id, threadId, orgId]);
-  await ds.query(`INSERT INTO decision_records (org_id, repo_id, job_id, overview) VALUES ($1, $2, $3, 'o')`, [orgId, repoIdArg, threadId]);
-  await ds.query(`INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`, [orgId, repoIdArg, threadId]);
+  await ds.query(`INSERT INTO steps (thread_id, job_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`, [track.id, jobId, orgId]);
+  await ds.query(`INSERT INTO decision_records (org_id, repo_id, job_id, overview) VALUES ($1, $2, $3, 'o')`, [orgId, repoIdArg, jobId]);
+  await ds.query(`INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`, [orgId, repoIdArg, jobId]);
 }
 
 /** Seed the org-DIRECT rows (no thread): credentials, an invite, a membership, memory, a parked event. */
@@ -232,8 +232,8 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     // Two real jobs (each provisions a job_sandboxes row + fake worktree).
     const t1 = await threadLifecycle.createThread({ orgId: ORG_ID, repoId, baseBranch: 'main', displayName: 'A' });
     const t2 = await threadLifecycle.createThread({ orgId: ORG_ID, repoId, baseBranch: 'main', displayName: 'B' });
-    await seedThreadChildren(ORG_ID, repoId, t1.threadId);
-    await seedThreadChildren(ORG_ID, repoId, t2.threadId);
+    await seedThreadChildren(ORG_ID, repoId, t1.jobId);
+    await seedThreadChildren(ORG_ID, repoId, t2.jobId);
     await seedOrgDirect(ORG_ID, repoId, 'tok-del', 'evt-del');
 
     // Sanity: the rows really exist before the delete.
@@ -257,7 +257,7 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('job_sandboxes', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('memory', 'org_id', ORG_ID)).toBe(0);
     // messages carry no org_id — assert by the (now-deleted) jobs' ids.
-    const msgs = await ds.query(`SELECT COUNT(*)::int AS c FROM messages WHERE job_id = ANY($1)`, [[t1.threadId, t2.threadId]]);
+    const msgs = await ds.query(`SELECT COUNT(*)::int AS c FROM messages WHERE job_id = ANY($1)`, [[t1.jobId, t2.jobId]]);
     expect(Number(msgs[0].c)).toBe(0);
 
     // The shared user row SURVIVES — orgs share users; only the membership join is removed.
@@ -266,7 +266,7 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
 
   it('is scoped to the target org — a sibling org and its data are untouched', async () => {
     const survivor = await threadLifecycle.createThread({ orgId: OTHER_ORG_ID, repoId: otherRepoId, baseBranch: 'main', displayName: 'keep' });
-    await seedThreadChildren(OTHER_ORG_ID, otherRepoId, survivor.threadId);
+    await seedThreadChildren(OTHER_ORG_ID, otherRepoId, survivor.jobId);
     await seedOrgDirect(OTHER_ORG_ID, otherRepoId, 'tok-keep', 'evt-keep');
 
     // Delete a DIFFERENT org (which has no rows of its own here).

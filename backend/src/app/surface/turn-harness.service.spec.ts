@@ -9,10 +9,10 @@ import { type BlockSink, TurnHarnessFactory } from './turn-harness.service';
  */
 function setup() {
   const live = new LiveTurnStore();
-  const persisted: Array<{ threadId: string; block: { kind: string; text?: string; meta?: Record<string, unknown> | null } }> = [];
+  const persisted: Array<{ jobId: string; block: { kind: string; text?: string; meta?: Record<string, unknown> | null } }> = [];
   const sink: BlockSink = {
-    appendBlock: vi.fn(async (threadId, block) => {
-      persisted.push({ threadId, block });
+    appendBlock: vi.fn(async (jobId, block) => {
+      persisted.push({ jobId, block });
     }),
   };
   return { live, persisted, factory: new TurnHarnessFactory(live, sink) };
@@ -21,7 +21,7 @@ function setup() {
 describe('TurnHarnessFactory — the shared transcript spine', () => {
   it('finish: streams live then persists authoritative blocks tagged with the role metaTag, and ends the lane', async () => {
     const { live, persisted, factory } = setup();
-    const h = factory.create({ threadId: 'T', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1', batchOrdinal: 2 } });
+    const h = factory.create({ jobId: 'T', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1', batchOrdinal: 2 } });
     h.onEvent({ kind: 'thinking', text: 'plan' });
     h.onEvent({ kind: 'text', text: 'hi' });
     h.onEvent({ kind: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'a' } });
@@ -43,7 +43,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('abort: persists partials, ends the lane, is idempotent, and drops late events', async () => {
     const { live, persisted, factory } = setup();
-    const h = factory.create({ threadId: 'T', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1' } });
+    const h = factory.create({ jobId: 'T', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1' } });
     h.onEvent({ kind: 'text', text: 'partial' });
     await h.abort();
 
@@ -59,7 +59,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('brain lane (no metaTag): blocks carry no phase tag; a subagent block keeps its parentToolUseId', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ threadId: 'T', channel: 'R' }); // default `main` lane, no metaTag
+    const h = factory.create({ jobId: 'T', channel: 'R' }); // default `main` lane, no metaTag
     h.onEvent({ kind: 'text', text: 'brain' });
     h.onEvent({ kind: 'text', text: 'sub', parentToolUseId: 'tu1' });
     await h.finish();
@@ -70,7 +70,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('finish turn_meta: appends a turn_meta block LAST carrying usage + context occupancy when usage is given', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ threadId: 'T', channel: 'R' });
+    const h = factory.create({ jobId: 'T', channel: 'R' });
     h.onEvent({ kind: 'text', text: 'reply' });
     await h.finish('reply', {
       usage: { inputTokens: 1200, outputTokens: 340, cacheReadTokens: 1100, costUsd: 0.02, model: 'claude-opus-4-8' },
@@ -88,7 +88,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('finish without usage: no turn_meta block is written', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ threadId: 'T', channel: 'R' });
+    const h = factory.create({ jobId: 'T', channel: 'R' });
     h.onEvent({ kind: 'text', text: 'reply' });
     await h.finish('reply');
     expect(persisted.map((p) => p.block.kind)).toEqual(['chat']);
@@ -96,7 +96,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('finish text fallback: a turn that emitted no text persists the final report as a chat block', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ threadId: 'T', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1' } });
+    const h = factory.create({ jobId: 'T', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1' } });
     h.onEvent({ kind: 'tool_use', id: 't1', name: 'Bash', input: {} });
     h.onEvent({ kind: 'tool_result', id: 't1', result: 'done' });
     await h.finish('summary report');

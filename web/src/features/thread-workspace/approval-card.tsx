@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useApprove } from '@/lib/api/thread-queries';
-import type { ThreadRef } from '@/lib/api/thread-api';
+import type { JobRef } from '@/lib/api/thread-api';
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
@@ -23,7 +23,7 @@ const NOTE_PROMPT: Partial<Record<ApprovalActionId, string>> = {
 
 /**
  * The inline plan / approval card — the gate. Approve / Request changes / Deny POST the verdict to
- * `…/threads/:threadId/approve` with the card action's verbatim `value`; the backend re-emits the card
+ * `…/threads/:jobId/approve` with the card action's verbatim `value`; the backend re-emits the card
  * as a verdict over SSE, which the refetch repaints in place. "Open full plan" switches the work column
  * to the plan doc (in-page, matching the comp — no separate route).
  */
@@ -33,7 +33,7 @@ export function ApprovalCardView({
   onOpenPlan,
 }: {
   card: WebApprovalCard;
-  threadRef: ThreadRef;
+  threadRef: JobRef;
   onOpenPlan?: () => void;
 }) {
   const value = card.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ?? card.actions[0]?.value ?? '';
@@ -68,9 +68,9 @@ export function ApprovalCardView({
         className="flex w-full items-center gap-2.5 border-t border-border bg-surface-2 px-4 py-3 text-left hover:brightness-[0.99]"
       >
         <span className="font-mono text-[10.5px] text-dim">
-          {confirmedCount} confirmed · {authoredCount} Atlas-authored · {card.tracks.length}{' '}
+          {confirmedCount} confirmed · {authoredCount} Atlas-authored · {card.threads.length}{' '}
           {card.kind === 'direct' ? 'change' : 'track'}
-          {card.tracks.length === 1 ? '' : 's'}
+          {card.threads.length === 1 ? '' : 's'}
         </span>
         <div className="flex-1" />
         <span className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-accent">
@@ -108,7 +108,7 @@ export function VerdictButtons({
   approveLabel = 'Approve',
   size = 'sm',
 }: {
-  threadRef: ThreadRef;
+  threadRef: JobRef;
   value: string;
   approveLabel?: string;
   size?: 'sm' | 'md';

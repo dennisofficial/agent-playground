@@ -164,11 +164,11 @@ export class FakeLocalGitService {
   }
 
   /** Per-thread base worktree (what `JobLifecycleService.provisionSandbox` cuts at thread create). */
-  async createBaseWorktree(repo: ProjectRepo, threadId: string): Promise<FeatureSandbox> {
+  async createBaseWorktree(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     return {
       repoId: repo.repoId,
       branch: repo.defaultBranch,
-      worktreePath: `${repo.repoPath}/.worktrees/thread-${threadId}`,
+      worktreePath: `${repo.repoPath}/.worktrees/thread-${jobId}`,
       gitUrl: repo.gitUrl,
       ...(repo.token ? { token: repo.token } : {}),
     };

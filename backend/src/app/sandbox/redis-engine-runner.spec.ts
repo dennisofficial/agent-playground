@@ -77,7 +77,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
     const out = await runner.run({
       ...baseArgs((e) => events.push(e)),
-      turnMeta: { threadId: 'th1', orgId: 'org1', channel: 'repo1', lane: 'main', kind: 'step' },
+      turnMeta: { jobId: 'th1', orgId: 'org1', channel: 'repo1', lane: 'main', kind: 'step' },
     });
 
     expect(events).toEqual([
@@ -136,7 +136,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     } as unknown as ContainerEngine;
 
     const bridge = {
-      threadId: 'th1',
+      jobId: 'th1',
       tools: {
         submit_plan: async (args: Record<string, unknown>) => {
           toolCalls.push({ name: 'submit_plan', args });

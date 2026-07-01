@@ -89,8 +89,8 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     create.mutate(
       { firstMessage: text, title, baseBranch: branch.trim() || undefined },
       {
-        onSuccess: ({ threadId }) => {
-          router.push(threadHref({ orgId, repoId, threadId }));
+        onSuccess: ({ jobId }) => {
+          router.push(threadHref({ orgId, repoId, jobId }));
           onDone?.();
         },
         onError: () => setError('Could not start the thread. Try again.'),

@@ -118,7 +118,7 @@ export function TicketDetailModal({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-[22px] pt-[18px]">
           {linkedThreadId ? (
             <Link
-              href={threadHref({ orgId, repoId, threadId: linkedThreadId })}
+              href={threadHref({ orgId, repoId, jobId: linkedThreadId })}
               className="mb-4 flex items-center gap-2.5 rounded-md border px-3 py-2.5 transition hover:brightness-[0.99]"
               style={{ borderColor: 'var(--accent-line)', background: 'var(--accent-soft)' }}
             >

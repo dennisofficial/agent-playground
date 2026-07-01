@@ -87,9 +87,10 @@ jobs:
       - name: Check for sandbox image changes
         id: sandbox_check
         run: |
-          # Detect if sandbox/image/** changed in this push (compare with the
-          # previous commit on main). If yes, pass SANDBOX_REBUILD=1 to deploy.sh.
-          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^backend/src/app/sandbox/image/'; then
+          # Detect if the sandbox image build context (backend/sandbox/**) changed in this
+          # push. The image auto-rebuilds on a context-hash change; SANDBOX_REBUILD=1 only
+          # forces past Docker's own layer cache.
+          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^backend/sandbox/'; then
             echo "sandbox_changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "sandbox_changed=false" >> "$GITHUB_OUTPUT"

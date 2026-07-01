@@ -71,7 +71,7 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
   let controller: WebSurfaceController;
   let runner: FakeStreamingRunner;
   let repoId: string;
-  let threadId: string;
+  let jobId: string;
 
   const prevSurface = process.env.SURFACE;
 
@@ -124,7 +124,7 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
       `INSERT INTO jobs (org_id, repo_id, origin, title) VALUES ($1, $2, 'chat', 'Stream thread') RETURNING id`,
       [ORG_ID, repoId],
     );
-    threadId = thread.id;
+    jobId = thread.id;
   }, 60_000);
 
   async function purge() {
@@ -143,14 +143,14 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
 
   it('resumes an in-flight turn on (re)connect, then persists the durable transcript on completion', async () => {
     // Drive a real human message — fire-and-forget; the brain turn runs async (producer ≠ connection).
-    surface.sendFromHuman(repoId, 'Say hello', { orgId: ORG_ID, threadTs: threadId, authorId: 'U', authorName: 'Op' });
+    surface.sendFromHuman(repoId, 'Say hello', { orgId: ORG_ID, threadTs: jobId, authorId: 'U', authorName: 'Op' });
 
     // Wait until the turn has streamed a couple of tokens and is paused mid-flight.
     await runner.reachedMid.promise;
     await new Promise((r) => setTimeout(r, 20)); // let the push microtasks settle
 
     // (1) RESUMABLE — the in-flight cumulative state is in the store (what a reconnecting client gets).
-    const snap = liveTurns.snapshot(repoId, threadId);
+    const snap = liveTurns.snapshot(repoId, jobId);
     expect(snap).not.toBeNull();
     expect(snap!.active).toBe(true);
     expect(snap!.blocks.find((b) => b.kind === 'text')).toMatchObject({ text: 'Hello', done: false });
@@ -158,7 +158,7 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     // (1b) NO double-render: the in-flight content is NOT yet in the durable log (it's persisted only at
     // turn end). If it were persisted mid-turn, a reconnecting client would see it twice — once from
     // `/messages` and once from the live snapshot.
-    const midRows = await ds.query(`SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND text LIKE '%Hello world%'`, [threadId]);
+    const midRows = await ds.query(`SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND text LIKE '%Hello world%'`, [jobId]);
     expect(midRows[0].n).toBe(0);
 
     // (2) A client that connects NOW (e.g. after a refresh) replays that snapshot the instant it subscribes.
@@ -179,11 +179,11 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     await waitFor(async () => {
       const rows = await ds.query(
         `SELECT text, kind FROM messages WHERE job_id = $1 AND author_bot_id IS NOT NULL`,
-        [threadId],
+        [jobId],
       );
       return rows.some((r: { text: string; kind: string }) => r.kind === 'chat' && r.text === 'Hello world');
     });
-    expect(liveTurns.snapshot(repoId, threadId)).toBeNull();
+    expect(liveTurns.snapshot(repoId, jobId)).toBeNull();
 
     // The late subscriber also saw the turn_end marker (its cue to reconcile against /messages).
     expect(

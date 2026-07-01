@@ -77,9 +77,9 @@ export class BrainStoreService {
   }
 
   /** Read a thread's message log, oldest-first — the transcript the grill turn reads. */
-  async transcript(threadId: string): Promise<TranscriptLine[]> {
+  async transcript(jobId: string): Promise<TranscriptLine[]> {
     const rows = await this.messages.find({
-      where: { job_id: threadId },
+      where: { job_id: jobId },
       order: { created_at: 'ASC' },
     });
     return rows.map((m) => ({
@@ -90,10 +90,10 @@ export class BrainStoreService {
   }
 
   /** Append Atlas's own message to a thread (so its turns are part of the durable transcript). */
-  async appendAtlasMessage(threadId: string, text: string): Promise<void> {
+  async appendAtlasMessage(jobId: string, text: string): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        job_id: threadId,
+        job_id: jobId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -111,12 +111,12 @@ export class BrainStoreService {
    * separate seed) Atlas see.
    */
   async appendSystemOperatorMessage(
-    threadId: string,
+    jobId: string,
     text: string,
   ): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        job_id: threadId,
+        job_id: jobId,
         author: 'System',
         author_id: 'system',
         author_bot_id: null,
@@ -140,7 +140,7 @@ export class BrainStoreService {
    * chronological order. (TypeORM honors an explicit `@CreateDateColumn` value on insert.)
    */
   async appendBlock(
-    threadId: string,
+    jobId: string,
     block: {
       kind: string;
       text?: string;
@@ -150,7 +150,7 @@ export class BrainStoreService {
   ): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        job_id: threadId,
+        job_id: jobId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -167,10 +167,10 @@ export class BrainStoreService {
    * "🔍 Codex is reviewing the plan…". Authored by Atlas so it renders on the agent side; the web renders
    * `build_event` rows as a tinted pill (tone derived from the text).
    */
-  async appendSystemEvent(threadId: string, text: string): Promise<void> {
+  async appendSystemEvent(jobId: string, text: string): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        job_id: threadId,
+        job_id: jobId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -190,18 +190,18 @@ export class BrainStoreService {
    * ({@link appendSystemOperatorMessage}), which only the operator sees. Returns false if it already existed.
    */
   async appendReviewFindingsMessage(
-    threadId: string,
+    jobId: string,
     reviewId: string,
     text: string,
   ): Promise<boolean> {
     const ts = `review-${reviewId}`;
     const existing = await this.messages.findOne({
-      where: { job_id: threadId, ts },
+      where: { job_id: jobId, ts },
     });
     if (existing) return false;
     await this.messages.save(
       this.messages.create({
-        job_id: threadId,
+        job_id: jobId,
         author: 'Codex',
         author_id: 'codex',
         author_bot_id: null,
@@ -222,12 +222,12 @@ export class BrainStoreService {
    * questionId); the card payload renders via `/messages` (which returns `m.card`). Authored by Atlas.
    */
   async appendCardMessage(
-    threadId: string,
+    jobId: string,
     input: { ts: string; text?: string; card: Record<string, unknown> },
   ): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        job_id: threadId,
+        job_id: jobId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -241,12 +241,12 @@ export class BrainStoreService {
 
   /** Merge a patch into a card row's `card` jsonb (e.g. stamp the answered state / `loggedDecision`). */
   async updateCardMessage(
-    threadId: string,
+    jobId: string,
     ts: string,
     patch: Record<string, unknown>,
   ): Promise<void> {
     const row = await this.messages.findOne({
-      where: { job_id: threadId, ts, kind: 'card' },
+      where: { job_id: jobId, ts, kind: 'card' },
     });
     if (!row) return;
     row.card = { ...(row.card ?? {}), ...patch };
@@ -254,9 +254,9 @@ export class BrainStoreService {
   }
 
   /** Load this thread's card rows, newest-first — small helper for the question-card lookups below. */
-  private async questionCards(threadId: string): Promise<MessageEntity[]> {
+  private async questionCards(jobId: string): Promise<MessageEntity[]> {
     const rows = await this.messages.find({
-      where: { job_id: threadId, kind: 'card' },
+      where: { job_id: jobId, kind: 'card' },
       order: { created_at: 'DESC' },
     });
     return rows.filter(
@@ -273,9 +273,9 @@ export class BrainStoreService {
    * out-of-order answer attaches the card the operator just answered, not the oldest-created one.
    */
   async latestAnsweredQuestionCard(
-    threadId: string,
+    jobId: string,
   ): Promise<MessageEntity | null> {
-    const cards = await this.questionCards(threadId);
+    const cards = await this.questionCards(jobId);
     const answered = cards.filter((m) => {
       const c = m.card as Record<string, unknown>;
       return c.answer != null && c.loggedDecision !== true;
@@ -299,17 +299,17 @@ export class BrainStoreService {
    * single-slot refusal — stacking is allowed. Returns `{ ok:false }` only if the thread doesn't exist.
    */
   async openQuestion(
-    threadId: string,
+    jobId: string,
     input: { ts: string; text?: string; card: Record<string, unknown> },
   ): Promise<{ ok: boolean }> {
     return this.dataSource.transaction(async (m) => {
       const threads = m.getRepository(JobEntity);
       const messages = m.getRepository(MessageEntity);
-      const thread = await threads.findOne({ where: { id: threadId } });
+      const thread = await threads.findOne({ where: { id: jobId } });
       if (!thread) return { ok: false };
       await messages.save(
         messages.create({
-          job_id: threadId,
+          job_id: jobId,
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -323,7 +323,7 @@ export class BrainStoreService {
         .createQueryBuilder()
         .update()
         .set({ open_question_count: () => 'open_question_count + 1' })
-        .where('id = :threadId', { threadId })
+        .where('id = :jobId', { jobId })
         .execute();
       return { ok: true };
     });
@@ -336,7 +336,7 @@ export class BrainStoreService {
    * then seeds the delivery turn) and `{ firstAnswer:false }` for a stale/duplicate/already-answered call.
    */
   async markQuestionAnswered(
-    threadId: string,
+    jobId: string,
     questionId: string,
     answer: string,
   ): Promise<{ firstAnswer: boolean }> {
@@ -349,7 +349,7 @@ export class BrainStoreService {
         .createQueryBuilder()
         .update(MessageEntity)
         .set({ card: () => 'card || :patch::jsonb' })
-        .where('job_id = :threadId', { threadId })
+        .where('job_id = :jobId', { jobId })
         .andWhere('ts = :questionId', { questionId })
         .andWhere("kind = 'card'")
         .andWhere("card ->> 'type' = 'question_card'")
@@ -365,7 +365,7 @@ export class BrainStoreService {
           .set({
             open_question_count: () => 'GREATEST(0, open_question_count - 1)',
           })
-          .where('id = :threadId', { threadId })
+          .where('id = :jobId', { jobId })
           .execute();
       }
       return { firstAnswer };
@@ -374,11 +374,11 @@ export class BrainStoreService {
 
   /** Fetch one thread's question-card payload by id (the card's `ts`); null if absent / not a question. */
   async getQuestionCard(
-    threadId: string,
+    jobId: string,
     questionId: string,
   ): Promise<WebQuestionCard | null> {
     const row = await this.messages.findOne({
-      where: { job_id: threadId, ts: questionId, kind: 'card' },
+      where: { job_id: jobId, ts: questionId, kind: 'card' },
     });
     const card = row?.card as WebQuestionCard | undefined;
     return card?.type === 'question_card' ? card : null;
@@ -386,10 +386,10 @@ export class BrainStoreService {
 
   /** Stamp a question card delivered (its answer reached the brain in a turn that actually ran). */
   async markQuestionDelivered(
-    threadId: string,
+    jobId: string,
     questionId: string,
   ): Promise<void> {
-    await this.updateCardMessage(threadId, questionId, {
+    await this.updateCardMessage(jobId, questionId, {
       deliveredAt: new Date().toISOString(),
     });
   }
@@ -402,7 +402,7 @@ export class BrainStoreService {
    */
   async findUndeliveredAnsweredQuestions(): Promise<
     {
-      threadId: string;
+      jobId: string;
       orgId: string;
       repoId: string;
       questionId: string;
@@ -417,7 +417,7 @@ export class BrainStoreService {
       .andWhere("m.card ->> 'type' = 'question_card'")
       .andWhere("m.card ->> 'answer' IS NOT NULL")
       .andWhere("m.card ->> 'deliveredAt' IS NULL")
-      .select('m.job_id', 'threadId')
+      .select('m.job_id', 'jobId')
       .addSelect('m.ts', 'questionId')
       .addSelect("m.card ->> 'question'", 'question')
       .addSelect("m.card ->> 'answer'", 'answer')
@@ -425,7 +425,7 @@ export class BrainStoreService {
       .addSelect('t.repo_id', 'repoId')
       .orderBy("m.card ->> 'answeredAt'", 'ASC')
       .getRawMany<{
-        threadId: string;
+        jobId: string;
         orgId: string;
         repoId: string;
         questionId: string;
@@ -433,7 +433,7 @@ export class BrainStoreService {
         answer: string | null;
       }>();
     return raw.map((r) => ({
-      threadId: r.threadId,
+      jobId: r.jobId,
       orgId: r.orgId,
       repoId: r.repoId,
       questionId: r.questionId,
@@ -471,18 +471,18 @@ export class BrainStoreService {
    * is already open, so the brain can't stack requests.
    */
   async openSecretRequest(
-    threadId: string,
+    jobId: string,
     input: { requestId: string; card: WebSecretInputCard },
   ): Promise<{ ok: boolean; alreadyOpen?: boolean }> {
     return this.dataSource.transaction(async (m) => {
       const threads = m.getRepository(JobEntity);
       const messages = m.getRepository(MessageEntity);
-      const thread = await threads.findOne({ where: { id: threadId } });
+      const thread = await threads.findOne({ where: { id: jobId } });
       if (!thread) return { ok: false };
       if (thread.awaiting_secret_id) {
         const open = await messages.findOne({
           where: {
-            job_id: threadId,
+            job_id: jobId,
             ts: thread.awaiting_secret_id,
             kind: 'card',
           },
@@ -493,7 +493,7 @@ export class BrainStoreService {
       }
       await messages.save(
         messages.create({
-          job_id: threadId,
+          job_id: jobId,
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -504,7 +504,7 @@ export class BrainStoreService {
         }),
       );
       await threads.update(
-        { id: threadId },
+        { id: jobId },
         { awaiting_secret_id: input.requestId },
       );
       return { ok: true };
@@ -512,47 +512,47 @@ export class BrainStoreService {
   }
 
   /** The requestId this thread is awaiting a secret value for (the gate pointer), or null. */
-  async awaitingSecretId(threadId: string): Promise<string | null> {
-    const row = await this.threads.findOne({ where: { id: threadId } });
+  async awaitingSecretId(jobId: string): Promise<string | null> {
+    const row = await this.threads.findOne({ where: { id: jobId } });
     return row?.awaiting_secret_id ?? null;
   }
 
   /** Fetch one thread's secret-input card by id (the card's `ts`); null if absent / not a secret card. */
   async getSecretCard(
-    threadId: string,
+    jobId: string,
     requestId: string,
   ): Promise<WebSecretInputCard | null> {
     const row = await this.messages.findOne({
-      where: { job_id: threadId, ts: requestId, kind: 'card' },
+      where: { job_id: jobId, ts: requestId, kind: 'card' },
     });
     const card = row?.card as WebSecretInputCard | undefined;
     return card?.type === 'secret_input_card' ? card : null;
   }
 
   /** Stamp a secret card PROVIDED (the operator submitted the value → encrypted store). No value stored. */
-  async markSecretProvided(threadId: string, requestId: string): Promise<void> {
-    await this.updateCardMessage(threadId, requestId, {
+  async markSecretProvided(jobId: string, requestId: string): Promise<void> {
+    await this.updateCardMessage(jobId, requestId, {
       provided_at: new Date().toISOString(),
     });
   }
 
   /** Stamp a secret card DELIVERED (the masked confirmation reached the brain in a turn that ran). */
   async markSecretDelivered(
-    threadId: string,
+    jobId: string,
     requestId: string,
   ): Promise<void> {
-    await this.updateCardMessage(threadId, requestId, {
+    await this.updateCardMessage(jobId, requestId, {
       delivered_at: new Date().toISOString(),
     });
   }
 
   /** Clear the secret gate iff it still equals `requestId` (compare-and-clear; ignores a superseded gate). */
   async clearAwaitingSecret(
-    threadId: string,
+    jobId: string,
     requestId: string,
   ): Promise<void> {
     await this.threads.update(
-      { id: threadId, awaiting_secret_id: requestId },
+      { id: jobId, awaiting_secret_id: requestId },
       { awaiting_secret_id: null },
     );
   }
@@ -565,7 +565,7 @@ export class BrainStoreService {
    */
   async findUndeliveredProvidedSecrets(): Promise<
     {
-      threadId: string;
+      jobId: string;
       orgId: string;
       repoId: string;
       requestId: string;
@@ -577,7 +577,7 @@ export class BrainStoreService {
       where: { awaiting_secret_id: Not(IsNull()) },
     });
     const out: {
-      threadId: string;
+      jobId: string;
       orgId: string;
       repoId: string;
       requestId: string;
@@ -588,7 +588,7 @@ export class BrainStoreService {
       const card = await this.getSecretCard(t.id, t.awaiting_secret_id!);
       if (card?.provided_at != null && card.delivered_at == null) {
         out.push({
-          threadId: t.id,
+          jobId: t.id,
           orgId: t.org_id,
           repoId: t.repo_id,
           requestId: t.awaiting_secret_id!,
@@ -603,8 +603,8 @@ export class BrainStoreService {
   // ── pending decisions (the grilling working set; snapshotted into a record by submit_plan) ──────────
 
   /** Read a thread's working-set decisions logged so far (the `pending_decisions` jsonb). */
-  async pendingDecisions(threadId: string): Promise<Decision[]> {
-    const row = await this.threads.findOne({ where: { id: threadId } });
+  async pendingDecisions(jobId: string): Promise<Decision[]> {
+    const row = await this.threads.findOne({ where: { id: jobId } });
     return row?.pending_decisions ?? [];
   }
 
@@ -616,14 +616,14 @@ export class BrainStoreService {
    * `submit_plan` → `persistPlan`.)
    */
   async createDecision(
-    threadId: string,
+    jobId: string,
     input: Omit<Decision, 'id'>,
   ): Promise<{ decision: Decision; all: Decision[] }> {
-    const row = await this.threads.findOneOrFail({ where: { id: threadId } });
+    const row = await this.threads.findOneOrFail({ where: { id: jobId } });
     const current = row.pending_decisions ?? [];
     const decision: Decision = { ...input, id: nextDecisionId(current) };
     const all = [...current, decision];
-    await this.threads.update({ id: threadId }, { pending_decisions: all });
+    await this.threads.update({ id: jobId }, { pending_decisions: all });
     return { decision, all };
   }
 
@@ -632,7 +632,7 @@ export class BrainStoreService {
    * array, or `null` if no decision with that id exists (the caller surfaces `knownIds`).
    */
   async updateDecision(
-    threadId: string,
+    jobId: string,
     id: string,
     patch: Partial<
       Pick<
@@ -641,13 +641,13 @@ export class BrainStoreService {
       >
     >,
   ): Promise<{ decision: Decision; all: Decision[] } | null> {
-    const row = await this.threads.findOneOrFail({ where: { id: threadId } });
+    const row = await this.threads.findOneOrFail({ where: { id: jobId } });
     const current = row.pending_decisions ?? [];
     const idx = current.findIndex((d) => d.id === id);
     if (idx < 0) return null;
     const decision: Decision = { ...current[idx], ...patch };
     const all = current.map((d, i) => (i === idx ? decision : d));
-    await this.threads.update({ id: threadId }, { pending_decisions: all });
+    await this.threads.update({ id: jobId }, { pending_decisions: all });
     return { decision, all };
   }
 
@@ -656,14 +656,14 @@ export class BrainStoreService {
    * re-renders from `all`). `removed:false` when the id is unknown.
    */
   async deleteDecision(
-    threadId: string,
+    jobId: string,
     id: string,
   ): Promise<{ removed: boolean; all: Decision[] }> {
-    const row = await this.threads.findOneOrFail({ where: { id: threadId } });
+    const row = await this.threads.findOneOrFail({ where: { id: jobId } });
     const current = row.pending_decisions ?? [];
     const all = current.filter((d) => d.id !== id);
     if (all.length === current.length) return { removed: false, all };
-    await this.threads.update({ id: threadId }, { pending_decisions: all });
+    await this.threads.update({ id: jobId }, { pending_decisions: all });
     return { removed: true, all };
   }
 
@@ -672,8 +672,8 @@ export class BrainStoreService {
    * `turn_active` axis of the "needs you" signal (see `deriveNeedsYou`). Best-effort — a write failure
    * here must never break the turn itself (the caller swallows errors).
    */
-  async setTurnActive(threadId: string, active: boolean): Promise<void> {
-    await this.threads.update({ id: threadId }, { turn_active: active });
+  async setTurnActive(jobId: string, active: boolean): Promise<void> {
+    await this.threads.update({ id: jobId }, { turn_active: active });
   }
 
   /**
@@ -708,18 +708,18 @@ export class BrainStoreService {
   async route(thread: {
     orgId: string;
     repoId: string;
-    threadId: string;
+    jobId: string;
   }): Promise<ThreadRoute> {
-    return { channel: thread.repoId, threadTs: thread.threadId };
+    return { channel: thread.repoId, threadTs: thread.jobId };
   }
 
   /**
    * If this thread is already being scoped (`status='planning'`), return its id — so a multi-turn grill
    * continues ONE build rather than re-anchoring per message. Null otherwise.
    */
-  async openJobOnThread(threadId: string): Promise<string | null> {
+  async openJobOnThread(jobId: string): Promise<string | null> {
     const row = await this.threads.findOne({
-      where: { id: threadId, status: 'planning' },
+      where: { id: jobId, status: 'planning' },
     });
     return row?.id ?? null;
   }
@@ -728,15 +728,15 @@ export class BrainStoreService {
   async openJob(input: {
     orgId: string;
     repoId: string;
-    threadId: string;
+    jobId: string;
     title: string;
     kind: JobKind;
   }): Promise<string> {
     await this.threads.update(
-      { id: input.threadId },
+      { id: input.jobId },
       { kind: input.kind, status: 'planning', title: input.title },
     );
-    return input.threadId;
+    return input.jobId;
   }
 
   /**
@@ -748,7 +748,7 @@ export class BrainStoreService {
   async persistPlan(input: {
     orgId: string;
     repoId: string;
-    threadId: string;
+    jobId: string;
     title: string;
     kind: JobKind;
     overview: string;
@@ -795,9 +795,9 @@ export class BrainStoreService {
       // tracks MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(job_id, ordinal)
       // collision); `steps.thread_id ON DELETE CASCADE` clears their step rows too. The prior draft
       // record is marked `superseded` (audit trail, never an approved one).
-      await tracks.delete({ job_id: input.threadId });
+      await tracks.delete({ job_id: input.jobId });
       await records.update(
-        { job_id: input.threadId, status: 'draft' },
+        { job_id: input.jobId, status: 'draft' },
         { status: 'superseded' },
       );
 
@@ -805,7 +805,7 @@ export class BrainStoreService {
         records.create({
           org_id: input.orgId,
           repo_id: input.repoId,
-          job_id: input.threadId,
+          job_id: input.jobId,
           status: 'draft',
           overview: input.overview,
           decisions: input.decisions,
@@ -821,7 +821,7 @@ export class BrainStoreService {
         input.threadTitles.map((brief, i) => {
           const authored = input.stepsByThread?.[i];
           return tracks.create({
-            job_id: input.threadId,
+            job_id: input.jobId,
             org_id: input.orgId,
             ordinal: (i + 1) * ORDINAL_GAP,
             brief,
@@ -844,7 +844,7 @@ export class BrainStoreService {
           (input.stepsByThread?.[i] ?? []).map((p, j) =>
             steps.create({
               thread_id: track.id,
-              job_id: input.threadId,
+              job_id: input.jobId,
               org_id: input.orgId,
               ordinal: (j + 1) * ORDINAL_GAP,
               title: p.title,
@@ -858,7 +858,7 @@ export class BrainStoreService {
       }
 
       await threads.update(
-        { id: input.threadId },
+        { id: input.jobId },
         {
           kind: input.kind,
           title,
@@ -870,7 +870,7 @@ export class BrainStoreService {
       return record.id;
     });
 
-    const thread = await this.loadJob(input.threadId);
+    const thread = await this.loadJob(input.jobId);
     return { thread, decisionRecordId };
   }
 
@@ -878,9 +878,9 @@ export class BrainStoreService {
    * Flip a reviewed plan to `awaiting_approval` — the operator gate. Called by `finalize_plan` once
    * Atlas has addressed the Codex review (the plan was persisted as `plan_review` by `submit_plan`).
    */
-  async markAwaitingApproval(threadId: string): Promise<void> {
+  async markAwaitingApproval(jobId: string): Promise<void> {
     await this.threads.update(
-      { id: threadId },
+      { id: jobId },
       { status: 'awaiting_approval' },
     );
   }
@@ -902,7 +902,7 @@ export class BrainStoreService {
 
   /** Mark a decision record approved + flip its thread to `running` (the dispatch precondition). */
   async approve(
-    threadId: string,
+    jobId: string,
     decisionRecordId: string,
     approvedBy: string,
   ): Promise<Job> {
@@ -911,38 +911,38 @@ export class BrainStoreService {
       { id: decisionRecordId },
       { status: 'approved', approved_by: approvedBy, approved_at: now },
     );
-    await this.threads.update({ id: threadId }, { status: 'running' });
-    return this.loadJob(threadId);
+    await this.threads.update({ id: jobId }, { status: 'running' });
+    return this.loadJob(jobId);
   }
 
   /** Flip a thread back to `planning` (a rejected / change-requested plan returns to the grill). */
-  async reopenPlanning(threadId: string): Promise<void> {
-    await this.threads.update({ id: threadId }, { status: 'planning' });
+  async reopenPlanning(jobId: string): Promise<void> {
+    await this.threads.update({ id: jobId }, { status: 'planning' });
   }
 
   /** Cancel a thread's build (a denied plan). */
-  async cancel(threadId: string): Promise<void> {
-    await this.threads.update({ id: threadId }, { status: 'cancelled' });
+  async cancel(jobId: string): Promise<void> {
+    await this.threads.update({ id: jobId }, { status: 'cancelled' });
   }
 
   /** The ticket a thread was promoted from / works (`threads.ticket_id`), or null. */
-  async threadTicketId(threadId: string): Promise<string | null> {
-    const row = await this.threads.findOne({ where: { id: threadId } });
+  async threadTicketId(jobId: string): Promise<string | null> {
+    const row = await this.threads.findOne({ where: { id: jobId } });
     return row?.ticket_id ?? null;
   }
 
   /** Load a thread row as the domain `Thread` shape. */
-  async loadJob(threadId: string): Promise<Job> {
-    const row = await this.threads.findOneOrFail({ where: { id: threadId } });
+  async loadJob(jobId: string): Promise<Job> {
+    const row = await this.threads.findOneOrFail({ where: { id: jobId } });
     return toThread(row);
   }
 
   // ── decision-ledger promotion spine (boot backstop + direct-path stamp) ──────────────────────────
 
   /** Mark a thread's ledger promotion COMPLETE — stamped only after the promotion turn + commit succeed. */
-  async markLedgerPromoted(threadId: string): Promise<void> {
+  async markLedgerPromoted(jobId: string): Promise<void> {
     await this.threads.update(
-      { id: threadId },
+      { id: jobId },
       { ledger_promotion_status: 'complete', ledger_promoted_at: new Date() },
     );
   }

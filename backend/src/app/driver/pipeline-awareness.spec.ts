@@ -13,7 +13,7 @@ import {
  */
 
 const RUNNING_STATE = {
-  threadId: 't1',
+  jobId: 't1',
   status: 'running',
   decisionRecordId: 'dr-1',
   prUrl: null,

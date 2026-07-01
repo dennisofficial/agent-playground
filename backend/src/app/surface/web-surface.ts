@@ -84,7 +84,7 @@ export class WebSurface implements ChatSurface {
   /** Control channel: operator resume requests (POST /web/resume) — the driver subscribes via the port. */
   private readonly resumeSubject = new Subject<{ jobId: string }>();
   /** Thread metadata updates (e.g. an auto-generated title) — the SSE controller fans these to clients. */
-  private readonly threadMetaSubject = new Subject<{ channel: string; threadId: string; title: string }>();
+  private readonly threadMetaSubject = new Subject<{ channel: string; jobId: string; title: string }>();
 
   /** Every message Atlas posted, in order — in-memory for the REST history endpoint. */
   readonly outbox: WebOutboundMessage[] = [];
@@ -116,13 +116,13 @@ export class WebSurface implements ChatSurface {
   }
 
   /** Thread metadata updates (title) — the SSE controller maps these to `{ type: 'thread_meta' }` frames. */
-  get threadMeta$(): Observable<{ channel: string; threadId: string; title: string }> {
+  get threadMeta$(): Observable<{ channel: string; jobId: string; title: string }> {
     return this.threadMetaSubject.asObservable();
   }
 
   /** Broadcast a thread metadata change (the channel is the repo id the SSE stream is keyed by). */
-  emitThreadMeta(channel: string, threadId: string, title: string): void {
-    this.threadMetaSubject.next({ channel, threadId, title });
+  emitThreadMeta(channel: string, jobId: string, title: string): void {
+    this.threadMetaSubject.next({ channel, jobId, title });
   }
 
   /** Emit a resume request (called by the controller on `POST /web/resume`). */
@@ -169,12 +169,12 @@ export class WebSurface implements ChatSurface {
    */
   seedSystemNotification(
     channel: string,
-    threadId: string,
+    jobId: string,
     body: string,
     opts: { orgId?: string; deliveredQuestionId?: string } = {},
   ): string {
     return this.receiveFromClient(channel, wrapSystemNotification(body), {
-      threadTs: threadId,
+      threadTs: jobId,
       seed: true,
       authorId: SYSTEM_SEED_AUTHOR.id,
       authorName: SYSTEM_SEED_AUTHOR.name,
@@ -301,9 +301,9 @@ function detectAndConvertApprovalCard(
   }
   if (!meta) return undefined;
 
-  // Extract summary (first track block text) and tracks (numbered list in a later track block).
+  // Extract summary (first track block text) and threads (numbered list in a later track block).
   let summary = '';
-  const tracks: string[] = [];
+  const threads: string[] = [];
   let decisions: ApprovalDecision[] = [];
   let planUrl: string | undefined;
   // The headline is either "*Plan proposal — <title>*" (full ceremony) or "*Direct build — <title>*"
@@ -327,7 +327,7 @@ function detectAndConvertApprovalCard(
         const lines = raw.split('\n').slice(1); // drop the "*Tracks*"/"*Changes*" header line
         for (const line of lines) {
           const m = /^\d+\.\s+(.+)$/.exec(line.trim());
-          if (m) tracks.push(m[1]);
+          if (m) threads.push(m[1]);
         }
       } else if (raw.startsWith('*Decisions*')) {
         // Parse decisions — bullet format: `• [confirmed|authored] *title* _(class)_ — ruling`. The
@@ -363,7 +363,7 @@ function detectAndConvertApprovalCard(
     title,
     summary,
     ...(decisions.length ? { decisions } : {}),
-    tracks,
+    threads,
     ...(planUrl ? { planUrl } : {}),
   });
 }

@@ -50,7 +50,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
   function makeController(liveTurns: LiveTurnStore) {
     const surface = {
       outbound$: new Subject<WebOutboundMessage>(),
-      threadMeta$: new Subject<{ channel: string; threadId: string; title: string }>(),
+      threadMeta$: new Subject<{ channel: string; jobId: string; title: string }>(),
     };
     return new WebSurfaceController(
       surface as never, // surface (outbound$ + threadMeta$)
@@ -158,7 +158,7 @@ describe('LiveTurnStore — lanes (a brain turn and a build turn coexist on one 
     const snaps = store.snapshotsForRepo(REPO);
     expect(snaps).toHaveLength(2);
     expect(new Set(snaps.map((s) => s.lane))).toEqual(new Set(['main', PHASE]));
-    expect(snaps.every((s) => s.threadId === THREAD)).toBe(true);
+    expect(snaps.every((s) => s.jobId === THREAD)).toBe(true);
   });
 
   it('a snapshot preserves parentToolUseId so subagent ownership survives a mid-turn reconnect', () => {

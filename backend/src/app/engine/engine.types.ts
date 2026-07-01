@@ -207,10 +207,10 @@ export interface ToolBridgeOptions {
    * The thread that owns this exec. Used to enforce per-thread scoping: any `tool_request` that
    * names a resource scoped to a different thread is denied.
    */
-  threadId: string;
+  jobId: string;
   /**
    * Host-side tool dispatch table. Keys are tool names; values are the implementations that execute
-   * on the host. The dispatch layer enforces `threadId` scoping before calling these.
+   * on the host. The dispatch layer enforces `jobId` scoping before calling these.
    */
   tools: Record<string, ToolImpl>;
 }
@@ -315,7 +315,7 @@ export interface RunEngineArgs {
 
 /** Registry context carried on a Redis-transport turn (rebuilds the harness + brain tool closure on re-attach). */
 export interface TurnMeta {
-  threadId: string;
+  jobId: string;
   orgId: string;
   /** SSE fan-out channel (repo id). */
   channel: string;

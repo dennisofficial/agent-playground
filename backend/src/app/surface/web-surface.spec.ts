@@ -35,7 +35,7 @@ const SAMPLE_CARD: DecisionApprovalCard = {
   decisionRecordId: 'dr-xyz',
   title: 'Payments integration',
   summary: 'Use Stripe; add a webhooks table.',
-  tracks: ['Backend: Stripe client + webhooks', 'Frontend: checkout page'],
+  threads: ['Backend: Stripe client + webhooks', 'Frontend: checkout page'],
   decisions: [
     { decisionClass: 'dependency', title: 'Payment gateway', ruling: 'Stripe' },
   ],
@@ -155,9 +155,9 @@ describe('WebSurface — approval card conversion', () => {
     expect(card.decisionRecordId).toBe('dr-xyz');
     expect(card.title).toBe('Payments integration');
     expect(card.summary).toContain('Use Stripe');
-    expect(card.tracks).toHaveLength(2);
-    expect(card.tracks[0]).toContain('Backend');
-    expect(card.tracks[1]).toContain('Frontend');
+    expect(card.threads).toHaveLength(2);
+    expect(card.threads[0]).toContain('Backend');
+    expect(card.threads[1]).toContain('Frontend');
 
     // All three verdict actions are present.
     const actionIds = card.actions.map((a) => a.actionId);
@@ -318,7 +318,7 @@ describe('webApprovalCard (pure builder)', () => {
     expect(result.decisionRecordId).toBe('dr-xyz');
     expect(result.title).toBe('Payments integration');
     expect(result.summary).toBe('Use Stripe; add a webhooks table.');
-    expect(result.tracks).toEqual([
+    expect(result.threads).toEqual([
       'Backend: Stripe client + webhooks',
       'Frontend: checkout page',
     ]);

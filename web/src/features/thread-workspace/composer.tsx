@@ -3,11 +3,11 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, ChevronDown, Plus } from 'lucide-react';
 import { useSay } from '@/lib/api/thread-queries';
-import type { ThreadRef } from '@/lib/api/thread-api';
+import type { JobRef } from '@/lib/api/thread-api';
 import { ContextMeter } from './bubbles';
 
 /**
- * The conversation composer — talks to the thread's brain. Posts to `…/threads/:threadId/say`. Typed
+ * The conversation composer — talks to the thread's brain. Posts to `…/threads/:jobId/say`. Typed
  * ops ("pause", "approve", "resume", "simplify the rest"…) run the same operations as the buttons; the
  * brain interprets the text, so the composer just sends it. Enter sends; Shift+Enter newlines.
  *
@@ -20,7 +20,7 @@ export function Composer({
   onHeightChange,
   context,
 }: {
-  threadRef: ThreadRef;
+  threadRef: JobRef;
   placeholder?: string;
   /** Reports the composer overlay's rendered height so the transcript can reserve matching space. */
   onHeightChange?: (height: number) => void;

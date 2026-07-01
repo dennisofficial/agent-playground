@@ -22,7 +22,7 @@ export interface SessionRef {
   /** Stable session id (the engine conversation handle). */
   id: string;
   /** The thread this session serves. */
-  threadId: string;
+  jobId: string;
   /** The step this session is building (null for non-step sessions, e.g. planning). */
   stepId: string | null;
   engine: SessionEngine;

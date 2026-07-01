@@ -157,9 +157,9 @@ describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
    */
   it('dispatchToolRequest source enforces per-thread scope before dispatching any tool', () => {
     const src = readFileSync(join(SRC, 'engine', 'tool-bridge-host.ts'), 'utf8');
-    // The guard: if args includes a threadId field it must match the owning thread.
+    // The guard: if args includes a jobId field it must match the owning thread.
     expect(src).toContain('Thread scope violation');
-    expect(src).toContain("args['threadId'] !== bridge.threadId");
+    expect(src).toContain("args['jobId'] !== bridge.jobId");
   });
 
   it('RedisEngineRunner dispatches host tools through dispatchToolRequest (scope-enforced path)', () => {

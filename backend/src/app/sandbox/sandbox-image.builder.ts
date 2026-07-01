@@ -1,9 +1,9 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, readFileSync } from 'node:fs';
-import { join, sep } from 'node:path';
-import { bundleEngine } from './bundle-engine';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { bundleEngine, sandboxContextDir } from './bundle-engine';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 
 /** The image label that carries the build-context hash — the signal for auto-rebuild-on-change. */
@@ -22,8 +22,8 @@ const CONTEXT_FILES = ['Dockerfile', 'sandbox-init.sh', 'shell-init.sh'] as cons
  * build-context files and bakes that hash into the image as a label, so it rebuilds automatically when
  * the Dockerfile / shell scripts change and otherwise skips the (slow) build after a fast label read.
  * `SANDBOX_REBUILD` forces a rebuild past that (to bust Docker's own layer cache). The image tag comes
- * from `SANDBOX_IMAGE` (else a sane default). The build context is the colocated `image/` dir
- * (Dockerfile + sandbox-init.sh + shell-init.sh + — from D1 — the engine bundle).
+ * from `SANDBOX_IMAGE` (else a sane default). The build context is the fixed `backend/sandbox/` dir
+ * (Dockerfile + sandbox-init.sh + shell-init.sh + the engine bundle written there at boot).
  *
  * On bootstrap it also REBUNDLES the engine entrypoint (`bundleEngine`) so the API itself keeps the
  * engine current — a dev watch-restart or a prod deploy-restart refreshes it with no manual bundle step
@@ -31,8 +31,8 @@ const CONTEXT_FILES = ['Dockerfile', 'sandbox-init.sh', 'shell-init.sh'] as cons
  * reaches running threads on their next turn. Best-effort: if bundling can't run (e.g. esbuild/source
  * absent), it logs and falls back to the existing bundle / the baked image.
  *
- * NOTE: in a compiled prod build, `nest-cli.json` must copy `sandbox/image/**` as assets so this path
- * resolves; under ts-node / vitest `__dirname` is the source dir, so it resolves as-is.
+ * NOTE: the build context is the fixed `backend/sandbox/` dir (see `sandboxContextDir`), NOT under
+ * `dist`/`src` — so it needs no nest-cli asset copy and is identical at build time and runtime.
  */
 @Injectable()
 export class SandboxImageBuilder implements OnApplicationBootstrap {
@@ -60,41 +60,21 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
   }
 
   contextDir(): string {
-    return join(__dirname, 'image');
+    return sandboxContextDir();
   }
 
   /**
-   * The CANONICAL source of the static context files. Under ts-node/dev `contextDir()` already IS the
-   * source (`src/…/image`); in a compiled deploy `contextDir()` is under `dist/` and this points at the
-   * shipped `src/` sibling (the prod image ships `backend/src` too — see infra/backend.Dockerfile). Used
-   * to self-heal a `dist` context that's missing an asset nest-cli didn't copy.
-   */
-  private srcContextDir(): string {
-    const dir = this.contextDir();
-    return dir.includes(`${sep}dist${sep}`) ? dir.replace(`${sep}dist${sep}`, `${sep}src${sep}`) : dir;
-  }
-
-  /**
-   * Guarantee every static context file is present in the build-context dir BEFORE we hash or build it —
-   * self-healing from the source tree when nest-cli didn't copy an asset into `dist` (e.g. a dev watcher
-   * that never saw a pre-existing asset change, the exact gap that produced a raw ENOENT at provision).
-   * Throws a CLEAR, actionable error if a file is genuinely absent from both dist and src.
+   * Preflight: fail with a CLEAR, actionable error if a static context file is missing, instead of a raw
+   * ENOENT from the hasher below. The context dir is a fixed committed folder identical in dev and prod,
+   * so a missing file means the checkout/deploy is broken (or a file was deleted), not a stale-copy race.
    */
   private ensureContextFiles(): void {
     const dir = this.contextDir();
-    const src = this.srcContextDir();
     for (const f of CONTEXT_FILES) {
-      const dest = join(dir, f);
-      if (existsSync(dest)) continue;
-      const from = join(src, f);
-      if (from !== dest && existsSync(from)) {
-        copyFileSync(from, dest);
-        this.logger.warn(`sandbox context file '${f}' missing from ${dir} — restored from ${src}`);
-        continue;
-      }
+      if (existsSync(join(dir, f))) continue;
       throw new Error(
-        `sandbox image build-context file '${f}' missing from ${dir} (no source at ${from}). ` +
-          'Run `pnpm build` (nest-cli copies the Dockerfile + image/*.sh into dist) or restart the dev server.',
+        `sandbox image build-context file '${f}' missing from ${dir}. It is committed under ` +
+          'backend/sandbox/ — restore it (git checkout) or check the deploy shipped that dir.',
       );
     }
   }

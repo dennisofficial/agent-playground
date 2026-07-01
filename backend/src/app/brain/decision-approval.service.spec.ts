@@ -26,7 +26,7 @@ const CARD: DecisionApprovalCard = {
   decisionRecordId: 'dr-1',
   title: 'CSV export',
   summary: 'Add CSV export.',
-  tracks: ['Backend', 'Frontend'],
+  threads: ['Backend', 'Frontend'],
 };
 
 describe('DecisionApprovalService', () => {

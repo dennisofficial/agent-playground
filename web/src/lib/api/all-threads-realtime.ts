@@ -8,13 +8,13 @@ import { subscribeSse, type SseHandle } from './sse-manager';
 import { uiStatus, type InboxThread } from './inbox';
 
 /**
- * The flat realtime `threads` row pushed by the backend engine (`GET /web/threads/realtime`). Mirrors the
+ * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
  * backend `ThreadRealtimeRow` — it carries the server-owned status signal but NOT the joined org/repo
  * display names, so an `update` patches those fields onto the already-enriched cached row, and an
  * `add`/`remove`/snapshot refetches the enriched list instead.
  */
 interface RealtimeRow {
-  threadId: string;
+  jobId: string;
   title: string | null;
   origin: string;
   status: string;
@@ -40,17 +40,17 @@ type RowDelta =
  *
  * Resilience (transient self-heal + a one-shot 401 refresh/reconnect) lives in the shared `sse-manager`.
  */
-export function useAllThreadsRealtime(): void {
+export function useAllJobsRealtime(): void {
   const qc = useQueryClient();
 
   useEffect(() => {
-    const invalidate = () => void qc.invalidateQueries({ queryKey: qk.allThreads() });
+    const invalidate = () => void qc.invalidateQueries({ queryKey: qk.allJobs() });
 
     const patchUpdate = (row: RealtimeRow) => {
       let found = false;
-      qc.setQueryData<InboxThread[]>(qk.allThreads(), (prev) => {
+      qc.setQueryData<InboxThread[]>(qk.allJobs(), (prev) => {
         if (!prev) return prev;
-        const idx = prev.findIndex((t) => t.id === row.threadId);
+        const idx = prev.findIndex((t) => t.id === row.jobId);
         if (idx === -1) return prev;
         found = true;
         const next = [...prev];
@@ -83,6 +83,6 @@ export function useAllThreadsRealtime(): void {
       else invalidate(); // snapshot / add / remove → refetch the enriched list
     };
 
-    return subscribeSse(`${env.NEXT_PUBLIC_HTTP_URL}/web/threads/realtime`, { onFrame });
+    return subscribeSse(`${env.NEXT_PUBLIC_HTTP_URL}/web/jobs/realtime`, { onFrame });
   }, [qc]);
 }

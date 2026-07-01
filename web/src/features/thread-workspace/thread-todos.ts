@@ -1,4 +1,4 @@
-import type { ThreadMessage } from '@/lib/api/thread-api';
+import type { JobMessage } from '@/lib/api/thread-api';
 import type { LiveBlock } from '@/lib/api/thread-stream';
 
 /**
@@ -91,7 +91,7 @@ const TASK_TOOL_NAMES = new Set(['taskcreate', 'taskupdate', 'tasklist', 'taskge
  * Durable: anchorStepId → the orchestrator session's task list, folded from its task-tool calls (joined by
  * `meta.phaseId`). Excludes calls tagged to a writer subagent (`meta.parentToolUseId`).
  */
-export function durableTaskListByPhase(messages: ThreadMessage[]): Map<string, TaskItem[]> {
+export function durableTaskListByPhase(messages: JobMessage[]): Map<string, TaskItem[]> {
   const callsByPhase = new Map<string, TaskCall[]>();
   for (const m of messages) {
     if (m.kind !== 'tool') continue;

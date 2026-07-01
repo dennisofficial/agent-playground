@@ -164,7 +164,7 @@ function makeReviewsRepo() {
 }
 
 const START_INPUT: PlanReviewStartInput = {
-  threadId: 'th-r4-001',
+  jobId: 'th-r4-001',
   orgId: 'T-R4',
   decisionRecordId: 'rec-1',
   goal: 'Add OAuth2 login to the public API',

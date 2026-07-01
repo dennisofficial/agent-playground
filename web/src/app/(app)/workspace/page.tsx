@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import { Check } from 'lucide-react';
 import { useOrgs } from '@/lib/api/me';
-import { useAllThreads } from '@/lib/api/inbox';
+import { useAllJobs } from '@/lib/api/inbox';
 import { NeedsYouBand } from '@/features/inbox/components/needs-you-band';
 
 /**
@@ -14,7 +14,7 @@ import { NeedsYouBand } from '@/features/inbox/components/needs-you-band';
  */
 export default function CoordinatorPage() {
   const { orgs, isLoading: orgsLoading } = useOrgs();
-  const { data: threads = [], isLoading } = useAllThreads();
+  const { data: threads = [], isLoading } = useAllJobs();
   const attention = useMemo(() => threads.filter((t) => t.needsYou), [threads]);
 
   return (

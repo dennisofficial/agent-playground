@@ -13,7 +13,7 @@ const card: DecisionApprovalCard = {
   decisionRecordId: 'dr-1',
   title: 'Payments',
   summary: 'Use Stripe; add a webhooks table.',
-  tracks: ['backend: stripe client + webhooks', 'frontend: checkout page'],
+  threads: ['backend: stripe client + webhooks', 'frontend: checkout page'],
 };
 
 describe('decisionApprovalBlocks', () => {

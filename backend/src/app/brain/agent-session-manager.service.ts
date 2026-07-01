@@ -150,7 +150,7 @@ export class AgentSessionManager
    * Per-thread turn queue — serializes chat turns for ONE thread so a follow-up sent WHILE a turn is
    * still running waits for it instead of starting a second engine turn that resumes the SAME session id
    * concurrently (which corrupts the session). One thread = one in-flight turn at a time; the next turn
-   * resumes the session with the queued message once the current one finishes. Keyed `orgId:threadId`.
+   * resumes the session with the queued message once the current one finishes. Keyed `orgId:jobId`.
    */
   private readonly turnQueues = new Map<string, Promise<void>>();
 
@@ -634,7 +634,7 @@ export class AgentSessionManager
           const stimulus = bootDeliveryStimulus(q);
           void this.handleChatTurn(stimulus).catch((err) =>
             this.logger.warn(
-              `boot re-delivery failed for thread=${q.threadId}: ${err}`,
+              `boot re-delivery failed for thread=${q.jobId}: ${err}`,
             ),
           );
         }
@@ -657,14 +657,14 @@ export class AgentSessionManager
         );
         for (const s of pendingSecrets) {
           const stimulus = harnessDeliveryStimulus({
-            threadId: s.threadId,
+            jobId: s.jobId,
             orgId: s.orgId,
             repoId: s.repoId,
             body: maskedSecretNotice(s.name, s.path),
           });
           void this.handleChatTurn(stimulus).catch((err) =>
             this.logger.warn(
-              `boot secret re-delivery failed for thread=${s.threadId}: ${err}`,
+              `boot secret re-delivery failed for thread=${s.jobId}: ${err}`,
             ),
           );
         }
@@ -772,12 +772,12 @@ export class AgentSessionManager
    * is cold-resume safe) and writes the files into the worktree; the CALLER commits them. Idempotent.
    */
   async promoteDurableDecisionsAtShip(
-    threadId: string,
+    jobId: string,
     orgId: string,
     repoId: string,
   ): Promise<void> {
     const stimulus = harnessDeliveryStimulus({
-      threadId,
+      jobId,
       orgId,
       repoId,
       body: LEDGER_PROMOTION_PROMPT,
@@ -826,7 +826,7 @@ export class AgentSessionManager
     // already rejected with 503 at the surface; this catches internal/boot re-delivery callers so the
     // in-flight set can actually quiesce. A no-op (not a throw) — internal callers are fire-and-forget.
     if (this.election.getState() === 'draining') return;
-    const key = `${stimulus.orgId}:${stimulus.threadId}`;
+    const key = `${stimulus.orgId}:${stimulus.jobId}`;
     const prev = this.turnQueues.get(key) ?? Promise.resolve();
     // Chain after any in-flight turn (swallow its error so a failed turn doesn't break the queue).
     const next = prev
@@ -922,14 +922,14 @@ export class AgentSessionManager
         .catch(() => undefined);
       return;
     }
-    // Rebuild the ChatStimulus buildTools closes over (orgId/repoId/threadId/author/body).
+    // Rebuild the ChatStimulus buildTools closes over (orgId/repoId/jobId/author/body).
     const stimulus: ChatStimulus = {
       id: row.turn_id,
       kind: 'chat',
       trust: 'trusted',
       orgId: row.org_id,
       repoId: ctx.repoId,
-      threadId: row.job_id,
+      jobId: row.job_id,
       body: ctx.body,
       author: ctx.author,
       replyRoute: { surfaceId: 'web', threadRef: row.job_id },
@@ -939,7 +939,7 @@ export class AgentSessionManager
     };
     const tools = this.buildTools(stimulus);
     const streamer = this.turnHarness.create({
-      threadId: row.job_id,
+      jobId: row.job_id,
       channel: row.channel,
     });
     const sandboxRow = await this.sandboxRows.findOne({
@@ -952,7 +952,7 @@ export class AgentSessionManager
         row.container_id,
         {
           onEvent: (e) => streamer.onEvent(e),
-          toolBridge: { threadId: row.job_id, tools },
+          toolBridge: { jobId: row.job_id, tools },
         },
       );
       if (result.sessionId && sandboxRow) {
@@ -992,13 +992,13 @@ export class AgentSessionManager
    */
   private async runChatTurn(stimulus: ChatStimulus): Promise<void> {
     await this.store
-      .setTurnActive(stimulus.threadId, true)
+      .setTurnActive(stimulus.jobId, true)
       .catch(() => undefined);
     try {
       await this.runChatTurnInner(stimulus);
     } finally {
       await this.store
-        .setTurnActive(stimulus.threadId, false)
+        .setTurnActive(stimulus.jobId, false)
         .catch(() => undefined);
     }
   }
@@ -1022,7 +1022,7 @@ export class AgentSessionManager
     let deliveredQuestionId: string | null = null;
     if (stimulus.seedQuestionId) {
       const card = await this.store.getQuestionCard(
-        stimulus.threadId,
+        stimulus.jobId,
         stimulus.seedQuestionId,
       );
       if (card?.answer != null && card.deliveredAt == null)
@@ -1033,10 +1033,10 @@ export class AgentSessionManager
     // secret card, THIS turn is its masked-confirmation delivery turn. Stamped + cleared only on the success
     // tail below, so a failed turn re-delivers. The VALUE is never read here (it isn't on the card).
     let deliveredSecretId: string | null = null;
-    const awaitingSecret = await this.store.awaitingSecretId(stimulus.threadId);
+    const awaitingSecret = await this.store.awaitingSecretId(stimulus.jobId);
     if (awaitingSecret) {
       const card = await this.store.getSecretCard(
-        stimulus.threadId,
+        stimulus.jobId,
         awaitingSecret,
       );
       if (card?.provided_at != null && card.delivered_at == null)
@@ -1047,7 +1047,7 @@ export class AgentSessionManager
     // thread rows (no sandbox/branch). Subsequent turns no-op (the row already exists). Tell the operator
     // we're setting up so the first turn isn't a silent ~30s wait while we clone + start a container.
     const alreadyProvisioned = await this.lifecycle.findSandbox(
-      stimulus.threadId,
+      stimulus.jobId,
       stimulus.orgId,
     );
     if (!alreadyProvisioned) {
@@ -1058,7 +1058,7 @@ export class AgentSessionManager
     }
     try {
       const provisioned = await this.lifecycle.ensureProvisioned(
-        stimulus.threadId,
+        stimulus.jobId,
         stimulus.orgId,
       );
       if (!provisioned) {
@@ -1073,7 +1073,7 @@ export class AgentSessionManager
         await this.say(stimulus, err.message);
       } else {
         this.logger.error(
-          `provisioning failed for thread=${stimulus.threadId}: ${err}`,
+          `provisioning failed for thread=${stimulus.jobId}: ${err}`,
         );
         await this.say(
           stimulus,
@@ -1086,12 +1086,12 @@ export class AgentSessionManager
     // (Re-)attach a live container against the thread's durable worktree. Returns null only if the
     // thread has no sandbox row (just provisioned above, so unexpected) or is closed.
     const ensured = await this.lifecycle.ensureContainer(
-      stimulus.threadId,
+      stimulus.jobId,
       stimulus.orgId,
     );
     if (!ensured) {
       this.logger.warn(
-        `No sandbox for thread=${stimulus.threadId} team=${stimulus.orgId} — cannot run in-sandbox turn`,
+        `No sandbox for thread=${stimulus.jobId} team=${stimulus.orgId} — cannot run in-sandbox turn`,
       );
       await this.say(
         stimulus,
@@ -1103,7 +1103,7 @@ export class AgentSessionManager
 
     // Resolve the current session_id for this thread (resume across turns).
     const sandboxRow = await this.sandboxRows.findOne({
-      where: { job_id: stimulus.threadId, org_id: stimulus.orgId },
+      where: { job_id: stimulus.jobId, org_id: stimulus.orgId },
     });
     const sessionId = sandboxRow?.session_id ?? undefined;
 
@@ -1122,7 +1122,7 @@ export class AgentSessionManager
     // buffer before the operator sees it). Best-effort: a failure here never blocks the turn.
     if (isOperatorAuthored(stimulus)) {
       const awarenessPrefix = await this.buildAwarenessPrefix(
-        stimulus.threadId,
+        stimulus.jobId,
         stimulus.orgId,
       );
       if (awarenessPrefix) task = `${awarenessPrefix}\n\n${task}`;
@@ -1131,7 +1131,7 @@ export class AgentSessionManager
     // Onboarding threads (`kind='onboarding'`) run a different mission prompt + a curated, build-free
     // toolset (the gating is enforced here, not just in prose — omitted tool names aren't registered).
     const isOnboarding =
-      (await this.store.loadJob(stimulus.threadId).catch(() => null))?.kind ===
+      (await this.store.loadJob(stimulus.jobId).catch(() => null))?.kind ===
       'onboarding';
 
     // Build the host-side tool dispatch table, scoped to this thread.
@@ -1145,16 +1145,16 @@ export class AgentSessionManager
     const route = await this.store.route({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
-      threadId: stimulus.threadId,
+      jobId: stimulus.jobId,
     });
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
     // The brain streams on the default `main` lane (no metaTag) — its blocks ARE the conversation.
     const streamer = this.turnHarness.create({
-      threadId: stimulus.threadId,
+      jobId: stimulus.jobId,
       channel,
     });
 
-    const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.threadId}`;
+    const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.jobId}`;
     // Per-org Claude subscription secret (deployed); undefined locally → the in-container engine falls
     // back to CLAUDE_OAUTH_TOKEN, and throws if neither is set (never an API-key fallback).
     const auth = await this.creds.engineAuth(stimulus.orgId, 'claude');
@@ -1180,13 +1180,13 @@ export class AgentSessionManager
           }
         : {}),
       toolBridge: {
-        threadId: stimulus.threadId,
+        jobId: stimulus.jobId,
         tools,
       },
       // Registry context for restart-survival (only acted on by the Redis runner): records an
       // `active_turns` row so a fresh backend can re-attach to this turn after a restart. See ADR 0001.
       turnMeta: {
-        threadId: stimulus.threadId,
+        jobId: stimulus.jobId,
         orgId: stimulus.orgId,
         channel,
         lane: 'main',
@@ -1221,17 +1221,17 @@ export class AgentSessionManager
           try {
             void Promise.resolve(
               this.sandboxRows.update(
-                { job_id: stimulus.threadId, org_id: stimulus.orgId },
+                { job_id: stimulus.jobId, org_id: stimulus.orgId },
                 { session_id: sid },
               ),
             ).catch((err) =>
               this.logger.warn(
-                `eager session_id persist failed for thread=${stimulus.threadId}: ${err}`,
+                `eager session_id persist failed for thread=${stimulus.jobId}: ${err}`,
               ),
             );
           } catch (err) {
             this.logger.warn(
-              `eager session_id persist threw for thread=${stimulus.threadId}: ${err}`,
+              `eager session_id persist threw for thread=${stimulus.jobId}: ${err}`,
             );
           }
         }
@@ -1244,7 +1244,7 @@ export class AgentSessionManager
       result = await runner.run(runArgs);
     } catch (err) {
       this.logger.error(
-        `in-sandbox turn failed for thread=${stimulus.threadId}: ${err}`,
+        `in-sandbox turn failed for thread=${stimulus.jobId}: ${err}`,
       );
       await streamer.finish();
       // An unresumable session is terminal for this thread — retrying re-hits the same missing transcript.
@@ -1295,7 +1295,7 @@ export class AgentSessionManager
     // leaves the card undelivered for a re-seed by the boot sweep (at-least-once). Best-effort.
     if (deliveredQuestionId) {
       await this.store
-        .markQuestionDelivered(stimulus.threadId, deliveredQuestionId)
+        .markQuestionDelivered(stimulus.jobId, deliveredQuestionId)
         .catch((err) =>
           this.logger.warn(`markQuestionDelivered failed: ${err}`),
         );
@@ -1304,10 +1304,10 @@ export class AgentSessionManager
     // SUCCESS TAIL — same for the secure-secret gate: the masked confirmation reached the brain this turn.
     if (deliveredSecretId) {
       await this.store
-        .markSecretDelivered(stimulus.threadId, deliveredSecretId)
+        .markSecretDelivered(stimulus.jobId, deliveredSecretId)
         .catch((err) => this.logger.warn(`markSecretDelivered failed: ${err}`));
       await this.store
-        .clearAwaitingSecret(stimulus.threadId, deliveredSecretId)
+        .clearAwaitingSecret(stimulus.jobId, deliveredSecretId)
         .catch((err) => this.logger.warn(`clearAwaitingSecret failed: ${err}`));
     }
   }
@@ -1364,7 +1364,7 @@ export class AgentSessionManager
         String(args['title'] ?? '').trim() ||
         deriveDecisionTitle(hasAnswer ? answeredCard!.question : ruling);
       const { decision, all } = await this.store.createDecision(
-        stimulus.threadId,
+        stimulus.jobId,
         {
           decisionClass,
           title,
@@ -1377,11 +1377,11 @@ export class AgentSessionManager
         },
       );
       if (answeredId && hasAnswer) {
-        await this.store.updateCardMessage(stimulus.threadId, answeredId, {
+        await this.store.updateCardMessage(stimulus.jobId, answeredId, {
           loggedDecision: true,
         });
       }
-      await this.writeDecisionRecordMd(stimulus.threadId, stimulus.orgId, all);
+      await this.writeDecisionRecordMd(stimulus.jobId, stimulus.orgId, all);
       // Echo the running provenance balance so the brain sees how much it has actually CONFIRMED vs authored.
       const confirmedCount = all.filter((d) => d.confirmedByOperator).length;
       return {
@@ -1398,18 +1398,18 @@ export class AgentSessionManager
     const tools: Record<string, ToolImpl> = {
       get_pipeline_state: async (_args) => {
         return this.driverStore.getPipelineState(
-          stimulus.threadId,
+          stimulus.jobId,
           stimulus.orgId,
         );
       },
 
       get_decision_record: async (_args) => {
         const record = await this.driverStore.getDecisionRecord(
-          stimulus.threadId,
+          stimulus.jobId,
         );
         if (record) return record;
         // No proposal yet — surface the working set logged so far so the brain can see what it has locked.
-        const pending = await this.store.pendingDecisions(stimulus.threadId);
+        const pending = await this.store.pendingDecisions(stimulus.jobId);
         return { status: 'drafting', decisions: pending };
       },
 
@@ -1453,7 +1453,7 @@ export class AgentSessionManager
         const header = String(args['header'] ?? '').trim();
         const questionId = `q-${randomUUID()}`;
         const card = webQuestionCard({
-          threadId: stimulus.threadId,
+          jobId: stimulus.jobId,
           questionId,
           question,
           ...(header ? { header } : {}),
@@ -1465,7 +1465,7 @@ export class AgentSessionManager
         // one transaction (the surface `post` path does NOT persist `messages.card`; the card renders on the
         // turn-end refetch). Multiple questions MAY be open at once — each is answered independently via its
         // own card; the asking turn ends cleanly (async gate) and each answer arrives on a later delivery turn.
-        const opened = await this.store.openQuestion(stimulus.threadId, {
+        const opened = await this.store.openQuestion(stimulus.jobId, {
           ts: questionId,
           text: question,
           card: card as unknown as Record<string, unknown>,
@@ -1544,12 +1544,12 @@ export class AgentSessionManager
         }
 
         const result = await this.store.updateDecision(
-          stimulus.threadId,
+          stimulus.jobId,
           id,
           patch,
         );
         if (!result) {
-          const pending = await this.store.pendingDecisions(stimulus.threadId);
+          const pending = await this.store.pendingDecisions(stimulus.jobId);
           return {
             ok: false,
             reason: `no decision with id "${id}"`,
@@ -1557,7 +1557,7 @@ export class AgentSessionManager
           };
         }
         await this.writeDecisionRecordMd(
-          stimulus.threadId,
+          stimulus.jobId,
           stimulus.orgId,
           result.all,
         );
@@ -1574,7 +1574,7 @@ export class AgentSessionManager
         const id = String(args['id'] ?? '').trim();
         if (!id) return { ok: false, reason: 'id is required' };
         const { removed, all } = await this.store.deleteDecision(
-          stimulus.threadId,
+          stimulus.jobId,
           id,
         );
         if (!removed) {
@@ -1585,7 +1585,7 @@ export class AgentSessionManager
           };
         }
         await this.writeDecisionRecordMd(
-          stimulus.threadId,
+          stimulus.jobId,
           stimulus.orgId,
           all,
         );
@@ -1602,7 +1602,7 @@ export class AgentSessionManager
         const decisions =
           args['decisions'] != null
             ? normalizeDecisions(args['decisions'])
-            : await this.store.pendingDecisions(stimulus.threadId);
+            : await this.store.pendingDecisions(stimulus.jobId);
         // Atlas plans at the TRACK level; the running track's orchestrator decomposes into its own live
         // task list (SDK task tools) — so steps are NOT authored up front. `normalizeThreads` still accepts
         // a `steps` array if a caller supplies one (back-compat: those lock + skip JIT), but it's optional;
@@ -1629,7 +1629,7 @@ export class AgentSessionManager
         const { thread: job, decisionRecordId } = await this.store.persistPlan({
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
-          threadId: jobId,
+          jobId: jobId,
           title: goal,
           kind: 'feature',
           overview,
@@ -1643,7 +1643,7 @@ export class AgentSessionManager
         // persistPlan retitled the thread to a short label (`job.title`). Repaint the open UI now.
         this.surface.emitThreadMeta?.(
           stimulus.repoId,
-          stimulus.threadId,
+          stimulus.jobId,
           job.title ?? goal,
         );
 
@@ -1660,7 +1660,7 @@ export class AgentSessionManager
           job.id,
         );
         const started = await this.planReview.start({
-          threadId: job.id,
+          jobId: job.id,
           orgId: stimulus.orgId,
           decisionRecordId,
           goal,
@@ -1713,7 +1713,7 @@ export class AgentSessionManager
         // Valid only after submit_plan persisted a plan (`plan_review`); Atlas calls it once it has
         // addressed (applied or pushed back on) the Codex review findings.
         const job = await this.store
-          .loadJob(stimulus.threadId)
+          .loadJob(stimulus.jobId)
           .catch(() => null);
         if (!job || !job.decisionRecordId) {
           return {
@@ -1761,7 +1761,7 @@ export class AgentSessionManager
           title: job.title ?? '',
           summary: rec.overview,
           decisions: rec.decisions,
-          tracks: rec.threadTitles,
+          threads: rec.threadTitles,
         });
 
         return {
@@ -1776,7 +1776,7 @@ export class AgentSessionManager
 
       dispatch_build: async (_args) => {
         // GATED tool — only dispatches an already-approved (status=running) job.
-        const jobId = await this.store.openJobOnThread(stimulus.threadId);
+        const jobId = await this.store.openJobOnThread(stimulus.jobId);
         if (!jobId) {
           return {
             ok: false,
@@ -1811,7 +1811,7 @@ export class AgentSessionManager
         const decisions =
           args['decisions'] != null
             ? normalizeDecisions(args['decisions'])
-            : await this.store.pendingDecisions(stimulus.threadId);
+            : await this.store.pendingDecisions(stimulus.jobId);
 
         // SAFETY GATE: "small" must NOT mean skipping an always-ask decision. Classify the change against
         // the locked decisions; an UNCOVERED always-ask class → refuse the fast path.
@@ -1841,7 +1841,7 @@ export class AgentSessionManager
         const { thread: job, decisionRecordId } = await this.store.persistPlan({
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
-          threadId: jobId,
+          jobId: jobId,
           title: jobTitle(summary),
           kind: 'feature',
           overview: summary,
@@ -1858,7 +1858,7 @@ export class AgentSessionManager
           title: job.title ?? jobTitle(summary),
           summary,
           decisions,
-          tracks: changeOutline,
+          threads: changeOutline,
         });
 
         return {
@@ -1874,7 +1874,7 @@ export class AgentSessionManager
       finalize_build: async (_args) => {
         // GATED — callable only inside the autonomous implementation turn of an APPROVED direct build
         // (status 'running'). Commits whatever was written, then runs the shared terminal ship.
-        const jobId = await this.store.openJobOnThread(stimulus.threadId);
+        const jobId = await this.store.openJobOnThread(stimulus.jobId);
         if (!jobId)
           return {
             ok: false,
@@ -1888,7 +1888,7 @@ export class AgentSessionManager
           };
         }
         const sandbox = await this.lifecycle.findSandbox(
-          stimulus.threadId,
+          stimulus.jobId,
           stimulus.orgId,
         );
         if (!sandbox)
@@ -1898,7 +1898,7 @@ export class AgentSessionManager
           };
 
         const rec = (await this.driverStore
-          .getDecisionRecord(stimulus.threadId)
+          .getDecisionRecord(stimulus.jobId)
           .catch(() => null)) as {
           overview: string;
           decisions: Decision[];
@@ -1958,7 +1958,7 @@ export class AgentSessionManager
           };
         }
         const sandbox = await this.lifecycle.findSandbox(
-          stimulus.threadId,
+          stimulus.jobId,
           stimulus.orgId,
         );
         if (!sandbox)
@@ -1970,7 +1970,7 @@ export class AgentSessionManager
         let entries: LedgerEntryInput[];
         try {
           entries = rawList.map((r) =>
-            normalizeLedgerEntry(r, stimulus.threadId),
+            normalizeLedgerEntry(r, stimulus.jobId),
           );
         } catch (err) {
           return { ok: false, reason: errText(err) };
@@ -1987,7 +1987,7 @@ export class AgentSessionManager
             title: e.title,
             contentHash: result.hashes[e.slug] ?? '',
             tags: e.tags ?? [],
-            sourceThread: e.sourceThread ?? stimulus.threadId,
+            sourceThread: e.sourceThread ?? stimulus.jobId,
             supersedes: e.supersedes ?? [],
             supersededBy: null,
             governsPaths: e.governsPaths ?? [],
@@ -2031,7 +2031,7 @@ export class AgentSessionManager
 
         // Same org + repo as this thread — derived from the closure, never from tool args (no cross-tenant
         // escape). The follow-up inherits this thread's base branch and starts scoping immediately.
-        const current = await this.store.loadJob(stimulus.threadId);
+        const current = await this.store.loadJob(stimulus.jobId);
         const newThreadId = await this.store.createFollowUpThread({
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
@@ -2052,11 +2052,11 @@ export class AgentSessionManager
           ),
         );
         this.logger.log(
-          `thread ${stimulus.threadId} created + started follow-up ${newThreadId}`,
+          `thread ${stimulus.jobId} created + started follow-up ${newThreadId}`,
         );
         return {
           ok: true,
-          threadId: newThreadId,
+          jobId: newThreadId,
           message: `Created follow-up "${title}" and started it.`,
         };
       },
@@ -2091,7 +2091,7 @@ export class AgentSessionManager
 
         // Stamp provenance from THIS thread + its locked decision (if any) — closure-derived, not args.
         const job = await this.store
-          .loadJob(stimulus.threadId)
+          .loadJob(stimulus.jobId)
           .catch(() => null);
         try {
           const ticket = await this.tickets.create({
@@ -2102,7 +2102,7 @@ export class AgentSessionManager
             status,
             priority,
             kind,
-            originThreadId: stimulus.threadId,
+            originThreadId: stimulus.jobId,
             originDecisionRecordId: job?.decisionRecordId ?? null,
             dependsOn: strArray(args['dependsOn']),
           });
@@ -2233,19 +2233,19 @@ export class AgentSessionManager
           if (result.created && result.seedText) {
             // Kick the new thread's brain in-process (same as create_thread). Fire-and-forget.
             void this.startFollowUpThread(
-              result.threadId,
+              result.jobId,
               stimulus.orgId,
               stimulus.repoId,
               result.seedText,
             ).catch((err) =>
               this.logger.warn(
-                `promote_ticket: start of ${result.threadId} failed: ${err}`,
+                `promote_ticket: start of ${result.jobId} failed: ${err}`,
               ),
             );
           }
           return {
             ok: true,
-            threadId: result.threadId,
+            jobId: result.jobId,
             created: result.created,
             message: result.created
               ? `Promoted "${result.title}" to a new thread and started it.`
@@ -2304,13 +2304,13 @@ export class AgentSessionManager
         };
       const requestId = `s-${randomUUID()}`;
       const card = webSecretInputCard({
-        threadId: stimulus.threadId,
+        jobId: stimulus.jobId,
         requestId,
         name,
         path,
         description,
       });
-      const opened = await this.store.openSecretRequest(stimulus.threadId, {
+      const opened = await this.store.openSecretRequest(stimulus.jobId, {
         requestId,
         card,
       });
@@ -2349,7 +2349,7 @@ export class AgentSessionManager
       const mounts = this.normalizeMounts(args['mounts']);
       const seed = this.normalizeSeed(args['seed']);
       const sandbox = await this.lifecycle.findSandbox(
-        stimulus.threadId,
+        stimulus.jobId,
         stimulus.orgId,
       );
       if (!sandbox)
@@ -2379,7 +2379,7 @@ export class AgentSessionManager
     return async (args) => {
       const summary = String(args['summary'] ?? '').trim();
       const sandbox = await this.lifecycle.findSandbox(
-        stimulus.threadId,
+        stimulus.jobId,
         stimulus.orgId,
       );
       if (!sandbox)
@@ -2389,7 +2389,7 @@ export class AgentSessionManager
 
       if (summary)
         await this.store.appendSystemEvent(
-          stimulus.threadId,
+          stimulus.jobId,
           `🎉 Onboarding complete — ${summary}`,
         );
 
@@ -2406,7 +2406,7 @@ export class AgentSessionManager
       // Commit `.atlas/worktree.json` and open a PR for the operator to merge (reuses the shared ship path:
       // commit → autofix → push → open ONE PR → record pr_url/pr_number on the thread → flips it done).
       try {
-        const job = await this.store.loadJob(stimulus.threadId);
+        const job = await this.store.loadJob(stimulus.jobId);
         const repo = await this.repos.resolve(job);
         const result = await this.ship.ship({
           job,
@@ -2414,7 +2414,7 @@ export class AgentSessionManager
           repo,
           sandbox,
           commitMessage: 'Atlas: add .atlas/worktree.json (repo onboarding)',
-          notify: (m) => this.store.appendSystemEvent(stimulus.threadId, m),
+          notify: (m) => this.store.appendSystemEvent(stimulus.jobId, m),
         });
         return result
           ? {
@@ -2478,25 +2478,25 @@ export class AgentSessionManager
   ): Promise<{ id: string; card: WebQuestionCard } | null> {
     const byId = async (id?: string) => {
       if (!id) return null;
-      const card = await this.store.getQuestionCard(stimulus.threadId, id);
+      const card = await this.store.getQuestionCard(stimulus.jobId, id);
       return card?.answer != null ? { id, card } : null;
     };
     const explicit = await byId(explicitQuestionId);
     if (explicit) return explicit;
     const seeded = await byId(stimulus.seedQuestionId);
     if (seeded) return seeded;
-    const row = await this.store.latestAnsweredQuestionCard(stimulus.threadId);
+    const row = await this.store.latestAnsweredQuestionCard(stimulus.jobId);
     const card = row?.card as WebQuestionCard | undefined;
     return row?.ts && card?.answer != null ? { id: row.ts, card } : null;
   }
 
   private async writeDecisionRecordMd(
-    threadId: string,
+    jobId: string,
     orgId: string,
     decisions: Decision[],
   ): Promise<void> {
     const generatedDir = join(
-      this.lifecycle.contextDirHost(threadId, orgId),
+      this.lifecycle.contextDirHost(jobId, orgId),
       'generated',
     );
     await mkdir(generatedDir, { recursive: true });
@@ -2522,7 +2522,7 @@ export class AgentSessionManager
     const route = await this.store.route({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
-      threadId: stimulus.threadId,
+      jobId: stimulus.jobId,
     });
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
     const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
@@ -2538,7 +2538,7 @@ export class AgentSessionManager
     // pre-review draft return), AFTER the durable write, so live and durable never diverge. Best-effort.
     this.surface.emitThreadMeta?.(
       stimulus.repoId,
-      stimulus.threadId,
+      stimulus.jobId,
       card.title,
     );
 
@@ -2581,13 +2581,13 @@ export class AgentSessionManager
       if (isDirect) {
         // FAST PATH: the brain implements it ITSELF in an autonomous in-sandbox turn (no driver).
         await this.store.appendAtlasMessage(
-          stimulus.threadId,
+          stimulus.jobId,
           'Approved — implementing the change directly.',
         );
         // Passive milestone (drained into the NEXT operator turn — the synthetic direct-build turn skips
         // the drain). Recorded AFTER the durable `approve`.
         await this.recordMilestone(
-          stimulus.threadId,
+          stimulus.jobId,
           `approved:${decisionRecordId}`,
           'Your direct-build plan was approved; I am implementing it directly now.',
         );
@@ -2595,17 +2595,17 @@ export class AgentSessionManager
       } else {
         await this.dispatcher.dispatch(running);
         await this.store.appendAtlasMessage(
-          stimulus.threadId,
+          stimulus.jobId,
           'Plan approved — dispatching the build.',
         );
         // Passive milestones — recorded AFTER the durable `approve` + `dispatch`.
         await this.recordMilestone(
-          stimulus.threadId,
+          stimulus.jobId,
           `approved:${decisionRecordId}`,
           'Your plan was approved by the operator.',
         );
         await this.recordMilestone(
-          stimulus.threadId,
+          stimulus.jobId,
           `dispatched:${decisionRecordId}`,
           'The build pipeline has started running the approved plan.',
         );
@@ -2652,7 +2652,7 @@ export class AgentSessionManager
     const rec = await this.store.loadDecisionRecord(job.decisionRecordId);
     if (!rec) return false;
     const stimulus = harnessDeliveryStimulus({
-      threadId: job.id,
+      jobId: job.id,
       orgId: job.orgId,
       repoId: job.repoId,
       body: '',
@@ -2723,13 +2723,13 @@ export class AgentSessionManager
    * one chat turn (which lazily provisions the new thread's sandbox).
    */
   async startFollowUpThread(
-    threadId: string,
+    jobId: string,
     orgId: string,
     repoId: string,
     firstMessage: string,
   ): Promise<void> {
     await this.store.appendAtlasMessage(
-      threadId,
+      jobId,
       `🔗 Follow-up started from a prior thread:\n\n${firstMessage}`,
     );
     const stimulus: ChatStimulus = {
@@ -2740,9 +2740,9 @@ export class AgentSessionManager
       receivedAt: new Date(),
       kind: 'chat',
       trust: 'trusted',
-      threadId,
+      jobId,
       author: { id: 'atlas', displayName: 'Atlas' },
-      replyRoute: { surfaceId: 'web', threadRef: threadId },
+      replyRoute: { surfaceId: 'web', threadRef: jobId },
     };
     await this.handleChatTurn(stimulus);
   }
@@ -2755,7 +2755,7 @@ export class AgentSessionManager
    * lazily provisioned on this first turn.
    */
   async startOnboardingThread(
-    threadId: string,
+    jobId: string,
     orgId: string,
     repoId: string,
   ): Promise<void> {
@@ -2771,9 +2771,9 @@ export class AgentSessionManager
       receivedAt: new Date(),
       kind: 'chat',
       trust: 'trusted',
-      threadId,
+      jobId,
       author: { id: 'atlas', displayName: 'Atlas' },
-      replyRoute: { surfaceId: 'web', threadRef: threadId },
+      replyRoute: { surfaceId: 'web', threadRef: jobId },
     };
     await this.handleChatTurn(stimulus);
   }
@@ -2834,7 +2834,7 @@ export class AgentSessionManager
 
     // (2) Deliver to the brain via a synthetic harness turn (skips the operator-only paths).
     const stimulus = harnessDeliveryStimulus({
-      threadId: review.job_id,
+      jobId: review.job_id,
       orgId: review.org_id,
       repoId: job.repoId,
       body,
@@ -2859,7 +2859,7 @@ export class AgentSessionManager
     if (row?.delivered_at) return;
 
     const delivery = eventDeliveryStimulus({
-      threadId: stimulus.threadId,
+      jobId: stimulus.jobId,
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
       body: renderEventDelivery(stimulus),
@@ -2891,7 +2891,7 @@ export class AgentSessionManager
         repoId: r.repo_id,
         kind: 'event' as const,
         trust: 'untrusted' as const,
-        threadId: r.job_id as string,
+        jobId: r.job_id as string,
         body: r.body,
         source: r.source ?? 'webhook',
         dedupeKey: r.dedupe_key ?? '',
@@ -2908,10 +2908,10 @@ export class AgentSessionManager
   private async resolveReviewTicket(
     orgId: string,
     repoId: string,
-    threadId: string,
+    jobId: string,
   ): Promise<{ number: number; title: string; body?: string } | null> {
     try {
-      const ticketId = await this.store.threadTicketId(threadId);
+      const ticketId = await this.store.threadTicketId(jobId);
       if (!ticketId) return null;
       const { ticket } = await this.tickets.get({ orgId, repoId, ticketId });
       return {
@@ -2937,14 +2937,14 @@ export class AgentSessionManager
    * authoritative pull.
    */
   private async buildAwarenessPrefix(
-    threadId: string,
+    jobId: string,
     orgId: string,
   ): Promise<string | null> {
     try {
-      const state = await this.driverStore.getPipelineState(threadId, orgId);
+      const state = await this.driverStore.getPipelineState(jobId, orgId);
       const sig = pipelineStateSignature(state);
       const { markers, stateChanged } = await this.awareness.drainAndAdvance(
-        threadId,
+        jobId,
         sig,
       );
       if (markers.length === 0 && !stateChanged) return null;
@@ -2963,12 +2963,12 @@ export class AgentSessionManager
 
   /** Buffer a passive pipeline milestone for the brain (no turn runs). Best-effort + idempotent by `id`. */
   private async recordMilestone(
-    threadId: string,
+    jobId: string,
     id: string,
     text: string,
   ): Promise<void> {
     await this.awareness
-      .appendMarker(threadId, { id, text, at: new Date().toISOString() })
+      .appendMarker(jobId, { id, text, at: new Date().toISOString() })
       .catch((err) =>
         this.logger.debug(`milestone append failed (continuing): ${err}`),
       );
@@ -2981,7 +2981,7 @@ export class AgentSessionManager
     const route = await this.store.route({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
-      threadId: stimulus.threadId,
+      jobId: stimulus.jobId,
     });
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
     const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
@@ -2993,7 +2993,7 @@ export class AgentSessionManager
     } catch (err) {
       this.logger.warn(`failed to post brain reply: ${err}`);
     }
-    await this.store.appendAtlasMessage(stimulus.threadId, text);
+    await this.store.appendAtlasMessage(stimulus.jobId, text);
   }
 
   /**
@@ -3008,7 +3008,7 @@ export class AgentSessionManager
     const route = await this.store.route({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
-      threadId: stimulus.threadId,
+      jobId: stimulus.jobId,
     });
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
     const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
@@ -3021,7 +3021,7 @@ export class AgentSessionManager
     } catch (err) {
       this.logger.warn(`failed to post system→operator notice: ${err}`);
     }
-    await this.store.appendSystemOperatorMessage(stimulus.threadId, text);
+    await this.store.appendSystemOperatorMessage(stimulus.jobId, text);
   }
 
   /** Find the open scoping job on this thread, or open a fresh one. */
@@ -3030,12 +3030,12 @@ export class AgentSessionManager
     title: string,
     kind: JobKind,
   ): Promise<string> {
-    const existing = await this.store.openJobOnThread(stimulus.threadId);
+    const existing = await this.store.openJobOnThread(stimulus.jobId);
     if (existing) return existing;
     return this.store.openJob({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
-      threadId: stimulus.threadId,
+      jobId: stimulus.jobId,
       title: jobTitle(title),
       kind,
     });
@@ -3092,7 +3092,7 @@ function maskedSecretNotice(name: string, path: string): string {
  * operator sees the same findings as the durable, idempotent "Codex review" message.
  */
 function harnessDeliveryStimulus(input: {
-  threadId: string;
+  jobId: string;
   orgId: string;
   repoId: string;
   body: string;
@@ -3105,9 +3105,9 @@ function harnessDeliveryStimulus(input: {
     receivedAt: new Date(),
     kind: 'chat',
     trust: 'trusted',
-    threadId: input.threadId,
+    jobId: input.jobId,
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', threadRef: input.threadId },
+    replyRoute: { surfaceId: 'web', threadRef: input.jobId },
     seed: true,
   };
 }
@@ -3141,7 +3141,7 @@ function renderEventDelivery(stimulus: EventStimulus): string {
  * so this stays a `trust: 'trusted'` harness turn carrying clearly-fenced untrusted data.
  */
 function eventDeliveryStimulus(input: {
-  threadId: string;
+  jobId: string;
   orgId: string;
   repoId: string;
   body: string;
@@ -3154,9 +3154,9 @@ function eventDeliveryStimulus(input: {
     receivedAt: new Date(),
     kind: 'chat',
     trust: 'trusted',
-    threadId: input.threadId,
+    jobId: input.jobId,
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', threadRef: input.threadId },
+    replyRoute: { surfaceId: 'web', threadRef: input.jobId },
     seed: true,
   };
 }
@@ -3175,7 +3175,7 @@ function frameAnswer(question: string, answer: string): string {
  * there is no natural inbound message to carry it.
  */
 function bootDeliveryStimulus(q: {
-  threadId: string;
+  jobId: string;
   orgId: string;
   repoId: string;
   questionId: string;
@@ -3190,9 +3190,9 @@ function bootDeliveryStimulus(q: {
     receivedAt: new Date(),
     kind: 'chat',
     trust: 'trusted',
-    threadId: q.threadId,
+    jobId: q.jobId,
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', threadRef: q.threadId },
+    replyRoute: { surfaceId: 'web', threadRef: q.jobId },
     seed: true,
     // Tie the re-delivery to its exact card so the delivery turn stamps THAT card `deliveredAt` on success.
     seedQuestionId: q.questionId,
@@ -3242,7 +3242,7 @@ function normalizeDecisions(raw: unknown): Decision[] {
  */
 function normalizeLedgerEntry(
   raw: unknown,
-  threadId: string,
+  jobId: string,
 ): LedgerEntryInput {
   if (typeof raw !== 'object' || raw === null)
     throw new Error('each promoted decision must be an object');
@@ -3278,7 +3278,7 @@ function normalizeLedgerEntry(
     sourceThread:
       typeof r['sourceThread'] === 'string' && r['sourceThread'].trim()
         ? String(r['sourceThread']).trim()
-        : threadId,
+        : jobId,
     ...(optStr(r['sourceDecision'])
       ? { sourceDecision: String(r['sourceDecision']).trim() }
       : {}),

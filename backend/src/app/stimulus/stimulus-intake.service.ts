@@ -15,7 +15,7 @@ import { JobTitler } from '../titling';
 
 /** Outcome of pushing an event through intake — for the controller to map to a status / log. */
 export type IntakeOutcome =
-  | { admitted: true; stimulusId: string; threadId: string }
+  | { admitted: true; stimulusId: string; jobId: string }
   | { admitted: false; reason: 'duplicate' | 'rate-limited'; detail: string };
 
 /**
@@ -90,7 +90,7 @@ export class StimulusIntake {
         .announceEvent({
           orgId: event.orgId,
           repoId: event.repoId,
-          threadId: seeded.thread.id,
+          jobId: seeded.thread.id,
           source: event.source,
           severity: event.severity,
           title,
@@ -111,7 +111,7 @@ export class StimulusIntake {
         `event admitted: ${seeded.stimulus.id} seeded thread ${seeded.thread.id} ` +
           `(project ${event.repoId}, severity ${event.severity})`,
       );
-      return { admitted: true, stimulusId: seeded.stimulus.id, threadId: seeded.thread.id };
+      return { admitted: true, stimulusId: seeded.stimulus.id, jobId: seeded.thread.id };
     } catch (err) {
       if (err instanceof DuplicateStimulusError) {
         // The DB unique-index backstop caught a duplicate the in-memory window missed (e.g. after a
@@ -140,7 +140,7 @@ export class StimulusIntake {
     const recorded = await this.store.recordChatStimulus({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
-      threadId: stimulus.threadId,
+      jobId: stimulus.jobId,
       author: stimulus.author,
       replyRoute: stimulus.replyRoute,
       body: stimulus.body,

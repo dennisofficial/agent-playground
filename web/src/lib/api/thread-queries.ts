@@ -21,18 +21,18 @@ import {
   type ProvideSecretBody,
   type ApproveBody,
   type CreateThreadBody,
-  type ThreadMessage,
-  type ThreadRef,
+  type JobMessage,
+  type JobRef,
 } from './thread-api';
 import { addQueuedSend } from './queued-sends';
 import { isLiveTurnActive } from './thread-stream';
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
-const hasRef = (ref: ThreadRef) => Boolean(ref.orgId && ref.repoId && ref.threadId);
+const hasRef = (ref: JobRef) => Boolean(ref.orgId && ref.repoId && ref.jobId);
 
 /** A thread's durable message log. SSE keeps it fresh via `useThreadEvents` (refetch on any frame). */
-export function useThreadMessages(ref: ThreadRef) {
+export function useThreadMessages(ref: JobRef) {
   return useQuery({
     queryKey: qk.threadMessages(ref),
     queryFn: () => fetchMessages(ref),
@@ -42,7 +42,7 @@ export function useThreadMessages(ref: ThreadRef) {
 }
 
 /** A thread's pipeline (job + tracks), or `{ status: 'no_job' }` before a plan is approved. */
-export function usePipeline(ref: ThreadRef) {
+export function usePipeline(ref: JobRef) {
   return useQuery({
     queryKey: qk.threadPipeline(ref),
     queryFn: () => fetchPipeline(ref),
@@ -52,7 +52,7 @@ export function usePipeline(ref: ThreadRef) {
 }
 
 /** A thread's `/context` files (specs + artifacts). SSE keeps it fresh via `useThreadEvents`. */
-export function useThreadContext(ref: ThreadRef) {
+export function useThreadContext(ref: JobRef) {
   return useQuery({
     queryKey: qk.threadContext(ref),
     queryFn: () => fetchThreadContext(ref),
@@ -62,7 +62,7 @@ export function useThreadContext(ref: ThreadRef) {
 }
 
 /** One `/context` file's content (`path` bucket-relative, e.g. `specs/plan.md`). Lazy — only when opened. */
-export function useContextFile(ref: ThreadRef, path: string | null) {
+export function useContextFile(ref: JobRef, path: string | null) {
   return useQuery({
     queryKey: qk.threadContextFile(ref, path ?? ''),
     queryFn: () => fetchContextFile(ref, path!),
@@ -92,7 +92,7 @@ export function useRepoBranches(orgId: string, repoId: string) {
 }
 
 interface SayContext {
-  prev?: ThreadMessage[];
+  prev?: JobMessage[];
 }
 
 /**
@@ -100,19 +100,19 @@ interface SayContext {
  * instant; the authoritative list is refetched on settle (and again when the SSE signal fires), which
  * reconciles the optimistic row with the durable one.
  */
-export function useSay(ref: ThreadRef) {
+export function useSay(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation<{ ts: string }, Error, string, SayContext>({
     mutationFn: (text: string) => sayMessage(ref, text),
     onMutate: async (text) => {
       const key = qk.threadMessages(ref);
       await qc.cancelQueries({ queryKey: key });
-      const prev = qc.getQueryData<ThreadMessage[]>(key);
+      const prev = qc.getQueryData<JobMessage[]>(key);
       // A message sent while a turn is still streaming is QUEUED behind it (the brain serializes turns
       // per thread). Flag it so the UI relays the queued state instead of pretending it was handled.
-      const queued = isLiveTurnActive(ref.threadId);
-      if (queued) addQueuedSend(ref.threadId, text);
-      const optimistic: ThreadMessage = {
+      const queued = isLiveTurnActive(ref.jobId);
+      if (queued) addQueuedSend(ref.jobId, text);
+      const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
         author: 'user',
         authorId: 'me',
@@ -124,7 +124,7 @@ export function useSay(ref: ThreadRef) {
         local: true,
         queued,
       };
-      qc.setQueryData<ThreadMessage[]>(key, [...(prev ?? []), optimistic]);
+      qc.setQueryData<JobMessage[]>(key, [...(prev ?? []), optimistic]);
       return { prev };
     },
     onError: (_e, _text, ctx) => {
@@ -137,7 +137,7 @@ export function useSay(ref: ThreadRef) {
 }
 
 /** Submit a plan verdict (approve / request changes / deny). Refreshes the conversation + pipeline. */
-export function useApprove(ref: ThreadRef) {
+export function useApprove(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ApproveBody) => approveThread(ref, body),
@@ -150,21 +150,21 @@ export function useApprove(ref: ThreadRef) {
 
 /** Re-drive a halted (failed/paused) build — the navigator "Retry"/"Re-ping" buttons. Refreshes the
  *  pipeline + conversation + inbox so the thread flips back to running. */
-export function useRetryThread(ref: ThreadRef) {
+export function useRetryThread(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => retryThread(ref),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.allThreads() });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
   });
 }
 
 /** Answer a formal `ask_question` card. Refreshes the conversation (the card flips to answered + the
  *  brain's next turn lands). */
-export function useAnswerQuestion(ref: ThreadRef) {
+export function useAnswerQuestion(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: AnswerQuestionBody) => answerQuestion(ref, body),
@@ -176,7 +176,7 @@ export function useAnswerQuestion(ref: ThreadRef) {
 
 /** Provide a secret value for a `request_secret` card (repo onboarding). The value goes straight to the
  *  encrypted store; the card flips to "provided" and the brain continues. */
-export function useProvideSecret(ref: ThreadRef) {
+export function useProvideSecret(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ProvideSecretBody) => provideSecret(ref, body),
@@ -192,29 +192,29 @@ export function useCreateThread(orgId: string, repoId: string) {
   return useMutation({
     mutationFn: (body: CreateThreadBody) => createThread(orgId, repoId, body),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.allThreads() });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
   });
 }
 
 /** Rename a thread (the only thread Update op). Refreshes the inbox so the new title shows everywhere. */
-export function useRenameThread(ref: ThreadRef) {
+export function useRenameThread(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (title: string) => renameThread(ref, title),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.allThreads() });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
   });
 }
 
 /** Delete a thread (closes its sandbox + removes its messages). Refreshes the inbox. */
-export function useDeleteThread(ref: ThreadRef) {
+export function useDeleteThread(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => deleteThread(ref),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.allThreads() });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
   });
 }

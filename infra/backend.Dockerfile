@@ -87,6 +87,9 @@ COPY --from=prod-deps /srv/atlas/app/backend/node_modules ./backend/node_modules
 # Compiled application + the source/migration files the migrator/ad-hoc migrations need.
 COPY --from=build /srv/atlas/app/backend/dist        ./backend/dist
 COPY --from=build /srv/atlas/app/backend/src         ./backend/src
+# The sandbox image build context — a fixed committed dir (backend/sandbox/), identical at build & runtime
+# (NOT copied into dist). bundleEngine writes engine-entrypoint.mjs here at boot; ensureImage builds from it.
+COPY --from=build /srv/atlas/app/backend/sandbox     ./backend/sandbox
 COPY --from=build /srv/atlas/app/backend/migrations  ./backend/migrations
 COPY --from=build /srv/atlas/app/backend/cli         ./backend/cli
 COPY --from=build /srv/atlas/app/backend/tsconfig.cli.json ./backend/tsconfig.cli.json
@@ -107,10 +110,10 @@ RUN chmod +x /usr/local/bin/backend-entrypoint.sh
 EXPOSE 4002
 
 # On first boot the backend (entirely in-process — no extra entrypoint logic):
-#   1. bundleEngine() → writes engine-entrypoint.mjs into the dist sandbox/image/ build-context dir AND
+#   1. bundleEngine() → writes engine-entrypoint.mjs into the fixed backend/sandbox/ build-context dir AND
 #      mirrors it to ENGINE_BUNDLE_PATH (A8).
 #   2. SandboxImageBuilder.ensureImage() → builds atlas-sandbox:latest on the host daemon from
-#      dist/app/sandbox/image/ if the tag is absent.
+#      backend/sandbox/ if the tag is absent (or its context hash changed).
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -sf http://localhost:4002/health/live || exit 1
 

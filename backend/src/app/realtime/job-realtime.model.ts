@@ -25,7 +25,7 @@ export interface RealtimePrincipal {
  * present here for `ThreadOrgGuard` to scope by it.
  */
 export interface ThreadRealtimeRow extends Row {
-  threadId: string;
+  jobId: string;
   title: string | null;
   origin: string;
   status: string;
@@ -58,7 +58,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
   const awaitingQuestion = Number(raw.open_question_count ?? 0) > 0;
   const createdAt = raw.created_at;
   return {
-    threadId: String(raw.id),
+    jobId: String(raw.id),
     title: (raw.title as string | null) ?? null,
     origin: String(raw.origin),
     status,

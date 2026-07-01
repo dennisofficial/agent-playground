@@ -186,11 +186,11 @@ function assemble(
 
   // `disconnectRepo` resolves `JobLifecycleService` lazily via `moduleRef.get(...)`. The fake records
   // each deep-delete AND removes the thread row (mirroring the real teardown) so the drain loop converges.
-  const deepDeleted: Array<{ threadId: string; orgId: string }> = [];
+  const deepDeleted: Array<{ jobId: string; orgId: string }> = [];
   const threadLifecycle = {
-    deleteThreadDeep: async (threadId: string, orgId: string) => {
-      deepDeleted.push({ threadId, orgId });
-      await threads.repo.delete({ id: threadId, org_id: orgId });
+    deleteThreadDeep: async (jobId: string, orgId: string) => {
+      deepDeleted.push({ jobId, orgId });
+      await threads.repo.delete({ id: jobId, org_id: orgId });
     },
   };
   const moduleRef = { get: () => threadLifecycle } as unknown as ModuleRef;
@@ -354,7 +354,7 @@ describe('OnboardingService', () => {
 
       const res = await svc.disconnectRepo('T1', connected.id);
       expect(res).toEqual({ ok: true, threadsDeleted: 2 });
-      expect(deepDeleted.map((d) => d.threadId).sort()).toEqual(['t1', 't2']);
+      expect(deepDeleted.map((d) => d.jobId).sort()).toEqual(['t1', 't2']);
       expect(deepDeleted.every((d) => d.orgId === 'T1')).toBe(true);
       expect(threads.rows).toHaveLength(0);
       expect(repos.map.get('T1:web')).toBeUndefined();
@@ -368,8 +368,8 @@ describe('OnboardingService', () => {
       // Simulate a concurrent create: the first deep-delete inserts one more thread row mid-cascade.
       const original = threadLifecycle.deleteThreadDeep;
       let injected = false;
-      threadLifecycle.deleteThreadDeep = async (threadId, orgId) => {
-        await original(threadId, orgId);
+      threadLifecycle.deleteThreadDeep = async (jobId, orgId) => {
+        await original(jobId, orgId);
         if (!injected) {
           injected = true;
           threads.rows.push({ id: 't2', repo_id: connected.id, org_id: 'T1' });

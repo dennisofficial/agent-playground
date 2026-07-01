@@ -41,7 +41,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
   let store: BrainStoreService;
   let secrets: WorktreeSecretStore;
   let ds: DataSource;
-  let threadId: string;
+  let jobId: string;
   let repoId: string;
 
   const prevSurface = process.env.SURFACE;
@@ -88,7 +88,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       `INSERT INTO jobs (org_id, repo_id, origin, kind) VALUES ($1, $2, 'control', 'onboarding') RETURNING id`,
       [ORG_ID, repoId],
     );
-    threadId = thread.id;
+    jobId = thread.id;
   });
 
   afterAll(async () => {
@@ -103,20 +103,20 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
   it('routes the value to the encrypted store + grant, never the transcript', async () => {
     const requestId = 's-leak-test-1';
     // (1) The brain's request_secret tool opens a value-FREE card + the durable gate.
-    const card = webSecretInputCard({ threadId, requestId, name: SECRET_NAME, path: SECRET_PATH, description: 'DB connection string' });
-    const opened = await store.openSecretRequest(threadId, { requestId, card });
+    const card = webSecretInputCard({ jobId, requestId, name: SECRET_NAME, path: SECRET_PATH, description: 'DB connection string' });
+    const opened = await store.openSecretRequest(jobId, { requestId, card });
     expect(opened.ok).toBe(true);
-    expect(await store.awaitingSecretId(threadId)).toBe(requestId);
+    expect(await store.awaitingSecretId(jobId)).toBe(requestId);
 
     // (2) The `provide-secret` endpoint's work: value → encrypted store + grant + stamp provided_at.
     await secrets.write(ORG_ID, SECRET_NAME, SECRET_VALUE);
     await secrets.grant(ORG_ID, repoId, SECRET_NAME, SECRET_PATH);
-    await store.markSecretProvided(threadId, requestId);
+    await store.markSecretProvided(jobId, requestId);
 
     // (3) THE LEAK ASSERTION — the plaintext value is in NO message row (card text, card jsonb, anything).
     const rows = await ds.query(
       `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND (text LIKE $2 OR card::text LIKE $2)`,
-      [threadId, `%${SECRET_VALUE}%`],
+      [jobId, `%${SECRET_VALUE}%`],
     );
     expect(rows[0].n).toBe(0);
 
@@ -132,13 +132,13 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     // (4) Crash-safe lifecycle: provided-but-undelivered surfaces for boot re-delivery (name/path only).
     const pending = await store.findUndeliveredProvidedSecrets();
     const mine = pending.find((p) => p.requestId === requestId);
-    expect(mine).toMatchObject({ threadId, orgId: ORG_ID, repoId, name: SECRET_NAME, path: SECRET_PATH });
+    expect(mine).toMatchObject({ jobId, orgId: ORG_ID, repoId, name: SECRET_NAME, path: SECRET_PATH });
     expect(JSON.stringify(mine)).not.toContain(SECRET_VALUE);
 
     // (5) Delivery success-tail: stamp delivered + clear gate → no longer pending.
-    await store.markSecretDelivered(threadId, requestId);
-    await store.clearAwaitingSecret(threadId, requestId);
-    expect(await store.awaitingSecretId(threadId)).toBeNull();
+    await store.markSecretDelivered(jobId, requestId);
+    await store.clearAwaitingSecret(jobId, requestId);
+    expect(await store.awaitingSecretId(jobId)).toBeNull();
     expect((await store.findUndeliveredProvidedSecrets()).some((p) => p.requestId === requestId)).toBe(false);
   });
 });

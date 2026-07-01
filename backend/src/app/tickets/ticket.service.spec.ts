@@ -54,7 +54,7 @@ describe('TicketService.revertForDeletedThread', () => {
   it('reverts an in_progress ticket back to todo and publishes an updated event', async () => {
     const { svc, save, publish } = makeService({ ticketId: TICKET, ticket: { status: 'in_progress' } });
 
-    await svc.revertForDeletedThread({ orgId: ORG, threadId: THREAD });
+    await svc.revertForDeletedThread({ orgId: ORG, jobId: THREAD });
 
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ id: TICKET, status: 'todo' }));
     expect(publish).toHaveBeenCalledWith({
@@ -69,7 +69,7 @@ describe('TicketService.revertForDeletedThread', () => {
   it('reverts an in_review ticket back to todo', async () => {
     const { svc, save } = makeService({ ticketId: TICKET, ticket: { status: 'in_review' } });
 
-    await svc.revertForDeletedThread({ orgId: ORG, threadId: THREAD });
+    await svc.revertForDeletedThread({ orgId: ORG, jobId: THREAD });
 
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ status: 'todo' }));
   });
@@ -79,7 +79,7 @@ describe('TicketService.revertForDeletedThread', () => {
     async (status) => {
       const { svc, save, publish } = makeService({ ticketId: TICKET, ticket: { status } });
 
-      await svc.revertForDeletedThread({ orgId: ORG, threadId: THREAD });
+      await svc.revertForDeletedThread({ orgId: ORG, jobId: THREAD });
 
       expect(save).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
@@ -89,7 +89,7 @@ describe('TicketService.revertForDeletedThread', () => {
   it('no-ops when the thread is not linked to a ticket', async () => {
     const { svc, save, publish } = makeService({ ticketId: null });
 
-    await svc.revertForDeletedThread({ orgId: ORG, threadId: THREAD });
+    await svc.revertForDeletedThread({ orgId: ORG, jobId: THREAD });
 
     expect(save).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
@@ -98,7 +98,7 @@ describe('TicketService.revertForDeletedThread', () => {
   it('no-ops when the linked ticket no longer exists', async () => {
     const { svc, save, publish } = makeService({ ticketId: TICKET, ticket: null });
 
-    await svc.revertForDeletedThread({ orgId: ORG, threadId: THREAD });
+    await svc.revertForDeletedThread({ orgId: ORG, jobId: THREAD });
 
     expect(save).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();

@@ -31,10 +31,10 @@ export interface RawNotification {
 /**
  * What verification + parsing yields BEFORE the intake mints the stimulus id / persists rows. The
  * adapter has already done routing (`orgId`/`repoId`), dedupe-key derivation, and severity
- * mapping; the intake seam adds the id, `receivedAt`, `threadId` (the seeded thread), and the
+ * mapping; the intake seam adds the id, `receivedAt`, `jobId` (the seeded thread), and the
  * `kind`/`trust`/`source` invariants.
  */
-export type ParsedEvent = Omit<EventStimulus, 'id' | 'receivedAt' | 'kind' | 'trust' | 'threadId'>;
+export type ParsedEvent = Omit<EventStimulus, 'id' | 'receivedAt' | 'kind' | 'trust' | 'jobId'>;
 
 /** Why an adapter rejected a request — surfaced as the HTTP status the controller returns. */
 export type IngressRejectionReason =

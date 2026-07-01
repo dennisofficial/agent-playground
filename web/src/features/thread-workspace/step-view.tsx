@@ -25,7 +25,7 @@ import {
 } from './subagents';
 import { useLiveTurn, type LiveTurn } from '@/lib/api/thread-stream';
 import { durablePhaseBlocks, indexPhaseBlocks, livePhaseBlocks, phaseLane } from './phases';
-import { pipelineJob, type ThreadMessage, type ThreadRef } from '@/lib/api/thread-api';
+import { pipelineJob, type JobMessage, type JobRef } from '@/lib/api/thread-api';
 import {
   APPROVE_ACTION_ID,
   type ContextFileContent,
@@ -54,12 +54,12 @@ export function PhaseView({
   onConversation,
   onSelectNode,
 }: {
-  threadRef: ThreadRef;
+  threadRef: JobRef;
   pipeline: PipelineState | undefined;
   /** The pipeline query's loading / error state — needed to tell "still loading" from "node is gone". */
   pipelineLoading?: boolean;
   pipelineError?: boolean;
-  messages: ThreadMessage[];
+  messages: JobMessage[];
   approvalCard: WebApprovalCard | null;
   selectedNode: string;
   onConversation: () => void;
@@ -68,11 +68,11 @@ export function PhaseView({
   onSelectNode?: (node: string) => void;
 }) {
   // Subagent sub-pages stream live (a running subagent) and fall back to the durable transcript afterward.
-  const liveTurn = useLiveTurn(threadRef.threadId);
+  const liveTurn = useLiveTurn(threadRef.jobId);
   const job = pipelineJob(pipeline);
-  const track = job?.tracks.find((s) => s.id === selectedNode) ?? null;
+  const track = job?.threads.find((s) => s.id === selectedNode) ?? null;
   // A step leaf (execute folder) — find which track owns it + its 1-based index, for the label.
-  const owningSection = job?.tracks.find((s) => s.steps.some((p) => p.id === selectedNode)) ?? null;
+  const owningSection = job?.threads.find((s) => s.steps.some((p) => p.id === selectedNode)) ?? null;
   const phaseIndex = owningSection ? owningSection.steps.findIndex((p) => p.id === selectedNode) : -1;
   const step = owningSection?.steps[phaseIndex] ?? null;
 
@@ -106,10 +106,10 @@ export function PhaseView({
     subtitle = selectedNode;
     body = <NodeNotFound node={selectedNode} onConversation={onConversation} />;
   } else if (selectedNode === 'plan') {
-    const n = (approvalCard?.tracks ?? job?.tracks.map((s) => s.brief) ?? []).length;
+    const n = (approvalCard?.threads ?? job?.threads.map((s) => s.brief) ?? []).length;
     title = job?.title ?? approvalCard?.title ?? 'Plan';
     subtitle = `${n} track${n === 1 ? '' : 's'} · plan.md`;
-    body = <PlanDoc card={approvalCard} tracks={job?.tracks.map((s) => s.brief)} threadRef={threadRef} />;
+    body = <PlanDoc card={approvalCard} tracks={job?.threads.map((s) => s.brief)} threadRef={threadRef} />;
   } else if (selectedNode === 'decision') {
     title = 'Decision record';
     subtitle = "locked at approval · the build's input contract";
@@ -142,13 +142,13 @@ export function PhaseView({
     body = <FileView threadRef={threadRef} path={filePath} onSelectNode={onSelectNode} />;
   } else if (selectedNode.startsWith('secplan:')) {
     const id = selectedNode.slice('secplan:'.length);
-    const sec = job?.tracks.find((s) => s.id === id) ?? null;
+    const sec = job?.threads.find((s) => s.id === id) ?? null;
     title = sec ? threadTitle(sec.brief) : 'Track plan';
     subtitle = 'track plan';
     body = <SectionPlanDoc />;
   } else if (selectedNode.startsWith('rev:')) {
-    const [, trackId, lensId = 'review'] = selectedNode.split(':');
-    const revThread = job?.tracks.find((s) => s.id === trackId) ?? null;
+    const [, threadId, lensId = 'review'] = selectedNode.split(':');
+    const revThread = job?.threads.find((s) => s.id === threadId) ?? null;
     const agent = revThread?.reviewAgents?.find((a) => a.id === lensId) ?? null;
     const lensLabel = agent?.label ?? lensId;
     title = lensLabel;
@@ -198,15 +198,15 @@ function BuildView({
   messages,
   anchorStepId,
 }: {
-  threadRef: ThreadRef;
-  messages: ThreadMessage[];
+  threadRef: JobRef;
+  messages: JobMessage[];
   /** The batch's ANCHOR step id — its transcript tag + live lane. Unset = the track/whole-build view. */
   anchorStepId?: string;
 }) {
   const [tab, setTab] = useState<PhaseTab>('transcript');
   const index = indexPhaseBlocks(messages);
   // The live lane for THIS phase. Hooks can't be conditional, so an unset anchor reads a dead lane (→ none).
-  const live = useLiveTurn(threadRef.threadId, anchorStepId ? phaseLane(anchorStepId) : '__none__');
+  const live = useLiveTurn(threadRef.jobId, anchorStepId ? phaseLane(anchorStepId) : '__none__');
   const active = Boolean(live?.active);
 
   // The build instruction the engine received — the turn's "first message". Persisted on the `build_anchor`
@@ -287,7 +287,7 @@ function SubagentView({
   liveTurn,
   parentId,
 }: {
-  messages: ThreadMessage[];
+  messages: JobMessage[];
   liveTurn: LiveTurn | null;
   parentId: string;
 }) {
@@ -405,7 +405,7 @@ function SubagentTranscript({ blocks, active }: { blocks: SubBlock[]; active: bo
 }
 
 /** Talks to the build session (via the thread). Pause / Revert are UI-only (no backend op route). */
-function InterjectBar({ threadRef }: { threadRef: ThreadRef }) {
+function InterjectBar({ threadRef }: { threadRef: JobRef }) {
   const say = useSay(threadRef);
   const [text, setText] = useState('');
   const [queued, setQueued] = useState<string[]>([]);
@@ -481,10 +481,10 @@ function PlanDoc({
 }: {
   card: WebApprovalCard | null;
   tracks?: string[];
-  threadRef: ThreadRef;
+  threadRef: JobRef;
 }) {
   const decisions = card?.decisions ?? [];
-  const sectionList = card?.tracks ?? tracks ?? [];
+  const sectionList = card?.threads ?? tracks ?? [];
   const value = card?.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ?? '';
 
   return (
@@ -786,7 +786,7 @@ function FileView({
   path,
   onSelectNode,
 }: {
-  threadRef: ThreadRef;
+  threadRef: JobRef;
   path: string;
   onSelectNode?: (node: string) => void;
 }) {
@@ -896,22 +896,22 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
   if (error || !job) return 'not_found';
 
   if (node.startsWith('secplan:')) return hasSection(job, node.slice('secplan:'.length)) ? 'found' : 'not_found';
-  // `rev:<trackId>:<agentId>` — found only when the track still exists AND still selects that review
+  // `rev:<threadId>:<agentId>` — found only when the track still exists AND still selects that review
   // agent. With the agent list now dynamic, a stale agent id must not render a plausible-but-wrong page.
   if (node.startsWith('rev:')) {
-    const [, trackId, lensId] = node.split(':');
-    const revThread = trackId ? job.tracks.find((s) => s.id === trackId) : undefined;
+    const [, threadId, lensId] = node.split(':');
+    const revThread = threadId ? job.threads.find((s) => s.id === threadId) : undefined;
     return revThread && lensId && (revThread.reviewAgents ?? []).some((a) => a.id === lensId)
       ? 'found'
       : 'not_found';
   }
   // Bare token — a track or a step leaf.
-  const matches = job.tracks.some((s) => s.id === node || s.steps.some((p) => p.id === node));
+  const matches = job.threads.some((s) => s.id === node || s.steps.some((p) => p.id === node));
   return matches ? 'found' : 'not_found';
 }
 
 function hasSection(job: PipelineJob, id: string): boolean {
-  return id.length > 0 && job.tracks.some((s) => s.id === id);
+  return id.length > 0 && job.threads.some((s) => s.id === id);
 }
 
 /** A `?node=` that no longer resolves (deleted file, re-planned track/step). Placeholder styling — the
@@ -950,13 +950,13 @@ export function SubagentPane({
   base,
   onBack,
 }: {
-  threadRef: ThreadRef;
-  messages: ThreadMessage[];
+  threadRef: JobRef;
+  messages: JobMessage[];
   parentId: string;
   base: string | null;
   onBack: () => void;
 }) {
-  const liveTurn = useLiveTurn(threadRef.threadId);
+  const liveTurn = useLiveTurn(threadRef.jobId);
   const summary =
     indexDurableSubagents(messages).summaryById.get(parentId) ??
     (liveTurn ? indexLiveSubagents(liveTurn.blocks).summaryById.get(parentId) : undefined);

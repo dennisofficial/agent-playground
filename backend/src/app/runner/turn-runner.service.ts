@@ -144,7 +144,7 @@ export class TurnRunnerService {
 
     const session: SessionRef = {
       id: result.sessionId ?? priorSessionId ?? '',
-      threadId: jobId,
+      jobId: jobId,
       stepId: stepId ?? null,
       engine,
       mode,

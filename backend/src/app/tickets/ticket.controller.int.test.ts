@@ -287,18 +287,18 @@ describe('TicketController HTTP (membership guard + scoping + dependencies, live
     const promoted = await request(server).post(`${ticketsPath(ORG1, REPO1)}/${ticketId}/promote`).set('Cookie', ownerCookie);
     expect(promoted.status).toBe(201);
     expect(promoted.body.created).toBe(true);
-    const threadId = promoted.body.threadId as string;
-    expect(threadId).toBeTruthy();
+    const jobId = promoted.body.jobId as string;
+    expect(jobId).toBeTruthy();
 
     // The thread row carries the link, and the ticket advanced onto the board.
-    const [thread] = await ds.query(`SELECT ticket_id FROM jobs WHERE id = $1`, [threadId]);
+    const [thread] = await ds.query(`SELECT ticket_id FROM jobs WHERE id = $1`, [jobId]);
     expect(thread.ticket_id).toBe(ticketId);
     const detail = await request(server).get(`${ticketsPath(ORG1, REPO1)}/${ticketId}`).set('Cookie', ownerCookie);
-    expect(detail.body).toMatchObject({ status: 'in_progress', linkedThreadId: threadId });
+    expect(detail.body).toMatchObject({ status: 'in_progress', linkedThreadId: jobId });
 
     // Idempotent: a second promote returns the SAME thread, creates nothing new.
     const again = await request(server).post(`${ticketsPath(ORG1, REPO1)}/${ticketId}/promote`).set('Cookie', ownerCookie);
-    expect(again.body).toMatchObject({ threadId, created: false });
+    expect(again.body).toMatchObject({ jobId, created: false });
     const count = await ds.query(`SELECT count(*)::int AS n FROM jobs WHERE ticket_id = $1`, [ticketId]);
     expect(count[0].n).toBe(1);
   });

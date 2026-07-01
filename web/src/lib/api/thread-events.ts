@@ -6,14 +6,14 @@ import { env } from '@/lib/env';
 import { qk } from './query-keys';
 import { subscribeSse } from './sse-manager';
 import type { InboxThread } from './inbox';
-import type { ThreadRef } from './thread-api';
+import type { JobRef } from './thread-api';
 import { applyStreamFrame, endLiveTurn } from './thread-stream';
 import { clearQueuedSends } from './queued-sends';
 
 /** A frame off the repo SSE: a durable-post change-signal, a live engine-stream frame, or a meta update. */
 interface SseFrame {
   type?: string;
-  threadId?: string;
+  jobId?: string;
   /** Which turn lane this stream frame belongs to: `'main'` (the brain) or `'phase:<stepId>'` (a build). */
   lane?: string;
   seq?: number;
@@ -39,9 +39,9 @@ const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts)\//;
  *
  *  - `{ type: 'message', … }` — a durable post landed (chat / approval card / PR / status). Used as a
  *    CHANGE-SIGNAL: debounced-refetch the open thread's messages + pipeline (the authoritative,
- *    threadId-scoped reads). A sibling thread's activity also triggers a refetch — fine for an operator
+ *    jobId-scoped reads). A sibling thread's activity also triggers a refetch — fine for an operator
  *    console.
- *  - `{ type: 'stream', threadId, event }` — a LIVE engine-stream frame (token deltas, thinking, tool
+ *  - `{ type: 'stream', jobId, event }` — a LIVE engine-stream frame (token deltas, thinking, tool
  *    calls/results, and a `turn_end` marker) for the in-sandbox session. Filtered to the OPEN thread and
  *    fed into the live-turn store (`thread-stream.ts`); on `turn_end` we refetch `/messages` (now holding
  *    the persisted blocks) and THEN clear the live buffer (no flicker).
@@ -53,14 +53,14 @@ const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts)\//;
  * repo (a thread switch no longer tears the SSE down + reopens it), which is what used to churn the
  * HTTP/1.1 connection pool and stall every fetch in dev.
  */
-export function useThreadEvents(ref: ThreadRef): void {
+export function useThreadEvents(ref: JobRef): void {
   const qc = useQueryClient();
-  const { orgId, repoId, threadId } = ref;
+  const { orgId, repoId, jobId } = ref;
 
   // The open thread, read live by the frame handlers — so the standing subscription always targets the
   // CURRENT thread without re-subscribing when it changes.
-  const openThreadRef = useRef(threadId);
-  openThreadRef.current = threadId;
+  const openThreadRef = useRef(jobId);
+  openThreadRef.current = jobId;
 
   useEffect(() => {
     if (!orgId || !repoId) return;
@@ -69,9 +69,9 @@ export function useThreadEvents(ref: ThreadRef): void {
 
     // Built from the open thread at call time (not captured once) so the standing connection's debounced
     // invalidations always target whichever thread is open now.
-    const liveRef = (): ThreadRef => ({ orgId, repoId, threadId: openThreadRef.current });
+    const liveRef = (): JobRef => ({ orgId, repoId, jobId: openThreadRef.current });
     // The 4-element prefix matches every open `/context` file for a thread (the 5th element is the path).
-    const contextFilesKey = (r: ThreadRef) => qk.threadContextFile(r, '').slice(0, 4);
+    const contextFilesKey = (r: JobRef) => qk.threadContextFile(r, '').slice(0, 4);
 
     const refetch = () => {
       if (debounce) clearTimeout(debounce);
@@ -95,7 +95,7 @@ export function useThreadEvents(ref: ThreadRef): void {
       }, 250);
     };
 
-    const reconcileNow = (r: ThreadRef) =>
+    const reconcileNow = (r: JobRef) =>
       Promise.all([
         qc.invalidateQueries({ queryKey: qk.threadMessages(r) }),
         qc.invalidateQueries({ queryKey: qk.threadPipeline(r) }),
@@ -116,7 +116,7 @@ export function useThreadEvents(ref: ThreadRef): void {
         // (thread-keyed) live-turn store — NOT just the open thread — so switching to a sibling thread that
         // is mid-stream is instant, with its already-streamed output present. (Before, this connection
         // re-opened per thread to re-trigger the snapshot; now it stands, so we must not drop siblings.)
-        const fThread = frame.threadId;
+        const fThread = frame.jobId;
         if (!fThread) return;
         // Which lane (the brain `main` turn, or a `phase:<stepId>` build turn). Lanes are independent
         // in-flight turns on the same thread; the conversation reads `main`, the step sub-page reads its phase.
@@ -126,7 +126,7 @@ export function useThreadEvents(ref: ThreadRef): void {
           // queued-sends tags belong to the brain's serialized queue, so only the `main` turn ending clears
           // them; a build (phase) turn ending must not drop a follow-up the operator queued for the brain.
           // For a non-open thread the invalidations just mark its (unobserved) queries stale — no fetch.
-          void reconcileNow({ orgId, repoId, threadId: fThread }).then(() => {
+          void reconcileNow({ orgId, repoId, jobId: fThread }).then(() => {
             endLiveTurn(fThread, lane);
             if (lane === 'main') clearQueuedSends(fThread);
           });
@@ -156,24 +156,24 @@ export function useThreadEvents(ref: ThreadRef): void {
         void qc.invalidateQueries({ queryKey: ['ticket-detail', orgId, repoId] });
         return;
       }
-      if (frame?.type === 'thread_meta' && frame.threadId && frame.title) {
+      if (frame?.type === 'thread_meta' && frame.jobId && frame.title) {
         // A thread title changed (e.g. the auto-generated one). Patch the inbox cache in place — the
-        // sidebar AND the navigator header both read the title from `allThreads` — then invalidate as a
+        // sidebar AND the navigator header both read the title from `allJobs` — then invalidate as a
         // backstop. (The navigator/sidebar update live; no message frame is involved in titling.)
-        const { threadId: id, title } = frame;
-        qc.setQueryData<InboxThread[]>(qk.allThreads(), (prev) =>
+        const { jobId: id, title } = frame;
+        qc.setQueryData<InboxThread[]>(qk.allJobs(), (prev) =>
           prev?.map((t) => (t.id === id ? { ...t, title } : t)),
         );
-        void qc.invalidateQueries({ queryKey: qk.allThreads() });
+        void qc.invalidateQueries({ queryKey: qk.allJobs() });
         return;
       }
       // `{ type: 'message' }` (or any non-stream frame) — a durable post landed → change-signal refetch.
       refetch();
     };
 
-    // Catch a title generated before this stream subscribed: pull the durable title from `allThreads` on
+    // Catch a title generated before this stream subscribed: pull the durable title from `allJobs` on
     // every (re)connect (a `thread_meta` frame could have fired during the connect gap).
-    const onOpen = () => void qc.invalidateQueries({ queryKey: qk.allThreads() });
+    const onOpen = () => void qc.invalidateQueries({ queryKey: qk.allJobs() });
 
     const url = `${env.NEXT_PUBLIC_HTTP_URL}/web/orgs/${orgId}/repos/${repoId}/events`;
     const unsubscribe = subscribeSse(url, { onFrame, onOpen });

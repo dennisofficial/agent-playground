@@ -5,9 +5,9 @@ import { WebSurfaceController } from './web-surface.controller';
 
 /**
  * Cross-tenant isolation regression (the hole Codex flagged): `OrgMembershipGuard` only proves the
- * caller is a member of `:orgId`, but thread-keyed ops act on a `threadId`. Without scoping, a member of
+ * caller is a member of `:orgId`, but thread-keyed ops act on a `jobId`. Without scoping, a member of
  * ANY org with a leaked thread id could read/write/DELETE another org's thread — and `deleteThreadDeep`
- * would then wipe that tenant's thread + all its children. `requireThread(threadId, org.id)` closes it:
+ * would then wipe that tenant's thread + all its children. `requireThread(jobId, org.id)` closes it:
  * every thread-keyed op resolves the thread scoped to the caller's org or 404s.
  *
  * Pure unit test — the controller is instantiated with mocked repos; `threads.findOne` returns a row only

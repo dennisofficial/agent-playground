@@ -129,8 +129,8 @@ export class TestBridgeController {
 
     // A reply continues the supplied thread; a new conversation creates a real thread up front so its id
     // is the durable handle (the chat bridge resolves inbound by this id).
-    let threadId = body.threadTs;
-    if (!threadId) {
+    let jobId = body.threadTs;
+    if (!jobId) {
       const thread = await this.threads.save(
         this.threads.create({
           org_id: repo.org_id,
@@ -140,7 +140,7 @@ export class TestBridgeController {
           title: null,
         }),
       );
-      threadId = thread.id;
+      jobId = thread.id;
     }
 
     // Snapshot the outbox cursor BEFORE sending so we only collect posts triggered by this message.
@@ -149,11 +149,11 @@ export class TestBridgeController {
       orgId: repo.org_id,
       authorId: TESTER_ID,
       authorName: 'Tester',
-      threadTs: threadId,
+      threadTs: jobId,
     });
 
-    const { replies, approvalCard } = await this.waitForReplies(cursor, threadId);
-    return { threadTs: threadId, replies, ...(approvalCard ? { approvalCard } : {}) };
+    const { replies, approvalCard } = await this.waitForReplies(cursor, jobId);
+    return { threadTs: jobId, replies, ...(approvalCard ? { approvalCard } : {}) };
   }
 
   /**

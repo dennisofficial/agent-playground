@@ -6,7 +6,7 @@ import type { SystemTone } from './classify';
 import { Markdown } from './markdown';
 import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import { SubagentCard, indexLiveSubagents, subagentNode } from './subagents';
-import type { ThreadMessage } from '@/lib/api/thread-api';
+import type { JobMessage } from '@/lib/api/thread-api';
 import type { LiveBlock, LiveTurn } from '@/lib/api/thread-stream';
 import { formatClockTime, formatTokens } from '@/lib/org-display';
 
@@ -74,7 +74,7 @@ export function ClaudeAvatar({ size = 24 }: { size?: number }) {
 }
 
 /**
- * An operator message — the right-aligned accent bubble. Takes raw `text` (not a `ThreadMessage`) so it can
+ * An operator message — the right-aligned accent bubble. Takes raw `text` (not a `JobMessage`) so it can
  * stand in for any operator-authored instruction, including a subagent's Task prompt (the "user message"
  * that kicked the run off), rendered identically to the main transcript.
  */
@@ -104,7 +104,7 @@ export function UserBubble({ text, queued = false, time }: { text: string; queue
   );
 }
 
-export function ClaudeBubble({ message }: { message: ThreadMessage }) {
+export function ClaudeBubble({ message }: { message: JobMessage }) {
   // No per-bubble timestamp on assistant prose — the end-of-turn `TurnMetaDivider` line carries the
   // turn's time (next to its token counter), so a timestamp here would just duplicate it.
   return <StreamTextBubble text={message.text} />;
@@ -216,7 +216,7 @@ const TONE_COLOR: Record<SystemTone, string> = {
   neutral: 'var(--faint)',
 };
 
-export function SystemEventPill({ message, tone }: { message: ThreadMessage; tone: SystemTone }) {
+export function SystemEventPill({ message, tone }: { message: JobMessage; tone: SystemTone }) {
   return (
     <div
       className="anim-fadeUp flex items-center gap-2.5 self-stretch rounded-md border px-3.5 py-1.5 font-mono text-[10px] text-dim"
@@ -252,7 +252,7 @@ function formatCost(n: number): string {
  * sitting right beside it, left-aligned like a message timestamp (NOT an isolated full-width divider).
  * Renders the durable `turn_meta` block the brain appends at each turn end.
  */
-export function TurnMetaDivider({ message }: { message: ThreadMessage }) {
+export function TurnMetaDivider({ message }: { message: JobMessage }) {
   const meta = (message.meta ?? {}) as TurnMeta;
   const u = meta.usage ?? {};
   const parts: string[] = [];
@@ -317,7 +317,7 @@ export function LiveIndicator({ text = 'Atlas is working…' }: { text?: string 
  * and never seen by it (e.g. "this thread can't be resumed — start a new one"). Deliberately NOT an Atlas
  * bubble: a full-width warn-toned panel with a "SYSTEM" header so it reads as coming from the harness.
  */
-export function SystemOperatorNotice({ message }: { message: ThreadMessage }) {
+export function SystemOperatorNotice({ message }: { message: JobMessage }) {
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
@@ -356,7 +356,7 @@ export function SystemOperatorNotice({ message }: { message: ThreadMessage }) {
  * both the operator and Atlas). Visually distinct from both operator bubbles (right-aligned) and Atlas
  * prose (plain markdown): a full-width bordered panel with a small labelled header and the markdown body.
  */
-export function HarnessBubble({ message }: { message: ThreadMessage }) {
+export function HarnessBubble({ message }: { message: JobMessage }) {
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
@@ -407,7 +407,7 @@ export function HarnessBubble({ message }: { message: ThreadMessage }) {
  * prose, and the (neutral) Codex `HarnessBubble`: a full-width accent-toned panel whose header names the
  * source + severity (read off `meta.eventSource` / `meta.severity`), so it reads as "not human-sent."
  */
-export function EventBubble({ message }: { message: ThreadMessage }) {
+export function EventBubble({ message }: { message: JobMessage }) {
   const meta = message.meta ?? {};
   const source = typeof meta.eventSource === 'string' ? meta.eventSource : 'event';
   const severity = typeof meta.severity === 'string' ? meta.severity : null;

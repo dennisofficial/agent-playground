@@ -56,7 +56,7 @@ import { JobLifecycleService } from './job-lifecycle.service';
 /** The narrow brain surface the driver needs at ship — resolved lazily to avoid the module cycle. */
 interface LedgerPromoter {
   promoteDurableDecisionsAtShip(
-    threadId: string,
+    jobId: string,
     orgId: string,
     repoId: string,
   ): Promise<void>;
@@ -104,12 +104,12 @@ export class ThreadDriver implements JobDispatcher {
    * repeatedly across a resume, so the buffer keeps one. A failed append never breaks the build.
    */
   private async recordMilestone(
-    threadId: string,
+    jobId: string,
     id: string,
     text: string,
   ): Promise<void> {
     await this.awareness
-      .appendMarker(threadId, { id, text, at: new Date().toISOString() })
+      .appendMarker(jobId, { id, text, at: new Date().toISOString() })
       .catch((err) =>
         this.logger.debug(`milestone append failed (continuing): ${err}`),
       );
@@ -922,7 +922,7 @@ export class ThreadDriver implements JobDispatcher {
         ),
       );
     const harness = this.turnHarness.create({
-      threadId: job.id,
+      jobId: job.id,
       channel,
       lane,
       metaTag: {

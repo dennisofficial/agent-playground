@@ -13,7 +13,7 @@ import { LiveTurnStore } from './live-turn-store';
  */
 export interface BlockSink {
   appendBlock(
-    threadId: string,
+    jobId: string,
     block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
   ): Promise<void>;
 }
@@ -34,12 +34,12 @@ export class MessageBlockSink implements BlockSink {
   ) {}
 
   async appendBlock(
-    threadId: string,
+    jobId: string,
     block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
   ): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        job_id: threadId,
+        job_id: jobId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -80,7 +80,7 @@ export interface TurnHarness {
 
 export interface TurnHarnessOptions {
   /** The thread whose durable log + live stream this turn writes to. */
-  threadId: string;
+  jobId: string;
   /** The repo channel the LiveTurnStore keys its stream by. */
   channel: string;
   /** Which lane this turn streams on. `'main'` = the brain; `'phase:<stepId>'` = a build turn. Default `'main'`. */
@@ -115,7 +115,7 @@ export class TurnHarnessFactory {
   ) {}
 
   create(options: TurnHarnessOptions): TurnHarness {
-    const { threadId, channel } = options;
+    const { jobId, channel } = options;
     const lane = options.lane ?? 'main';
     const metaTag = options.metaTag;
 
@@ -149,22 +149,22 @@ export class TurnHarnessFactory {
     const persistAll = async (): Promise<void> => {
       for (const b of blocks) {
         await this.sink
-          .appendBlock(threadId, {
+          .appendBlock(jobId, {
             kind: b.kind,
             createdAt: b.emittedAt,
             ...(b.text != null ? { text: b.text } : {}),
             ...(b.meta ? { meta: b.meta } : {}),
           })
-          .catch((err) => this.logger.warn(`appendBlock failed for thread=${threadId} lane=${lane}: ${err}`));
+          .catch((err) => this.logger.warn(`appendBlock failed for thread=${jobId} lane=${lane}: ${err}`));
       }
-      this.liveTurns.end(channel, threadId, lane); // fans turn_end + drops the in-flight buffer
+      this.liveTurns.end(channel, jobId, lane); // fans turn_end + drops the in-flight buffer
     };
 
     return {
       onEvent: (e: EngineEvent) => {
         if (closed) return;
         // LIVE + RESUMABLE: the store fans the frame AND holds the cumulative turn for snapshot-on-connect.
-        this.liveTurns.push(channel, threadId, e, lane);
+        this.liveTurns.push(channel, jobId, e, lane);
         switch (e.kind) {
           case 'text': {
             // `parentToolUseId` (set only for subagent blocks) is stamped into meta so the web can peel

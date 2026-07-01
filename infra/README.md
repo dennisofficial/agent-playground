@@ -142,8 +142,8 @@ docker compose -f infra/docker-compose.prod.yml up -d
 ```
 
 On first backend boot (backend-blue starts first), the process:
-1. Calls `bundleEngine()` → writes `engine-entrypoint.mjs` to the dist sandbox
-   image context dir AND to `ENGINE_BUNDLE_PATH`.
+1. Calls `bundleEngine()` → writes `engine-entrypoint.mjs` to the fixed
+   `backend/sandbox/` build-context dir AND to `ENGINE_BUNDLE_PATH`.
 2. Calls `SandboxImageBuilder.ensureImage()` → builds `atlas-sandbox:latest` on the
    host Docker daemon. **This takes several minutes on first boot** — it installs
    Docker CE inside the image and pulls Node.js layers.
@@ -183,9 +183,11 @@ Rollback:
 ./infra/deploy.sh --rollback sha-<previous-tag>
 ```
 
-When deploying a change to `backend/src/app/sandbox/image/**`, the new sandbox image
-needs to be built on the box. The CI workflow sets `SANDBOX_REBUILD=1` automatically
-when it detects sandbox image file changes. For a manual deploy:
+When you change the sandbox image context (`backend/sandbox/**`) or the engine sources
+(`backend/src/app/sandbox/image/**`), the backend now **rebuilds the image automatically**
+on boot: `ensureImage()` hashes the context files into an `atlas.context-hash` label and
+rebuilds when it changes. `SANDBOX_REBUILD=1` is only needed to bust Docker's own layer
+cache (e.g. re-pull a floating base/tool version):
 ```bash
 SANDBOX_REBUILD=1 ./infra/deploy.sh sha-<gitsha>
 ```

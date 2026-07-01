@@ -54,7 +54,7 @@ export interface UpdateTicketPatch {
 
 /** The outcome of promoting a ticket to a thread. `created` is false when an existing link was reused. */
 export interface PromoteResult {
-  threadId: string;
+  jobId: string;
   /** True if a NEW thread was created; false if the ticket was already linked (idempotent reuse). */
   created: boolean;
   /** The opening intent to seed the new thread's brain with (title + body). Empty if not newly created. */
@@ -385,7 +385,7 @@ export class TicketService {
 
     const existing = await this.findLinkedThread(orgId, ticketId);
     if (existing) {
-      return { threadId: existing, created: false, seedText: '', title: ticket.title };
+      return { jobId: existing, created: false, seedText: '', title: ticket.title };
     }
 
     const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
@@ -395,7 +395,7 @@ export class TicketService {
     // ticket's own `title` is untouched — the board keeps the user's wording; only the thread is shortened.
     const threadTitle = await this.titler.titleFor(ticket.title, orgId);
 
-    let threadId: string;
+    let jobId: string;
     try {
       const row = await this.threads.save(
         this.threads.create({
@@ -408,12 +408,12 @@ export class TicketService {
           ticket_id: ticketId, // the link is written FIRST (in the insert)
         }),
       );
-      threadId = row.id;
+      jobId = row.id;
     } catch (err) {
       // A concurrent promote won the partial-unique index — resolve to the winning thread, don't error.
       if (isUniqueViolation(err)) {
         const won = await this.findLinkedThread(orgId, ticketId);
-        if (won) return { threadId: won, created: false, seedText: '', title: ticket.title };
+        if (won) return { jobId: won, created: false, seedText: '', title: ticket.title };
       }
       throw err;
     }
@@ -424,8 +424,8 @@ export class TicketService {
       await this.tickets.save(ticket);
     }
     this.events.publish({ type: 'ticket_event', orgId, repoId, ticketId, kind: 'updated' });
-    this.logger.log(`promoted ticket #${ticket.number} (${ticketId}) → thread ${threadId}`);
-    return { threadId, created: true, seedText, title: threadTitle };
+    this.logger.log(`promoted ticket #${ticket.number} (${ticketId}) → thread ${jobId}`);
+    return { jobId, created: true, seedText, title: threadTitle };
   }
 
   /** The thread currently linked to a ticket (org-scoped), or null. */
@@ -444,15 +444,15 @@ export class TicketService {
    * not started — immediately re-promotable). `done`/`cancelled` are terminal and left alone; a ticket
    * already manually parked in `todo`/`backlog` is a no-op. Idempotent and best-effort by design.
    */
-  async revertForDeletedThread(args: { orgId: string; threadId: string }): Promise<void> {
-    const { orgId, threadId } = args;
-    const thread = await this.threads.findOne({ where: { id: threadId, org_id: orgId } });
+  async revertForDeletedThread(args: { orgId: string; jobId: string }): Promise<void> {
+    const { orgId, jobId } = args;
+    const thread = await this.threads.findOne({ where: { id: jobId, org_id: orgId } });
     const ticketId = thread?.ticket_id;
     if (!ticketId) return; // thread gone, or never tied to a ticket → nothing to hand back.
 
     const ticket = await this.tickets.findOne({ where: { id: ticketId, org_id: orgId } });
     if (!ticket) return;
-    await this.revertStrandedTicket(ticket, `driving thread ${threadId} deleted`);
+    await this.revertStrandedTicket(ticket, `driving thread ${jobId} deleted`);
   }
 
   /**
@@ -574,12 +574,12 @@ export class TicketService {
   private async snapshotOrigin(
     orgId: string,
     repoId: string,
-    threadId: string | null,
+    jobId: string | null,
     decisionRecordId: string | null,
   ): Promise<TicketOrigin | null> {
     const origin: TicketOrigin = {};
-    if (threadId) {
-      const thread = await this.threads.findOne({ where: { id: threadId, org_id: orgId } });
+    if (jobId) {
+      const thread = await this.threads.findOne({ where: { id: jobId, org_id: orgId } });
       if (thread?.title) origin.threadTitle = thread.title;
     }
     if (decisionRecordId) {

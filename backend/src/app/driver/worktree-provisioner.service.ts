@@ -10,7 +10,7 @@ export interface ProvisionAndAttachInput {
   /** Tenant org id. */
   orgId: string;
   /** Owning thread — every provisioned sandbox is per-thread (the gate attaches directly, not here). */
-  threadId: string;
+  jobId: string;
   /** The repo's uuid (`repos.id`) — required to resolve secret grants. Absent → no secrets. */
   repoDbId?: string;
   /** Last hydration signature (thread sandboxes persist it). Re-hydrate only when it changes. */
@@ -52,7 +52,7 @@ export class WorktreeProvisioner {
   ) {}
 
   async provisionAndAttach(input: ProvisionAndAttachInput): Promise<ProvisionAndAttachResult> {
-    const { sandbox, orgId, threadId, repoDbId } = input;
+    const { sandbox, orgId, jobId, repoDbId } = input;
     const worktreePath = sandbox.worktreePath;
 
     // Ignore package-manager / build caches at the clone level so `commitAll`'s `git add -A` can never
@@ -79,7 +79,7 @@ export class WorktreeProvisioner {
       // wake, no spam (this only fires on a (re)hydration, i.e. at thread creation or a config change).
       if (notices.length) {
         await this.awareness
-          .appendMarker(threadId, {
+          .appendMarker(jobId, {
             id: 'worktree-hydration-issues',
             text: `⚠ .atlas/worktree.json — ${notices.length} issue(s): ${notices.join('; ')}`,
             at: new Date().toISOString(),
@@ -92,7 +92,7 @@ export class WorktreeProvisioner {
       sandbox,
       orgId,
       mounts,
-      threadId,
+      jobId,
       ...(repoDbId ? { repoDbId } : {}),
     });
     return { sandbox: attached, hydrationSig };

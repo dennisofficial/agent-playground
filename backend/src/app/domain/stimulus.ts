@@ -43,7 +43,7 @@ export interface ChatStimulus extends BaseStimulus {
   kind: 'chat';
   trust: 'trusted';
   /** The thread this message belongs to (`threads.id`). */
-  threadId: string;
+  jobId: string;
   /** Who authored the message — display name + scope id. */
   author: { id: string; displayName: string };
   /** Where the system replies: the surface id + the surface-native thread coordinate (the web thread ref). */
@@ -72,7 +72,7 @@ export interface EventStimulus extends BaseStimulus {
   kind: 'event';
   trust: 'untrusted';
   /** The thread this event seeded (`threads.id`) — the brain it's delivered to as a harness message. */
-  threadId: string;
+  jobId: string;
   /** The gateway that produced it, e.g. 'github' | 'webhook' | 'sentry' | 'posthog'. */
   source: string;
   /** Collapse key for the mechanical dedup/rate-limit filter (e.g. the grouped issue/run id). */

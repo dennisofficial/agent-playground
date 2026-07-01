@@ -14,10 +14,11 @@
 #     release) before the standby is declared ready. See plan Part A3.
 #   - The migrator runs as a one-shot container on the internal atlas network before
 #     the standby is started, so schema changes land before any code that uses them.
-#   - SANDBOX_REBUILD=1: pass this env var (or set it in the env) to force a rebuild
-#     of the atlas-sandbox:latest image on first backend boot after a deploy that
-#     changes backend/src/app/sandbox/image/**. The deploy.sh script accepts a flag
-#     to set it automatically (see --rebuild-sandbox below).
+#   - SANDBOX_REBUILD=1: force a rebuild of atlas-sandbox:latest past Docker's own layer
+#     cache (e.g. re-pull a floating base/tool version). NOTE: a changed build context
+#     (backend/sandbox/**) already auto-rebuilds via the image's context-hash label, so
+#     this is no longer required for ordinary image edits. The script accepts a flag to
+#     set it automatically (see --rebuild-sandbox below).
 #   - Idempotent: if the standby is already running (previous partial deploy), it is
 #     recreated. If the state file is absent, blue is assumed active.
 #

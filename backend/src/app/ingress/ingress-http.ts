@@ -49,7 +49,7 @@ export function toRawNotification(req: RawBodyRequest): RawNotification {
  * verify → intake → status plumbing so every gateway controller behaves identically.
  *
  * Status mapping (a webhook caller reads these):
- *  - accepted + admitted  → 202 { status:'accepted', stimulusId, threadId }
+ *  - accepted + admitted  → 202 { status:'accepted', stimulusId, jobId }
  *  - accepted + deduped   → 202 { status:'deduped', reason }
  *  - ignored              → 202 { status:'ignored', reason }   (verified but no action — a success)
  *  - rejected:bad-signature / unverifiable → 401
@@ -80,7 +80,7 @@ export async function runIngress(
   return {
     status: 'accepted',
     stimulusId: outcome.stimulusId,
-    threadId: outcome.threadId,
+    jobId: outcome.jobId,
   };
 }
 

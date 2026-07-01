@@ -90,59 +90,59 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
   }
 
   it('defaults to an empty buffer for a fresh thread (the migration backfill)', async () => {
-    const threadId = await newThread();
-    const rows = await ds.query(`SELECT pipeline_awareness AS a FROM jobs WHERE id = $1`, [threadId]);
+    const jobId = await newThread();
+    const rows = await ds.query(`SELECT pipeline_awareness AS a FROM jobs WHERE id = $1`, [jobId]);
     expect(rows[0].a).toEqual({ markerQueue: [], conveyedStateSig: null });
   });
 
   it('appends idempotently (same id → one marker) and survives a "process restart"', async () => {
-    const threadId = await newThread();
-    await store.appendMarker(threadId, marker('approved:dr-1', 'Plan approved.'));
-    await store.appendMarker(threadId, marker('approved:dr-1', 'Plan approved.')); // dup id
-    await store.appendMarker(threadId, marker('dispatched:dr-1', 'Build started.'));
+    const jobId = await newThread();
+    await store.appendMarker(jobId, marker('approved:dr-1', 'Plan approved.'));
+    await store.appendMarker(jobId, marker('approved:dr-1', 'Plan approved.')); // dup id
+    await store.appendMarker(jobId, marker('dispatched:dr-1', 'Build started.'));
 
     // A FRESH store instance (a new process) reads the durable buffer — proves it's persisted, not in-mem.
     const fresh = new PipelineAwarenessStore(ds);
-    const { markers } = await fresh.drainAndAdvance(threadId, null);
+    const { markers } = await fresh.drainAndAdvance(jobId, null);
     expect(markers.map((m) => m.id)).toEqual(['approved:dr-1', 'dispatched:dr-1']);
   });
 
   it('drains markers exactly once (a second drain is empty)', async () => {
-    const threadId = await newThread();
-    await store.appendMarker(threadId, marker('m1'));
-    const first = await store.drainAndAdvance(threadId, null);
+    const jobId = await newThread();
+    await store.appendMarker(jobId, marker('m1'));
+    const first = await store.drainAndAdvance(jobId, null);
     expect(first.markers.map((m) => m.id)).toEqual(['m1']);
-    const second = await store.drainAndAdvance(threadId, null);
+    const second = await store.drainAndAdvance(jobId, null);
     expect(second.markers).toEqual([]);
   });
 
   it('advances the state watermark — conveys a change once, then suppresses the unchanged repeat', async () => {
-    const threadId = await newThread();
-    const a = await store.drainAndAdvance(threadId, 'sig-running-1');
+    const jobId = await newThread();
+    const a = await store.drainAndAdvance(jobId, 'sig-running-1');
     expect(a.stateChanged).toBe(true); // first time this signature is seen → convey
-    const b = await store.drainAndAdvance(threadId, 'sig-running-1');
+    const b = await store.drainAndAdvance(jobId, 'sig-running-1');
     expect(b.stateChanged).toBe(false); // unchanged → suppressed
-    const c = await store.drainAndAdvance(threadId, 'sig-running-2');
+    const c = await store.drainAndAdvance(jobId, 'sig-running-2');
     expect(c.stateChanged).toBe(true); // a real change → convey again
   });
 
   it('a null signature (no build yet) never advances the watermark', async () => {
-    const threadId = await newThread();
-    const { stateChanged } = await store.drainAndAdvance(threadId, null);
+    const jobId = await newThread();
+    const { stateChanged } = await store.drainAndAdvance(jobId, null);
     expect(stateChanged).toBe(false);
   });
 
   it('the drain/append RACE drops no marker (FOR UPDATE serializes the human turn vs the driver)', async () => {
-    const threadId = await newThread();
+    const jobId = await newThread();
     // 20 concurrent appends (the driver) racing one drain (a human turn arriving mid-build).
     const ids = Array.from({ length: 20 }, (_, i) => `step:${i}:done`);
-    const appends = ids.map((id) => store.appendMarker(threadId, marker(id)));
-    const drain = store.drainAndAdvance(threadId, null);
+    const appends = ids.map((id) => store.appendMarker(jobId, marker(id)));
+    const drain = store.drainAndAdvance(jobId, null);
     const [{ markers: drained }] = await Promise.all([drain, ...appends.map((p) => p.then(() => undefined))]);
 
     // Whatever the interleaving, every marker is accounted for EXACTLY once: some were drained, the rest
     // remain queued — none vanished (a lost-update would lose appends that landed during a read-clear).
-    const remaining = (await store.drainAndAdvance(threadId, null)).markers;
+    const remaining = (await store.drainAndAdvance(jobId, null)).markers;
     const seen = [...drained, ...remaining].map((m) => m.id).sort();
     expect(seen).toEqual([...ids].sort());
   });

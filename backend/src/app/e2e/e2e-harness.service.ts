@@ -328,7 +328,7 @@ export class E2eHarness {
       trust: 'trusted',
       orgId: TEAM_ID,
       repoId: PROJECT_ID,
-      threadId: FEATURE_THREAD_ID,
+      jobId: FEATURE_THREAD_ID,
       body: 'Please add a short note to the README about the project.',
       author: { id: DEFAULT_HUMAN_ID, displayName: 'Dennis (e2e)' },
       replyRoute: { surfaceId: 'agent', threadRef: CHANNEL_REF },
@@ -410,9 +410,9 @@ export class E2eHarness {
 
       // The event seeded the thread's operator-visible artifact: a `system_event` provenance message
       // (the EVENT bubble). This is what the operator + Atlas both see — the harness-message model.
-      const threadId = first.json?.threadId as string | undefined;
-      const eventMsg = threadId
-        ? await this.repo(MessageEntity).findOne({ where: { job_id: threadId } })
+      const jobId = first.json?.jobId as string | undefined;
+      const eventMsg = jobId
+        ? await this.repo(MessageEntity).findOne({ where: { job_id: jobId } })
         : null;
       const hasEventMsg =
         !!eventMsg && (eventMsg.meta as { source?: unknown } | null)?.source === 'system_event';
@@ -467,13 +467,13 @@ export class E2eHarness {
       record('injection-admitted-as-data', admitted, `HTTP ${res.status} ${JSON.stringify(res.json)}`);
       if (!admitted) return { name: 'security', ok: false, steps };
 
-      const threadId = res.json?.threadId as string | undefined;
+      const jobId = res.json?.jobId as string | undefined;
 
       // The injected body is stored as the seeded event message (DATA) — it is fenced before the brain
       // sees it (the brain delivery wraps it in the untrusted markers). The seeded row holds the clean
       // text and is tagged `system_event`, NOT executed as an instruction.
-      const eventMsg = threadId
-        ? await this.repo(MessageEntity).findOne({ where: { job_id: threadId } })
+      const eventMsg = jobId
+        ? await this.repo(MessageEntity).findOne({ where: { job_id: jobId } })
         : null;
       const storedAsData =
         !!eventMsg &&
@@ -548,17 +548,17 @@ export class E2eHarness {
 
   /** Poll for the job on a thread (the autonomous path opens it itself) reaching a terminal state. */
   private async waitForJobOnThread(
-    threadId: string | undefined,
+    jobId: string | undefined,
     timeoutMs: number,
   ): Promise<JobEntity | undefined> {
-    if (!threadId) return undefined;
+    if (!jobId) return undefined;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const row = await this.repo(JobEntity).findOne({ where: { id: threadId } });
+      const row = await this.repo(JobEntity).findOne({ where: { id: jobId } });
       if (this.isTerminal(row)) return row ?? undefined;
       await delay(250);
     }
-    return (await this.repo(JobEntity).findOne({ where: { id: threadId } })) ?? undefined;
+    return (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ?? undefined;
   }
 
   // ── repo identity ──────────────────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { ChevronRight, Sparkles } from 'lucide-react';
-import type { ThreadMessage } from '@/lib/api/thread-api';
+import type { JobMessage } from '@/lib/api/thread-api';
 import type { LiveBlock } from '@/lib/api/thread-stream';
 
 /**
@@ -53,7 +53,7 @@ const firstLine = (v: unknown): string => (typeof v === 'string' ? v.split('\n')
 export const subagentLabel = (type: string): string =>
   `${type.charAt(0).toUpperCase()}${type.slice(1)} agent`;
 
-// ── Durable side (ThreadMessage[]) ────────────────────────────────────────────────────────────────
+// ── Durable side (JobMessage[]) ────────────────────────────────────────────────────────────────
 
 export interface DurableSubagentIndex {
   /** `message.ts` of every block that belongs to a subagent (skip these in the main log). */
@@ -63,11 +63,11 @@ export interface DurableSubagentIndex {
   /** parentId → the anchor's summary. */
   summaryById: Map<string, SubagentSummary>;
   /** parentId → its child messages, in order. */
-  childrenById: Map<string, ThreadMessage[]>;
+  childrenById: Map<string, JobMessage[]>;
 }
 
-export function indexDurableSubagents(messages: ThreadMessage[]): DurableSubagentIndex {
-  const childrenById = new Map<string, ThreadMessage[]>();
+export function indexDurableSubagents(messages: JobMessage[]): DurableSubagentIndex {
+  const childrenById = new Map<string, JobMessage[]>();
   const childKeys = new Set<string>();
   for (const m of messages) {
     const p = typeof m.meta?.parentToolUseId === 'string' ? m.meta.parentToolUseId : null;
@@ -99,7 +99,7 @@ export function indexDurableSubagents(messages: ThreadMessage[]): DurableSubagen
 }
 
 /** The Task anchor's prompt (full) — for the detail pane's collapsible "Task prompt". */
-export function durableSubagentPrompt(messages: ThreadMessage[], parentId: string): string {
+export function durableSubagentPrompt(messages: JobMessage[], parentId: string): string {
   for (const m of messages) {
     if (m.kind === 'tool' && m.meta?.id === parentId) {
       const input = (m.meta?.input ?? {}) as Record<string, unknown>;
@@ -109,7 +109,7 @@ export function durableSubagentPrompt(messages: ThreadMessage[], parentId: strin
   return '';
 }
 
-export function durableSubBlocks(children: ThreadMessage[]): SubBlock[] {
+export function durableSubBlocks(children: JobMessage[]): SubBlock[] {
   return children.map((m): SubBlock => {
     if (m.kind === 'thinking') return { kind: 'thinking', key: m.ts, text: m.text, postedAt: m.postedAt };
     if (m.kind === 'tool') {

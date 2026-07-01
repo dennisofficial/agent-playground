@@ -85,10 +85,10 @@ function makeSvc(
 
   // Records the per-thread deep deletes so the deleteOrg test can assert on them. `JobLifecycleService`
   // is pulled lazily via `ModuleRef.get(...)` in `deleteOrg`, so the mock ref just hands back this fake.
-  const deepDeleted: Array<{ threadId: string; orgId: string }> = [];
+  const deepDeleted: Array<{ jobId: string; orgId: string }> = [];
   const threadLifecycle = {
-    deleteThreadDeep: async (threadId: string, orgId: string) => {
-      deepDeleted.push({ threadId, orgId });
+    deleteThreadDeep: async (jobId: string, orgId: string) => {
+      deepDeleted.push({ jobId, orgId });
     },
   };
   const moduleRef = { get: () => threadLifecycle } as unknown as ModuleRef;
@@ -185,8 +185,8 @@ describe('OrganizationService deleteOrg', () => {
 
     // Each thread is deep-deleted (container + worktree teardown; its rows cascade) before the org row.
     expect(deepDeleted).toEqual([
-      { threadId: 'T1', orgId: 'O1' },
-      { threadId: 'T2', orgId: 'O1' },
+      { jobId: 'T1', orgId: 'O1' },
+      { jobId: 'T2', orgId: 'O1' },
     ]);
 
     // The org row is deleted exactly once; FK cascade removes the rest. No explicit per-table sweep runs,

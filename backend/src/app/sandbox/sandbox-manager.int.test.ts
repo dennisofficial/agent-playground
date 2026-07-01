@@ -155,8 +155,8 @@ describe('SandboxManager (integration, needs Docker)', () => {
     }
     await builder.ensureImage();
 
-    const threadId = 'thread-ctx-1';
-    const attached = await manager.attach({ sandbox, orgId: 'team-ctx', threadId });
+    const jobId = 'thread-ctx-1';
+    const attached = await manager.attach({ sandbox, orgId: 'team-ctx', jobId });
     containerId = attached.containerId;
     const containerName = (await engine.inspect(attached.containerId!))!.name;
     artifacts = { net: `${containerName}-net`, vol: `${containerName}-dind` };
@@ -171,7 +171,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
     expect(w.exitCode).toBe(0);
 
     // The HOST reads it back via the resolver — same dir, outside the worktree.
-    const hostContext = manager.contextDirHost('team-ctx', threadId);
+    const hostContext = manager.contextDirHost('team-ctx', jobId);
     expect(readFileSync(join(hostContext, 'specs', '01.md'), 'utf8').trim()).toBe(marker);
     // It is NOT inside the git worktree (so it never pollutes the repo diff).
     expect(hostContext.startsWith(worktree)).toBe(false);

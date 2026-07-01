@@ -13,7 +13,7 @@ const STIMULUS: ChatStimulus = {
   kind: 'chat',
   orgId: 'org-REAL',
   repoId: 'repo-REAL',
-  threadId: 'thread-REAL',
+  jobId: 'thread-REAL',
   author: { id: 'U1', displayName: 'Op' },
   text: 'hi',
   replyRoute: { threadRef: 'thread-REAL' },
@@ -105,16 +105,16 @@ describe('brain ticket tools — closure scoping', () => {
 
   it('list_tickets / promote_ticket pass the stimulus scope', async () => {
     const list = vi.fn().mockResolvedValue([]);
-    const promote = vi.fn().mockResolvedValue({ threadId: 'th-new', created: true, seedText: '', title: 'X' });
+    const promote = vi.fn().mockResolvedValue({ jobId: 'th-new', created: true, seedText: '', title: 'X' });
     const { manager } = makeManager({ list, promote });
     const tools = manager.buildTools(STIMULUS) as never as Record<string, (a: Record<string, unknown>) => Promise<unknown>>;
 
     await qualified('list_tickets', tools)({ status: 'backlog', orgId: 'org-EVIL' });
     expect(list).toHaveBeenCalledWith({ orgId: 'org-REAL', repoId: 'repo-REAL', status: 'backlog' });
 
-    const res = (await qualified('promote_ticket', tools)({ ticketId: 't-9', repoId: 'repo-EVIL' })) as { ok: boolean; threadId?: string };
+    const res = (await qualified('promote_ticket', tools)({ ticketId: 't-9', repoId: 'repo-EVIL' })) as { ok: boolean; jobId?: string };
     expect(res.ok).toBe(true);
-    expect(res.threadId).toBe('th-new');
+    expect(res.jobId).toBe('th-new');
     expect(promote).toHaveBeenCalledWith({ orgId: 'org-REAL', repoId: 'repo-REAL', ticketId: 't-9' });
   });
 });

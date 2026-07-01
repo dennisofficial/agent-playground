@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { TopBar } from './top-bar';
 import { CommandPalette } from './command-palette';
-import { useAllThreadsRealtime } from '@/lib/api/all-threads-realtime';
+import { useAllJobsRealtime } from '@/lib/api/all-threads-realtime';
 
 /**
  * The persistent app chrome (client). The app-wide TOP BAR (ATLAS lockup + Threads | Tickets nav + avatar)
@@ -20,7 +20,7 @@ export function AppChrome({ children, dialog }: { children: ReactNode; dialog: R
 
   // One shell-wide realtime subscription keeps every thread's "needs you" dot + status live across the
   // whole app (sidebar, dashboard, board) — independent of which thread, if any, is open.
-  useAllThreadsRealtime();
+  useAllJobsRealtime();
 
   const closePalette = useCallback(() => setPaletteOpen(false), []);
 

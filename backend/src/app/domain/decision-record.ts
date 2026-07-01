@@ -97,7 +97,7 @@ export interface DecisionRecord {
   /** The project this record scopes to. */
   repoId: string;
   /** The thread this record was produced for. */
-  threadId: string;
+  jobId: string;
   status: DecisionRecordStatus;
   /**
    * The agreed overview — the feature's intent, stack, constraints, and how the tracks fit

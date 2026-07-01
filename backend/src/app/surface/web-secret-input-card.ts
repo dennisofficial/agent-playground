@@ -2,7 +2,7 @@
  * Web SECRET-INPUT card payload — the secure request the repo-onboarding brain poses via the
  * `request_secret` tool when it needs an env-file secret value (e.g. `DATABASE_URL`). The web client
  * renders a masked password field + submit; the operator's value is POSTed to
- * `…/threads/:threadId/provide-secret`, which writes it straight to the encrypted `WorktreeSecretStore`
+ * `…/threads/:jobId/provide-secret`, which writes it straight to the encrypted `WorktreeSecretStore`
  * and creates the owner grant. The value is therefore NEVER part of this card, the transcript, or any
  * brain tool I/O — the card holds only the request metadata + lifecycle timestamps, and once provided the
  * client renders a compact "✓ NAME provided" state.
@@ -14,7 +14,7 @@
 export interface WebSecretInputCard {
   /** Discriminant — the web client checks `type` to decide which component to render. */
   type: 'secret_input_card';
-  threadId: string;
+  jobId: string;
   /** Stable key for this request (the card row's `ts`); the provide POST echoes it back. */
   requestId: string;
   /** The secret's name (→ `OrgWorktreeSecretEntity.name`); shown to the operator, never the value. */
@@ -39,7 +39,7 @@ export interface WebSecretInputCard {
 
 /** Build a `WebSecretInputCard` from the brain's `request_secret` args. */
 export function webSecretInputCard(input: {
-  threadId: string;
+  jobId: string;
   requestId: string;
   name: string;
   path: string;
@@ -47,7 +47,7 @@ export function webSecretInputCard(input: {
 }): WebSecretInputCard {
   return {
     type: 'secret_input_card',
-    threadId: input.threadId,
+    jobId: input.jobId,
     requestId: input.requestId,
     name: input.name,
     path: input.path,

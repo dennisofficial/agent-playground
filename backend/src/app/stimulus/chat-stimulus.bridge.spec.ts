@@ -91,7 +91,7 @@ describe('ChatStimulusBridge → ChatStimulus', () => {
 
     await bridge.onInbound(msg({ threadTs: 'thread-7', text: "I'm on it" }));
     expect(threadRows).toHaveLength(1); // no new thread created
-    expect(intaken[0]).toMatchObject({ threadId: 'thread-7', body: "I'm on it" });
+    expect(intaken[0]).toMatchObject({ jobId: 'thread-7', body: "I'm on it" });
     expect(intaken[0].replyRoute.threadRef).toBe('thread-7');
   });
 });

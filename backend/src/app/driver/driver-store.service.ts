@@ -68,9 +68,9 @@ export class DriverStoreService {
   // ── thread (the build unit) ────────────────────────────────────────────────────────────────────
 
   /** Load one thread as the domain shape. */
-  async loadJob(threadId: string): Promise<Job> {
+  async loadJob(jobId: string): Promise<Job> {
     return toJob(
-      await this.threads.findOneOrFail({ where: { id: threadId } }),
+      await this.threads.findOneOrFail({ where: { id: jobId } }),
     );
   }
 
@@ -80,23 +80,23 @@ export class DriverStoreService {
     return rows.map(toJob);
   }
 
-  async setJobStatus(threadId: string, status: JobStatus): Promise<void> {
-    await this.threads.update({ id: threadId }, { status });
+  async setJobStatus(jobId: string, status: JobStatus): Promise<void> {
+    await this.threads.update({ id: jobId }, { status });
   }
 
   /** Record the feature branch all tracks stack on (set once, when the sandbox is cut). */
-  async setFeatureBranch(threadId: string, branch: string): Promise<void> {
-    await this.threads.update({ id: threadId }, { feature_branch: branch });
+  async setFeatureBranch(jobId: string, branch: string): Promise<void> {
+    await this.threads.update({ id: jobId }, { feature_branch: branch });
   }
 
   /** Record the opened PR (url + number) + flip the thread to its terminal `done`. */
   async setPrReady(
-    threadId: string,
+    jobId: string,
     prUrl: string,
     prNumber?: number,
   ): Promise<void> {
     await this.threads.update(
-      { id: threadId },
+      { id: jobId },
       {
         pr_url: prUrl,
         ...(prNumber != null ? { pr_number: prNumber } : {}),
@@ -114,12 +114,12 @@ export class DriverStoreService {
    * caller won the claim (so the boot backstop can't race a live driver run). A row already `running` or
    * `complete` is NOT re-claimed here — but the resumable `finishWithPr` re-runs `running` idempotently.
    */
-  async claimLedgerPromotion(threadId: string): Promise<boolean> {
+  async claimLedgerPromotion(jobId: string): Promise<boolean> {
     const res = await this.threads
       .createQueryBuilder()
       .update(JobEntity)
       .set({ ledger_promotion_status: 'running' })
-      .where('id = :id', { id: threadId })
+      .where('id = :id', { id: jobId })
       .andWhere(
         "(ledger_promotion_status IS NULL OR ledger_promotion_status IN ('pending', 'failed'))",
       )
@@ -129,19 +129,19 @@ export class DriverStoreService {
 
   /** Set the promotion lifecycle status (e.g. `failed` on a caught promotion error, retried later). */
   async setLedgerPromotionStatus(
-    threadId: string,
+    jobId: string,
     status: string,
   ): Promise<void> {
     await this.threads.update(
-      { id: threadId },
+      { id: jobId },
       { ledger_promotion_status: status },
     );
   }
 
   /** Mark the ledger promotion COMPLETE — stamped ONLY after the promotion turn AND the commit succeed. */
-  async markLedgerPromoted(threadId: string): Promise<void> {
+  async markLedgerPromoted(jobId: string): Promise<void> {
     await this.threads.update(
-      { id: threadId },
+      { id: jobId },
       { ledger_promotion_status: 'complete', ledger_promoted_at: new Date() },
     );
   }
@@ -160,30 +160,30 @@ export class DriverStoreService {
   // ── tracks ─────────────────────────────────────────────────────────────────────────────────
 
   /** The thread's tracks in execution order (ORDER BY ordinal). */
-  async tracksForJob(threadId: string): Promise<DriverThread[]> {
+  async tracksForJob(jobId: string): Promise<DriverThread[]> {
     const rows = await this.tracks.find({
-      where: { job_id: threadId },
+      where: { job_id: jobId },
       order: { ordinal: 'ASC' },
     });
     return rows.map(toThread);
   }
 
-  async setThreadStatus(trackId: string, status: ThreadStatus): Promise<void> {
-    await this.tracks.update({ id: trackId }, { status });
+  async setThreadStatus(threadId: string, status: ThreadStatus): Promise<void> {
+    await this.tracks.update({ id: threadId }, { status });
   }
 
   /** Persist the just-in-time plan prose + the prior track's handoff onto the track. */
   async setThreadPlan(
-    trackId: string,
+    threadId: string,
     plan: string,
     handoffIn: string | null,
   ): Promise<void> {
-    await this.tracks.update({ id: trackId }, { plan, handoff_in: handoffIn });
+    await this.tracks.update({ id: threadId }, { plan, handoff_in: handoffIn });
   }
 
   /** Record the track's handoff note for the next track (set when the track is done). */
-  async setThreadHandoffOut(trackId: string, handoffOut: string): Promise<void> {
-    await this.tracks.update({ id: trackId }, { handoff_out: handoffOut });
+  async setThreadHandoffOut(threadId: string, handoffOut: string): Promise<void> {
+    await this.tracks.update({ id: threadId }, { handoff_out: handoffOut });
   }
 
   // ── review agents (post-build review fan-out, per-agent status) ────────────────────────────────
@@ -191,37 +191,37 @@ export class DriverStoreService {
   /** Seed the track's review agents at `pending` from the selected lens set — call before the auto-fix
    *  pass so the navigator can show the agents queued, then transitioned as each lens runs. */
   async seedReviewAgents(
-    trackId: string,
+    threadId: string,
     agents: ReviewAgentState[],
   ): Promise<void> {
-    await this.tracks.update({ id: trackId }, { review_agents: agents });
+    await this.tracks.update({ id: threadId }, { review_agents: agents });
   }
 
   /** Transition ONE review agent's status (read-modify-write the jsonb array). A no-op if the track or the
    *  lens id isn't found (best-effort display state, never sinks the build). */
   async setReviewAgentStatus(
-    trackId: string,
+    threadId: string,
     lensId: string,
     status: ReviewAgentState['status'],
     findings?: number,
   ): Promise<void> {
-    const track = await this.tracks.findOne({ where: { id: trackId } });
+    const track = await this.tracks.findOne({ where: { id: threadId } });
     if (!track) return;
     const agents = (track.review_agents ?? []).map((a) =>
       a.id === lensId
         ? { ...a, status, ...(findings != null ? { findings } : {}) }
         : a,
     );
-    await this.tracks.update({ id: trackId }, { review_agents: agents });
+    await this.tracks.update({ id: threadId }, { review_agents: agents });
   }
 
   /** Resolve any review agent still `pending`/`running` once the pass is over — `passed` if its lens ran,
    *  else `skipped` (e.g. the pass threw before reaching it, or the diff was empty). Idempotent. */
   async finalizeReviewAgents(
-    trackId: string,
+    threadId: string,
     lensesRun: string[],
   ): Promise<void> {
-    const track = await this.tracks.findOne({ where: { id: trackId } });
+    const track = await this.tracks.findOne({ where: { id: threadId } });
     if (!track) return;
     const ran = new Set(lensesRun);
     const agents = (track.review_agents ?? []).map((a) =>
@@ -232,15 +232,15 @@ export class DriverStoreService {
           }
         : a,
     );
-    await this.tracks.update({ id: trackId }, { review_agents: agents });
+    await this.tracks.update({ id: threadId }, { review_agents: agents });
   }
 
   // ── steps ───────────────────────────────────────────────────────────────────────────────────
 
   /** A track's steps in execution order. */
-  async stepsForThread(trackId: string): Promise<Step[]> {
+  async stepsForThread(threadId: string): Promise<Step[]> {
     const rows = await this.steps.find({
-      where: { thread_id: trackId },
+      where: { thread_id: threadId },
       order: { ordinal: 'ASC' },
     });
     return rows.map(toStep);
@@ -257,7 +257,7 @@ export class DriverStoreService {
     const rows = planned.map((p, i) =>
       this.steps.create({
         thread_id: track.id,
-        job_id: track.threadId,
+        job_id: track.jobId,
         org_id: track.orgId,
         ordinal: (i + 1) * ORDINAL_GAP,
         title: p.title,
@@ -304,9 +304,9 @@ export class DriverStoreService {
    * `{ status: 'no_job' }` if the thread hasn't entered the build lifecycle. Used by the in-sandbox
    * AgentSessionManager brain session.
    */
-  async getPipelineState(threadId: string, orgId: string): Promise<unknown> {
+  async getPipelineState(jobId: string, orgId: string): Promise<unknown> {
     const thread = await this.threads.findOne({
-      where: { id: threadId, org_id: orgId },
+      where: { id: jobId, org_id: orgId },
     });
     if (!thread || thread.status === 'open') return { status: 'no_job' };
     const tracks = await this.tracks.find({
@@ -325,7 +325,7 @@ export class DriverStoreService {
       stepsByThread.set(p.thread_id, list);
     }
     return {
-      threadId: thread.id,
+      jobId: thread.id,
       title: thread.title,
       kind: thread.kind,
       status: thread.status,
@@ -334,7 +334,7 @@ export class DriverStoreService {
       prNumber: thread.pr_number,
       featureBranch: thread.feature_branch,
       baseBranch: thread.base_branch,
-      tracks: tracks.map((s) => ({
+      threads: tracks.map((s) => ({
         id: s.id,
         ordinal: s.ordinal,
         brief: s.brief,
@@ -361,8 +361,8 @@ export class DriverStoreService {
    * R3 — `get_decision_record` tool impl. Returns the current decision record for a thread (via the
    * thread's `decision_record_id`), or null. Used by the in-sandbox brain session.
    */
-  async getDecisionRecord(threadId: string): Promise<unknown> {
-    const thread = await this.threads.findOne({ where: { id: threadId } });
+  async getDecisionRecord(jobId: string): Promise<unknown> {
+    const thread = await this.threads.findOne({ where: { id: jobId } });
     if (!thread?.decision_record_id) return null;
     const record = await this.records.findOne({
       where: { id: thread.decision_record_id },
@@ -457,7 +457,7 @@ function toJob(row: JobEntity): Job {
 function toThread(row: ThreadEntity): DriverThread {
   return {
     id: row.id,
-    threadId: row.job_id,
+    jobId: row.job_id,
     orgId: row.org_id,
     ordinal: row.ordinal,
     brief: row.brief,
@@ -471,8 +471,8 @@ function toThread(row: ThreadEntity): DriverThread {
 function toStep(row: StepEntity): Step {
   return {
     id: row.id,
-    trackId: row.thread_id,
-    threadId: row.job_id,
+    threadId: row.thread_id,
+    jobId: row.job_id,
     ordinal: row.ordinal,
     title: row.title,
     brief: row.brief,
@@ -489,7 +489,7 @@ function toRecord(row: DecisionRecordEntity): DecisionRecord {
     id: row.id,
     orgId: row.org_id,
     repoId: row.repo_id,
-    threadId: row.job_id,
+    jobId: row.job_id,
     status: row.status as DecisionRecord['status'],
     overview: row.overview,
     decisions: row.decisions as Decision[],

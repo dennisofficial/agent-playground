@@ -17,11 +17,11 @@ export async function dispatchToolRequest(
   req: ToolRequestFrame,
 ): Promise<HostFrame> {
   const { id, name, args } = req;
-  if (typeof args['threadId'] === 'string' && args['threadId'] !== bridge.threadId) {
+  if (typeof args['jobId'] === 'string' && args['jobId'] !== bridge.jobId) {
     return {
       t: 'tool_error',
       id,
-      message: `Thread scope violation: tool '${name}' requested for thread '${args['threadId']}' but this exec belongs to thread '${bridge.threadId}'`,
+      message: `Thread scope violation: tool '${name}' requested for thread '${args['jobId']}' but this exec belongs to thread '${bridge.jobId}'`,
     };
   }
   const impl = bridge.tools[name];

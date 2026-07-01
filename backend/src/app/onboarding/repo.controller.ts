@@ -143,7 +143,7 @@ export class RepoController {
   async onboard(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('repoId') repoId: string,
-  ): Promise<{ threadId: string }> {
+  ): Promise<{ jobId: string }> {
     return this.onboarding.reonboardRepo(org.id, repoId);
   }
 

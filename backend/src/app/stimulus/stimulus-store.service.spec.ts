@@ -97,7 +97,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const chat = await store.recordChatStimulus({
       orgId: 'T1',
       repoId: 'web',
-      threadId: 'thread-9',
+      jobId: 'thread-9',
       author: { id: 'U1', displayName: 'Dennis' },
       replyRoute: { surfaceId: 'slack', threadRef: '100.1' },
       body: 'hey',
@@ -108,7 +108,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     expect(chat).toMatchObject({
       kind: 'chat',
       trust: 'trusted',
-      threadId: 'thread-9',
+      jobId: 'thread-9',
       author: { id: 'U1', displayName: 'Dennis' },
     });
     expect(chat.replyRoute).toEqual({ surfaceId: 'slack', threadRef: '100.1' });

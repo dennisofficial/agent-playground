@@ -58,7 +58,8 @@ x-backend-common: &backend-common
     APP_ENV: production
     # SANDBOX_REBUILD: if set in the deploy.sh shell environment, docker compose
     # passes it through to the container (implicit passthrough when value is omitted).
-    # Set SANDBOX_REBUILD=1 when deploying a build that changes sandbox/image/**.
+    # A changed context (backend/sandbox/**) already auto-rebuilds via the context-hash
+    # label; set SANDBOX_REBUILD=1 only to bust Docker's own layer cache.
     SANDBOX_REBUILD: "${SANDBOX_REBUILD:-}"
   volumes:
     # Docker socket — allows the backend to drive per-thread sandbox containers.

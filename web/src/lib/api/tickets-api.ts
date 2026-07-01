@@ -154,7 +154,7 @@ export function deleteTicket(ref: TicketRef, ticketId: string): Promise<{ ok: bo
 export function promoteTicket(
   ref: TicketRef,
   ticketId: string,
-): Promise<{ threadId: string; created: boolean }> {
+): Promise<{ jobId: string; created: boolean }> {
   return ticketJson(ticketsPath(ref, `/${ticketId}/promote`), { method: 'POST' });
 }
 

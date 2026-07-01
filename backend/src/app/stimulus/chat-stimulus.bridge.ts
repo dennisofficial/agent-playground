@@ -88,7 +88,7 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
       kind: 'chat',
       trust: 'trusted',
       body: msg.text,
-      threadId: thread.id,
+      jobId: thread.id,
       author: { id: msg.authorId, displayName: msg.authorName },
       replyRoute: {
         surfaceId: this.surface.name,

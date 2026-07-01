@@ -8,17 +8,17 @@ import { toJobStatus } from './status';
 import type { WireJobStatus, JobStatus, JobKind } from './types';
 
 /**
- * The unified cross-org inbox — every thread across ALL the operator's orgs (`GET /web/threads`), the
+ * The unified cross-org inbox — every thread across ALL the operator's orgs (`GET /web/jobs`), the
  * data behind the "All organizations" board and the org-grouped sidebar. The endpoint is login-gated and
  * inherently scoped to the caller's memberships; each row carries its org + repo so the UI can label it.
  *
  * The row carries a server-owned `status` + `needsYou` ("needs you" = the AI isn't actively working and
  * the thread isn't terminal — see the backend `deriveNeedsYou`). These power the status pie + the alert
- * dot for EVERY thread, not just the open one; a realtime feed keeps them live (see `useAllThreadsRealtime`).
+ * dot for EVERY thread, not just the open one; a realtime feed keeps them live (see `useAllJobsRealtime`).
  */
 
 export interface RawInboxThread {
-  threadId: string;
+  jobId: string;
   title: string | null;
   origin: string; // 'chat' | 'event' | 'control'
   /** Raw backend thread status ('open' | 'planning' | … | 'cancelled'). */
@@ -56,7 +56,7 @@ export function uiStatus(backend: string, origin: string): JobStatus {
 
 export function normalize(r: RawInboxThread): InboxThread {
   return {
-    id: r.threadId,
+    id: r.jobId,
     title: r.title?.trim() || 'Untitled thread',
     kind: kindFromOrigin(r.origin),
     status: uiStatus(r.status, r.origin),
@@ -68,7 +68,7 @@ export function normalize(r: RawInboxThread): InboxThread {
 }
 
 async function fetchAllThreads(): Promise<InboxThread[]> {
-  const res = await fetchWithRefresh(`${env.NEXT_PUBLIC_HTTP_URL}/web/threads`, {
+  const res = await fetchWithRefresh(`${env.NEXT_PUBLIC_HTTP_URL}/web/jobs`, {
     headers: { accept: 'application/json' },
   });
   if (!res.ok) throw new Error(`threads ${res.status}`);
@@ -76,9 +76,9 @@ async function fetchAllThreads(): Promise<InboxThread[]> {
   return rows.map(normalize);
 }
 
-export function useAllThreads() {
+export function useAllJobs() {
   return useQuery({
-    queryKey: qk.allThreads(),
+    queryKey: qk.allJobs(),
     queryFn: fetchAllThreads,
     staleTime: 15_000,
   });

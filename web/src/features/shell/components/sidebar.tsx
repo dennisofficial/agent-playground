@@ -7,7 +7,7 @@ import { ChevronRight, LayoutGrid, Plus, Settings } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ROUTES, threadHref } from '@/lib/routes';
 import { useOrgs, type OrgSummary } from '@/lib/api/me';
-import { useAllThreads, type InboxThread } from '@/lib/api/inbox';
+import { useAllJobs, type InboxThread } from '@/lib/api/inbox';
 import { useAllRepos } from '@/lib/api/tickets-queries';
 import { StatusPie } from '@/components/ui/badges';
 import { AccountMenu } from './account-menu';
@@ -28,7 +28,7 @@ import { AccountMenu } from './account-menu';
  * (This replaces the handoff's per-item hide/show, which didn't scale: muting 18 of 20 repos left a
  * permanent "N hidden" line.) Explicit collapse/expand always overrides these data-driven defaults.
  *
- * Threads come from the cross-org inbox (`useAllThreads`), kept live by the realtime feed; each row's
+ * Threads come from the cross-org inbox (`useAllJobs`), kept live by the realtime feed; each row's
  * `status` (the status pie) and `needsYou` (the accent attention dot) are server-owned. A collapsed
  * org/repo header carries an attention dot when any thread inside needs you (the rollup); expanded headers
  * show the per-thread dots instead.
@@ -67,7 +67,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const { owned, joined, isLoading: orgsLoading } = useOrgs();
   const { repos: allRepos, isLoading: reposLoading } = useAllRepos();
-  const { data: threads = [], isLoading: threadsLoading } = useAllThreads();
+  const { data: threads = [], isLoading: threadsLoading } = useAllJobs();
 
   // Owned-first, then joined — a stable order independent of thread recency.
   const orgs = useMemo(() => [...owned, ...joined], [owned, joined]);
@@ -465,7 +465,7 @@ function RepoGroup({
               key={t.id}
               thread={t}
               orgId={orgId}
-              active={pathname === threadHref({ orgId, repoId: repo.repoId, threadId: t.id })}
+              active={pathname === threadHref({ orgId, repoId: repo.repoId, jobId: t.id })}
             />
           ))
         )
@@ -478,7 +478,7 @@ function RepoGroup({
 function ThreadRow({ thread, orgId, active }: { thread: InboxThread; orgId: string; active: boolean }) {
   return (
     <Link
-      href={threadHref({ orgId, repoId: thread.repo.id, threadId: thread.id })}
+      href={threadHref({ orgId, repoId: thread.repo.id, jobId: thread.id })}
       title={`${thread.org.name} · ${thread.repo.name}`}
       className={cn(
         'flex items-start gap-1.5 rounded-[7px] pb-[5px] pl-[3px] pr-[7px] pt-[5px] transition',

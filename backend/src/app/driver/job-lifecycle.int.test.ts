@@ -89,9 +89,9 @@ class FakeGitService {
     };
   }
 
-  async createBaseWorktree(repo: ProjectRepo, threadId: string): Promise<FeatureSandbox> {
-    const path = `${repo.repoPath}/.worktrees/thread-${threadId}`;
-    this.worktreesByThreadId.set(threadId, path);
+  async createBaseWorktree(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
+    const path = `${repo.repoPath}/.worktrees/thread-${jobId}`;
+    this.worktreesByThreadId.set(jobId, path);
     return { repoId: repo.repoId, branch: FAKE_BASE_BRANCH, worktreePath: path, gitUrl: repo.gitUrl };
   }
 
@@ -121,9 +121,9 @@ class FakeSandboxProvider {
   warm = true;
   attachCount = 0;
   readonly tornDown: string[] = [];
-  async attach({ sandbox, threadId }: { sandbox: FeatureSandbox; orgId: string; threadId?: string }): Promise<FeatureSandbox> {
+  async attach({ sandbox, jobId }: { sandbox: FeatureSandbox; orgId: string; jobId?: string }): Promise<FeatureSandbox> {
     this.attachCount++;
-    return { ...sandbox, containerId: `fake-c-${threadId ?? sandbox.branch}`, warm: this.warm };
+    return { ...sandbox, containerId: `fake-c-${jobId ?? sandbox.branch}`, warm: this.warm };
   }
   async teardown(sandbox: FeatureSandbox): Promise<void> {
     if (sandbox.containerId) this.tornDown.push(sandbox.containerId);
@@ -133,11 +133,11 @@ class FakeSandboxProvider {
    * when no `container_id` is known (post-restart). Records the stable id `attach` would have used, so
    * teardown is observable regardless of whether the row still carries a `container_id`.
    */
-  async teardownByIdentity({ sandbox, threadId }: { sandbox: FeatureSandbox; orgId: string; threadId?: string }): Promise<void> {
-    this.tornDown.push(`fake-c-${threadId ?? sandbox.branch}`);
+  async teardownByIdentity({ sandbox, jobId }: { sandbox: FeatureSandbox; orgId: string; jobId?: string }): Promise<void> {
+    this.tornDown.push(`fake-c-${jobId ?? sandbox.branch}`);
   }
-  contextDirHost(orgId: string, threadId: string): string {
-    return `/fake/contexts/${orgId}/${threadId}`;
+  contextDirHost(orgId: string, jobId: string): string {
+    return `/fake/contexts/${orgId}/${jobId}`;
   }
 }
 
@@ -211,8 +211,8 @@ beforeEach(async () => {
         // hydration is a no-op here (no `.atlas/worktree.json` in the fake worktrees).
         provide: WorktreeProvisioner,
         useValue: {
-          provisionAndAttach: async ({ sandbox, orgId, threadId }: { sandbox: FeatureSandbox; orgId: string; threadId?: string }) => ({
-            sandbox: await provider.attach({ sandbox, orgId, threadId }),
+          provisionAndAttach: async ({ sandbox, orgId, jobId }: { sandbox: FeatureSandbox; orgId: string; jobId?: string }) => ({
+            sandbox: await provider.attach({ sandbox, orgId, jobId }),
             hydrationSig: 'int-sig',
           }),
         },
@@ -275,124 +275,124 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   it('createThread persists an attached sandbox with the feature branch cut at create', async () => {
     const result = await create('Add dark mode');
 
-    expect(result.threadId).toBeTruthy();
-    expect(result.worktreePath).toContain(`thread-${result.threadId}`);
+    expect(result.jobId).toBeTruthy();
+    expect(result.worktreePath).toContain(`thread-${result.jobId}`);
 
     const row = await sandboxes.findOneOrFail({ where: { id: result.threadSandboxId } });
     expect(row.lifecycle).toBe('attached');
-    expect(row.container_id).toBe(`fake-c-${result.threadId}`);
+    expect(row.container_id).toBe(`fake-c-${result.jobId}`);
     expect(row.last_active_at).not.toBeNull();
     // The branch lives on the THREAD now (single owner — sandbox is pure infra).
-    const thread = await jobs.findOneOrFail({ where: { id: result.threadId } });
+    const thread = await jobs.findOneOrFail({ where: { id: result.jobId } });
     expect(thread.base_branch).toBe(FAKE_BASE_BRANCH);
-    expect(thread.feature_branch).toBe(`atlas/thread-${result.threadId.slice(0, 8)}`);
+    expect(thread.feature_branch).toBe(`atlas/thread-${result.jobId.slice(0, 8)}`);
     expect(fakeGit.branches).toContain(thread.feature_branch);
   });
 
   it('ensureContainer reuses the live container and reports wasReset from the provider warm flag', async () => {
-    const { threadId } = await create();
+    const { jobId } = await create();
 
     provider.warm = true; // reuse warm
-    const warm = await threadLifecycle.ensureContainer(threadId, FAKE_TEAM_ID);
+    const warm = await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID);
     expect(warm).not.toBeNull();
     expect(warm!.wasReset).toBe(false);
-    expect(warm!.sandbox.branch).toBe(`atlas/thread-${threadId.slice(0, 8)}`);
+    expect(warm!.sandbox.branch).toBe(`atlas/thread-${jobId.slice(0, 8)}`);
 
     provider.warm = false; // simulate a cold re-attach
-    const cold = await threadLifecycle.ensureContainer(threadId, FAKE_TEAM_ID);
+    const cold = await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID);
     expect(cold!.wasReset).toBe(true);
 
-    const row = await sandboxes.findOneOrFail({ where: { job_id: threadId } });
+    const row = await sandboxes.findOneOrFail({ where: { job_id: jobId } });
     expect(row.lifecycle).toBe('attached');
   });
 
   it('reapIdle detaches an idle container (worktree survives); ensureContainer re-attaches it', async () => {
-    const { threadId } = await create();
+    const { jobId } = await create();
     // Age the row well past the default idle TTL.
-    await sandboxes.update({ job_id: threadId }, { last_active_at: new Date(0) });
+    await sandboxes.update({ job_id: jobId }, { last_active_at: new Date(0) });
 
     const reaped = await threadLifecycle.reapIdle();
     expect(reaped).toBeGreaterThanOrEqual(1);
 
-    const detached = await sandboxes.findOneOrFail({ where: { job_id: threadId } });
+    const detached = await sandboxes.findOneOrFail({ where: { job_id: jobId } });
     expect(detached.lifecycle).toBe('detached');
     expect(detached.container_id).toBeNull();
     expect(provider.tornDown.length).toBeGreaterThanOrEqual(1);
 
     // The next turn re-attaches against the surviving worktree.
-    const reattached = await threadLifecycle.ensureContainer(threadId, FAKE_TEAM_ID);
+    const reattached = await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID);
     expect(reattached).not.toBeNull();
-    const row = await sandboxes.findOneOrFail({ where: { job_id: threadId } });
+    const row = await sandboxes.findOneOrFail({ where: { job_id: jobId } });
     expect(row.lifecycle).toBe('attached');
-    expect(row.container_id).toBe(`fake-c-${threadId}`);
+    expect(row.container_id).toBe(`fake-c-${jobId}`);
   });
 
   it('closeThread tears down the container + worktree and marks the row closed (idempotent)', async () => {
-    const { threadId, worktreePath } = await create();
+    const { jobId, worktreePath } = await create();
 
-    await threadLifecycle.closeThread(threadId, FAKE_TEAM_ID);
-    const row = await sandboxes.findOneOrFail({ where: { job_id: threadId } });
+    await threadLifecycle.closeThread(jobId, FAKE_TEAM_ID);
+    const row = await sandboxes.findOneOrFail({ where: { job_id: jobId } });
     expect(row.lifecycle).toBe('closed');
     expect(row.container_id).toBeNull();
     expect(provider.tornDown.length).toBeGreaterThanOrEqual(1);
     expect(fakeGit.removedWorktrees).toContain(worktreePath);
 
     // Idempotent: a second close is a no-op and ensureContainer returns null for a closed thread.
-    await threadLifecycle.closeThread(threadId, FAKE_TEAM_ID);
-    expect(await threadLifecycle.ensureContainer(threadId, FAKE_TEAM_ID)).toBeNull();
+    await threadLifecycle.closeThread(jobId, FAKE_TEAM_ID);
+    expect(await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID)).toBeNull();
   });
 
   it('closeThread reclaims the container by NAME even after a boot reconcile nulled container_id (leak fix)', async () => {
-    const { threadId } = await create();
+    const { jobId } = await create();
 
     // Simulate a process restart: reconcileOnBoot nulls container_id while the real container keeps
     // running. Pre-fix, closeThread's `if (row.container_id)` guard then skipped teardown → permanent leak.
     await threadLifecycle.reconcileOnBoot();
-    const detached = await sandboxes.findOneOrFail({ where: { job_id: threadId } });
+    const detached = await sandboxes.findOneOrFail({ where: { job_id: jobId } });
     expect(detached.lifecycle).toBe('detached');
     expect(detached.container_id).toBeNull();
 
     // reconcileOnBoot is a pure DB update (no provider call), so nothing has been torn down yet.
     expect(provider.tornDown).toHaveLength(0);
 
-    await threadLifecycle.closeThread(threadId, FAKE_TEAM_ID);
+    await threadLifecycle.closeThread(jobId, FAKE_TEAM_ID);
 
     // The container is reclaimed by its deterministic identity DESPITE the null container_id — no orphan.
-    expect(provider.tornDown).toContain(`fake-c-${threadId}`);
-    const row = await sandboxes.findOneOrFail({ where: { job_id: threadId } });
+    expect(provider.tornDown).toContain(`fake-c-${jobId}`);
+    const row = await sandboxes.findOneOrFail({ where: { job_id: jobId } });
     expect(row.lifecycle).toBe('closed');
   });
 
   it('deleteThreadDeep tears down the sandbox AND sweeps every child row (no orphans)', async () => {
-    const { threadId } = await create();
+    const { jobId } = await create();
 
     // Seed one child row in every table that references the thread; deleting the thread must remove all
     // of them via the FK ON DELETE CASCADE (RestoreReferentialIntegrity migration) — zero orphans.
-    await ds.query(`INSERT INTO messages (job_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [threadId]);
+    await ds.query(`INSERT INTO messages (job_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [jobId]);
     const [track] = await ds.query(
       `INSERT INTO threads (job_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
-      [threadId, FAKE_TEAM_ID],
+      [jobId, FAKE_TEAM_ID],
     );
     await ds.query(
       `INSERT INTO steps (thread_id, job_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`,
-      [track.id, threadId, FAKE_TEAM_ID],
+      [track.id, jobId, FAKE_TEAM_ID],
     );
     await ds.query(
       `INSERT INTO decision_records (org_id, repo_id, job_id, overview) VALUES ($1, $2, $3, 'o')`,
-      [FAKE_TEAM_ID, repoId, threadId],
+      [FAKE_TEAM_ID, repoId, jobId],
     );
     await ds.query(
       `INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`,
-      [FAKE_TEAM_ID, repoId, threadId],
+      [FAKE_TEAM_ID, repoId, jobId],
     );
 
-    await threadLifecycle.deleteThreadDeep(threadId, FAKE_TEAM_ID);
+    await threadLifecycle.deleteThreadDeep(jobId, FAKE_TEAM_ID);
 
     // The linked ticket (if any) is handed back to the board BEFORE the thread row is swept.
-    expect(ticketStub.revertForDeletedThread).toHaveBeenCalledWith({ orgId: FAKE_TEAM_ID, threadId });
+    expect(ticketStub.revertForDeletedThread).toHaveBeenCalledWith({ orgId: FAKE_TEAM_ID, jobId });
 
     const count = async (table: string, col = 'job_id') =>
-      Number((await ds.query(`SELECT COUNT(*) AS count FROM ${table} WHERE ${col} = $1`, [threadId]))[0].count);
+      Number((await ds.query(`SELECT COUNT(*) AS count FROM ${table} WHERE ${col} = $1`, [jobId]))[0].count);
     expect(await count('jobs', 'id')).toBe(0);
     expect(await count('messages')).toBe(0);
     expect(await count('threads')).toBe(0);
@@ -403,18 +403,18 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   });
 
   it('reconcileOnBoot marks non-closed rows detached', async () => {
-    const { threadId } = await create();
+    const { jobId } = await create();
     await threadLifecycle.reconcileOnBoot();
-    const row = await sandboxes.findOneOrFail({ where: { job_id: threadId } });
+    const row = await sandboxes.findOneOrFail({ where: { job_id: jobId } });
     expect(row.lifecycle).toBe('detached');
     expect(row.container_id).toBeNull();
   });
 
   it('findSandbox returns the persisted sandbox, and null for an unknown thread', async () => {
-    const { threadId } = await create();
-    const found = await threadLifecycle.findSandbox(threadId, FAKE_TEAM_ID);
+    const { jobId } = await create();
+    const found = await threadLifecycle.findSandbox(jobId, FAKE_TEAM_ID);
     expect(found).not.toBeNull();
-    expect(found!.branch).toBe(`atlas/thread-${threadId.slice(0, 8)}`);
+    expect(found!.branch).toBe(`atlas/thread-${jobId.slice(0, 8)}`);
 
     expect(await threadLifecycle.findSandbox(randomUUID(), FAKE_TEAM_ID)).toBeNull();
   });
@@ -422,56 +422,56 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   // ── ensureProvisioned — lazy first-turn provisioning (the conversation prerequisite) ───────────────
 
   it('ensureProvisioned provisions a complete sandbox for a BARE thread row', async () => {
-    const threadId = await createBareThread();
-    const row = await threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID);
+    const jobId = await createBareThread();
+    const row = await threadLifecycle.ensureProvisioned(jobId, FAKE_TEAM_ID);
     expect(row).not.toBeNull();
     expect(row!.lifecycle).toBe('attached');
     expect(row!.worktree_path).toBeTruthy();
-    const thread = await jobs.findOneOrFail({ where: { id: threadId } });
-    expect(thread.feature_branch).toBe(`atlas/thread-${threadId.slice(0, 8)}`);
+    const thread = await jobs.findOneOrFail({ where: { id: jobId } });
+    expect(thread.feature_branch).toBe(`atlas/thread-${jobId.slice(0, 8)}`);
   });
 
   it('ensureProvisioned is idempotent — a second call returns the same row, no re-provision', async () => {
-    const threadId = await createBareThread();
-    const first = await threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID);
+    const jobId = await createBareThread();
+    const first = await threadLifecycle.ensureProvisioned(jobId, FAKE_TEAM_ID);
     const attaches = provider.attachCount;
-    const second = await threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID);
+    const second = await threadLifecycle.ensureProvisioned(jobId, FAKE_TEAM_ID);
     expect(second!.id).toBe(first!.id);
     expect(provider.attachCount).toBe(attaches);
   });
 
   it('ensureProvisioned serializes concurrent first turns into ONE provision (no double row)', async () => {
-    const threadId = await createBareThread();
+    const jobId = await createBareThread();
     provider.attachCount = 0;
     const [a, b] = await Promise.all([
-      threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID),
-      threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID),
+      threadLifecycle.ensureProvisioned(jobId, FAKE_TEAM_ID),
+      threadLifecycle.ensureProvisioned(jobId, FAKE_TEAM_ID),
     ]);
     expect(a!.id).toBe(b!.id);
     expect(provider.attachCount).toBe(1);
-    expect(await sandboxes.find({ where: { job_id: threadId } })).toHaveLength(1);
+    expect(await sandboxes.find({ where: { job_id: jobId } })).toHaveLength(1);
   });
 
   it('ensureProvisioned RECOVERS an incomplete row (failed provision: empty worktree / no branch)', async () => {
-    const threadId = await createBareThread();
+    const jobId = await createBareThread();
     // Simulate a failed provision: a detached row with empty worktree + no feature branch on the thread.
     await sandboxes.save(
       sandboxes.create({
         org_id: FAKE_TEAM_ID,
-        job_id: threadId,
+        job_id: jobId,
         repo_id: repoId,
         worktree_path: '',
         container_id: null,
         lifecycle: 'detached',
       }),
     );
-    const row = await threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID);
+    const row = await threadLifecycle.ensureProvisioned(jobId, FAKE_TEAM_ID);
     expect(row!.lifecycle).toBe('attached');
     expect(row!.worktree_path).toBeTruthy();
-    const thread = await jobs.findOneOrFail({ where: { id: threadId } });
+    const thread = await jobs.findOneOrFail({ where: { id: jobId } });
     expect(thread.feature_branch).toBeTruthy();
     // The stale row was replaced — exactly one sandbox row remains.
-    expect(await sandboxes.find({ where: { job_id: threadId } })).toHaveLength(1);
+    expect(await sandboxes.find({ where: { job_id: jobId } })).toHaveLength(1);
   });
 
   it('ensureProvisioned throws ProvisioningNotReadyError when the repo is not access_ok (no provider call)', async () => {

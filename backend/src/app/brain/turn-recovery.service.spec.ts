@@ -70,7 +70,7 @@ function makeSandboxRows(threadIds: string[]) {
     createQueryBuilder: () => {
       const qb: Record<string, unknown> = {};
       for (const m of ['select', 'where']) qb[m] = () => qb;
-      qb.getRawMany = async () => threadIds.map((threadId) => ({ threadId }));
+      qb.getRawMany = async () => threadIds.map((jobId) => ({ jobId }));
       return qb;
     },
   } as unknown as Repository<JobSandboxEntity>;

@@ -1,4 +1,4 @@
-import type { ThreadMessage } from '@/lib/api/thread-api';
+import type { JobMessage } from '@/lib/api/thread-api';
 import type { LiveBlock } from '@/lib/api/thread-stream';
 import { indexDurableSubagents, indexLiveSubagents, type SubagentSummary } from './subagents';
 
@@ -29,7 +29,7 @@ import { indexDurableSubagents, indexLiveSubagents, type SubagentSummary } from 
  * Subagents spawned on the brain's main turn (e.g. an `explore` during planning) carry no `phaseId`, so
  * they belong to no build session and are correctly omitted — only the per-track execute fan-out appears.
  */
-export function durableSubagentRunsByPhase(messages: ThreadMessage[]): Map<string, SubagentSummary[]> {
+export function durableSubagentRunsByPhase(messages: JobMessage[]): Map<string, SubagentSummary[]> {
   const { summaryById } = indexDurableSubagents(messages);
   if (summaryById.size === 0) return new Map();
 
@@ -72,7 +72,7 @@ export function liveSubagentRunsForPhase(laneBlocks: LiveBlock[]): SubagentSumma
  * tool blocks tagged to the phase but NOT belonging to a writer subagent — the subagents carry their own
  * tool counts on each run row, so excluding them keeps the session total from double-counting the fan-out.
  */
-export function durableSessionToolCounts(messages: ThreadMessage[]): Map<string, number> {
+export function durableSessionToolCounts(messages: JobMessage[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const m of messages) {
     if (m.kind !== 'tool') continue;

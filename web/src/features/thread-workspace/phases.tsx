@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { ChevronRight, Hammer } from 'lucide-react';
-import type { ThreadMessage } from '@/lib/api/thread-api';
+import type { JobMessage } from '@/lib/api/thread-api';
 import { useLiveTurn, type LiveBlock } from '@/lib/api/thread-stream';
 import { durableSubBlocks, type SubBlock } from './subagents';
 
@@ -40,16 +40,16 @@ export interface PhaseIndex {
   /** `message.ts` of every `build_anchor` row (render these as a card, not as prose). */
   anchorKeys: Set<string>;
   /** phaseId → its transcript blocks (the `build_anchor` row excluded), in order. */
-  blocksByPhase: Map<string, ThreadMessage[]>;
+  blocksByPhase: Map<string, JobMessage[]>;
   /** phaseId → the batch's anchor metadata. */
   anchorByPhase: Map<string, PhaseAnchor>;
 }
 
 /** Index a thread's durable log: peel phase blocks out of the main conversation + collect per-phase data. */
-export function indexPhaseBlocks(messages: ThreadMessage[]): PhaseIndex {
+export function indexPhaseBlocks(messages: JobMessage[]): PhaseIndex {
   const childKeys = new Set<string>();
   const anchorKeys = new Set<string>();
-  const blocksByPhase = new Map<string, ThreadMessage[]>();
+  const blocksByPhase = new Map<string, JobMessage[]>();
   const anchorByPhase = new Map<string, PhaseAnchor>();
   for (const m of messages) {
     const phaseId = typeof m.meta?.phaseId === 'string' ? (m.meta.phaseId as string) : null;
@@ -94,18 +94,18 @@ export function livePhaseBlocks(blocks: LiveBlock[]): SubBlock[] {
  * live lane so it pulses while building and shows a live tool count, falling back to the durable count.
  */
 export function BuildStepCard({
-  threadId,
+  jobId,
   anchor,
   durableToolCount,
   onOpen,
 }: {
-  threadId: string;
+  jobId: string;
   anchor: PhaseAnchor;
   durableToolCount: number;
   onOpen: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const live = useLiveTurn(threadId, phaseLane(anchor.phaseId));
+  const live = useLiveTurn(jobId, phaseLane(anchor.phaseId));
   const running = live?.active ?? false;
   const toolCount = running ? live!.blocks.filter((b) => b.kind === 'tool').length : durableToolCount;
   const stepCount = anchor.batchStepIds.length;

@@ -454,15 +454,15 @@ export class LocalGitService {
    * Cut a per-THREAD worktree on the BASE branch (R2: thread-creation time). Unlike
    * `createFeatureSandbox` this does NOT create a new branch — it checks out the existing
    * `origin/<baseBranch>` so planning turns read the repo as-is. The worktree lands at
-   * `<repoPath>/.worktrees/thread-<threadId>`.
+   * `<repoPath>/.worktrees/thread-<jobId>`.
    *
    * Idempotent: if the worktree already exists it is reused (boot recovery).
    */
   async createBaseWorktree(
     repo: ProjectRepo,
-    threadId: string,
+    jobId: string,
   ): Promise<FeatureSandbox> {
-    const slug = `thread-${threadId.replace(/[^a-z0-9_-]/gi, '-')}`;
+    const slug = `thread-${jobId.replace(/[^a-z0-9_-]/gi, '-')}`;
     const worktreePath = join(repo.repoPath, '.worktrees', slug);
 
     await this.withLock(repo.repoPath, async () => {

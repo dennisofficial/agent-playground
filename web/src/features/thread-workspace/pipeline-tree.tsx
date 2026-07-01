@@ -8,7 +8,7 @@ import { threadTitle } from '@/lib/thread-title';
 import { useLiveTurn } from '@/lib/api/thread-stream';
 import { phaseLane } from './phases';
 import { durableTaskListByPhase, liveTaskListForPhase, type TaskItem } from './thread-todos';
-import type { ThreadMessage } from '@/lib/api/thread-api';
+import type { JobMessage } from '@/lib/api/thread-api';
 import type { PipelineJob, PipelineThread, JobStatus, ThreadStatus } from '@/lib/api/types';
 
 // ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
@@ -89,9 +89,9 @@ export interface TreeProps {
   job: PipelineJob;
   status: JobStatus;
   /** The thread transcript — the source for each thread-session's task list (folded from its task-tool calls). */
-  messages: ThreadMessage[];
+  messages: JobMessage[];
   /** The open thread id — to subscribe to the active thread's live `phase:<anchor>` lane. */
-  threadId: string;
+  jobId: string;
   /** The LEFT pane's open lane (`?lane=`) — the selected thread; drives the orange highlight + task expand. */
   laneNode: string | null;
   onSelectNode: (node: string) => void;
@@ -104,8 +104,8 @@ export interface TreeProps {
  * shows under the thread that's currently building (live progress) and under any started thread you open in
  * the left pane. Draft threads (pre-approval) render as bare rows — no steps, no tasks (they form at run).
  */
-export function PipelineTree({ job, status, messages, threadId, laneNode, onSelectNode }: TreeProps) {
-  const tracks = job.tracks;
+export function PipelineTree({ job, status, messages, jobId, laneNode, onSelectNode }: TreeProps) {
+  const tracks = job.threads;
   const activeIdx = tracks.findIndex((s) => isActiveThread(s.status));
   // Failed: tracks aren't persisted as `failed` (only the thread flips), so derive the halt point — the
   // in-flight track (furthest non-`done`/non-`pending`) is where the run stopped; later ones never ran.
@@ -118,7 +118,7 @@ export function PipelineTree({ job, status, messages, threadId, laneNode, onSele
   // its live task list. Hooks can't be conditional, so an inactive tree reads a dead lane.
   const activeThread = activeIdx === -1 ? null : tracks[activeIdx];
   const activeAnchor = activeThread ? liveAnchorOf(activeThread) : null;
-  const live = useLiveTurn(threadId, activeAnchor ? phaseLane(activeAnchor) : '__none__');
+  const live = useLiveTurn(jobId, activeAnchor ? phaseLane(activeAnchor) : '__none__');
   const liveTasks = useMemo(
     () => (activeAnchor && live ? liveTaskListForPhase(live.blocks) : []),
     [activeAnchor, live],

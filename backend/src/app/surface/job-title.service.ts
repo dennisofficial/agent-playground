@@ -41,7 +41,7 @@ export class JobTitleService {
    * deleted thread) is never clobbered, and the live frame fires ONLY when a row actually changed.
    */
   async generateAndApply(
-    threadId: string,
+    jobId: string,
     orgId: string,
     repoId: string,
     message: string,
@@ -51,12 +51,12 @@ export class JobTitleService {
       const title = await this.generate({ message, orgId });
       if (!title || title === placeholder) return;
       const res = await this.threads.update(
-        { id: threadId, org_id: orgId, title: placeholder === null ? IsNull() : placeholder },
+        { id: jobId, org_id: orgId, title: placeholder === null ? IsNull() : placeholder },
         { title },
       );
-      if (res.affected) this.surface.emitThreadMeta(repoId, threadId, title);
+      if (res.affected) this.surface.emitThreadMeta(repoId, jobId, title);
     } catch (err) {
-      this.logger.warn(`title generation failed for thread=${threadId}: ${err}`);
+      this.logger.warn(`title generation failed for thread=${jobId}: ${err}`);
     }
   }
 }

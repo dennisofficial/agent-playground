@@ -197,7 +197,7 @@ export class OnboardingService {
     const store = this.moduleRef.get(BrainStoreService, { strict: false });
     const sessions = this.moduleRef.get(AgentSessionManager, { strict: false });
 
-    const threadId = await store.createFollowUpThread({
+    const jobId = await store.createFollowUpThread({
       orgId,
       repoId,
       title: `Onboarding ${repo.name}`,
@@ -209,15 +209,15 @@ export class OnboardingService {
     // its orphan thread row and bails (no double onboarding).
     const claim = await this.repos.update(
       { id: repoId, org_id: orgId, onboarding_job_id: IsNull() },
-      { onboarding_job_id: threadId },
+      { onboarding_job_id: jobId },
     );
     if (!claim.affected) {
-      await this.threads.delete({ id: threadId, org_id: orgId }).catch(() => undefined);
+      await this.threads.delete({ id: jobId, org_id: orgId }).catch(() => undefined);
       return;
     }
 
-    this.logger.log(`spawned repo-onboarding thread ${threadId} for ${orgId}/${repo.slug}`);
-    await sessions.startOnboardingThread(threadId, orgId, repoId);
+    this.logger.log(`spawned repo-onboarding thread ${jobId} for ${orgId}/${repo.slug}`);
+    await sessions.startOnboardingThread(jobId, orgId, repoId);
   }
 
   /**
@@ -229,7 +229,7 @@ export class OnboardingService {
    * runnable (keys + engine auth + GitHub PAT) and the repo's access validated. Returns the new thread id
    * so the UI can deep-link straight into it. Org-scoped (404 on a cross-tenant id).
    */
-  async reonboardRepo(orgId: string, repoId: string): Promise<{ threadId: string }> {
+  async reonboardRepo(orgId: string, repoId: string): Promise<{ jobId: string }> {
     const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
     if (!repo) throw new NotFoundException('repo not found');
     if (!repo.access_ok) {
@@ -249,7 +249,7 @@ export class OnboardingService {
     const store = this.moduleRef.get(BrainStoreService, { strict: false });
     const sessions = this.moduleRef.get(AgentSessionManager, { strict: false });
 
-    const threadId = await store.createFollowUpThread({
+    const jobId = await store.createFollowUpThread({
       orgId,
       repoId,
       title: `Onboarding ${repo.name}`,
@@ -258,10 +258,10 @@ export class OnboardingService {
     });
     // Explicit operator action — overwrite the marker (no first-time guard); the prior onboarding thread,
     // if any, stays as history.
-    await this.repos.update({ id: repoId, org_id: orgId }, { onboarding_job_id: threadId });
-    this.logger.log(`re-onboarding thread ${threadId} for ${orgId}/${repo.slug} (operator-initiated)`);
-    await sessions.startOnboardingThread(threadId, orgId, repoId);
-    return { threadId };
+    await this.repos.update({ id: repoId, org_id: orgId }, { onboarding_job_id: jobId });
+    this.logger.log(`re-onboarding thread ${jobId} for ${orgId}/${repo.slug} (operator-initiated)`);
+    await sessions.startOnboardingThread(jobId, orgId, repoId);
+    return { jobId };
   }
 
   /**

@@ -281,7 +281,7 @@ export class WebSurfaceController {
    * "All threads" inbox (no org switching). Login-gated only (inherently scoped to the user's
    * memberships); each thread carries its org + repo so the UI can label it.
    */
-  @Get('threads')
+  @Get('jobs')
   async allThreads(@CurrentUser() user: UserEntity): Promise<unknown[]> {
     const orgs = await this.orgService.listForUser(user.id);
     if (orgs.length === 0) return [];
@@ -298,7 +298,7 @@ export class WebSurfaceController {
     return threads.map((t) => {
       const org = orgById.get(t.org_id);
       return {
-        threadId: t.id,
+        jobId: t.id,
         title: t.title,
         origin: t.origin,
         status: t.status,
@@ -326,7 +326,7 @@ export class WebSurfaceController {
    * deferred to subscribe-time (per-connection principal + subscription); when realtime is unavailable the
    * subscription factory throws and the stream errors (the client falls back to its polling refetch).
    */
-  @Sse('threads/realtime')
+  @Sse('jobs/realtime')
   threadsRealtime(@CurrentUser() user: UserEntity): Observable<MessageEvent> {
     // Never 503 here — an error/503 makes EventSource reconnect-storm. When realtime is unavailable
     // (engine off / wal_level not logical), hand back a `disabled` stream so the client stops trying and
@@ -346,8 +346,8 @@ export class WebSurfaceController {
 
   // ── threads ────────────────────────────────────────────────────────────────────────────────────
 
-  /** `GET …/repos/:repoId/threads` — the repo's threads (newest first). */
-  @Get('orgs/:orgId/repos/:repoId/threads')
+  /** `GET …/repos/:repoId/jobs` — the repo's threads (newest first). */
+  @Get('orgs/:orgId/repos/:repoId/jobs')
   @UseGuards(OrgMembershipGuard)
   async listThreads(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -373,14 +373,14 @@ export class WebSurfaceController {
     }));
   }
 
-  /** `POST …/repos/:repoId/threads` — create a thread + inject its first message. Returns the real id. */
-  @Post('orgs/:orgId/repos/:repoId/threads')
+  /** `POST …/repos/:repoId/jobs` — create a thread + inject its first message. Returns the real id. */
+  @Post('orgs/:orgId/repos/:repoId/jobs')
   @UseGuards(OrgMembershipGuard)
   async createThread(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('repoId') repoId: string,
     @Body() body: CreateThreadDto,
-  ): Promise<{ threadId: string }> {
+  ): Promise<{ jobId: string }> {
     const text = body?.firstMessage?.trim();
     if (!text) throw new BadRequestException('firstMessage is required');
     // Resolve the repo WITHIN the caller's org — the thread's org_id/repo_id derive from this resolved
@@ -412,19 +412,19 @@ export class WebSurfaceController {
         this.logger.warn(`title gen dispatch failed for ${thread.id}: ${err}`),
       );
     this.logger.log(`web created thread ${thread.id} on ${org.id}/${repo.id}`);
-    return { threadId: thread.id };
+    return { jobId: thread.id };
   }
 
-  /** `GET …/threads/:threadId/messages` — the durable message log (oldest-first). Org-scoped. */
-  @Get('orgs/:orgId/repos/:repoId/threads/:threadId/messages')
+  /** `GET …/threads/:jobId/messages` — the durable message log (oldest-first). Org-scoped. */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/messages')
   @UseGuards(OrgMembershipGuard)
   async messageHistory(
     @CurrentOrg() org: CurrentOrgCtx,
-    @Param('threadId') threadId: string,
+    @Param('jobId') jobId: string,
   ): Promise<unknown[]> {
-    await this.requireThread(threadId, org.id);
+    await this.requireThread(jobId, org.id);
     const rows = await this.messages.find({
-      where: { job_id: threadId },
+      where: { job_id: jobId },
       order: { created_at: 'ASC' },
     });
     return rows.map((m) => ({
@@ -453,13 +453,13 @@ export class WebSurfaceController {
     }));
   }
 
-  /** `POST …/threads/:threadId/say` — inject a human reply. Returns the synthetic ts. */
-  @Post('orgs/:orgId/repos/:repoId/threads/:threadId/say')
+  /** `POST …/threads/:jobId/say` — inject a human reply. Returns the synthetic ts. */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/say')
   @UseGuards(OrgMembershipGuard)
   async say(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('repoId') repoId: string,
-    @Param('threadId') threadId: string,
+    @Param('jobId') jobId: string,
     @Body() body: SayDto,
   ): Promise<{ ts: string }> {
     if (!body?.text) throw new BadRequestException('text is required');
@@ -471,10 +471,10 @@ export class WebSurfaceController {
         'Atlas is handing off — retry momentarily.',
       );
     }
-    const thread = await this.requireThread(threadId, org.id);
+    const thread = await this.requireThread(jobId, org.id);
     const ts = this.surface.receiveFromClient(thread.repo_id, body.text, {
       orgId: org.id,
-      threadTs: threadId,
+      threadTs: jobId,
       ...OPERATOR,
     });
     return { ts };
@@ -484,10 +484,10 @@ export class WebSurfaceController {
    * `GET …/repos/:repoId/events` — SSE for the repo, carrying frame types discriminated by `type`:
    *  - `{ type: 'message', … }` — a durable post landed (chat / approval card / PR card / status). The
    *    client refetches the authoritative `/messages` + pipeline.
-   *  - `{ type: 'stream', threadId, seq, event }` — the live in-sandbox session. `event` is either a
+   *  - `{ type: 'stream', jobId, seq, event }` — the live in-sandbox session. `event` is either a
    *    `{ kind: 'snapshot', blocks, active }` (the RESUMABLE catch-up replayed the moment THIS client
    *    connects, for every in-flight turn in the repo), a token/thinking/tool delta, or `{kind:'turn_end'}`.
-   *    The client filters by `threadId`, applies the snapshot, then deltas (deduped by `seq`), and
+   *    The client filters by `jobId`, applies the snapshot, then deltas (deduped by `seq`), and
    *    reconciles against `/messages` on `turn_end`.
    *
    * The snapshot-on-connect is what makes a long response keep streaming across refresh / navigate-away /
@@ -510,7 +510,7 @@ export class WebSurfaceController {
         (s): MessageEvent => ({
           data: {
             type: 'stream',
-            threadId: s.threadId,
+            jobId: s.jobId,
             lane: s.lane,
             seq: s.seq,
             event: { kind: 'snapshot', blocks: s.blocks, active: s.active },
@@ -524,7 +524,7 @@ export class WebSurfaceController {
         (f): MessageEvent => ({
           data: {
             type: 'stream',
-            threadId: f.threadId,
+            jobId: f.jobId,
             lane: f.lane,
             seq: f.seq,
             event: f.event,
@@ -537,7 +537,7 @@ export class WebSurfaceController {
       filter((m) => m.channel === repoId),
       map(
         (m): MessageEvent => ({
-          data: { type: 'thread_meta', threadId: m.threadId, title: m.title },
+          data: { type: 'thread_meta', jobId: m.jobId, title: m.title },
         }),
       ),
     );
@@ -555,8 +555,8 @@ export class WebSurfaceController {
     return merge(snapshot$, live$, messages$, meta$, tickets$);
   }
 
-  /** `POST …/threads/:threadId/approve` — submit a plan verdict. */
-  @Post('orgs/:orgId/repos/:repoId/threads/:threadId/approve')
+  /** `POST …/threads/:jobId/approve` — submit a plan verdict. */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/approve')
   @UseGuards(OrgMembershipGuard)
   async approve(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -585,48 +585,48 @@ export class WebSurfaceController {
   }
 
   /**
-   * `POST …/threads/:threadId/retry` — the halted-build "Retry" button. Re-drives a `failed`/`paused`
+   * `POST …/threads/:jobId/retry` — the halted-build "Retry" button. Re-drives a `failed`/`paused`
    * build through the deterministic, resumable driver (`JOB_DISPATCHER.retry` → flips back to `running`,
    * fast-forwards finished work, continues at the first unfinished step). No-op if the thread isn't in a
    * retryable state. Scoped to the caller's org via the membership guard + `requireThread`.
    */
-  @Post('orgs/:orgId/repos/:repoId/threads/:threadId/retry')
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/retry')
   @UseGuards(OrgMembershipGuard)
   async retry(
     @CurrentOrg() org: CurrentOrgCtx,
-    @Param('threadId') threadId: string,
+    @Param('jobId') jobId: string,
   ): Promise<{ ok: boolean; status: string }> {
-    const thread = await this.requireThread(threadId, org.id);
+    const thread = await this.requireThread(jobId, org.id);
     if (thread.status !== 'failed' && thread.status !== 'paused') {
       // Idempotent / not-applicable: nothing to retry (already running, done, or pre-build).
       return { ok: false, status: thread.status };
     }
-    await this.dispatcher.retry(threadId);
+    await this.dispatcher.retry(jobId);
     return { ok: true, status: 'running' };
   }
 
   /**
-   * `POST …/threads/:threadId/answer-question` — answer a brain `ask_question` card. GATED on the CARD's
+   * `POST …/threads/:jobId/answer-question` — answer a brain `ask_question` card. GATED on the CARD's
    * OWN state (there is no single-slot thread pointer; many cards can be open at once): an already-delivered
    * card is stale, an already-answered card is an idempotent no-op (e.g. a double click). The first valid
    * answer is stamped atomically by `markQuestionAnswered` (a conditional update — concurrent double-answers
    * can't both win); only the winner seeds the delivery turn (carrying this card's `questionId`), whose
    * success tail stamps the card `deliveredAt`, and `create_decision` attaches the Q&A.
    */
-  @Post('orgs/:orgId/repos/:repoId/threads/:threadId/answer-question')
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/answer-question')
   @UseGuards(OrgMembershipGuard)
   async answerQuestion(
     @CurrentOrg() org: CurrentOrgCtx,
-    @Param('threadId') threadId: string,
+    @Param('jobId') jobId: string,
     @Body() body: AnswerQuestionDto,
   ): Promise<{ ok: boolean; ts: string }> {
     const answer = body?.answer?.trim();
     if (!body?.questionId || !answer) {
       throw new BadRequestException('questionId and answer are required');
     }
-    const thread = await this.requireThread(threadId, org.id);
+    const thread = await this.requireThread(jobId, org.id);
     const card = await this.messages.findOne({
-      where: { job_id: threadId, ts: body.questionId, kind: 'card' },
+      where: { job_id: jobId, ts: body.questionId, kind: 'card' },
     });
     const payload = card?.card as WebQuestionCard | undefined;
     if (!card || payload?.type !== 'question_card') {
@@ -639,7 +639,7 @@ export class WebSurfaceController {
     // Atomic first-answer: only the txn that flips the still-unanswered card "wins" (decrements the
     // open-question counter); a concurrent loser returns ok without firing a second delivery turn.
     const { firstAnswer } = await this.store.markQuestionAnswered(
-      threadId,
+      jobId,
       body.questionId,
       answer,
     );
@@ -650,7 +650,7 @@ export class WebSurfaceController {
     const question = (payload.question ?? '').trim();
     const ts = this.surface.seedSystemNotification(
       thread.repo_id,
-      threadId,
+      jobId,
       `The operator answered your question ${JSON.stringify(question)}: ${answer}`,
       { orgId: org.id, deliveredQuestionId: body.questionId },
     );
@@ -658,18 +658,18 @@ export class WebSurfaceController {
   }
 
   /**
-   * `POST …/threads/:threadId/provide-secret` — provide the value for a brain `request_secret` card during
+   * `POST …/threads/:jobId/provide-secret` — provide the value for a brain `request_secret` card during
    * repo onboarding. THE ONLY PLACE A SECRET VALUE LIVES: it goes straight to the encrypted
    * `WorktreeSecretStore` + an owner grant, and is NEVER written to the card, the transcript, or any brain
    * tool I/O. OWNER-ONLY (`OrgOwnerGuard`) — writing a secret + grant is an Administer action everywhere
    * else. Gated on the thread's durable `awaiting_secret_id`; stamps the card `provided_at` (not the value)
    * and delivers a MASKED confirmation to the brain, whose success tail stamps delivered + clears the gate.
    */
-  @Post('orgs/:orgId/repos/:repoId/threads/:threadId/provide-secret')
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/provide-secret')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async provideSecret(
     @CurrentOrg() org: CurrentOrgCtx,
-    @Param('threadId') threadId: string,
+    @Param('jobId') jobId: string,
     @Body() body: ProvideSecretDto,
   ): Promise<{ ok: boolean; ts: string }> {
     const value = body?.value;
@@ -678,9 +678,9 @@ export class WebSurfaceController {
         'requestId and a non-empty value are required',
       );
     }
-    const thread = await this.requireThread(threadId, org.id);
+    const thread = await this.requireThread(jobId, org.id);
     const card = await this.messages.findOne({
-      where: { job_id: threadId, ts: body.requestId, kind: 'card' },
+      where: { job_id: jobId, ts: body.requestId, kind: 'card' },
     });
     const payload = card?.card as WebSecretInputCard | undefined;
     if (!card || payload?.type !== 'secret_input_card') {
@@ -709,42 +709,42 @@ export class WebSurfaceController {
     await this.messages.save(card);
     const ts = this.surface.seedSystemNotification(
       thread.repo_id,
-      threadId,
+      jobId,
       `The operator provided the secret \`${payload.name}\` (stored encrypted, granted to \`${payload.path}\`). Continue onboarding.`,
       { orgId: org.id },
     );
     return { ok: true, ts };
   }
 
-  /** `GET …/threads/:threadId/pipeline` — current pipeline state (or `{ status: 'no_job' }`). */
-  @Get('orgs/:orgId/repos/:repoId/threads/:threadId/pipeline')
+  /** `GET …/threads/:jobId/pipeline` — current pipeline state (or `{ status: 'no_job' }`). */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/pipeline')
   @UseGuards(OrgMembershipGuard)
   async pipeline(
     @CurrentOrg() org: CurrentOrgCtx,
-    @Param('threadId') threadId: string,
+    @Param('jobId') jobId: string,
   ): Promise<unknown> {
-    await this.requireThread(threadId, org.id);
-    return this.driverStore.getPipelineState(threadId, org.id);
+    await this.requireThread(jobId, org.id);
+    return this.driverStore.getPipelineState(jobId, org.id);
   }
 
   /**
-   * `GET …/threads/:threadId/context` — list the thread's `/context` files, grouped into `specs` (the
+   * `GET …/threads/:jobId/context` — list the thread's `/context` files, grouped into `specs` (the
    * plan: plan.md, decision-record.md, diagrams) and `artifacts` (outputs: preview HTML, screenshots).
    * V1 MVP: just names + size + mtime. The UI's Artifacts panel composes this with the diff/PR (which
    * are not files — they come from `pipeline`/the thread row).
    */
-  @Get('orgs/:orgId/repos/:repoId/threads/:threadId/context')
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/context')
   @UseGuards(OrgMembershipGuard)
   async context(
     @CurrentOrg() org: CurrentOrgCtx,
-    @Param('threadId') threadId: string,
+    @Param('jobId') jobId: string,
   ): Promise<{
     specs: ContextFile[];
     generated: ContextFile[];
     artifacts: ContextFile[];
   }> {
-    await this.requireThread(threadId, org.id);
-    const root = this.threadLifecycle.contextDirHost(threadId, org.id);
+    await this.requireThread(jobId, org.id);
+    const root = this.threadLifecycle.contextDirHost(jobId, org.id);
     return {
       specs: listContextBucket(join(root, 'specs')),
       generated: listContextBucket(join(root, 'generated')),
@@ -753,20 +753,20 @@ export class WebSurfaceController {
   }
 
   /**
-   * `GET …/threads/:threadId/context/file?path=specs/plan.md` — read ONE `/context` file for the viewer.
+   * `GET …/threads/:jobId/context/file?path=specs/plan.md` — read ONE `/context` file for the viewer.
    * Text files (.md, .json, …) come back utf-8; images come back base64. Capped at 2 MB; the path is
    * guarded to the thread's own specs/ + artifacts/ buckets (no traversal, no cross-thread reads).
    */
-  @Get('orgs/:orgId/repos/:repoId/threads/:threadId/context/file')
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/context/file')
   @UseGuards(OrgMembershipGuard)
   async contextFile(
     @CurrentOrg() org: CurrentOrgCtx,
-    @Param('threadId') threadId: string,
+    @Param('jobId') jobId: string,
     @Query('path') relPath: string,
   ): Promise<ContextFileContent> {
-    await this.requireThread(threadId, org.id);
+    await this.requireThread(jobId, org.id);
     if (!relPath) throw new BadRequestException('path is required');
-    const root = this.threadLifecycle.contextDirHost(threadId, org.id);
+    const root = this.threadLifecycle.contextDirHost(jobId, org.id);
     const abs = resolveContextFilePath(root, relPath);
     let st: ReturnType<typeof statSync>;
     try {
@@ -797,39 +797,39 @@ export class WebSurfaceController {
     };
   }
 
-  /** `PATCH …/threads/:threadId` — rename a thread (the only thread Update op). Org-scoped. */
-  @Patch('orgs/:orgId/repos/:repoId/threads/:threadId')
+  /** `PATCH …/threads/:jobId` — rename a thread (the only thread Update op). Org-scoped. */
+  @Patch('orgs/:orgId/repos/:repoId/jobs/:jobId')
   @UseGuards(OrgMembershipGuard)
   async renameThread(
     @CurrentOrg() org: CurrentOrgCtx,
-    @Param('threadId') threadId: string,
+    @Param('jobId') jobId: string,
     @Body() body: RenameThreadDto,
   ): Promise<{ ok: boolean; title: string }> {
     const title = body?.title?.trim().slice(0, 200);
     if (!title) throw new BadRequestException('title is required');
     // Scope the update to the caller's org (defense in depth beyond the membership guard).
     const result = await this.threads.update(
-      { id: threadId, org_id: org.id },
+      { id: jobId, org_id: org.id },
       { title },
     );
     if (!result.affected) throw new NotFoundException('thread not found');
-    this.logger.log(`web renamed thread ${threadId} (org ${org.id})`);
+    this.logger.log(`web renamed thread ${jobId} (org ${org.id})`);
     return { ok: true, title };
   }
 
-  /** `DELETE …/threads/:threadId` — tear down the sandbox + remove the thread and its messages. */
-  @Delete('orgs/:orgId/repos/:repoId/threads/:threadId')
+  /** `DELETE …/threads/:jobId` — tear down the sandbox + remove the thread and its messages. */
+  @Delete('orgs/:orgId/repos/:repoId/jobs/:jobId')
   @UseGuards(OrgMembershipGuard)
   async deleteThread(
     @CurrentOrg() org: CurrentOrgCtx,
-    @Param('threadId') threadId: string,
+    @Param('jobId') jobId: string,
   ): Promise<{ ok: boolean }> {
     // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable.
-    await this.requireThread(threadId, org.id);
+    await this.requireThread(jobId, org.id);
     // Full cascade in app code: tear down the sandbox AND sweep messages/tracks/steps/
     // decision_records/stimuli/sandbox before the thread row (the live schema has no FK cascades).
-    await this.threadLifecycle.deleteThreadDeep(threadId, org.id);
-    this.logger.log(`web deleted thread ${threadId} (org ${org.id})`);
+    await this.threadLifecycle.deleteThreadDeep(jobId, org.id);
+    this.logger.log(`web deleted thread ${jobId} (org ${org.id})`);
     return { ok: true };
   }
 
@@ -837,11 +837,11 @@ export class WebSurfaceController {
 
   /** Resolve a thread scoped to the org, or 404 — the guard for every thread-keyed op. */
   private async requireThread(
-    threadId: string,
+    jobId: string,
     orgId: string,
   ): Promise<JobEntity> {
     const thread = await this.threads.findOne({
-      where: { id: threadId, org_id: orgId },
+      where: { id: jobId, org_id: orgId },
     });
     if (!thread) throw new NotFoundException('thread not found');
     return thread;

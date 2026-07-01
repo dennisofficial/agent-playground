@@ -102,13 +102,13 @@ describe('SandboxManager.reapOrphanedArtifacts', () => {
 });
 
 describe('SandboxManager.teardownByIdentity', () => {
-  // The deterministic name `attach` derives for a thread-keyed sandbox (keyed by threadId alone — the
+  // The deterministic name `attach` derives for a thread-keyed sandbox (keyed by jobId alone — the
   // globally-unique PK): `atlas-sbx-thread-<id>`. Terminal cleanup must resolve this WITHOUT a container_id,
   // because a boot reconcile nulls the persisted id while the real container keeps running.
   const NAME = 'atlas-sbx-thread-abc';
   const sandbox = (): FeatureSandbox => ({
     repoId: 'proj',
-    branch: 'atlas/thread-abc', // ignored for thread-keyed names; proves the name is keyed by threadId
+    branch: 'atlas/thread-abc', // ignored for thread-keyed names; proves the name is keyed by jobId
     worktreePath: '/w',
     gitUrl: '',
   });
@@ -154,7 +154,7 @@ describe('SandboxManager.teardownByIdentity', () => {
   it('resolves a running orphan by its deterministic name and removes it + its net/vol (no container_id)', async () => {
     const { engine, removedContainers, removedNetworks, removedVolumes } = fake({ containerExists: true });
 
-    await manager(engine).teardownByIdentity({ sandbox: sandbox(), orgId: 'team', threadId: 'abc' });
+    await manager(engine).teardownByIdentity({ sandbox: sandbox(), orgId: 'team', jobId: 'abc' });
 
     expect(removedContainers).toEqual(['cid-1']);
     expect(removedNetworks).toEqual([`${NAME}-net`]);
@@ -164,7 +164,7 @@ describe('SandboxManager.teardownByIdentity', () => {
   it('still reclaims leaked net/vol by name when the container is already gone', async () => {
     const { engine, removedContainers, removedNetworks, removedVolumes } = fake({ containerExists: false });
 
-    await manager(engine).teardownByIdentity({ sandbox: sandbox(), orgId: 'team', threadId: 'abc' });
+    await manager(engine).teardownByIdentity({ sandbox: sandbox(), orgId: 'team', jobId: 'abc' });
 
     expect(removedContainers).toEqual([]); // nothing to remove
     expect(removedNetworks).toEqual([`${NAME}-net`]);

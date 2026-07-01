@@ -106,16 +106,16 @@ function makeStore(state: StoreState): {
     seedReviewAgents: vi.fn(async () => undefined),
     setReviewAgentStatus: vi.fn(async () => undefined),
     finalizeReviewAgents: vi.fn(async () => undefined),
-    stepsForThread: vi.fn(async (trackId: string) =>
-      state.steps.filter((p) => p.trackId === trackId).map((p) => ({ ...p })),
+    stepsForThread: vi.fn(async (threadId: string) =>
+      state.steps.filter((p) => p.threadId === threadId).map((p) => ({ ...p })),
     ),
     lockSteps: vi.fn(async (track: DriverThread, planned: PlannedStep[]) => {
-      const existing = state.steps.filter((p) => p.trackId === track.id);
+      const existing = state.steps.filter((p) => p.threadId === track.id);
       if (existing.length) return existing.map((p) => ({ ...p }));
       const rows: Step[] = planned.map((p, i) => ({
         id: `${track.id}-ph${i}`,
-        trackId: track.id,
-        threadId: track.threadId,
+        threadId: track.id,
+        jobId: track.jobId,
         ordinal: (i + 1) * 10,
         title: p.title,
         brief: p.brief,
@@ -385,7 +385,7 @@ function makeRecord(): DecisionRecord {
     id: 'dr-1',
     orgId: 'T1',
     repoId: 'proj',
-    threadId: 'job-abcdef12',
+    jobId: 'job-abcdef12',
     status: 'approved',
     overview: 'Build the widget feature.',
     decisions: [],
@@ -407,7 +407,7 @@ function track(
 ): DriverThread {
   return {
     id,
-    threadId: 'job-abcdef12',
+    jobId: 'job-abcdef12',
     orgId: 'T1',
     ordinal,
     brief,
@@ -449,7 +449,7 @@ function assemble(
   // their transcript (and the `build_anchor`) through the same path production uses, and tests can assert it.
   const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
   const sunk: Array<{
-    threadId: string;
+    jobId: string;
     block: {
       kind: string;
       text?: string;
@@ -459,14 +459,14 @@ function assemble(
   const blockSink = {
     appendBlock: vi.fn(
       async (
-        threadId: string,
+        jobId: string,
         block: {
           kind: string;
           text?: string;
           meta?: Record<string, unknown> | null;
         },
       ) => {
-        sunk.push({ threadId, block });
+        sunk.push({ jobId, block });
       },
     ),
   } as unknown as BlockSink;
@@ -700,8 +700,8 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
   function authoredState(n: number): StoreState {
     const steps: Step[] = Array.from({ length: n }, (_, i) => ({
       id: `sec-be-ph${i}`,
-      trackId: 'sec-be',
-      threadId: 'job-abcdef12',
+      threadId: 'sec-be',
+      jobId: 'job-abcdef12',
       ordinal: (i + 1) * 10,
       title: `P${i}`,
       brief: `do ${i}`,
@@ -866,7 +866,7 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    const steps = state.steps.filter((p) => p.trackId === 'sec-be');
+    const steps = state.steps.filter((p) => p.threadId === 'sec-be');
     expect(steps).toHaveLength(2);
     expect(steps.every((p) => p.status === 'done' && p.stage === 'done')).toBe(
       true,
@@ -891,8 +891,8 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
       steps: [
         {
           id: 'sec-be-ph0',
-          trackId: 'sec-be',
-          threadId: 'job-abcdef12',
+          threadId: 'sec-be',
+          jobId: 'job-abcdef12',
           ordinal: 10,
           title: 'A',
           brief: 'do A',
@@ -904,8 +904,8 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
         },
         {
           id: 'sec-be-ph1',
-          trackId: 'sec-be',
-          threadId: 'job-abcdef12',
+          threadId: 'sec-be',
+          jobId: 'job-abcdef12',
           ordinal: 20,
           title: 'B',
           brief: 'do B',
@@ -945,8 +945,8 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
       steps: [
         {
           id: 'sec-be-ph0',
-          trackId: 'sec-be',
-          threadId: 'job-abcdef12',
+          threadId: 'sec-be',
+          jobId: 'job-abcdef12',
           ordinal: 10,
           title: 'A',
           brief: 'do A',
@@ -958,8 +958,8 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
         },
         {
           id: 'sec-be-ph1',
-          trackId: 'sec-be',
-          threadId: 'job-abcdef12',
+          threadId: 'sec-be',
+          jobId: 'job-abcdef12',
           ordinal: 20,
           title: 'B',
           brief: 'do B',
@@ -993,8 +993,8 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
       steps: [
         {
           id: 'sec-be-ph0',
-          trackId: 'sec-be',
-          threadId: 'job-abcdef12',
+          threadId: 'sec-be',
+          jobId: 'job-abcdef12',
           ordinal: 10,
           title: 'A',
           brief: 'do A',
@@ -1006,8 +1006,8 @@ describe('ThreadDriver — the legible track/step pipeline', () => {
         },
         {
           id: 'sec-be-ph1',
-          trackId: 'sec-be',
-          threadId: 'job-abcdef12',
+          threadId: 'sec-be',
+          jobId: 'job-abcdef12',
           ordinal: 20,
           title: 'B',
           brief: 'do B',

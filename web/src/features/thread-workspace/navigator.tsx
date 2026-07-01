@@ -26,7 +26,7 @@ import { useRetryThread } from '@/lib/api/thread-queries';
 import { Divider, PipelineTree, haltThreadIdx } from './pipeline-tree';
 import { NavigatorApproveButton } from './spec-approval';
 import type { ContextFile, PipelineJob, PipelineState, ThreadContext, JobKind, JobStatus } from '@/lib/api/types';
-import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
+import type { JobMessage, JobRef } from '@/lib/api/thread-api';
 
 export interface ThreadMeta {
   title: string;
@@ -70,7 +70,7 @@ export function Navigator({
   pipeline: PipelineState | undefined;
   /** The job's durable transcript — the pipeline tree derives each lane-session's writer-subagent runs
    *  from it (the `/pipeline` read model doesn't carry them; see `thread-subagents.ts`). */
-  messages: ThreadMessage[];
+  messages: JobMessage[];
   /** The job's `/context` files (specs + generated + artifacts) — feeds the OUTPUTS region. */
   context: ThreadContext | undefined;
   contextLoading?: boolean;
@@ -79,7 +79,7 @@ export function Navigator({
   /** The RIGHT pane's open detail node (`?node=`; OUTPUT / port / doc) — highlighted BLUE. */
   detailNode: string | null;
   /** The open job — for the in-place "Approve plan" callout. */
-  threadRef: ThreadRef;
+  threadRef: JobRef;
   /** The approval card's verbatim approve `value`, when the job is awaiting approval (else ''). Drives
    *  the navigator approval callout. */
   approveValue: string;
@@ -227,7 +227,7 @@ export function Navigator({
           status={st}
           job={job}
           messages={messages}
-          threadId={threadRef.threadId}
+          jobId={threadRef.jobId}
           laneNode={laneNode}
           onSelectNode={onSelectNode}
         />
@@ -277,14 +277,14 @@ function ThreadsTracks({
   status,
   job,
   messages,
-  threadId,
+  jobId,
   laneNode,
   onSelectNode,
 }: {
   status: JobStatus;
   job: PipelineJob | null;
-  messages: ThreadMessage[];
-  threadId: string;
+  messages: JobMessage[];
+  jobId: string;
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
@@ -306,7 +306,7 @@ function ThreadsTracks({
 
   // One renderer for every stage: running/done/failed threads expand to their live task list; pre-approval
   // drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the hint line.
-  if (!job || job.tracks.length === 0) {
+  if (!job || job.threads.length === 0) {
     return (
       <p className="px-2 pb-1 pt-1 text-[11px] italic leading-relaxed text-faint">
         No build lanes yet — the plan you approve in the conversation is what creates them.
@@ -318,7 +318,7 @@ function ThreadsTracks({
       job={job}
       status={status}
       messages={messages}
-      threadId={threadId}
+      jobId={jobId}
       laneNode={laneNode}
       onSelectNode={onSelectNode}
     />
@@ -544,7 +544,7 @@ function StateBanner({
 }: {
   status: JobStatus;
   job: PipelineJob | null;
-  threadRef: ThreadRef;
+  threadRef: JobRef;
   onConversation: () => void;
 }) {
   const retry = useRetryThread(threadRef);
@@ -610,7 +610,7 @@ function StateBanner({
 }
 
 function haltSectionNo(job: PipelineJob): number | null {
-  const idx = haltThreadIdx(job.tracks);
+  const idx = haltThreadIdx(job.threads);
   return idx === -1 ? null : idx + 1;
 }
 

@@ -122,7 +122,7 @@ export function usePromoteTicket(orgId: string, repoId: string) {
     onSuccess: () => {
       invalidate();
       // A new thread may have been spun up — refresh the cross-org inbox so the sidebar shows it.
-      void qc.invalidateQueries({ queryKey: qk.allThreads() });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
   });
 }

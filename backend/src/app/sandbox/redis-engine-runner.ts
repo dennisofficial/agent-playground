@@ -78,14 +78,14 @@ export class RedisEngineRunner implements EngineRunnerPort {
       await this.registry
         .register({
           turnId,
-          threadId: args.turnMeta.threadId,
+          jobId: args.turnMeta.jobId,
           orgId: args.turnMeta.orgId,
           channel: args.turnMeta.channel,
           lane: args.turnMeta.lane,
           kind: args.turnMeta.kind,
           containerId: target.containerId,
           // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
-          ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, threadId: args.turnMeta.threadId },
+          ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, jobId: args.turnMeta.jobId },
         })
         .catch((err) => this.logger.warn(`turn ${turnId}: registry.register failed (continuing): ${err}`));
     }

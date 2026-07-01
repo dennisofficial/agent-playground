@@ -35,7 +35,7 @@ import { PlanReviewEntity } from '../persistence/entities';
 /** What `start` needs to render + persist a review round. */
 export type PlanReviewStartInput = {
   /** Thread the plan belongs to. */
-  threadId: string;
+  jobId: string;
   /** Tenant (for credential resolution + sandbox scoping). */
   orgId: string;
   /** The draft decision record this round grades (audit). */
@@ -264,19 +264,19 @@ export class PlanReviewService {
    */
   async start(input: PlanReviewStartInput): Promise<PlanReviewStart> {
     const prior = await this.reviews.count({
-      where: { job_id: input.threadId },
+      where: { job_id: input.jobId },
     });
     const round = prior + 1;
     if (round > this.maxRounds) {
       this.logger.log(
-        `plan-review: thread=${input.threadId} hit round cap (${this.maxRounds}) — not reviewing`,
+        `plan-review: thread=${input.jobId} hit round cap (${this.maxRounds}) — not reviewing`,
       );
       return { capped: true, round: prior };
     }
     const prompt = renderPlanForReview(input);
     const row = await this.reviews.save(
       this.reviews.create({
-        job_id: input.threadId,
+        job_id: input.jobId,
         org_id: input.orgId,
         decision_record_id: input.decisionRecordId ?? null,
         round,
@@ -288,7 +288,7 @@ export class PlanReviewService {
       }),
     );
     this.logger.log(
-      `plan-review: opened round ${round} (review=${row.id}) for thread=${input.threadId}`,
+      `plan-review: opened round ${round} (review=${row.id}) for thread=${input.jobId}`,
     );
     return { reviewId: row.id, round };
   }
@@ -438,9 +438,9 @@ export class PlanReviewService {
    * or null when no round is running, i.e. the latest review has completed (its findings are delivered, or
    * are being delivered in this very turn) and the brain is free to finalize.
    */
-  async runningReview(threadId: string): Promise<{ round: number } | null> {
+  async runningReview(jobId: string): Promise<{ round: number } | null> {
     const row = await this.reviews.findOne({
-      where: { job_id: threadId, status: 'running' },
+      where: { job_id: jobId, status: 'running' },
       order: { round: 'DESC' },
     });
     if (!row) return null;
@@ -452,7 +452,7 @@ export class PlanReviewService {
     const ageMs = Date.now() - new Date(row.created_at).getTime();
     if (ageMs > this.timeoutMs) {
       this.logger.warn(
-        `plan-review: thread=${threadId} round ${row.round} stuck 'running' for ${Math.round(
+        `plan-review: thread=${jobId} round ${row.round} stuck 'running' for ${Math.round(
           ageMs / 60_000,
         )}m — treating as orphaned (not blocking finalize)`,
       );

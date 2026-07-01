@@ -88,8 +88,8 @@ export class SandboxManager implements SandboxProvider {
   ) {}
 
   async attach(input: SandboxAttachInput): Promise<FeatureSandbox> {
-    const { sandbox, orgId, threadId } = input;
-    const name = this.containerName(orgId, sandbox.repoId, sandbox.branch, threadId);
+    const { sandbox, orgId, jobId } = input;
+    const name = this.containerName(orgId, sandbox.repoId, sandbox.branch, jobId);
 
     const image = await this.images.ensureImage();
     // Fold the per-repo mount SET into the fingerprint so a changed `.atlas/worktree.json` mount list
@@ -159,14 +159,14 @@ export class SandboxManager implements SandboxProvider {
       binds.push(`${refsDir}:/refs:ro`);
     }
     // The thread's durable SHARED CONTEXT folder at /context — lives OUTSIDE the worktree (keyed by
-    // threadId so it survives container recreate; the host reads it via contextDirHost()). THREE buckets,
+    // jobId so it survives container recreate; the host reads it via contextDirHost()). THREE buckets,
     // pre-created so all always list cleanly:
     //   • specs/     — hand-authored by the brain (plan.md, diagrams). Read/write.
     //   • generated/ — SYSTEM-owned (decision-record.md, …), written ONLY by host tool calls. Mounted
     //                  READ-ONLY here (a nested :ro bind over the rw /context parent — Docker honors the
     //                  more-specific child mount) so no in-sandbox agent can edit a generated file.
     //   • artifacts/ — outputs for the human.
-    const contextDir = this.contextDirHost(orgId, threadId, name);
+    const contextDir = this.contextDirHost(orgId, jobId, name);
     mkdirSync(join(contextDir, 'specs'), { recursive: true });
     mkdirSync(join(contextDir, 'generated'), { recursive: true });
     mkdirSync(join(contextDir, 'artifacts'), { recursive: true });
@@ -213,7 +213,7 @@ export class SandboxManager implements SandboxProvider {
         [L_PROJECT]: sandbox.repoId,
         [L_BRANCH]: sandbox.branch,
         [L_CFG]: fingerprint,
-        ...(threadId ? { [L_THREAD]: threadId } : {}),
+        ...(jobId ? { [L_THREAD]: jobId } : {}),
       },
     });
     await this.engine.start(id);
@@ -256,8 +256,8 @@ export class SandboxManager implements SandboxProvider {
    * still reclaimed by name (cheap + idempotent). Never throws on a missing artifact.
    */
   async teardownByIdentity(input: SandboxAttachInput): Promise<void> {
-    const { sandbox, orgId, threadId } = input;
-    const name = this.containerName(orgId, sandbox.repoId, sandbox.branch, threadId);
+    const { sandbox, orgId, jobId } = input;
+    const name = this.containerName(orgId, sandbox.repoId, sandbox.branch, jobId);
     const existing = await this.engine.inspect(name);
     if (existing) {
       await this.engine.remove(existing.id, { force: true });
@@ -363,12 +363,12 @@ export class SandboxManager implements SandboxProvider {
    * reaping (it is the host side of the {@link CONTAINER_AGENT_HOME} bind), so the backend can read a
    * completed-but-unpersisted turn after a restart (crash recovery).
    *
-   * Located by threadId alone: the container dir is `atlas-sbx-thread-<threadId>`, so we GLOB the sandbox
-   * dir whose `-thread-<…>` suffix is a prefix of `threadId` (tolerates the 40-char `part()` cap truncating
+   * Located by jobId alone: the container dir is `atlas-sbx-thread-<jobId>`, so we GLOB the sandbox
+   * dir whose `-thread-<…>` suffix is a prefix of `jobId` (tolerates the 40-char `part()` cap truncating
    * the tail), then the single `brain_*` home under it (verified: at most one per sandbox). Null when nothing
    * is on disk yet.
    */
-  brainTranscriptProjectsDir(threadId: string): string | null {
+  brainTranscriptProjectsDir(jobId: string): string | null {
     const sandboxesRoot = join(this.agentHomeRootHost(), 'sandboxes');
     let dirs: string[];
     try {
@@ -380,7 +380,7 @@ export class SandboxManager implements SandboxProvider {
       const i = d.lastIndexOf('-thread-');
       if (i < 0) return false; // gate sandbox keyed by branch — not a thread sandbox
       const suffix = d.slice(i + '-thread-'.length);
-      return suffix.length > 0 && threadId.startsWith(suffix);
+      return suffix.length > 0 && jobId.startsWith(suffix);
     });
     if (!sandboxDir) return null;
     const sandboxHome = join(sandboxesRoot, sandboxDir);
@@ -396,31 +396,31 @@ export class SandboxManager implements SandboxProvider {
 
   /**
    * The HOST path of a thread's durable `/context` shared folder — the same dir bind-mounted into the
-   * container at {@link CONTAINER_CONTEXT}. Keyed by `threadId` so it is STABLE across the container's
+   * container at {@link CONTAINER_CONTEXT}. Keyed by `jobId` so it is STABLE across the container's
    * lifecycle (recreate, idle-reap, cold re-attach) and never deleted by container teardown (only by a
    * deep thread delete). The brain authors plan/track specs here and reads them back via this path;
    * the build sessions read it as shared context. Sandboxes WITHOUT a thread (gate runs) fall back to a
    * name-keyed dir — never resolved by the brain, just keeps the mount uniform.
    */
-  contextDirHost(orgId: string, threadId?: string, name?: string): string {
+  contextDirHost(orgId: string, jobId?: string, name?: string): string {
     const root = join(this.agentHomeRootHost(), 'contexts');
-    if (threadId) return join(root, orgId, threadId);
+    if (jobId) return join(root, orgId, jobId);
     return join(root, '_sandbox', name ?? 'unkeyed');
   }
 
   /**
    * Build the bind strings for the per-repo cache mounts AND pre-create their host dirs + in-worktree
    * mountpoints (chowned to the host uid so docker doesn't create them root-owned). per-thread caches get
-   * their own host dir keyed by thread (or branch, for the threadId-less gate path); shared-ro caches
+   * their own host dir keyed by thread (or branch, for the jobId-less gate path); shared-ro caches
    * share one read-only host dir per repo. The bind target is /workspace/<path>.
    */
   private cacheMountBinds(input: SandboxAttachInput): string[] {
     const mounts = input.mounts ?? [];
     if (!mounts.length) return [];
-    const { sandbox, orgId, threadId } = input;
+    const { sandbox, orgId, jobId } = input;
     const slug = sandbox.repoId.replace(/[^a-z0-9_-]/gi, '_') || 'repo';
     const safeOrg = orgId.replace(/[^a-z0-9_-]/gi, '_') || 'org';
-    const perThreadKey = threadId ?? `_branch-${sandbox.branch.replace(/[^a-z0-9_-]/gi, '-')}`;
+    const perThreadKey = jobId ?? `_branch-${sandbox.branch.replace(/[^a-z0-9_-]/gi, '-')}`;
     const cacheRoot = join(this.agentHomeRootHost(), 'caches', safeOrg, slug);
 
     const binds: string[] = [];
@@ -525,20 +525,20 @@ export class SandboxManager implements SandboxProvider {
   }
 
   /**
-   * Thread sandboxes: `atlas-sbx-thread-<threadId>`. The thread uuid is the globally-unique PK, so it alone
+   * Thread sandboxes: `atlas-sbx-thread-<jobId>`. The thread uuid is the globally-unique PK, so it alone
    * IS the stable identity (1 thread = 1 container, across branch + re-attach) — org and repo add no
    * uniqueness and only bloated the name, so they're dropped. The `-thread-` token is kept (not just for
    * readability): crash recovery ({@link brainTranscriptProjectsDir}) uses it both to distinguish thread
-   * sandboxes from the gate path and to extract the threadId, and the FULL uuid stays so its
-   * `threadId.startsWith(suffix)` prefix-match holds.
+   * sandboxes from the gate path and to extract the jobId, and the FULL uuid stays so its
+   * `jobId.startsWith(suffix)` prefix-match holds.
    *
-   * The acceptance gate (synthetic `orgId:'gate'`, no thread) has no `threadId`: `atlas-sbx-<org>-<repo>-
+   * The acceptance gate (synthetic `orgId:'gate'`, no thread) has no `jobId`: `atlas-sbx-<org>-<repo>-
    * <branch>` (one container per branch). Branch names aren't globally unique, so org + repo + branch
    * together are what make those names unique.
    */
-  private containerName(orgId: string, repoId: string, branch: string, threadId?: string): string {
+  private containerName(orgId: string, repoId: string, branch: string, jobId?: string): string {
     const part = (s: string) => s.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 40);
-    if (threadId) return `atlas-sbx-thread-${part(threadId)}`;
+    if (jobId) return `atlas-sbx-thread-${part(jobId)}`;
     return `atlas-sbx-${part(orgId)}-${part(repoId)}-${part(branch)}`.slice(0, 120);
   }
 }

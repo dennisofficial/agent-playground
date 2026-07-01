@@ -1,5 +1,5 @@
 import type { WebApprovalCard, WebQuestionCard, WebSecretInputCard, WebVerdictCard } from '@/lib/api/types';
-import type { ThreadMessage } from '@/lib/api/thread-api';
+import type { JobMessage } from '@/lib/api/thread-api';
 
 /**
  * The conversation bubble kinds the work column renders. `approval`/`verdict` are STRUCTURED (the card
@@ -9,22 +9,22 @@ import type { ThreadMessage } from '@/lib/api/thread-api';
 export type SystemTone = 'ok' | 'warn' | 'accent' | 'neutral';
 
 export type ClassifiedMessage =
-  | { kind: 'user'; message: ThreadMessage }
-  | { kind: 'claude'; message: ThreadMessage }
-  | { kind: 'thinking'; message: ThreadMessage }
-  | { kind: 'tool'; message: ThreadMessage }
-  | { kind: 'approval'; message: ThreadMessage; card: WebApprovalCard }
-  | { kind: 'verdict'; message: ThreadMessage; card: WebVerdictCard }
-  | { kind: 'question'; message: ThreadMessage; card: WebQuestionCard }
+  | { kind: 'user'; message: JobMessage }
+  | { kind: 'claude'; message: JobMessage }
+  | { kind: 'thinking'; message: JobMessage }
+  | { kind: 'tool'; message: JobMessage }
+  | { kind: 'approval'; message: JobMessage; card: WebApprovalCard }
+  | { kind: 'verdict'; message: JobMessage; card: WebVerdictCard }
+  | { kind: 'question'; message: JobMessage; card: WebQuestionCard }
   /** A secure secret request (repo onboarding) — rendered as a masked input card. */
-  | { kind: 'secret'; message: ThreadMessage; card: WebSecretInputCard }
-  | { kind: 'event'; message: ThreadMessage; tone: SystemTone }
+  | { kind: 'secret'; message: JobMessage; card: WebSecretInputCard }
+  | { kind: 'event'; message: JobMessage; tone: SystemTone }
   /** System→operator+Atlas review block (e.g. Codex plan-review findings). Rendered as a distinct panel. */
-  | { kind: 'system_shared'; message: ThreadMessage }
+  | { kind: 'system_shared'; message: JobMessage }
   /** An automated notification that opened this thread (a harness delivery to Atlas). Its own panel. */
-  | { kind: 'system_event'; message: ThreadMessage }
+  | { kind: 'system_event'; message: JobMessage }
   /** System→operator-only notice (e.g. an unresumable-thread error). Its own dedicated box. */
-  | { kind: 'system_operator'; message: ThreadMessage };
+  | { kind: 'system_operator'; message: JobMessage };
 
 const WARN_RE = /\b(paused|halt|failed|error|blocked|credential|expired)\b/i;
 const OK_RE = /\b(resumed|done|completed|merged|approved|opened|landed)\b/i;
@@ -37,7 +37,7 @@ const OK_RE = /\b(resumed|done|completed|merged|approved|opened|landed)\b/i;
  * merely mentioned those words (e.g. a message discussing "always-ask" decisions rendered as a fake
  * "Decision needed — paused" card).
  */
-export function classifyMessage(message: ThreadMessage): ClassifiedMessage {
+export function classifyMessage(message: JobMessage): ClassifiedMessage {
   // System messages (provenance-tagged) — check BEFORE the user/atlas fallback. Older rows without an
   // explicit `source` are unaffected (they fall through to user/atlas).
   if (message.source === 'system_operator') {

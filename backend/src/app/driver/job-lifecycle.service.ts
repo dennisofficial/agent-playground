@@ -37,7 +37,7 @@ export interface CreateThreadInput {
 
 /** The key output of a `createThread` call. */
 export interface CreatedThread {
-  threadId: string;
+  jobId: string;
   threadSandboxId: string;
   worktreePath: string;
   baseBranch: string;
@@ -72,7 +72,7 @@ export class ProvisioningNotReadyError extends Error {
 export class JobLifecycleService {
   private readonly logger = new Logger(JobLifecycleService.name);
 
-  /** In-flight lazy provisions, keyed `orgId:threadId` — serializes concurrent first turns (single-process). */
+  /** In-flight lazy provisions, keyed `orgId:jobId` — serializes concurrent first turns (single-process). */
   private readonly provisioning = new Map<string, Promise<JobSandboxEntity | null>>();
 
   constructor(
@@ -100,8 +100,8 @@ export class JobLifecycleService {
    * `/context`). The brain reads spec files it authored in-sandbox via this path. Pure path derivation —
    * no I/O, safe to call before the sandbox exists (the dir is created when the container is attached).
    */
-  contextDirHost(threadId: string, orgId: string): string {
-    return this.sandboxProvider.contextDirHost(orgId, threadId);
+  contextDirHost(jobId: string, orgId: string): string {
+    return this.sandboxProvider.contextDirHost(orgId, jobId);
   }
 
   /**
@@ -136,7 +136,7 @@ export class JobLifecycleService {
     const sandboxRow = await this.provisionSandbox(thread, project, baseBranch);
 
     return {
-      threadId: thread.id,
+      jobId: thread.id,
       threadSandboxId: sandboxRow.id,
       worktreePath: sandboxRow.worktree_path,
       baseBranch,
@@ -159,24 +159,24 @@ export class JobLifecycleService {
    * Throws `ProvisioningNotReadyError` if the repo isn't connected/validated (`access_ok`) — fail fast,
    * no clone. Concurrent first turns for the same thread share ONE provision (no double row).
    */
-  async ensureProvisioned(threadId: string, orgId: string): Promise<JobSandboxEntity | null> {
-    const key = `${orgId}:${threadId}`;
+  async ensureProvisioned(jobId: string, orgId: string): Promise<JobSandboxEntity | null> {
+    const key = `${orgId}:${jobId}`;
     const inflight = this.provisioning.get(key);
     if (inflight) return inflight;
     // Set the promise SYNCHRONOUSLY (before any await) so racing callers share it.
-    const p = this.doEnsureProvisioned(threadId, orgId).finally(() => this.provisioning.delete(key));
+    const p = this.doEnsureProvisioned(jobId, orgId).finally(() => this.provisioning.delete(key));
     this.provisioning.set(key, p);
     return p;
   }
 
   private async doEnsureProvisioned(
-    threadId: string,
+    jobId: string,
     orgId: string,
   ): Promise<JobSandboxEntity | null> {
-    const thread = await this.threads.findOne({ where: { id: threadId, org_id: orgId } });
+    const thread = await this.threads.findOne({ where: { id: jobId, org_id: orgId } });
     if (!thread) return null;
 
-    const existing = await this.sandboxes.findOne({ where: { job_id: threadId, org_id: orgId } });
+    const existing = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
     if (existing) {
       if (existing.lifecycle === 'closed') return null;
       // Complete iff BOTH the worktree path and the thread's feature branch are set. A failed
@@ -187,11 +187,11 @@ export class JobLifecycleService {
         await this.sandboxProvider
           .teardown(await this.rowToSandbox(existing))
           .catch((err) =>
-            this.logger.warn(`ensureProvisioned: teardown of stale sandbox failed for ${threadId}: ${err}`),
+            this.logger.warn(`ensureProvisioned: teardown of stale sandbox failed for ${jobId}: ${err}`),
           );
       }
       await this.sandboxes.delete({ id: existing.id });
-      this.logger.log(`ensureProvisioned: replaced incomplete sandbox row for thread ${threadId}`);
+      this.logger.log(`ensureProvisioned: replaced incomplete sandbox row for thread ${jobId}`);
     }
 
     const project = await this.projects.findOne({ where: { id: thread.repo_id, org_id: orgId } });
@@ -213,8 +213,8 @@ export class JobLifecycleService {
    * Look up the sandbox row for a thread, returning its current `FeatureSandbox` (or null if none
    * exists). Read-only (no attach) — used where a live container isn't required (e.g. plan-review).
    */
-  async findSandbox(threadId: string, orgId: string): Promise<FeatureSandbox | null> {
-    const row = await this.sandboxes.findOne({ where: { job_id: threadId, org_id: orgId } });
+  async findSandbox(jobId: string, orgId: string): Promise<FeatureSandbox | null> {
+    const row = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
     if (!row) return null;
     return this.rowToSandbox(row);
   }
@@ -228,10 +228,10 @@ export class JobLifecycleService {
    * Self-heals a missing worktree (crash / host-down) by recreating it on the feature branch first.
    */
   async ensureContainer(
-    threadId: string,
+    jobId: string,
     orgId: string,
   ): Promise<{ sandbox: FeatureSandbox; wasReset: boolean } | null> {
-    const row = await this.sandboxes.findOne({ where: { job_id: threadId, org_id: orgId } });
+    const row = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
     if (!row || row.lifecycle === 'closed') return null;
 
     // Common path: the durable worktree is present → skip the repo resolve (a git fetch) entirely. Only
@@ -249,11 +249,11 @@ export class JobLifecycleService {
 
     // Hydrate (granted secrets/seed) only when stale or the worktree was just restored, then attach.
     // Onboarding threads skip secret rendering (their worktree must never hold a real secret value).
-    const kindRow = await this.threads.findOne({ where: { id: threadId }, select: { id: true, kind: true } });
+    const kindRow = await this.threads.findOne({ where: { id: jobId }, select: { id: true, kind: true } });
     const { sandbox: attached, hydrationSig } = await this.provisioner.provisionAndAttach({
       sandbox: await this.rowToSandbox(row),
       orgId,
-      threadId,
+      jobId,
       repoDbId: row.repo_id,
       knownSig: row.hydration_sig ?? undefined,
       forceHydrate: worktreeRestored,
@@ -268,7 +268,7 @@ export class JobLifecycleService {
     row.hydration_sig = hydrationSig;
     await this.sandboxes.save(row);
 
-    if (wasReset) this.logger.log(`thread ${threadId} re-attached a COLD container — turn will be told the sandbox reset`);
+    if (wasReset) this.logger.log(`thread ${jobId} re-attached a COLD container — turn will be told the sandbox reset`);
     return { sandbox: attached, wasReset };
   }
 
@@ -277,8 +277,8 @@ export class JobLifecycleService {
    * on PR merge / explicit thread close / abandon. Idempotent: a `closed` row is a no-op. Leaves the
    * branch ref (the PR/merge owns it). Best-effort on each side so a half-gone sandbox still closes.
    */
-  async closeThread(threadId: string, orgId: string): Promise<void> {
-    const row = await this.sandboxes.findOne({ where: { job_id: threadId, org_id: orgId } });
+  async closeThread(jobId: string, orgId: string): Promise<void> {
+    const row = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
     if (!row || row.lifecycle === 'closed') return;
 
     // Tear down the container by its DETERMINISTIC identity, NOT by `row.container_id`. `reconcileOnBoot`
@@ -286,15 +286,15 @@ export class JobLifecycleService {
     // thread that hasn't had a turn since the last restart would otherwise skip teardown and orphan the
     // container (+ its network/volume) forever. Resolving by name reclaims it either way.
     await this.sandboxProvider
-      .teardownByIdentity({ sandbox: await this.rowToSandbox(row), orgId, threadId })
+      .teardownByIdentity({ sandbox: await this.rowToSandbox(row), orgId, jobId })
       .catch((err) => {
-        this.logger.warn(`closeThread: teardown failed for thread ${threadId}: ${err}`);
+        this.logger.warn(`closeThread: teardown failed for thread ${jobId}: ${err}`);
       });
     if (row.worktree_path) {
       const projectRepo = await this.repoForRow(row).catch(() => null);
       if (projectRepo) {
         await this.git.removeSandbox(projectRepo, row.worktree_path).catch((err) => {
-          this.logger.warn(`closeThread: worktree remove failed for thread ${threadId}: ${err}`);
+          this.logger.warn(`closeThread: worktree remove failed for thread ${jobId}: ${err}`);
         });
       }
     }
@@ -302,7 +302,7 @@ export class JobLifecycleService {
     row.container_id = null;
     row.lifecycle = 'closed';
     await this.sandboxes.save(row);
-    this.logger.log(`closed thread ${threadId} (container + worktree torn down)`);
+    this.logger.log(`closed thread ${jobId} (container + worktree torn down)`);
   }
 
   /**
@@ -316,26 +316,26 @@ export class JobLifecycleService {
    * The delete is org-scoped (defense-in-depth beyond the caller's membership check). Idempotent and safe
    * to call on a partially-gone thread.
    */
-  async deleteThreadDeep(threadId: string, orgId: string): Promise<void> {
+  async deleteThreadDeep(jobId: string, orgId: string): Promise<void> {
     // 1. Reclaim the container + worktree (physical side effects — no DB cascade can do this).
-    await this.closeThread(threadId, orgId);
+    await this.closeThread(jobId, orgId);
 
     // 2. Hand any linked ticket back to the board BEFORE the thread row vanishes (its `ticket_id` is the
     //    only way to resolve the ticket). The board's in_progress/in_review lanes are thread-driven, so a
     //    deleted thread would otherwise strand its ticket with no driver. Best-effort — never block teardown.
-    await this.tickets.revertForDeletedThread({ orgId, threadId }).catch((err) => {
-      this.logger.warn(`deleteThreadDeep: ticket revert failed for thread ${threadId}: ${err}`);
+    await this.tickets.revertForDeletedThread({ orgId, jobId }).catch((err) => {
+      this.logger.warn(`deleteThreadDeep: ticket revert failed for thread ${jobId}: ${err}`);
     });
 
     // 2b. If this was a repo's onboarding thread, release the spawn marker so a re-connect can re-onboard
     //     (the marker is a pointer, not an FK — it would otherwise dangle and block re-spawn forever).
     await this.projects
-      .update({ org_id: orgId, onboarding_job_id: threadId }, { onboarding_job_id: null })
+      .update({ org_id: orgId, onboarding_job_id: jobId }, { onboarding_job_id: null })
       .catch(() => undefined);
 
     // 3. Delete the thread row; the FK ON DELETE CASCADE removes every child row with it.
-    const res = await this.threads.delete({ id: threadId, org_id: orgId });
-    this.logger.log(`deleted thread ${threadId} (org ${orgId}); thread rows removed=${res.affected ?? 0}, children cascaded`);
+    const res = await this.threads.delete({ id: jobId, org_id: orgId });
+    this.logger.log(`deleted thread ${jobId} (org ${orgId}); thread rows removed=${res.affected ?? 0}, children cascaded`);
   }
 
   // ── reaping / reconciliation (driven by DriverModule's boot hook + interval) ────────────────────
@@ -524,7 +524,7 @@ export class JobLifecycleService {
       const { sandbox: attached, hydrationSig } = await this.provisioner.provisionAndAttach({
         sandbox: branched,
         orgId: thread.org_id,
-        threadId: thread.id,
+        jobId: thread.id,
         repoDbId: project.id,
         forceHydrate: true,
         isOnboarding: thread.kind === 'onboarding',

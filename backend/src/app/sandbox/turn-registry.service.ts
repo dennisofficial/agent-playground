@@ -8,14 +8,14 @@ import { ActiveTurnEntity, ToolExecutionEntity } from '../persistence/entities';
 export interface TurnContext {
   orgId?: string;
   repoId?: string;
-  threadId?: string;
+  jobId?: string;
   /** Free-form per-kind params (author, prompt body, route, session id, timeouts, …). */
   [k: string]: unknown;
 }
 
 export interface RegisterTurnInput {
   turnId: string;
-  threadId: string;
+  jobId: string;
   orgId: string;
   channel: string;
   lane: string;
@@ -64,7 +64,7 @@ export class TurnRegistry {
     await this.turns.save(
       this.turns.create({
         turn_id: input.turnId,
-        job_id: input.threadId,
+        job_id: input.jobId,
         org_id: input.orgId,
         channel: input.channel,
         lane: input.lane,
@@ -126,10 +126,10 @@ export class TurnRegistry {
   }
 
   /** True if any turn for this thread is still running (guards a duplicate dispatch). */
-  async hasRunningForThread(threadId: string): Promise<boolean> {
+  async hasRunningForThread(jobId: string): Promise<boolean> {
     return (
       (await this.turns.count({
-        where: { job_id: threadId, status: Not('failed') as never },
+        where: { job_id: jobId, status: Not('failed') as never },
       })) > 0
     );
   }

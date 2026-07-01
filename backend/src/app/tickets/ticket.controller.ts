@@ -167,18 +167,18 @@ export class TicketController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('repoId') repoId: string,
     @Param('ticketId') ticketId: string,
-  ): Promise<{ threadId: string; created: boolean }> {
+  ): Promise<{ jobId: string; created: boolean }> {
     const result = await this.tickets.promote({ orgId: org.id, repoId, ticketId });
     if (result.created && result.seedText) {
       // Seed the new thread's opening intent — the chat bridge resolves the thread by id and triages it.
       this.surface.receiveFromClient(repoId, result.seedText, {
         orgId: org.id,
-        threadTs: result.threadId,
+        threadTs: result.jobId,
         ...OPERATOR,
       });
     }
-    this.logger.log(`promoted ticket ${ticketId} → thread ${result.threadId} (created=${result.created})`);
-    return { threadId: result.threadId, created: result.created };
+    this.logger.log(`promoted ticket ${ticketId} → thread ${result.jobId} (created=${result.created})`);
+    return { jobId: result.jobId, created: result.created };
   }
 
   /** `POST …/tickets/:ticketId/dependencies` — add an advisory "blocked by" edge. */

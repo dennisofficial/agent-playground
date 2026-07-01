@@ -22,7 +22,7 @@ import { SecretCardView } from './secret-card';
 import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
 import { BuildStepCard, indexPhaseBlocks } from './phases';
 import { Composer } from './composer';
-import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
+import type { JobMessage, JobRef } from '@/lib/api/thread-api';
 import { useLiveTurn } from '@/lib/api/thread-stream';
 import { useQueuedSends } from '@/lib/api/queued-sends';
 
@@ -38,8 +38,8 @@ export function Conversation({
   onOpenPlan,
   onSelectNode,
 }: {
-  threadRef: ThreadRef;
-  messages: ThreadMessage[];
+  threadRef: JobRef;
+  messages: JobMessage[];
   isLoading: boolean;
   live: boolean;
   onOpenPlan?: () => void;
@@ -49,7 +49,7 @@ export function Conversation({
   // The composer is a floating overlay; track its height so the transcript reserves matching space and
   // the last line never slips under it as the box auto-grows.
   const [composerHeight, setComposerHeight] = useState(116);
-  const liveTurn = useLiveTurn(threadRef.threadId);
+  const liveTurn = useLiveTurn(threadRef.jobId);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
   const turnActive = liveTurn?.active ?? false;
   // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
@@ -62,8 +62,8 @@ export function Conversation({
   // Messages sent while a turn is streaming are QUEUED behind it (the brain serializes turns per thread).
   // Pull them out of the main log and render them below the live response with a "queued" treatment — so
   // a follow-up reads as "waiting its turn", not as an already-answered message in the wrong spot.
-  const queuedTexts = useQueuedSends(threadRef.threadId);
-  const isQueued = (m: ThreadMessage): boolean =>
+  const queuedTexts = useQueuedSends(threadRef.jobId);
+  const isQueued = (m: JobMessage): boolean =>
     m.author === 'user' && turnActive && (m.queued === true || queuedTexts.has(m.text));
   const log = messages.filter((m) => !isQueued(m));
   const queued = messages.filter(isQueued);
@@ -121,8 +121,8 @@ export function Conversation({
  * other kind renders as its own typed block.
  */
 function renderLog(
-  log: ThreadMessage[],
-  threadRef: ThreadRef,
+  log: JobMessage[],
+  threadRef: JobRef,
   onOpenPlan?: () => void,
   onSelectNode?: (node: string) => void,
 ): React.ReactNode {
@@ -158,7 +158,7 @@ function renderLog(
         nodes.push(
           <BuildStepCard
             key={message.ts}
-            threadId={threadRef.threadId}
+            jobId={threadRef.jobId}
             anchor={anchor}
             durableToolCount={(phase.blocksByPhase.get(phaseId) ?? []).filter((m) => m.kind === 'tool').length}
             onOpen={() => onSelectNode?.(phaseId)}
@@ -251,7 +251,7 @@ function renderLog(
 }
 
 /** The most recent `turn_meta` block's context occupancy (null until a turn has reported usage). */
-function latestContextMeta(messages: ThreadMessage[]): { tokens: number; limit: number; model?: string } | null {
+function latestContextMeta(messages: JobMessage[]): { tokens: number; limit: number; model?: string } | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.kind !== 'turn_meta') continue;
