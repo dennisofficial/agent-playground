@@ -54,6 +54,12 @@ export interface InboundChatMessage {
    * `delivered_at` on success — same at-least-once bookkeeping as `seedQuestionId`. Undefined otherwise.
    */
   seedFileId?: string;
+  /**
+   * Optional structured card payload to persist alongside this message (render-only — the brain still
+   * reads `text`, never `card`). E.g. the review-comments batch renders as a styled card in the web
+   * client while the formatted markdown in `text` is what Atlas actually reads.
+   */
+  card?: Record<string, unknown>;
 }
 
 /** Options for an outbound post. */

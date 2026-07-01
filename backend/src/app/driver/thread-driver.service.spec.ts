@@ -106,6 +106,9 @@ function makeStore(state: StoreState): {
     seedReviewAgents: vi.fn(async () => undefined),
     setReviewAgentStatus: vi.fn(async () => undefined),
     finalizeReviewAgents: vi.fn(async () => undefined),
+    seedJobReviewAgents: vi.fn(async () => undefined),
+    setJobReviewAgentStatus: vi.fn(async () => undefined),
+    finalizeJobReviewAgents: vi.fn(async () => undefined),
     stepsForThread: vi.fn(async (threadId: string) =>
       state.steps.filter((p) => p.threadId === threadId).map((p) => ({ ...p })),
     ),
@@ -522,7 +525,9 @@ function assemble(
     } as unknown as import('./job-lifecycle.service').JobLifecycleService,
     // BuildShipService: the real terminal "ship" over the same git/pr/autofix/store fakes, so the
     // PR-tail assertions (pushed/opened/setPrReady) hold exactly as before the extraction.
-    new BuildShipService(autofix.autofix, git, pr, store),
+    new BuildShipService(autofix.autofix, git, pr, store, {
+      appendBlock: async () => undefined,
+    }),
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     {
       appendMarker: async () => undefined,

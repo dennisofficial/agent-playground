@@ -11,6 +11,9 @@
 
 import type { EnvService } from '@core/config/env/env.service';
 import type { ModuleRef } from '@nestjs/core';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type {
@@ -77,6 +80,35 @@ function makeService(
   );
 }
 
+/** Build a service whose sandbox repo + provisioner are controllable, for rehydrateThread tests. */
+function makeServiceWithMocks(row: JobSandboxEntity | null, hydrationSig = 'new') {
+  const sandboxes = {
+    findOne: vi.fn().mockResolvedValue(row),
+    save: vi.fn(),
+    create: vi.fn(),
+  } as unknown as Repository<JobSandboxEntity>;
+  const provisionAndAttach = vi.fn().mockResolvedValue({
+    sandbox: { worktreePath: row?.worktree_path, containerId: 'c1', repoId: 'proj', branch: 'main' },
+    hydrationSig,
+  });
+  const svc = new JobLifecycleService(
+    { findOne: vi.fn().mockResolvedValue({ id: 'thread-1', feature_branch: null, base_branch: 'main' }) } as unknown as Repository<JobEntity>,
+    sandboxes,
+    { findOne: vi.fn().mockResolvedValue({ id: 'repo-uuid-1', slug: 'proj', default_branch: 'main' }) } as unknown as Repository<RepoEntity>,
+    {} as unknown as LocalGitService,
+    { getPullState: vi.fn() } as unknown as GithubPrService,
+    { githubToken: vi.fn() } as unknown as CredentialResolver,
+    { get: vi.fn() } as unknown as EnvService,
+    new SandboxActivityRegistry(),
+    { resolve: vi.fn() } as unknown as DriverRepoResolver,
+    { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
+    { provisionAndAttach } as unknown as WorktreeProvisioner,
+    { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+    { get: vi.fn() } as unknown as ModuleRef,
+  );
+  return { svc, sandboxes, provisionAndAttach };
+}
+
 // Cast to access the private (now-async) rowToSandbox method from tests.
 function rowToSandbox(svc: JobLifecycleService, row: JobSandboxEntity) {
   return (
@@ -138,5 +170,39 @@ describe('JobLifecycleService.rowToSandbox', () => {
       makeRow({ container_id: 'x' }),
     );
     expect(base.branch).toBe('main');
+  });
+});
+
+describe('JobLifecycleService.rehydrateThread', () => {
+  it('force-hydrates the live worktree and persists the new signature', async () => {
+    const wt = mkdtempSync(join(tmpdir(), 'atlas-rehy-'));
+    try {
+      const row = makeRow({ worktree_path: wt, hydration_sig: 'old' } as Partial<JobSandboxEntity>);
+      const { svc, sandboxes, provisionAndAttach } = makeServiceWithMocks(row, 'new-sig');
+
+      const ok = await svc.rehydrateThread('thread-1', 'T1');
+
+      expect(ok).toBe(true);
+      expect(provisionAndAttach).toHaveBeenCalledWith(
+        expect.objectContaining({ forceHydrate: true, jobId: 'thread-1', orgId: 'T1' }),
+      );
+      expect(sandboxes.save).toHaveBeenCalled();
+      expect((row as JobSandboxEntity).hydration_sig).toBe('new-sig');
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  it('is a no-op (false) when the worktree is gone — the next real turn hydrates it', async () => {
+    const row = makeRow({ worktree_path: '/atlas/does-not-exist/thread-1' });
+    const { svc, provisionAndAttach } = makeServiceWithMocks(row);
+    expect(await svc.rehydrateThread('thread-1', 'T1')).toBe(false);
+    expect(provisionAndAttach).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op (false) when there is no sandbox row', async () => {
+    const { svc, provisionAndAttach } = makeServiceWithMocks(null);
+    expect(await svc.rehydrateThread('thread-1', 'T1')).toBe(false);
+    expect(provisionAndAttach).not.toHaveBeenCalled();
   });
 });

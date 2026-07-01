@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineEvent, ExecutionTarget } from '../engine';
 import { LocalGitService } from '../git';
+import { TurnHarnessFactory, type TurnHarness } from '../surface/turn-harness.service';
 import {
   buildFixPrompt,
   buildReviewPrompt,
@@ -25,6 +26,24 @@ import type {
 const DEFAULT_FIX_MIN_SEVERITY: FindingSeverity = 'medium';
 const DEFAULT_CONCURRENCY = 3;
 
+// ── transcript-lane / meta contract (mirrors the `codex-review:*` convention) ──────────────────────
+// The auto-fix stage streams onto the shared spine so the web can peel it exactly like Codex review / a
+// build phase. The CONTRACT the web consumes (see `docs/handoffs/autofix-review-lane-ui.md`):
+//   • lanes:  stage node `autofix:<autofixId>`  ·  per-lens `autofix:<autofixId>:<lensId>`  ·  fix turn
+//             `autofix:<autofixId>:fix`. Per-lens sub-lanes are REQUIRED — the lenses run concurrently and
+//             `LiveTurnStore` keys an in-flight turn by (channel, jobId, lane), so one shared lane would let
+//             the first lens's `finish()` end the lane out from under the others.
+//   • block meta (stamped by the harness `metaTag`): `{ autofixId, scope, lensId? , fixTurn? }`.
+//   • the `autofix_anchor` durable row (kind + `meta.autofixAnchor`) is emitted by the CALLER (driver / ship),
+//     paired with a change-signal post so the web wakes at stage start — NOT by this stage.
+/** The stage node lane (the card / aggregate opens this). */
+export const autofixLane = (autofixId: string): string => `autofix:${autofixId}`;
+/** One review lens's sub-lane — live-safe for the concurrent fan-out. */
+export const autofixLensLane = (autofixId: string, lensId: string): string =>
+  `autofix:${autofixId}:${lensId}`;
+/** The fix turn's sub-lane. */
+export const autofixFixLane = (autofixId: string): string => `autofix:${autofixId}:fix`;
+
 const REVIEW_SYSTEM_PROMPT =
   'You are a precise, terse senior code reviewer embedded in an automated pipeline. You report only ' +
   'real, in-scope issues and always answer in the exact JSON contract you are given.';
@@ -47,8 +66,11 @@ const FIX_SYSTEM_PROMPT =
  * - **Idempotent / safe to re-run.** A clean re-run finds nothing, attempts no fix, and produces no
  *   commit (`commitAll` returns null when the tree is clean), so running twice is a no-op the second time.
  *
- * Zero imports from `harness/**` or the v1 `slack-app` surface — it composes ONLY W1's EngineRunner +
- * LocalGitService.
+ * Composes W1's EngineRunner + LocalGitService, plus the @Global {@link TurnHarnessFactory} (the shared
+ * transcript spine) so its review lenses + fix turn stream + persist exactly like the brain, a build phase,
+ * and Codex review — used ONLY when the context carries a streaming identity (jobId + channel); absent, the
+ * stage runs the engine directly with no harness (byte-identical to its pre-streaming behavior). Zero v1
+ * `slack-app` imports.
  */
 @Injectable()
 export class AutoFixStage {
@@ -57,6 +79,9 @@ export class AutoFixStage {
   constructor(
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
     private readonly git: LocalGitService,
+    // Shared transcript spine (@Global LiveTurnModule) — used ONLY when the context carries a streaming
+    // identity (jobId + channel). The same factory the brain, build driver, and Codex review use.
+    private readonly turnHarness: TurnHarnessFactory,
   ) {}
 
   /** The execution target for a turn — the sandbox container when the driver ran in docker mode. */
@@ -67,6 +92,32 @@ export class AutoFixStage {
       worktreeHost: ctx.worktreePath,
       ...(ctx.execUser ? { user: ctx.execUser } : {}),
     };
+  }
+
+  /**
+   * A {@link TurnHarness} bound to one auto-fix turn's lane — or `undefined` when the context carries no
+   * streaming identity (jobId + channel), in which case the caller runs the engine directly with no
+   * harness (the pre-streaming path). `sub` picks the sub-lane + block meta: a review lens or the fix turn.
+   */
+  private harnessFor(
+    ctx: AutoFixContext,
+    sub: { lensId: string } | { fix: true },
+  ): TurnHarness | undefined {
+    if (!ctx.jobId || !ctx.channel || !ctx.autofixId) return undefined;
+    const isFix = 'fix' in sub;
+    const lane = isFix
+      ? autofixFixLane(ctx.autofixId)
+      : autofixLensLane(ctx.autofixId, sub.lensId);
+    return this.turnHarness.create({
+      jobId: ctx.jobId,
+      channel: ctx.channel,
+      lane,
+      metaTag: {
+        autofixId: ctx.autofixId,
+        ...(ctx.scope ? { scope: ctx.scope } : {}),
+        ...(isFix ? { fixTurn: true } : { lensId: sub.lensId }),
+      },
+    });
   }
 
   /**
@@ -190,6 +241,9 @@ export class AutoFixStage {
     options: AutoFixOptions,
   ): Promise<ReviewFinding[]> {
     this.notifyLensStatus(options, lens.id, 'running');
+    // Stream this lens's reasoning + file reads onto its own sub-lane (when the ctx carries a streaming
+    // identity) so it renders like every other agent turn. `undefined` → the pre-streaming direct path.
+    const harness = this.harnessFor(ctx, { lensId: lens.id });
     try {
       const target = this.targetFor(ctx);
       const res = await this.engine.run({
@@ -199,15 +253,19 @@ export class AutoFixStage {
         systemPrompt: REVIEW_SYSTEM_PROMPT,
         sandboxKey: `${ctx.sandboxKey}--review-${lens.id}`,
         mode: 'review',
+        ...(harness ? { richStream: true, onEvent: (e) => harness.onEvent(e) } : {}),
         ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
       });
+      await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
       const found = parseFindings(lens.id, res.result);
       this.logger.debug(`Lens "${lens.id}": ${found.length} finding(s)`);
       this.notifyLensStatus(options, lens.id, 'passed', found.length);
       return found;
     } catch (err) {
+      // Persist whatever streamed before the error + close the live lane (idempotent vs finish).
+      await harness?.abort().catch(() => undefined);
       this.logger.warn(`Lens "${lens.id}" review pass failed (dropped): ${err}`);
       this.notifyLensStatus(options, lens.id, 'failed');
       return [];
@@ -237,22 +295,33 @@ export class AutoFixStage {
     engine: AutoFixOptions['engine'],
     options: AutoFixOptions,
   ): Promise<{ fixReport: string; commits: AutoFixCommit[] }> {
+    // Stream the fix turn onto the `…:fix` sub-lane (when streaming); else the coarse debug log only.
+    const harness = this.harnessFor(ctx, { fix: true });
     const onEvent = (e: EngineEvent): void => {
       if (e.kind === 'tool') this.logger.debug(`fix-turn tool: ${e.name}`);
+      harness?.onEvent(e);
     };
     const target = this.targetFor(ctx);
-    const res = await this.engine.run({
-      engine: engine ?? 'claude',
-      task: buildFixPrompt(findings, ctx),
-      cwd: ctx.worktreePath,
-      systemPrompt: FIX_SYSTEM_PROMPT,
-      sandboxKey: `${ctx.sandboxKey}--fix`,
-      mode: 'execute',
-      onEvent,
-      ...(target ? { target } : {}),
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.auth ? { auth: options.auth } : {}),
-    });
+    let res;
+    try {
+      res = await this.engine.run({
+        engine: engine ?? 'claude',
+        task: buildFixPrompt(findings, ctx),
+        cwd: ctx.worktreePath,
+        systemPrompt: FIX_SYSTEM_PROMPT,
+        sandboxKey: `${ctx.sandboxKey}--fix`,
+        mode: 'execute',
+        ...(harness ? { richStream: true } : {}),
+        onEvent,
+        ...(target ? { target } : {}),
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.auth ? { auth: options.auth } : {}),
+      });
+    } catch (err) {
+      await harness?.abort().catch(() => undefined);
+      throw err;
+    }
+    await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
 
     const fixReport = res.result;
 

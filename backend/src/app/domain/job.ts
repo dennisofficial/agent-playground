@@ -45,6 +45,9 @@ export function deriveNeedsYou(
   turnActive: boolean,
   awaitingQuestion: boolean,
 ): boolean {
+  // A deleting job is going away — it must never light the alert dot, even with an open question. This
+  // MUST precede the question gate below (which otherwise overrides every other axis).
+  if (status === 'deleting') return false;
   if (awaitingQuestion) return true;
   if (turnActive) return false;
   return (

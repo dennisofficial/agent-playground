@@ -17,6 +17,8 @@ import { MarkdownActionsProvider } from './markdown';
 import { PhaseView, EmptyPane, SubagentPane } from './step-view';
 import { PersistentApprovalBar } from './spec-approval';
 import { useSelectedNode } from './use-selected-node';
+import { ReviewCommentsProvider } from './review-comments';
+import { SelectionCommentPopover } from './selection-comment-popover';
 
 /**
  * The thread workspace — the navigator (pipeline / state panels) + the work column (Conversation or
@@ -116,6 +118,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   return (
     <MarkdownActionsProvider value={markdownActions}>
+    <ReviewCommentsProvider>
     <div className="flex h-full min-h-0">
       <Navigator
         meta={meta}
@@ -205,6 +208,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
                 selectedNode={detailNode}
                 onConversation={closeDetail}
                 onSelectNode={(node) => selectNode(node, { push: true })}
+                tracksComments
               />
             ) : (
               <EmptyPane />
@@ -216,6 +220,8 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         </Panel>
       </Group>
     </div>
+    <SelectionCommentPopover />
+    </ReviewCommentsProvider>
     </MarkdownActionsProvider>
   );
 }

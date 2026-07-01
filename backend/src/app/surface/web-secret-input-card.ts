@@ -24,6 +24,12 @@ export interface WebSecretInputCard {
   /** Why the secret is needed (the brain's one-line rationale). */
   description: string;
   /**
+   * Optional URL to surface as a clickable link ABOVE the input — used for a headless login flow
+   * (`gcloud auth login --no-browser` prints an auth URL; the operator opens it, completes the browser
+   * step, and pastes the resulting code back into the field). Absent for an ordinary secret value.
+   */
+  url?: string;
+  /**
    * ISO-8601 time the operator submitted the value (which went straight to the encrypted store + a grant).
    * Its presence is the durable "provided" state; the VALUE is never stored here. The lifecycle is
    * `requested → provided (provided_at) → delivered (delivered_at)`.
@@ -44,6 +50,7 @@ export function webSecretInputCard(input: {
   name: string;
   path: string;
   description: string;
+  url?: string;
 }): WebSecretInputCard {
   return {
     type: 'secret_input_card',
@@ -52,5 +59,6 @@ export function webSecretInputCard(input: {
     name: input.name,
     path: input.path,
     description: input.description,
+    ...(input.url ? { url: input.url } : {}),
   };
 }

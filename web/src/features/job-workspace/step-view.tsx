@@ -1,10 +1,11 @@
 'use client';
 
+import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { ArrowRight, FileText, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
-import { useContextFile } from '@/lib/api/job-queries';
+import { useContextFile, useServiceLogs, useServices } from '@/lib/api/job-queries';
 import { threadTitle } from '@/lib/thread-title';
 import { VerdictButtons } from './approval-card';
 import { Markdown } from './markdown';
@@ -27,12 +28,15 @@ import { threadLane } from './phases';
 import { codexReviewLane } from './codex-review';
 import { TranscriptView } from './conversation';
 import { DetailTopBar } from './detail-top-bar';
+import { useCommentableRef } from './use-text-selection';
+import { useReviewComments } from './review-comments';
 import { pipelineJob, type JobMessage, type JobRef } from '@/lib/api/job-api';
 import {
   APPROVE_ACTION_ID,
   type ContextFileContent,
   type PipelineJob,
   type PipelineState,
+  type ServiceInfo,
   type WebApprovalCard,
 } from '@/lib/api/types';
 
@@ -54,6 +58,7 @@ export function PhaseView({
   selectedNode,
   onConversation,
   onSelectNode,
+  tracksComments = false,
 }: {
   jobRef: JobRef;
   pipeline: PipelineState | undefined;
@@ -67,6 +72,14 @@ export function PhaseView({
   /** Select another navigator node (URL `?node=`) — lets a rendered spec file's relative links open the
    *  linked file in-app. */
   onSelectNode?: (node: string) => void;
+  /**
+   * Only the RIGHT (detail) pane's `PhaseView` instance owns the review-comments `activeTarget` — the LEFT
+   * (lane) instance's `selectedNode` is always a bare thread/step id (never commentable, see
+   * `use-selected-node.ts`'s `isDetailNode`), so it must NOT clear the right pane's active target to null
+   * every time the operator switches lanes. Defaults false; `job-workspace.tsx` passes true only for the
+   * `detailNode`-driven instance.
+   */
+  tracksComments?: boolean;
 }) {
   // Subagent sub-pages stream live (a running subagent) and fall back to the durable transcript afterward.
   const liveTurn = useLiveTurn(jobRef.jobId);
@@ -93,6 +106,18 @@ export function PhaseView({
         ? `artifacts/${selectedNode.slice('artifact:'.length)}`
         : null;
   const fileQuery = useContextFile(jobRef, filePath);
+  // Cheap even when the node isn't a service — React Query dedupes against the navigator's own useServices
+  // call (same query key), and gives ServiceView a real name/cmd for its header instead of the bare id.
+  const servicesQuery = useServices(jobRef);
+
+  // Comments can be authored on a spec/generated/artifact file, the plan, the decision record, or the
+  // diff — every OTHER node (ports, subagents, transcripts) is read-only content, never text to review.
+  // Excludes 'loading'/'not_found': nothing real is on screen to select from yet.
+  const commentable =
+    resolution !== 'loading' &&
+    resolution !== 'not_found' &&
+    (Boolean(filePath) || selectedNode === 'plan' || selectedNode === 'decision' || selectedNode === 'diff');
+  const { setActiveTarget } = useReviewComments();
 
   // The detail pane's header (title + subtitle) lives in the top bar — each branch supplies it alongside
   // its body so the scrolling content no longer repeats it.
@@ -124,6 +149,12 @@ export function PhaseView({
     title = portMeta?.name ?? 'Port';
     subtitle = portMeta?.sub ?? 'sandbox port';
     body = <PortView id={selectedNode.slice('port:'.length)} />;
+  } else if (selectedNode.startsWith('service:')) {
+    const svcId = selectedNode.slice('service:'.length);
+    const svc = servicesQuery.data?.services.find((s) => s.id === svcId) ?? null;
+    title = svc?.name ?? svcId;
+    subtitle = svc?.cmd ? `atlas-svc · ${svc.cmd}` : 'atlas-svc · supervised process';
+    body = <ServiceView jobRef={jobRef} id={svcId} service={svc} />;
   } else if (selectedNode.startsWith('subagent:')) {
     const parentId = selectedNode.slice('subagent:'.length);
     const summary =
@@ -219,10 +250,22 @@ export function PhaseView({
     );
   }
 
+  // Tell the shared review-comments context which file is open, so a fresh selection tags its comment
+  // correctly and the committed highlight rebuilds for the newly-active file (see `review-comments.tsx`).
+  // ONLY the tracking instance may do this — see the `tracksComments` doc comment above (the other
+  // instance's `selectedNode` is always non-commentable and would otherwise clobber this to null on every
+  // unrelated lane switch).
+  useEffect(() => {
+    if (!tracksComments) return;
+    setActiveTarget(commentable ? { node: selectedNode, label: title } : null);
+  }, [tracksComments, commentable, selectedNode, title, setActiveTarget]);
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <DetailTopBar title={title} subtitle={subtitle || undefined} />
-      <div className="min-h-0 flex-1 overflow-hidden">{body}</div>
+      {/* Flex column so a `flex-1` body (TranscriptView) gets a bounded height and scrolls internally —
+          a plain block wrapper leaves its `h-full` scroll child resolving against auto height (no scroll). */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{body}</div>
     </div>
   );
 }
@@ -369,10 +412,11 @@ function PlanDoc({
   const decisions = card?.decisions ?? [];
   const sectionList = card?.threads ?? threads ?? [];
   const value = card?.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ?? '';
+  const contentRef = useCommentableRef<HTMLDivElement>();
 
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
-      <div className="max-w-[720px]">
+      <div ref={contentRef} className="max-w-[720px]">
         {card?.summary ? (
           <p className="mb-6 whitespace-pre-wrap text-[14px] leading-relaxed text-text">{card.summary}</p>
         ) : null}
@@ -419,9 +463,10 @@ function PlanDoc({
 
 function DecisionDoc({ card }: { card: WebApprovalCard | null }) {
   const decisions = card?.decisions ?? [];
+  const contentRef = useCommentableRef<HTMLDivElement>();
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
-      <div className="max-w-[720px]">
+      <div ref={contentRef} className="max-w-[720px]">
         {decisions.length === 0 ? (
           <Placeholder
             title="Decision record"
@@ -460,9 +505,10 @@ function SectionPlanDoc() {
 }
 
 function DiffView() {
+  const contentRef = useCommentableRef<HTMLDivElement>();
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
-      <div className="max-w-[720px]">
+      <div ref={contentRef} className="max-w-[720px]">
         <Placeholder
           title="Diff"
           body="The accumulated diff isn't exposed by the web surface yet — it lives in the feature branch and lands in the PR. Open the pull request from ARTIFACTS to review the change on GitHub."
@@ -481,6 +527,49 @@ function ReviewView({ lens }: { lens: string }) {
           title={`${lens} review`}
           body="Review lenses run as parallel self-review passes over the thread's diff; their findings are relayed into the conversation rather than persisted, so they aren't browsable here yet."
         />
+      </div>
+    </div>
+  );
+}
+
+// ── Supervised services (atlas-svc — real data) ─────────────────────────────────────────────────────
+/**
+ * A process the agent brought up on demand via `atlas-svc run` — its captured log, tailed via REST. This
+ * is a DURABLE snapshot, not a live stream: the panel polls (see `useServiceLogs`), it doesn't push. The
+ * footer is deliberately honest about what the host can't verify (see `ServiceInfo`).
+ */
+function ServiceView({ jobRef, id, service }: { jobRef: JobRef; id: string; service: ServiceInfo | null }) {
+  const { data, isLoading, error } = useServiceLogs(jobRef, id);
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-4 py-2.5 font-mono text-[10px] text-dim">
+        {service?.pid != null ? <span>pid {service.pid}</span> : null}
+        {service?.startedAt ? <span>started {new Date(service.startedAt).toLocaleTimeString()}</span> : null}
+        {service?.logUpdatedAt ? (
+          <span>log updated {new Date(service.logUpdatedAt).toLocaleTimeString()}</span>
+        ) : null}
+        {!service ? (
+          <span className="text-faint">no marker on disk — this process may have been stopped or the sandbox reset</span>
+        ) : null}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-panel px-4 py-3">
+        {isLoading ? (
+          <p className="font-mono text-[11.5px] text-faint">Loading…</p>
+        ) : error ? (
+          <Placeholder
+            title="Couldn’t load logs"
+            body={error instanceof Error ? error.message : 'Unknown error reading this log.'}
+          />
+        ) : data?.content ? (
+          <pre className="whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-dim">
+            {data.content}
+          </pre>
+        ) : (
+          <p className="font-mono text-[11.5px] italic text-faint">(no log output yet)</p>
+        )}
+      </div>
+      <div className="shrink-0 border-t border-border px-5 py-2 text-center font-mono text-[9px] text-faint">
+        last-known state from atlas-svc · ask Atlas to run atlas-svc ps for the current truth
       </div>
     </div>
   );
@@ -674,9 +763,10 @@ function FileView({
   onSelectNode?: (node: string) => void;
 }) {
   const { data, isLoading, error } = useContextFile(jobRef, path);
+  const contentRef = useCommentableRef<HTMLDivElement>();
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
-      <div className="max-w-[820px]">
+      <div ref={contentRef} className="max-w-[820px]">
         {isLoading ? (
           <p className="font-mono text-[11.5px] text-faint">Loading…</p>
         ) : error ? (
@@ -776,6 +866,9 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
   if (node.startsWith('codex-review:')) return 'found';
   // Sandbox ports are a design-stage mock (no backend port-exposure yet) — always resolvable.
   if (node.startsWith('port:')) return 'found';
+  // Supervised services self-handle a missing marker inside ServiceView (it may have been stopped/cleared
+  // since the link was opened) — always resolvable, like ports.
+  if (node.startsWith('service:')) return 'found';
 
   if (loading) return 'loading';
   if (error || !job) return 'not_found';

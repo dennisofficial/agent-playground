@@ -50,4 +50,12 @@ describe('deriveNeedsYou', () => {
     expect(deriveNeedsYou('running', false, true)).toBe(true);
     expect(deriveNeedsYou('done', false, true)).toBe(true);
   });
+
+  it('a deleting job never needs you — it wins even over the question gate', () => {
+    // The job is being torn down and about to vanish; it must never light the sidebar dot, regardless of
+    // a stray open question or live turn (deleting is checked before the question gate).
+    expect(deriveNeedsYou('deleting', false, false)).toBe(false);
+    expect(deriveNeedsYou('deleting', false, true)).toBe(false);
+    expect(deriveNeedsYou('deleting', true, true)).toBe(false);
+  });
 });

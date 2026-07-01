@@ -8,12 +8,14 @@ export const SANDBOX_PROVIDER = Symbol('SANDBOX_PROVIDER');
  * `node_modules/.cache`). Declared here (not imported from the driver's manifest types) so the sandbox
  * layer takes no dependency on the driver — the `WorktreeProvisioner` passes already-validated specs.
  * `per-thread` = its own host dir (no cross-thread write contention); `shared-ro` = one immutable host
- * dir mounted read-only into every thread. There is deliberately no shared read-write mode.
+ * dir mounted read-only into every thread; `shared-rw` = one PER-REPO host dir mounted read-write across
+ * all of a repo's sandboxes (persistent auth STATE like `.gcloud` — the rare concurrent-refresh race is
+ * accepted; see driver/worktree-manifest.ts).
  */
 export interface SandboxMount {
   /** Worktree-relative path (already path-guarded by the provisioner). */
   path: string;
-  mode: 'per-thread' | 'shared-ro';
+  mode: 'per-thread' | 'shared-ro' | 'shared-rw';
 }
 
 /** Input to `attach` — the cut worktree plus the tenant scope (for container naming/labels/isolation). */
@@ -67,6 +69,12 @@ export interface SandboxProvider {
    * Null when nothing is on disk for the thread yet.
    */
   brainTranscriptProjectsDir(jobId: string): string | null;
+  /**
+   * The HOST path of a thread's `atlas-svc` supervisor dir (markers + captured logs for processes the
+   * agent started via `atlas-svc run`). Same durability as {@link brainTranscriptProjectsDir}. Null when
+   * the thread has no sandbox home on disk yet.
+   */
+  supervisorDirHost(jobId: string): string | null;
   /**
    * Reclaim a container by its DETERMINISTIC identity (the same `orgId · repo · thread/branch` key
    * `attach` uses to name it) even when its concrete id isn't known. This is the terminal-cleanup

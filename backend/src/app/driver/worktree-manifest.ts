@@ -2,14 +2,16 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isReservedMountPath } from '../sandbox/container-paths';
 
-/** Cache mount mode. There is deliberately NO shared read-write mode (cross-thread corruption risk). */
-export type MountMode = 'per-thread' | 'shared-ro';
-
-/** A secret file to render: `from` names a per-org stored secret; `path` is the worktree destination. */
-export interface SecretSpec {
-  path: string;
-  from: string;
-}
+/**
+ * Cache/state mount mode.
+ * - `per-thread` = its own host dir (no cross-thread write contention).
+ * - `shared-ro` = one immutable host dir mounted read-only into every thread.
+ * - `shared-rw` = one PER-REPO host dir mounted read-write across all of a repo's sandboxes. Used for
+ *   persistent auth STATE (e.g. `.gcloud`) that must survive sandbox reap and be reused by every job.
+ *   The concurrent-writer race (two jobs refreshing a token at once) is accepted: login is rare and
+ *   refresh is near-atomic; worst case is one job re-auths, not corruption.
+ */
+export type MountMode = 'per-thread' | 'shared-ro' | 'shared-rw';
 
 /** A cache/state directory bind-mounted into the container at `path` (worktree-relative). */
 export interface MountSpec {
@@ -17,9 +19,14 @@ export interface MountSpec {
   mode: MountMode;
 }
 
-/** The parsed `.atlas/worktree.json`. Empty when the file is absent (feature is opt-in per repo). */
+/**
+ * The parsed `atlas.json` (repo root). Empty when absent (feature is opt-in per repo). Carries only the
+ * NON-re-derivable, NON-secret setup inputs: cache/auth `mounts` + golden `seed`. Secret name→path
+ * bindings live in the encrypted grant store (DB), NOT here — a repo-controlled file plays no part in
+ * secret rendering. There is deliberately no boot recipe: how to run the app is re-derived by the agent
+ * from the repo's own `package.json`/README/`CLAUDE.md` (see docs/adr/0002).
+ */
 export interface WorktreeManifest {
-  secrets: SecretSpec[];
   mounts: MountSpec[];
   seed: string[];
 }
@@ -30,23 +37,27 @@ export interface LoadedManifest {
   warnings: string[];
 }
 
-const MANIFEST_REL = join('.atlas', 'worktree.json');
+/** Current manifest location (repo root). */
+const MANIFEST_REL = 'atlas.json';
+/** Legacy location — read as a fallback so already-onboarded repos keep working until they re-onboard. */
+const LEGACY_MANIFEST_REL = join('.atlas', 'worktree.json');
 const MAX_BYTES = 64 * 1024;
 const MAX_ENTRIES = 100; // per array
 const MAX_PATH_LEN = 512;
-const MAX_NAME_LEN = 128;
 
-const EMPTY: WorktreeManifest = { secrets: [], mounts: [], seed: [] };
+const EMPTY: WorktreeManifest = { mounts: [], seed: [] };
 
 /**
- * Load + validate a repo's committed `.atlas/worktree.json` from a worktree. The manifest is
- * attacker-controllable (any org member can commit it), so this enforces size + count + field-length
- * limits and drops malformed entries (never throws on bad content — a broken manifest must not break
- * provisioning; it just hydrates nothing). Path SAFETY (traversal/symlink) is enforced separately by
- * `worktree-path-guard` at use time; this only does shape/limit validation.
+ * Load + validate a repo's committed `atlas.json` (falling back to the legacy `.atlas/worktree.json`)
+ * from a worktree. The manifest is attacker-controllable (any org member can commit it), so this
+ * enforces size + count + field-length limits and drops malformed entries (never throws on bad content
+ * — a broken manifest must not break provisioning; it just hydrates nothing). Path SAFETY
+ * (traversal/symlink) is enforced separately by `worktree-path-guard` at use time; this only does
+ * shape/limit validation.
  */
 export function loadWorktreeManifest(worktreePath: string): LoadedManifest {
-  const file = join(worktreePath, MANIFEST_REL);
+  const current = join(worktreePath, MANIFEST_REL);
+  const file = existsSync(current) ? current : join(worktreePath, LEGACY_MANIFEST_REL);
   if (!existsSync(file)) return { manifest: EMPTY, warnings: [] };
 
   const warnings: string[] = [];
@@ -60,10 +71,9 @@ export function loadWorktreeManifest(worktreePath: string): LoadedManifest {
     }
     const obj = raw as Record<string, unknown>;
 
-    const secrets = parseSecrets(obj.secrets, warnings);
     const mounts = parseMounts(obj.mounts, warnings);
     const seed = parseSeed(obj.seed, warnings);
-    return { manifest: { secrets, mounts, seed }, warnings };
+    return { manifest: { mounts, seed }, warnings };
   } catch (err) {
     return { manifest: EMPTY, warnings: [`worktree manifest is unreadable: ${(err as Error).message}`] };
   }
@@ -86,24 +96,13 @@ function validPath(p: unknown): p is string {
   return typeof p === 'string' && p.length > 0 && p.length <= MAX_PATH_LEN;
 }
 
-function parseSecrets(v: unknown, warnings: string[]): SecretSpec[] {
-  const out: SecretSpec[] = [];
-  for (const e of asArray(v, 'secrets', warnings)) {
-    const o = e as Record<string, unknown>;
-    if (!o || !validPath(o.path) || typeof o.from !== 'string' || !o.from || o.from.length > MAX_NAME_LEN) {
-      warnings.push('worktree manifest: dropped invalid secrets[] entry');
-      continue;
-    }
-    out.push({ path: o.path, from: o.from });
-  }
-  return out;
-}
+const MOUNT_MODES: readonly MountMode[] = ['per-thread', 'shared-ro', 'shared-rw'];
 
 function parseMounts(v: unknown, warnings: string[]): MountSpec[] {
   const out: MountSpec[] = [];
   for (const e of asArray(v, 'mounts', warnings)) {
     const o = e as Record<string, unknown>;
-    const mode = o?.mode === 'shared-ro' ? 'shared-ro' : 'per-thread';
+    const mode: MountMode = MOUNT_MODES.includes(o?.mode as MountMode) ? (o.mode as MountMode) : 'per-thread';
     if (!o || !validPath(o.path)) {
       warnings.push('worktree manifest: dropped invalid mounts[] entry');
       continue;
@@ -115,7 +114,7 @@ function parseMounts(v: unknown, warnings: string[]): MountSpec[] {
       warnings.push(`worktree manifest: mounts[] entry "${o.path}" is auto-managed by the system — ignored`);
       continue;
     }
-    if (o.mode !== undefined && o.mode !== 'per-thread' && o.mode !== 'shared-ro') {
+    if (o.mode !== undefined && !MOUNT_MODES.includes(o.mode as MountMode)) {
       warnings.push(`worktree manifest: mounts[] entry "${String(o.path)}" has unknown mode — defaulting to per-thread`);
     }
     out.push({ path: o.path, mode });

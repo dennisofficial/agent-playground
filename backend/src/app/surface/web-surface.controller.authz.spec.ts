@@ -15,6 +15,7 @@ import { WebSurfaceController } from './web-surface.controller';
  */
 function makeController(threadOrgId: string) {
   const deleteJobDeep = vi.fn(async () => undefined);
+  const claimDeleteJob = vi.fn(async () => true);
   const threads = {
     findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) =>
       where.org_id === threadOrgId ? { id: where.id, org_id: threadOrgId, repo_id: 'repo-1' } : null,
@@ -27,7 +28,7 @@ function makeController(threadOrgId: string) {
     {} as never, // surface
     {} as never, // liveTurns
     {} as never, // driverStore
-    { deleteJobDeep } as never, // threadLifecycle
+    { deleteJobDeep, claimDeleteJob } as never, // threadLifecycle
     {} as never, // orgService
     threads as never,
     messages as never,
@@ -39,17 +40,19 @@ function makeController(threadOrgId: string) {
     { dispatch: async () => undefined } as never, // dispatcher (JOB_DISPATCHER)
     { write: async () => undefined, grant: async () => undefined } as never, // secrets (WorktreeSecretStore)
   );
-  return { controller, deleteJobDeep, threads, messages };
+  return { controller, deleteJobDeep, claimDeleteJob, threads, messages };
 }
 
 describe('WebSurfaceController — cross-tenant authz', () => {
   const orgB: CurrentOrgCtx = { id: 'orgB', role: 'owner' };
 
   it("deleteThread on another org's thread 404s and never tears it down", async () => {
-    const { controller, deleteJobDeep } = makeController('orgA'); // thread belongs to org A
+    const { controller, deleteJobDeep, claimDeleteJob } = makeController('orgA'); // thread belongs to org A
     await expect(controller.deleteThread(orgB, 'leaked-thread-id')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+    // 404s at requireThread — never claims nor tears down.
+    expect(claimDeleteJob).not.toHaveBeenCalled();
     expect(deleteJobDeep).not.toHaveBeenCalled();
   });
 
@@ -62,8 +65,10 @@ describe('WebSurfaceController — cross-tenant authz', () => {
   });
 
   it("deleteThread on the caller's OWN thread proceeds (full org-scoped cascade)", async () => {
-    const { controller, deleteJobDeep } = makeController('orgB'); // thread belongs to org B
+    const { controller, deleteJobDeep, claimDeleteJob } = makeController('orgB'); // thread belongs to org B
     await controller.deleteThread(orgB, 'my-thread-id');
+    // Claims the delete (durable `deleting` state), then backgrounds the org-scoped teardown+cascade.
+    expect(claimDeleteJob).toHaveBeenCalledWith('my-thread-id', 'orgB');
     expect(deleteJobDeep).toHaveBeenCalledWith('my-thread-id', 'orgB');
   });
 });

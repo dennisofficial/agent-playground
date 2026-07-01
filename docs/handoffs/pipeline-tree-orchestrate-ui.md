@@ -2,7 +2,7 @@
 
 ## Why
 The build was reworked so **each track runs as ONE Opus orchestrator session** that fans the
-implementation out to **writer subagents** (`implement` Opus / `implement-fast` Sonnet) via the Task tool
+implementation out to **writer subagents** (`implement` Sonnet / `implement-deep` Opus) via the Task tool
 (HYBRID — the orchestrator also makes small edits directly). But the pipeline tree still renders the OLD
 plan shape (`track → plan / execute → step 1, step 2… / review`), which reads like the pre-orchestrate
 "each step is its own execution" model AND never shows the subagent fan-out. The tree should reflect the
@@ -27,7 +27,7 @@ execution model: one session per track, with its writer-subagent runs nested.
 1. **execute = one orchestrator session** per track (not N discrete step runs). Keep the plan's steps as
    the session's checklist/decomposition (they all open the same anchor transcript), but stop implying
    per-step execution.
-2. **Nest the writer-subagent runs** (`implement`/`implement-fast`) under that session in the tree — the
+2. **Nest the writer-subagent runs** (`implement`/`implement-deep`) under that session in the tree — the
    same runs `SubagentCard` shows in the transcript, made structural. This is the "single session with
    subagents" view the operator expects.
 3. **Reconcile the `review` node** given in-turn verification (soften or fold it in).

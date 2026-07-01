@@ -153,6 +153,8 @@ export class StimulusStoreService {
     author: { id: string; displayName: string };
     replyRoute: { surfaceId: string; jobRef: string };
     body: string;
+    /** Optional render-only card payload (e.g. a review-comments batch) carried on the persisted row. */
+    card?: Record<string, unknown>;
   }): Promise<ChatStimulus> {
     await this.messages.save(
       this.messages.create({
@@ -161,6 +163,7 @@ export class StimulusStoreService {
         author_id: input.author.id,
         author_bot_id: null,
         text: input.body,
+        card: input.card ?? null,
       }),
     );
 

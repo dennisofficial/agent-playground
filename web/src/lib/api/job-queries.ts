@@ -14,7 +14,10 @@ import {
   fetchOrgRepos,
   fetchRepoBranches,
   fetchPipeline,
+  fetchServiceLogs,
+  fetchServices,
   fetchThreadContext,
+  postReviewComments,
   renameJob,
   retryJob,
   sayMessage,
@@ -25,9 +28,11 @@ import {
   type CreateThreadBody,
   type JobMessage,
   type JobRef,
+  type ReviewCommentItemBody,
 } from './job-api';
 import { addQueuedSend } from './queued-sends';
 import { isLiveTurnActive } from './job-stream';
+import type { WebReviewCommentsCard } from './types';
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
@@ -70,6 +75,31 @@ export function useContextFile(ref: JobRef, path: string | null) {
     queryFn: () => fetchContextFile(ref, path!),
     enabled: hasRef(ref) && Boolean(path),
     staleTime: 5_000,
+  });
+}
+
+/**
+ * A thread's `atlas-svc` supervised processes — a DURABLE snapshot (marker files), not a live liveness
+ * check, so poll modestly while a workspace tab is open to catch state the agent just changed.
+ */
+export function useServices(ref: JobRef) {
+  return useQuery({
+    queryKey: qk.threadServices(ref),
+    queryFn: () => fetchServices(ref),
+    enabled: hasRef(ref),
+    staleTime: 4_000,
+    refetchInterval: 5_000,
+  });
+}
+
+/** One supervised process's tailed log. Lazy — only fetched while its log view is open; polls while open. */
+export function useServiceLogs(ref: JobRef, id: string | null) {
+  return useQuery({
+    queryKey: qk.threadServiceLogs(ref, id ?? ''),
+    queryFn: () => fetchServiceLogs(ref, id!),
+    enabled: hasRef(ref) && Boolean(id),
+    staleTime: 2_000,
+    refetchInterval: id ? 3_000 : false,
   });
 }
 
@@ -130,6 +160,55 @@ export function useSay(ref: JobRef) {
       return { prev };
     },
     onError: (_e, _text, ctx) => {
+      if (ctx?.prev) qc.setQueryData(qk.threadMessages(ref), ctx.prev);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+    },
+  });
+}
+
+interface ReviewCommentsSendInput {
+  items: ReviewCommentItemBody[];
+  message?: string;
+}
+
+/**
+ * Send a queued batch of inline highlight-and-comments — mirrors `useSay`'s optimistic-append + queued-send
+ * handling, but the optimistic row carries the `review_comments_card` so it renders as the styled card
+ * immediately (not a plain bubble) while the durable echo settles.
+ */
+export function useSendReviewComments(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation<{ ts: string }, Error, ReviewCommentsSendInput, SayContext>({
+    mutationFn: (input) => postReviewComments(ref, input),
+    onMutate: async (input) => {
+      const key = qk.threadMessages(ref);
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<JobMessage[]>(key);
+      const queued = isLiveTurnActive(ref.jobId);
+      const card: WebReviewCommentsCard = {
+        type: 'review_comments_card',
+        items: input.items,
+        ...(input.message ? { message: input.message } : {}),
+      };
+      const optimistic: JobMessage = {
+        ts: `local-${Date.now()}`,
+        author: 'user',
+        authorId: 'me',
+        authorName: 'You',
+        text: input.message ?? '',
+        kind: 'chat',
+        source: 'operator',
+        card,
+        postedAt: new Date().toISOString(),
+        local: true,
+        queued,
+      };
+      qc.setQueryData<JobMessage[]>(key, [...(prev ?? []), optimistic]);
+      return { prev };
+    },
+    onError: (_e, _input, ctx) => {
       if (ctx?.prev) qc.setQueryData(qk.threadMessages(ref), ctx.prev);
     },
     onSettled: () => {

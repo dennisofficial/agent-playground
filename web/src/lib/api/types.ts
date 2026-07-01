@@ -128,6 +128,8 @@ export interface WebSecretInputCard {
   name: string;
   path: string;
   description: string;
+  /** A headless-login URL (e.g. `gcloud auth login --no-browser`) to render as a clickable link above the field. */
+  url?: string;
   provided_at?: string;
   delivered_at?: string;
 }
@@ -149,12 +151,33 @@ export interface WebFileRequestCard {
   delivered_at?: string;
 }
 
+/** One quoted selection + note in a sent review-comment bundle. `file` is the display label (e.g. the
+ *  file's basename) the operator had open when they commented, not the full context-bucket path. */
+export interface WebReviewCommentItem {
+  file: string;
+  quote: string;
+  note?: string;
+}
+
+/**
+ * A batch of inline review comments the operator sent via the highlight-and-comment flow ("Atlas Workspace
+ * HiFi") — the operator selected text in the detail pane, noted it, and sent the queue as one message.
+ * Rendered as a distinct right-aligned card (grouped by file); an optional trailing `message` is the
+ * operator's typed prose, rendered as a normal bubble underneath. Mirrors the backend `review_comments_card`.
+ */
+export interface WebReviewCommentsCard {
+  type: 'review_comments_card';
+  items: WebReviewCommentItem[];
+  message?: string;
+}
+
 export type WebCard =
   | WebApprovalCard
   | WebVerdictCard
   | WebQuestionCard
   | WebSecretInputCard
-  | WebFileRequestCard;
+  | WebFileRequestCard
+  | WebReviewCommentsCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
 /** One step of a thread's locked plan — the execute folder's leaf (a Claude Code session). */
@@ -276,6 +299,31 @@ export interface ContextFileContent {
   content: string;
 }
 
+// ── Supervised services (`…/threads/:jobId/services`) ────────────────────────────────────────────
+/**
+ * One process the agent started via `atlas-svc run`, from its durable marker file. Mirrors the backend
+ * `ServiceInfo` — a DURABLE snapshot, not a live liveness check (the host can't see into the container's
+ * PID namespace), so a service may show its last marker after it has actually stopped.
+ */
+export interface ServiceInfo {
+  id: string;
+  name: string;
+  cmd: string;
+  pid: number | null;
+  pgid: number | null;
+  startedAt: string | null;
+  logBytes: number;
+  logUpdatedAt: string | null;
+}
+
+/** A supervised process's tailed log (`…/threads/:jobId/services/:id/logs`). */
+export interface ServiceLogs {
+  id: string;
+  content: string;
+  /** True if the log exceeded the server's tail cap and was truncated from the front. */
+  truncated: boolean;
+}
+
 // ── UI job model ───────────────────────────────────────────────────────────────────────────────
 /** The Job UI-presentation status set from handoff §7 (semantic dot colors). */
 export type JobStatus =
@@ -286,7 +334,8 @@ export type JobStatus =
   | 'done'
   | 'triaging'
   | 'paused'
-  | 'failed';
+  | 'failed'
+  | 'deleting';
 
 /** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job. */
 export type JobKind = 'feat' | 'fix' | 'event';

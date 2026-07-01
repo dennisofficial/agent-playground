@@ -8,6 +8,8 @@ import type {
   PipelineJob,
   PipelineState,
   JobContext,
+  ServiceInfo,
+  ServiceLogs,
   WebCard,
 } from './types';
 
@@ -135,6 +137,24 @@ export function sayMessage(ref: JobRef, text: string): Promise<{ ts: string }> {
   return webJson(threadPath(ref, '/say'), { method: 'POST', body: JSON.stringify({ text }) });
 }
 
+/** One inline highlight-and-comment item, as sent to `…/jobs/:jobId/review-comments`. */
+export interface ReviewCommentItemBody {
+  file: string;
+  quote: string;
+  note?: string;
+}
+
+/**
+ * Send a batch of queued review comments — a durable operator message that both drives a brain turn AND
+ * renders as the `review_comments_card`. See `review-comments.tsx` for the authoring side.
+ */
+export function postReviewComments(
+  ref: JobRef,
+  body: { items: ReviewCommentItemBody[]; message?: string },
+): Promise<{ ts: string }> {
+  return webJson(threadPath(ref, '/review-comments'), { method: 'POST', body: JSON.stringify(body) });
+}
+
 // ── Approvals ──────────────────────────────────────────────────────────────────────────────────
 export interface ApproveBody {
   /** The prefixed action id from the card action (e.g. `atlas_approval:approve`). */
@@ -208,6 +228,17 @@ export function retryJob(ref: JobRef): Promise<{ ok: boolean; status: string }> 
 // ── Pipeline ───────────────────────────────────────────────────────────────────────────────────
 export function fetchPipeline(ref: JobRef): Promise<PipelineState> {
   return webJson<PipelineState>(threadPath(ref, '/pipeline'));
+}
+
+// ── Supervised services (atlas-svc) ───────────────────────────────────────────────────────────
+export function fetchServices(ref: JobRef): Promise<{ services: ServiceInfo[] }> {
+  return webJson<{ services: ServiceInfo[] }>(threadPath(ref, '/services'));
+}
+
+export function fetchServiceLogs(ref: JobRef, id: string, n = 200): Promise<ServiceLogs> {
+  return webJson<ServiceLogs>(
+    threadPath(ref, `/services/${encodeURIComponent(id)}/logs?n=${n}`),
+  );
 }
 
 /** Narrow a pipeline read to its job, or `null` before a plan is approved (`{ status: 'no_job' }`). */

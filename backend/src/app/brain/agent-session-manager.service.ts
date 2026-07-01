@@ -517,9 +517,12 @@ export class AgentSessionManager
     '    existing ledger entry, list its slug in `supersedes`. Calling with an empty list is fine (nothing',
     '    durable to record). Idempotent — re-promoting the same slug overwrites.',
     '',
-    'SANDBOX RUNTIME: your sandbox can be restarted between turns (idle reaps, crashes, restarts). Never',
-    'assume a server or background process you started in a previous turn is still running — verify it is',
-    'up (curl/health-check) and restart it if needed before relying on it.',
+    'SANDBOX RUNTIME: to bring up long-running processes (dev servers, `docker compose`, watchers) use the',
+    '`atlas-svc` supervisor via Bash — `atlas-svc run --name <id> -- <cmd>` (detached, captured logs),',
+    '`atlas-svc logs [-f] <id>`, `atlas-svc ps`, `atlas-svc stop <id>` — instead of a bare `&`/nohup, so the',
+    'process is tracked and its logs are surfaced. Your sandbox can be restarted between turns (idle reaps,',
+    'crashes); never assume something you started earlier is still running — `atlas-svc ps` shows what died,',
+    'and verify a server is actually up (curl/health-check) before relying on it.',
     '',
     'ACT WITH CARE, REPORT TRUTHFULLY: the approval gate is your safety net, not a substitute for judgment.',
     'The hard-to-reverse, outward-facing actions are `finalize_build` / `dispatch_build` (they commit code and',
@@ -533,21 +536,30 @@ export class AgentSessionManager
   ].join('\n');
 
   /**
-   * The system prompt for an ONBOARDING thread (`kind='onboarding'`) — a one-off "init this repo" mission.
-   * Self-contained (NOT spliced onto {@link SYSTEM_PROMPT}, whose feature/plan/build framing is wrong here).
-   * The brain has only the onboarding toolset (`buildTools` omits the build/PR tools); the secrets guardrail
-   * is load-bearing — a real value must never enter the transcript or any tool I/O.
+   * The system prompt for an ONBOARDING thread (`kind='onboarding'`) — the one-off "make this repo's
+   * environment capable of running" ceremony. Self-contained (NOT spliced onto {@link SYSTEM_PROMPT}). The
+   * mission is to BOOT the stack for real (discovering secrets/auth/mounts live) until it is green, then
+   * record the non-re-derivable inputs so every future job inherits a hydrated, runnable box. Secret VALUES
+   * never enter the transcript/tool I/O (they go to the encrypted store); but they DO render into the live
+   * worktree so the boot can actually happen (see docs/adr/0002).
    */
   private static readonly ONBOARDING_SYSTEM_PROMPT = [
-    'You are Atlas, initialising a newly-connected repository — a ONE-OFF onboarding session, like',
-    '`claude init` for this repo. Your goal: discover everything a future build needs to compile, test, and',
-    'run this repo in a fresh sandbox, and RECORD it so every later thread starts ready-to-build.',
+    'You are Atlas, onboarding a newly-connected repository. Think of it as your first day as a new engineer:',
+    'your job is to get the environment ACTUALLY RUNNING headlessly — boot every service, hit real errors, ask',
+    'for whatever secret/access you are missing on the spot — and then RECORD what you needed so every future',
+    'job starts with a hydrated, runnable box and never has to do this again. The proof of done is not a',
+    'document; it is a stack you personally brought up green.',
     '',
-    'You work in /workspace (a real checkout). Investigate with your native tools (Bash, Read, Glob, Grep):',
-    '  - Install dependencies the way the repo expects (e.g. pnpm install) and note the exact command.',
-    '  - Read .env.example / .env.sample / README / framework configs to learn which ENV FILES + keys the',
-    '    app needs to build and run. Attempt a build/typecheck to see what is actually missing.',
-    '  - Note setup/build/test commands and any cache directories worth persisting between threads.',
+    'You work in /workspace (a real checkout) with your native tools (Bash, Read, Glob, Grep). Loop:',
+    '  1. Learn how the repo runs from ITS OWN docs — package.json scripts, README, CLAUDE.md, compose files,',
+    '     .env.example. Do not invent; re-derive. Install deps the way the repo expects (e.g. pnpm install).',
+    '  2. Bring services up with the supervisor: `atlas-svc run --name <id> -- <cmd>` (e.g. `docker compose up`,',
+    '     `pnpm --filter backend dev`). Read `atlas-svc logs <id>`; iterate until each service is healthy',
+    '     (curl its endpoint / watch the log say it is listening). `atlas-svc ps` lists what is running.',
+    '  3. When a boot fails for a MISSING secret/file/credential, request it on the spot (see SECRETS/AUTH),',
+    '     wait for it to render into the worktree, then retry — do not give up and do not fake it.',
+    '  4. Anything that would mutate EXTERNAL state (terraform apply, real cloud provisioning, live writes):',
+    '     validate to plan/dry-run ONLY (`terraform plan`, config parse). Never create real infra from here.',
     'NEVER ask the operator anything the repo already answers — investigate first.',
     '',
     `All host tools are served by the "${BRIDGE_SERVER_NAME}" MCP server; call the FULLY-QUALIFIED name`,
@@ -559,35 +571,41 @@ export class AgentSessionManager
     `  - mcp__${BRIDGE_SERVER_NAME}__remember            — store a durable memory fact about this repo`,
     `  - mcp__${BRIDGE_SERVER_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (see SECRETS)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__request_file        — ask the operator to UPLOAD a file (JSON/key file; see SECRETS)`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — author .atlas/worktree.json (mounts + seed; NOT secrets)`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: summarise + (if needed) open the config PR`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — author atlas.json (mounts + seed; NOT secrets)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: only after the stack boots green (see FINISH)`,
     '',
     'SECRETS — env-file values (DATABASE_URL, API keys, …) are SECRET. NEVER ask for a secret value in chat,',
-    'and NEVER print, cat, echo, or repeat a secret value (do not read a real .env back to the operator). To',
-    'obtain one, call request_secret({ name, path, description }): the operator enters it through a secure',
-    'field that stores it ENCRYPTED and grants it to `path` for future build threads — you only ever see a',
-    'masked "✓ NAME provided" confirmation. Refer to secrets by NAME only. Request ONE secret at a time and',
-    'wait for the confirmation before continuing. The onboarding worktree has NO real secrets rendered — work',
-    'against .env.example / placeholders only.',
-    'For a value the operator must UPLOAD rather than type — a service-account JSON, a keystore/.pem, a',
-    'gitignored .env.keys — call request_file({ path, description }) instead: the operator uploads the file',
-    'through a secure field that stores its contents ENCRYPTED and grants them to `path`; you see only a',
-    'masked confirmation. Never ask them to paste file contents in chat. The destination MUST be gitignored',
-    '(else it would leak into the PR and will not render). request_file is per-card — you may open several.',
+    'and NEVER print, cat, echo, or repeat one back. Call request_secret({ name, path, description }): the',
+    'operator enters it through a secure field that stores it ENCRYPTED + grants it to `path`; you see only a',
+    'masked "✓ NAME provided" confirmation. Once provided, the value is RENDERED into your live worktree at',
+    '`path` (real, gitignored) so you can boot the app — use it, never echo it. Request ONE at a time and wait.',
+    'To take a WHOLE env file at once (better than 20 keys), or a file the operator must UPLOAD — a',
+    'service-account JSON, a keystore/.pem, a gitignored .env.keys — call request_file({ path, description }):',
+    'the operator uploads it, contents stored ENCRYPTED + granted to `path` (which MUST be gitignored). Both',
+    'propagate instantly to every future job; request_file is per-card (open several).',
     '',
-    'CONFIG — non-secret provisioning goes in .atlas/worktree.json via write_worktree_config({ mounts, seed }):',
-    '  - mounts: cache dirs to persist across threads (e.g. [{ path: ".next/cache", mode: "per-thread" }]).',
-    '  - seed: operator golden files to copy in (rare). Secrets do NOT go here — use request_secret.',
-    'The pnpm store and Node (via fnm) are AUTO-MANAGED and shared across threads — NEVER add `.pnpm-store`,',
-    '`node_modules`, or a Node version dir as a mount (it collides with the system bind and breaks the sandbox).',
-    'Most repos need NO mounts/seed — only call write_worktree_config when there is something real to record.',
+    'AUTH / CAPABILITY ACCESS — if the repo talks to a cloud (gcloud/gsutil, Firebase/Firestore, a real DB),',
+    'you may need credentials YOU use directly. A static key file is just a request_file secret. For an',
+    'INTERACTIVE login that writes a token dir (e.g. `gcloud auth login`), that state must PERSIST across jobs:',
+    'record its dir as a `shared-rw` mount in atlas.json (per-repo, reused everywhere — e.g. `.gcloud`, matching',
+    "the repo's own .envrc if it has one), run the headless login (`--no-browser`), and use request_secret with",
+    'a `url` to hand the operator the auth URL and take the code back. Then verify the access actually works',
+    '(e.g. `gsutil ls`, a read query) as part of proving green.',
     '',
-    'FINISH — when the repo is ready (deps install, required secrets registered, config recorded), call',
-    'finish_onboarding({ summary }) with a short plain-language summary of what you set up and what you asked',
-    'the operator for. If you wrote a .atlas/worktree.json it is committed and opened as a small PR to merge.',
+    'CONFIG — non-secret provisioning goes in atlas.json via write_worktree_config({ mounts, seed }):',
+    '  - mounts: cache/auth dirs to persist across jobs. `per-thread` (own dir), `shared-ro` (one read-only',
+    '    dir), or `shared-rw` (one per-repo read-write dir — for persistent auth state like `.gcloud`).',
+    '  - seed: operator golden files to copy in (rare). Secrets do NOT go here — use request_secret/file.',
+    'Do NOT record how-to-run commands here — those are re-derived from the repo. The pnpm store and Node (via',
+    'fnm) are AUTO-MANAGED — NEVER add `.pnpm-store`, `node_modules`, or a Node dir as a mount (it collides).',
     '',
-    'You do NOT plan, grill for decisions, or build features here, and you have NO build/PR tools — this',
-    'session only initialises the repo. Investigate, register required secrets, record config, finish.',
+    'FINISH — only when the stack is GREEN (services boot, required secrets/auth in place, external steps',
+    'dry-run-validated). Call finish_onboarding({ summary, verified }): `verified` MUST describe what you',
+    'actually brought up and how you checked it (the services, the health checks/log lines, any dry-run) — it',
+    'is your evidence, saved for the operator. If you wrote an atlas.json it is committed and opened as a small',
+    'PR to merge. Do NOT finish on a stack you could not boot — instead say what is still blocking and why.',
+    '',
+    'You do NOT plan, grill for decisions, or build features here — this session only makes the repo runnable.',
   ].join('\n');
 
   /**
@@ -1941,23 +1959,23 @@ export class AgentSessionManager
       },
 
       dispatch_build: async (_args) => {
-        // GATED tool — only dispatches an already-approved (status=running) job.
-        const jobId = await this.store.openJobOnThread(stimulus.jobId);
-        if (!jobId) {
+        // GATED tool — only dispatches an already-approved (status=running) job. Resolve the job by id
+        // (NOT openJobOnThread, which is planning-only) and let the running-status check gate it.
+        const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+        if (!job) {
           return {
             ok: false,
-            reason: 'No open job on this thread — call submit_plan first',
+            reason: 'No job on this thread — call submit_plan first',
           };
         }
-        const job = await this.store.loadJob(jobId);
         if (job.status !== 'running') {
           return {
             ok: false,
-            reason: `Job ${jobId} is in status '${job.status}' — only 'running' jobs can be dispatched`,
+            reason: `Job ${job.id} is in status '${job.status}' — only 'running' (approved) jobs can be dispatched`,
           };
         }
         await this.dispatcher.dispatch(job);
-        return { ok: true, jobId, message: 'Build dispatched.' };
+        return { ok: true, jobId: job.id, message: 'Build dispatched.' };
       },
 
       start_direct_build: async (args) => {
@@ -2039,14 +2057,16 @@ export class AgentSessionManager
 
       finalize_build: async (_args) => {
         // GATED — callable only inside the autonomous implementation turn of an APPROVED direct build
-        // (status 'running'). Commits whatever was written, then runs the shared terminal ship.
-        const jobId = await this.store.openJobOnThread(stimulus.jobId);
-        if (!jobId)
+        // (status 'running'). Commits whatever was written, then runs the shared terminal ship. Resolve
+        // the job by id (NOT openJobOnThread, which is planning-only — approval already flipped it to
+        // 'running', so that lookup would always return null here) and let the status check gate it.
+        const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+        if (!job)
           return {
             ok: false,
-            reason: 'No open job on this thread — nothing to finalize',
+            reason: 'No job on this thread — nothing to finalize',
           };
-        const job = await this.store.loadJob(jobId);
+        const jobId = job.id;
         if (job.status !== 'running') {
           return {
             ok: false,
@@ -2423,14 +2443,21 @@ export class AgentSessionManager
       },
     };
 
-    // Normal threads get the full toolset above. Onboarding threads get a curated, build-free subset.
-    if (!onboarding) return tools;
+    // Every thread can request a missing secret/file on the spot (so a build thread that finds the env
+    // incomplete asks for the key instead of failing) — the owner-gated provide endpoints accept any job.
+    const intake = {
+      request_secret: this.buildRequestSecretTool(stimulus),
+      request_file: this.buildRequestFileTool(stimulus),
+    };
+
+    // Normal threads get the full toolset above + intake. Onboarding threads get a curated, build-free
+    // subset (they don't build/PR; they explore, provision, and finish).
+    if (!onboarding) return { ...tools, ...intake };
     return {
       ask_question: tools.ask_question,
       recall: tools.recall,
       remember: tools.remember,
-      request_secret: this.buildRequestSecretTool(stimulus),
-      request_file: this.buildRequestFileTool(stimulus),
+      ...intake,
       write_worktree_config: this.buildWriteWorktreeConfigTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
     };
@@ -2450,6 +2477,10 @@ export class AgentSessionManager
       const name = String(args['name'] ?? '').trim();
       const path = String(args['path'] ?? '').trim();
       const description = String(args['description'] ?? '').trim();
+      // Optional headless-login URL (e.g. `gcloud auth login --no-browser`): surfaced as a clickable link on
+      // the card so the operator opens it, then pastes the resulting code back into the field. https only.
+      const rawUrl = String(args['url'] ?? '').trim();
+      const url = /^https:\/\//.test(rawUrl) ? rawUrl : undefined;
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
         return {
           ok: false,
@@ -2476,6 +2507,7 @@ export class AgentSessionManager
         name,
         path,
         description,
+        ...(url ? { url } : {}),
       });
       const opened = await this.store.openSecretRequest(stimulus.jobId, {
         requestId,
@@ -2552,8 +2584,8 @@ export class AgentSessionManager
   }
 
   /**
-   * `write_worktree_config({ mounts, seed })` — author the repo's committed `.atlas/worktree.json` (the
-   * NON-secret half: cache mounts + golden-seed files). Secrets are NEVER written here (they live as
+   * `write_worktree_config({ mounts, seed })` — author the repo's committed `atlas.json` (the NON-secret
+   * hydration half: cache/auth mounts + golden-seed files). Secrets are NEVER written here (they live as
    * encrypted grants); a `secrets` field is rejected. Validated against the manifest schema before write.
    */
   private buildWriteWorktreeConfigTool(stimulus: ChatStimulus): ToolImpl {
@@ -2562,7 +2594,7 @@ export class AgentSessionManager
         return {
           ok: false,
           reason:
-            'secrets do not go in .atlas/worktree.json — use request_secret instead',
+            'secrets do not go in atlas.json — use request_secret instead',
         };
       }
       const { mounts, warnings: mountWarnings } = this.normalizeMounts(
@@ -2575,10 +2607,8 @@ export class AgentSessionManager
       );
       if (!sandbox)
         return { ok: false, reason: 'no sandbox for this thread yet' };
-      const dir = join(sandbox.worktreePath, '.atlas');
-      await mkdir(dir, { recursive: true });
       const body = JSON.stringify({ mounts, seed }, null, 2) + '\n';
-      await writeFile(join(dir, 'worktree.json'), body, 'utf8');
+      await writeFile(join(sandbox.worktreePath, 'atlas.json'), body, 'utf8');
       // Re-parse through the loader to surface any limit/shape warnings to the brain.
       const { warnings: loadWarnings } = loadWorktreeManifest(
         sandbox.worktreePath,
@@ -2595,13 +2625,27 @@ export class AgentSessionManager
 
   /**
    * `finish_onboarding({ summary })` — conclude the onboarding session. Posts the operator-visible summary.
-   * If a `.atlas/worktree.json` with mounts/seed was authored, commit it + open a small PR (the repo's
+   * If an `atlas.json` with mounts/seed was authored, commit it + open a small PR (the repo's
    * `onboarded_at` is stamped when that PR MERGES, via `pollPrClosures`). Otherwise (secrets-only / nothing
    * to commit) stamp `onboarded_at` immediately — secrets are already live in the backend.
    */
   private buildFinishOnboardingTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
       const summary = String(args['summary'] ?? '').trim();
+      // Green-gate: onboarding may only conclude once Atlas has actually brought the stack up and checked
+      // it. `verified` is that evidence (which services booted, how they were health-checked, any dry-run).
+      // It is required + non-trivial so the ceremony can't rubber-stamp a stack it never ran; the operator
+      // approving/merging the PR is the final human gate. (See docs/adr/0002 §6.)
+      const verified = String(args['verified'] ?? '').trim();
+      if (verified.length < 20) {
+        return {
+          ok: false,
+          reason:
+            'finish_onboarding requires `verified`: describe what you actually booted and how you checked it ' +
+            '(the services you brought up via atlas-svc, the health checks/log lines, any dry-run). If the ' +
+            'stack would not boot, do NOT finish — say what is still blocking instead.',
+        };
+      }
       const sandbox = await this.lifecycle.findSandbox(
         stimulus.jobId,
         stimulus.orgId,
@@ -2611,6 +2655,11 @@ export class AgentSessionManager
       const { manifest } = loadWorktreeManifest(sandbox.worktreePath);
       const hasConfig = manifest.mounts.length > 0 || manifest.seed.length > 0;
 
+      // Persist the boot evidence as a durable, operator-visible record before concluding.
+      await this.store.appendSystemEvent(
+        stimulus.jobId,
+        `✅ Boot verified — ${verified}`,
+      );
       if (summary)
         await this.store.appendSystemEvent(
           stimulus.jobId,
@@ -2627,7 +2676,7 @@ export class AgentSessionManager
         };
       }
 
-      // Commit `.atlas/worktree.json` and open a PR for the operator to merge (reuses the shared ship path:
+      // Commit `atlas.json` and open a PR for the operator to merge (reuses the shared ship path:
       // commit → autofix → push → open ONE PR → record pr_url/pr_number on the thread → flips it done).
       try {
         const job = await this.store.loadJob(stimulus.jobId);
@@ -2637,7 +2686,7 @@ export class AgentSessionManager
           record: null,
           repo,
           sandbox,
-          commitMessage: 'Atlas: add .atlas/worktree.json (repo onboarding)',
+          commitMessage: 'Atlas: add atlas.json (repo onboarding)',
           notify: (m) => this.store.appendSystemEvent(stimulus.jobId, m),
         });
         return result
@@ -2682,7 +2731,9 @@ export class AgentSessionManager
         continue;
       }
       const mode: MountMode =
-        o?.['mode'] === 'shared-ro' ? 'shared-ro' : 'per-thread';
+        o?.['mode'] === 'shared-ro' || o?.['mode'] === 'shared-rw'
+          ? (o['mode'] as MountMode)
+          : 'per-thread';
       out.push({ path, mode });
     }
     return { mounts: out, warnings };

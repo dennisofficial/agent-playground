@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Atlas process supervisor — a thin, robust wrapper for the long-running processes the agent needs to
+# bring up (dev servers, `docker compose`, watchers). The agent drives it via its normal Bash tool; it is
+# NOT auto-started on sandbox attach. Markers + captured logs live under the DURABLE agent home so they
+# survive a container recreate (a reaped process is then reported `stopped` and the agent restarts it on
+# demand). Health-checking is the agent's job — read the logs / curl the endpoint. See docs/adr/0002.
+set -uo pipefail
+
+SVC_DIR="${ATLAS_SUPERVISOR_DIR:-/atlas-home/supervisor}"
+mkdir -p "$SVC_DIR" 2>/dev/null || true
+
+usage() {
+  echo "usage: atlas-svc run --name <id> -- <cmd...>" >&2
+  echo "       atlas-svc logs <id> [-n N] [-f]" >&2
+  echo "       atlas-svc ps" >&2
+  echo "       atlas-svc stop <id>" >&2
+}
+
+# Minimal JSON string escaper (backslash, quote, control chars we care about).
+json_str() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/ }"
+  s="${s//$'\t'/ }"
+  printf '"%s"' "$s"
+}
+
+pgid_of() { sed -n 's/.*"pgid":[[:space:]]*\([0-9]*\).*/\1/p' "$1" 2>/dev/null; }
+
+is_alive() { # <pgid> — a process group is alive if kill -0 on the negative pgid succeeds.
+  local pgid="$1"
+  [ -n "$pgid" ] && kill -0 "-$pgid" 2>/dev/null
+}
+
+cmd_run() {
+  local name=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="${2:-}"; shift 2 || { usage; return 2; } ;;
+      --) shift; break ;;
+      *) echo "atlas-svc run: unexpected arg '$1' (did you forget '--' before the command?)" >&2; return 2 ;;
+    esac
+  done
+  if [ -z "$name" ] || [ $# -eq 0 ]; then usage; return 2; fi
+  if ! [[ "$name" =~ ^[a-z0-9_-]+$ ]]; then
+    echo "atlas-svc: name must be [a-z0-9_-]+" >&2; return 2
+  fi
+  local marker="$SVC_DIR/$name.json" log="$SVC_DIR/$name.log"
+  local cmd="$*"
+
+  # Idempotent: if a process is already alive under this name, do nothing (probe-first — never double-start).
+  if [ -f "$marker" ]; then
+    local existing; existing="$(pgid_of "$marker")"
+    if is_alive "$existing"; then
+      echo "atlas-svc: '$name' is already running (pgid $existing) — logs: atlas-svc logs $name"
+      return 0
+    fi
+  fi
+
+  : > "$log"
+  # Detach into its own session/process-group (setsid) so it outlives this `bash -c` exec and `stop` can
+  # signal the whole group. Output is captured to the durable log.
+  setsid bash -lc "$cmd" >>"$log" 2>&1 &
+  local pid=$!   # for a setsid leader, the process-group id equals this pid.
+
+  printf '{"name":%s,"cmd":%s,"pid":%d,"pgid":%d,"startedAt":"%s"}\n' \
+    "$(json_str "$name")" "$(json_str "$cmd")" "$pid" "$pid" "$(date -u +%FT%TZ)" > "$marker"
+  echo "atlas-svc: started '$name' (pid $pid) — tail with: atlas-svc logs -f $name"
+}
+
+cmd_logs() {
+  local name="" n=200 follow=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -n) n="${2:-200}"; shift 2 ;;
+      -f) follow=1; shift ;;
+      -*) echo "atlas-svc logs: unknown flag '$1'" >&2; return 2 ;;
+      *) name="$1"; shift ;;
+    esac
+  done
+  if [ -z "$name" ]; then usage; return 2; fi
+  local log="$SVC_DIR/$name.log"
+  [ -f "$log" ] || { echo "(no logs yet for '$name')"; return 0; }
+  if [ "$follow" = 1 ]; then tail -n "$n" -f "$log"; else tail -n "$n" "$log"; fi
+}
+
+cmd_ps() {
+  shopt -s nullglob
+  local any=0 m name pgid status started
+  for m in "$SVC_DIR"/*.json; do
+    any=1
+    name="$(basename "$m" .json)"
+    pgid="$(pgid_of "$m")"
+    if is_alive "$pgid"; then status="running"; else status="stopped"; fi
+    started="$(sed -n 's/.*"startedAt":"\([^"]*\)".*/\1/p' "$m" 2>/dev/null)"
+    printf '%-24s %-9s pgid=%-8s since=%s\n' "$name" "$status" "${pgid:-?}" "${started:-?}"
+  done
+  [ "$any" = 0 ] && echo "(no supervised processes)"
+}
+
+cmd_stop() {
+  local name="${1:-}"
+  if [ -z "$name" ]; then usage; return 2; fi
+  local marker="$SVC_DIR/$name.json"
+  [ -f "$marker" ] || { echo "(no such process: '$name')"; return 0; }
+  local pgid; pgid="$(pgid_of "$marker")"
+  if [ -n "$pgid" ]; then
+    kill -TERM "-$pgid" 2>/dev/null || true
+    sleep 1
+    kill -KILL "-$pgid" 2>/dev/null || true
+  fi
+  rm -f "$marker"
+  echo "atlas-svc: stopped '$name'"
+}
+
+case "${1:-}" in
+  run)  shift; cmd_run "$@" ;;
+  logs) shift; cmd_logs "$@" ;;
+  ps)   shift; cmd_ps ;;
+  stop) shift; cmd_stop "$@" ;;
+  ""|-h|--help) usage ;;
+  *) echo "atlas-svc: unknown subcommand '$1'" >&2; usage; exit 2 ;;
+esac

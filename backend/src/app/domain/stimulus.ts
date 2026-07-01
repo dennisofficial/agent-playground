@@ -67,6 +67,12 @@ export interface ChatStimulus extends BaseStimulus {
    * tied to the exact confirmation-carrying seed). In-memory only — never persisted. Undefined otherwise.
    */
   seedFileId?: string;
+  /**
+   * Optional structured card payload persisted alongside `body` on the `messages` row (render-only — the
+   * brain still triages `body`, never `card`). E.g. a batch of review comments renders as a styled card
+   * in the web client while `body` carries the formatted markdown Atlas reads.
+   */
+  card?: Record<string, unknown>;
 }
 
 /**

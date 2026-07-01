@@ -103,6 +103,30 @@ export interface ContextFileContent {
 /** Preview cap — text is tiny, screenshots a few hundred KB; refuse anything pathological. */
 const MAX_CONTEXT_FILE_BYTES = 2 * 1024 * 1024;
 
+/**
+ * One supervised process's last-known state, derived from its `atlas-svc` marker file (see
+ * `backend/sandbox/atlas-svc`). This is a DURABLE snapshot, not a live liveness check — the host can't
+ * see into the container's PID namespace, so a service that has since stopped (sandbox reset,
+ * `atlas-svc stop`, crash) may still show its last marker until the agent notices and cleans it up.
+ */
+export interface ServiceInfo {
+  id: string;
+  name: string;
+  cmd: string;
+  pid: number | null;
+  pgid: number | null;
+  startedAt: string | null;
+  /** Size of the paired `<id>.log`, 0 if none yet. */
+  logBytes: number;
+  /** Last-modified time of the log file — a recency signal, not a liveness guarantee. */
+  logUpdatedAt: string | null;
+}
+
+/** Matches `atlas-svc`'s own `--name` validation — also doubles as the path-safety guard below. */
+const SERVICE_ID_RE = /^[a-z0-9_-]+$/;
+/** Tail cap for the logs endpoint — a long-running dev server's log can grow large. */
+const MAX_SERVICE_LOG_TAIL_BYTES = 512 * 1024;
+
 /** Best-effort mime + text/binary split by extension. Unknown → text/plain (we still cap the size). */
 const MIME_BY_EXT: Record<string, { mime: string; binary: boolean }> = {
   '.md': { mime: 'text/markdown', binary: false },
@@ -189,6 +213,19 @@ interface CreateThreadDto {
 interface SayDto {
   text: string;
 }
+/** One highlighted-and-annotated selection in a review-comments batch. */
+interface ReviewCommentItemDto {
+  /** A label for the file/doc the selection was made in (e.g. "plan.md"). */
+  file: string;
+  /** The selected/quoted text. */
+  quote: string;
+  note?: string;
+}
+interface ReviewCommentsDto {
+  items: ReviewCommentItemDto[];
+  /** Optional operator prose accompanying the batch — rendered underneath the card. */
+  message?: string;
+}
 interface RenameThreadDto {
   title: string;
 }
@@ -239,6 +276,37 @@ export function mapMessageSource(
   if (stored === 'system_shared') return 'system_shared';
   if (stored === 'system_event') return 'system_event';
   return isAtlas ? 'atlas' : 'operator';
+}
+
+/**
+ * Render a batch of inline review comments (selection + optional note, grouped by file) into the
+ * markdown Atlas reads as the operator's chat turn. Companion to the `review_comments_card` payload
+ * persisted alongside it — that card is render-only; this text is what actually drives the brain.
+ */
+export function formatReviewComments(
+  items: ReviewCommentItemDto[],
+  message?: string,
+): string {
+  const byFile = new Map<string, ReviewCommentItemDto[]>();
+  for (const item of items) {
+    const group = byFile.get(item.file) ?? [];
+    group.push(item);
+    byFile.set(item.file, group);
+  }
+  const lines: string[] = [
+    `The operator left ${items.length} review comment${items.length === 1 ? '' : 's'} on the plan:`,
+  ];
+  for (const [file, group] of byFile) {
+    lines.push('', `**${file}**`);
+    for (const item of group) {
+      lines.push(`> "${item.quote}"`);
+      if (item.note?.trim()) lines.push(`— ${item.note.trim()}`);
+    }
+  }
+  if (message?.trim()) {
+    lines.push('', message.trim());
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -492,6 +560,46 @@ export class WebSurfaceController {
   }
 
   /**
+   * `POST …/threads/:jobId/review-comments` — send a batch of inline highlight-and-comment review
+   * comments (selected quotes + optional notes, from the right-pane file/spec viewer) as ONE durable
+   * human message. Routes through the SAME operator-chat intake as `say` (a real `messages`+`stimuli`
+   * row, delivery/retry inherited from the existing at-least-once boot sweep) — NOT a non-persisted
+   * system seed — so it both drives a brain turn AND renders as a styled `review_comments_card` (the
+   * card rides `messages.card`; the brain still reads the formatted markdown body).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/review-comments')
+  @UseGuards(OrgMembershipGuard)
+  async reviewComments(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Body() body: ReviewCommentsDto,
+  ): Promise<{ ts: string }> {
+    if (!Array.isArray(body?.items) || body.items.length === 0) {
+      throw new BadRequestException('items must be a non-empty array');
+    }
+    // Only the leader processes turns — same rationale as `say`.
+    if (!this.election.isLeader()) {
+      throw new ServiceUnavailableException(
+        'Atlas is handing off — retry momentarily.',
+      );
+    }
+    const thread = await this.requireThread(jobId, org.id);
+    const text = formatReviewComments(body.items, body.message);
+    const card = {
+      type: 'review_comments_card',
+      items: body.items,
+      ...(body.message?.trim() ? { message: body.message.trim() } : {}),
+    };
+    const ts = this.surface.receiveFromClient(thread.repo_id, text, {
+      orgId: org.id,
+      threadTs: jobId,
+      ...OPERATOR,
+      card,
+    });
+    return { ts };
+  }
+
+  /**
    * `GET …/repos/:repoId/events` — SSE for the repo, carrying frame types discriminated by `type`:
    *  - `{ type: 'message', … }` — a durable post landed (chat / approval card / PR card / status). The
    *    client refetches the authoritative `/messages` + pipeline.
@@ -714,6 +822,12 @@ export class WebSurfaceController {
       payload.name,
       payload.path,
     );
+    // Render the newly-granted value into the RUNNING sandbox now, so it is on disk before the brain's
+    // confirmation turn runs (otherwise it wouldn't appear until the next lazy provision). Best-effort —
+    // a failure here still lets the next turn's ensureContainer hydrate it.
+    await this.threadLifecycle
+      .rehydrateThread(jobId, org.id)
+      .catch(() => undefined);
     // Stamp the card PROVIDED (no value), then deliver a MASKED confirmation. The gate clears only on the
     // delivery turn's success tail, so a crash before it re-delivers on boot (at-least-once).
     card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
@@ -771,6 +885,10 @@ export class WebSurfaceController {
     const storeKey = `file:${thread.repo_id}:${payload.path}`;
     await this.secrets.write(org.id, storeKey, content);
     await this.secrets.grant(org.id, thread.repo_id, storeKey, payload.path);
+    // Render the uploaded file into the RUNNING sandbox now (see provide-secret). Best-effort.
+    await this.threadLifecycle
+      .rehydrateThread(jobId, org.id)
+      .catch(() => undefined);
     // Stamp the card PROVIDED (+ filename, no contents), then deliver a MASKED confirmation carrying this
     // card's id so the delivery turn's success tail stamps exactly THIS card delivered (at-least-once).
     card.card = {
@@ -869,6 +987,93 @@ export class WebSurfaceController {
     };
   }
 
+  /**
+   * `GET …/jobs/:jobId/services` — list processes the agent has started via `atlas-svc run`, read from
+   * their durable marker files (the host mirror of `/atlas-home/supervisor`). Always-available history,
+   * independent of turn lifecycle — NOT a live liveness check (see {@link ServiceInfo}). Empty when the
+   * thread has no sandbox home yet or the agent has started nothing.
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/services')
+  @UseGuards(OrgMembershipGuard)
+  async services(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<{ services: ServiceInfo[] }> {
+    await this.requireThread(jobId, org.id);
+    const dir = this.threadLifecycle.supervisorDirHost(jobId);
+    if (!dir) return { services: [] };
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return { services: [] };
+    }
+    const services: ServiceInfo[] = [];
+    for (const f of entries) {
+      if (!f.endsWith('.json')) continue;
+      const id = f.slice(0, -'.json'.length);
+      if (!SERVICE_ID_RE.test(id)) continue; // defensive — atlas-svc only ever writes validated names
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<string, unknown>;
+      } catch {
+        continue; // a marker mid-write / corrupt — skip rather than fail the whole list
+      }
+      let logBytes = 0;
+      let logUpdatedAt: string | null = null;
+      try {
+        const st = statSync(join(dir, `${id}.log`));
+        logBytes = st.size;
+        logUpdatedAt = st.mtime.toISOString();
+      } catch {
+        /* no log yet */
+      }
+      services.push({
+        id,
+        name: typeof parsed.name === 'string' ? parsed.name : id,
+        cmd: typeof parsed.cmd === 'string' ? parsed.cmd : '',
+        pid: typeof parsed.pid === 'number' ? parsed.pid : null,
+        pgid: typeof parsed.pgid === 'number' ? parsed.pgid : null,
+        startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : null,
+        logBytes,
+        logUpdatedAt,
+      });
+    }
+    services.sort((a, b) => a.id.localeCompare(b.id));
+    return { services };
+  }
+
+  /**
+   * `GET …/jobs/:jobId/services/:id/logs?n=200` — tail a supervised process's captured log (the durable
+   * file `atlas-svc run` writes to). Returns the last `n` lines (default/cap below), not the whole file.
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/services/:id/logs')
+  @UseGuards(OrgMembershipGuard)
+  async serviceLogs(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('id') id: string,
+    @Query('n') n?: string,
+  ): Promise<{ id: string; content: string; truncated: boolean }> {
+    await this.requireThread(jobId, org.id);
+    if (!SERVICE_ID_RE.test(id)) {
+      throw new BadRequestException('invalid service id');
+    }
+    const dir = this.threadLifecycle.supervisorDirHost(jobId);
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(join(dir ?? '', `${id}.log`));
+    } catch {
+      return { id, content: '', truncated: false };
+    }
+    const truncated = st.size > MAX_SERVICE_LOG_TAIL_BYTES;
+    const buf = readFileSync(join(dir as string, `${id}.log`));
+    const tail = truncated ? buf.subarray(buf.length - MAX_SERVICE_LOG_TAIL_BYTES) : buf;
+    const wantLines = Math.min(Math.max(parseInt(n ?? '200', 10) || 200, 1), 2000);
+    const content = tail.toString('utf8').split('\n').slice(-wantLines).join('\n');
+    return { id, content, truncated };
+  }
+
   /** `PATCH …/threads/:jobId` — rename a thread (the only thread Update op). Org-scoped. */
   @Patch('orgs/:orgId/repos/:repoId/jobs/:jobId')
   @UseGuards(OrgMembershipGuard)
@@ -898,10 +1103,19 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean }> {
     // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable.
     await this.requireThread(jobId, org.id);
-    // Full cascade in app code: tear down the sandbox AND sweep messages/threads/steps/
-    // decision_records/stimuli/sandbox before the thread row (the live schema has no FK cascades).
-    await this.threadLifecycle.deleteJobDeep(jobId, org.id);
-    this.logger.log(`web deleted thread ${jobId} (org ${org.id})`);
+    // Atomically flip the job to `deleting` and COMMIT it before responding, so the durable state is
+    // visible to the next thread-list/realtime frame (the sidebar shows "Deleting…" instead of freezing).
+    // The claim also serializes concurrent deletes — a second click matches 0 rows and is a no-op.
+    const claimed = await this.threadLifecycle.claimDeleteJob(jobId, org.id);
+    if (claimed) {
+      // Background the slow physical teardown (container + worktree) so the request returns immediately.
+      // The row is removed when teardown finishes; a boot/reap reconciler finishes any delete stranded by
+      // a crash. Best-effort — never throw out of the fire-and-forget.
+      void this.threadLifecycle
+        .deleteJobDeep(jobId, org.id)
+        .catch((err) => this.logger.warn(`web delete: background teardown failed for job ${jobId}: ${err}`));
+    }
+    this.logger.log(`web deleting thread ${jobId} (org ${org.id}); claimed=${claimed}`);
     return { ok: true };
   }
 

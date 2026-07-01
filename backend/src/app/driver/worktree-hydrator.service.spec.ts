@@ -99,17 +99,19 @@ describe('WorktreeHydrator', () => {
     expect(existsSync(join(wt, '.env.keys'))).toBe(false);
   });
 
-  it('skips ALL secret rendering for an onboarding thread (skipSecrets), even when granted', async () => {
+  it('renders granted secrets for EVERY thread (no more secret-free onboarding)', async () => {
+    // skipSecrets is gone: onboarding threads now hydrate real secrets too (see the invariant comment
+    // in worktree-hydrator.service.ts — intentional, so onboarding can actually boot the app).
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
       fakeSecrets({ values: { s: 'v' }, grants: [{ name: 's', path: '.env.keys' }] }),
       fakeEnv(),
     );
     const { forbiddenPaths: forbidden } = await h.hydrateFiles({
-      worktreePath: wt, slug: SLUG, orgId: ORG, repoDbId: REPO, skipSecrets: true,
+      worktreePath: wt, slug: SLUG, orgId: ORG, repoDbId: REPO,
     });
-    expect(forbidden).toEqual([]);
-    expect(existsSync(join(wt, '.env.keys'))).toBe(false);
+    expect(forbidden).toEqual(['.env.keys']);
+    expect(existsSync(join(wt, '.env.keys'))).toBe(true);
   });
 
   it('refuses a granted secret whose target is NOT gitignored (PR-leak guard)', async () => {
@@ -191,16 +193,16 @@ describe('WorktreeHydrator', () => {
     expect(a).not.toBe(b);
   });
 
-  it('notices that a legacy manifest secrets[] is ignored (renders from grants instead)', async () => {
-    writeManifest({ secrets: [{ path: '.env.keys', from: 'dotenvxPrivateKeys' }] });
+  it('silently ignores a stray manifest secrets[] field and renders nothing (grants are the authority)', async () => {
+    // `secrets` is no longer a manifest field; the loader drops unknown keys. With no grants, nothing renders.
+    writeManifest({ secrets: [{ path: '.env.keys', from: 'dotenvxPrivateKeys' }] } as never);
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
       fakeSecrets({ values: { dotenvxPrivateKeys: 'v' }, grants: [] }),
       fakeEnv(),
     );
-    const { forbiddenPaths, notices } = await h.hydrateFiles({ worktreePath: wt, slug: SLUG, orgId: ORG, repoDbId: REPO });
-    expect(forbiddenPaths).toEqual([]); // secrets[] alone renders nothing
-    expect(notices.some((n) => /ignored/i.test(n) && /grant/i.test(n))).toBe(true);
+    const { forbiddenPaths } = await h.hydrateFiles({ worktreePath: wt, slug: SLUG, orgId: ORG, repoDbId: REPO });
+    expect(forbiddenPaths).toEqual([]);
   });
 
   it('surfaces a malformed manifest as a notice (never throws)', async () => {

@@ -392,6 +392,36 @@ export class SandboxManager implements SandboxProvider {
    * is on disk yet.
    */
   brainTranscriptProjectsDir(jobId: string): string | null {
+    const sandboxHome = this.findSandboxHomeDir(jobId);
+    if (!sandboxHome) return null;
+    let entries: string[];
+    try {
+      entries = readdirSync(sandboxHome);
+    } catch {
+      return null;
+    }
+    const brainHome = entries.find((d) => d.startsWith('brain_'));
+    return brainHome ? join(sandboxHome, brainHome, 'claude', 'projects') : null;
+  }
+
+  /**
+   * The HOST path of a thread's `atlas-svc` supervisor dir — `<sandboxHome>/supervisor`, the host side of
+   * the {@link CONTAINER_AGENT_HOME} bind (`/atlas-home/supervisor` in-container). Holds one `<id>.json`
+   * marker + `<id>.log` per process the agent started via `atlas-svc run`. Durable across container
+   * recreate (same bind as the brain transcript); null when the thread has no sandbox home on disk yet.
+   */
+  supervisorDirHost(jobId: string): string | null {
+    const sandboxHome = this.findSandboxHomeDir(jobId);
+    return sandboxHome ? join(sandboxHome, 'supervisor') : null;
+  }
+
+  /**
+   * Locate a thread's sandbox home dir on the host — `<agentHomeRoot>/sandboxes/atlas-sbx-…-thread-<id>`.
+   * GLOBS the sandboxes root for the `-thread-<…>` suffix that is a PREFIX of `jobId` (tolerates the
+   * container-name `part()` cap truncating the tail). Null if nothing is on disk yet (no sandbox ever
+   * provisioned for this thread).
+   */
+  private findSandboxHomeDir(jobId: string): string | null {
     const sandboxesRoot = join(this.agentHomeRootHost(), 'sandboxes');
     let dirs: string[];
     try {
@@ -405,16 +435,7 @@ export class SandboxManager implements SandboxProvider {
       const suffix = d.slice(i + '-thread-'.length);
       return suffix.length > 0 && jobId.startsWith(suffix);
     });
-    if (!sandboxDir) return null;
-    const sandboxHome = join(sandboxesRoot, sandboxDir);
-    let entries: string[];
-    try {
-      entries = readdirSync(sandboxHome);
-    } catch {
-      return null;
-    }
-    const brainHome = entries.find((d) => d.startsWith('brain_'));
-    return brainHome ? join(sandboxHome, brainHome, 'claude', 'projects') : null;
+    return sandboxDir ? join(sandboxesRoot, sandboxDir) : null;
   }
 
   /**
@@ -433,9 +454,13 @@ export class SandboxManager implements SandboxProvider {
 
   /**
    * Build the bind strings for the per-repo cache mounts AND pre-create their host dirs + in-worktree
-   * mountpoints (chowned to the host uid so docker doesn't create them root-owned). per-thread caches get
-   * their own host dir keyed by thread (or branch, for the jobId-less gate path); shared-ro caches
-   * share one read-only host dir per repo. The bind target is /workspace/<path>.
+   * mountpoints (chowned to the host uid so docker doesn't create them root-owned). The bind target is
+   * /workspace/<path>. Host dir by mode:
+   *   - `per-thread` → its own dir keyed by thread (or branch, for the jobId-less gate path).
+   *   - `shared-ro`  → one read-only dir per repo (`_shared`).
+   *   - `shared-rw`  → one read-WRITE dir per repo (`_shared-rw`) — persistent auth STATE (e.g. `.gcloud`)
+   *     reused by every job for the repo; set up once, survives sandbox reap. The concurrent-writer race
+   *     is accepted (see driver/worktree-manifest.ts).
    */
   private cacheMountBinds(input: SandboxAttachInput): string[] {
     const mounts = input.mounts ?? [];
@@ -451,7 +476,9 @@ export class SandboxManager implements SandboxProvider {
       const hostDir =
         m.mode === 'shared-ro'
           ? join(cacheRoot, '_shared', m.path)
-          : join(cacheRoot, perThreadKey, m.path);
+          : m.mode === 'shared-rw'
+            ? join(cacheRoot, '_shared-rw', m.path)
+            : join(cacheRoot, perThreadKey, m.path);
       const mountpoint = join(sandbox.worktreePath, m.path);
       this.ensureHostOwnedDir(hostDir);
       this.ensureHostOwnedDir(mountpoint);

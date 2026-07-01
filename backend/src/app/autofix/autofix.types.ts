@@ -146,4 +146,21 @@ export interface AutoFixContext {
    */
   containerId?: string;
   execUser?: string;
+
+  // ── streaming identity (optional) ────────────────────────────────────────────────────────────
+  // When BOTH `jobId` and `channel` are present, each review lens + the fix turn rides the shared
+  // transcript spine (live SSE frames + durable `messages` blocks) on an `autofix:*` lane — exactly like
+  // a build phase or a Codex review turn. Absent → the stage runs the engine directly with no harness
+  // (the standalone / unit-test path), byte-identical to its pre-streaming behavior.
+  /** The job whose durable log + live stream the turns write to. */
+  jobId?: string;
+  /** The repo channel the live stream keys by (the driver's `route.channel ?? job.repoId`). */
+  channel?: string;
+  /**
+   * The stage's stable id — the THREAD id for a per-thread pass, the JOB id for the PR-tail pass. Names
+   * the lane namespace (`autofix:<autofixId>`, `…:<lensId>`, `…:fix`) + tags every block's `meta.autofixId`.
+   */
+  autofixId?: string;
+  /** Which pass this is — `'thread'` (per-thread, after a thread's steps) or `'pr'` (PR-tail, whole diff). */
+  scope?: 'thread' | 'pr';
 }

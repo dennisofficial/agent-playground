@@ -22,4 +22,7 @@ export type JobStatus =
   // `session_id`, so a ping continues the SAME session instead of starting from scratch.
   | 'done' // one PR opened, all tracks handed off
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'deleting'; // terminal-bound: the operator deleted the job; container + worktree teardown is in
+// progress and the row is about to be removed. Transient (self-heals via boot/reap reconcilers) and
+// NOT a needs-you state — the job is going away, so it must never light the sidebar alert dot.

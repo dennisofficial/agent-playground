@@ -151,6 +151,8 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
         // Mark per-thread sandboxes detached (next turn re-attaches) BEFORE resuming jobs — resumed
         // drives call `ensureContainer`, which expects the reconciled state.
         await this.lifecycle.reconcileOnBoot();
+        // Finish any job stranded in `deleting` (crash between the delete claim and teardown completing).
+        await this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
         await this.driver.resume();
       }
       this.startReapTimer(); // transient: stopped on demote, restarted on every promote
@@ -168,6 +170,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     this.reapTimer = setInterval(() => {
       void this.lifecycle.reapIdle().catch(() => undefined);
       void this.lifecycle.pollPrClosures().catch(() => undefined);
+      void this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
     }, everyMs);
     this.reapTimer.unref?.();
   }

@@ -2,9 +2,11 @@
 
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, ChevronDown, Plus } from 'lucide-react';
-import { useSay } from '@/lib/api/job-queries';
+import { useSay, useSendReviewComments } from '@/lib/api/job-queries';
 import type { JobRef } from '@/lib/api/job-api';
 import { ContextMeter } from './bubbles';
+import { CommentTray } from './comment-tray';
+import { useReviewComments } from './review-comments';
 
 /**
  * The conversation composer — talks to the thread's brain. Posts to `…/threads/:jobId/say`. Typed
@@ -28,6 +30,8 @@ export function Composer({
   context?: { tokens: number; limit: number; model?: string } | null;
 }) {
   const say = useSay(jobRef);
+  const sendReviewComments = useSendReviewComments(jobRef);
+  const { comments, clearComments } = useReviewComments();
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -54,6 +58,15 @@ export function Composer({
 
   function send() {
     const trimmed = text.trim();
+    if (comments.length > 0) {
+      sendReviewComments.mutate({
+        items: comments.map((c) => ({ file: c.file.label, quote: c.quote, note: c.note || undefined })),
+        message: trimmed || undefined,
+      });
+      clearComments();
+      setText('');
+      return;
+    }
     if (!trimmed) return;
     say.mutate(trimmed);
     setText('');
@@ -73,6 +86,7 @@ export function Composer({
       style={{ background: 'linear-gradient(to top, var(--panel) 58%, transparent)' }}
     >
       <div className="pointer-events-auto mx-auto max-w-[880px]">
+        <CommentTray />
         <div
           className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
           style={{ boxShadow: '0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)' }}
@@ -84,13 +98,13 @@ export function Composer({
               onChange={(e) => setText(e.target.value)}
               onKeyDown={onKeyDown}
               rows={1}
-              placeholder={placeholder}
+              placeholder={comments.length > 0 ? 'Add a message with your comments (optional)…' : placeholder}
               className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint"
             />
             <button
               type="button"
               onClick={send}
-              disabled={!text.trim() || say.isPending}
+              disabled={(!text.trim() && comments.length === 0) || say.isPending || sendReviewComments.isPending}
               className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
               aria-label="Send"
             >

@@ -4,6 +4,7 @@ import type { Decision } from '../../domain/decision-record';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
+import type { ReviewAgentState } from './thread.entity';
 import { TicketEntity } from './ticket.entity';
 
 /**
@@ -155,6 +156,16 @@ export class JobEntity extends TimestampedEntity {
   /** The opened PR number — what the merge poll queries GitHub with; null until opened. */
   @Column({ type: 'int', nullable: true })
   pr_number!: number | null;
+
+  /**
+   * The PR-TAIL review agents (lenses) + their per-agent status — the JOB-level twin of
+   * {@link ThreadEntity.review_agents}. Seeded at `pending` when the PR-tail auto-fix pass starts
+   * (`BuildShipService.ship`), transitioned as each lens runs, surfaced by `getPipelineState` so the
+   * navigator's job-level "Final review" node can show each agent's state. `[]` until the PR-tail runs.
+   * LITERAL default — a function default loops `migration:generate` (see the jsonb-default-loop memory).
+   */
+  @Column({ type: 'jsonb', default: [] })
+  review_agents!: ReviewAgentState[];
 
   /**
    * PASSIVE pipeline-milestone awareness buffer — durable per-thread record of build milestones the

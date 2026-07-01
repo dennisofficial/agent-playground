@@ -22,7 +22,7 @@ import { STATUS_META } from '@/lib/api/status';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/job-api';
-import { useRetryJob } from '@/lib/api/job-queries';
+import { useRetryJob, useServices } from '@/lib/api/job-queries';
 import { Divider, PipelineTree, haltThreadIdx } from './pipeline-tree';
 import { NavigatorApproveButton } from './spec-approval';
 import { codexReviewNode } from './codex-review';
@@ -250,6 +250,10 @@ export function Navigator({
           detailNode={detailNode}
           onSelectNode={onSelectNode}
         />
+
+        {/* SERVICES — real atlas-svc supervised processes (dev servers Atlas brought up on demand). Open in
+            the RIGHT pane (blue), which streams the process's captured log. */}
+        <ServicesRegion jobRef={jobRef} detailNode={detailNode} onSelectNode={onSelectNode} />
 
         {/* PORTS — the sandbox's live dev servers (design-stage mock). Open in the RIGHT pane (blue). */}
         <PortsRegion detailNode={detailNode} onSelectNode={onSelectNode} />
@@ -497,6 +501,60 @@ function OutputGroup({
         <LoadingRow label="Loading…" />
       ) : children ? null : (
         <p className="px-2 pb-1 pt-1 text-[10.5px] italic leading-relaxed text-faint">{emptyText}</p>
+      )}
+    </>
+  );
+}
+
+// ── SERVICES: atlas-svc supervised processes (real data — the process supervisor) ──────────────────
+
+/** The build lanes' `atlas-svc run` processes — a DURABLE snapshot (marker files), not a live liveness
+ *  check (the host can't see into the container's PID namespace). Rows never claim "running" outright;
+ *  a pulsing dot is only a heuristic ("its log wrote recently"), never a guarantee — see `ServiceInfo`. */
+function ServicesRegion({
+  jobRef,
+  detailNode,
+  onSelectNode,
+}: {
+  jobRef: JobRef;
+  detailNode: string | null;
+  onSelectNode: (node: string) => void;
+}) {
+  const { data, isLoading } = useServices(jobRef);
+  const services = data?.services ?? [];
+
+  return (
+    <>
+      <Divider label="SERVICES" count={services.length > 0 ? services.length : undefined} />
+      {services.length > 0 ? (
+        services.map((s) => {
+          const node = `service:${s.id}`;
+          const active = detailNode === node;
+          const recentlyActive = s.logUpdatedAt != null && Date.now() - Date.parse(s.logUpdatedAt) < 15_000;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onSelectNode(node)}
+              className={cn(
+                'flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left transition hover:bg-surface-2',
+                active && 'nav-selected-blue',
+              )}
+            >
+              <Dot color="var(--accent)" pulse={recentlyActive} size={9} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[11px] font-semibold text-text">{s.name}</span>
+                <span className="block truncate font-mono text-[8px] text-faint">{s.cmd || 'atlas-svc'}</span>
+              </span>
+            </button>
+          );
+        })
+      ) : isLoading ? (
+        <LoadingRow label="Loading…" />
+      ) : (
+        <p className="px-2 pb-1 pt-1 text-[10.5px] italic leading-relaxed text-faint">
+          Nothing running yet — Atlas starts services on demand via atlas-svc, never automatically.
+        </p>
       )}
     </>
   );
@@ -810,8 +868,10 @@ function JobMenu({
               disabled={deleting}
               onClick={() => {
                 if (confirm) {
+                  // Keep the menu open so the button's "Deleting…" state is visible while the request is
+                  // in flight (don't close it out from under the user — that was the "frozen, no feedback"
+                  // window). The menu unmounts on the post-success navigation anyway.
                   onDelete();
-                  setOpen(false);
                   setConfirm(false);
                 } else {
                   setConfirm(true);

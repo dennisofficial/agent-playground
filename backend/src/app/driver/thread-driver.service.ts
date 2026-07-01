@@ -482,6 +482,16 @@ export class ThreadDriver implements JobDispatcher {
       status: 'pending' as const,
     }));
     await this.store.seedReviewAgents(thread.id, reviewAgents);
+    // ANCHOR — emit the stage's `autofix_anchor` row PAIRED with a change-signal post (mirrors `build_anchor`:
+    // a bare `appendBlock` only writes a DB row; the `post` is what wakes the web at stage start). The future
+    // review card latches onto `meta.autofixAnchor`; the stage streams each lens/fix turn on `autofix:*` lanes.
+    await this.postAutofixAnchor(job, route, {
+      autofixId: thread.id,
+      scope: 'thread',
+      label: thread.brief,
+      lensIds: reviewAgents.map((a) => a.id),
+    });
+    const channel = route.channel ?? job.repoId;
     let lensesRun: string[] = [];
     try {
       const summary = await this.autofix.autofixThread(
@@ -491,6 +501,11 @@ export class ThreadDriver implements JobDispatcher {
           ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
           intent: `${record?.overview ?? ''}\n\nSection: ${thread.brief}`.trim(),
           label: thread.brief,
+          // Streaming identity — ride the shared transcript spine on `autofix:<threadId>:*` lanes.
+          jobId: job.id,
+          channel,
+          autofixId: thread.id,
+          scope: 'thread',
           ...(sandbox.containerId
             ? {
                 containerId: sandbox.containerId,
@@ -1258,6 +1273,35 @@ export class ThreadDriver implements JobDispatcher {
       this.logger.warn(`post failed (continuing): ${err}`);
     }
   }
+
+  /**
+   * Emit the auto-fix stage's `autofix_anchor` row PAIRED with a change-signal post — the same pattern as
+   * `build_anchor` (a bare `appendBlock` only writes a DB row; the `post` is what wakes the web). The
+   * `autofix_anchor` row is the durable hook the future review card latches onto (`meta.autofixAnchor`);
+   * the stage streams each lens + fix turn on `autofix:<autofixId>:*` lanes. Best-effort (never sinks the build).
+   */
+  private async postAutofixAnchor(
+    job: Job,
+    route: JobRoute,
+    a: { autofixId: string; scope: 'thread' | 'pr'; label: string; lensIds: string[] },
+  ): Promise<void> {
+    await this.post(route, `:mag: Reviewing the diff — *${a.label}*`);
+    await this.blockSink
+      .appendBlock(job.id, {
+        kind: 'autofix_anchor',
+        text: `Reviewing the diff — ${a.label}`,
+        meta: {
+          autofixId: a.autofixId,
+          autofixAnchor: true,
+          scope: a.scope,
+          label: a.label,
+          lensIds: a.lensIds,
+        },
+      })
+      .catch((err) =>
+        this.logger.warn(`autofix_anchor append failed for job=${job.id}: ${err}`),
+      );
+  }
 }
 
 // ── pure render helpers ──────────────────────────────────────────────────────────────────────────
@@ -1329,22 +1373,25 @@ const ORCHESTRATOR_TASKLIST_NOTE =
 
 // Orchestrator note — adds the WRITER subagents to the read-only set. Used by ORCHESTRATE_EXECUTE_SYSTEM.
 const ORCHESTRATOR_SUBAGENTS_NOTE =
-  ' You have subagents (Task tool). WRITERS that change files: `implement` (Opus, for code needing ' +
-  'judgment) and `implement-fast` (Sonnet, for mechanical/fully-specified slices) — give each a ' +
-  'concrete slice and the EXACT files it may touch; it edits and returns a tight summary. Run writers ' +
-  'ONE AT A TIME (they share one worktree — concurrent writers corrupt it). Read-only helpers: ' +
-  '`explore` (trace the code/own docs), `docs` (external library docs), `review` (a second pass on a ' +
-  'diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw logs).';
+  ' You have subagents (Task tool). WRITERS that change files: `implement` (Sonnet — your DEFAULT ' +
+  'writer) and `implement-deep` (Opus — escalation for genuinely hard, judgment-heavy slices) — hand ' +
+  'each a SUBSTANTIAL, long-running slice and the EXACT files it may touch; it edits and returns a ' +
+  'tight summary. Writers are for big, context-heavy work — anything small or quick you do yourself. ' +
+  'Run writers ONE AT A TIME (they share one worktree — concurrent writers corrupt it). Read-only ' +
+  'helpers: `explore` (trace the code/own docs), `docs` (external library docs), `review` (a second ' +
+  'pass on a diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw logs).';
 
 // The PER-THREAD ORCHESTRATOR system prompt (orchestrate mode): one Opus session owns the whole thread and
 // fans the implementation out to writer subagents, integrating + verifying as it goes.
 const ORCHESTRATE_EXECUTE_SYSTEM =
   'You are Atlas, the ORCHESTRATOR for ONE thread of an approved plan, working in a feature worktree. The ' +
-  'steps below are your plan and your suggested decomposition — YOU own the fan-out. For each step (or a ' +
-  'cluster of tightly-related steps), DELEGATE the actual file changes to a writer subagent via the Task ' +
-  'tool — `implement` (Opus) for code that needs judgment, `implement-fast` (Sonnet) for mechanical, ' +
-  'fully-specified work — telling it the exact files it may touch. You MAY make small edits yourself ' +
-  'directly when spawning a subagent would be overkill. Steps are ORDERED and build on each other: ' +
+  'steps below are your plan and your suggested decomposition — YOU own the fan-out. DELEGATE the ' +
+  'substantial, long-running coding to writer subagents via the Task tool — `implement` (Sonnet) is ' +
+  'your default writer; escalate to `implement-deep` (Opus) ONLY for the genuinely hard, ' +
+  'judgment-heavy slices — telling each the exact files it may touch. Offloading the heavy coding ' +
+  'keeps YOUR context clean and your orchestration sharp; that is the point. You keep full read/write ' +
+  'access and SHOULD make small or quick edits yourself (glue, wiring, a one-line fix) rather than ' +
+  'spinning up a writer — writers are for big slices, not little tasks. Steps are ORDERED and build on each other: ' +
   'delegate them IN ORDER and run writers ONE AT A TIME (they share this worktree; concurrent writers ' +
   'corrupt it). After each writer returns, sanity-check its work before moving on. When every step is ' +
   "implemented, VERIFY: discover and run the repository's OWN typecheck/build/test tooling and FIX any " +

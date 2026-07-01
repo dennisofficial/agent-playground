@@ -11,8 +11,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # System deps + Docker CE (dockerd + CLI + compose v2 + buildx) from Docker's official apt repo.
 # Also: python3 + a C/C++ toolchain (build-essential) so the agent's repos can run Python build steps and
 # compile native node modules (node-gyp); unzip is needed to unpack the fnm release.
+# direnv: honor a repo's own `.envrc` (e.g. `CLOUDSDK_CONFIG=./.gcloud`) so Atlas boots the app exactly
+# how the repo is set up locally. shell-init.sh evaluates it for each non-interactive agent shell.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl gnupg git iptables openssh-client procps \
+      ca-certificates curl gnupg git iptables openssh-client procps direnv \
       python3 python3-venv python3-pip build-essential unzip \
   && install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
@@ -66,6 +68,11 @@ RUN printf '#!/usr/bin/env bash\nexec /usr/local/bin/node /usr/local/lib/atlas/e
 
 COPY sandbox-init.sh /usr/local/bin/sandbox-init.sh
 RUN chmod +x /usr/local/bin/sandbox-init.sh
+
+# atlas-svc: the in-sandbox process supervisor (run/logs/ps/stop) the agent drives via Bash to bring dev
+# servers up on demand. Markers + logs live under the durable agent home (/atlas-home/supervisor).
+COPY atlas-svc /usr/local/bin/atlas-svc
+RUN chmod +x /usr/local/bin/atlas-svc
 
 # Shared cross-thread fnm store (one host dir bound here by SandboxManager — see CONTAINER_FNM_STORE) +
 # activate fnm in every non-interactive agent bash via BASH_ENV. Set LAST so the build's own RUN steps

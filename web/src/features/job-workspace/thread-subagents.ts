@@ -3,7 +3,7 @@ import type { LiveBlock } from '@/lib/api/job-stream';
 import { indexDurableSubagents, indexLiveSubagents, type SubagentSummary } from './subagents';
 
 /**
- * DATA GAP — which writer-subagent runs (`implement` / `implement-fast`) executed inside each thread's
+ * DATA GAP — which writer-subagent runs (`implement` / `implement-deep`) executed inside each thread's
  * orchestrator session. This is the data the pipeline TREE needs to nest subagent runs under a thread's
  * execute session (the `/pipeline` read model deliberately doesn't carry them — see below). It does NOT
  * render anything; the visual tree treatment that consumes it lands with the designer handoff.

@@ -402,6 +402,42 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(await count('job_sandboxes')).toBe(0);
   });
 
+  it('claimDeleteJob is single-flight: flips status→deleting once, then returns false', async () => {
+    const { jobId } = await create();
+
+    const first = await threadLifecycle.claimDeleteJob(jobId, FAKE_TEAM_ID);
+    expect(first).toBe(true);
+    expect((await jobs.findOneOrFail({ where: { id: jobId } })).status).toBe('deleting');
+
+    // A second concurrent claim matches 0 rows (status is already `deleting`) — the guard that stops two
+    // DELETE requests from interleaving into the cascade-then-resurrect FK crash.
+    expect(await threadLifecycle.claimDeleteJob(jobId, FAKE_TEAM_ID)).toBe(false);
+    // A claim on a job that never existed also returns false (no row to flip).
+    expect(await threadLifecycle.claimDeleteJob(randomUUID(), FAKE_TEAM_ID)).toBe(false);
+  });
+
+  it('a second deleteJobDeep on an already-gone job is a no-op and does not throw (FK-crash regression)', async () => {
+    const { jobId } = await create();
+
+    await threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID);
+    expect(await jobs.findOne({ where: { id: jobId } })).toBeNull();
+
+    // Pre-fix, closeJob's `sandboxes.save(row)` would INSERT the cascade-deleted sandbox back and violate
+    // fk_job_sandboxes_job_id_jobs. It must now be a clean no-op.
+    await expect(threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID)).resolves.toBeUndefined();
+  });
+
+  it('reconcileDeletingJobs finishes a job stranded in `deleting`', async () => {
+    const { jobId } = await create();
+    // Simulate a crash after the claim committed but before teardown ran.
+    await jobs.update({ id: jobId }, { status: 'deleting' });
+
+    const swept = await threadLifecycle.reconcileDeletingJobs();
+    expect(swept).toBeGreaterThanOrEqual(1);
+    expect(await jobs.findOne({ where: { id: jobId } })).toBeNull();
+    expect(await sandboxes.findOne({ where: { job_id: jobId } })).toBeNull();
+  });
+
   it('reconcileOnBoot marks non-closed rows detached', async () => {
     const { jobId } = await create();
     await threadLifecycle.reconcileOnBoot();

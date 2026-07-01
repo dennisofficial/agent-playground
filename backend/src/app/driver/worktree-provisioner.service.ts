@@ -17,11 +17,6 @@ export interface ProvisionAndAttachInput {
   knownSig?: string;
   /** Force a (re-)hydration regardless of `knownSig` — e.g. a freshly cut / restored worktree. */
   forceHydrate?: boolean;
-  /**
-   * The owning thread is an ONBOARDING thread (`kind='onboarding'`) → skip secret rendering so its
-   * worktree never holds a real secret value (mounts/seed still apply). See {@link WorktreeHydrator}.
-   */
-  isOnboarding?: boolean;
 }
 
 export interface ProvisionAndAttachResult {
@@ -72,16 +67,15 @@ export class WorktreeProvisioner {
         slug: sandbox.repoId,
         orgId,
         repoDbId,
-        ...(input.isOnboarding ? { skipSecrets: true } : {}),
       });
-      // Surface a bad/incomplete `.atlas/worktree.json` to the OPERATOR (it never errors the build). The
+      // Surface a bad/incomplete `atlas.json` to the OPERATOR (it never errors the build). The
       // passive-awareness marker is drained into the next operator turn so the brain can relay it — no
       // wake, no spam (this only fires on a (re)hydration, i.e. at thread creation or a config change).
       if (notices.length) {
         await this.awareness
           .appendMarker(jobId, {
             id: 'worktree-hydration-issues',
-            text: `⚠ .atlas/worktree.json — ${notices.length} issue(s): ${notices.join('; ')}`,
+            text: `⚠ atlas.json — ${notices.length} issue(s): ${notices.join('; ')}`,
             at: new Date().toISOString(),
           })
           .catch((err) => this.logger.debug(`worktree notice append failed (continuing): ${err}`));

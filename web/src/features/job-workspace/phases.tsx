@@ -5,6 +5,7 @@ import { ChevronRight, Hammer } from 'lucide-react';
 import type { JobMessage } from '@/lib/api/job-api';
 import { useLiveTurn, type LiveBlock } from '@/lib/api/job-stream';
 import { durableSubBlocks, type SubBlock } from './subagents';
+import { Markdown } from './markdown';
 
 /**
  * A build PHASE (a driver batch) rides the shared transcript spine on a `phase:<anchorStepId>` lane and
@@ -85,6 +86,49 @@ export function indexPhaseBlocks(messages: JobMessage[]): PhaseIndex {
     blocksByPhase.set(phaseId, arr);
   }
   return { childKeys, anchorKeys, blocksByPhase, anchorByPhase };
+}
+
+/**
+ * The opening "what was asked" block on a build THREAD/STEP lane — the instruction the engine received
+ * (goal + locked decisions + per-step briefs). It's a long generated markdown DOCUMENT, not an operator
+ * chat line, so it renders as a full-width, collapsible panel with a real markdown body — NOT a right-
+ * aligned prose bubble, which showed the raw `###`/`**` source and read as a chat message the operator
+ * never typed. Default-open so each lane still opens with "what was asked"; collapse to get out of the way.
+ */
+export function BuildInstruction({ text }: { text: string }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div
+      className="anim-fadeUp rounded-[9px] border"
+      style={{ borderColor: 'var(--border-2)', background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)' }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 rounded-t-[8px] px-3.5 py-2 text-left"
+        style={{
+          borderBottom: open ? '1px solid var(--border)' : 'none',
+          background: 'color-mix(in srgb, var(--surface-3) 70%, transparent)',
+        }}
+      >
+        <ChevronRight
+          size={11}
+          strokeWidth={2.6}
+          className={`shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`}
+        />
+        <Hammer size={12} className="shrink-0 text-dim" />
+        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-dim">
+          Build instruction
+        </span>
+        <span className="truncate font-mono text-[10px] text-faint">what this thread was asked to do</span>
+      </button>
+      {open ? (
+        <div className="px-3.5 py-3">
+          <Markdown>{text}</Markdown>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /** Durable transcript blocks for one phase (reuses the subagent block mapper — same shape). */

@@ -186,7 +186,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(res.usage).toMatchObject({ inputTokens: 12, outputTokens: 4, costUsd: 0.01 });
   });
 
-  it('writer subagents (implement/implement-fast) are spawnable ONLY on execute turns, not plan/review', async () => {
+  it('writer subagents (implement/implement-deep) are spawnable ONLY on execute turns, not plan/review', async () => {
     const run = async (mode: 'execute' | 'plan' | 'review') => {
       const { sdk, captured } = fakeClaudeSdk();
       const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
@@ -195,12 +195,12 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     };
 
     const execAgents = await run('execute');
-    // Writers present, Opus/Sonnet, can Write/Edit/Bash, and have NO Task (no recursive fan-out).
+    // Writers present, Sonnet default + Opus escalation, can Write/Edit/Bash, and have NO Task (no recursive fan-out).
     expect(execAgents.implement).toBeDefined();
-    expect(execAgents['implement-fast']).toBeDefined();
-    expect(execAgents.implement.model).toBe('opus');
-    expect(execAgents['implement-fast'].model).toBe('sonnet');
-    for (const w of [execAgents.implement, execAgents['implement-fast']]) {
+    expect(execAgents['implement-deep']).toBeDefined();
+    expect(execAgents.implement.model).toBe('sonnet');
+    expect(execAgents['implement-deep'].model).toBe('opus');
+    for (const w of [execAgents.implement, execAgents['implement-deep']]) {
       expect(w.tools).toEqual(expect.arrayContaining(['Write', 'Edit', 'Bash']));
       expect(w.tools).not.toContain('Task');
     }
@@ -212,7 +212,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       const agents = await run(mode);
       expect(agents.explore).toBeDefined();
       expect(agents.implement).toBeUndefined();
-      expect(agents['implement-fast']).toBeUndefined();
+      expect(agents['implement-deep']).toBeUndefined();
     }
   });
 

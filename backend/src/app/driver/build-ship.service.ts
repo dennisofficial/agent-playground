@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AutoFixStage } from '../autofix';
+import { reviewAgentsForThread } from '../autofix/autofix-lenses';
 import type { DecisionRecord, Job } from '../domain';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
+import { BLOCK_SINK, type BlockSink } from '../surface/turn-harness.service';
 import { DriverStoreService } from './driver-store.service';
 import type { ResolvedRepo } from './repo-resolver';
 
@@ -59,6 +61,8 @@ export class BuildShipService {
     private readonly git: LocalGitService,
     private readonly pr: GithubPrService,
     private readonly store: DriverStoreService,
+    // The @Global durable-block writer — for the PR-tail `autofix_anchor` row (paired with a `notify` post).
+    @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
   ) {}
 
   async ship(input: ShipInput): Promise<ShipResult | null> {
@@ -82,23 +86,62 @@ export class BuildShipService {
     }
 
     this.logger.log(`job=${job.id} ship — PR-tail auto-fix`);
-    await this.autofix
-      .autofixPullRequest({
-        worktreePath: sandbox.worktreePath,
-        sandboxKey: shipSandboxKey(sandbox),
-        gitRange: `origin/${repo.defaultBranch}...HEAD`,
-        intent: record?.overview ?? job.title ?? '',
-        label: 'PR-tail',
-        ...(sandbox.containerId
-          ? {
-              containerId: sandbox.containerId,
-              ...(sandbox.execUser ? { execUser: sandbox.execUser } : {}),
-            }
-          : {}),
+    // Job-level review agents (the "Final review" over the WHOLE diff): seed at `pending`, emit the anchor
+    // (paired with a `notify` change-signal, like the per-thread pass), transition per lens, finalize after.
+    const reviewAgents = reviewAgentsForThread().map((a) => ({
+      ...a,
+      status: 'pending' as const,
+    }));
+    await this.store.seedJobReviewAgents(job.id, reviewAgents).catch(() => undefined);
+    await notify(':mag: Final review — reviewing the whole PR diff.');
+    await this.blockSink
+      .appendBlock(job.id, {
+        kind: 'autofix_anchor',
+        text: 'Final review — the whole PR diff',
+        meta: {
+          autofixId: job.id,
+          autofixAnchor: true,
+          scope: 'pr',
+          label: 'Final review',
+          lensIds: reviewAgents.map((a) => a.id),
+        },
       })
-      .catch((err) =>
-        this.logger.warn(`PR-tail auto-fix failed (continuing): ${err}`),
+      .catch((err) => this.logger.debug(`autofix_anchor append failed for job=${job.id}: ${err}`));
+    let lensesRun: string[] = [];
+    try {
+      const summary = await this.autofix.autofixPullRequest(
+        {
+          worktreePath: sandbox.worktreePath,
+          sandboxKey: shipSandboxKey(sandbox),
+          gitRange: `origin/${repo.defaultBranch}...HEAD`,
+          intent: record?.overview ?? job.title ?? '',
+          label: 'PR-tail',
+          // Streaming identity — ride the shared spine on `autofix:<jobId>:*` lanes.
+          jobId: job.id,
+          channel: job.repoId,
+          autofixId: job.id,
+          scope: 'pr',
+          ...(sandbox.containerId
+            ? {
+                containerId: sandbox.containerId,
+                ...(sandbox.execUser ? { execUser: sandbox.execUser } : {}),
+              }
+            : {}),
+        },
+        {
+          onLensStatus: (lensId, status, findings) => {
+            void this.store
+              .setJobReviewAgentStatus(job.id, lensId, status, findings)
+              .catch(() => undefined);
+          },
+        },
       );
+      lensesRun = summary.lensesRun;
+    } catch (err) {
+      this.logger.warn(`PR-tail auto-fix failed (continuing): ${err}`);
+    } finally {
+      await this.store.finalizeJobReviewAgents(job.id, lensesRun).catch(() => undefined);
+    }
 
     if (!repo.token) {
       this.logger.warn(

@@ -37,6 +37,8 @@ export interface WebInboundOptions {
   seedQuestionId?: string;
   /** Delivery seed — the `request_file` card id whose uploaded file this seed confirms (see `InboundChatMessage.seedFileId`). */
   seedFileId?: string;
+  /** Optional structured card payload to persist alongside this message (see `InboundChatMessage.card`). */
+  card?: Record<string, unknown>;
 }
 
 const DEFAULT_TEAM_ID = 'a0a0a0a0-0000-4000-8000-000000000001'; // sentinel org uuid (web default tenant)
@@ -156,6 +158,7 @@ export class WebSurface implements ChatSurface {
       ...(opts.seed ? { seed: true } : {}),
       ...(opts.seedQuestionId ? { seedQuestionId: opts.seedQuestionId } : {}),
       ...(opts.seedFileId ? { seedFileId: opts.seedFileId } : {}),
+      ...(opts.card ? { card: opts.card } : {}),
       ts: new Date(),
     };
     this.logger.debug(

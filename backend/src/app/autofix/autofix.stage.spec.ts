@@ -2,7 +2,26 @@ import { describe, expect, it, vi } from 'vitest';
 import { AutoFixStage } from './autofix.stage';
 import type { EngineRunnerPort } from '../engine';
 import type { LocalGitService } from '../git';
+import type { TurnHarnessFactory } from '../surface/turn-harness.service';
 import type { AutoFixContext, ReviewLens } from './autofix.types';
+
+/**
+ * A stub {@link TurnHarnessFactory}. `create` records the `{lane, metaTag}` it was called with and returns a
+ * harness whose `onEvent`/`finish`/`abort` are spies — so streaming tests can assert the lane/meta contract
+ * without a real live-turn store. For the non-streaming tests it's an unused throwaway (`create` never fires).
+ */
+function mockHarness(): {
+  factory: TurnHarnessFactory;
+  create: ReturnType<typeof vi.fn>;
+  finish: ReturnType<typeof vi.fn>;
+  abort: ReturnType<typeof vi.fn>;
+} {
+  const finish = vi.fn(async () => {});
+  const abort = vi.fn(async () => {});
+  const harness = { onEvent: vi.fn(), finish, abort };
+  const create = vi.fn(() => harness);
+  return { factory: { create } as unknown as TurnHarnessFactory, create, finish, abort };
+}
 
 /** A context that supplies its own diff/changedFiles so the stage never shells out to git for review. */
 const ctx: AutoFixContext = {
@@ -33,11 +52,20 @@ function reportWith(findings: Array<Record<string, unknown>>): string {
 function mockEngine(opts: {
   reviewReports: Record<string, string>;
   fixReport?: string;
-}): { engine: EngineRunnerPort; calls: Array<{ mode: string; sandboxKey: string }> } {
-  const calls: Array<{ mode: string; sandboxKey: string }> = [];
-  const run = vi.fn(async (args: { mode: string; sandboxKey: string }) => {
-    calls.push({ mode: args.mode, sandboxKey: args.sandboxKey });
-    if (args.mode === 'execute') {
+}): {
+  engine: EngineRunnerPort;
+  calls: Array<{ mode: string; sandboxKey: string; richStream?: boolean; hasOnEvent: boolean }>;
+} {
+  const calls: Array<{ mode: string; sandboxKey: string; richStream?: boolean; hasOnEvent: boolean }> = [];
+  const run = vi.fn(
+    async (args: { mode: string; sandboxKey: string; richStream?: boolean; onEvent?: unknown }) => {
+      calls.push({
+        mode: args.mode,
+        sandboxKey: args.sandboxKey,
+        richStream: args.richStream,
+        hasOnEvent: typeof args.onEvent === 'function',
+      });
+      if (args.mode === 'execute') {
       return { result: opts.fixReport ?? 'fixed finding 1', sessionId: 'fix-sess' };
     }
     // review turn — pick the report by the lens embedded in the sandbox key.
@@ -69,7 +97,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       },
     });
     const { git } = mockGit({ hasChanges: true, sha: 'sha-1' });
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
@@ -88,7 +116,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       },
     });
     const { git } = mockGit({ hasChanges: true, sha: 'sha-1' });
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
@@ -106,7 +134,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       fixReport: 'I fixed finding A.',
     });
     const { git, commitAll } = mockGit({ hasChanges: true, sha: 'commitsha1' });
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
@@ -124,7 +152,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       reviewReports: { l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]), l2: reportWith([]) },
     });
     const { git, commitAll } = mockGit({ hasChanges: true, sha: 'prsha' });
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixPullRequest(ctx, { lenses: LENSES });
 
@@ -143,7 +171,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       },
     });
     const { git, commitAll } = mockGit({});
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES, fixMinSeverity: 'medium' });
 
@@ -158,7 +186,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       reviewReports: { l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]), l2: reportWith([]) },
     });
     const { git, commitAll } = mockGit({});
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES, applyFixes: false });
 
@@ -173,7 +201,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       reviewReports: { l1: reportWith([]), l2: reportWith([]) },
     });
     const { git, commitAll } = mockGit({});
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
@@ -190,7 +218,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     // is not a git repo, so the diff derivation yields [].)
     const { engine, calls } = mockEngine({ reviewReports: {} });
     const { git, commitAll } = mockGit({});
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(
       { ...ctx, worktreePath: '/tmp', diff: '', changedFiles: [] },
@@ -209,7 +237,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       reviewReports: { l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]), l2: reportWith([]) },
     });
     const { git, commitAll } = mockGit({ hasChanges: false });
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
@@ -229,7 +257,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     });
     const engine = { run } as unknown as EngineRunnerPort;
     const { git } = mockGit({ hasChanges: true, sha: 's' });
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
@@ -250,7 +278,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     });
     const engine = { run } as unknown as EngineRunnerPort;
     const { git } = mockGit({});
-    const stage = new AutoFixStage(engine, git);
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const lenses: ReviewLens[] = Array.from({ length: 5 }, (_, i) => ({
       id: `lens${i}`,
@@ -260,5 +288,89 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     await stage.autofixThread(ctx, { lenses, concurrency: 2 });
 
     expect(maxInFlight).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('AutoFixStage — streaming onto the transcript spine', () => {
+  /** A ctx carrying a streaming identity → each turn rides an `autofix:*` lane. */
+  const streamCtx: AutoFixContext = {
+    ...ctx,
+    jobId: 'job-1',
+    channel: 'repo-1',
+    autofixId: 'thread-1',
+    scope: 'thread',
+  };
+
+  it('streams each lens + the fix turn on its own lane with the meta contract', async () => {
+    const { engine, calls } = mockEngine({
+      reviewReports: {
+        l1: reportWith([{ severity: 'high', file: 'src/x.ts', title: 'A', detail: 'fix it' }]),
+        l2: reportWith([]),
+      },
+      fixReport: 'fixed A',
+    });
+    const { git } = mockGit({ hasChanges: true, sha: 'sha-1' });
+    const h = mockHarness();
+    const stage = new AutoFixStage(engine, git, h.factory);
+
+    await stage.autofixThread(streamCtx, { lenses: LENSES });
+
+    // A harness per turn: 2 review lenses + 1 fix turn, each on its own sub-lane.
+    const byLane = new Map<string, { jobId: string; channel: string; metaTag: unknown }>(
+      h.create.mock.calls.map((c) => [c[0].lane, c[0]]),
+    );
+    expect([...byLane.keys()].sort()).toEqual([
+      'autofix:thread-1:fix',
+      'autofix:thread-1:l1',
+      'autofix:thread-1:l2',
+    ]);
+    expect(byLane.get('autofix:thread-1:l1')).toMatchObject({
+      jobId: 'job-1',
+      channel: 'repo-1',
+      metaTag: { autofixId: 'thread-1', scope: 'thread', lensId: 'l1' },
+    });
+    expect(byLane.get('autofix:thread-1:fix')!.metaTag).toEqual({
+      autofixId: 'thread-1',
+      scope: 'thread',
+      fixTurn: true,
+    });
+    // Every engine turn opted into rich streaming + forwarded events; each harness was finished.
+    expect(calls.every((c) => c.richStream === true && c.hasOnEvent)).toBe(true);
+    expect(h.finish).toHaveBeenCalledTimes(3);
+  });
+
+  it('does NOT create a harness (nor richStream) when the ctx carries no streaming identity', async () => {
+    const { engine, calls } = mockEngine({
+      reviewReports: { l1: reportWith([{ severity: 'high', file: 'a.ts', title: 'A' }]), l2: reportWith([]) },
+    });
+    const { git } = mockGit({ hasChanges: true, sha: 's' });
+    const h = mockHarness();
+    const stage = new AutoFixStage(engine, git, h.factory);
+
+    await stage.autofixThread(ctx, { lenses: LENSES }); // ctx has no jobId/channel
+
+    expect(h.create).not.toHaveBeenCalled();
+    expect(calls.every((c) => !c.richStream)).toBe(true);
+  });
+
+  it('aborts (not finishes) the lens harness when a review pass throws', async () => {
+    const run = vi.fn(
+      async (args: { mode: string; sandboxKey: string; richStream?: boolean; onEvent?: unknown }) => {
+        if (args.mode === 'review' && args.sandboxKey.endsWith('--review-l1')) {
+          throw new Error('engine boom');
+        }
+        return { result: reportWith([]) };
+      },
+    );
+    const engine = { run } as unknown as EngineRunnerPort;
+    const { git } = mockGit({});
+    const h = mockHarness();
+    const stage = new AutoFixStage(engine, git, h.factory);
+
+    await stage.autofixThread(streamCtx, { lenses: LENSES });
+
+    // l1 threw → its harness aborted; l2 succeeded → finished. Never both for one turn.
+    expect(h.abort).toHaveBeenCalledTimes(1);
+    expect(h.finish).toHaveBeenCalledTimes(1);
   });
 });

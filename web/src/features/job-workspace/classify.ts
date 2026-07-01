@@ -2,6 +2,7 @@ import type {
   WebApprovalCard,
   WebFileRequestCard,
   WebQuestionCard,
+  WebReviewCommentsCard,
   WebSecretInputCard,
   WebVerdictCard,
 } from '@/lib/api/types';
@@ -26,6 +27,8 @@ export type ClassifiedMessage =
   | { kind: 'secret'; message: JobMessage; card: WebSecretInputCard }
   /** A secure file-upload request (repo onboarding) — rendered as a file picker card. */
   | { kind: 'file'; message: JobMessage; card: WebFileRequestCard }
+  /** A sent inline-highlight review-comment batch — rendered as a distinct card, prose (if any) underneath. */
+  | { kind: 'review_comments'; message: JobMessage; card: WebReviewCommentsCard }
   | { kind: 'event'; message: JobMessage; tone: SystemTone }
   /** System→operator+Atlas review block (e.g. Codex plan-review findings). Rendered as a distinct panel. */
   | { kind: 'system_shared'; message: JobMessage }
@@ -56,6 +59,12 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
   }
   if (message.source === 'system_event') {
     return { kind: 'system_event', message };
+  }
+
+  // A sent review-comment bundle IS operator-authored (`author: 'user'`) but carries a structured card and
+  // renders as one — check it BEFORE the plain-user fallback below.
+  if (message.card?.type === 'review_comments_card') {
+    return { kind: 'review_comments', message, card: message.card };
   }
 
   if (message.author === 'user' || message.local) {

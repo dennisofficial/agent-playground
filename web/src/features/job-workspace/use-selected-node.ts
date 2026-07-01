@@ -27,7 +27,7 @@ const SUB_PARAM = 'sub';
 /** DETAIL nodes render in the RIGHT pane; every other (bare thread/step id) is a LANE for the LEFT pane.
  *  (`subagent:` is neither — it stacks via `?sub=`, handled in `selectNode`.) */
 const DETAIL_LITERALS = new Set(['plan', 'decision', 'diff']);
-const DETAIL_PREFIX = /^(spec|gen|artifact|port|rev|secplan):/;
+const DETAIL_PREFIX = /^(spec|gen|artifact|port|rev|secplan|service):/;
 
 /** Whether a navigator node opens in the RIGHT (detail) pane rather than the LEFT (lane/conversation) one. */
 export function isDetailNode(node: string): boolean {

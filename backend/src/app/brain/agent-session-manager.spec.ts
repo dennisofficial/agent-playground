@@ -89,6 +89,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     loadDecisionRecord: vi.fn(),
     appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
     threadTicketId: vi.fn().mockResolvedValue(null),
+    // Direct-build finalize stamps the ledger promotion complete after ship.
+    markLedgerPromoted: vi.fn().mockResolvedValue(undefined),
     // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
     setTurnActive: vi.fn().mockResolvedValue(undefined),
     resetAllTurnActive: vi.fn().mockResolvedValue(0),
@@ -232,6 +234,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.markAwaitingApproval as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.appendReviewFindingsMessage as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     (mockStore.threadTicketId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.markLedgerPromoted as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockPlanReview.start as ReturnType<typeof vi.fn>).mockResolvedValue({ reviewId: 'rev-r3gate-001', round: 1 });
     (mockPlanReview.runReview as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'complete', findings: '' });
     (mockPlanReview.load as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -526,6 +529,60 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect((result as { reason: string }).reason).toContain('always-ask');
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
     expect(mockApprovals.request).not.toHaveBeenCalled();
+  });
+
+  it('(c) finalize_build: an APPROVED (running) direct build ships + returns the PR url', async () => {
+    // Regression: finalize_build previously resolved the job via openJobOnThread (planning-only), so once
+    // approval flipped the job to 'running' the gate ALWAYS returned "No open job — nothing to finalize"
+    // and the PR was never opened. It must now load the running job by id and ship it.
+    const tools = manager.buildTools(fakeStimulus);
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'running',
+      title: 'Fix the pagination cursor',
+      repoId: PROJECT_ID,
+      orgId: TEAM_ID,
+    });
+    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'sbx-1' });
+    (mockDriverStore.getDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'Fix off-by-one',
+      decisions: [],
+    });
+    (mockRepos.resolve as ReturnType<typeof vi.fn>).mockResolvedValue({
+      owner: 'o',
+      repo: 'r',
+      defaultBranch: 'main',
+      token: 't',
+    });
+    (mockShip.ship as ReturnType<typeof vi.fn>).mockResolvedValue({
+      url: 'https://gh/pr/42',
+      number: 42,
+      existing: false,
+    });
+
+    const result = await tools['finalize_build']({});
+
+    expect(mockShip.ship).toHaveBeenCalledOnce();
+    // The old planning-only lookup must NOT gate this path anymore.
+    expect(mockStore.openJobOnThread).not.toHaveBeenCalled();
+    expect(mockStore.markLedgerPromoted).toHaveBeenCalledWith(FAKE_JOB_ID);
+    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, prUrl: 'https://gh/pr/42', prNumber: 42 });
+  });
+
+  it('(c) finalize_build: refuses a non-running job (no ship)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'planning',
+      repoId: PROJECT_ID,
+      orgId: TEAM_ID,
+    });
+
+    const result = await tools['finalize_build']({});
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain("'planning'");
+    expect(mockShip.ship).not.toHaveBeenCalled();
   });
 
   it('(e) ask_question opens the durable gate with a normalized question_card', async () => {

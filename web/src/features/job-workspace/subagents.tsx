@@ -21,12 +21,12 @@ export const SUBAGENT_NODE_PREFIX = 'subagent:';
 export const subagentNode = (parentId: string): string => `${SUBAGENT_NODE_PREFIX}${parentId}`;
 
 /** Known subagent types → display model (the engine pins these; mirrors `SUBAGENTS` / `WRITER_SUBAGENTS`
- *  in engine-core.ts). The writer subagents fan out on execute turns: `implement` (Opus) does substantive
- *  slices, `implement-fast` (Sonnet) the mechanical ones. */
+ *  in engine-core.ts). The writer subagents fan out on execute turns: `implement` (Sonnet) is the default
+ *  writer for substantial slices, `implement-deep` (Opus) the escalation for judgment-heavy ones. */
 const SUBAGENT_MODELS: Record<string, string> = {
   explore: 'Sonnet',
-  implement: 'Opus',
-  'implement-fast': 'Sonnet',
+  implement: 'Sonnet',
+  'implement-deep': 'Opus',
 };
 export const subagentModel = (type: string): string | undefined => SUBAGENT_MODELS[type];
 

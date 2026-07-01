@@ -238,6 +238,48 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { review_agents: agents });
   }
 
+  // ── job-level review agents (PR-tail fan-out, per-agent status) ────────────────────────────────
+  // JOB-level twins of the thread methods above — the PR-tail auto-fix pass reviews the WHOLE diff, so its
+  // agent state lives on the job, not any single thread. Same read-modify-write jsonb pattern.
+
+  /** Seed the job's PR-tail review agents at `pending` (call before the PR-tail auto-fix pass). */
+  async seedJobReviewAgents(jobId: string, agents: ReviewAgentState[]): Promise<void> {
+    await this.jobs.update({ id: jobId }, { review_agents: agents });
+  }
+
+  /** Transition ONE PR-tail review agent's status. No-op if the job / lens id isn't found (best-effort). */
+  async setJobReviewAgentStatus(
+    jobId: string,
+    lensId: string,
+    status: ReviewAgentState['status'],
+    findings?: number,
+  ): Promise<void> {
+    const job = await this.jobs.findOne({ where: { id: jobId } });
+    if (!job) return;
+    const agents = (job.review_agents ?? []).map((a) =>
+      a.id === lensId
+        ? { ...a, status, ...(findings != null ? { findings } : {}) }
+        : a,
+    );
+    await this.jobs.update({ id: jobId }, { review_agents: agents });
+  }
+
+  /** Resolve any PR-tail review agent still `pending`/`running` once the pass is over. Idempotent. */
+  async finalizeJobReviewAgents(jobId: string, lensesRun: string[]): Promise<void> {
+    const job = await this.jobs.findOne({ where: { id: jobId } });
+    if (!job) return;
+    const ran = new Set(lensesRun);
+    const agents = (job.review_agents ?? []).map((a) =>
+      a.status === 'pending' || a.status === 'running'
+        ? {
+            ...a,
+            status: ran.has(a.id) ? ('passed' as const) : ('skipped' as const),
+          }
+        : a,
+    );
+    await this.jobs.update({ id: jobId }, { review_agents: agents });
+  }
+
   // ── steps ───────────────────────────────────────────────────────────────────────────────────
 
   /** A thread's steps in execution order. */
@@ -357,6 +399,10 @@ export class DriverStoreService {
       featureBranch: thread.feature_branch,
       baseBranch: thread.base_branch,
       codexReview,
+      // The PR-tail review agents over the WHOLE feature diff (the job-level "Final review" node). `[]` until
+      // the PR-tail pass seeds them; unlike the per-thread fallback there is no pre-seed default (the pass
+      // runs once, after all threads), so an empty array simply means "not reviewed yet".
+      reviewAgents: Array.isArray(thread.review_agents) ? thread.review_agents : [],
       threads: threads.map((s) => ({
         id: s.id,
         ordinal: s.ordinal,

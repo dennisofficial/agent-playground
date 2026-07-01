@@ -21,8 +21,9 @@ import { ApprovalCardView, VerdictCardView } from './approval-card';
 import { QuestionCardView } from './question-card';
 import { SecretCardView } from './secret-card';
 import { FileCardView } from './file-card';
+import { ReviewCommentsCardView } from './review-comments-card';
 import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
-import { BuildStepCard, indexPhaseBlocks } from './phases';
+import { BuildInstruction, BuildStepCard, indexPhaseBlocks } from './phases';
 import { CodexReviewCard, codexReviewNode, indexCodexReviewBlocks } from './codex-review';
 import { Composer } from './composer';
 import { DetailTopBar } from './detail-top-bar';
@@ -200,9 +201,13 @@ export function TranscriptView({
           )}
           {liveTurn && liveBlockCount > 0 ? <LiveTurnView turn={liveTurn} onSelectNode={onSelectNode} /> : null}
           {live || turnActive ? <LiveIndicator /> : null}
-          {queued.map((message) => (
-            <UserBubble key={message.ts} text={message.text} queued />
-          ))}
+          {queued.map((message) =>
+            message.card?.type === 'review_comments_card' ? (
+              <ReviewCommentsCardView key={message.ts} card={message.card} />
+            ) : (
+              <UserBubble key={message.ts} text={message.text} queued />
+            ),
+          )}
           {/* Spacer so the last line clears the floating composer (or just breathes on read-only lanes). */}
           <div className="shrink-0" style={{ height: bottomPad }} aria-hidden />
           <div ref={endRef} />
@@ -347,7 +352,7 @@ function buildLogItems(
           flush();
           nodes.push({
             key: message.ts,
-            node: <UserBubble key={message.ts} text={anchor.prompt} time={message.postedAt} />,
+            node: <BuildInstruction key={message.ts} text={anchor.prompt} />,
           });
         }
         continue;
@@ -412,6 +417,9 @@ function buildLogItems(
         break;
       case 'file':
         push(<FileCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        break;
+      case 'review_comments':
+        push(<ReviewCommentsCardView key={message.ts} card={c.card} time={message.postedAt} />);
         break;
       case 'event':
         push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);

@@ -225,9 +225,10 @@ export interface ToolBridgeOptions {
 export const SANDBOX_RESET_NOTICE = [
   '[sandbox reset] Your sandbox was restarted since your last turn. Any background processes you started',
   'earlier (dev servers, test watchers, headless browsers, docker compose services) are NO LONGER RUNNING',
-  'and in-memory state is gone — but files you committed to the worktree are intact. Before relying on any',
-  'server or process, verify it is actually up (curl/health-check) and restart it if needed. Do not assume',
-  'anything you started in a previous turn is still alive.',
+  'and in-memory state is gone — but files you committed to the worktree are intact. Run `atlas-svc ps` to',
+  'see which supervised services are now `stopped`, and restart the ones you need with `atlas-svc run`.',
+  'Before relying on any server, verify it is actually up (curl/health-check). Do not assume anything you',
+  'started in a previous turn is still alive.',
 ].join(' ');
 
 /**

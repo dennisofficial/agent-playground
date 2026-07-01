@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { CheckCircle2, KeyRound } from 'lucide-react';
+import { CheckCircle2, ExternalLink, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useProvideSecret } from '@/lib/api/job-queries';
 import type { JobRef } from '@/lib/api/job-api';
@@ -56,6 +56,17 @@ export function SecretCardView({ card, jobRef }: { card: WebSecretInputCard; job
 
       <div className="px-4 py-3">
         <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-text">{card.description}</p>
+        {card.url ? (
+          <a
+            href={card.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-accent hover:underline"
+          >
+            <ExternalLink size={13} />
+            Open login page
+          </a>
+        ) : null}
         <p className="mt-1.5 text-[11.5px] leading-snug text-dim">
           Sent once, encrypted at rest — it never appears in the conversation or is shown back to Atlas.
         </p>
@@ -70,7 +81,7 @@ export function SecretCardView({ card, jobRef }: { card: WebSecretInputCard; job
           onKeyDown={(e) => {
             if (e.key === 'Enter') submit();
           }}
-          placeholder={`Value for ${card.name}…`}
+          placeholder={card.url ? 'Paste the code from the login page…' : `Value for ${card.name}…`}
           className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 font-mono text-[12.5px] text-text outline-none placeholder:text-faint focus:border-accent"
         />
         <div className="flex flex-wrap items-center gap-2">

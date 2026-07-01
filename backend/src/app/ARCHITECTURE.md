@@ -100,7 +100,7 @@ immediately (`createFollowUpJob` → `startFollowUpJob`). Intentionally *indepen
 
 **Build sessions.** After approval, each **thread** runs (default **ORCHESTRATE mode**) as ONE Opus
 orchestrator session that decomposes the thread into a live **task list** (SDK `TaskCreate`/`TaskUpdate`) and
-fans the implementation out to **writer subagents** (`implement` / `implement-fast`). They stream live to the
+fans the implementation out to **writer subagents** (`implement` Sonnet / `implement-deep` Opus). They stream live to the
 SSE surface (the build transcript / the navigator's task list + agents). `ORCHESTRATE_THREADS=off` falls back
 to the legacy programmatic per-step batched path (one fresh session per step batch). A build session is *not*
 the job brain — interjecting one steers that coding turn, not the job's intent.

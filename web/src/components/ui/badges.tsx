@@ -89,6 +89,8 @@ const STATUS_SHAPE: Record<JobStatus, 'forming' | 'reviewing' | 'working' | 'wai
   paused: 'paused',
   failed: 'failed',
   done: 'done',
+  // Winding down — a muted static ring; the faint color (STATUS_META) carries the "Deleting…" meaning.
+  deleting: 'paused',
 };
 
 export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: number }) {

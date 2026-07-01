@@ -334,6 +334,19 @@ body {
   background: var(--accent-soft);
 }
 
+/* Review-comment highlights (CSS Custom Highlight API) — the committed range under an added comment vs.
+   the range currently held while its popover is open. Registered in review-comments.tsx. */
+::highlight(atlas-comment) {
+  background-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  text-decoration-line: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2.5px;
+}
+::highlight(atlas-comment-pending) {
+  background-color: color-mix(in srgb, var(--accent) 27%, transparent);
+}
+
 /* ============================================================================================
    Syntax highlighting — highlight.js token classes (via rehype-highlight), themed for the dark
    terminal code frame (--term). The light-tuned --c-* tokens read poorly on the dark surface, so

@@ -243,23 +243,25 @@ const WRITER_PROMPT =
 const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
   implement: {
     description:
-      'WRITER subagent (Opus) — delegate a concrete implementation slice here (e.g. "create file X ' +
-      'implementing …", "add method Y to Z per the brief"), NAMING the exact files it may touch. It ' +
-      'edits the worktree and returns a tight summary of what it changed. Use it for non-trivial code ' +
-      'that needs judgment. Run ONE writer at a time. For mechanical, fully-specified slices use ' +
-      '`implement-fast` instead (cheaper).',
-    tools: WRITER_TOOLS,
-    model: 'opus',
-    prompt: WRITER_PROMPT,
-  },
-  'implement-fast': {
-    description:
-      'WRITER subagent (Sonnet) — the cheaper/faster sibling of `implement` for MECHANICAL, ' +
-      'fully-specified slices (rote edits, boilerplate, repetitive changes with no design judgment ' +
-      'left to make). Same rules: it edits only the files you name and returns a tight summary; run ' +
-      'one writer at a time.',
+      'WRITER subagent (Sonnet) — your DEFAULT writer. Delegate a SUBSTANTIAL, long-running ' +
+      'implementation slice here (a whole feature area, a multi-file change), NAMING the exact files ' +
+      'it may touch. It edits the worktree and returns a tight summary of what it changed. Reach for ' +
+      'it whenever the work is big enough that doing it inline would burn your context — that is the ' +
+      'point of offloading it. Do NOT use it for small/quick edits (do those yourself). Run ONE writer ' +
+      'at a time. For a genuinely hard, judgment-heavy slice where Sonnet-level coding is not enough, ' +
+      'escalate to `implement-deep`.',
     tools: WRITER_TOOLS,
     model: 'sonnet',
+    prompt: WRITER_PROMPT,
+  },
+  'implement-deep': {
+    description:
+      'ESCALATION WRITER subagent (Opus) — same contract as `implement`, reserved for the genuinely ' +
+      'hard, judgment-heavy long-running slices (subtle design, tricky algorithms, dense cross-cutting ' +
+      'refactors) where Sonnet-level coding is not enough. Use SPARINGLY — prefer `implement`. Same ' +
+      'rules: it edits only the files you name and returns a tight summary; run one writer at a time.',
+    tools: WRITER_TOOLS,
+    model: 'opus',
     prompt: WRITER_PROMPT,
   },
 };
@@ -389,7 +391,7 @@ export class EngineCore {
       tools: planMode ? PLAN_TOOLS : readOnly ? REVIEW_TOOLS : WORKER_TOOLS,
       // Programmatic subagent definitions (settingSources [] means none are read from disk) — the only
       // spawnable Task subagents. Advisory subagents (read-only, Sonnet) are always available; the WRITER
-      // subagents (implement/implement-fast) are added ONLY on EXECUTE turns, so a plan/brain/review turn
+      // subagents (implement/implement-deep) are added ONLY on EXECUTE turns, so a plan/brain/review turn
       // can never fan out a file-mutating subagent. See SUBAGENTS / WRITER_SUBAGENTS.
       agents: mode === 'execute' ? { ...SUBAGENTS, ...WRITER_SUBAGENTS } : SUBAGENTS,
       // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface

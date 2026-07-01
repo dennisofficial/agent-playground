@@ -15,7 +15,7 @@ const CONTEXT_HASH_LABEL = 'atlas.context-hash';
  * bind-mounted live into each sandbox, so folding its churn into the hash would rebuild the image (and,
  * via the imageId fingerprint, recreate every sandbox container) on every restart for no real change.
  */
-const CONTEXT_FILES = ['Dockerfile', 'sandbox-init.sh', 'shell-init.sh'] as const;
+const CONTEXT_FILES = ['Dockerfile', 'sandbox-init.sh', 'shell-init.sh', 'atlas-svc'] as const;
 
 /**
  * Build of the sandbox base image. `ensureImage()` is idempotent AND change-aware: it hashes the static

@@ -105,6 +105,15 @@ export class JobLifecycleService {
   }
 
   /**
+   * The HOST path of the thread's `atlas-svc` supervisor dir (markers + logs for processes the agent
+   * started via `atlas-svc run`). Null when the thread has no sandbox home on disk yet (never
+   * provisioned, or a fresh worktree with no supervised process started).
+   */
+  supervisorDirHost(jobId: string): string | null {
+    return this.sandboxProvider.supervisorDirHost(jobId);
+  }
+
+  /**
    * Create a new thread: persist the thread + provision the sandbox (worktree + feature branch cut at
    * create, container attached). Returns immediately after the sandbox is marked `attached`.
    */
@@ -219,6 +228,38 @@ export class JobLifecycleService {
     return this.rowToSandbox(row);
   }
 
+  /**
+   * Force an immediate re-hydration of a thread's RUNNING sandbox — called right after the operator
+   * provides a secret/file, so the newly-granted value is on disk BEFORE the masked-confirmation turn
+   * runs (otherwise the value wouldn't render until the next lazy provision). Serializes with any
+   * in-flight lazy provision via the same `orgId:jobId` key, then `forceHydrate`s the existing worktree
+   * and persists the new hydration signature. Returns false (no-op) when the thread has no attachable
+   * worktree yet — the next real turn's `ensureContainer` will hydrate it anyway.
+   */
+  async rehydrateThread(jobId: string, orgId: string): Promise<boolean> {
+    const key = `${orgId}:${jobId}`;
+    // Chain onto any in-flight lazy provision so we never hydrate the same worktree concurrently with it.
+    await this.provisioning.get(key)?.catch(() => undefined);
+
+    const row = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
+    if (!row || row.lifecycle === 'closed') return false;
+    if (!row.worktree_path || !existsSync(row.worktree_path)) return false;
+
+    const { sandbox: attached, hydrationSig } = await this.provisioner.provisionAndAttach({
+      sandbox: await this.rowToSandbox(row),
+      orgId,
+      jobId,
+      repoDbId: row.repo_id,
+      forceHydrate: true,
+    });
+    row.worktree_path = attached.worktreePath;
+    row.container_id = attached.containerId ?? null;
+    row.hydration_sig = hydrationSig;
+    row.last_active_at = new Date();
+    await this.sandboxes.save(row);
+    return true;
+  }
+
   // ── private helpers ───────────────────────────────────────────────────────────────────────────
 
   /**
@@ -248,8 +289,7 @@ export class JobLifecycleService {
     if (!row.container_id) await this.evictForCapacity();
 
     // Hydrate (granted secrets/seed) only when stale or the worktree was just restored, then attach.
-    // Onboarding threads skip secret rendering (their worktree must never hold a real secret value).
-    const kindRow = await this.jobs.findOne({ where: { id: jobId }, select: { id: true, kind: true } });
+    // EVERY thread (incl. onboarding) now renders real secrets — see WorktreeHydrator for the rationale.
     const { sandbox: attached, hydrationSig } = await this.provisioner.provisionAndAttach({
       sandbox: await this.rowToSandbox(row),
       orgId,
@@ -257,7 +297,6 @@ export class JobLifecycleService {
       repoDbId: row.repo_id,
       knownSig: row.hydration_sig ?? undefined,
       forceHydrate: worktreeRestored,
-      isOnboarding: kindRow?.kind === 'onboarding',
     });
 
     const wasReset = attached.warm === false;
@@ -299,9 +338,11 @@ export class JobLifecycleService {
       }
     }
 
-    row.container_id = null;
-    row.lifecycle = 'closed';
-    await this.sandboxes.save(row);
+    // Scoped UPDATE, NOT `save(row)`: a concurrent delete can cascade this sandbox row away between the
+    // `findOne` above and here (the `job_sandboxes.job_id` FK is ON DELETE CASCADE). `save` on a
+    // now-missing row would INSERT it back — resurrecting a row whose parent job is gone → the
+    // `fk_job_sandboxes_job_id_jobs` violation. An UPDATE affects 0 rows in that race and is a safe no-op.
+    await this.sandboxes.update({ id: row.id }, { container_id: null, lifecycle: 'closed' });
     this.logger.log(`closed thread ${jobId} (container + worktree torn down)`);
   }
 
@@ -316,6 +357,28 @@ export class JobLifecycleService {
    * The delete is org-scoped (defense-in-depth beyond the caller's membership check). Idempotent and safe
    * to call on a partially-gone thread.
    */
+  /**
+   * Atomically claim a job for web deletion — flip `status` → `'deleting'` in a single conditional UPDATE,
+   * returning whether THIS caller won the claim. SEPARATE from {@link deleteJobDeep} (the physical teardown)
+   * so the durable `deleting` marker can be committed + rendered by the UI (it rides the thread list + WAL
+   * realtime) BEFORE the slow container/worktree teardown runs in the background.
+   *
+   * Single-flight: the `status <> 'deleting'` guard makes a second concurrent DELETE match 0 rows and
+   * return false — so the two requests can't interleave into the cascade-then-resurrect race that caused
+   * the `fk_job_sandboxes_job_id_jobs` crash. Returns false too if the job is already gone. Org-scoped.
+   *
+   * NOTE: this is layered ONLY on the web DELETE endpoint. The parent-delete paths (org delete, repo
+   * disconnect) and the reconciler call {@link deleteJobDeep} directly — it keeps its synchronous,
+   * always-tears-down-and-deletes-the-row contract, which those drain loops depend on.
+   */
+  async claimDeleteJob(jobId: string, orgId: string): Promise<boolean> {
+    const res = await this.jobs.update(
+      { id: jobId, org_id: orgId, status: Not('deleting') },
+      { status: 'deleting' },
+    );
+    return (res.affected ?? 0) > 0;
+  }
+
   async deleteJobDeep(jobId: string, orgId: string): Promise<void> {
     // 1. Reclaim the container + worktree (physical side effects — no DB cascade can do this).
     await this.closeJob(jobId, orgId);
@@ -339,6 +402,28 @@ export class JobLifecycleService {
   }
 
   // ── reaping / reconciliation (driven by DriverModule's boot hook + interval) ────────────────────
+
+  /**
+   * Finish any job stranded mid-delete — a job left in `status='deleting'` because the process crashed
+   * between {@link claimDeleteJob} and the background {@link deleteJobDeep} completing. Re-runs the full
+   * teardown (idempotent: `closeJob` no-ops a closed sandbox, `jobs.delete` no-ops a gone row). Best-effort
+   * per job. Run leader-only on boot + from the reap interval so a stuck delete self-heals without a
+   * restart. Returns how many jobs it swept.
+   */
+  async reconcileDeletingJobs(): Promise<number> {
+    const stuck = await this.jobs.find({ where: { status: 'deleting' }, select: { id: true, org_id: true } });
+    let swept = 0;
+    for (const job of stuck) {
+      try {
+        await this.deleteJobDeep(job.id, job.org_id);
+        swept++;
+      } catch (err) {
+        this.logger.warn(`reconcileDeletingJobs: finishing delete of job ${job.id} failed: ${err}`);
+      }
+    }
+    if (swept) this.logger.log(`reconcileDeletingJobs: finished ${swept} stranded delete(s)`);
+    return swept;
+  }
 
   /**
    * Poll the PR of every thread that has one (the PR lives on the THREAD now) whose sandbox isn't
@@ -527,7 +612,6 @@ export class JobLifecycleService {
         jobId: thread.id,
         repoDbId: project.id,
         forceHydrate: true,
-        isOnboarding: thread.kind === 'onboarding',
       });
 
       row.worktree_path = attached.worktreePath;

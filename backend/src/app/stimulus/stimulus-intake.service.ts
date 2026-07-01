@@ -144,6 +144,7 @@ export class StimulusIntake {
       author: stimulus.author,
       replyRoute: stimulus.replyRoute,
       body: stimulus.body,
+      card: stimulus.card,
     });
     await this.sink.handleChat(recorded);
   }

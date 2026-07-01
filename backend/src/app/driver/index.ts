@@ -13,7 +13,6 @@ export {
   loadWorktreeManifest,
   type WorktreeManifest,
   type MountSpec,
-  type SecretSpec,
   type MountMode,
 } from './worktree-manifest';
 export {

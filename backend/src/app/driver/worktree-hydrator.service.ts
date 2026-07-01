@@ -17,12 +17,6 @@ export interface HydrateInput {
   orgId: string;
   /** The repo's uuid (`repos.id`) — grants are keyed by this. Absent → no secrets (gate/legacy). */
   repoDbId?: string;
-  /**
-   * Skip secret rendering entirely (mounts/seed still apply). Set for ONBOARDING threads: their worktree
-   * must never hold a real secret value (the brain has Bash and could `cat` it). Onboarding works against
-   * `.env.example`/placeholders; real secrets render only into BUILD threads.
-   */
-  skipSecrets?: boolean;
 }
 
 /**
@@ -105,17 +99,12 @@ export class WorktreeHydrator {
 
     // ── secrets (category 1) — rendered from owner GRANTS, not the manifest ─────────────────────
     // The grant IS the render instruction AND the authority (owner-authored). The committed manifest is
-    // never consulted for secrets — so a repo-controlled `.atlas/worktree.json` can't read an org secret.
-    // Skipped wholesale for onboarding threads (their worktree must never hold a real secret value).
-    if (input.skipSecrets) {
-      this.logger.debug(`skipping secret hydration for ${worktreePath} (onboarding thread)`);
-    } else if (repoDbId) {
-      if (manifest.secrets.length) {
-        note(
-          `.atlas/worktree.json lists secrets[] — these are ignored. Secrets render from owner grants ` +
-            `(Settings → Worktree secrets); the manifest is mounts/seed only.`,
-        );
-      }
+    // never consulted for secrets — so a repo-controlled `atlas.json` can't read an org secret.
+    // NOTE: EVERY thread (incl. onboarding) renders real secret values now. The brain has Bash and can
+    // read them in-sandbox — that is INTENTIONAL and accepted: this is a private, trusted deployment where
+    // Atlas is at least as capable as local Claude Code (which runs with the user's full unisolated creds).
+    // The only guard is "don't COMMIT it": each target must be gitignored (below) + `commitAll`'s leak-scan.
+    if (repoDbId) {
       for (const g of await this.secrets.listGrants(orgId, repoDbId)) {
         let target: string;
         try {

@@ -30,6 +30,8 @@ export const STATUS_META: Record<JobStatus, StatusMeta> = {
   triaging: { label: 'Triaging', color: 'var(--slate)', pulse: true },
   paused: { label: 'Paused', color: 'var(--faint)', pulse: false },
   failed: { label: 'Failed', color: 'var(--red)', pulse: false },
+  // Transient: the job is being torn down and will vanish from the list momentarily.
+  deleting: { label: 'Deleting…', color: 'var(--faint)', pulse: true },
 };
 
 export interface KindMeta {
@@ -62,6 +64,8 @@ export function toJobStatus(status: WireJobStatus): JobStatus {
       return 'paused';
     case 'failed':
       return 'failed';
+    case 'deleting':
+      return 'deleting';
     default:
       return 'planning';
   }

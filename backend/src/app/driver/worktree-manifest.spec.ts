@@ -13,34 +13,51 @@ describe('loadWorktreeManifest', () => {
   afterEach(() => rmSync(wt, { recursive: true, force: true }));
 
   function writeManifest(content: string): void {
+    writeFileSync(join(wt, 'atlas.json'), content);
+  }
+
+  function writeLegacyManifest(content: string): void {
     mkdirSync(join(wt, '.atlas'), { recursive: true });
     writeFileSync(join(wt, '.atlas', 'worktree.json'), content);
   }
 
   it('returns an empty manifest (no warnings) when the file is absent', () => {
     const { manifest, warnings } = loadWorktreeManifest(wt);
-    expect(manifest).toEqual({ secrets: [], mounts: [], seed: [] });
+    expect(manifest).toEqual({ mounts: [], seed: [] });
     expect(warnings).toEqual([]);
   });
 
-  it('parses a well-formed manifest', () => {
+  it('parses a well-formed manifest (incl. shared-rw)', () => {
     writeManifest(
       JSON.stringify({
-        secrets: [{ path: '.env.keys', from: 'dotenvxPrivateKeys' }],
         mounts: [
           { path: '.cocoindex', mode: 'per-thread' },
           { path: 'reference', mode: 'shared-ro' },
+          { path: '.gcloud', mode: 'shared-rw' },
         ],
         seed: ['.env.local'],
       }),
     );
     const { manifest } = loadWorktreeManifest(wt);
-    expect(manifest.secrets).toEqual([{ path: '.env.keys', from: 'dotenvxPrivateKeys' }]);
     expect(manifest.mounts).toEqual([
       { path: '.cocoindex', mode: 'per-thread' },
       { path: 'reference', mode: 'shared-ro' },
+      { path: '.gcloud', mode: 'shared-rw' },
     ]);
     expect(manifest.seed).toEqual(['.env.local']);
+  });
+
+  it('reads the legacy .atlas/worktree.json when atlas.json is absent', () => {
+    writeLegacyManifest(JSON.stringify({ mounts: [{ path: 'reference', mode: 'shared-ro' }], seed: ['.env.local'] }));
+    const { manifest } = loadWorktreeManifest(wt);
+    expect(manifest.mounts).toEqual([{ path: 'reference', mode: 'shared-ro' }]);
+    expect(manifest.seed).toEqual(['.env.local']);
+  });
+
+  it('prefers atlas.json over the legacy path when both exist', () => {
+    writeLegacyManifest(JSON.stringify({ seed: ['legacy'] }));
+    writeManifest(JSON.stringify({ seed: ['current'] }));
+    expect(loadWorktreeManifest(wt).manifest.seed).toEqual(['current']);
   });
 
   it('defaults an unknown/absent mount mode to per-thread (with a warning for unknown)', () => {
@@ -56,12 +73,12 @@ describe('loadWorktreeManifest', () => {
   it('drops malformed entries but keeps valid ones', () => {
     writeManifest(
       JSON.stringify({
-        secrets: [{ path: '.env.keys', from: 'k' }, { path: '.bad' }, { from: 'no-path' }],
+        mounts: [{ path: '.cocoindex', mode: 'per-thread' }, { mode: 'shared-ro' }],
         seed: ['.ok', 42, ''],
       }),
     );
     const { manifest, warnings } = loadWorktreeManifest(wt);
-    expect(manifest.secrets).toEqual([{ path: '.env.keys', from: 'k' }]);
+    expect(manifest.mounts).toEqual([{ path: '.cocoindex', mode: 'per-thread' }]);
     expect(manifest.seed).toEqual(['.ok']);
     expect(warnings.length).toBeGreaterThan(0);
   });
@@ -100,7 +117,7 @@ describe('loadWorktreeManifest', () => {
   it('returns empty + a warning on invalid JSON', () => {
     writeManifest('{ not json');
     const { manifest, warnings } = loadWorktreeManifest(wt);
-    expect(manifest).toEqual({ secrets: [], mounts: [], seed: [] });
+    expect(manifest).toEqual({ mounts: [], seed: [] });
     expect(warnings[0]).toMatch(/unreadable/);
   });
 });
