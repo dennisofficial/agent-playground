@@ -1,7 +1,7 @@
 'use client';
 
-import type { ReactNode } from 'react';
-import { GitPullRequest } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { ChevronRight, GitPullRequest } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { threadTitle } from '@/lib/thread-title';
 import { useLiveTurn } from '@/lib/api/job-stream';
@@ -332,6 +332,13 @@ function byTaskId(a: TaskItem, b: TaskItem): number {
   return a.id.localeCompare(b.id);
 }
 
+/** The most-recent completed tasks stay visible so a task doesn't vanish the instant it's checked off —
+ *  it lingers here as newer tasks finish, then rolls into the fold. */
+const DONE_TAIL = 2;
+/** Only fold once at least this many completed tasks would actually be hidden (below it, folding a row or
+ *  two behind a disclosure isn't worth the click — the list just renders in full, pure id order). */
+const DONE_FOLD_MIN = 2;
+
 /** The open thread's TASKS section — the session's live, LLM-authored checklist. Exported for the
  *  navigator's Main row, whose fold shows the brain session's own list (`job.mainTasks`) the same way. */
 export function TasksBody({ tasks, done, total }: { tasks: TaskItem[]; done: number; total: number }) {
@@ -346,6 +353,18 @@ export function TasksBody({ tasks, done, total }: { tasks: TaskItem[]; done: num
           return b != null && b.status !== 'completed';
         })
       : [];
+
+  // A long finished run folds away, but the last DONE_TAIL completed tasks stay pinned (a just-finished
+  // task lingers there as newer ones complete, then rolls into the fold) and everything still in flight
+  // (pending/in_progress/blocked/dropped) is always visible. Only the OLDER completed tasks hide, and
+  // only once enough of them pile up to earn the disclosure — otherwise the pure id-ordered list renders.
+  const [showDone, setShowDone] = useState(false);
+  const completed = ordered.filter((t) => t.status === 'completed');
+  const active = ordered.filter((t) => t.status !== 'completed');
+  const hidden = completed.slice(0, Math.max(0, completed.length - DONE_TAIL));
+  const tail = completed.slice(hidden.length);
+  const fold = hidden.length >= DONE_FOLD_MIN;
+
   return (
     <div className="nav-expand mb-1.5 ml-[9px] flex flex-col gap-px">
       <BodyHeader label="TASKS" right={total > 0 ? `${done}/${total}` : '—'} />
@@ -353,6 +372,28 @@ export function TasksBody({ tasks, done, total }: { tasks: TaskItem[]; done: num
         <p className="px-1.5 pb-1.5 text-[11px] italic leading-relaxed text-faint">
           No tasks yet — Atlas creates them once this thread starts.
         </p>
+      ) : fold ? (
+        <>
+          <button
+            type="button"
+            onClick={() => setShowDone((v) => !v)}
+            className="flex w-full items-center gap-1.5 rounded-[4px] py-1 pl-1.5 pr-1 text-left text-[11px] text-faint transition hover:text-dim"
+            aria-expanded={showDone}
+          >
+            <span className="mt-px h-[13px] w-[13px] shrink-0">
+              <DoneDisc />
+            </span>
+            <span className="min-w-0 flex-1">{hidden.length} more done</span>
+            <ChevronRight
+              size={9}
+              strokeWidth={3}
+              className={cn('mt-px flex-none transition-transform', showDone && 'rotate-90')}
+            />
+          </button>
+          {showDone ? hidden.map((t) => <TaskRow key={t.id} task={t} />) : null}
+          {tail.map((t) => <TaskRow key={t.id} task={t} />)}
+          {active.map((t) => <TaskRow key={t.id} task={t} blockers={openBlockers(t)} />)}
+        </>
       ) : (
         ordered.map((t) => <TaskRow key={t.id} task={t} blockers={openBlockers(t)} />)
       )}
