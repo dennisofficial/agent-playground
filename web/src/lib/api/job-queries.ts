@@ -21,6 +21,7 @@ import {
   retryJob,
   retryTurn,
   sayMessage,
+  stopJob,
   type AnswerQuestionBody,
   type ProvideSecretBody,
   type ProvideFileBody,
@@ -30,8 +31,6 @@ import {
   type JobRef,
   type ReviewCommentItemBody,
 } from './job-api';
-import { addQueuedSend } from './queued-sends';
-import { isLiveTurnActive } from './job-stream';
 import type { WebReviewCommentsCard } from './types';
 
 /** Tanstack Query hooks over the org → repo → thread API. */
@@ -120,6 +119,11 @@ interface SayContext {
  * Post a message into the thread. Optimistically appends a local user bubble so the composer feels
  * instant; the authoritative list is refetched on settle (and again when the SSE signal fires), which
  * reconciles the optimistic row with the durable one.
+ *
+ * Steering is now server-side: a message sent WHILE a turn is live is injected into the running turn by the
+ * backend (the model reacts mid-turn) instead of queuing — so there's no client-side queue. The optimistic
+ * bubble renders inline at its natural position and reconciles to the durable row (ordered by `created_at`,
+ * stamped ≈ send time), landing in the right chronological spot.
  */
 export function useSay(ref: JobRef) {
   const qc = useQueryClient();
@@ -129,10 +133,6 @@ export function useSay(ref: JobRef) {
       const key = qk.threadMessages(ref);
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<JobMessage[]>(key);
-      // A message sent while a turn is still streaming is QUEUED behind it (the brain serializes turns
-      // per thread). Flag it so the UI relays the queued state instead of pretending it was handled.
-      const queued = isLiveTurnActive(ref.jobId);
-      if (queued) addQueuedSend(ref.jobId, text);
       const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
         author: 'user',
@@ -143,7 +143,6 @@ export function useSay(ref: JobRef) {
         source: 'operator',
         postedAt: new Date().toISOString(),
         local: true,
-        queued,
       };
       qc.setQueryData<JobMessage[]>(key, [...(prev ?? []), optimistic]);
       return { prev };
@@ -157,15 +156,30 @@ export function useSay(ref: JobRef) {
   });
 }
 
+/**
+ * Gracefully stop the thread brain's in-flight turn — the composer's Stop button (shown when a turn is
+ * active AND the textarea is empty). Mirrors `useSay`'s shape; no optimistic row (the turn's own `turn_end`
+ * clears the live indicator). Refreshes the message log so any partial output the stop persisted settles.
+ */
+export function useStop(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation<{ stopped: boolean }, Error, void>({
+    mutationFn: () => stopJob(ref),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+    },
+  });
+}
+
 interface ReviewCommentsSendInput {
   items: ReviewCommentItemBody[];
   message?: string;
 }
 
 /**
- * Send a queued batch of inline highlight-and-comments — mirrors `useSay`'s optimistic-append + queued-send
- * handling, but the optimistic row carries the `review_comments_card` so it renders as the styled card
- * immediately (not a plain bubble) while the durable echo settles.
+ * Send a batch of inline highlight-and-comments — mirrors `useSay`'s optimistic-append, but the optimistic
+ * row carries the `review_comments_card` so it renders as the styled card immediately (not a plain bubble)
+ * while the durable echo settles. Like `say`, a send mid-turn steers server-side (no client queue).
  */
 export function useSendReviewComments(ref: JobRef) {
   const qc = useQueryClient();
@@ -175,7 +189,6 @@ export function useSendReviewComments(ref: JobRef) {
       const key = qk.threadMessages(ref);
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<JobMessage[]>(key);
-      const queued = isLiveTurnActive(ref.jobId);
       const card: WebReviewCommentsCard = {
         type: 'review_comments_card',
         items: input.items,
@@ -192,7 +205,6 @@ export function useSendReviewComments(ref: JobRef) {
         card,
         postedAt: new Date().toISOString(),
         local: true,
-        queued,
       };
       qc.setQueryData<JobMessage[]>(key, [...(prev ?? []), optimistic]);
       return { prev };

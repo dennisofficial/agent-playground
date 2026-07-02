@@ -17,10 +17,27 @@ export interface WebSecretInputCard {
   jobId: string;
   /** Stable key for this request (the card row's `ts`); the provide POST echoes it back. */
   requestId: string;
-  /** The secret's name (→ `OrgWorktreeSecretEntity.name`); shown to the operator, never the value. */
+  /** The secret's name (→ `OrgWorktreeSecretEntity.name`); shown to the operator, never the value. For an
+   *  ephemeral request this is a display LABEL only (e.g. `GCLOUD_AUTH_CODE`) — nothing is keyed by it. */
   name: string;
-  /** The worktree-relative destination the secret will be rendered to in build threads (e.g. `.env`). */
-  path: string;
+  /**
+   * The worktree-relative destination the secret will be rendered to in build threads (e.g. `.env`).
+   * Absent for an EPHEMERAL request (there is no durable destination — see {@link ephemeral}/{@link deliver_to}).
+   */
+  path?: string;
+  /**
+   * EPHEMERAL mode: the value is a one-time, short-lived token (an OAuth verification code, a 2FA code, a
+   * sudo password) that must be handed to a process the brain has running in the sandbox and **never**
+   * persisted. When set, the `provide-secret` endpoint does NOT write the encrypted store / grant / rehydrate
+   * — it pipes the value straight into {@link deliver_to} inside the live container over exec stdin, then
+   * discards it. Nothing about the value survives the delivery.
+   */
+  ephemeral?: boolean;
+  /**
+   * Ephemeral-only: the ABSOLUTE in-container path the operator's value is delivered to (a FIFO the brain
+   * created and wired its waiting process to read — e.g. `/tmp/atlas-login-in`). Operational, not a secret.
+   */
+  deliver_to?: string;
   /** Why the secret is needed (the brain's one-line rationale). */
   description: string;
   /**
@@ -48,17 +65,21 @@ export function webSecretInputCard(input: {
   jobId: string;
   requestId: string;
   name: string;
-  path: string;
+  path?: string;
   description: string;
   url?: string;
+  ephemeral?: boolean;
+  deliver_to?: string;
 }): WebSecretInputCard {
   return {
     type: 'secret_input_card',
     jobId: input.jobId,
     requestId: input.requestId,
     name: input.name,
-    path: input.path,
+    ...(input.path ? { path: input.path } : {}),
     description: input.description,
     ...(input.url ? { url: input.url } : {}),
+    ...(input.ephemeral ? { ephemeral: true } : {}),
+    ...(input.deliver_to ? { deliver_to: input.deliver_to } : {}),
   };
 }

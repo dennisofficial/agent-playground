@@ -513,6 +513,8 @@ function assemble(
       contextDirHost: () => '/ctx',
       playgroundDirHost: () => '/playground',
       brainTranscriptProjectsDir: () => null,
+      supervisorDirHost: () => null,
+      probeLiveness: async () => ({ status: 'unknown' as const }),
     },
     // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.
     {
@@ -751,8 +753,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
 
     // A runner that CAN re-attach; `reattach` resolves the in-flight turn and `runTurn` is a spy that must
-    // NOT fire for the execute batch (no re-run).
-    const reattach = vi.fn(async () => ({
+    // NOT fire for the execute batch (no re-run). Typed with its real `TurnRunnerService.reattach` param so
+    // `reattach.mock.calls[0][0]` below type-checks against what the driver actually passed it.
+    const reattach = vi.fn(async (_input: Parameters<TurnRunnerService['reattach']>[0]) => ({
       report: 'resumed build',
       session: {
         id: 'sess-live',

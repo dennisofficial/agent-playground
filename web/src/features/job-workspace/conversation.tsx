@@ -31,7 +31,7 @@ import { Composer } from './composer';
 import { DetailTopBar } from './detail-top-bar';
 import type { JobMessage, JobRef } from '@/lib/api/job-api';
 import { MAIN_LANE, useLiveTurn } from '@/lib/api/job-stream';
-import { useQueuedSends } from '@/lib/api/queued-sends';
+import { useAllJobs } from '@/lib/api/inbox';
 
 /**
  * Conversation mode — the Main lane (the thread's brain). Just the shared {@link TranscriptView} with the
@@ -97,7 +97,7 @@ export function TranscriptView({
   lane?: string;
   /** For a build THREAD lane: the phase anchor ids to aggregate (the `lane` still picks the live turn). */
   phaseIds?: Set<string>;
-  /** Show the composer + queued-send treatment (the Main lane only). Other lanes are read-only. */
+  /** Show the composer (the Main lane only). Other lanes are read-only. */
   composer?: boolean;
   isLoading?: boolean;
   live?: boolean;
@@ -112,7 +112,14 @@ export function TranscriptView({
   const bottomPad = composer ? composerHeight : 20;
   const liveTurn = useLiveTurn(jobRef.jobId, lane);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
-  const turnActive = liveTurn?.active ?? false;
+
+  // The AUTHORITATIVE turn signal: the server-owned realtime `needsYou` (true = the AI is idle / awaiting
+  // you — a turn is NOT running). If it flips true while a stale live turn still lingers (a dropped
+  // `turn_end`), we treat the turn as OVER so the "working…" indicator self-heals OFF. Only the Main lane
+  // cross-checks this — the realtime feed is job-level, so it can't gate independent build (phase) lanes.
+  const realtimeIdle = useRealtimeIdle(composer ? jobRef.jobId : null);
+  const turnActive = (liveTurn?.active ?? false) && !realtimeIdle;
+
   // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
   // block boundaries.
   const liveStreamSig = (liveTurn?.blocks ?? []).reduce(
@@ -120,15 +127,9 @@ export function TranscriptView({
     0,
   );
 
-  // Messages sent while a turn is streaming are QUEUED behind it (the brain serializes turns per thread).
-  // Pull them out of the main log and render them below the live response with a "queued" treatment — so
-  // a follow-up reads as "waiting its turn", not as an already-answered message in the wrong spot. Only the
-  // Main lane (composer) can enqueue sends.
-  const queuedTexts = useQueuedSends(jobRef.jobId);
-  const isQueued = (m: JobMessage): boolean =>
-    composer && m.author === 'user' && turnActive && (m.queued === true || queuedTexts.has(m.text));
-  const log = messages.filter((m) => !isQueued(m));
-  const queued = composer ? messages.filter(isQueued) : [];
+  // Steering is server-side now: a message sent mid-turn is injected into the running turn by the backend
+  // (no client queue). Every operator message renders inline in the main log at its natural position.
+  const log = messages;
 
   // The context-window ring reads the MOST RECENT `turn_meta` block (the brain appends one per turn with
   // the last request's occupancy + the model's window). Only the composer shows the ring.
@@ -146,7 +147,7 @@ export function TranscriptView({
   // (which itself depends on the scrollRef useTailFollow returns — the ref breaks that render-order cycle).
   const pinRef = useRef<() => void>(() => {});
   const { scrollRef, endRef, showJump, jumpToLatest, onScroll } = useTailFollow(
-    [messages.length, live, liveBlockCount, liveStreamSig, turnActive, queued.length, composerHeight],
+    [messages.length, live, liveBlockCount, liveStreamSig, turnActive, composerHeight],
     () => pinRef.current(),
   );
 
@@ -163,8 +164,8 @@ export function TranscriptView({
     if (!el) return;
     // Land near the last durable row using the virtualizer (accounts for estimated off-screen heights)…
     if (items.length > 0) virtualizer.scrollToIndex(items.length - 1, { align: 'end' });
-    // …then, once layout settles, pin to the true bottom so the trailing live turn / queued sends / composer
-    // spacer are included (they render in normal flow AFTER the windowed list, so `scrollHeight` is exact).
+    // …then, once layout settles, pin to the true bottom so the trailing live turn / composer spacer are
+    // included (they render in normal flow AFTER the windowed list, so `scrollHeight` is exact).
     requestAnimationFrame(() => {
       const e = scrollRef.current;
       if (e) e.scrollTop = e.scrollHeight;
@@ -202,14 +203,7 @@ export function TranscriptView({
             </div>
           )}
           {liveTurn && liveBlockCount > 0 ? <LiveTurnView turn={liveTurn} onSelectNode={onSelectNode} /> : null}
-          {live || turnActive ? <LiveIndicator /> : null}
-          {queued.map((message) =>
-            message.card?.type === 'review_comments_card' ? (
-              <ReviewCommentsCardView key={message.ts} card={message.card} />
-            ) : (
-              <UserBubble key={message.ts} text={message.text} queued />
-            ),
-          )}
+          {live || turnActive ? <LiveIndicator turn={turnActive ? liveTurn : undefined} /> : null}
           {/* Spacer so the last line clears the floating composer (or just breathes on read-only lanes). */}
           <div className="shrink-0" style={{ height: bottomPad }} aria-hidden />
           <div ref={endRef} />
@@ -483,6 +477,19 @@ function buildLogItems(
   flush();
 
   return nodes;
+}
+
+/**
+ * The AUTHORITATIVE "the AI is idle" signal for one job, from the server-owned realtime inbox row
+ * (`needsYou`, kept live by `useAllJobsRealtime`). `needsYou === true` means the brain is NOT running a turn
+ * and the thread isn't terminal — so a lingering live turn (dropped `turn_end`) should be treated as over.
+ * Returns `false` when `jobId` is null (non-Main lanes don't cross-check) or the row isn't cached yet, so
+ * the SSE stream stays the sole signal until realtime confirms otherwise (never a false "not working").
+ */
+function useRealtimeIdle(jobId: string | null): boolean {
+  const { data: threads } = useAllJobs();
+  if (!jobId) return false;
+  return threads?.find((t) => t.id === jobId)?.needsYou ?? false;
 }
 
 /** The most recent `turn_meta` block's context occupancy (null until a turn has reported usage). */

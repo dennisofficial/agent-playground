@@ -162,7 +162,14 @@ export class BuildShipService {
       return null;
     }
 
-    await this.git.push(sandbox);
+    // Push with auth from the RESOLVED repo, not the sandbox: a row-sourced `FeatureSandbox` (resume
+    // path) carries an empty `gitUrl`/no token, so `push()` would otherwise run unauthenticated and lean
+    // on ambient host credentials. Enriching from `repo` makes the host push robust in prod.
+    await this.git.push({
+      ...sandbox,
+      gitUrl: repo.projectRepo.gitUrl,
+      token: repo.token,
+    });
     const opened = await this.pr.openPullRequest(repo.token, {
       owner: repo.owner,
       repo: repo.repo,

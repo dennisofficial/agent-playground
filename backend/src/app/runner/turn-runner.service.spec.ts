@@ -105,3 +105,53 @@ describe('TurnRunnerService — session-handle durability', () => {
     expect(seen).toBe('sess-prior'); // continues the SAME session, not a new one
   });
 });
+
+describe('TurnRunnerService — git auth threading', () => {
+  // A row-sourced sandbox: it has a container, but an EMPTY gitUrl / no token (auth is resolved lazily,
+  // per JobLifecycleService.rowToSandbox). So any authenticated git MUST come from `input.gitAuth`.
+  const rowSourced: FeatureSandbox = {
+    repoId: 'proj',
+    branch: 'atlas/feat',
+    worktreePath: '/wt/feat',
+    gitUrl: '',
+    containerId: 'ctr-1',
+    execUser: '1000:1000',
+  };
+
+  it('puts input.gitAuth onto the docker target (sourced from the resolved repo, not the empty sandbox)', async () => {
+    const { repo } = fakeSteps();
+    const received: RunEngineArgs[] = [];
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        received.push(args);
+        return { result: 'ok' };
+      }),
+    };
+    await new TurnRunnerService(engine, repo).runTurn({
+      ...baseInput,
+      sandbox: rowSourced,
+      gitAuth: { gitUrl: 'https://github.com/o/r.git', token: 'tok' },
+    });
+
+    expect(received[0].target?.gitAuth).toEqual({
+      gitUrl: 'https://github.com/o/r.git',
+      token: 'tok',
+    });
+    // Container identity still comes from the sandbox; only the auth is sourced from the resolved repo.
+    expect(received[0].target?.containerId).toBe('ctr-1');
+  });
+
+  it('omits gitAuth on the target when the turn passes none (analysis turns stay unauthenticated)', async () => {
+    const { repo } = fakeSteps();
+    const received: RunEngineArgs[] = [];
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        received.push(args);
+        return { result: 'ok' };
+      }),
+    };
+    await new TurnRunnerService(engine, repo).runTurn({ ...baseInput, sandbox: rowSourced });
+
+    expect(received[0].target?.gitAuth).toBeUndefined();
+  });
+});

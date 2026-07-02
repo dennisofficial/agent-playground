@@ -35,6 +35,8 @@ export interface LiveTurnSnapshot {
   active: boolean;
   /** The highest frame `seq` reflected in this snapshot (the client dedupes deltas against it). */
   seq: number;
+  /** Epoch ms when this turn's live state was first created — the "working since" clock for the elapsed timer. */
+  startedAt: number;
 }
 
 /** A frame fanned to SSE: an engine delta, a `{kind:'snapshot'}`, or a `{kind:'turn_end'}` — all seq'd. */
@@ -52,6 +54,7 @@ interface TurnState {
   blocks: LiveTurnBlock[];
   active: boolean;
   lastSeq: number;
+  startedAt: number;
 }
 
 /** The default lane — the thread brain's conversational turn. */
@@ -98,7 +101,21 @@ export class LiveTurnStore {
     event: { kind: string; [k: string]: unknown },
     lane: string = MAIN_LANE,
   ): void {
+    const isNew = !this.turns.get(channel)?.get(this.key(jobId, lane));
     const state = this.ensure(channel, jobId, lane);
+    // The FIRST event of a turn fans an explicit `turn_start` (carrying the "working since" clock) so the
+    // client can drive an accurate elapsed timer + flip its working indicator on authoritatively.
+    if (isNew) {
+      const startSeq = ++this.seq;
+      state.lastSeq = startSeq;
+      this.subject.next({
+        channel,
+        jobId,
+        lane,
+        seq: startSeq,
+        event: { kind: 'turn_start', startedAt: state.startedAt },
+      });
+    }
     this.applyToState(state, event);
     const seq = ++this.seq;
     state.lastSeq = seq;
@@ -116,7 +133,14 @@ export class LiveTurnStore {
   snapshot(channel: string, jobId: string, lane: string = MAIN_LANE): LiveTurnSnapshot | null {
     const state = this.turns.get(channel)?.get(this.key(jobId, lane));
     if (!state) return null;
-    return { jobId, lane, blocks: state.blocks, active: state.active, seq: state.lastSeq };
+    return {
+      jobId,
+      lane,
+      blocks: state.blocks,
+      active: state.active,
+      seq: state.lastSeq,
+      startedAt: state.startedAt,
+    };
   }
 
   /** Every in-flight turn lane for a repo — replayed to a client the moment its SSE connects. */
@@ -129,6 +153,7 @@ export class LiveTurnStore {
       blocks: s.blocks,
       active: s.active,
       seq: s.lastSeq,
+      startedAt: s.startedAt,
     }));
   }
 
@@ -145,7 +170,7 @@ export class LiveTurnStore {
     const k = this.key(jobId, lane);
     let s = m.get(k);
     if (!s) {
-      s = { jobId, lane, blocks: [], active: true, lastSeq: 0 };
+      s = { jobId, lane, blocks: [], active: true, lastSeq: 0, startedAt: Date.now() };
       m.set(k, s);
     }
     s.active = true;

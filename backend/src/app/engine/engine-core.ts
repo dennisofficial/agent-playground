@@ -1,4 +1,4 @@
-import type { CanUseTool, Options, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Codex, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
@@ -42,6 +42,67 @@ function extractStructuredPatch(toolUseResult: unknown): StructuredPatchHunk[] |
   }
   return hunks.length ? hunks : undefined;
 }
+
+/** A user message the SDK's streaming input accepts (mid-turn steering uses `priority:'now'`). */
+function steerUserMessage(content: string, priority?: 'now' | 'next' | 'later'): SDKUserMessage {
+  return {
+    type: 'user',
+    message: { role: 'user', content },
+    parent_tool_use_id: null,
+    ...(priority ? { priority } : {}),
+  } as SDKUserMessage;
+}
+
+/**
+ * A hand-driven async-iterable the engine feeds the SDK in STREAMING-INPUT mode: `push` a message to
+ * deliver it to the live turn, `end` to close input so the query completes. Mirrors the spike harness.
+ */
+function makeManualInput(): {
+  stream: AsyncIterable<SDKUserMessage>;
+  push: (m: SDKUserMessage) => void;
+  end: () => void;
+} {
+  const queue: SDKUserMessage[] = [];
+  let resolveNext: ((r: IteratorResult<SDKUserMessage>) => void) | null = null;
+  let done = false;
+  return {
+    push(m) {
+      if (resolveNext) {
+        const r = resolveNext;
+        resolveNext = null;
+        r({ value: m, done: false });
+      } else queue.push(m);
+    },
+    end() {
+      done = true;
+      if (resolveNext) {
+        const r = resolveNext;
+        resolveNext = null;
+        r({ value: undefined as never, done: true });
+      }
+    },
+    stream: {
+      [Symbol.asyncIterator]() {
+        return {
+          next(): Promise<IteratorResult<SDKUserMessage>> {
+            if (queue.length) return Promise.resolve({ value: queue.shift() as SDKUserMessage, done: false });
+            if (done) return Promise.resolve({ value: undefined as never, done: true });
+            return new Promise((res) => {
+              resolveNext = res;
+            });
+          },
+        };
+      },
+    },
+  };
+}
+
+/**
+ * After the model emits a `result` in streaming-input mode, wait this long for an in-flight steer to
+ * arrive (Redis publish→subscribe latency) before closing the input and ending the turn. A no-steer turn
+ * pays this as a small completion tail.
+ */
+const STEER_IDLE_GRACE_MS = 350;
 
 /**
  * The Atlas v2 ENGINE CORE — the vendor logic for running ONE Claude/Codex turn, with **zero Nest and
@@ -350,12 +411,63 @@ export class EngineCore {
     extraClaudeOptions?: Record<string, unknown>,
     bridgeToolNames?: string[],
   ): Promise<EngineRunResult> {
-    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream } = args;
+    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput } =
+      args;
 
     const abortController = new AbortController();
     if (signal) {
       if (signal.aborted) abortController.abort();
       else signal.addEventListener('abort', () => abortController.abort(), { once: true });
+    }
+
+    // STREAMING-INPUT mode (the steerable brain turn): feed the SDK a live async-iterable that yields the
+    // initial task, then drains `steerInput` (operator steers) with `priority:'now'`. The turn ends when the
+    // model emits a `result` and no steer arrives within a short grace. Non-steerable turns keep the plain
+    // string prompt (single-message mode) — zero behavior change for build/plan/review workers.
+    const streaming = !!steerInput;
+    const input = streaming ? makeManualInput() : undefined;
+    let turnEnded = false;
+    let endTimer: ReturnType<typeof setTimeout> | undefined;
+    const cancelEnd = (): void => {
+      if (endTimer) {
+        clearTimeout(endTimer);
+        endTimer = undefined;
+      }
+    };
+    const scheduleEnd = (): void => {
+      if (!input) return;
+      cancelEnd();
+      endTimer = setTimeout(() => input.end(), STEER_IDLE_GRACE_MS);
+    };
+    const steerIter = streaming ? steerInput![Symbol.asyncIterator]() : undefined;
+    if (input) {
+      input.push(steerUserMessage(task));
+      // Drain operator steers into the live turn until the turn ends. Each steer carries its stimulus `id`;
+      // we push it into the session with priority:'now', then emit an `input_ack` echoing the id — the
+      // durable proof the message was TAKEN (the host stamps delivered_at only on this ack, never on the
+      // stream write). A redelivered id (a lost ack re-driven by the delivery pump) is a NO-OP push
+      // (exactly-once injection) but STILL re-emits its ack so delivery converges.
+      const injectedSteerIds = new Set<string>();
+      void (async () => {
+        try {
+          while (!turnEnded && steerIter) {
+            const { value, done } = await steerIter.next();
+            if (done || turnEnded) break;
+            const text = value?.text;
+            if (typeof text !== 'string' || text.length === 0) continue;
+            const id = value?.id;
+            const duplicate = typeof id === 'string' && injectedSteerIds.has(id);
+            if (!duplicate) {
+              cancelEnd(); // a steer is in flight to the model — don't close input under it
+              input.push(steerUserMessage(text, 'now'));
+              if (typeof id === 'string') injectedSteerIds.add(id);
+            }
+            if (typeof id === 'string') onEvent?.({ kind: 'input_ack', id });
+          }
+        } catch {
+          /* steer source closed — the turn's own lifecycle ends it */
+        }
+      })();
     }
 
     const auth = this.resolveAuth('claude', args.auth);
@@ -430,7 +542,12 @@ export class EngineCore {
     let contextTokens: number | undefined;
     let contextModel: string | undefined;
     try {
-      for await (const message of this.claudeSdk.query({ prompt: task, options })) {
+      for await (const message of this.claudeSdk.query({
+        prompt: streaming ? input!.stream : task,
+        options,
+      })) {
+        // Model is actively producing (or a steer is being processed) → don't close input under it.
+        if (streaming && message.type !== 'result') cancelEnd();
         if (message.type === 'system' && message.subtype === 'init') {
           resolvedSession = message.session_id;
           // Surface the resume handle the instant the session exists, so a mid-turn halt is recoverable.
@@ -536,6 +653,10 @@ export class EngineCore {
               usage.contextTokens = contextTokens;
               if (contextModel) usage.contextModel = contextModel;
             }
+            // Streaming-input mode: the model finished responding but the query stays alive awaiting more
+            // input. Close it after a short grace unless a steer lands (which cancels the timer). Single-
+            // message mode ends naturally when the generator closes.
+            if (streaming) scheduleEnd();
           } else {
             throw new Error(`Claude engine ended: ${message.subtype}`);
           }
@@ -546,7 +667,17 @@ export class EngineCore {
       // so the driver pauses (not fails) and a re-ping continues this same session. Else re-throw.
       const msg = err instanceof Error ? err.message : String(err);
       if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession);
-      throw err;
+      // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
+      // graceful end — fall through to the normal post-loop return with the partial result + live session,
+      // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
+      // erroring. Non-streaming worker turns keep throwing on abort (the driver's timeout race depends on it).
+      if (!(streaming && abortController.signal.aborted)) throw err;
+    } finally {
+      // Stop feeding/consuming input so the detached steer consumer + entrypoint generator unwind.
+      turnEnded = true;
+      cancelEnd();
+      input?.end();
+      void steerIter?.return?.(undefined);
     }
 
     // On a plan turn the substance is the captured plan, not the closing summary.

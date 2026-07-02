@@ -8,10 +8,15 @@ import type { JobRef } from '@/lib/api/job-api';
 import type { ServiceInfo } from '@/lib/api/types';
 import { JumpToLatestButton, useTailFollow } from './tail-follow';
 
-/** The service pane's header subtitle — cmd + pid/start/log-update facts, or why there's no marker. */
+/** The service pane's header subtitle — live status + cmd + pid/start/log-update facts, or why there's
+ *  no marker. The leading status word mirrors the sidebar dot (running / stopped; unknown is omitted
+ *  rather than shown as a confident claim). */
 export function serviceHeaderSubtitle(service: ServiceInfo | null): string {
   if (!service) return 'no marker on disk — this process may have been stopped or the sandbox reset';
-  const parts = [service.cmd ? `atlas-svc · ${service.cmd}` : 'atlas-svc · supervised process'];
+  const parts: string[] = [];
+  if (service.status === 'running') parts.push('running');
+  else if (service.status === 'stopped') parts.push('stopped');
+  parts.push(service.cmd ? `atlas-svc · ${service.cmd}` : 'atlas-svc · supervised process');
   if (service.pid != null) parts.push(`pid ${service.pid}`);
   if (service.startedAt) parts.push(`started ${new Date(service.startedAt).toLocaleTimeString()}`);
   if (service.logUpdatedAt) parts.push(`log updated ${new Date(service.logUpdatedAt).toLocaleTimeString()}`);

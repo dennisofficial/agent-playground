@@ -52,7 +52,7 @@ function fakeEngine(state: {
     }),
     list: vi.fn(
       async (): Promise<ContainerInfo[]> =>
-        state.containers.map((name) => ({ id: name, name, state: 'running', labels: {} })),
+        state.containers.map((name) => ({ id: name, name, state: 'running', labels: {}, startedAt: null })),
     ),
     inspect: vi.fn(),
     listNetworks: vi.fn(async (): Promise<NetworkInfo[]> => state.networks.map((name) => ({ id: name, name }))),
@@ -68,18 +68,18 @@ describe('dedupeBindsByTarget', () => {
   it('drops a colliding target keeping the LAST occurrence (system bind wins)', () => {
     // Cache mount (empty per-thread dir) pushed first, then the system shared store at the same target.
     const { binds, dropped } = dedupeBindsByTarget([
-      '/caches/thread/.pnpm-store:/workspace/.pnpm-store',
-      '/agent-home/pnpm-store:/workspace/.pnpm-store',
+      '/caches/thread/pnpm-store:/.atlas/pnpm-store',
+      '/agent-home/pnpm-store:/.atlas/pnpm-store',
     ]);
-    expect(binds).toEqual(['/agent-home/pnpm-store:/workspace/.pnpm-store']);
-    expect(dropped).toEqual(['/workspace/.pnpm-store']);
+    expect(binds).toEqual(['/agent-home/pnpm-store:/.atlas/pnpm-store']);
+    expect(dropped).toEqual(['/.atlas/pnpm-store']);
   });
 
   it('keeps nested targets (a parent and its more-specific :ro child both survive)', () => {
     const input = [
       '/host/context:/context',
       '/host/context/generated:/context/generated:ro',
-      '/host/store:/workspace/.pnpm-store',
+      '/host/store:/.atlas/pnpm-store',
     ];
     const { binds, dropped } = dedupeBindsByTarget(input);
     expect(binds).toEqual(input);
@@ -145,7 +145,7 @@ describe('SandboxManager.teardownByIdentity', () => {
     const removedContainers: string[] = [];
     const removedNetworks: string[] = [];
     const removedVolumes: string[] = [];
-    const container: ContainerInfo = { id: 'cid-1', name: NAME, state: 'running', labels: {} };
+    const container: ContainerInfo = { id: 'cid-1', name: NAME, state: 'running', labels: {}, startedAt: null };
     const engine: ContainerEngine = {
       ensureNetwork: vi.fn(),
       connectNetwork: vi.fn(),
@@ -200,9 +200,9 @@ describe('SandboxManager.teardownByIdentity', () => {
 });
 
 describe('SandboxManager.attach — onMilestone', () => {
-  // CONFIG_REV is a private module constant (currently 9); mirrored here to construct a matching
+  // CONFIG_REV is a private module constant (currently 11); mirrored here to construct a matching
   // fingerprint label for the warm-reuse case. `atlas.cfg` mirrors the private L_CFG label key.
-  const CONFIG_REV = 9;
+  const CONFIG_REV = 11;
   const IMAGE_ID = 'img-1';
   const FINGERPRINT = `${IMAGE_ID}|cfg${CONFIG_REV}|mnone`; // no mounts in these tests
 
@@ -284,12 +284,53 @@ describe('SandboxManager.attach — onMilestone', () => {
     expect(hostDir).toBe(mgr.playgroundDirHost('org1', 'job1'));
   });
 
+  it('binds the durable PER-REPO /home/atlas HOME mount (host dir under the org/repo cache root, not global)', async () => {
+    const { engine, createContainer } = fullFakeEngine(null);
+    const mgr = new SandboxManager(engine, fakeBuilder(false), env({ AGENT_HOME_ROOT: agentHomeRoot }));
+
+    await mgr.attach({ sandbox: sandbox(), orgId: 'org1', jobId: 'job1' } as SandboxAttachInput);
+
+    const spec = (createContainer.mock.calls[0] as unknown as [{ binds: string[] }])[0];
+    const homeBind = spec.binds.find((b) => b.endsWith(':/home/atlas'));
+    expect(homeBind).toBeDefined();
+    // Host side is per-repo (caches/<org>/<slug>/_home) — install-once/login-once is shared across a repo's
+    // jobs, but one repo can never populate another repo's HOME/bin.
+    expect(homeBind!.slice(0, -':/home/atlas'.length)).toContain(join('caches', 'org1', 'proj', '_home'));
+  });
+
+  it('binds an EXTERNAL absolute mount at its exact path (outside /workspace) and drops a reserved one', async () => {
+    const { engine, createContainer } = fullFakeEngine(null);
+    const mgr = new SandboxManager(engine, fakeBuilder(false), env({ AGENT_HOME_ROOT: agentHomeRoot }));
+
+    await mgr.attach({
+      sandbox: sandbox(),
+      orgId: 'org1',
+      jobId: 'job1',
+      mounts: [
+        { path: '/root/.config/gcloud', mode: 'shared-rw' }, // external → bound at the exact path
+        { path: '/etc/foo', mode: 'shared-rw' }, // reserved OS dir → dropped (defense-in-depth)
+        { path: '.cache', mode: 'per-thread' }, // worktree-relative → under /workspace
+      ],
+    } as SandboxAttachInput);
+
+    const spec = (createContainer.mock.calls[0] as unknown as [{ binds: string[] }])[0];
+    // External mount lands at the exact absolute container path (NOT under /workspace); host dir under _ext.
+    const ext = spec.binds.find((b) => b.endsWith(':/root/.config/gcloud'));
+    expect(ext).toBeDefined();
+    expect(ext!.slice(0, -':/root/.config/gcloud'.length)).toContain(join('_shared-rw', '_ext', 'root/.config/gcloud'));
+    // Reserved external target is dropped — no bind for it at all.
+    expect(spec.binds.some((b) => b.endsWith(':/etc/foo'))).toBe(false);
+    // Worktree-relative mount still lands under /workspace.
+    expect(spec.binds.some((b) => b.endsWith(':/workspace/.cache'))).toBe(true);
+  });
+
   it('does NOT fire container_create on a warm reuse (already running, matching fingerprint)', async () => {
     const existing: ContainerInfo = {
       id: 'existing-id',
       name: 'atlas-sbx-thread-job1',
       state: 'running',
       labels: { 'atlas.cfg': FINGERPRINT },
+      startedAt: null,
     };
     const { engine, createContainer } = fullFakeEngine(existing);
     const mgr = new SandboxManager(engine, fakeBuilder(false), env({ AGENT_HOME_ROOT: agentHomeRoot }));
@@ -318,5 +359,61 @@ describe('SandboxManager.attach — onMilestone', () => {
     await expect(
       mgr.attach({ sandbox: sandbox(), orgId: 'org1', jobId: 'job1' } as SandboxAttachInput),
     ).resolves.toBeDefined();
+  });
+});
+
+describe('SandboxManager.probeLiveness', () => {
+  const mkMgr = (engine: Partial<ContainerEngine>) =>
+    new SandboxManager(engine as ContainerEngine, {} as SandboxImageBuilder, env());
+
+  const runningContainer = (startedAt: string): ContainerInfo => ({
+    id: 'c1',
+    name: 'atlas-sbx-thread-job1',
+    state: 'running',
+    labels: {},
+    startedAt,
+  });
+
+  it('reports down when no container matches the deterministic name', async () => {
+    const mgr = mkMgr({ inspect: vi.fn(async () => null) });
+    expect(await mgr.probeLiveness('job1', [100])).toEqual({ status: 'down' });
+  });
+
+  it('reports down when the container exists but is not running', async () => {
+    const mgr = mkMgr({
+      inspect: vi.fn(async () => ({ ...runningContainer('2026-07-02T10:00:00Z'), state: 'exited' })),
+    });
+    expect(await mgr.probeLiveness('job1', [100])).toEqual({ status: 'down' });
+  });
+
+  it('reports up with the alive pgids parsed from the kill -0 probe stdout', async () => {
+    const exec = vi.fn(async () => ({ exitCode: 0, stdout: '100\n300\n', stderr: '' }));
+    const mgr = mkMgr({ inspect: vi.fn(async () => runningContainer('2026-07-02T11:00:00Z')), exec });
+
+    const res = await mgr.probeLiveness('job1', [100, 200, 300]);
+
+    expect(res).toEqual({ status: 'up', containerStartedAt: '2026-07-02T11:00:00Z', alive: [100, 300] });
+    // Resolved the container by its deterministic name → id 'c1', and execed a kill -0 loop over the pgids.
+    expect(exec).toHaveBeenCalledWith('c1', ['sh', '-c', expect.stringContaining('kill -0')], expect.anything());
+  });
+
+  it('reports up with an empty alive set and does NOT exec when there are no pgids to probe', async () => {
+    const exec = vi.fn();
+    const mgr = mkMgr({ inspect: vi.fn(async () => runningContainer('2026-07-02T11:00:00Z')), exec });
+
+    const res = await mgr.probeLiveness('job1', []);
+
+    expect(res).toEqual({ status: 'up', containerStartedAt: '2026-07-02T11:00:00Z', alive: [] });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('reports unknown (never throws) when the probe exec fails', async () => {
+    const mgr = mkMgr({
+      inspect: vi.fn(async () => runningContainer('2026-07-02T11:00:00Z')),
+      exec: vi.fn(async () => {
+        throw new Error('docker exec failed');
+      }),
+    });
+    expect(await mgr.probeLiveness('job1', [100])).toEqual({ status: 'unknown' });
   });
 });

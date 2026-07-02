@@ -1,17 +1,23 @@
 'use client';
 
 import { useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUp, ChevronDown, Plus } from 'lucide-react';
-import { useSay, useSendReviewComments } from '@/lib/api/job-queries';
+import { ArrowUp, ChevronDown, Plus, Square } from 'lucide-react';
+import { useSay, useSendReviewComments, useStop } from '@/lib/api/job-queries';
 import type { JobRef } from '@/lib/api/job-api';
+import { MAIN_LANE, useLiveTurn } from '@/lib/api/job-stream';
+import { useAllJobs } from '@/lib/api/inbox';
 import { ContextMeter } from './bubbles';
 import { CommentTray } from './comment-tray';
 import { useReviewComments } from './review-comments';
 
 /**
- * The conversation composer — talks to the thread's brain. Posts to `…/threads/:jobId/say`. Typed
+ * The conversation composer — talks to the thread's brain. Posts to `…/jobs/:jobId/say`. Typed
  * ops ("pause", "approve", "resume", "simplify the rest"…) run the same operations as the buttons; the
  * brain interprets the text, so the composer just sends it. Enter sends; Shift+Enter newlines.
+ *
+ * Steering: a message sent WHILE a turn is live is injected into the running turn by the backend (the model
+ * reacts mid-turn) — no code change here beyond dropping the old client queue. When a turn is live AND the
+ * box is empty, the Send button becomes a STOP button (`…/jobs/:jobId/stop`) that gracefully ends the turn.
  *
  * The `Plan ▾` mode pill, the `＋` attach button, and the model label are visual affordances from the
  * design and are intentionally static for now (no backend wiring) — see `web/BACKEND_GAPS.md`.
@@ -30,11 +36,22 @@ export function Composer({
   context?: { tokens: number; limit: number; model?: string } | null;
 }) {
   const say = useSay(jobRef);
+  const stop = useStop(jobRef);
   const sendReviewComments = useSendReviewComments(jobRef);
   const { comments, clearComments } = useReviewComments();
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Is the brain's turn live? Same reconciliation the transcript uses: the SSE live turn, self-healed by the
+  // authoritative realtime `needsYou` (idle = no turn), so a dropped `turn_end` doesn't strand a Stop button.
+  const liveActive = useLiveTurn(jobRef.jobId, MAIN_LANE)?.active ?? false;
+  const { data: threads } = useAllJobs();
+  const realtimeIdle = threads?.find((t) => t.id === jobRef.jobId)?.needsYou ?? false;
+  const turnActive = liveActive && !realtimeIdle;
+  // Stop replaces Send only when a turn is running AND the composer is empty (no pending text/comments to
+  // send). With text present, the button is Send — which now STEERS the running turn server-side.
+  const showStop = turnActive && !text.trim() && comments.length === 0;
 
   // Auto-grow the textarea to fit its content (capped by the CSS max-height, which then scrolls).
   // Reset to `auto` first so the box can also shrink as lines are removed.
@@ -101,15 +118,28 @@ export function Composer({
               placeholder={comments.length > 0 ? 'Add a message with your comments (optional)…' : placeholder}
               className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint"
             />
-            <button
-              type="button"
-              onClick={send}
-              disabled={(!text.trim() && comments.length === 0) || say.isPending || sendReviewComments.isPending}
-              className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
-              aria-label="Send"
-            >
-              <ArrowUp size={15} strokeWidth={2.4} />
-            </button>
+            {showStop ? (
+              <button
+                type="button"
+                onClick={() => stop.mutate()}
+                disabled={stop.isPending}
+                className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
+                aria-label="Stop"
+                title="Stop Atlas"
+              >
+                <Square size={12} strokeWidth={2.6} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={send}
+                disabled={(!text.trim() && comments.length === 0) || say.isPending || sendReviewComments.isPending}
+                className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
+                aria-label="Send"
+              >
+                <ArrowUp size={15} strokeWidth={2.4} />
+              </button>
+            )}
           </div>
 
           {/* Static affordances (design parity — not wired yet) */}

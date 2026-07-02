@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
 /**
  * LIVE engine-stream store — the in-flight turn of a thread's in-sandbox Claude Code session, made
@@ -11,6 +11,9 @@ import { useCallback, useSyncExternalStore } from 'react';
  *     connects (first load / refresh / navigate-back / network blip). This is what lets a long response
  *     keep streaming after a reconnect: the producing turn runs server-side independent of the
  *     connection, so on reconnect we catch up to the current state instead of seeing nothing.
+ *   - `event.kind === 'turn_start'` — the FIRST frame of a turn: marks the lane active + records the
+ *     turn's `startedAt` (epoch ms) so the working indicator flips on and can tick an elapsed timer. The
+ *     reconnect snapshot ALSO carries `startedAt`, so elapsed survives refresh/reconnect.
  *   - delta kinds (`text_delta`/`thinking`/`tool_use`/`tool_result`/…) — applied on top, live.
  *   - `turn_end` — handled in `job-events.ts` (refetch `/messages`, then `endLiveTurn`).
  *
@@ -44,6 +47,11 @@ export interface LiveTurn {
   active: boolean;
   /** Highest frame `seq` applied to this turn. */
   lastSeq: number;
+  /**
+   * Epoch-ms the turn started (from the `turn_start` frame, or the reconnect `snapshot`'s `startedAt`).
+   * Drives the working-indicator elapsed timer; `undefined` until the first frame that carries it.
+   */
+  startedAt?: number;
 }
 
 type StreamPayload = {
@@ -61,6 +69,8 @@ type StreamPayload = {
   /** present on `kind:'snapshot'` */
   blocks?: LiveBlock[];
   active?: boolean;
+  /** present on `kind:'turn_start'` and (for reconnect resilience) `kind:'snapshot'` — epoch-ms turn start. */
+  startedAt?: number;
 };
 
 let blockSeq = 0;
@@ -99,6 +109,21 @@ class ThreadStreamStore {
     this.touchedEpoch.set(key, this.epoch);
     const cur = this.map.get(key);
 
+    // `turn_start` — the FIRST frame of a turn. Mark the lane active + record the authoritative start time
+    // so the working indicator can flip ON immediately and tick an elapsed timer. Preserve any blocks a
+    // (rare) out-of-order earlier frame already produced; just stamp active + startedAt.
+    if (ev.kind === 'turn_start') {
+      if (cur && seq <= cur.lastSeq) return;
+      this.map.set(key, {
+        blocks: cur?.blocks ?? [],
+        active: true,
+        lastSeq: seq,
+        startedAt: ev.startedAt ?? cur?.startedAt ?? Date.now(),
+      });
+      this.notify(key);
+      return;
+    }
+
     // Snapshot: the authoritative full state at `seq`. Replace, unless we already have newer deltas.
     if (ev.kind === 'snapshot') {
       if (cur && seq < cur.lastSeq) return;
@@ -106,6 +131,9 @@ class ThreadStreamStore {
         blocks: (ev.blocks ?? []).map((b) => ({ ...b })),
         active: ev.active ?? true,
         lastSeq: seq,
+        // The reconnect snapshot now carries `startedAt` so elapsed survives refresh/reconnect; fall back
+        // to any value we already had, so a snapshot missing it doesn't reset the timer.
+        startedAt: ev.startedAt ?? cur?.startedAt,
       });
       this.notify(key);
       return;
@@ -173,12 +201,12 @@ class ThreadStreamStore {
       }
       default:
         // session / result — advance seq but don't change rendered blocks.
-        this.map.set(key, { blocks, active: true, lastSeq: seq });
+        this.map.set(key, { blocks, active: true, lastSeq: seq, startedAt: cur?.startedAt });
         this.notify(key);
         return;
     }
 
-    this.map.set(key, { blocks, active: true, lastSeq: seq });
+    this.map.set(key, { blocks, active: true, lastSeq: seq, startedAt: cur?.startedAt });
     this.notify(key);
   }
 
@@ -265,16 +293,6 @@ export function sweepLiveTurnsAfterReconnect(): void {
 }
 
 /**
- * Is the `main` (brain) turn currently streaming for this thread? Read OUTSIDE React (e.g. in a mutation's
- * `onMutate`) to decide whether a just-sent message is QUEUED behind a running turn — the brain serializes
- * turns per thread, so a follow-up sent mid-turn waits for the current one to finish. (Build/phase lanes
- * don't gate the brain's input, so this only consults the `main` lane.)
- */
-export function isLiveTurnActive(jobId: string): boolean {
-  return store.get(jobId, MAIN_LANE)?.active ?? false;
-}
-
-/**
  * Subscribe to one thread's in-flight live turn for a lane (default the brain's `main` turn). The
  * conversation reads `main`; a step sub-page reads its `phase:<stepId>` lane.
  */
@@ -283,4 +301,60 @@ export function useLiveTurn(jobId: string, lane: string = MAIN_LANE): LiveTurn |
   const subscribe = useCallback((cb: () => void) => store.subscribeKey(key, cb), [key]);
   const getByKey = useCallback(() => store.getByKey(key), [key]);
   return useSyncExternalStore(subscribe, getByKey, () => undefined);
+}
+
+/** The short status word for the working indicator, derived from the LAST live block's kind. */
+export type LiveStatusWord = 'still thinking' | 'using tools' | 'responding';
+
+/**
+ * A compact summary of a live turn for the "Atlas is working…" indicator (Claude-Code style):
+ *  - `openTools` — tool_use blocks with no tool_result yet (in-flight tool calls, incl. subagent/Task runs).
+ *  - `statusWord` — from the last block's kind (thinking → "still thinking", tool → "using tools",
+ *    text → "responding").
+ * The block model doesn't pair tool_use↔tool_result by matching frames; instead each tool block carries a
+ * `done` flag (flipped when its `tool_result` lands), so an open tool = a `tool` block with `done === false`.
+ */
+export function summarizeLiveTurn(turn: LiveTurn | undefined): {
+  openTools: number;
+  statusWord: LiveStatusWord;
+} {
+  const blocks = turn?.blocks ?? [];
+  let openTools = 0;
+  for (const b of blocks) if (b.kind === 'tool' && !b.done) openTools += 1;
+  const last = blocks[blocks.length - 1];
+  const statusWord: LiveStatusWord =
+    last?.kind === 'thinking' ? 'still thinking' : last?.kind === 'tool' ? 'using tools' : 'responding';
+  return { openTools, statusWord };
+}
+
+/**
+ * A once-per-second elapsed-seconds ticker for a turn that started at `startedAt` (epoch ms). Returns 0
+ * when `startedAt` is undefined. Recomputes from wall-clock each tick (not an accumulator), so it stays
+ * correct across tab-throttling and reconnects. Cleans its interval up on unmount / when the turn ends.
+ */
+export function useElapsedSeconds(startedAt: number | undefined): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt == null) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  if (startedAt == null) return 0;
+  return Math.max(0, Math.round((now - startedAt) / 1_000));
+}
+
+/**
+ * Formats an elapsed-seconds count into a compact human-readable duration: `45s`, `19m 24s`, or
+ * `1h 05m 24s`. Sub-minute durations stay bare seconds; once minutes/hours appear the smaller units are
+ * zero-padded so the width stays stable as it ticks.
+ */
+export function formatElapsed(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(s / 3_600);
+  const minutes = Math.floor((s % 3_600) / 60);
+  const seconds = s % 60;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  return `${seconds}s`;
 }

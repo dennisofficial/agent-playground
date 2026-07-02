@@ -94,6 +94,21 @@ describe('TurnRegistry', () => {
     expect(await reg.getToolReply('t1', 'nope')).toBeNull();
   });
 
+  it('failRunningForJob deletes only that job\'s running rows and reports how many were dropped', async () => {
+    const repo = makeRepo();
+    repo.delete.mockResolvedValueOnce({ affected: 2 } as never);
+    const out = await new TurnRegistry(repo, makeRepo() as never).failRunningForJob('th1');
+    expect(repo.delete).toHaveBeenCalledWith({ job_id: 'th1', status: 'running' });
+    expect(out).toBe(2);
+  });
+
+  it('failRunningForJob returns 0 when nothing was running for that job', async () => {
+    const repo = makeRepo();
+    repo.delete.mockResolvedValueOnce({ affected: undefined } as never);
+    const out = await new TurnRegistry(repo, makeRepo() as never).failRunningForJob('th-idle');
+    expect(out).toBe(0);
+  });
+
   it('findStale merges stale-heartbeat + never-beat rows, de-duped by turn_id', async () => {
     const repo = makeRepo();
     // First find() = stale-heartbeat rows; second = never-beat rows (one overlaps t1).

@@ -176,6 +176,7 @@ export class StimulusStoreService {
         body: input.body,
         job_id: input.jobId,
         author_id: input.author.id,
+        author_name: input.author.displayName,
         reply_route: input.replyRoute,
         source: null,
         dedupe_key: null,

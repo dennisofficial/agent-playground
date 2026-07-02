@@ -424,6 +424,41 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await store.reconcileOpenQuestionCounts();
     expect(await openCount(dataSource, jobId)).toBe(1); // q-2 still unanswered
   }, 30_000);
+
+  it('hasRecentSystemOperatorNotice matches an identical recent notice, and only that (dedup guard)', async () => {
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active') ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, $2, 'BrainStore Repo', 'https://github.com/acme/brainstore.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+      [TEAM_ID, PROJECT_SLUG],
+    );
+    const [thread]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
+         VALUES ($1, $2, 'chat', 'limit dedup') RETURNING id`,
+      [TEAM_ID, repoRow.id],
+    );
+    const jobId = thread.id;
+    const err = 'in-sandbox engine turn failed: monthly spend limit';
+
+    // Nothing posted yet → no match.
+    expect(await store.hasRecentSystemOperatorNotice(jobId, err)).toBe(false);
+
+    await store.appendSystemOperatorMessage(jobId, err, { retryable: true });
+
+    // Identical text within the window → matched (the guard suppresses the second box).
+    expect(await store.hasRecentSystemOperatorNotice(jobId, err)).toBe(true);
+    // A DIFFERENT error is never suppressed.
+    expect(await store.hasRecentSystemOperatorNotice(jobId, `${err} (other)`)).toBe(false);
+    // Outside the recency window (a `since` in the future) → not matched.
+    expect(await store.hasRecentSystemOperatorNotice(jobId, err, -60_000)).toBe(false);
+    // Scoped to the thread — another thread's identical notice doesn't match.
+    expect(await store.hasRecentSystemOperatorNotice(TEAM_ID, err)).toBe(false);
+  }, 30_000);
 });
 
 async function openCount(ds: DataSource, jobId: string): Promise<number> {

@@ -16,8 +16,20 @@ export const BRAIN_SINK = Symbol('BRAIN_SINK');
  * and tested with a no-op.
  */
 export interface BrainSink {
-  /** A human chat message continuing an existing thread → that thread's brain session. */
+  /**
+   * A SYSTEM-SEED chat stimulus (an `ask_question`/`request_file` answer, a review-comments card, a
+   * reset-verify kick) → run DIRECTLY as its own brain turn now. Seeds are in-memory only (never a
+   * durable `stimuli` row), so they don't ride the durable delivery pump — they carry in-memory-only
+   * fields (`seedQuestionId`/`card`/…) a re-drive from the DB row couldn't reconstruct.
+   */
   handleChat(stimulus: ChatStimulus): Promise<void>;
+  /**
+   * A PERSISTED plain operator chat message → ensure durable delivery. Implementations enqueue it onto
+   * the per-thread delivery pump (steer a live turn, or run a fresh one) and stamp `stimuli.delivered_at`
+   * only once the brain positively took it; a leader sweep re-drives anything still undelivered. Does NOT
+   * await the engine turn (intake stays fast; a swallowed/lost delivery self-heals via the sweep).
+   */
+  enqueueChat(stimulus: ChatStimulus): Promise<void>;
   /**
    * A seeded event → delivered to its thread's brain as a harness message. Implementations make this
    * durable + at-least-once (the caller does NOT await the engine turn — the webhook 202 must stay fast).
@@ -33,6 +45,13 @@ export class LoggingBrainSink implements BrainSink {
   private readonly logger = new Logger('BrainSink');
 
   async handleChat(stimulus: ChatStimulus): Promise<void> {
+    this.logger.log(
+      `[no-op] CHAT SEED ${stimulus.id} thread=${stimulus.jobId} ` +
+        `author=${stimulus.author.displayName} project=${stimulus.repoId}`,
+    );
+  }
+
+  async enqueueChat(stimulus: ChatStimulus): Promise<void> {
     this.logger.log(
       `[no-op] CHAT ${stimulus.id} thread=${stimulus.jobId} ` +
         `author=${stimulus.author.displayName} project=${stimulus.repoId}`,

@@ -6,7 +6,7 @@
 # demand). Health-checking is the agent's job — read the logs / curl the endpoint. See docs/adr/0002.
 set -uo pipefail
 
-SVC_DIR="${ATLAS_SUPERVISOR_DIR:-/atlas-home/supervisor}"
+SVC_DIR="${ATLAS_SUPERVISOR_DIR:-/.atlas/supervisor}"
 mkdir -p "$SVC_DIR" 2>/dev/null || true
 
 usage() {

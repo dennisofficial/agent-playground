@@ -11,6 +11,7 @@ import {
 } from '../engine';
 import { dispatchToolRequest } from '../engine/tool-bridge-host';
 import type { ToolBridgeOptions, ToolRequestFrame } from '../engine/engine.types';
+import { gitAuthEnv } from '../git';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import {
@@ -78,25 +79,33 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // 1) Publish the spec the engine reads on startup.
     await this.redis.xadd(keys.spec, spec);
 
-    // 2) Register the turn for restart re-attach (best-effort — a turn still runs without a registry row).
+    // 2) Register the turn for restart re-attach. Best-effort by default (a turn still runs without a
+    //    registry row), BUT when the caller passes `onTurnRegistered` it stamps an operator message
+    //    `delivered_at` off this registration — so the row MUST be durable: await + rethrow, aborting the
+    //    turn on failure (the message stays pending; the delivery pump retries) rather than claiming a
+    //    hand-off that can't be re-attached.
     if (args.turnMeta) {
-      await this.registry
-        .register({
-          turnId,
-          jobId: args.turnMeta.jobId,
-          orgId: args.turnMeta.orgId,
-          channel: args.turnMeta.channel,
-          lane: args.turnMeta.lane,
-          kind: args.turnMeta.kind,
-          containerId: target.containerId,
-          // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
-          ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, jobId: args.turnMeta.jobId },
-        })
-        .catch((err) => this.logger.warn(`turn ${turnId}: registry.register failed (continuing): ${err}`));
+      const register = this.registry.register({
+        turnId,
+        jobId: args.turnMeta.jobId,
+        orgId: args.turnMeta.orgId,
+        channel: args.turnMeta.channel,
+        lane: args.turnMeta.lane,
+        kind: args.turnMeta.kind,
+        containerId: target.containerId,
+        // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
+        ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, jobId: args.turnMeta.jobId },
+      });
+      if (args.onTurnRegistered) await register;
+      else await register.catch((err) => this.logger.warn(`turn ${turnId}: registry.register failed (continuing): ${err}`));
     }
 
-    // 3) Kick the engine detached, then attach (tail events + serve the tool bridge).
-    return this.runAttached(turnId, keys, args, target.containerId, target);
+    // 3) Kick the engine detached, then attach (tail events + serve the tool bridge). `onTurnRegistered`
+    //    fires from INSIDE runAttached once the kick lands — the true restart-survivable hand-off point
+    //    (registered row + a running engine; boot re-attach never re-kicks). Only when the row exists.
+    const onKicked =
+      args.turnMeta && args.onTurnRegistered ? () => args.onTurnRegistered!(turnId) : undefined;
+    return this.runAttached(turnId, keys, args, target.containerId, target, onKicked);
   }
 
   /**
@@ -120,6 +129,27 @@ export class RedisEngineRunner implements EngineRunnerPort {
   }
 
   /**
+   * STEER a running turn: XADD an operator message to `turn:{T}:input`. The in-container entrypoint reads
+   * the durable stream and injects it into the live SDK session with `priority:'now'`. Durable so a steer
+   * published a beat before the engine's input reader attaches is still delivered (read from '0-0'). The
+   * `id` (the steer's stimulus id) rides the frame so the engine emits a correlated `input_ack` once it
+   * PUSHES the message — the caller stamps `delivered_at` on that ack, never on this write. A redelivered
+   * id is a no-op push in-container (exactly-once injection) but still re-acks, so re-drives converge.
+   */
+  async steer(turnId: string, id: string, text: string): Promise<void> {
+    await this.redis.xadd(turnKeys(turnId).input, { id, text });
+  }
+
+  /**
+   * STOP a running turn: publish a cooperative abort to `turn:{T}:abort`. The entrypoint aborts the SDK
+   * query; the engine returns its partial result gracefully, writes `final`, and the normal completion
+   * path (tailEvents → runAttached finally) finalizes the registry row + reclaims the streams.
+   */
+  async stop(turnId: string): Promise<void> {
+    await this.redis.publish(turnKeys(turnId).abort, { t: 'abort' });
+  }
+
+  /**
    * The shared attach loop: (optionally kick the engine, for a fresh run) then tail events + serve the
    * tool bridge concurrently until the turn ends, and finalize the registry. Used by both `run` (with a
    * kick) and `reattach` (no kick — the engine is already running).
@@ -130,6 +160,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     args: AttachArgs,
     containerId: string,
     kickTarget: NonNullable<RunEngineArgs['target']> | undefined,
+    onKicked?: () => void,
   ): Promise<EngineRunResult> {
     return this.activity.thread(containerId, async () => {
       const done = { value: false };
@@ -145,9 +176,16 @@ export class RedisEngineRunner implements EngineRunnerPort {
         if (kickTarget) {
           await this.containers.execDetached(kickTarget.containerId, ['atlas-engine-turn'], {
             ...(kickTarget.user ? { user: kickTarget.user } : {}),
-            env: this.execEnv(turnId),
+            env: this.execEnv(turnId, kickTarget),
             cwd: CONTAINER_WORKTREE,
           });
+          // Hand-off point: the row is registered AND the engine is running detached, so the turn is now
+          // restart-survivable (boot re-attach resumes it without re-kicking). Fire the caller's stamp hook.
+          try {
+            onKicked?.();
+          } catch (err) {
+            this.logger.debug(`turn ${turnId}: onTurnRegistered hook threw (ignored): ${err}`);
+          }
         }
         // The tools loop runs CONCURRENTLY with the events tail; it stops when the tail flips `done`.
         const toolsLoop = args.toolBridge
@@ -329,6 +367,8 @@ export class RedisEngineRunner implements EngineRunnerPort {
       ...(args.auth ? { auth: args.auth } : {}),
       ...(args.model ? { model: args.model } : {}),
       ...(args.richStream ? { richStream: args.richStream } : {}),
+      // Steering: tell the entrypoint to run streaming-input mode + subscribe to `turn:{T}:input`/`:abort`.
+      ...(args.steerable ? { steerable: true } : {}),
       // Tool-bridge: tell the entrypoint which host tools exist so it builds the MCP proxy for each.
       ...(args.toolBridge ? { toolBridgeTools: Object.keys(args.toolBridge.tools) } : {}),
     };
@@ -343,7 +383,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
   }
 
   /** Credentials + the redis transport config the in-container engine reads from process.env (per-exec). */
-  private execEnv(turnId: string): Record<string, string> {
+  private execEnv(
+    turnId: string,
+    target?: NonNullable<RunEngineArgs['target']>,
+  ): Record<string, string> {
     const e: Record<string, string> = {};
     const put = (key: string, value: string | undefined): void => {
       if (value) e[key] = value;
@@ -357,6 +400,20 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // The container-reachable Redis URL (the sandbox joins the internal atlas-bus net; falls back to the
     // host REDIS_URL for same-host/dev). Phase 5 swaps this for a per-turn ACL-scoped credential.
     e.REDIS_URL = this.env.get('SANDBOX_REDIS_URL') ?? this.env.get('REDIS_URL') ?? 'redis://redis:6379';
+    // Authenticated git for mutation turns (brain / build): the agent can fetch/push/merge against the
+    // remote from inside the sandbox. The GIT_CONFIG_* extraheader keeps the token out of argv/.git/config
+    // (same mechanism as host git + SandboxRefsService); GITHUB_TOKEN/GH_TOKEN let it drive the API/`gh`.
+    // GIT_TERMINAL_PROMPT=0 makes a missing/expired token fail fast instead of hanging on a prompt.
+    if (target?.gitAuth?.token) {
+      const { gitUrl, token } = target.gitAuth;
+      Object.assign(e, gitAuthEnv(gitUrl, token));
+      if (e.GIT_CONFIG_COUNT) {
+        // Auth was actually injected (https github url) — expose the raw token + fail-fast prompt guard.
+        e.GIT_TERMINAL_PROMPT = '0';
+        e.GITHUB_TOKEN = token;
+        e.GH_TOKEN = token;
+      }
+    }
     return e;
   }
 }

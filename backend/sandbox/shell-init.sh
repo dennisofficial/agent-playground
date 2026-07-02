@@ -3,7 +3,7 @@
 # stays on the image's Node 22 (its launcher calls node by absolute path). Kept fast + idempotent: it runs
 # on every command shell.
 #
-# Node versions live in the SHARED fnm store (FNM_DIR=/atlas-fnm, a host dir bound across all threads), so
+# Node versions live in the SHARED fnm store (FNM_DIR=/.atlas/fnm, a host dir bound across all threads), so
 # a pinned version is downloaded ONCE globally and reused. Errors are swallowed: a repo with no version
 # file simply runs the image's base Node 22; a download hiccup falls back to it too.
 

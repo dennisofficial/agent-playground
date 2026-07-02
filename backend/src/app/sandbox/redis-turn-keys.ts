@@ -10,6 +10,8 @@ export const turnKeys = (turnId: string) => ({
   replies: `turn:${turnId}:replies`,
   /** host → engine: cooperative abort (pub/sub). */
   abort: `turn:${turnId}:abort`,
+  /** host → engine: mid-turn steering messages (a durable stream, read from the turn's start). */
+  input: `turn:${turnId}:input`,
 });
 
 /** The consumer group the host uses to drain a turn's tools stream (one logical host across replicas). */

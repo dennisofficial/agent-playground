@@ -23,8 +23,8 @@ import type {
  * session's TaskCreate/TaskUpdate calls) and its read-only REVIEW AGENTS (navigable child threads on
  * `rev:<threadId>:<agentId>` nodes) capped by the derived "Post-review fixes" row — and whichever thread
  * was open collapses (open = the selected lane, or the thread whose review agent is open in the detail
- * pane). Below the list, {@link PrReviewFooter} renders the pinned FINAL REVIEW row — the single job-level
- * master-review thread with its own tasks and no review agents.
+ * pane). Directly under the list, {@link PrReviewRegion} renders the inline FINAL REVIEW row — the single
+ * job-level master-review thread with its own tasks and no review agents.
  */
 
 // ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
@@ -611,15 +611,16 @@ function PostReviewFixesRow({ state }: { state: 'queued' | 'running' | 'done' })
   );
 }
 
-// ── the pinned PR Review footer (FINAL REVIEW) ─────────────────────────────────────────────────────
+// ── the PR Review region (FINAL REVIEW) ────────────────────────────────────────────────────────────
 
 /**
- * The pinned FINAL REVIEW footer — the single job-level master-review thread that runs against all code
- * once every worker thread finishes (review + fix + apply + verify via its own tasks; NO review agents).
- * Rendered below the scrolling regions; the caller hides it entirely while no plan exists. Selecting it
- * opens the session's transcript in the LEFT pane (`pr-review` lane) and expands its task list in place.
+ * The FINAL REVIEW region — the single job-level master-review thread that runs against all code once
+ * every worker thread finishes (review + fix + apply + verify via its own tasks; NO review agents). It is
+ * technically a thread, so it renders inline directly under the THREADS list (and above OUTPUTS) with its
+ * own distinct styling; the caller hides it entirely while no plan exists. Selecting it opens the
+ * session's transcript in the LEFT pane (`pr-review` lane) and expands its task list in place.
  */
-export function PrReviewFooter({
+export function PrReviewRegion({
   job,
   laneNode,
   onSelectNode,
@@ -640,8 +641,8 @@ export function PrReviewFooter({
   const accent = footerAccent(display);
 
   return (
-    <div className="flex-none border-t border-border bg-surface pb-1.5 pt-2">
-      <div className="px-4 pb-1.5">
+    <div className="pb-1.5">
+      <div className="px-4 pb-1.5 pt-3">
         <span className="font-mono text-[8px] tracking-[0.14em] text-faint">FINAL REVIEW</span>
       </div>
       <div className="border-l-[3px]" style={footerRail(display, open)}>

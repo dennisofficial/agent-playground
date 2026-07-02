@@ -469,7 +469,7 @@ export class ThreadDriver implements JobDispatcher {
       .headSha(sandbox.worktreePath)
       .catch(() => undefined);
     await this.store.setThreadStatus(thread.id, 'executing');
-    const reports = await this.executeSteps(job, route, sandbox, thread, record);
+    const reports = await this.executeSteps(job, route, sandbox, thread, record, repo);
 
     // f. AUTO-FIX — fan-out review → fix over this thread's diff.
     await this.store.setThreadStatus(thread.id, 'auto_fixing');
@@ -794,6 +794,7 @@ export class ThreadDriver implements JobDispatcher {
     sandbox: FeatureSandbox,
     thread: DriverThread,
     record: DecisionRecord | null,
+    repo: ResolvedRepo,
   ): Promise<string[]> {
     let steps = await this.store.stepsForThread(thread.id);
 
@@ -859,7 +860,7 @@ export class ThreadDriver implements JobDispatcher {
         continue;
       }
       reports.push(
-        await this.runBatch(job, route, sandbox, thread, record, batch),
+        await this.runBatch(job, route, sandbox, thread, record, batch, repo),
       );
     }
     return reports;
@@ -899,6 +900,7 @@ export class ThreadDriver implements JobDispatcher {
     thread: DriverThread,
     record: DecisionRecord | null,
     steps: Step[],
+    repo: ResolvedRepo,
   ): Promise<string> {
     const anchor = steps[0];
     const label =
@@ -969,7 +971,7 @@ export class ThreadDriver implements JobDispatcher {
       result = await this.reattachBatchTurn(job, thread, lane, metaTag, reattachRow, anchor.id);
     }
     if (!result) {
-      result = await this.kickBatchTurn(job, sandbox, thread, steps, task, lane, channel, metaTag, label);
+      result = await this.kickBatchTurn(job, sandbox, thread, steps, task, lane, channel, metaTag, label, repo);
     }
 
     // Surface any off-spec deviations the engine flagged in its report (#7) — never silent.
@@ -1092,6 +1094,7 @@ export class ThreadDriver implements JobDispatcher {
     channel: string,
     metaTag: Record<string, unknown>,
     label: string,
+    repo: ResolvedRepo,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const anchor = steps[0];
     const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
@@ -1114,6 +1117,9 @@ export class ThreadDriver implements JobDispatcher {
               : BATCH_EXECUTE_SYSTEM,
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
+          // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
+          // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
+          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
           // Register in `active_turns` so a fresh backend can RE-ATTACH this build turn's live stream after a
           // restart (parity with the brain), not just re-run it. No toolBridge — a build turn's tools

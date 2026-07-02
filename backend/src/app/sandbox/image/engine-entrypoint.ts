@@ -19,7 +19,7 @@ import type { EngineEvent, RunEngineArgs } from '../../engine/engine.types';
 import { BRIDGE_SERVER_NAME, buildBridgeClaudeOptions, type BridgeClaudeOptions } from './bridge-options';
 
 /** The serialized turn — everything `RunEngineArgs` carries except host-only, non-serializable bits. */
-type TurnSpec = Omit<RunEngineArgs, 'onEvent' | 'signal' | 'target' | 'toolBridge'> & {
+type TurnSpec = Omit<RunEngineArgs, 'onEvent' | 'signal' | 'target' | 'toolBridge' | 'steerInput'> & {
   /** When present, activates the tool bridge — the list of host tool names to proxy via an MCP server. */
   toolBridgeTools?: string[];
 };
@@ -54,6 +54,9 @@ async function runOverRedis(turnId: string): Promise<void> {
 
   let stopReplies: (() => void) | undefined;
   let sub: typeof client | undefined; // the tool-bridge replies-reader connection (must be closed)
+  let stopInput: (() => void) | undefined;
+  let inputSub: typeof client | undefined; // the steering input-reader connection (must be closed)
+  let abortSub: typeof client | undefined; // the abort pub/sub connection (must be closed)
 
   try {
     // The spec is a single-entry stream the host XADDed before the kick.
@@ -145,9 +148,52 @@ async function runOverRedis(turnId: string): Promise<void> {
       bridge = buildBridgeClaudeOptions(server, spec.toolBridgeTools);
     }
 
+    // ── Mid-turn steering + cooperative stop (the operator-facing brain turn) ───────────────────
+    // Only wired when the host marked the turn `steerable`. The abort channel (pub/sub) cancels the SDK
+    // query; the input channel (a durable stream) feeds operator steers into the live turn.
+    const abortController = new AbortController();
+    let steerInput: AsyncIterable<{ id?: string; text: string }> | undefined;
+    if (spec.steerable) {
+      abortSub = client.duplicate();
+      await abortSub.subscribe(`turn:${turnId}:abort`);
+      abortSub.on('message', () => abortController.abort());
+
+      const inputKey = `turn:${turnId}:input`;
+      const conn = client.duplicate();
+      inputSub = conn;
+      let stopped = false;
+      stopInput = () => {
+        stopped = true;
+      };
+      steerInput = {
+        async *[Symbol.asyncIterator]() {
+          // '0-0' reads every steer from the start of THIS turn's fresh input stream (no missed-race, no
+          // stale data). BLOCK yields control between polls so the loop unwinds promptly once stopped.
+          let lastId = '0-0';
+          while (!stopped) {
+            const r = (await conn.xread('BLOCK', 1000, 'STREAMS', inputKey, lastId)) as
+              | Array<[string, Array<[string, string[]]>]>
+              | null;
+            if (!r) continue;
+            for (const [, entries] of r) {
+              for (const [eid, f] of entries) {
+                lastId = eid;
+                const di = f.indexOf('data');
+                if (di < 0) continue;
+                const frame = JSON.parse(f[di + 1]) as { id?: string; text?: string };
+                if (typeof frame.text === 'string' && frame.text.length > 0)
+                  yield { ...(typeof frame.id === 'string' ? { id: frame.id } : {}), text: frame.text };
+              }
+            }
+          }
+        },
+      };
+    }
+
     const runArgs: RunEngineArgs = {
       ...spec,
       onEvent: (e: EngineEvent) => void xadd(eventsKey, { t: 'event', e }).catch(() => undefined),
+      ...(spec.steerable ? { signal: abortController.signal, steerInput } : {}),
     };
     const result = await core.runWithExtras(
       runArgs,
@@ -166,8 +212,11 @@ async function runOverRedis(turnId: string): Promise<void> {
     process.exitCode = 1;
   } finally {
     stopReplies?.();
+    stopInput?.();
     clearInterval(heartbeat);
     sub?.disconnect(); // the replies-reader's separate connection — leaks the process if left open
+    inputSub?.disconnect(); // the steering input-reader's separate connection
+    abortSub?.disconnect(); // the abort pub/sub connection
     client.disconnect();
   }
 }

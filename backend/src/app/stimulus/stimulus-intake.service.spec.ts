@@ -27,21 +27,39 @@ function fakeOrchestration(): SurfaceOrchestration & { announceEvent: ReturnType
   };
 }
 
-/** A recording brain sink — captures the chat/event stimuli intake hands downstream. */
+/**
+ * A recording brain sink — captures the chat/event stimuli intake hands downstream. `chats` merges BOTH
+ * `handleChat` (system seeds) and `enqueueChat` (persisted operator messages, the durable pump) so
+ * existing "a chat stimulus reached the brain" assertions don't care which; `handleChatCalls`/
+ * `enqueueChatCalls` are the SEPARATE spies for tests that must assert the specific routing.
+ */
 function collectSink(): {
   sink: BrainSink;
   chats: ChatStimulus[];
   events: EventStimulus[];
+  handleChatCalls: ChatStimulus[];
+  enqueueChatCalls: ChatStimulus[];
 } {
   const chats: ChatStimulus[] = [];
   const events: EventStimulus[] = [];
+  const handleChatCalls: ChatStimulus[] = [];
+  const enqueueChatCalls: ChatStimulus[] = [];
   return {
     sink: {
-      handleChat: async (s) => void chats.push(s),
+      handleChat: async (s) => {
+        handleChatCalls.push(s);
+        chats.push(s);
+      },
+      enqueueChat: async (s) => {
+        enqueueChatCalls.push(s);
+        chats.push(s);
+      },
       deliverEvent: async (s) => void events.push(s),
     },
     chats,
     events,
+    handleChatCalls,
+    enqueueChatCalls,
   };
 }
 
@@ -152,13 +170,20 @@ describe('StimulusIntake.intakeChat', () => {
     };
     const store = { recordChatStimulus: vi.fn(async () => recorded) } as unknown as StimulusStoreService;
     const filter = { admit: vi.fn() } as unknown as EventFilterService;
-    const { sink, chats } = collectSink();
+    const { sink, chats, handleChatCalls, enqueueChatCalls } = collectSink();
     const intake = new StimulusIntake(filter, store, fakeOrchestration(), sink, fakeTitler());
 
     await intake.intakeChat(recorded);
     expect(store.recordChatStimulus).toHaveBeenCalledOnce();
     expect(filter.admit).not.toHaveBeenCalled(); // chat bypasses the filter
     expect(chats[0]).toMatchObject({ kind: 'chat', id: 'chat-1' });
+    // DURABLE ROUTING: a plain, persisted operator message rides the delivery pump (`enqueueChat`), NOT
+    // the direct-run `handleChat` — that distinction is the whole point of the durable-delivery fix (a
+    // fire-and-forget `handleChat` here is exactly what let a message get steered into a dead turn and
+    // silently lost). Regression guard: this must stay `enqueueChat`.
+    expect(enqueueChatCalls).toHaveLength(1);
+    expect(enqueueChatCalls[0]).toMatchObject({ id: 'chat-1' });
+    expect(handleChatCalls).toHaveLength(0);
   });
 
   it('SYSTEM SEED: runs the brain turn WITHOUT persisting a chat row (no operator bubble)', async () => {
@@ -176,12 +201,17 @@ describe('StimulusIntake.intakeChat', () => {
       seed: true,
     };
     const store = { recordChatStimulus: vi.fn() } as unknown as StimulusStoreService;
-    const { sink, chats } = collectSink();
+    const { sink, chats, handleChatCalls, enqueueChatCalls } = collectSink();
     const intake = new StimulusIntake(fakeFilter({ pass: true }), store, fakeOrchestration(), sink, fakeTitler());
 
     await intake.intakeChat(seed);
     expect(store.recordChatStimulus).not.toHaveBeenCalled(); // NOT persisted as a chat message
     expect(chats[0]).toMatchObject({ kind: 'chat', seed: true }); // but the brain turn still runs
     expect(chats[0].id).toBeTruthy(); // a synthetic id was minted
+    // A system seed is IN-MEMORY only (never a durable `stimuli` row — see `seedQuestionId`/`card` etc.,
+    // which a re-drive from the DB row couldn't reconstruct), so it runs directly via `handleChat`, NOT
+    // the durable pump. The opposite routing from the plain-message test above.
+    expect(handleChatCalls).toHaveLength(1);
+    expect(enqueueChatCalls).toHaveLength(0);
   });
 });

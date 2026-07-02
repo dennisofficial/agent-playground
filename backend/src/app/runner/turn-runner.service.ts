@@ -27,6 +27,12 @@ export interface RunTurnInput {
   /** How the turn authenticates (defaults derived from env by the EngineRunner). */
   auth?: EngineAuth;
   /**
+   * Authenticated-git for this turn (resolved repo url + org PAT) so the agent can fetch/push/merge from
+   * inside the sandbox. Sourced from the RESOLVED repo, NOT `sandbox` (a row-sourced sandbox has empty
+   * `gitUrl`/no token). Set by build/execute dispatch; the runner puts it on the docker `target`.
+   */
+  gitAuth?: { gitUrl: string; token?: string };
+  /**
    * Opt into RICH token-level streaming (thinking + tool calls/results + subagent forwarding). Build turns
    * pass this so they ride the shared transcript spine (a full transcript, not coarse text/tool/result).
    */
@@ -126,6 +132,7 @@ export class TurnRunnerService {
                 containerId: sandbox.containerId,
                 worktreeHost: sandbox.worktreePath,
                 ...(sandbox.execUser ? { user: sandbox.execUser } : {}),
+                ...(input.gitAuth ? { gitAuth: input.gitAuth } : {}),
               },
             }
           : {}),

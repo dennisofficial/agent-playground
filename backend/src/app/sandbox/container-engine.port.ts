@@ -107,6 +107,13 @@ export interface ContainerInfo {
   /** 'running' | 'exited' | 'created' | … (Docker's state string). */
   state: string;
   labels: Record<string, string>;
+  /**
+   * The container's current boot time (Docker `State.StartedAt`, RFC3339), or null when unknown. It
+   * REFRESHES on every start/restart, so it doubles as a PID-namespace generation marker: a supervised
+   * process whose own `startedAt` predates this is from a previous container and is definitively dead,
+   * regardless of PID reuse. Only populated by `inspect` (list summaries don't carry it → null there).
+   */
+  startedAt: string | null;
 }
 
 /** A minimal view of a network, enough to reap orphans by name. */

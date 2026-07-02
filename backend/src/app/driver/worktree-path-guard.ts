@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, sep } from 'node:path';
+import { isAbsolute, join, posix, sep } from 'node:path';
+import { isReservedContainerPath, MAX_MOUNT_PATH_LEN } from '../sandbox/container-paths';
 
 /**
  * Path SAFETY for the worktree hydrator + mount wiring. The manifest is attacker-controllable (committed
@@ -13,6 +14,30 @@ import { isAbsolute, join, sep } from 'node:path';
  */
 
 export class WorktreePathError extends Error {}
+
+/**
+ * Validate an EXTERNAL mount target — an ABSOLUTE container path (e.g. `/root/.config/gcloud`) bound outside
+ * `/workspace`. Purely lexical (the container path need not exist on the host): require absolute, POSIX-
+ * normalize, reject `..` segments, over-length, and any {@link isReservedContainerPath} hit (a system bind
+ * or OS root). Returns the normalized absolute path. The HOST side of the bind is a managed org/repo cache
+ * dir chosen by the manager — this guards only WHERE in the container it lands.
+ */
+export function resolveExternalMountTarget(path: string): string {
+  if (!path || !posix.isAbsolute(path)) {
+    throw new WorktreePathError(`external mount must be an absolute container path: ${path}`);
+  }
+  if (path.length > MAX_MOUNT_PATH_LEN) {
+    throw new WorktreePathError(`external mount path too long (> ${MAX_MOUNT_PATH_LEN}): ${path}`);
+  }
+  const norm = posix.normalize(path).replace(/\/+$/, '') || '/';
+  if (norm.split('/').includes('..')) {
+    throw new WorktreePathError(`unsafe external mount (traversal): ${path}`);
+  }
+  if (isReservedContainerPath(norm)) {
+    throw new WorktreePathError(`external mount targets a reserved container path: ${path}`);
+  }
+  return norm;
+}
 
 function rejectLexical(relPath: string): string[] {
   if (!relPath || isAbsolute(relPath) || relPath.startsWith('/') || relPath.startsWith('\\')) {

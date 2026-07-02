@@ -41,6 +41,7 @@ import { LeaderElectionService } from '../cluster';
 import { closeTailFd, nextTailFrame, openTailFd, readServiceLogTail } from './service-log-tail';
 import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
 import { BrainStoreService } from '../brain/brain-store.service';
+import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { JobTitleService } from './job-title.service';
@@ -51,6 +52,7 @@ import type { WebFileRequestCard } from './web-file-request-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
+import type { ServiceLivenessProbe } from '../sandbox';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
@@ -105,10 +107,10 @@ export interface ContextFileContent {
 const MAX_CONTEXT_FILE_BYTES = 2 * 1024 * 1024;
 
 /**
- * One supervised process's last-known state, derived from its `atlas-svc` marker file (see
- * `backend/sandbox/atlas-svc`). This is a DURABLE snapshot, not a live liveness check — the host can't
- * see into the container's PID namespace, so a service that has since stopped (sandbox reset,
- * `atlas-svc stop`, crash) may still show its last marker until the agent notices and cleans it up.
+ * One supervised process, its durable `atlas-svc` marker (see `backend/sandbox/atlas-svc`) joined with
+ * a LIVE liveness check: the endpoint execs a `kill -0` probe into the container (gated on the current
+ * container generation) so `status` reflects reality, not just "a marker exists". The marker fields
+ * (pid/startedAt/log*) remain the durable snapshot; `status` is the freshly-probed truth.
  */
 export interface ServiceInfo {
   id: string;
@@ -121,10 +123,46 @@ export interface ServiceInfo {
   logBytes: number;
   /** Last-modified time of the log file — a recency signal, not a liveness guarantee. */
   logUpdatedAt: string | null;
+  /**
+   * Live liveness from the in-container probe: `running` (its process-group answered `kill -0` in the
+   * current container generation), `stopped` (marker present but the process is gone — crashed,
+   * `atlas-svc stop`, or a previous container), `unknown` (couldn't probe: no running container yet, a
+   * null pgid/startedAt, or a transient exec failure).
+   */
+  status: 'running' | 'stopped' | 'unknown';
 }
 
 /** Matches `atlas-svc`'s own `--name` validation — also doubles as the path-safety guard below. */
 const SERVICE_ID_RE = /^[a-z0-9_-]+$/;
+/** Reuse-window for the in-container liveness probe (see `probeLivenessMemoized`). Comfortably shorter
+ *  than the ~5s status poll so a genuine state change still surfaces on the next tick. */
+const LIVENESS_MEMO_TTL_MS = 2_500;
+/** Slack for the generation gate: `atlas-svc` markers are second-precision (`date +%FT%TZ`) while Docker
+ *  `StartedAt` is sub-second, so a service started in the SAME second as container boot can truncate just
+ *  below it. Only treat a marker as previous-generation when it predates boot by more than this — genuine
+ *  stale markers predate boot by minutes/hours, so the tolerance never lets a reused old pgid through. */
+const GENERATION_SKEW_MS = 2_000;
+
+/**
+ * Map one supervised process's durable marker + the container-wide liveness probe to its live `status`.
+ * The container-GENERATION gate is load-bearing: a marker whose `startedAt` predates the current
+ * container boot is from a previous PID namespace and is dead even if its old pgid was reused and now
+ * answers `kill -0` — so we must reject it BEFORE consulting `alive`.
+ */
+export function serviceStatus(
+  marker: Pick<ServiceInfo, 'pgid' | 'startedAt'>,
+  probe: ServiceLivenessProbe,
+): ServiceInfo['status'] {
+  if (probe.status === 'unknown') return 'unknown';
+  if (probe.status === 'down') return 'stopped'; // no running container ⇒ every marker is dead
+  // probe.status === 'up' — verify the marker belongs to THIS container generation before trusting alive.
+  if (marker.pgid == null || marker.startedAt == null) return 'unknown';
+  const started = Date.parse(marker.startedAt);
+  const generation = Date.parse(probe.containerStartedAt);
+  if (!Number.isFinite(started) || !Number.isFinite(generation)) return 'unknown';
+  if (started < generation - GENERATION_SKEW_MS) return 'stopped'; // previous container — reused pgid must not read as running
+  return probe.alive.includes(marker.pgid) ? 'running' : 'stopped';
+}
 /** Tail cap for the logs endpoint — a long-running dev server's log can grow large. */
 const MAX_SERVICE_LOG_TAIL_BYTES = 512 * 1024;
 /** How often the SSE log tail polls the file for new bytes — see `serviceLogEvents` doc comment. */
@@ -347,6 +385,8 @@ export class WebSurfaceController {
     // The brain's store — used here for the atomic `markQuestionAnswered` gate (resolved ambiently from
     // the @Global BrainModule, same as the approval services this module already depends on).
     private readonly store: BrainStoreService,
+    // The chat brain — used here to STOP a live turn (`/stop`). Also from the @Global BrainModule.
+    private readonly brain: AgentSessionManager,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -607,8 +647,10 @@ export class WebSurfaceController {
    *  - `{ type: 'message', … }` — a durable post landed (chat / approval card / PR card / status). The
    *    client refetches the authoritative `/messages` + pipeline.
    *  - `{ type: 'stream', jobId, seq, event }` — the live in-sandbox session. `event` is either a
-   *    `{ kind: 'snapshot', blocks, active }` (the RESUMABLE catch-up replayed the moment THIS client
-   *    connects, for every in-flight turn in the repo), a token/thinking/tool delta, or `{kind:'turn_end'}`.
+   *    `{ kind: 'snapshot', blocks, active, startedAt }` (the RESUMABLE catch-up replayed the moment THIS
+   *    client connects, for every in-flight turn in the repo — `startedAt` lets a client that missed the
+   *    original `turn_start` still drive an accurate elapsed timer), a token/thinking/tool delta, a
+   *    `{kind:'turn_start', startedAt}` (first frame of a turn), or `{kind:'turn_end'}`.
    *    The client filters by `jobId`, applies the snapshot, then deltas (deduped by `seq`), and
    *    reconciles against `/messages` on `turn_end`.
    *
@@ -635,7 +677,7 @@ export class WebSurfaceController {
             jobId: s.jobId,
             lane: s.lane,
             seq: s.seq,
-            event: { kind: 'snapshot', blocks: s.blocks, active: s.active },
+            event: { kind: 'snapshot', blocks: s.blocks, active: s.active, startedAt: s.startedAt },
           },
         }),
       ),
@@ -750,6 +792,24 @@ export class WebSurfaceController {
   }
 
   /**
+   * `POST …/jobs/:jobId/stop` — the operator hit Stop while Atlas was mid-turn. Cooperatively aborts the
+   * live brain turn (the in-container SDK query stops; the engine writes a graceful `final`), so the normal
+   * completion path persists the partial transcript, finalizes the turn, and clears `turn_active` (dropping
+   * the "working" indicator). Idempotent: `stopped:false` when nothing was running. Leader-only (the turn
+   * runs on the leader). Scoped to the caller's org via the membership guard + `requireThread`.
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/stop')
+  @UseGuards(OrgMembershipGuard)
+  async stop(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<{ stopped: boolean }> {
+    await this.requireThread(jobId, org.id);
+    const stopped = await this.brain.stopTurn(jobId);
+    return { stopped };
+  }
+
+  /**
    * `POST …/threads/:jobId/answer-question` — answer a brain `ask_question` card. GATED on the CARD's
    * OWN state (there is no single-slot thread pointer; many cards can be open at once): an already-delivered
    * card is stale, an already-answered card is an idempotent no-op (e.g. a double click). The first valid
@@ -837,6 +897,49 @@ export class WebSurfaceController {
     }
     if (payload.provided_at != null) {
       return { ok: true, ts: '' }; // already provided; a delivery turn is in flight / queued
+    }
+
+    // EPHEMERAL lane — a one-time value (an OAuth code, a 2FA code) piped STRAIGHT into the running process
+    // and NEVER stored: no encrypted store, no grant, no rehydrate. If the target process isn't reading (dead
+    // reader → the write times out), clear the gate and tell the brain to restart the login rather than wedge.
+    if (payload.ephemeral) {
+      const deliverTo = payload.deliver_to ?? '';
+      if (!deliverTo) {
+        throw new BadRequestException('ephemeral request has no delivery target');
+      }
+      const delivered = await this.threadLifecycle.deliverEphemeralSecret({
+        jobId,
+        path: deliverTo,
+        // gcloud (and most stdin prompts) read a single line — normalize to exactly one trailing newline.
+        value: `${value.replace(/\r?\n$/, '')}\n`,
+      });
+      if (!delivered.ok) {
+        // The reader is gone / not reading — this card is dead. Clear the single-slot gate so the brain can
+        // re-run the login, and seed a turn telling it to.
+        await this.store.clearAwaitingSecret(jobId, body.requestId);
+        const ts = this.surface.seedSystemNotification(
+          thread.repo_id,
+          jobId,
+          `The one-time value \`${payload.name}\` could not be delivered (${delivered.reason ?? 'the target process is not reading'}). Restart the interactive login and request the code again.`,
+          { orgId: org.id },
+        );
+        return { ok: false, ts };
+      }
+      // Delivered — stamp the card provided (no value) + hand the brain a masked confirmation. The gate clears
+      // on the delivery turn's success tail (same at-least-once path as a durable secret).
+      card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
+      await this.messages.save(card);
+      const ts = this.surface.seedSystemNotification(
+        thread.repo_id,
+        jobId,
+        `The operator provided the one-time value \`${payload.name}\` (delivered to the running process, not stored). Verify the login completed and continue.`,
+        { orgId: org.id },
+      );
+      return { ok: true, ts };
+    }
+
+    if (!payload.path) {
+      throw new BadRequestException('secret request is missing its destination path');
     }
     // Write the value to the ENCRYPTED store + create the owner grant (name → repo → path). This is the
     // value's only resting place; everything downstream is masked.
@@ -1014,7 +1117,7 @@ export class WebSurfaceController {
 
   /**
    * `GET …/jobs/:jobId/services` — list processes the agent has started via `atlas-svc run`, read from
-   * their durable marker files (the host mirror of `/atlas-home/supervisor`). Always-available history,
+   * their durable marker files (the host mirror of `/.atlas/supervisor`). Always-available history,
    * independent of turn lifecycle — NOT a live liveness check (see {@link ServiceInfo}). Empty when the
    * thread has no sandbox home yet or the agent has started nothing.
    */
@@ -1062,10 +1165,40 @@ export class WebSurfaceController {
         startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : null,
         logBytes,
         logUpdatedAt,
+        status: 'unknown', // overwritten by the liveness probe below
       });
     }
     services.sort((a, b) => a.id.localeCompare(b.id));
+
+    // Join the durable markers with a LIVE liveness probe (exec `kill -0` into the container), gated on
+    // the container generation so a recreated container reusing a pgid can't fake `running`. Memoized so
+    // overlapping polls / multiple open clients collapse into one docker exec.
+    const pgids = services.map((s) => s.pgid).filter((p): p is number => p != null);
+    const probe = await this.probeLivenessMemoized(jobId, pgids);
+    for (const s of services) s.status = serviceStatus(s, probe);
+
     return { services };
+  }
+
+  /** In-flight/recent liveness probes keyed by job + the exact pgid set (a changed set busts it). */
+  private readonly livenessMemo = new Map<string, { at: number; probe: Promise<ServiceLivenessProbe> }>();
+
+  /**
+   * Rate-limit the liveness probe: within {@link LIVENESS_MEMO_TTL_MS} the same job + pgid set reuses the
+   * one in-flight/resolved probe, so the ~5s status poll (× however many open clients) collapses to a
+   * single `docker exec`. Keyed by the pgid SET so a service starting/stopping mid-window isn't masked.
+   */
+  private probeLivenessMemoized(jobId: string, pgids: number[]): Promise<ServiceLivenessProbe> {
+    const key = `${jobId}|${[...pgids].sort((a, b) => a - b).join(',')}`;
+    const now = Date.now();
+    const hit = this.livenessMemo.get(key);
+    if (hit && now - hit.at < LIVENESS_MEMO_TTL_MS) return hit.probe;
+    const probe = this.threadLifecycle.probeLiveness(jobId, pgids);
+    this.livenessMemo.set(key, { at: now, probe });
+    if (this.livenessMemo.size > 256) {
+      for (const [k, v] of this.livenessMemo) if (now - v.at >= LIVENESS_MEMO_TTL_MS) this.livenessMemo.delete(k);
+    }
+    return probe;
   }
 
   /**

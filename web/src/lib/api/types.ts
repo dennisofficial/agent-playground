@@ -125,11 +125,17 @@ export interface WebSecretInputCard {
   type: 'secret_input_card';
   jobId: string;
   requestId: string;
+  /** Secret name, or a display LABEL only when {@link ephemeral}. */
   name: string;
-  path: string;
+  /** Durable destination; absent for an ephemeral request. */
+  path?: string;
   description: string;
-  /** A headless-login URL (e.g. `gcloud auth login --no-browser`) to render as a clickable link above the field. */
+  /** A headless-login URL (e.g. `gcloud auth login --no-launch-browser`) to render as a clickable link above the field. */
   url?: string;
+  /** One-time value delivered straight to the running sandbox and NEVER stored (OAuth code, 2FA, sudo pw). */
+  ephemeral?: boolean;
+  /** Ephemeral-only: the in-container path the value is piped to (operational, not a secret). */
+  deliver_to?: string;
   provided_at?: string;
   delivered_at?: string;
 }
@@ -351,8 +357,8 @@ export interface ContextFileContent {
 // ── Supervised services (`…/threads/:jobId/services`) ────────────────────────────────────────────
 /**
  * One process the agent started via `atlas-svc run`, from its durable marker file. Mirrors the backend
- * `ServiceInfo` — a DURABLE snapshot, not a live liveness check (the host can't see into the container's
- * PID namespace), so a service may show its last marker after it has actually stopped.
+ * `ServiceInfo`. The marker fields (pid/startedAt/log*) are a durable snapshot; `status` is a LIVE
+ * liveness check the backend runs by execing a generation-gated `kill -0` probe into the container.
  */
 export interface ServiceInfo {
   id: string;
@@ -363,6 +369,12 @@ export interface ServiceInfo {
   startedAt: string | null;
   logBytes: number;
   logUpdatedAt: string | null;
+  /**
+   * Live liveness: `running` (process answered in the current container generation), `stopped` (marker
+   * present but the process is gone — crash, `atlas-svc stop`, or a previous/absent container),
+   * `unknown` (couldn't probe: no running container, null pgid/startedAt, or a transient exec failure).
+   */
+  status: 'running' | 'stopped' | 'unknown';
 }
 
 

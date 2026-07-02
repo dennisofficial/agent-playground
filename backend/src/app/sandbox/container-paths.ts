@@ -3,8 +3,27 @@
  * runner so they're a stable, dependency-light import for the manager / runner / provisioner.
  */
 
-/** The engine's isolated agent home INSIDE the sandbox (long-lived → session resume across turns). */
-export const CONTAINER_AGENT_HOME = '/atlas-home';
+import { posix } from 'node:path';
+
+/**
+ * The ENGINE's own isolated home INSIDE the sandbox — session transcripts (long-lived → resume across
+ * turns) and `atlas-svc` supervisor markers/logs. Host-owned, durable, keyed PER-JOB (survives a
+ * `reset_sandbox` of the same job, but NOT shared across other jobs on the repo — see {@link CONTAINER_HOME}
+ * for cross-job/per-repo durability). Hidden dotdir naming (`.atlas`, mirroring `.git`/`.ssh`/`.docker`)
+ * signals this is engine-internal machinery, NOT a general scratch space — Atlas's own throwaway
+ * scripts/spikes belong in {@link CONTAINER_PLAYGROUND} instead.
+ */
+export const CONTAINER_AGENT_HOME = '/.atlas';
+
+/**
+ * The agent shell's `HOME` INSIDE the sandbox — a durable, host-owned, PER-REPO bind. Turns exec as the
+ * host uid:gid (not root) and the image would otherwise leave `HOME` undefined, so a tool's "default"
+ * config/cred/install paths (`~/.config/gcloud`, `~/.local/bin`) were neither well-defined nor persistent.
+ * Binding this per-repo makes those defaults real + durable across resets and jobs, with no config override.
+ * NOTE: distinct from {@link CONTAINER_AGENT_HOME} — that is the ENGINE's OWN config dir (transcripts, keyed
+ * per-job; the engine sets it explicitly, not via `HOME`), so changing `HOME` never touches session resume.
+ */
+export const CONTAINER_HOME = '/home/atlas';
 
 /**
  * The worktree's mount path INSIDE the sandbox — a NEUTRAL container path, NOT the host path. The host
@@ -14,27 +33,32 @@ export const CONTAINER_AGENT_HOME = '/atlas-home';
 export const CONTAINER_WORKTREE = '/workspace';
 
 /** The repo's SHARED git common dir mount path INSIDE the sandbox (linked-worktree case only). */
-export const CONTAINER_GIT_COMMON = '/repo.git';
+export const CONTAINER_GIT_COMMON = `${CONTAINER_AGENT_HOME}/git-common`;
 
 /**
- * The in-sandbox path of the SHARED pnpm content-addressable store. pnpm forces its store onto the
- * PROJECT's device — it ignores `store-dir`/`.npmrc` pointing at another mount and always uses
- * `<project-mount>/.pnpm-store` (verified live). So the only way to share the store across every
- * thread is to bind ONE host dir at exactly this path; a dependency is then fetched ONCE globally and
- * copied from the store on every later install (cross-device → copy, not hardlink). The store is
- * git-excluded by the `WorktreeProvisioner`, so `commitAll`'s `git add -A` never stages it — which is
- * what previously failed the build when a ~1.7 GB `.pnpm-store/` landed in the worktree.
+ * The in-sandbox path of the SHARED pnpm content-addressable store — explicitly pointed here regardless
+ * of which pnpm version a repo's `packageManager` field (or corepack's own resolution) ends up running,
+ * via TWO mechanisms baked in the sandbox Dockerfile (verified live against both): `npm_config_store_dir`
+ * for pnpm 10.x and earlier, and a global `~/.config/pnpm/config.yaml` (reached by redirecting
+ * `XDG_CONFIG_HOME` to a path no bind ever shadows) for pnpm 11.x, which dropped `storeDir` from
+ * `.npmrc`/env vars in favor of that file or a per-project `pnpm-workspace.yaml`. Left unset, pnpm falls
+ * back to its own per-disk default — which, even with a durable `HOME` (a separate bind from `/workspace`
+ * either way), still lands a LIVE store inside the worktree, which is what once made a ~1.7 GB
+ * `.pnpm-store/` get swept into a commit by `git add -A`. One host dir is bound here, shared by every
+ * org/repo/thread, so a dependency is fetched ONCE globally and copied from the store on every later
+ * install (copy, not hardlink — the store bind is a separate device from the worktree either way).
  */
-export const CONTAINER_PNPM_STORE = `${CONTAINER_WORKTREE}/.pnpm-store`;
+export const CONTAINER_PNPM_STORE = `${CONTAINER_AGENT_HOME}/pnpm-store`;
 
 /**
- * Worktree-relative paths the SYSTEM already binds under {@link CONTAINER_WORKTREE} on its own. A
- * repo's worktree config must NOT also request a cache mount at one of these, or two binds land
- * on the same container target and Docker hard-fails container creation ("Duplicate mount point"),
- * wedging every turn on the thread. `.pnpm-store` is the shared store bound at {@link
- * CONTAINER_PNPM_STORE}; the fnm store (`/atlas-fnm`) and `/context` live OUTSIDE `/workspace` so a
- * worktree-relative mount can't reach them. Reserved mounts are dropped (with a warning) both when the
- * brain authors config and when it is resolved at provision time.
+ * Worktree-relative paths the SYSTEM already binds under {@link CONTAINER_WORKTREE} on its own, OR that
+ * must never be mounted into a worktree at all. A repo's worktree config must NOT request a cache mount
+ * at one of these, or (for a genuine system bind) two binds would land on the same container target and
+ * Docker hard-fails container creation ("Duplicate mount point"), wedging every turn on the thread.
+ * `.pnpm-store` no longer lives under `/workspace` (see {@link CONTAINER_PNPM_STORE}, now under
+ * `/.atlas`) but stays reserved regardless — a repo has no legitimate reason to mount a package cache
+ * into its own worktree. Reserved mounts are dropped (with a warning) both when the brain authors config
+ * and when it is resolved at provision time.
  */
 export const RESERVED_WORKTREE_MOUNTS: ReadonlySet<string> = new Set(['.pnpm-store']);
 
@@ -49,7 +73,13 @@ export const RESERVED_WORKTREE_MOUNTS: ReadonlySet<string> = new Set(['.pnpm-sto
  */
 export type MountMode = 'per-thread' | 'shared-ro' | 'shared-rw';
 
-/** A cache/state directory bind-mounted into the container at `path` (worktree-relative). */
+/**
+ * A cache/state directory bind-mounted into the container at `path`. `path` is EITHER worktree-relative
+ * (lands at `/workspace/<path>`, the original behaviour) OR an absolute container path (an EXTERNAL mount
+ * at that exact location, e.g. `/root/.config/gcloud`) — see {@link isExternalMountPath}. External targets
+ * are guarded by {@link isReservedContainerPath} (can't shadow a system bind / OS root); the HOST side is
+ * always a managed org/repo cache dir regardless, so no arbitrary host path is ever bound.
+ */
 export interface MountSpec {
   path: string;
   mode: MountMode;
@@ -86,7 +116,7 @@ export function isReservedMountPath(p: string): boolean {
  * every later thread — mirroring the shared pnpm store. (Sandboxes have outbound egress; only inbound
  * port exposure is unavailable.) A repo with no version file just runs the image's base Node 22.
  */
-export const CONTAINER_FNM_STORE = '/atlas-fnm';
+export const CONTAINER_FNM_STORE = `${CONTAINER_AGENT_HOME}/fnm`;
 
 /**
  * The thread's durable SHARED CONTEXT folder INSIDE the sandbox — a per-thread scratch/working space
@@ -105,3 +135,38 @@ export const CONTAINER_CONTEXT = '/context';
  * scratch pad, given no imposed structure.
  */
 export const CONTAINER_PLAYGROUND = '/playground';
+
+/** True if a mount `path` is an ABSOLUTE container path (an external mount) vs a worktree-relative one. */
+export function isExternalMountPath(path: string): boolean {
+  return posix.isAbsolute(path);
+}
+
+/**
+ * Container paths an EXTERNAL mount may not target — every system bind the sandbox already owns, plus the
+ * OS roots that would break the box if shadowed. Declared AFTER all the `CONTAINER_*` consts so the array
+ * literal doesn't hit a temporal-dead-zone at module load.
+ */
+export const RESERVED_CONTAINER_MOUNTS: readonly string[] = [
+  CONTAINER_WORKTREE, // /workspace
+  CONTAINER_AGENT_HOME, // /.atlas (covers the nested pnpm-store/fnm/git-common binds under it too)
+  CONTAINER_HOME,
+  CONTAINER_FNM_STORE,
+  CONTAINER_CONTEXT,
+  CONTAINER_GIT_COMMON,
+  CONTAINER_PLAYGROUND,
+  '/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/boot', '/proc', '/sys', '/dev', '/run',
+];
+
+/**
+ * True if an absolute container `path` collides with a reserved location — checked as "IS, is UNDER, or is
+ * an ANCESTOR of" any reserved path (so mounting `/` or `/home` — a parent of `/home/atlas` — is refused
+ * too, since binding a parent would shadow the child system bind). Trailing slashes are ignored.
+ */
+export function isReservedContainerPath(path: string): boolean {
+  const norm = (posix.normalize(path).replace(/\/+$/, '') || '/');
+  if (norm === '/') return true;
+  return RESERVED_CONTAINER_MOUNTS.some((r) => {
+    const rr = r.replace(/\/+$/, '');
+    return norm === rr || norm.startsWith(`${rr}/`) || rr.startsWith(`${norm}/`);
+  });
+}

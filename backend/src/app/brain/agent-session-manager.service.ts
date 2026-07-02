@@ -9,7 +9,7 @@ import {
   type OnApplicationShutdown,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
 import type {
@@ -59,7 +59,13 @@ import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/planner-llm';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
-import { isReservedMountPath, MAX_MOUNT_PATH_LEN, type MountMode } from '../sandbox/container-paths';
+import {
+  isExternalMountPath,
+  isReservedContainerPath,
+  isReservedMountPath,
+  MAX_MOUNT_PATH_LEN,
+  type MountMode,
+} from '../sandbox/container-paths';
 import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { TicketService } from '../tickets';
@@ -96,6 +102,7 @@ import {
   SANDBOX_RESET_NOTICE,
 } from '../engine/engine.types';
 import type {
+  EngineEvent,
   EngineRunnerPort,
   ToolImpl,
   RunEngineArgs,
@@ -139,6 +146,17 @@ export class AgentSessionManager
   private leaderBootSub?: Subscription;
   /** The boot sweeps run ONCE per process — never on a mid-life re-promote (would clear active turns). */
   private bootSweepsDone = false;
+  /** Leader-only periodic chat-delivery sweep (started on promote, stopped on demote/shutdown). */
+  private chatSweepPromoteSub?: Subscription;
+  private chatSweepDemoteSub?: Subscription;
+  private chatSweepTimer?: ReturnType<typeof setInterval>;
+
+  /**
+   * Delivery LEASE window: once the pump takes a pending chat row (steers it / hands it to a fresh turn),
+   * it can't be re-selected for this long. Longer than a cold-container provision so a live delivery isn't
+   * raced by the sweep; the per-thread turn queue is the real serializer, so this is a cross-pass guard.
+   */
+  private static readonly CHAT_DELIVERY_LEASE_MS = 2 * 60 * 1000;
 
   /**
    * The thread brain's model — the conversational/planning session that grills, locks decisions, and
@@ -163,6 +181,8 @@ export class AgentSessionManager
   private readonly pendingResetVerify = new Set<string>();
   /** Consecutive autonomous resets — incremented by the tool, cleared ONLY on an operator turn (loop guard). */
   private readonly consecutiveResets = new Map<string, number>();
+  /** Per-job resolved git auth (repo url + org PAT) for in-sandbox push/fetch — cached; see resolveBrainGitAuth. */
+  private readonly gitAuthByJob = new Map<string, { gitUrl: string; token?: string }>();
 
   constructor(
     private readonly store: BrainStoreService,
@@ -211,6 +231,33 @@ export class AgentSessionManager
     private readonly git: LocalGitService,
   ) {}
 
+  /**
+   * Resolve (and cache per job) the repo url + org GitHub PAT so the brain's turns can fetch/push/merge
+   * against the remote from inside the sandbox. Sourced from the RESOLVED repo — never `sandbox`, whose
+   * row-sourced form carries an empty `gitUrl`/no token. Cached because `resolve()` re-checks the clone
+   * and the repo url is stable + the org PAT rarely rotates mid-session. Best-effort: on failure returns
+   * undefined (and does NOT cache), so remote git ops fail closed via `GIT_TERMINAL_PROMPT=0` and a later
+   * turn retries. Only caches when a real token is present (a tokenless resolve isn't worth pinning).
+   */
+  private async resolveBrainGitAuth(
+    jobId: string,
+  ): Promise<{ gitUrl: string; token?: string } | undefined> {
+    const cached = this.gitAuthByJob.get(jobId);
+    if (cached) return cached;
+    try {
+      const job = await this.store.loadJob(jobId);
+      const repo = await this.repos.resolve(job);
+      const auth = { gitUrl: repo.projectRepo.gitUrl, token: repo.token };
+      if (auth.gitUrl && auth.token) this.gitAuthByJob.set(jobId, auth);
+      return auth;
+    } catch (err) {
+      this.logger.warn(
+        `brain git auth resolve failed for job ${jobId} (remote git disabled this turn): ${err}`,
+      );
+      return undefined;
+    }
+  }
+
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
 
   private static readonly SYSTEM_PROMPT = [
@@ -228,6 +275,15 @@ export class AgentSessionManager
     'you genuinely cannot do routes through your tools (request_secret/request_file for credentials,',
     'ask_question for decisions and facts only the operator knows). Your work reaches their world ONLY',
     'through what you ship (the PR) and what you post in chat.',
+    '',
+    'YOU OWN GIT IN THE SANDBOX: your checkout has AUTHENTICATED git — the remote is wired with a',
+    'credential, so you can `git fetch`, `git merge origin/<base>`, `git rebase`, resolve conflicts by',
+    'editing files, and `git push` your branch DIRECTLY. Do it yourself when the work calls for it. NEVER',
+    'tell the operator you "cannot push", ask them to push for you, or ask them to run git on their machine',
+    '— there is no operator-side checkout, and no separate "finalize flow" is needed to get your commits to',
+    'the remote. (Shipping a NEW feature still goes through finalize_build / dispatch_build, which commit,',
+    'review, and open the PR; direct git is for fetching, syncing the base branch, resolving conflicts, and',
+    'pushing follow-up fixes onto an already-open PR branch.)',
     '',
     `You have 21 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
     `under its fully-qualified name "mcp__${BRIDGE_SERVER_NAME}__<tool>" — that is the ONLY name that works.`,
@@ -411,10 +467,13 @@ export class AgentSessionManager
     '',
     'THE /playground SCRATCH SPACE: `/playground` is your durable scratch pad, OUTSIDE the repo. Put',
     'THROWAWAY work here — spike scripts, one-off test/verification harnesses, screenshot-driving scripts,',
-    'ad-hoc `npm install`s — instead of writing temp files into `/workspace` (which pollutes the git diff and',
-    'risks landing junk in the PR). It survives container restarts and is shared across the job\'s build lanes.',
-    "It is NOT a deliverable: nothing in `/playground` is ever committed. Reach for it any time you'd otherwise",
-    'scribble a temporary file into the repo or `/tmp` (which is wiped on restart).',
+    'ad-hoc `npm install`s, a helper script for a login/setup dance (e.g. `gcloud-login.sh`) — instead of',
+    'writing temp files into `/workspace` (which pollutes the git diff and risks landing junk in the PR).',
+    'It survives container restarts and is shared across the job\'s build lanes. It is NOT a deliverable:',
+    "nothing in `/playground` is ever committed. Reach for it any time you'd otherwise scribble a temporary",
+    'file into the repo or `/tmp` (which is wiped on restart). NEVER write your own files into `/.atlas` —',
+    'that is the ENGINE\'s own dir (session transcripts, atlas-svc supervisor markers); it is not a general',
+    'scratch space and its layout is not yours to use.',
     '',
     'DECISION LEDGER — `/workspace/.atlas/decisions/` is the DURABLE, repo-level record of the cross-cutting',
     'architecture calls that OUTLIVE one feature ("money-out requires SUPER_ADMIN", "credits via Stripe',
@@ -579,16 +638,19 @@ export class AgentSessionManager
     'key — nobody typed it, nothing for an operator to gate), call `derive_secret({ name, path, value,',
     'description })` to store it durably with no operator wait — otherwise every future job re-derives it from',
     'scratch, paying the same tax you just paid.',
-    'If you discover the repo needs a persistent cache/auth mount (e.g. a `.gcloud`/`.stripe` dir a tool',
-    'expects to survive across jobs), call `write_worktree_config({ mounts, seed })` to record it — it writes',
-    'straight to the DB (org+repo scoped), live for every job on this repo on its very next turn, no PR needed.',
+    'Persistence, by kind: (a) a CLI you install (gcloud/stripe/a `curl|sh` binary) → drop it in `~/.local/bin`',
+    '(already on PATH, durable) — never re-export PATH or install into /workspace; (b) a tool credential/cache →',
+    'it already persists at its DEFAULT `~/.config`/`~/.cache` path (durable per-repo HOME), no mount or config',
+    'override needed; (c) a durable dir a tool insists on writing ELSEWHERE → `write_worktree_config({ mounts })`',
+    'with a worktree-relative OR an absolute (external, outside /workspace) path — a DB write, live for every job',
+    'next turn, no PR; (d) a system `apt` package → will NOT survive a reset, `remember` it for the base image.',
     'Small environment fixes (a broken script, a missing build step another package needs) are just a normal',
     'code change — make them as part of your build like anything else. Do not silently work around something',
     'that will bite the next job too when it is fixable in the repo.',
     'If you set up environment state by hand and want to confirm it will survive for the next job, call',
     '`reset_sandbox({ reason })` — it recreates your container fresh on your next turn (worktree, recorded',
-    'mounts, granted secrets, and /atlas-home survive; ephemeral state does not), then STOP and verify what',
-    'came back. Whatever you have to redo by hand is what you forgot to record.',
+    'mounts, granted secrets, your HOME, and /.atlas survive; ephemeral state does not), then STOP and verify',
+    'what came back. Whatever you have to redo by hand is what you forgot to record.',
     '',
     'ACT WITH CARE, REPORT TRUTHFULLY: the approval gate is your safety net, not a substitute for judgment.',
     'The hard-to-reverse, outward-facing actions are `finalize_build` / `dispatch_build` (they commit code and',
@@ -631,7 +693,10 @@ export class AgentSessionManager
     '  1. Learn how the repo runs from ITS OWN docs — package.json scripts, README, CLAUDE.md, compose files,',
     '     .env.example. Do not invent; re-derive. Install deps the way the repo expects (e.g. pnpm install).',
     '     Build a FLEET INVENTORY from what you find: EVERY runnable thing the repo defines — every backend',
-    '     app/API, every frontend, every worker/daemon/queue processor/cron, every infra service in compose.',
+    '     app/API, every frontend, every worker/daemon/queue processor/cron, every infra service in compose,',
+    '     AND every infra-as-code stack (terraform/pulumi/cdk/etc. — an `infra/`-style dir with its own',
+    '     provider config). IaC entries are validated differently (see step 5) but still belong on the list —',
+    '     do not wait for the operator to ask whether you checked them.',
     '     That inventory is your checklist for the rest of the ceremony: you are not done until every entry',
     '     is booted AND validated, or explicitly recorded as not-locally-runnable and why. Booting one',
     '     representative backend and one frontend and calling it a day is NOT onboarding. The moment the',
@@ -665,8 +730,10 @@ export class AgentSessionManager
     '     running simultaneously.',
     '  4. When a boot fails for a MISSING secret/file/credential, request it on the spot (see SECRETS/AUTH),',
     '     wait for it to render into the worktree, then retry — do not give up and do not fake it.',
-    '  5. Anything that would mutate EXTERNAL state (terraform apply, real cloud provisioning, live writes):',
-    '     validate to plan/dry-run ONLY (`terraform plan`, config parse). Never create real infra from here.',
+    '  5. For each IaC entry from the inventory, validate it WITHOUT mutating external state: `terraform init`',
+    '     (or the tool\'s equivalent) + `validate` + `plan` (config parse / dry-run), and record what the plan',
+    '     shows (in sync, drifted, or would-create). Anything that would mutate EXTERNAL state — `apply`, real',
+    '     cloud provisioning, live writes — is OFF LIMITS from here; never run it, no matter how it is asked for.',
     'NEVER ask the operator anything the repo already answers — investigate first.',
     '',
     TASK_LIST_NOTE,
@@ -711,6 +778,10 @@ export class AgentSessionManager
     'service-account JSON, a keystore/.pem, a gitignored .env.keys — call request_file({ path, description }):',
     'the operator uploads it, contents stored ENCRYPTED + granted to `path` (which MUST be gitignored). Both',
     'propagate instantly to every future job; request_file is per-card (open several).',
+    'For a ONE-TIME, short-lived value that must go to a RUNNING process, not a file — an OAuth verification',
+    'code, a 2FA/OTP, a sudo password — call request_secret({ ephemeral: true, deliver_to, description }):',
+    'the value is piped straight into `deliver_to` (an absolute path, usually a FIFO you set up) in the live',
+    'sandbox and NEVER stored. See AUTH / CAPABILITY ACCESS for the full interactive-login recipe.',
     '',
     'DERIVED values — some values are NOT operator-provided at all: you COMPUTE them yourself, using a',
     "credential you already hold. E.g. `stripe listen --print-secret` prints a webhook signing secret from",
@@ -721,27 +792,51 @@ export class AgentSessionManager
     '',
     'AUTH / CAPABILITY ACCESS — if the repo talks to a cloud (gcloud/gsutil, Firebase/Firestore, a real DB),',
     'you may need credentials YOU use directly. A static key file is just a request_file secret. For an',
-    'INTERACTIVE login that writes a token dir (e.g. `gcloud auth login`), that state must PERSIST across jobs:',
-    'record its dir as a `shared-rw` mount via write_worktree_config (per-repo, reused everywhere — e.g.',
-    "`.gcloud`, matching the repo's own .envrc if it has one), run the headless login (`--no-browser`), and",
-    'use request_secret with a `url` to hand the operator the auth URL and take the code back. Then verify the',
-    'access actually works (e.g. `gsutil ls`, a read query) as part of proving green.',
+    'INTERACTIVE login (e.g. `gcloud auth login`): the tool writes its token to its DEFAULT location under your',
+    'HOME (`~/.config/gcloud`), and HOME is a durable, host-owned, PER-REPO dir — so the token PERSISTS across',
+    'resets and future jobs with NO mount and NO config override, and no sandbox recreate. Just run the login',
+    '(across an operator round-trip for the one-time code):',
+    '  1. Make a FIFO for the operator code: `mkfifo /tmp/atlas-login-in`.',
+    '  2. Start the login under the supervisor with a NON-BLOCKING stdin open so the URL prints immediately:',
+    "     `atlas-svc run --name login -- sh -c 'exec 0<>/tmp/atlas-login-in; gcloud auth login --no-launch-browser'`.",
+    '     (`exec 0<>fifo` opens it read-write so gcloud starts and prints the URL without waiting for a writer;',
+    '     plain `< fifo` DEADLOCKS — it blocks until a writer exists, so the URL never appears.)',
+    '  3. Read the sign-in URL from the supervisor log (`atlas-svc logs login`).',
+    '  4. NOW post the code request — the URL is known: request_secret({ ephemeral: true,',
+    '     deliver_to: "/tmp/atlas-login-in", url: <that URL>, description }). EPHEMERAL is mandatory for a',
+    '     one-time code — it is piped straight into the FIFO and NEVER stored (a normal request_secret would',
+    '     persist a dead, expired code forever). Then STOP and wait.',
+    '  5. On the confirmation, gcloud has completed; verify access works (`gcloud auth list`, `gsutil ls`, a',
+    '     read query) as part of proving green. The token in `~/.config/gcloud` persists, so future jobs are',
+    '     already logged in — re-run the login only when a reauth error says the session expired.',
+    'Only if a tool INSISTS on writing its state OUTSIDE your HOME do you need a mount — record its absolute',
+    'path as a `shared-rw` external mount via write_worktree_config (lands there directly, outside /workspace).',
     '',
-    'CONFIG — non-secret provisioning is DB-backed via write_worktree_config({ mounts, seed }) (no file, no PR):',
-    '  - mounts: cache/auth dirs to persist across jobs. `per-thread` (own dir), `shared-ro` (one read-only',
-    '    dir), or `shared-rw` (one per-repo read-write dir — for persistent auth state like `.gcloud`).',
+    'INSTALLING A CLI (gcloud SDK, Stripe CLI, a `curl|sh` binary) — install it into your HOME the normal way',
+    'so it PERSISTS across resets/jobs and is already on PATH: put the binary in `~/.local/bin` (or symlink a',
+    "tarball's bin there, e.g. `ln -s ~/google-cloud-sdk/bin/* ~/.local/bin/`). `~/.local/bin` is on PATH — do",
+    'NOT re-export PATH each turn, and do NOT install into /workspace. A tool needing a system `apt install`',
+    'will NOT survive a reset — `remember` it and tell the operator it needs baking into the sandbox image.',
+    '',
+    'CONFIG — non-secret provisioning is DB-backed via write_worktree_config({ mounts, seed }) (no file, no PR).',
+    'For most credential/cache state you need NO mount at all — it already lives under your durable HOME',
+    '(`~/.config`, `~/.cache`, `~/.local`). Use a mount only for a durable dir a tool writes ELSEWHERE:',
+    '  - mounts: a path may be WORKTREE-RELATIVE (lands at /workspace/<path> — e.g. a repo whose own `.envrc`',
+    '    expects `./.cache`) OR ABSOLUTE (an external durable dir anywhere in the box, outside /workspace, so',
+    '    it never enters the git tree). Modes: `per-thread` / `shared-ro` / `shared-rw` (one per-repo rw dir).',
     '  - seed: operator golden files to copy in (rare). Secrets do NOT go here — use request_secret/file.',
     'Do NOT record how-to-run commands here — those are re-derived from the repo. The pnpm store and Node (via',
-    'fnm) are AUTO-MANAGED — NEVER add `.pnpm-store`, `node_modules`, or a Node dir as a mount (it collides).',
+    'fnm) are AUTO-MANAGED caches — NEVER add `.pnpm-store`, `node_modules`, or a Node dir as a mount.',
     '',
     'RESET / PROVE-IT-COLD-BOOTS — a stack that runs right now might only run because of ephemeral container',
-    'state YOU created by hand (a package installed outside /workspace, a login that wrote a token dir you',
-    'never recorded as a shared-rw mount, a service you started manually). The next fresh job would NOT have',
-    'it. Before you finish, call reset_sandbox({ reason }) to recreate the container from scratch, then STOP.',
-    'On your next turn the box is fresh — the worktree, recorded mounts, granted secrets, and /atlas-home',
-    'survive; everything else is gone. Re-run setup and see what broke: whatever you have to re-do by hand is',
-    'exactly what you forgot to record (fix it via write_worktree_config / request_secret / derive_secret,',
-    'then reset again to confirm). This is the strongest evidence onboarding is DURABLE, not just working now.',
+    'state YOU created by hand (a global install outside your HOME/workspace, a tool that wrote state OUTSIDE',
+    'your HOME that you never recorded as a mount, a service you started manually). The next fresh job would',
+    'NOT have it. Before you finish, call reset_sandbox({ reason }) to recreate the container from scratch,',
+    'then STOP. On your next turn the box is fresh — the worktree, recorded mounts, granted secrets, your',
+    'durable HOME (~/.config, ~/.local/bin), and /.atlas survive; everything else is gone. Re-run setup and see',
+    'what broke: whatever you have to re-do by hand is exactly what you forgot to record (fix it via',
+    'write_worktree_config / request_secret / derive_secret, then reset again to confirm). This is the',
+    'strongest evidence onboarding is DURABLE, not just working now.',
     '',
     'FINISH — only when the FULL fleet inventory is GREEN: every entry booted AND validated in use (authed',
     'API calls, the logged-in browser walkthrough for each web UI, a processed job per worker), required',
@@ -774,10 +869,30 @@ export class AgentSessionManager
     this.leaderBootSub = this.election.onPromote(() =>
       this.runLeaderBootSweeps(),
     );
+    // Leader-only periodic chat-delivery sweep: re-drive any operator message still undelivered (an
+    // unacked steer, a fresh turn that never registered). Started on promote, stopped on demote/shutdown.
+    this.chatSweepPromoteSub = this.election.onPromote(() => this.startChatDeliverySweep());
+    this.chatSweepDemoteSub = this.election.onDemote(() => this.stopChatDeliverySweep());
   }
 
   onApplicationShutdown(): void {
     this.leaderBootSub?.unsubscribe();
+    this.chatSweepPromoteSub?.unsubscribe();
+    this.chatSweepDemoteSub?.unsubscribe();
+    this.stopChatDeliverySweep();
+  }
+
+  private startChatDeliverySweep(): void {
+    if (this.chatSweepTimer) return;
+    this.chatSweepTimer = setInterval(() => void this.sweepUndeliveredChat(), CHAT_SWEEP_INTERVAL_MS);
+    if (typeof this.chatSweepTimer.unref === 'function') this.chatSweepTimer.unref();
+  }
+
+  private stopChatDeliverySweep(): void {
+    if (this.chatSweepTimer) {
+      clearInterval(this.chatSweepTimer);
+      this.chatSweepTimer = undefined;
+    }
   }
 
   /** The leader-only boot sweeps, run ONCE on first promotion. Each step is independently best-effort. */
@@ -848,7 +963,10 @@ export class AgentSessionManager
             jobId: s.jobId,
             orgId: s.orgId,
             repoId: s.repoId,
-            body: maskedSecretNotice(s.name, s.path),
+            body: maskedSecretNotice(s.name, {
+              ...(s.path ? { path: s.path } : {}),
+              ...(s.ephemeral ? { ephemeral: true } : {}),
+            }),
           });
           void this.handleChatTurn(stimulus).catch((err) =>
             this.logger.warn(
@@ -939,6 +1057,28 @@ export class AgentSessionManager
       }
     } catch (err) {
       this.logger.warn(`event-delivery reconciliation failed: ${err}`);
+    }
+
+    // Operator-chat delivery reconciliation (the durable-inbox at-least-once boot half): a plain operator
+    // message is a `stimuli` row persisted at intake; `delivered_at` is stamped only on a positive brain
+    // hand-off. Clear leases first (a row mid-attempt at crash never reached the registered hand-off — a
+    // registered turn would have stamped it), then pump every thread with an undelivered message. The pump
+    // steers a re-attached live turn or runs a fresh one; the periodic sweep keeps re-driving after boot.
+    try {
+      await this.resetChatLeases();
+      const threads = await this.undeliveredChatThreads();
+      if (threads.length > 0) {
+        this.logger.log(
+          `Leader: re-driving undelivered operator message(s) across ${threads.length} thread(s)`,
+        );
+        for (const t of threads) {
+          void this.pumpThread(t.jobId, t.orgId, t.repoId).catch((err) =>
+            this.logger.warn(`boot chat re-drive failed for thread=${t.jobId}: ${err}`),
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`chat-delivery reconciliation failed: ${err}`);
     }
 
     // Decision-ledger reconciliation: SHIPPED threads whose durable decisions never finished promoting
@@ -1055,6 +1195,11 @@ export class AgentSessionManager
     // already rejected with 503 at the surface; this catches internal/boot re-delivery callers so the
     // in-flight set can actually quiesce. A no-op (not a throw) — internal callers are fire-and-forget.
     if (this.election.getState() === 'draining') return;
+
+    // NOTE: plain operator chat no longer enters here — it rides the durable delivery pump (`enqueueChat`
+    // → `pumpThread`), which owns the steer-vs-fresh-turn decision AND the delivered/sweep guarantee. This
+    // method now serves only SYSTEM turns (seeds, event/harness deliveries), which always run as their own
+    // queued turn (never steered). Kept as the shared "run this stimulus as a serialized turn" primitive.
     const key = `${stimulus.orgId}:${stimulus.jobId}`;
     const prev = this.turnQueues.get(key) ?? Promise.resolve();
     // Chain after any in-flight turn (swallow its error so a failed turn doesn't break the queue).
@@ -1069,6 +1214,221 @@ export class AgentSessionManager
       }),
     );
     return next;
+  }
+
+  // ── Durable operator-message delivery (the pump) ─────────────────────────────────────────────────
+  //
+  // Every plain operator chat message is a durable `stimuli` row (persisted at intake). The pump is the
+  // single owner of "get it to the brain, exactly once": steer a live turn, or run a fresh one, and stamp
+  // `delivered_at` only on a positive hand-off (an engine `input_ack`, or the runner's registration). A
+  // leader sweep re-drives anything still undelivered — so a swallowed steer / crash / sandbox transition
+  // self-heals instead of silently losing the message (see the durable-delivery redesign).
+
+  /** BrainSink.enqueueChat — a persisted operator message is ready; ensure the brain takes it. */
+  async enqueueChat(stimulus: ChatStimulus): Promise<void> {
+    await this.pumpThread(stimulus.jobId, stimulus.orgId, stimulus.repoId);
+  }
+
+  /**
+   * Deliver a thread's pending operator messages. FAST PATH: a running brain turn is steered directly
+   * (outside the per-thread queue — that queue is HELD by the very turn we want to steer), so the model
+   * reacts mid-flight; the engine's `input_ack` stamps delivery. SLOW PATH (no running turn): a fresh turn
+   * is queued (serialized with all other turns) that coalesces the pending batch and stamps delivery at its
+   * registration hand-off. Idempotent + safe to call redundantly (intake poke, sweep) — the lease + the
+   * in-container exactly-once steer id set prevent double-injection.
+   */
+  async pumpThread(jobId: string, orgId: string, repoId: string): Promise<void> {
+    if (this.election.getState() === 'draining') return;
+
+    const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
+    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+      const pending = await this.eligiblePendingChat(jobId).catch((err) => {
+        this.logger.warn(`pump: eligiblePendingChat failed for thread=${jobId}: ${err}`);
+        return [] as ChatStimulus[];
+      });
+      if (pending.length) await this.steerPending(live.turn_id, pending);
+      return;
+    }
+
+    // No running turn → deliver via a fresh turn, serialized on the per-thread turn queue.
+    const key = `${orgId}:${jobId}`;
+    const prev = this.turnQueues.get(key) ?? Promise.resolve();
+    const next = prev
+      .catch(() => undefined)
+      .then(() => this.deliverPendingViaFreshTurn(jobId, orgId, repoId));
+    this.turnQueues.set(
+      key,
+      next.finally(() => {
+        if (this.turnQueues.get(key) === next) this.turnQueues.delete(key);
+      }),
+    );
+    return next;
+  }
+
+  /** Run ONE fresh turn that consumes the thread's pending operator messages (coalesced, oldest first). */
+  private async deliverPendingViaFreshTurn(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+  ): Promise<void> {
+    const pending = await this.eligiblePendingChat(jobId).catch((err) => {
+      this.logger.warn(`pump: eligiblePendingChat failed for thread=${jobId}: ${err}`);
+      return [] as ChatStimulus[];
+    });
+    if (pending.length === 0) return;
+
+    // A turn may have appeared since pumpThread's check (a boot re-attach resumed one). Steer it instead of
+    // starting a SECOND turn on the same session (never two concurrent turns resuming one session id).
+    const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
+    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+      await this.steerPending(live.turn_id, pending);
+      return;
+    }
+
+    await this.leaseChatStimuli(pending.map((p) => p.id));
+    const ids = pending.map((p) => p.id);
+    // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
+    // message); the brain reads them together as this turn's task. Base fields come from the oldest.
+    const combined: ChatStimulus = {
+      ...pending[0],
+      body: pending.map((p) => p.body).join('\n\n'),
+    };
+    await this.runChatTurn(combined, {
+      // Restart-survivable hand-off: stamp every coalesced message delivered the instant the turn is
+      // registered + kicked (a later crash resumes THIS turn rather than re-running these messages).
+      onRegistered: () => {
+        for (const id of ids) {
+          void this.markChatDelivered(id).catch((err) =>
+            this.logger.debug(`markChatDelivered ${id} failed (sweep will retry): ${err}`),
+          );
+        }
+      },
+    });
+  }
+
+  /** Steer each pending message into a live turn (lease first; the engine `input_ack` stamps delivered). */
+  private async steerPending(turnId: string, pending: ChatStimulus[]): Promise<void> {
+    await this.leaseChatStimuli(pending.map((p) => p.id)).catch((err) =>
+      this.logger.debug(`pump: leaseChat failed (continuing): ${err}`),
+    );
+    for (const p of pending) {
+      await this.engineRunner
+        .steer!(turnId, p.id, p.body)
+        .catch((err) =>
+          this.logger.warn(`pump: steer of turn ${turnId} failed (sweep will re-drive): ${err}`),
+        );
+    }
+  }
+
+  /** Stamp `delivered_at` when the engine acks a steered message (from either onEvent path). */
+  private stampInputAck(e: EngineEvent): void {
+    if (e.kind !== 'input_ack' || !e.id) return;
+    void this.markChatDelivered(e.id).catch((err) =>
+      this.logger.debug(`input_ack stamp for ${e.id} failed (sweep will retry): ${err}`),
+    );
+  }
+
+  /** LEADER periodic + boot re-drive of any operator message still undelivered (the at-least-once sweep). */
+  private async sweepUndeliveredChat(): Promise<void> {
+    if (this.election.getState() !== 'leader') return;
+    let threads: Array<{ jobId: string; orgId: string; repoId: string }>;
+    try {
+      threads = await this.undeliveredChatThreads();
+    } catch (err) {
+      this.logger.debug(`chat delivery sweep query failed (will retry): ${err}`);
+      return;
+    }
+    for (const t of threads) {
+      void this.pumpThread(t.jobId, t.orgId, t.repoId).catch((err) =>
+        this.logger.debug(`chat sweep pump failed for thread=${t.jobId}: ${err}`),
+      );
+    }
+  }
+
+  // ── Durable-delivery persistence (the `stimuli` chat-inbox queries, on this manager's own repo) ────
+
+  /** This thread's eligible pending chat stimuli (undelivered + lease-free), oldest first, as stimuli. */
+  private async eligiblePendingChat(jobId: string): Promise<ChatStimulus[]> {
+    const cutoff = new Date(Date.now() - AgentSessionManager.CHAT_DELIVERY_LEASE_MS);
+    const rows = await this.stimulusRows
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id = :j', { j: jobId })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere('(s.attempted_at IS NULL OR s.attempted_at < :cutoff)', { cutoff })
+      .orderBy('s.created_at', 'ASC')
+      .getMany();
+    return rows.map((r) => this.rowToChatStimulus(r));
+  }
+
+  /** Stamp the delivery lease (`attempted_at = now`) so a concurrent sweep can't re-take these rows. */
+  private async leaseChatStimuli(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.stimulusRows.update({ id: In(ids) }, { attempted_at: new Date() });
+  }
+
+  /** Mark a chat stimulus delivered (idempotent — only stamps a still-null row). */
+  private async markChatDelivered(id: string): Promise<void> {
+    await this.stimulusRows.update({ id, delivered_at: IsNull() }, { delivered_at: new Date() });
+  }
+
+  /** Distinct (thread, org, repo) tuples with at least one undelivered chat stimulus — the sweep worklist. */
+  private async undeliveredChatThreads(): Promise<Array<{ jobId: string; orgId: string; repoId: string }>> {
+    const rows = await this.stimulusRows
+      .createQueryBuilder('s')
+      .select('s.job_id', 'job_id')
+      .addSelect('s.org_id', 'org_id')
+      .addSelect('s.repo_id', 'repo_id')
+      .distinct(true)
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere('s.job_id IS NOT NULL')
+      .getRawMany<{ job_id: string; org_id: string; repo_id: string }>();
+    return rows.map((r) => ({ jobId: r.job_id, orgId: r.org_id, repoId: r.repo_id }));
+  }
+
+  /** Clear the lease on every undelivered chat row (boot reconcile — re-drive anything mid-attempt at crash). */
+  private async resetChatLeases(): Promise<void> {
+    await this.stimulusRows.update(
+      { kind: 'chat', delivered_at: IsNull() },
+      { attempted_at: null },
+    );
+  }
+
+  /** Reconstruct the in-memory `ChatStimulus` from a persisted chat row (for re-drive). */
+  private rowToChatStimulus(row: StimulusEntity): ChatStimulus {
+    return {
+      id: row.id,
+      orgId: row.org_id,
+      repoId: row.repo_id,
+      kind: 'chat',
+      trust: 'trusted',
+      body: row.body,
+      jobId: row.job_id as string,
+      author: {
+        id: row.author_id ?? '',
+        // Rows written before author_name existed fall back to the scope id as the display label.
+        displayName: row.author_name ?? row.author_id ?? 'operator',
+      },
+      replyRoute: row.reply_route ?? { surfaceId: '', jobRef: row.job_id as string },
+      receivedAt: row.created_at,
+    };
+  }
+
+  /**
+   * STOP the live brain turn for a thread (the operator hit Stop). Publishes a cooperative abort; the
+   * in-container engine aborts the SDK query and writes a graceful `final`, so the normal completion path
+   * persists the partial transcript, finalizes the registry row, reclaims the streams, and clears
+   * `turn_active` (whose turn_end fans out to drop the "working" indicator). No-op if nothing is running.
+   * Returns true when a live turn was found and signalled.
+   */
+  async stopTurn(jobId: string): Promise<boolean> {
+    if (typeof this.engineRunner.stop !== 'function') return false;
+    const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
+    if (!live?.turn_id) return false;
+    await this.engineRunner.stop(live.turn_id);
+    this.logger.log(`stop requested for brain turn ${live.turn_id} (job ${jobId})`);
+    return true;
   }
 
   /**
@@ -1195,7 +1555,12 @@ export class AgentSessionManager
         row.turn_id,
         row.container_id,
         {
-          onEvent: (e) => streamer.onEvent(e),
+          // Same durable-delivery ack handling as a fresh run: an `input_ack` replayed on re-attach still
+          // stamps its stimulus `delivered_at`, so a steer acked while the host was down can't redeliver.
+          onEvent: (e) => {
+            this.stampInputAck(e);
+            streamer.onEvent(e);
+          },
           toolBridge: { jobId: row.job_id, tools },
         },
       );
@@ -1242,12 +1607,15 @@ export class AgentSessionManager
    * comes back to the operator (every early return below still hits the `finally`). Best-effort flag
    * writes never block the turn. Delegates the actual turn to `runChatTurnInner`.
    */
-  private async runChatTurn(stimulus: ChatStimulus): Promise<void> {
+  private async runChatTurn(
+    stimulus: ChatStimulus,
+    opts?: TurnDeliveryOpts,
+  ): Promise<void> {
     await this.store
       .setTurnActive(stimulus.jobId, true)
       .catch(() => undefined);
     try {
-      await this.runChatTurnInner(stimulus);
+      await this.runChatTurnInner(stimulus, opts);
     } finally {
       await this.store
         .setTurnActive(stimulus.jobId, false)
@@ -1256,8 +1624,13 @@ export class AgentSessionManager
   }
 
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
-   *  `handleChatTurn` queue above — never invoked concurrently for the same thread. */
-  private async runChatTurnInner(stimulus: ChatStimulus): Promise<void> {
+   *  `handleChatTurn` queue above — never invoked concurrently for the same thread. `opts.onRegistered`
+   *  (the delivery pump's fresh-turn path) fires when the turn becomes restart-survivable, so the pump can
+   *  stamp the operator message(s) `delivered_at` at hand-off rather than at completion. */
+  private async runChatTurnInner(
+    stimulus: ChatStimulus,
+    opts?: TurnDeliveryOpts,
+  ): Promise<void> {
     const resetKey = `${stimulus.orgId}:${stimulus.jobId}`;
     // A real operator turn breaks any autonomous reset→verify→reset spiral — clear the loop counter so
     // operator-driven resets never trip the guard (only unattended self-resets accumulate).
@@ -1469,6 +1842,11 @@ export class AgentSessionManager
     // Per-org Claude subscription secret (deployed); undefined locally → the in-container engine falls
     // back to CLAUDE_OAUTH_TOKEN, and throws if neither is set (never an API-key fallback).
     const auth = await this.creds.engineAuth(stimulus.orgId, 'claude');
+    // Authenticated git for the operator-facing brain turn: resolve the repo url + org PAT (cached per
+    // job) so the brain can fetch/merge/rebase/resolve-conflicts/push directly from inside the sandbox —
+    // it OWNS git, not the host. Sourced from the resolved repo, never `sandbox` (a row-sourced sandbox
+    // has an empty gitUrl/no token). Undefined → remote git ops fail closed (GIT_TERMINAL_PROMPT=0).
+    const gitAuth = await this.resolveBrainGitAuth(stimulus.jobId);
     const runArgs: RunEngineArgs = {
       engine: 'claude',
       task,
@@ -1481,12 +1859,14 @@ export class AgentSessionManager
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
+      steerable: true, // streaming-input mode: operator messages steer this turn mid-flight (priority:'now')
       ...(sessionId ? { sessionId } : {}),
       ...(sandbox.containerId
         ? {
             target: {
               containerId: sandbox.containerId,
               worktreeHost: sandbox.worktreePath,
+              ...(gitAuth ? { gitAuth } : {}),
             },
           }
         : {}),
@@ -1516,6 +1896,7 @@ export class AgentSessionManager
             : {}),
         },
       },
+      ...(opts?.onRegistered ? { onTurnRegistered: opts.onRegistered } : {}),
       onEvent: (e) => {
         // EAGER session-id persist: the engine emits `{kind:'session'}` at turn START (before any work), so
         // a turn interrupted on its FIRST exchange — which never reaches the post-run persist below — still
@@ -1546,6 +1927,9 @@ export class AgentSessionManager
             );
           }
         }
+        // Durable chat delivery: an `input_ack` means the engine PUSHED a steered operator message into the
+        // session — stamp that stimulus `delivered_at` (the only place a steer is marked delivered).
+        this.stampInputAck(e);
         streamer.onEvent(e);
       },
     };
@@ -2759,10 +3143,69 @@ export class AgentSessionManager
       const name = String(args['name'] ?? '').trim();
       const path = String(args['path'] ?? '').trim();
       const description = String(args['description'] ?? '').trim();
-      // Optional headless-login URL (e.g. `gcloud auth login --no-browser`): surfaced as a clickable link on
-      // the card so the operator opens it, then pastes the resulting code back into the field. https only.
+      // Optional headless-login URL (e.g. `gcloud auth login --no-launch-browser`): surfaced as a clickable
+      // link on the card so the operator opens it, then pastes the resulting code back. https only.
       const rawUrl = String(args['url'] ?? '').trim();
       const url = /^https:\/\//.test(rawUrl) ? rawUrl : undefined;
+      const ephemeral = args['ephemeral'] === true;
+      const deliverTo = String(args['deliver_to'] ?? '').trim();
+
+      if (!description)
+        return {
+          ok: false,
+          reason: 'description is required (why the secret is needed)',
+        };
+
+      // EPHEMERAL: a one-time, short-lived value (an OAuth verification code, a 2FA code) piped straight to a
+      // process the brain has running and NEVER stored. `deliver_to` (an absolute in-container path — the FIFO
+      // the brain already wired its waiting process to read) replaces `path`; `name` is just a display label.
+      if (ephemeral) {
+        if (!deliverTo.startsWith('/') || deliverTo.split('/').includes('..')) {
+          return {
+            ok: false,
+            reason:
+              'deliver_to must be an absolute in-container path (e.g. /tmp/atlas-login-in), no ..',
+          };
+        }
+        const label = name || 'ONE_TIME_CODE';
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(label)) {
+          return {
+            ok: false,
+            reason: 'name (label) must be an identifier (e.g. GCLOUD_AUTH_CODE)',
+          };
+        }
+        const requestId = `s-${randomUUID()}`;
+        const card = webSecretInputCard({
+          jobId: stimulus.jobId,
+          requestId,
+          name: label,
+          description,
+          ephemeral: true,
+          deliver_to: deliverTo,
+          ...(url ? { url } : {}),
+        });
+        const opened = await this.store.openSecretRequest(stimulus.jobId, {
+          requestId,
+          card,
+        });
+        if (!opened.ok) {
+          return {
+            ok: false,
+            reason: opened.alreadyOpen
+              ? 'A secret request is already awaiting the operator — wait for it before requesting another.'
+              : 'Could not open the secret request (thread not found).',
+          };
+        }
+        return {
+          ok: true,
+          requestId,
+          message:
+            `Ephemeral secure card posted for "${label}". Make SURE your process is already reading ${deliverTo} ` +
+            `(open the FIFO read-write: \`exec 0<>${deliverTo}\`) before the operator submits. Stop and wait — ` +
+            'the value is piped straight into that path and never stored; you only get a masked confirmation.',
+        };
+      }
+
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
         return {
           ok: false,
@@ -2777,11 +3220,6 @@ export class AgentSessionManager
             'path must be a worktree-relative file path (e.g. .env), no leading / or ..',
         };
       }
-      if (!description)
-        return {
-          ok: false,
-          reason: 'description is required (why the secret is needed)',
-        };
       const requestId = `s-${randomUUID()}`;
       const card = webSecretInputCard({
         jobId: stimulus.jobId,
@@ -2956,6 +3394,16 @@ export class AgentSessionManager
       // A DB hiccup here must never crash the turn — warn, tell Atlas the real error via `reason` (its
       // next tool call is retryable), don't leave it silently believing the write landed.
       try {
+        // Snapshot the mount SET before the upserts: a genuinely new/changed mount changes the container's
+        // mount fingerprint, so its NEXT attach recreates the container (binds only apply at create time).
+        // We warn about that so the brain configures mounts BEFORE starting long-running processes — adding a
+        // mount mid-login was what silently killed the gcloud process + wiped its `.gcloud` dir.
+        const priorMountSig = (
+          await this.configStore.listMounts(stimulus.orgId, stimulus.repoId)
+        )
+          .map((m) => `${m.path}:${m.mode}`)
+          .sort()
+          .join(',');
         for (const m of newMounts) {
           await this.configStore.upsertMount(stimulus.orgId, stimulus.repoId, m.path, m.mode);
         }
@@ -2967,14 +3415,21 @@ export class AgentSessionManager
           this.configStore.listMounts(stimulus.orgId, stimulus.repoId),
           this.configStore.listSeed(stimulus.orgId, stimulus.repoId),
         ]);
+        const mountSetChanged =
+          mounts.map((m) => `${m.path}:${m.mode}`).sort().join(',') !==
+          priorMountSig;
         await this.store.appendSystemEvent(
           stimulus.jobId,
-          `⚙️ Updated worktree config (${mounts.length} mount(s), ${seed.length} seed path(s)) — live for every job on this repo immediately.`,
+          `⚙️ Updated worktree config (${mounts.length} mount(s), ${seed.length} seed path(s)) — live for every job on this repo immediately.` +
+            (mountSetChanged
+              ? ' The mount set changed — this sandbox recreates on your NEXT turn (in-container processes/state are lost); configure mounts BEFORE starting a login or other long-running process.'
+              : ''),
         );
         return {
           ok: true,
           mounts: mounts.length,
           seed: seed.length,
+          ...(mountSetChanged ? { restarts_sandbox: true } : {}),
           ...(warnings.length ? { warnings } : {}),
         };
       } catch (err) {
@@ -2987,7 +3442,7 @@ export class AgentSessionManager
   /**
    * `reset_sandbox({ reason })` — recreate this thread's sandbox container from scratch, so Atlas can PROVE
    * its environment cold-boots from durable inputs (worktree + recorded mounts + granted secrets + the
-   * durable `/atlas-home`) instead of ephemeral container state it built by hand. It does NOT tear down
+   * durable HOME + `/.atlas`) instead of ephemeral container state it built by hand. It does NOT tear down
    * synchronously (that would kill the engine process running this very call); it flags the reset, and the
    * turn tail (`maybeHonorSandboxReset`) tears down + kicks a fresh-container verify turn once Atlas stops.
    * A soft loop guard refuses a 4th consecutive unattended reset so a broken setup can't spin forever.
@@ -3099,6 +3554,17 @@ export class AgentSessionManager
           commitMessage: 'Atlas: onboarding — environment setup',
           notify: (m) => this.store.appendSystemEvent(stimulus.jobId, m),
         });
+        // Onboarding threads never get `promote_decisions` (see `buildTools`) — there is nothing to
+        // promote by design. Stamp complete here so the boot backstop's `threadsAwaitingLedgerPromotion`
+        // sweep (which only looks at `pr_url`/`ledger_promotion_status`, not thread kind) never picks this
+        // thread up and fires an impossible `promote_decisions` harness turn against it.
+        await this.store
+          .markLedgerPromoted(stimulus.jobId)
+          .catch((err) =>
+            this.logger.debug(
+              `markLedgerPromoted failed for onboarding thread=${stimulus.jobId} (harmless — boot backstop would just no-op): ${err}`,
+            ),
+          );
         return result
           ? {
               ok: true,
@@ -3131,19 +3597,19 @@ export class AgentSessionManager
     for (const e of raw) {
       const o = e as Record<string, unknown>;
       const path = String(o?.['path'] ?? '').trim();
-      if (
-        !path ||
-        path.startsWith('/') ||
-        path.split('/').includes('..') ||
-        path.length > MAX_MOUNT_PATH_LEN
-      )
-        continue;
-      // Reserved paths (e.g. `.pnpm-store`) are bound by the system under /workspace; recording one here
-      // would collide at container-create time and wedge the thread — drop it and tell the brain.
-      if (isReservedMountPath(path)) {
-        warnings.push(
-          `mount "${path}" is auto-managed by the system (do not add it) — dropped`,
-        );
+      if (!path || path.split('/').includes('..') || path.length > MAX_MOUNT_PATH_LEN) continue;
+      if (isExternalMountPath(path)) {
+        // ABSOLUTE path = an EXTERNAL durable mount at that exact container location (e.g. a tool's default
+        // `~/.config/gcloud` → `/root/.config/gcloud`), bound OUTSIDE /workspace so nothing lands in the
+        // repo. Guarded so it can't shadow a system bind or OS root.
+        if (isReservedContainerPath(path)) {
+          warnings.push(`mount "${path}" targets a reserved/system container path (do not mount it) — dropped`);
+          continue;
+        }
+      } else if (isReservedMountPath(path)) {
+        // Worktree-relative reserved paths (e.g. `.pnpm-store`) are system-managed caches with no
+        // legitimate reason to be mounted into a repo's own worktree — drop + warn.
+        warnings.push(`mount "${path}" is auto-managed by the system (do not add it) — dropped`);
         continue;
       }
       const mode: MountMode =
@@ -3754,6 +4220,16 @@ export class AgentSessionManager
     });
     const channel = route.channel ?? stimulus.replyRoute.jobRef;
     const threadTs = route.threadTs ?? stimulus.replyRoute.jobRef;
+    // Idempotency: a PERSISTENT engine failure (spend / session / rate limit) fails every queued sibling
+    // turn, every event/seed delivery, and every durable-delivery sweep re-drive identically — stacking
+    // byte-identical red boxes. If the same notice already landed on this thread moments ago, skip it (the
+    // operator already has the box + its Resume). Per-thread turns are serialized, so this can't race.
+    if (await this.store.hasRecentSystemOperatorNotice(stimulus.jobId, text)) {
+      this.logger.debug(
+        `suppressing duplicate system→operator notice for thread=${stimulus.jobId}`,
+      );
+      return;
+    }
     const meta = { source: 'system_operator', ...(opts.retryable ? { retryable: true } : {}) };
     try {
       await this.surface.post(channel, text, {
@@ -3788,6 +4264,15 @@ export class AgentSessionManager
 /** The synthetic author id Atlas stamps on its own (non-operator) turns — runDirectBuild /
  *  startFollowUpJob. The passive-awareness flush is gated on this so a background turn never drains
  *  the buffer before the operator sees it. */
+/** How often the leader re-drives any operator message still undelivered (the at-least-once chat sweep). */
+const CHAT_SWEEP_INTERVAL_MS = 30_000;
+
+/** Options threaded from the delivery pump into a fresh turn (stamp delivery at the registration hand-off). */
+interface TurnDeliveryOpts {
+  /** Fired when the turn becomes restart-survivable (registered + kicked). */
+  onRegistered?: () => void;
+}
+
 const ATLAS_AUTHOR_ID = 'atlas';
 
 /** The HARNESS-turn task that drives a server-initiated `promote_decisions` (full path + boot recovery). */
@@ -3823,8 +4308,19 @@ function isOperatorAuthored(stimulus: ChatStimulus): boolean {
  * the secret + destination, NEVER the value. Used by both the live `provide-secret` delivery and the boot
  * re-delivery sweep so the two read identically.
  */
-function maskedSecretNotice(name: string, path: string): string {
-  return `The operator provided the secret \`${name}\` (stored encrypted, granted to \`${path}\`). Continue onboarding.`;
+function maskedSecretNotice(
+  name: string,
+  opts: { path?: string; ephemeral?: boolean },
+): string {
+  if (opts.ephemeral) {
+    // Ephemeral value was already piped to the running process at provide-time; nothing to re-deliver. Re-run
+    // on boot only to prompt a cheap idempotent verification (the login may or may not have completed).
+    return (
+      `The operator provided the one-time value \`${name}\` (delivered to the running session, not stored). ` +
+      'Verify the interactive login completed (e.g. `gcloud auth list`) and re-run it only if it did not.'
+    );
+  }
+  return `The operator provided the secret \`${name}\` (stored encrypted, granted to \`${opts.path}\`). Continue onboarding.`;
 }
 
 /**
@@ -3847,13 +4343,15 @@ const RESET_LOOP_CAP = 3;
  */
 const RESET_VERIFY_TEXT = [
   'You reset the sandbox — this is a FRESH container. The worktree, DB-backed mounts, granted secrets, seed,',
-  'and your durable /atlas-home (engine transcripts + atlas-svc supervisor state) all came back. Ephemeral',
-  'container state did NOT: anything installed outside /workspace and outside a recorded mount, shell env,',
-  'and every service you started (atlas-svc now shows them stopped). Verify the environment cold-boots on',
-  'this clean box: re-run your setup, bring services back with atlas-svc, and confirm mounts + credentials',
-  'are present. Record anything that was lost so the NEXT fresh box has it — a missing cache/auth dir via',
-  'write_worktree_config (e.g. a shared-rw mount for a login dir like .gcloud), an uncaptured credential via',
-  'request_secret/derive_secret. This is how you prove onboarding is durable, not just working-right-now.',
+  'your durable per-repo HOME (~/.config, ~/.local/bin — installed CLIs + tool credentials), and the engine\'s',
+  'own /.atlas (transcripts + atlas-svc supervisor state) all came back. Ephemeral container state did NOT:',
+  'anything installed outside your HOME/workspace and outside a recorded mount, shell env, and every service',
+  'you started (atlas-svc now shows them stopped). Verify the environment cold-boots on this clean box:',
+  're-run your setup, bring services back with atlas-svc, and confirm your CLIs + credentials are present with',
+  'NO re-install/re-login. Record anything that was lost so the NEXT fresh box has it — a durable dir a tool',
+  'insists on writing OUTSIDE your HOME via write_worktree_config (a worktree-relative or external mount), an',
+  'uncaptured credential via request_secret/derive_secret. This is how you prove onboarding is durable, not',
+  'just working-right-now.',
 ].join('\n');
 
 /**

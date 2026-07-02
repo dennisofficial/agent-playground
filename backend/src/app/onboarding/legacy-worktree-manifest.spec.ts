@@ -84,8 +84,8 @@ describe('loadLegacyManifestFile', () => {
   });
 
   it('drops reserved (system-managed) mount paths so they cannot collide with a system bind', () => {
-    // `.pnpm-store` is bound by the system at /workspace/.pnpm-store; a manifest mount there would make
-    // Docker hard-fail container creation ("Duplicate mount point") and wedge every turn on the thread.
+    // `.pnpm-store` is a system-managed cache (now bound under /.atlas, outside the worktree entirely) —
+    // a repo has no legitimate reason to mount a package cache into its own worktree, so it stays reserved.
     writeManifest(
       JSON.stringify({
         mounts: [
@@ -98,6 +98,22 @@ describe('loadLegacyManifestFile', () => {
     const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([{ path: '.next/cache', mode: 'per-thread' }]);
     expect(warnings.filter((w) => w.includes('auto-managed')).length).toBe(2);
+  });
+
+  it('drops ABSOLUTE (external) mount paths — a committed file may not introduce external mounts', () => {
+    // External mounts (absolute container paths) are a privileged capability reserved for Atlas's validated
+    // write_worktree_config calls; a repo-committed legacy file must never gain it.
+    writeManifest(
+      JSON.stringify({
+        mounts: [
+          { path: '/root/.config/gcloud', mode: 'shared-rw' },
+          { path: '.cache', mode: 'per-thread' },
+        ],
+      }),
+    );
+    const { manifest, warnings } = loadLegacyManifestFile(wt);
+    expect(manifest.mounts).toEqual([{ path: '.cache', mode: 'per-thread' }]);
+    expect(warnings.some((w) => w.includes('external'))).toBe(true);
   });
 
   it('ignores a manifest that exceeds the size limit', () => {

@@ -33,7 +33,11 @@ export class OrgWorktreeMountEntity extends TimestampedEntity {
   @JoinColumn({ name: 'repo_id' })
   repo?: RepoEntity;
 
-  /** The worktree-relative bind target. */
+  /**
+   * The bind target: worktree-relative (lands at `/workspace/<path>`) OR an absolute container path (an
+   * EXTERNAL mount at that exact location, guarded against system binds/OS roots — see
+   * `isReservedContainerPath` in `sandbox/container-paths.ts`).
+   */
   @PrimaryColumn({ type: 'text' })
   path!: string;
 

@@ -6,8 +6,8 @@ import { cp, mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { LocalGitService, writeForbiddenPaths } from '../git';
 import { WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
-import type { MountSpec } from '../sandbox/container-paths';
-import { resolveSafeSource, resolveSafeTarget } from './worktree-path-guard';
+import { isExternalMountPath, type MountSpec } from '../sandbox/container-paths';
+import { resolveExternalMountTarget, resolveSafeSource, resolveSafeTarget } from './worktree-path-guard';
 
 export interface HydrateInput {
   worktreePath: string;
@@ -74,7 +74,10 @@ export class WorktreeHydrator {
     const out: MountSpec[] = [];
     for (const m of mounts) {
       try {
-        resolveSafeTarget(worktreePath, m.path);
+        // External mounts (absolute container path) validate against the reserved-container guard; worktree
+        // mounts (relative) against the traversal/escape guard. Either way a bad entry is dropped + warned.
+        if (isExternalMountPath(m.path)) resolveExternalMountTarget(m.path);
+        else resolveSafeTarget(worktreePath, m.path);
         out.push(m);
       } catch (err) {
         this.logger.warn(`worktree mount "${m.path}" rejected: ${(err as Error).message}`);
@@ -201,9 +204,13 @@ export class WorktreeHydrator {
     }
 
     // ── mounts (category 2) — notice on rejected paths (the attach applies the valid ones) ───────
+    // External mounts (absolute container path) render NO files and need NO gitignore check — they live
+    // outside /workspace, so `commitAll`'s `git add -A` can never see them. We only surface a notice for a
+    // path the guard rejects (external → reserved-container guard; worktree → traversal/escape guard).
     for (const m of mounts) {
       try {
-        resolveSafeTarget(worktreePath, m.path);
+        if (isExternalMountPath(m.path)) resolveExternalMountTarget(m.path);
+        else resolveSafeTarget(worktreePath, m.path);
       } catch (err) {
         note(`worktree mount "${m.path}" rejected (unsafe path): ${(err as Error).message}`);
       }

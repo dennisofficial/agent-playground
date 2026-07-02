@@ -21,10 +21,29 @@ export type SandboxMilestoneStage = 'image_build' | 'container_create';
  * accepted; see sandbox/container-paths.ts and onboarding/worktree-config.store.ts).
  */
 export interface SandboxMount {
-  /** Worktree-relative path (already path-guarded by the provisioner). */
+  /**
+   * The bind target, already path-guarded by the provisioner. EITHER worktree-relative (lands at
+   * `/workspace/<path>`) OR an absolute container path (an EXTERNAL mount at that exact location, guarded
+   * against system binds / OS roots — see `isReservedContainerPath` in `sandbox/container-paths.ts`). The
+   * HOST side is always a managed org/repo cache dir; only the container target varies.
+   */
   path: string;
   mode: 'per-thread' | 'shared-ro' | 'shared-rw';
 }
+
+/**
+ * The result of probing a job's container for which supervised processes are alive RIGHT NOW. A
+ * discriminated union so "we couldn't tell" (`unknown`) is distinct from "the container is gone, so
+ * everything is stopped" (`down`) — the caller must never conflate them (a transient probe failure
+ * must not flip a running service to stopped). On `up`, `containerStartedAt` is the current
+ * PID-namespace generation marker (Docker `State.StartedAt`): a process whose own marker predates it
+ * is from a previous container and is dead regardless of PID reuse, so the caller gates on it before
+ * trusting `alive`.
+ */
+export type ServiceLivenessProbe =
+  | { status: 'unknown' }
+  | { status: 'down' }
+  | { status: 'up'; containerStartedAt: string; alive: number[] };
 
 /** Input to `attach` — the cut worktree plus the tenant scope (for container naming/labels/isolation). */
 export interface SandboxAttachInput {
@@ -97,6 +116,14 @@ export interface SandboxProvider {
    */
   supervisorDirHost(jobId: string): string | null;
   /**
+   * Probe a job's container for which of the given supervised process-groups (`pgids`, read from the
+   * durable markers) are actually alive right now. Runs the same `kill -0` liveness test `atlas-svc`
+   * uses, execed INTO the container (the host can't see its PID namespace). Never throws — any failure
+   * (no container, exec error) resolves to a `status` the caller maps to `unknown`/`stopped`, never a
+   * false `running`. See {@link ServiceLivenessProbe} for the generation-gate contract.
+   */
+  probeLiveness(jobId: string, pgids: number[]): Promise<ServiceLivenessProbe>;
+  /**
    * Reclaim a container by its DETERMINISTIC identity (the same `orgId · repo · thread/branch` key
    * `attach` uses to name it) even when its concrete id isn't known. This is the terminal-cleanup
    * counterpart to `attach`: terminal cleanup can't rely on a persisted `container_id` because a process
@@ -105,4 +132,18 @@ export interface SandboxProvider {
    * container plus its per-sandbox network/volume, and is a no-op when nothing matches the identity.
    */
   teardownByIdentity(input: SandboxAttachInput): Promise<void>;
+  /**
+   * Pipe a value into a path inside a thread's LIVE container over exec stdin (never argv/env, so it can't
+   * leak into `docker inspect`/process lists), bounded by `timeoutMs`. The delivery lane for EPHEMERAL
+   * secrets (an OAuth code, a 2FA code): the target is typically a FIFO the brain wired a waiting process to
+   * read. Returns `{ ok:false, reason }` when the container isn't running or the write times out (a dead
+   * reader blocks the FIFO open) — the caller restarts the flow rather than wedging. Optional on the port so
+   * test fakes needn't implement it; `SandboxManager` (the only real binding) always does.
+   */
+  writeToJobContainerPath?(input: {
+    jobId: string;
+    path: string;
+    value: string;
+    timeoutMs?: number;
+  }): Promise<{ ok: boolean; reason?: string }>;
 }

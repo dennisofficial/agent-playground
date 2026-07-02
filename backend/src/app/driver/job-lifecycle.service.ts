@@ -15,7 +15,9 @@ import {
   SandboxActivityRegistry,
   type SandboxMilestoneStage,
   type SandboxProvider,
+  type ServiceLivenessProbe,
 } from '../sandbox';
+import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { TicketService } from '../tickets';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
@@ -103,6 +105,7 @@ export class JobLifecycleService {
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
     private readonly provisioner: WorktreeProvisioner,
     private readonly tickets: TicketService,
+    private readonly turnRegistry: TurnRegistry,
     // Lazily resolves the brain-module decision-ledger manifest for merge-time reconcile (avoids cycle).
     private readonly moduleRef: ModuleRef,
   ) {}
@@ -123,6 +126,20 @@ export class JobLifecycleService {
    */
   supervisorDirHost(jobId: string): string | null {
     return this.sandboxProvider.supervisorDirHost(jobId);
+  }
+
+  /**
+   * Probe the job's container for which supervised process-groups are alive (see
+   * {@link SandboxProvider.probeLiveness}). Catches here too so a provider that throws despite its own
+   * guard still degrades to `unknown` rather than failing the status endpoint.
+   */
+  async probeLiveness(jobId: string, pgids: number[]): Promise<ServiceLivenessProbe> {
+    try {
+      return await this.sandboxProvider.probeLiveness(jobId, pgids);
+    } catch (err) {
+      this.logger.warn(`probeLiveness(${jobId.slice(0, 8)}) threw — reporting unknown: ${String(err)}`);
+      return { status: 'unknown' };
+    }
   }
 
   /**
@@ -233,6 +250,28 @@ export class JobLifecycleService {
     }
     const baseBranch = thread.base_branch ?? project.default_branch ?? 'main';
     return this.provisionSandbox(thread, project, baseBranch, onMilestone);
+  }
+
+  /**
+   * Deliver an EPHEMERAL secret value straight into a path in the thread's LIVE container (a FIFO the brain
+   * wired a waiting process to read) over exec stdin — never persisted, never granted, never on the card.
+   * Thin pass-through to the sandbox provider's optional {@link SandboxProvider.writeToJobContainerPath};
+   * returns `{ ok:false }` (rather than throwing) when the provider can't deliver, so the `provide-secret`
+   * endpoint can tell the operator to retry instead of wedging.
+   */
+  async deliverEphemeralSecret(input: {
+    jobId: string;
+    path: string;
+    value: string;
+    timeoutMs?: number;
+  }): Promise<{ ok: boolean; reason?: string }> {
+    const deliver = this.sandboxProvider.writeToJobContainerPath?.bind(
+      this.sandboxProvider,
+    );
+    if (!deliver) {
+      return { ok: false, reason: 'ephemeral delivery is unavailable' };
+    }
+    return deliver(input);
   }
 
   /**
@@ -603,6 +642,14 @@ export class JobLifecycleService {
 
   /** Tear down a row's container (best-effort) and flip it to `detached`. Worktree untouched. */
   private async detachContainer(row: JobSandboxEntity, reason: 'idle' | 'lru' | 'reset'): Promise<void> {
+    // Drop any `running` turn row bound to this container BEFORE tearing it down: the engine is about to
+    // die, so a lingering `running` row would make the steer path treat it as a live turn and XADD the
+    // operator's next message into an unread input stream (silently lost) until the watchdog's stale
+    // window cleans it. Best-effort — the durable delivery pump's liveness probe is the primary guard.
+    await this.turnRegistry
+      .failRunningForJob(row.job_id)
+      .then((n) => n && this.logger.log(`detachContainer(${reason}): dropped ${n} running turn row(s) for ${row.job_id}`))
+      .catch((err) => this.logger.debug(`detachContainer(${reason}): failRunningForJob failed (ignored): ${err}`));
     await this.sandboxProvider.teardown(await this.rowToSandbox(row)).catch((err) => {
       this.logger.warn(`detachContainer(${reason}): teardown failed for thread ${row.job_id}: ${err}`);
     });

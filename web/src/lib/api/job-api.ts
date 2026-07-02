@@ -107,8 +107,6 @@ export interface JobMessage {
   postedAt: string;
   /** Client-only: an optimistic post not yet echoed by history. */
   local?: boolean;
-  /** Client-only: sent while a turn was streaming → queued behind it (rendered distinctly). */
-  queued?: boolean;
 }
 
 export function normalizeMessage(r: RawThreadMessage): JobMessage {
@@ -134,6 +132,15 @@ export function fetchMessages(ref: JobRef): Promise<JobMessage[]> {
 
 export function sayMessage(ref: JobRef, text: string): Promise<{ ts: string }> {
   return webJson(threadPath(ref, '/say'), { method: 'POST', body: JSON.stringify({ text }) });
+}
+
+/**
+ * Gracefully stop the thread brain's in-flight turn (the composer's Stop button). Returns `{ stopped }` —
+ * `false` if there was no live turn to stop. The backend emits a normal `turn_end` (no separate abort
+ * frame), so the live indicator clears through the usual reconcile path.
+ */
+export function stopJob(ref: JobRef): Promise<{ stopped: boolean }> {
+  return webJson(threadPath(ref, '/stop'), { method: 'POST' });
 }
 
 /** One inline highlight-and-comment item, as sent to `…/jobs/:jobId/review-comments`. */

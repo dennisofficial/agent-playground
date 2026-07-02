@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { isReservedMountPath } from '../sandbox/container-paths';
+import { isExternalMountPath, isReservedMountPath } from '../sandbox/container-paths';
 import type { MountMode, MountSpec } from '../sandbox/container-paths';
 
 /**
@@ -88,6 +88,13 @@ function parseMounts(v: unknown, warnings: string[]): MountSpec[] {
     const mode: MountMode = MOUNT_MODES.includes(o?.mode as MountMode) ? (o.mode as MountMode) : 'per-thread';
     if (!o || !validPath(o.path)) {
       warnings.push('legacy worktree manifest: dropped invalid mounts[] entry');
+      continue;
+    }
+    // A legacy manifest is a REPO-COMMITTED (attacker-influenceable) file — it must NOT gain the power to
+    // mount an absolute/EXTERNAL container path (that power is reserved for Atlas's validated
+    // `write_worktree_config` calls). Drop any absolute mount here; legacy import stays worktree-relative.
+    if (isExternalMountPath(o.path)) {
+      warnings.push(`legacy worktree manifest: mounts[] entry "${o.path}" is an absolute (external) path — not allowed from a committed file, ignored`);
       continue;
     }
     // Reserved paths (e.g. `.pnpm-store`) are bound by the system itself under /workspace; importing a

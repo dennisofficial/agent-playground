@@ -135,10 +135,13 @@ export class LocalGitService {
 
   /**
    * Package-manager / build CACHE dirs that an in-sandbox engine turn may drop at the worktree ROOT
-   * but the connected repo's `.gitignore` does NOT cover. The proven culprit: `pnpm install` creating
-   * a ~1.7 GB `.pnpm-store/` (when pnpm can't hardlink into `/workspace` it falls back to a project-
-   * local store), which then made `commitAll`'s `git add -A` stage 1.7 GB and throw — failing the
-   * build at the commit step with no PR. These are categorically caches no sane repo commits.
+   * but the connected repo's `.gitignore` does NOT cover. The proven culprit: `pnpm install` once created
+   * a ~1.7 GB `.pnpm-store/` INSIDE the worktree (pnpm's store-dir was left unset, so it fell back to its
+   * own per-disk default — verified this happens even with a durable `HOME`, since `/workspace` is a
+   * separate device from wherever that default points), which then made `commitAll`'s `git add -A` stage
+   * 1.7 GB and throw — failing the build at the commit step with no PR. The pnpm store is now pinned
+   * outside the worktree entirely (`CONTAINER_PNPM_STORE`, under `/.atlas`), so this entry is
+   * defense-in-depth, not load-bearing. These are categorically caches no sane repo commits.
    */
   static readonly BUILD_JUNK_PATTERNS = [
     '.pnpm-store/',

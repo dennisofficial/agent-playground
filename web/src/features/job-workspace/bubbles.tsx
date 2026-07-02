@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight, Clock, RotateCw } from 'lucide-react';
+import { ChevronRight, RotateCw } from 'lucide-react';
 import type { SystemTone } from './classify';
 import { Markdown } from './markdown';
 import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
@@ -9,7 +9,7 @@ import { SubagentCard, indexLiveSubagents, subagentNode } from './subagents';
 import { Button } from '@/components/ui/button';
 import { useRetryTurn } from '@/lib/api/job-queries';
 import type { JobMessage, JobRef } from '@/lib/api/job-api';
-import type { LiveBlock, LiveTurn } from '@/lib/api/job-stream';
+import { formatElapsed, summarizeLiveTurn, useElapsedSeconds, type LiveBlock, type LiveTurn } from '@/lib/api/job-stream';
 import { formatClockTime, formatTokens } from '@/lib/org-display';
 
 /** Per-type tone for {@link MessageTime} — distinct colors so the operator can tell turn boundaries from
@@ -80,7 +80,7 @@ export function ClaudeAvatar({ size = 24 }: { size?: number }) {
  * stand in for any operator-authored instruction, including a subagent's Task prompt (the "user message"
  * that kicked the run off), rendered identically to the main transcript.
  */
-export function UserBubble({ text, queued = false, time }: { text: string; queued?: boolean; time?: string }) {
+export function UserBubble({ text, time }: { text: string; time?: string }) {
   return (
     <div className="group anim-fadeUp flex flex-col items-end gap-1">
       <div
@@ -89,19 +89,11 @@ export function UserBubble({ text, queued = false, time }: { text: string; queue
           background: 'var(--accent-soft)',
           border: '1px solid var(--accent-line)',
           borderRadius: '13px 13px 4px 13px',
-          opacity: queued ? 0.72 : 1,
         }}
       >
         {text}
       </div>
-      {queued ? (
-        <span className="flex items-center gap-1 pr-0.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-faint">
-          <Clock size={10} className="shrink-0" />
-          queued · sends when the current turn finishes
-        </span>
-      ) : (
-        <MessageTime iso={time} tone="user" align="right" />
-      )}
+      <MessageTime iso={time} tone="user" align="right" />
     </div>
   );
 }
@@ -305,11 +297,33 @@ export function ContextMeter({ tokens, limit, model }: { tokens: number; limit: 
   );
 }
 
-export function LiveIndicator({ text = 'Atlas is working…' }: { text?: string }) {
+/**
+ * The "Atlas is working…" indicator. When a live `turn` is supplied it renders a rich, Claude-Code-style
+ * status line: `{elapsed} · {N} running task{s} · {statusWord}…` (the "N running task" clause is omitted
+ * when there are no open tool calls) — e.g. `25s · 1 running task · still thinking…` or, for longer turns,
+ * `19m 24s · 1 running task · using tools…`. `elapsed` ticks every second off the turn's `startedAt` and is
+ * formatted compactly (`45s` / `19m 24s` / `1h 05m 24s`); `N` counts in-flight tool calls (tool_use with no tool_result yet,
+ * incl. subagent/Task runs); `statusWord` comes from the last live block. Falls back to the plain `text`
+ * when no turn is available (e.g. the pipeline-level `live` flag with no live-turn buffer, or a build lane).
+ *
+ * NOTE: token count is intentionally NOT shown — it's a backend fast-follow that isn't wired yet.
+ */
+export function LiveIndicator({ turn, text = 'Atlas is working…' }: { turn?: LiveTurn; text?: string }) {
+  const elapsed = useElapsedSeconds(turn?.startedAt);
+  const { openTools, statusWord } = summarizeLiveTurn(turn);
+  const label = !turn
+    ? text
+    : [
+        formatElapsed(elapsed),
+        openTools > 0 ? `${openTools} running task${openTools === 1 ? '' : 's'}` : null,
+        `${statusWord}…`,
+      ]
+        .filter(Boolean)
+        .join(' · ');
   return (
     <div className="anim-fadeUp flex items-center gap-2.5 text-[11.5px] text-accent">
       <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)', boxShadow: '0 0 9px var(--accent)' }} />
-      <span>{text}</span>
+      <span className="tabular-nums">{label}</span>
     </div>
   );
 }

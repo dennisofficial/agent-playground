@@ -8,7 +8,6 @@ import { subscribeSse } from './sse-manager';
 import type { InboxThread } from './inbox';
 import type { JobRef } from './job-api';
 import { applyStreamFrame, endLiveTurn, sweepLiveTurnsAfterReconnect } from './job-stream';
-import { clearQueuedSends } from './queued-sends';
 
 /** A frame off the repo SSE: a durable-post change-signal, a live engine-stream frame, or a meta update. */
 interface SseFrame {
@@ -41,10 +40,12 @@ const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts)\//;
  *    CHANGE-SIGNAL: debounced-refetch the open thread's messages + pipeline (the authoritative,
  *    jobId-scoped reads). A sibling thread's activity also triggers a refetch — fine for an operator
  *    console.
- *  - `{ type: 'stream', jobId, event }` — a LIVE engine-stream frame (token deltas, thinking, tool
- *    calls/results, and a `turn_end` marker) for the in-sandbox session. Filtered to the OPEN thread and
- *    fed into the live-turn store (`job-stream.ts`); on `turn_end` we refetch `/messages` (now holding
- *    the persisted blocks) and THEN clear the live buffer (no flicker).
+ *  - `{ type: 'stream', jobId, event }` — a LIVE engine-stream frame (a `turn_start` marker, token deltas,
+ *    thinking, tool calls/results, and a `turn_end` marker) for the in-sandbox session. Fed into the
+ *    live-turn store (`job-stream.ts`) for EVERY thread in the repo; `turn_start` flips the working
+ *    indicator on + records `startedAt` (the elapsed timer), and on `turn_end` we refetch `/messages` (now
+ *    holding the persisted blocks) and THEN clear the live buffer (no flicker). A Stop = a graceful
+ *    `turn_end` (no separate abort frame).
  *
  * Resilience (transient self-heal + the refresh/reconnect retry loop) lives in the shared `sse-manager`.
  *
@@ -122,13 +123,12 @@ export function useJobEvents(ref: JobRef): void {
         // in-flight turns on the same thread; the conversation reads `main`, the step sub-page reads its phase.
         const lane = frame.lane ?? 'main';
         if (frame.event?.kind === 'turn_end') {
-          // Reconcile: refetch durable messages, THEN clear THIS lane's live buffer (so no gap/flicker). The
-          // queued-sends tags belong to the brain's serialized queue, so only the `main` turn ending clears
-          // them; a build (phase) turn ending must not drop a follow-up the operator queued for the brain.
-          // For a non-open thread the invalidations just mark its (unobserved) queries stale — no fetch.
+          // Reconcile: refetch durable messages, THEN clear THIS lane's live buffer (so no gap/flicker).
+          // A Stop produces a graceful `turn_end` (there's no separate abort frame), so the same path clears
+          // the indicator after a stop. For a non-open thread the invalidations just mark its (unobserved)
+          // queries stale — no fetch.
           void reconcileNow({ orgId, repoId, jobId: fThread }).then(() => {
             endLiveTurn(fThread, lane);
-            if (lane === 'main') clearQueuedSends(fThread);
           });
         } else {
           // Snapshot (catch-up on connect) or a live delta — both deduped by seq in the store, per lane.

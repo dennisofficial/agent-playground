@@ -146,7 +146,10 @@ export class StimulusIntake {
       body: stimulus.body,
       card: stimulus.card,
     });
-    await this.sink.handleChat(recorded);
+    // Durable hand-off: the row is persisted; the pump owns steer-vs-turn + the delivered/sweep guarantee.
+    // NOT the old `await handleChat` (a fire-and-forget turn that could be steered into a dead engine and
+    // silently lost). `enqueueChat` returns fast once enqueued — the engine turn runs behind it.
+    await this.sink.enqueueChat(recorded);
   }
 }
 

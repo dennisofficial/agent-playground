@@ -197,6 +197,25 @@ describe('WorktreeHydrator', () => {
     expect(await h.resolveMounts(ORG, REPO, wt)).toEqual([{ path: '.cocoindex', mode: 'per-thread' }]);
   });
 
+  it('resolveMounts keeps a valid EXTERNAL (absolute) mount and drops a reserved one', async () => {
+    const h = new WorktreeHydrator(
+      fakeGit(new Set()),
+      fakeSecrets({}),
+      fakeConfig({
+        mounts: [
+          { path: '/root/.config/gcloud', mode: 'shared-rw' }, // external, allowed
+          { path: '/.atlas', mode: 'shared-rw' }, // external, reserved system bind → dropped
+          { path: '.cache', mode: 'per-thread' }, // worktree-relative, allowed
+        ],
+      }),
+      fakeEnv(),
+    );
+    expect(await h.resolveMounts(ORG, REPO, wt)).toEqual([
+      { path: '/root/.config/gcloud', mode: 'shared-rw' },
+      { path: '.cache', mode: 'per-thread' },
+    ]);
+  });
+
   it('computeSig changes when a GRANTED secret version changes (rotation re-triggers hydration)', async () => {
     const h1 = new WorktreeHydrator(
       fakeGit(new Set()),

@@ -25,6 +25,7 @@ import type { GithubPrService, LocalGitService } from '../git';
 import type { CredentialResolver } from '../onboarding';
 import type { DriverRepoResolver } from './repo-resolver';
 import { SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
+import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { JobLifecycleService } from './job-lifecycle.service';
 import type { TicketService } from '../tickets';
 import type { WorktreeProvisioner } from './worktree-provisioner.service';
@@ -76,6 +77,7 @@ function makeService(
     { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+    { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
   );
 }
@@ -104,6 +106,7 @@ function makeServiceWithMocks(row: JobSandboxEntity | null, hydrationSig = 'new'
     { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach } as unknown as WorktreeProvisioner,
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+    { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
   );
   return { svc, sandboxes, provisionAndAttach };
@@ -121,6 +124,7 @@ function makeServiceForReset(row: JobSandboxEntity | null) {
   } as unknown as Repository<JobSandboxEntity>;
   const teardown = vi.fn().mockResolvedValue(undefined);
   const activity = new SandboxActivityRegistry();
+  const failRunningForJob = vi.fn().mockResolvedValue(0);
   const svc = new JobLifecycleService(
     { findOne: vi.fn().mockResolvedValue({ id: 'thread-1', feature_branch: null, base_branch: 'main' }) } as unknown as Repository<JobEntity>,
     sandboxes,
@@ -134,9 +138,10 @@ function makeServiceForReset(row: JobSandboxEntity | null) {
     { attach: vi.fn(), teardown, teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+    { failRunningForJob } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
   );
-  return { svc, sandboxes, teardown, activity };
+  return { svc, sandboxes, teardown, activity, failRunningForJob };
 }
 
 // Cast to access the private (now-async) rowToSandbox method from tests.
@@ -251,6 +256,17 @@ describe('JobLifecycleService.resetContainer', () => {
     expect(row.worktree_path).toBe('/wt/keep'); // host bind — untouched, so files survive the reset
     expect(row.session_id).toBe('sess-keep'); // resume survives → next attach resumes the same session
     expect(sandboxes.save).toHaveBeenCalled();
+  });
+
+  it('drops any running turn row for the job before tearing the container down (no swallowed steer)', async () => {
+    const row = makeRow({ container_id: 'c-live' });
+    const { svc, failRunningForJob } = makeServiceForReset(row);
+
+    await svc.resetContainer('thread-1', 'T1');
+
+    // The engine is about to die → its `active_turns` row must be finalized so the steer path can't treat
+    // it as a live turn and XADD the operator's next message into an unread input stream (silent loss).
+    expect(failRunningForJob).toHaveBeenCalledWith('thread-1');
   });
 
   it('returns no-container (no teardown) when the row has no live container', async () => {

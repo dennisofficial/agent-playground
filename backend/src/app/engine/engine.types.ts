@@ -39,6 +39,13 @@ export type EngineEvent =
    * restart, kill) recovers by CONTINUING this same session instead of spawning a fresh one.
    */
   | { kind: 'session'; sessionId: string }
+  /**
+   * Emitted when a mid-turn steer (an operator message on `turn:{T}:input`) has been PUSHED into the live
+   * SDK session — the durable ACK that the message was actually taken, not just written to the stream. `id`
+   * echoes the steer's stimulus id so the host can stamp that message `delivered_at`. Rides the events
+   * stream like any other frame, so it survives a host detach + boot re-attach (replayed with the log).
+   */
+  | { kind: 'input_ack'; id: string }
   // ── Rich streaming (emitted only when `RunEngineArgs.richStream` is set — the thread BRAIN turn). The
   //    `*_delta` kinds are LIVE-only (token-by-token); the full-block kinds (`text`/`thinking`/`tool_use`/
   //    `tool_result`) are AUTHORITATIVE — the caller persists those as the durable transcript. ──
@@ -150,6 +157,15 @@ export interface ExecutionTarget {
    * → the runner assumes the turn runs at the worktree root.
    */
   worktreeHost?: string;
+  /**
+   * Authenticated-git for this turn: the agent inside the sandbox can `fetch`/`push`/merge against the
+   * remote. Sourced from the RESOLVED repo (repo url + org PAT via `CredentialResolver`), NOT from the
+   * sandbox (a row-sourced `FeatureSandbox` has an empty `gitUrl`/no token). Set only on the two turn
+   * types that mutate git — brain operator turns and build/execute turns. The runner turns this into the
+   * `GIT_CONFIG_*` extraheader + `GITHUB_TOKEN` in the turn's exec env; the token never lands in argv or
+   * `.git/config`. Absent → git remote ops fail closed (`GIT_TERMINAL_PROMPT=0`).
+   */
+  gitAuth?: { gitUrl: string; token?: string };
 }
 
 // ── Tool-bridge frame protocol ────────────────────────────────────────────────────────────────────
@@ -294,6 +310,29 @@ export interface RunEngineArgs {
   /** Aborts the run when signalled — wired to the SDK's native cancellation. */
   signal?: AbortSignal;
   /**
+   * Opt into MID-TURN STEERING (the operator-facing brain turn): the in-container entrypoint runs the SDK
+   * in STREAMING-INPUT mode and subscribes to `turn:{T}:input`, so an operator message can be injected into
+   * the RUNNING turn (`priority:'now'`) and the model reacts before the turn ends — instead of queuing until
+   * the next turn. Serialized into the turn spec. Omit (build/plan/review workers) for the single-message path.
+   */
+  steerable?: boolean;
+  /**
+   * The live source of mid-turn steering messages, drained into the SDK's streaming input with
+   * `priority:'now'`. NOT serialized — the in-container entrypoint builds it from the `turn:{T}:input`
+   * Redis channel (gated on `steerable`) and passes it in-process to the engine core. When present the
+   * engine runs in streaming-input mode; when absent it uses the single-message prompt. Each item carries
+   * the steer's stimulus `id` (when present) so the core can emit a correlated `input_ack` after pushing it.
+   */
+  steerInput?: AsyncIterable<{ id?: string; text: string }>;
+  /**
+   * Fired ONCE, host-side, the instant this turn is DURABLY registered + kicked (its `active_turns` row is
+   * committed and the engine is running detached) — i.e. the moment the turn becomes restart-survivable via
+   * boot re-attach. The brain uses this to stamp an operator message `delivered_at` at hand-off (not at
+   * completion), so a mid-turn crash leaves it delivered-and-resumable rather than lost or double-run. Only
+   * the Redis runner fires it (the only restart-survivable transport). Best-effort; never blocks the turn.
+   */
+  onTurnRegistered?(turnId: string): void;
+  /**
    * WHERE to execute. Omit → host-local (in-process). When set, the `docker` engine-runner execs the
    * turn inside that sandbox container. The `local` runner ignores it. (Not serialized to the
    * in-container entrypoint — it's a host-side routing hint.)
@@ -363,6 +402,23 @@ export interface EngineRunnerPort {
    * `onPromote` while turns are in flight). Only the Redis runner implements it.
    */
   isAttached?(turnId: string): boolean;
+  /**
+   * STEER a running (`steerable`) turn: publish an operator message to `turn:{T}:input`, which the
+   * in-container entrypoint injects into the live SDK session with `priority:'now'` (mid-turn steering).
+   * The `id` (the steer's stimulus id) rides the frame so the engine can emit a correlated `input_ack`
+   * once it PUSHES the message into the session — the durable proof it was taken (the caller stamps
+   * `delivered_at` only on that ack, never on the write). No-op transport-wise if the turn already ended
+   * (the engine has closed its input stream) — no ack ever comes, and the caller re-drives. Only the Redis
+   * runner implements it.
+   */
+  steer?(turnId: string, id: string, text: string): Promise<void>;
+  /**
+   * STOP a running turn: publish a cooperative abort to `turn:{T}:abort`. The in-container entrypoint
+   * aborts the SDK query; the engine writes a graceful `final` (the partial transcript is preserved) and
+   * the normal completion path finalizes the registry row, reclaims the streams, and clears `turn_active`.
+   * Only the Redis runner implements it.
+   */
+  stop?(turnId: string): Promise<void>;
 }
 
 /** DI token for {@link EngineRunnerPort}. */

@@ -15,9 +15,9 @@ import { SandboxManager } from './sandbox-manager.service';
 /**
  * Integration test for the docker SANDBOX_PROVIDER (D2/D3). Proves the manager's substrate without an
  * LLM: it ensures a privileged per-feature container with the LINKED worktree mounted at /workspace + its
- * git common dir at /repo.git (a generated `.git` pointer shadows the host one so in-container git resolves),
- * an inner dockerd (DinD), and a host-uid exec that can write the worktree. Needs Docker; a no-op when
- * Docker is unreachable.
+ * git common dir at /.atlas/git-common (a generated `.git` pointer shadows the host one so in-container
+ * git resolves), an inner dockerd (DinD), and a host-uid exec that can write the worktree. Needs Docker;
+ * a no-op when Docker is unreachable.
  */
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
@@ -91,7 +91,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
     expect(attached.execUser).toMatch(/^\d+:\d+$/);
 
     // in-container git resolves the LINKED worktree at its NEUTRAL /workspace mount (the generated `.git`
-    // pointer rebases the gitdir onto /repo.git → no host paths needed inside the box).
+    // pointer rebases the gitdir onto /.atlas/git-common → no host paths needed inside the box).
     const branch = await engine.exec(attached.containerId!, ['git', '-C', CONTAINER_WORKTREE, 'rev-parse', '--abbrev-ref', 'HEAD'], {
       user: attached.execUser,
     });

@@ -220,4 +220,66 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(out).toEqual({ result: 'DONE' });
     expect(events.some((e) => (e as { kind?: string; text?: string }).text === 'tool-ok')).toBe(true);
   });
+
+  it('injects authenticated git into the exec env when target.gitAuth carries a github token', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.run({
+      ...baseArgs(() => {}),
+      target: {
+        containerId: 'c1',
+        worktreeHost: '/wt',
+        gitAuth: { gitUrl: 'https://github.com/o/r.git', token: 'tok-123' },
+      },
+    });
+
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    // The token rides the git extraheader (never argv/.git/config), plus the raw token for API/`gh`.
+    expect(env.env.GIT_CONFIG_KEY_0).toBe('http.https://github.com/.extraheader');
+    expect(env.env.GIT_CONFIG_VALUE_0).toContain('AUTHORIZATION: basic ');
+    expect(env.env.GIT_TERMINAL_PROMPT).toBe('0');
+    expect(env.env.GITHUB_TOKEN).toBe('tok-123');
+    expect(env.env.GH_TOKEN).toBe('tok-123');
+  });
+
+  it('does NOT inject git auth into the exec env when target.gitAuth is absent', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.run(baseArgs(() => {})); // baseArgs.target has no gitAuth
+
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.GITHUB_TOKEN).toBeUndefined();
+    expect(env.env.GIT_CONFIG_COUNT).toBeUndefined();
+  });
+
+  it('steer() XADDs the operator message onto the turn input stream (mid-turn steering)', async () => {
+    const redis = new InMemoryRedisStream();
+    const runner = new RedisEngineRunner(fakeContainers(redis, []), redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.steer('T1', 'S1', 'actually, focus on the API layer');
+
+    // The in-container entrypoint reads this durable stream from '0-0'. The stimulus id rides the frame so
+    // the engine can emit a correlated `input_ack` after pushing the steer into the session.
+    const entries = await redis.xread({ stream: turnKeys('T1').input, lastId: '0-0', count: 10, blockMs: 0 });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].data).toEqual({ id: 'S1', text: 'actually, focus on the API layer' });
+  });
+
+  it('stop() publishes a cooperative abort on the turn abort channel', async () => {
+    const redis = new InMemoryRedisStream();
+    const runner = new RedisEngineRunner(fakeContainers(redis, []), redis, fakeEnv, fakeActivity, fakeRegistry());
+    const publish = vi.spyOn(redis, 'publish');
+
+    await runner.stop('T2');
+
+    expect(publish).toHaveBeenCalledWith(turnKeys('T2').abort, { t: 'abort' });
+  });
 });

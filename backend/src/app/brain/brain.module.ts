@@ -85,6 +85,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
       inject: [AgentSessionManager],
       useFactory: (brain: AgentSessionManager): BrainSink => ({
         handleChat: (s) => brain.handleChatTurn(s),
+        enqueueChat: (s) => brain.enqueueChat(s),
         deliverEvent: (s) => brain.deliverEvent(s),
       }),
     },

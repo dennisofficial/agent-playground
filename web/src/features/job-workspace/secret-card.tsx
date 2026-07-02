@@ -33,7 +33,13 @@ export function SecretCardView({ card, jobRef }: { card: WebSecretInputCard; job
               <span className="font-mono">{card.name}</span> provided
             </p>
             <p className="truncate text-[12.5px] text-dim">
-              stored encrypted · granted to <span className="font-mono">{card.path}</span>
+              {card.ephemeral ? (
+                'delivered to the session · not stored'
+              ) : (
+                <>
+                  stored encrypted · granted to <span className="font-mono">{card.path}</span>
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -50,7 +56,7 @@ export function SecretCardView({ card, jobRef }: { card: WebSecretInputCard; job
         </span>
         <div className="flex-1" />
         <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[9.5px] text-dim">
-          {card.path}
+          {card.ephemeral ? 'one-time' : card.path}
         </span>
       </div>
 
@@ -68,7 +74,9 @@ export function SecretCardView({ card, jobRef }: { card: WebSecretInputCard; job
           </a>
         ) : null}
         <p className="mt-1.5 text-[11.5px] leading-snug text-dim">
-          Sent once, encrypted at rest — it never appears in the conversation or is shown back to Atlas.
+          {card.ephemeral
+            ? 'One-time code — delivered straight to the running session and never stored. It never appears in the conversation or is shown back to Atlas.'
+            : 'Sent once, encrypted at rest — it never appears in the conversation or is shown back to Atlas.'}
         </p>
       </div>
 
@@ -85,11 +93,21 @@ export function SecretCardView({ card, jobRef }: { card: WebSecretInputCard; job
           className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 font-mono text-[12.5px] text-text outline-none placeholder:text-faint focus:border-accent"
         />
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" loading={pending} loadingText="Storing…" disabled={!value} onClick={submit}>
-            Store securely
+          <Button
+            size="sm"
+            loading={pending}
+            loadingText={card.ephemeral ? 'Sending…' : 'Storing…'}
+            disabled={!value}
+            onClick={submit}
+          >
+            {card.ephemeral ? 'Send code' : 'Store securely'}
           </Button>
           {provide.isError ? (
-            <span className="text-[11.5px] text-red">Could not store the secret. Try again.</span>
+            <span className="text-[11.5px] text-red">
+              {card.ephemeral
+                ? 'Could not deliver the code — Atlas will restart the login. Try again.'
+                : 'Could not store the secret. Try again.'}
+            </span>
           ) : null}
         </div>
       </div>

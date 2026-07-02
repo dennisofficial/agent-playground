@@ -353,6 +353,102 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(kinds).not.toContain('tool_result');
   });
 
+  it('steerable: runs streaming-input mode — delivers the task, then injects a steer with priority:now', async () => {
+    // A fake SDK that CONSUMES the prompt iterable (streaming-input mode): reads the task, finishes a
+    // round-trip, then reads a second message (the injected steer) and finishes a steered round-trip.
+    const seen: Array<{ type?: string; message?: { content?: unknown }; priority?: string }> = [];
+    const sdk = {
+      query: ({ prompt }: { prompt: AsyncIterable<{ type: string }> }) =>
+        (async function* () {
+          const iter = prompt[Symbol.asyncIterator]();
+          const first = await iter.next();
+          seen.push(first.value as (typeof seen)[number]);
+          yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
+          yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'r1', usage: { input_tokens: 1, output_tokens: 1 } };
+          const second = await iter.next(); // the steer, injected by the engine after the first result
+          if (!second.done) {
+            seen.push(second.value as (typeof seen)[number]);
+            yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'r2', usage: { input_tokens: 1, output_tokens: 1 } };
+          }
+        })(),
+    } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+
+    // The live steer source: one operator steer, then it ends (the turn's own lifecycle closes input).
+    const steerInput: AsyncIterable<{ text: string }> = {
+      async *[Symbol.asyncIterator]() {
+        yield { text: 'focus on the API layer' };
+      },
+    };
+
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+    const res = await core.run({
+      engine: 'claude',
+      task: 'do the thing',
+      cwd: '/tmp/wt',
+      systemPrompt: 'p',
+      sandboxKey: 'k',
+      mode: 'execute',
+      steerable: true,
+      steerInput,
+    });
+
+    // The initial prompt message is the task; the second is the steer, tagged priority:'now'.
+    expect(seen[0]).toMatchObject({ type: 'user', message: { role: 'user', content: 'do the thing' } });
+    expect(seen[1]).toMatchObject({ type: 'user', message: { role: 'user', content: 'focus on the API layer' }, priority: 'now' });
+    // The steered continuation's result wins.
+    expect(res.result).toBe('r2');
+  });
+
+  it('steerable: emits input_ack for a steer carrying an id, and dedupes a redelivered id (no double-push, still re-acks)', async () => {
+    // The SDK consumes the task, then two more input messages (the steer + its redelivery).
+    const pushed: unknown[] = [];
+    const sdk = {
+      query: ({ prompt }: { prompt: AsyncIterable<{ type: string; message?: { content?: unknown } }> }) =>
+        (async function* () {
+          const iter = prompt[Symbol.asyncIterator]();
+          const first = await iter.next();
+          pushed.push((first.value as { message?: { content?: unknown } }).message?.content);
+          yield { type: 'system', subtype: 'init', session_id: 's' };
+          yield { type: 'result', subtype: 'success', session_id: 's', result: 'r1', usage: { input_tokens: 1, output_tokens: 1 } };
+          // A steer lands (id S1) → pushed; then the SAME id S1 is redelivered → must NOT push again.
+          const a = await iter.next();
+          if (!a.done) pushed.push((a.value as { message?: { content?: unknown } }).message?.content);
+          const b = await iter.next();
+          if (!b.done) pushed.push((b.value as { message?: { content?: unknown } }).message?.content);
+          yield { type: 'result', subtype: 'success', session_id: 's', result: 'r2', usage: { input_tokens: 1, output_tokens: 1 } };
+        })(),
+    } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+
+    // Two steers with the SAME id (the second is a lost-ack re-drive from the delivery pump).
+    const steerInput: AsyncIterable<{ id?: string; text: string }> = {
+      async *[Symbol.asyncIterator]() {
+        yield { id: 'S1', text: 'do X' };
+        yield { id: 'S1', text: 'do X' };
+      },
+    };
+
+    const acks: string[] = [];
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+    await core.run({
+      engine: 'claude',
+      task: 'the task',
+      cwd: '/tmp/wt',
+      systemPrompt: 'p',
+      sandboxKey: 'k',
+      mode: 'execute',
+      steerable: true,
+      steerInput,
+      onEvent: (e) => {
+        if (e.kind === 'input_ack') acks.push(e.id);
+      },
+    });
+
+    // The task is pushed once; the steer id S1 is pushed exactly ONCE (the redelivery is a no-op push)...
+    expect(pushed).toEqual(['the task', 'do X']);
+    // ...but BOTH deliveries of S1 emit an ack, so a lost-ack re-drive still converges to delivered.
+    expect(acks).toEqual(['S1', 'S1']);
+  });
+
   it('surfaces per-call context occupancy (NOT the cumulative billing sum) across multiple round-trips', async () => {
     const { sdk } = fakeMultiTurnClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });

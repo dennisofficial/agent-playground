@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Not, Repository } from 'typeorm';
+import { DataSource, IsNull, MoreThan, Not, Repository } from 'typeorm';
 import type { Decision, Job, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type {
@@ -130,6 +130,27 @@ export class BrainStoreService {
         meta: { source: 'system_operator', ...extraMeta },
       }),
     );
+  }
+
+  /**
+   * Has an IDENTICAL system→operator notice already landed on this thread within `withinMs`? Guards against
+   * a PERSISTENT engine failure (a spend / session / rate limit) stacking byte-identical red error boxes:
+   * such a failure hits every queued sibling turn, every event/seed delivery, and every sweep re-drive the
+   * same way, so without this the operator sees the same "Resume" panel two, three, four times in a row.
+   * Matched on the `system` author (the exclusive marker of {@link appendSystemOperatorMessage}) + exact
+   * text — a false miss just falls back to posting (never a wrong suppression of a genuinely different
+   * error). Per-thread turns are serialized (the `turnQueues` mutex), so this check-then-write can't race.
+   */
+  async hasRecentSystemOperatorNotice(
+    jobId: string,
+    text: string,
+    withinMs = 120_000,
+  ): Promise<boolean> {
+    const since = new Date(Date.now() - withinMs);
+    const existing = await this.messages.findOne({
+      where: { job_id: jobId, author_id: 'system', text, created_at: MoreThan(since) },
+    });
+    return existing != null;
   }
 
   /**
@@ -514,7 +535,9 @@ export class BrainStoreService {
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
-          text: `Requested secret \`${input.card.name}\` → \`${input.card.path}\``,
+          text: input.card.ephemeral
+            ? `Requested a one-time value \`${input.card.name}\` (delivered to the running session, not stored)`
+            : `Requested secret \`${input.card.name}\` → \`${input.card.path}\``,
           kind: 'card',
           ts: input.requestId,
           card: input.card as unknown as Record<string, unknown>,
@@ -587,7 +610,8 @@ export class BrainStoreService {
       repoId: string;
       requestId: string;
       name: string;
-      path: string;
+      path?: string;
+      ephemeral?: boolean;
     }[]
   > {
     const rows = await this.jobs.find({
@@ -599,7 +623,8 @@ export class BrainStoreService {
       repoId: string;
       requestId: string;
       name: string;
-      path: string;
+      path?: string;
+      ephemeral?: boolean;
     }[] = [];
     for (const t of rows) {
       const card = await this.getSecretCard(t.id, t.awaiting_secret_id!);
@@ -610,7 +635,8 @@ export class BrainStoreService {
           repoId: t.repo_id,
           requestId: t.awaiting_secret_id!,
           name: card.name,
-          path: card.path,
+          ...(card.path ? { path: card.path } : {}),
+          ...(card.ephemeral ? { ephemeral: true } : {}),
         });
       }
     }
@@ -1074,7 +1100,13 @@ export class BrainStoreService {
     const nullRows = await this.jobs.find({
       where: { pr_url: Not(IsNull()), ledger_promotion_status: IsNull() },
     });
-    return [...rows, ...nullRows].map(toThread);
+    // Onboarding threads never get `promote_decisions` (see `buildTools`) — there is nothing durable
+    // for them to promote by design, so they can never legitimately reach `complete`. Excluded here
+    // (not just left to `finish_onboarding`'s own stamp) so no future onboarding-ship path can
+    // resurrect the impossible `promote_decisions` harness turn against one.
+    return [...rows, ...nullRows]
+      .filter((row) => row.kind !== 'onboarding')
+      .map(toThread);
   }
 
   // ── create_job tool ───────────────────────────────────────────────────────────────────────────

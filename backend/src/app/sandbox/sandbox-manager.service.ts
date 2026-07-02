@@ -2,7 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { atlasAgentHomeBase } from '../engine/engine-home';
@@ -13,19 +13,31 @@ import {
   CONTAINER_CONTEXT,
   CONTAINER_FNM_STORE,
   CONTAINER_GIT_COMMON,
+  CONTAINER_HOME,
   CONTAINER_PLAYGROUND,
   CONTAINER_PNPM_STORE,
   CONTAINER_WORKTREE,
+  isExternalMountPath,
+  isReservedContainerPath,
 } from './container-paths';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import { hostExecUser } from './host-exec-user';
 import { SandboxImageBuilder } from './sandbox-image.builder';
-import type { SandboxAttachInput, SandboxProvider } from './sandbox-provider.port';
+import type { SandboxAttachInput, SandboxProvider, ServiceLivenessProbe } from './sandbox-provider.port';
 
 const execFileAsync = promisify(execFile);
 
 /** The in-container path of the engine entrypoint baked by the Dockerfile — bind-mounted live over it. */
 const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
+
+/** Hard cap on the liveness probe exec — it's a trivial `kill -0` loop, so anything slower is a wedged
+ *  docker exec we'd rather abandon (→ `unknown`) than let pile up behind the ~5s status poll. */
+const PROBE_TIMEOUT_MS = 4_000;
+
+/** Hard cap on an EPHEMERAL secret delivery exec (`writeToJobContainerPath`). The value target is usually a
+ *  FIFO whose open blocks until the brain's waiting process reads it; if that process is dead the write hangs
+ *  forever, so we abandon it and let the caller restart the login rather than wedge the request. */
+const DELIVER_TIMEOUT_MS = 15_000;
 
 /** realpath a path, falling back to the input if it can't be resolved (e.g. doesn't exist yet). */
 function realpathSafe(p: string): string {
@@ -51,11 +63,18 @@ function realpathSafe(p: string): string {
  *   NB: image rebuilds are automatic now — `ensureImage` hashes the static build context and rebuilds on
  *   any Dockerfile/script change, so a rev bump never races a stale image.)
  * rev 9 = added the durable per-job /playground scratch mount (bound at /playground, keyed by jobId).
+ * rev 10 = added the durable per-repo /home/atlas HOME mount (CONTAINER_HOME) + external (absolute)
+ *   worktree-config mounts.
+ * rev 11 = moved the shared pnpm store + fnm store + git-common dir under /.atlas (from /workspace/.pnpm-
+ *   store, /atlas-fnm, /repo.git) and pinned pnpm's store-dir explicitly (Dockerfile — two mechanisms,
+ *   since it moved between pnpm majors: `npm_config_store_dir` for 10.x, a global `XDG_CONFIG_HOME`-redirected
+ *   config.yaml for 11.x) instead of relying on pnpm's per-disk fallback, which is what previously put a
+ *   live store in the worktree.
  *
  * NOTE: the per-repo mount SET is ALSO hashed into the `atlas.cfg` fingerprint below, so a changed
  * manifest mount list recreates the container even without bumping this rev.
  */
-const CONFIG_REV = 9;
+const CONFIG_REV = 11;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -157,6 +176,13 @@ export class SandboxManager implements SandboxProvider {
 
     const hostHome = join(this.agentHomeRootHost(), 'sandboxes', name);
     mkdirSync(hostHome, { recursive: true });
+    // `/.atlas` (hostHome, PER-JOB) hosts three NESTED binds below whose actual host source is GLOBAL
+    // (pnpm-store, fnm) or PER-REPO (git-common) — a nested bind target must already exist as a dir under
+    // its parent's host source at container-create time (same requirement the /context/generated nested
+    // bind already relies on), so pre-create empty mountpoints here; the nested binds shadow them.
+    for (const child of ['pnpm-store', 'fnm', 'git-common']) {
+      mkdirSync(join(hostHome, child), { recursive: true });
+    }
 
     // The worktree mounts at a NEUTRAL container path (`/workspace`), not its host path — so the engine never
     // sees host-shaped paths. `cwd` is rewritten host→`/workspace` by the runner.
@@ -167,7 +193,7 @@ export class SandboxManager implements SandboxProvider {
       // common dir at a neutral path too, then SHADOW the worktree's `.git` pointer file — which holds an
       // absolute HOST path — with a container-local one so in-container git resolves the worktree's gitdir
       // → objects/refs, without leaking host paths or mutating the host's real `.git` (the host still uses
-      // it). `commondir` is already relative (`../..`), so it resolves to /repo.git unchanged.
+      // it). `commondir` is already relative (`../..`), so it resolves to CONTAINER_GIT_COMMON unchanged.
       binds.push(`${gitDir}:${CONTAINER_GIT_COMMON}`);
       const dotGit = this.containerDotGit(sandbox.worktreePath, gitDir, hostHome);
       if (dotGit) binds.push(`${dotGit}:${CONTAINER_WORKTREE}/.git`);
@@ -208,28 +234,40 @@ export class SandboxManager implements SandboxProvider {
     this.ensureHostOwnedDir(playgroundDir);
     binds.push(`${playgroundDir}:${CONTAINER_PLAYGROUND}`);
 
+    // The agent shell's durable HOME at /home/atlas (ENV HOME in the image). PER-REPO (one host dir shared
+    // by every job on the repo, like the shared-rw cred cache — install-once/login-once is inherited), NEVER
+    // global: a repo can populate its OWN home/bin but never another repo's, so a durable-dir binary can't
+    // become a cross-repo attack. Combined with PATH being APPENDED in the Dockerfile (not prepended), an
+    // installed binary can only ADD tools, never shadow a system one. Host-owned so the exec uid can write.
+    const safeOrg = orgId.replace(/[^a-z0-9_-]/gi, '_') || 'org';
+    const slug = sandbox.repoId.replace(/[^a-z0-9_-]/gi, '_') || 'repo';
+    const homeDir = join(this.agentHomeRootHost(), 'caches', safeOrg, slug, '_home');
+    this.ensureHostOwnedDir(homeDir);
+    binds.push(`${homeDir}:${CONTAINER_HOME}`);
+
     // Per-repo CACHE MOUNTS from `.atlas/worktree.json` (resolved + validated by the WorktreeProvisioner).
     // Each lands at /workspace/<path>; per-thread gets its own host dir (no cross-thread write contention),
     // shared-ro mounts one immutable host dir read-only. Host dirs + the in-worktree mountpoint are
     // pre-created (+chowned to the host uid) so docker doesn't create them root-owned.
     binds.push(...this.cacheMountBinds(input));
 
-    // SYSTEM-WIDE shared pnpm STORE — ONE host dir for every org/repo/thread (not keyed), bound at the
-    // path pnpm forces the store onto (`/workspace/.pnpm-store`; pnpm ignores store-dir pointing
-    // elsewhere — verified live). A dependency is fetched ONCE globally and copied from the store by
-    // every later install (cross-device → copy, not hardlink). The in-worktree mountpoint is pre-created
-    // (+chowned) so docker doesn't make it root-owned; the store is git-excluded by the
-    // WorktreeProvisioner so `commitAll` never stages it (the `.pnpm-store/` commit-failure cause).
+    // SYSTEM-WIDE shared pnpm STORE — ONE host dir for every org/repo/thread (not keyed), bound UNDER
+    // /.atlas (a nested bind — see the mountpoint pre-creation above) at the path the Dockerfile pins
+    // pnpm's `storeDir` to explicitly, regardless of which pnpm version a repo's own `packageManager`
+    // field (or corepack's own resolution) ends up running — see CONTAINER_PNPM_STORE. A dependency is
+    // fetched ONCE globally and copied from the store by every later install (cross-device → copy, not
+    // hardlink). Living outside
+    // `/workspace` means it can never land in the worktree at all — the `.pnpm-store/` git-exclude
+    // (`WorktreeProvisioner`/`BUILD_JUNK_PATTERNS`) is now pure defense-in-depth, not load-bearing.
     const pnpmStore = join(this.agentHomeRootHost(), 'pnpm-store');
     this.ensureHostOwnedDir(pnpmStore);
-    this.ensureHostOwnedDir(join(sandbox.worktreePath, '.pnpm-store'));
     binds.push(`${pnpmStore}:${CONTAINER_PNPM_STORE}`);
 
     // SHARED cross-thread fnm version store (FNM_DIR in the image) — ONE host dir for every org/repo/thread
-    // (not keyed), bound at /atlas-fnm. A Node version a repo pins via .nvmrc/.node-version is downloaded
-    // ONCE globally (shell-init.sh runs `fnm use --install-if-missing`; sandboxes have outbound egress) and
-    // reused by every later thread, like the pnpm store above. Host dir pre-created + chowned to the host
-    // uid so docker doesn't make it root-owned (turns exec as the host uid).
+    // (not keyed), bound UNDER /.atlas (nested, like the pnpm store above). A Node version a repo pins via
+    // .nvmrc/.node-version is downloaded ONCE globally (shell-init.sh runs `fnm use --install-if-missing`;
+    // sandboxes have outbound egress) and reused by every later thread. Host dir pre-created + chowned to
+    // the host uid so docker doesn't make it root-owned (turns exec as the host uid).
     const fnmStore = join(this.agentHomeRootHost(), 'fnm-store');
     this.ensureHostOwnedDir(fnmStore);
     binds.push(`${fnmStore}:${CONTAINER_FNM_STORE}`);
@@ -422,13 +460,101 @@ export class SandboxManager implements SandboxProvider {
 
   /**
    * The HOST path of a thread's `atlas-svc` supervisor dir — `<sandboxHome>/supervisor`, the host side of
-   * the {@link CONTAINER_AGENT_HOME} bind (`/atlas-home/supervisor` in-container). Holds one `<id>.json`
+   * the {@link CONTAINER_AGENT_HOME} bind (`/.atlas/supervisor` in-container). Holds one `<id>.json`
    * marker + `<id>.log` per process the agent started via `atlas-svc run`. Durable across container
    * recreate (same bind as the brain transcript); null when the thread has no sandbox home on disk yet.
    */
   supervisorDirHost(jobId: string): string | null {
     const sandboxHome = this.findSandboxHomeDir(jobId);
     return sandboxHome ? join(sandboxHome, 'supervisor') : null;
+  }
+
+  /**
+   * Probe the job's container for which supervised process-groups are alive. Resolves the container by
+   * its deterministic name, and — if it's running — execs the same `kill -0 -$pgid` test `atlas-svc`
+   * uses. Returns `down` when there is no running container (every marker is then a dead previous
+   * generation), `up` with the current boot time + alive pgids otherwise, and `unknown` on any failure
+   * so a transient error never masquerades as `stopped`/`running`.
+   */
+  async probeLiveness(jobId: string, pgids: number[]): Promise<ServiceLivenessProbe> {
+    try {
+      // Same name `attach` created it with — for a job the name depends only on jobId.
+      const name = this.containerName('', '', '', jobId);
+      const info = await this.engine.inspect(name);
+      if (!info || info.state !== 'running' || !info.startedAt) return { status: 'down' };
+
+      // Nothing to probe (all markers had null pgids) — still `up`, with an empty alive set, so the
+      // caller can apply the generation gate to each marker.
+      const valid = pgids.filter((g) => Number.isInteger(g) && g > 0);
+      if (valid.length === 0) return { status: 'up', containerStartedAt: info.startedAt, alive: [] };
+
+      // A process-group is alive iff `kill -0` on its negated pgid succeeds (mirrors atlas-svc's
+      // is_alive). Echo the survivors; run as the uid that launched them so ownership matches (no EPERM
+      // false-negatives). `dash`-safe: plain `for`, quoted expansion.
+      const script = `for g in ${valid.join(' ')}; do kill -0 -"$g" 2>/dev/null && echo "$g"; done`;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+      let out: { exitCode: number; stdout: string };
+      try {
+        out = await this.engine.exec(info.id, ['sh', '-c', script], {
+          ...(hostExecUser() ? { user: hostExecUser() } : {}),
+          signal: ctrl.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      const alive = out.stdout
+        .split('\n')
+        .map((l) => Number.parseInt(l.trim(), 10))
+        .filter((n) => Number.isInteger(n) && n > 0);
+      return { status: 'up', containerStartedAt: info.startedAt, alive };
+    } catch (err) {
+      this.logger.warn(`probeLiveness(${jobId.slice(0, 8)}) failed — reporting unknown: ${String(err)}`);
+      return { status: 'unknown' };
+    }
+  }
+
+  /**
+   * EPHEMERAL secret delivery — pipe a value into a path inside a thread's LIVE container over exec STDIN
+   * (never argv/env, so it can't surface in `docker inspect`/`ps`), bounded by `timeoutMs`. `cat > "$1"`
+   * writes exactly the bytes we send to `path`; when `path` is a FIFO the brain wired a waiting process to
+   * read (an OAuth-login prompt), the open blocks until that reader exists — so a DEAD reader trips the
+   * timeout and we return `{ ok:false }` for the caller to restart the flow, rather than hanging the request.
+   * Runs as the host exec-uid so a FIFO the brain created (also as that uid) is writable (no EPERM). See
+   * {@link SandboxProvider.writeToJobContainerPath}.
+   */
+  async writeToJobContainerPath(input: {
+    jobId: string;
+    path: string;
+    value: string;
+    timeoutMs?: number;
+  }): Promise<{ ok: boolean; reason?: string }> {
+    const name = this.containerName('', '', '', input.jobId);
+    const info = await this.engine.inspect(name);
+    if (!info || info.state !== 'running') {
+      return { ok: false, reason: 'the sandbox container is not running' };
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), input.timeoutMs ?? DELIVER_TIMEOUT_MS);
+    try {
+      const out = await this.engine.exec(info.id, ['sh', '-c', 'cat > "$1"', 'sh', input.path], {
+        ...(hostExecUser() ? { user: hostExecUser() } : {}),
+        stdin: input.value,
+        signal: ctrl.signal,
+      });
+      if (out.exitCode !== 0) {
+        return { ok: false, reason: `delivery exited ${out.exitCode}` };
+      }
+      return { ok: true };
+    } catch {
+      // The AbortController fired (timeout) — the target had no live reader, or the write hung.
+      return {
+        ok: false,
+        reason: 'delivery timed out — the target process is not reading',
+      };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -503,17 +629,35 @@ export class SandboxManager implements SandboxProvider {
 
     const binds: string[] = [];
     for (const m of mounts) {
-      const hostDir =
-        m.mode === 'shared-ro'
-          ? join(cacheRoot, '_shared', m.path)
-          : m.mode === 'shared-rw'
-            ? join(cacheRoot, '_shared-rw', m.path)
-            : join(cacheRoot, perThreadKey, m.path);
-      const mountpoint = join(sandbox.worktreePath, m.path);
-      this.ensureHostOwnedDir(hostDir);
-      this.ensureHostOwnedDir(mountpoint);
+      const tier = m.mode === 'shared-ro' ? '_shared' : m.mode === 'shared-rw' ? '_shared-rw' : perThreadKey;
       const ro = m.mode === 'shared-ro' ? ':ro' : '';
-      // Container path is POSIX under /workspace; manifest paths already use '/'.
+      // EXTERNAL (absolute container path, e.g. /root/.config/gcloud): the target IS the path — bound
+      // OUTSIDE /workspace, so nothing lands in the git tree (no gitignore needed). Docker auto-creates the
+      // container mountpoint, so only the HOST dir is pre-created; it still lives under the managed org/repo
+      // cache root (never an arbitrary host path). Defense-in-depth: skip a reserved target (the hydrator +
+      // tool already reject these upstream).
+      const external = isExternalMountPath(m.path);
+      if (external && isReservedContainerPath(m.path)) continue;
+      const hostDir = external
+        ? join(cacheRoot, tier, '_ext', m.path.replace(/^\/+/, ''))
+        : join(cacheRoot, tier, m.path);
+      this.ensureHostOwnedDir(hostDir);
+      // A `shared-rw` dir holds persistent AUTH state (a `.gcloud` login writes a refresh token there in
+      // plaintext) reused by every job on the repo. Lock it to owner-only (0700) so the credential isn't
+      // group/world-readable on the host. Best-effort — a chmod failure must not wedge the attach.
+      if (m.mode === 'shared-rw') {
+        try {
+          chmodSync(hostDir, 0o700);
+        } catch {
+          /* best-effort: we created it owner-owned anyway */
+        }
+      }
+      if (external) {
+        binds.push(`${hostDir}:${m.path}${ro}`);
+        continue;
+      }
+      // WORKTREE-relative: lands at /workspace/<path> (original behaviour). Manifest paths already use '/'.
+      this.ensureHostOwnedDir(join(sandbox.worktreePath, m.path));
       binds.push(`${hostDir}:${CONTAINER_WORKTREE}/${m.path}${ro}`);
     }
     return binds;

@@ -64,6 +64,14 @@ export class StimulusEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   author_id!: string | null;
 
+  /**
+   * Chat author display name; null for events (and for chat rows written before this column existed —
+   * the durable delivery pump then falls back to `author_id` as the label). Persisted so the pump can
+   * reconstruct a full `ChatStimulus` from the row alone when re-driving an undelivered message.
+   */
+  @Column({ type: 'text', nullable: true })
+  author_name!: string | null;
+
   /** Where Atlas replies to a chat stimulus (surface id + thread coordinate, JSON); null for events. */
   @Column({ type: 'jsonb', nullable: true })
   reply_route!: { surfaceId: string; jobRef: string } | null;
@@ -82,10 +90,22 @@ export class StimulusEntity extends TimestampedEntity {
   severity!: string | null;
 
   /**
-   * When this event was delivered to its thread's brain as a harness message (events only). Null until
-   * the delivery turn completes — the at-least-once boot sweep re-delivers any seeded-but-undelivered
-   * event so a crash between seed and the brain turn can't lose it. Chat rows never set it.
+   * When this stimulus was delivered to its thread's brain (both subtypes now). For an EVENT: null until
+   * the delivery turn completes. For CHAT: null until the message was positively TAKEN — handed to a
+   * restart-survivable engine turn (stamped from the runner's `onTurnRegistered` hand-off) or steered
+   * with an engine `input_ack`. The at-least-once boot + periodic sweep re-drives any still-null row so a
+   * crash / sandbox transition / swallowed steer can't lose it.
    */
   @Column({ type: 'timestamptz', nullable: true })
   delivered_at!: Date | null;
+
+  /**
+   * DELIVERY LEASE (chat only). Set to `now()` the instant the delivery pump takes a pending row (steers
+   * it or hands it to a fresh turn), so the same message can't be re-selected — and re-steered — within
+   * the loop or by a concurrent sweep. A row is eligible again only when `delivered_at IS NULL AND
+   * (attempted_at IS NULL OR attempted_at < now() - lease)`, so a genuinely lost hand-off re-drives once
+   * the lease expires. Null = never attempted.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  attempted_at!: Date | null;
 }

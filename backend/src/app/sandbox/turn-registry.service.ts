@@ -108,6 +108,17 @@ export class TurnRegistry {
     await this.turns.delete({ turn_id: turnId });
   }
 
+  /**
+   * Drop every still-`running` turn for a job — called when its sandbox container is torn down out from
+   * under it (idle-reap / reset / LRU detach). Leaving the row `running` lets the steer path treat a dead
+   * engine as live (the operator message is XADD'd to an unread input stream and silently lost) until the
+   * watchdog's stale window finally cleans it. Returns how many rows were dropped.
+   */
+  async failRunningForJob(jobId: string): Promise<number> {
+    const res = await this.turns.delete({ job_id: jobId, status: 'running' });
+    return res.affected ?? 0;
+  }
+
   /** Load one turn (for re-attach context rebuild). */
   async get(turnId: string): Promise<ActiveTurnEntity | null> {
     return this.turns.findOne({ where: { turn_id: turnId } });
@@ -144,6 +155,14 @@ export class TurnRegistry {
     });
     const seen = new Set(beat.map((t) => t.turn_id));
     return [...beat, ...neverBeat.filter((t) => !seen.has(t.turn_id))];
+  }
+
+  /**
+   * The running BRAIN turn for a thread (the operator-facing Claude Code session), or null. The steer/stop
+   * routing resolves the live turnId through this — durable, so it survives a host restart mid-turn.
+   */
+  async runningBrainTurn(jobId: string): Promise<ActiveTurnEntity | null> {
+    return this.turns.findOne({ where: { job_id: jobId, kind: 'brain', status: 'running' } });
   }
 
   /** True if any turn for this thread is still running (guards a duplicate dispatch). */

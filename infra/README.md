@@ -1,6 +1,6 @@
 # Atlas — Production deployment guide
 
-Single OVH box (~32 GB). Docker + docker-compose. Caddy for TLS termination.
+Single OVH box (64 GB, SYS-GAME-2). Docker + docker-compose. Caddy for TLS termination.
 
 ---
 
@@ -114,15 +114,16 @@ docker compose -f infra/docker-compose.prod.yml ps
 ### 7. Run initial migration
 
 ```bash
-# TODO: replace <owner> and <tag> with the actual values.
 docker run --rm \
     --network atlas \
     --env-file /srv/atlas/secrets/atlas.env \
     -e POSTGRES_HOST=postgres \
     -e POSTGRES_SSL_MODE=disable \
     -e NODE_ENV=production \
-    ghcr.io/<owner>/atlas-backend-migrator:<tag>
+    ghcr.io/dennisofficial/atlas-backend-migrator:<tag>
 ```
+
+Replace `<tag>` with the `sha-<gitsha>` tag `ci.yml` published for the commit you're deploying (see the GitHub Actions run summary, or `git rev-parse --short HEAD` for the current `main` tip once CI has built it).
 
 > **Migrations must be backward-compatible (expand-contract).** `deploy.sh` runs the migrator BEFORE
 > the blue/green swap, so during every deploy's drain window the **old** backend keeps serving in-flight

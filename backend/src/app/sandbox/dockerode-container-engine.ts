@@ -280,6 +280,7 @@ export class DockerodeContainerEngine implements ContainerEngine {
       name: (c.Names?.[0] ?? '').replace(/^\//, ''),
       state: c.State,
       labels: c.Labels ?? {},
+      startedAt: null, // list summaries don't carry State.StartedAt — use inspect() when needed
     }));
   }
 
@@ -296,11 +297,16 @@ export class DockerodeContainerEngine implements ContainerEngine {
   async inspect(idOrName: string): Promise<ContainerInfo | null> {
     try {
       const info = await this.docker.getContainer(idOrName).inspect();
+      // Docker reports StartedAt as the zero-time '0001-01-01T00:00:00Z' for a never-started container;
+      // normalize that to null so callers don't treat it as a real boot time.
+      const started = info.State?.StartedAt;
+      const startedAt = started && !started.startsWith('0001-01-01') ? started : null;
       return {
         id: info.Id,
         name: (info.Name ?? '').replace(/^\//, ''),
         state: info.State?.Status ?? 'unknown',
         labels: info.Config?.Labels ?? {},
+        startedAt,
       };
     } catch {
       return null;

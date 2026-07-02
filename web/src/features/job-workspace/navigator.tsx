@@ -24,7 +24,7 @@ import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/job-api';
 import { useRetryJob, useServices } from '@/lib/api/job-queries';
-import { Divider, PipelineTree, PrReviewFooter, TasksBody, haltThreadIdx } from './pipeline-tree';
+import { Divider, PipelineTree, PrReviewRegion, TasksBody, haltThreadIdx } from './pipeline-tree';
 import { NavigatorApproveButton } from './spec-approval';
 import { codexReviewNode } from './codex-review';
 import { pipelineMainTasks } from '@/lib/api/types';
@@ -246,6 +246,18 @@ export function Navigator({
           onConversation={onConversation}
         />
 
+        {/* FINAL REVIEW — the single job-level master-review thread (PR Review). It's technically a thread,
+            so it sits directly under the THREADS list (above OUTPUTS) with its own styling. Hidden entirely
+            while no plan exists (no threads yet). */}
+        {job && job.threads.length > 0 ? (
+          <PrReviewRegion
+            job={job}
+            laneNode={laneNode}
+            onSelectNode={onSelectNode}
+            onConversation={onConversation}
+          />
+        ) : null}
+
         {/* OUTPUTS — specs / artifacts / generated, merged. Open in the RIGHT pane (blue highlight). */}
         <OutputsRegion
           status={st}
@@ -262,17 +274,6 @@ export function Navigator({
         {/* PORTS — the sandbox's live dev servers (design-stage mock). Open in the RIGHT pane (blue). */}
         <PortsRegion detailNode={detailNode} onSelectNode={onSelectNode} />
       </div>
-
-      {/* PINNED: the FINAL REVIEW footer — the single job-level master-review thread (PR Review), pinned
-          below the scrolling regions. Hidden entirely while no plan exists (no threads yet). */}
-      {job && job.threads.length > 0 ? (
-        <PrReviewFooter
-          job={job}
-          laneNode={laneNode}
-          onSelectNode={onSelectNode}
-          onConversation={onConversation}
-        />
-      ) : null}
     </div>
   );
 }
@@ -585,6 +586,10 @@ function ServicesRegion({
           const node = `service:${s.id}`;
           const active = detailNode === node;
           const recentlyActive = s.logUpdatedAt != null && Date.now() - Date.parse(s.logUpdatedAt) < 15_000;
+          // Live liveness drives the dot: accent = running (pulse only while its log is actively writing),
+          // faint = stopped, slate = unknown/indeterminate. A stopped row also dims its label.
+          const dotColor =
+            s.status === 'running' ? 'var(--accent)' : s.status === 'stopped' ? 'var(--faint)' : 'var(--slate)';
           return (
             <button
               key={s.id}
@@ -595,9 +600,16 @@ function ServicesRegion({
                 active && 'nav-selected-blue',
               )}
             >
-              <Dot color="var(--accent)" pulse={recentlyActive} size={9} />
+              <Dot color={dotColor} pulse={s.status === 'running' && recentlyActive} size={9} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[11px] font-semibold text-text">{s.name}</span>
+                <span
+                  className={cn(
+                    'block truncate text-[11px] font-semibold',
+                    s.status === 'stopped' ? 'text-faint' : 'text-text',
+                  )}
+                >
+                  {s.name}
+                </span>
                 <span className="block truncate font-mono text-[8px] text-faint">{s.cmd || 'atlas-svc'}</span>
               </span>
             </button>

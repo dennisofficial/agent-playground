@@ -25,7 +25,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DataSource, Repository } from 'typeorm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvService } from '../../_core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import type { FeatureSandbox, ProjectRepo } from '../git';
@@ -35,6 +35,7 @@ import { TenantCredentialStore } from '../onboarding';
 import { GithubPrService } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
+  ActiveTurnEntity,
   DecisionRecordEntity,
   MessageEntity,
   OrgCredentialsEntity,
@@ -45,8 +46,10 @@ import {
   StimulusEntity,
   JobEntity,
   JobSandboxEntity,
+  ToolExecutionEntity,
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
+import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { TicketService } from '../tickets';
 import { DRIVER_REPO, type DriverRepoResolver, JobLifecycleService, WorktreeProvisioner, type ResolvedRepo } from '.';
 import { ProvisioningNotReadyError } from './job-lifecycle.service';
@@ -226,6 +229,7 @@ beforeEach(async () => {
         },
       },
       { provide: TicketService, useValue: { revertForDeletedThread: vi.fn().mockResolvedValue(undefined) } },
+      { provide: TurnRegistry, useValue: { failRunningForJob: vi.fn().mockResolvedValue(0) } },
       JobLifecycleService,
     ],
   }).compile();
@@ -552,5 +556,215 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
       ProvisioningNotReadyError,
     );
     expect(provider.attachCount).toBe(before);
+  });
+});
+
+// ── Durable-delivery hygiene gate: detachContainer really finalizes `active_turns` ──────────────────
+//
+// Root cause of the "operator message never goes through while the sandbox comes back online" bug: a
+// container torn down out-of-band (idle-reap / reset / LRU) left its thread's `running` `active_turns`
+// row behind for up to ~90-120s, so the durable-delivery pump's liveness check (`runningBrainTurn`) saw
+// a "live" turn that had no engine behind it and steered a message into a dead stream. The fix wires
+// `detachContainer` to `TurnRegistry.failRunningForJob`. The rest of this file stubs `TurnRegistry`
+// entirely (its own module-scope tests don't touch it), so this gate uses the REAL service against real
+// Postgres — the stub can't prove the wiring or the DELETE query's scoping are actually correct.
+describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry, live Postgres)', () => {
+  let hygieneMod: TestingModule;
+  let hygieneLifecycle: JobLifecycleService;
+  let hygieneSandboxes: Repository<JobSandboxEntity>;
+  let hygieneJobs: Repository<JobEntity>;
+  let activeTurns: Repository<ActiveTurnEntity>;
+  let hygieneDs: DataSource;
+  let hygieneFakeGit: FakeGitService;
+  let hygieneProvider: FakeSandboxProvider;
+  let hygieneRepoId: string;
+
+  beforeEach(async () => {
+    hygieneFakeGit = new FakeGitService();
+    hygieneProvider = new FakeSandboxProvider();
+
+    hygieneMod = await Test.createTestingModule({
+      imports: [
+        TypeOrmModule.forRoot(dbOpts()),
+        TypeOrmModule.forFeature(
+          [
+            OrganizationEntity,
+            RepoEntity,
+            JobEntity,
+            JobSandboxEntity,
+            OrgCredentialsEntity,
+            MessageEntity,
+            ThreadEntity,
+            StepEntity,
+            DecisionRecordEntity,
+            StimulusEntity,
+            ActiveTurnEntity,
+            ToolExecutionEntity,
+          ],
+          DB_CONNECTION,
+        ),
+      ],
+      providers: [
+        { provide: EnvService, useValue: { get: (k: string) => process.env[k] } },
+        { provide: LocalGitService, useValue: hygieneFakeGit },
+        { provide: SANDBOX_PROVIDER, useValue: hygieneProvider },
+        SandboxActivityRegistry,
+        {
+          provide: TenantCredentialStore,
+          useValue: {
+            presence: async () => ({ hasAnthropic: false, hasGithub: false, engineAuthSet: false }),
+            get: async () => undefined,
+          },
+        },
+        {
+          provide: CredentialResolver,
+          useValue: {
+            anthropicKey: async () => undefined,
+            openaiKey: async () => undefined,
+            githubToken: async () => undefined,
+            engineAuth: async () => ({ secret: 'test-secret' }),
+          },
+        },
+        {
+          provide: GithubPrService,
+          useValue: { getRepo: async () => null, openPullRequest: async () => ({ url: '', existing: false }), getPullState: async () => 'open' },
+        },
+        {
+          provide: DRIVER_REPO,
+          useValue: { resolve: async (): Promise<ResolvedRepo> => { throw new Error('not used in this gate'); } },
+        },
+        {
+          provide: WorktreeProvisioner,
+          useValue: {
+            provisionAndAttach: async ({ sandbox, orgId, jobId }: { sandbox: FeatureSandbox; orgId: string; jobId?: string }) => ({
+              sandbox: await hygieneProvider.attach({ sandbox, orgId, jobId }),
+              hydrationSig: 'int-sig',
+            }),
+          },
+        },
+        { provide: TicketService, useValue: { revertForDeletedThread: vi.fn().mockResolvedValue(undefined) } },
+        TurnRegistry, // the REAL service — this gate's whole point
+        JobLifecycleService,
+      ],
+    }).compile();
+
+    hygieneLifecycle = hygieneMod.get(JobLifecycleService);
+    hygieneSandboxes = hygieneMod.get(getRepositoryToken(JobSandboxEntity, DB_CONNECTION));
+    hygieneJobs = hygieneMod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
+    activeTurns = hygieneMod.get(getRepositoryToken(ActiveTurnEntity, DB_CONNECTION));
+    hygieneDs = hygieneMod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
+
+    await hygieneDs.query(`
+      INSERT INTO organizations (id, name, slug, status)
+      VALUES ($1, $2, $3, 'active')
+      ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+    `, [FAKE_TEAM_ID, 'R2 Gate Org', 'r2-gate-org']);
+
+    const repoRows = await hygieneDs.query(`
+      INSERT INTO repos (org_id, slug, name, git_url, default_branch, token_name, access_ok)
+      VALUES ($1, $2, $3, $4, $5, NULL, true)
+      ON CONFLICT (org_id, slug) DO UPDATE
+        SET git_url = EXCLUDED.git_url, default_branch = EXCLUDED.default_branch
+      RETURNING id
+    `, [FAKE_TEAM_ID, FAKE_PROJECT_SLUG, 'R2 Gate Repo', FAKE_REPO_URL, FAKE_BASE_BRANCH]);
+    hygieneRepoId = repoRows[0].id;
+  });
+
+  afterEach(async () => {
+    await hygieneMod.close();
+  });
+
+  /** A minimal, real `active_turns` row — the shape `TurnRegistry.register` itself would insert. */
+  async function seedRunningTurn(jobId: string, turnId: string): Promise<void> {
+    await activeTurns.save(
+      activeTurns.create({
+        turn_id: turnId,
+        job_id: jobId,
+        org_id: FAKE_TEAM_ID,
+        channel: hygieneRepoId,
+        lane: 'main',
+        kind: 'brain',
+        container_id: `fake-c-${jobId}`,
+        status: 'running',
+        events_last_id: '0-0',
+      }),
+    );
+  }
+
+  it('reapIdle on a container with a lingering RUNNING brain turn deletes that active_turns row', async () => {
+    const { jobId } = await hygieneLifecycle.createJob({
+      orgId: FAKE_TEAM_ID,
+      repoId: hygieneRepoId,
+      baseBranch: FAKE_BASE_BRANCH,
+      displayName: 'Hygiene gate thread',
+    });
+    // Simulate: a brain turn was live when this container died out-of-band (the exact scenario that
+    // let a steered operator message vanish — see the module doc comment above).
+    const turnId = randomUUID();
+    await seedRunningTurn(jobId, turnId);
+    await hygieneSandboxes.update({ job_id: jobId }, { last_active_at: new Date(0) }); // past idle TTL
+
+    const reaped = await hygieneLifecycle.reapIdle();
+    expect(reaped).toBeGreaterThanOrEqual(1);
+
+    const row = await activeTurns.findOne({ where: { turn_id: turnId } });
+    expect(row).toBeNull(); // gone — the pump's liveness check can no longer see a phantom "live" turn
+  });
+
+  it('scopes the finalize to THIS job only — a running turn on an unrelated job survives', async () => {
+    const { jobId: jobA } = await hygieneLifecycle.createJob({
+      orgId: FAKE_TEAM_ID,
+      repoId: hygieneRepoId,
+      baseBranch: FAKE_BASE_BRANCH,
+      displayName: 'Hygiene gate thread A',
+    });
+    const { jobId: jobB } = await hygieneLifecycle.createJob({
+      orgId: FAKE_TEAM_ID,
+      repoId: hygieneRepoId,
+      baseBranch: FAKE_BASE_BRANCH,
+      displayName: 'Hygiene gate thread B',
+    });
+    const turnA = randomUUID();
+    const turnB = randomUUID();
+    await seedRunningTurn(jobA, turnA);
+    await seedRunningTurn(jobB, turnB);
+    // Only job A goes idle.
+    await hygieneSandboxes.update({ job_id: jobA }, { last_active_at: new Date(0) });
+    await hygieneSandboxes.update({ job_id: jobB }, { last_active_at: new Date() });
+
+    await hygieneLifecycle.reapIdle();
+
+    expect(await activeTurns.findOne({ where: { turn_id: turnA } })).toBeNull();
+    expect(await activeTurns.findOne({ where: { turn_id: turnB } })).not.toBeNull();
+  });
+
+  it('an on-demand resetContainer (the reset_sandbox tool) also finalizes the running turn', async () => {
+    const { jobId } = await hygieneLifecycle.createJob({
+      orgId: FAKE_TEAM_ID,
+      repoId: hygieneRepoId,
+      baseBranch: FAKE_BASE_BRANCH,
+      displayName: 'Hygiene gate reset thread',
+    });
+    const turnId = randomUUID();
+    await seedRunningTurn(jobId, turnId);
+
+    const out = await hygieneLifecycle.resetContainer(jobId, FAKE_TEAM_ID);
+    expect(out).toEqual({ reset: true });
+
+    expect(await activeTurns.findOne({ where: { turn_id: turnId } })).toBeNull();
+  });
+
+  it('a thread with NO running turn reaps cleanly (failRunningForJob is a real no-op, not an error)', async () => {
+    const { jobId } = await hygieneLifecycle.createJob({
+      orgId: FAKE_TEAM_ID,
+      repoId: hygieneRepoId,
+      baseBranch: FAKE_BASE_BRANCH,
+      displayName: 'Hygiene gate quiet thread',
+    });
+    await hygieneSandboxes.update({ job_id: jobId }, { last_active_at: new Date(0) });
+
+    await expect(hygieneLifecycle.reapIdle()).resolves.toBeGreaterThanOrEqual(1);
+    const row = await hygieneSandboxes.findOneOrFail({ where: { job_id: jobId } });
+    expect(row.lifecycle).toBe('detached');
   });
 });

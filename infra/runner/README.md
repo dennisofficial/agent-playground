@@ -11,7 +11,7 @@ installed on the production OVH box.
 2. Register the runner (one-time):
    ```
    sudo -u gha-runner /opt/actions-runner/config.sh \
-       --url https://github.com/<owner>/<repo> \
+       --url https://github.com/dennisofficial/ai-crew \
        --token <RUNNER_REGISTRATION_TOKEN> \
        --labels self-hosted,atlas-box \
        --unattended

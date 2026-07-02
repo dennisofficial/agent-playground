@@ -79,10 +79,9 @@ jobs:
         run: |
           SHA_TAG="sha-$(git rev-parse --short HEAD)"
           echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
-          # TODO: replace <owner> with the actual GHCR owner (e.g. dennisofficial).
-          echo "backend_image=ghcr.io/<owner>/atlas-backend" >> "$GITHUB_OUTPUT"
-          echo "migrator_image=ghcr.io/<owner>/atlas-backend-migrator" >> "$GITHUB_OUTPUT"
-          echo "web_image=ghcr.io/<owner>/atlas-web" >> "$GITHUB_OUTPUT"
+          echo "backend_image=ghcr.io/dennisofficial/atlas-backend" >> "$GITHUB_OUTPUT"
+          echo "migrator_image=ghcr.io/dennisofficial/atlas-backend-migrator" >> "$GITHUB_OUTPUT"
+          echo "web_image=ghcr.io/dennisofficial/atlas-web" >> "$GITHUB_OUTPUT"
 
       - name: Check for sandbox image changes
         id: sandbox_check
