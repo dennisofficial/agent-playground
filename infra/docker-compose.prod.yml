@@ -56,11 +56,6 @@ x-backend-common: &backend-common
     REALTIME_SLOT_PREFIX: pg_realtime_slot
     NODE_ENV: production
     APP_ENV: production
-    # SANDBOX_REBUILD: if set in the deploy.sh shell environment, docker compose
-    # passes it through to the container (implicit passthrough when value is omitted).
-    # A changed context (backend/sandbox/**) already auto-rebuilds via the context-hash
-    # label; set SANDBOX_REBUILD=1 only to bust Docker's own layer cache.
-    SANDBOX_REBUILD: "${SANDBOX_REBUILD:-}"
   volumes:
     # Docker socket — allows the backend to drive per-thread sandbox containers.
     - /var/run/docker.sock:/var/run/docker.sock

@@ -123,7 +123,6 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       <Navigator
         meta={meta}
         pipeline={pipeline}
-        messages={messages}
         context={context}
         contextLoading={contextLoading}
         laneNode={laneNode}

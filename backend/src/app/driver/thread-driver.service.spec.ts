@@ -2,6 +2,7 @@ import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import type { ModuleRef } from '@nestjs/core';
 import { EngineAuthError } from '../engine';
+import type { EngineRunnerPort } from '../engine';
 import { ThreadDriver } from './thread-driver.service';
 import { BuildShipService } from './build-ship.service';
 import type {
@@ -26,7 +27,7 @@ import type {
   ProjectRepo,
 } from '../git';
 import type { TurnRunnerService } from '../runner';
-import type { BlockSink, ChatSurface, LiveTurnStore } from '../surface';
+import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
 import { TurnHarnessFactory } from '../surface';
 import type { CredentialResolver } from '../onboarding';
 import type { LeaderElectionService } from '../cluster';
@@ -106,9 +107,9 @@ function makeStore(state: StoreState): {
     seedReviewAgents: vi.fn(async () => undefined),
     setReviewAgentStatus: vi.fn(async () => undefined),
     finalizeReviewAgents: vi.fn(async () => undefined),
-    seedJobReviewAgents: vi.fn(async () => undefined),
-    setJobReviewAgentStatus: vi.fn(async () => undefined),
-    finalizeJobReviewAgents: vi.fn(async () => undefined),
+    // PR Review lifecycle writes — no-ops for the driver flow tests (display state only).
+    startPrReview: vi.fn(async () => undefined),
+    setPrReviewStatus: vi.fn(async () => undefined),
     stepsForThread: vi.fn(async (threadId: string) =>
       state.steps.filter((p) => p.threadId === threadId).map((p) => ({ ...p })),
     ),
@@ -476,7 +477,19 @@ function assemble(
       },
     ),
   } as unknown as BlockSink;
-  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink);
+  // Task-event capture isn't under test here (see turn-harness.service.spec.ts) — a no-op fake.
+  const taskSink = { applyTaskEvent: vi.fn(async () => undefined) } as unknown as TaskEventSink;
+  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink);
+  // BuildShipService's direct ENGINE_RUNNER dependency (the PR Review orchestrator) — separate from the
+  // `turn`/`calls` fake above (TurnRunnerService, used by per-thread build turns) so PR Review's one
+  // execute turn doesn't inflate the per-thread `execTurns` count.
+  const engineCalls: Array<{ mode: string; engine: string }> = [];
+  const engineRunner = {
+    run: vi.fn(async (args: { mode: string; engine: string }) => {
+      engineCalls.push({ mode: args.mode, engine: args.engine });
+      return { result: 'PR Review: no findings.', usage: undefined };
+    }),
+  } as unknown as EngineRunnerPort;
   // LeaderElectionService stub: `draining` is flippable so the shutdown-guard test can simulate SIGTERM.
   const electionState = { draining: false };
   const driver = new ThreadDriver(
@@ -523,11 +536,10 @@ function assemble(
       findSandbox: async () => null,
       recordPr: async () => undefined,
     } as unknown as import('./job-lifecycle.service').JobLifecycleService,
-    // BuildShipService: the real terminal "ship" over the same git/pr/autofix/store fakes, so the
-    // PR-tail assertions (pushed/opened/setPrReady) hold exactly as before the extraction.
-    new BuildShipService(autofix.autofix, git, pr, store, {
-      appendBlock: async () => undefined,
-    }),
+    // BuildShipService: the real terminal "ship" over the same git/pr/store fakes, so the push/open/
+    // setPrReady assertions hold exactly as before the extraction. PR Review runs on the same shared
+    // `turnHarness` + the dedicated `engineRunner` fake above.
+    new BuildShipService(git, pr, store, blockSink, turnHarness, engineRunner),
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     {
       appendMarker: async () => undefined,
@@ -567,6 +579,7 @@ function assemble(
     commits,
     opened,
     calls,
+    engineCalls,
     posts,
     liveTurns,
     blockSink,
@@ -598,9 +611,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(planTurns).toHaveLength(2);
     expect(execTurns).toHaveLength(2); // 2 threads × 1 orchestrator session
 
-    // Per-thread auto-fix ran once per thread; PR-tail ran exactly once.
+    // Per-thread auto-fix ran once per thread; PR Review (the orchestrator that replaced PR-tail
+    // auto-fix) ran its one execute turn exactly once, on Claude.
     expect(h.autofix.autofixThread).toHaveBeenCalledTimes(2);
-    expect(h.autofix.autofixPullRequest).toHaveBeenCalledTimes(1);
+    expect(h.engineCalls).toEqual([{ mode: 'execute', engine: 'claude' }]);
 
     // Both threads are done with a handoff; the SECOND thread received the first's handoff.
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
@@ -678,9 +692,12 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       anchors.every((a) => typeof a.block.meta?.phaseId === 'string'),
     ).toBe(true);
 
-    // The transcript blocks landed via the durable sink — all tagged with meta.phaseId (peeled into the step).
-    const transcript = h.sunk.filter((s) =>
-      ['chat', 'thinking', 'tool'].includes(s.block.kind),
+    // The transcript blocks landed via the durable sink — all tagged with meta.phaseId (peeled into the
+    // step). Excludes the PR Review orchestrator's own blocks (tagged `prReviewId`, not `phaseId` — a
+    // separate session entirely, see build-ship.service.ts).
+    const transcript = h.sunk.filter(
+      (s) =>
+        ['chat', 'thinking', 'tool'].includes(s.block.kind) && s.block.meta?.prReviewId == null,
     );
     expect(transcript.length).toBeGreaterThan(0);
     expect(

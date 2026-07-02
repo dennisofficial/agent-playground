@@ -2,8 +2,9 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { EngineEvent, EngineUsage } from '../engine';
+import { foldTaskEvent } from '../driver/task-fold';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { MessageEntity } from '../persistence/entities';
+import { JobEntity, MessageEntity, ThreadEntity } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
 
 /**
@@ -49,6 +50,97 @@ export class MessageBlockSink implements BlockSink {
         ...(block.createdAt ? { created_at: block.createdAt } : {}),
       }),
     );
+  }
+}
+
+/**
+ * The scope a task event folds into: a build thread's own list (`thread` → `threads.tasks`), the PR Review
+ * orchestrator's job-level list (`job` → `jobs.tasks`), or the Main brain session's list (`main` →
+ * `jobs.main_tasks` — a separate column so PR Review's `startPrReview` reset can never wipe it).
+ */
+export interface TaskScope {
+  kind: 'thread' | 'job' | 'main';
+  id: string;
+}
+
+/**
+ * The destination for a `TaskCreate`/`TaskUpdate` tool event — a narrow port (mirrors {@link BlockSink})
+ * so the harness can fold LLM-authored task-list events into the owning entity's tasks jsonb column
+ * WITHOUT depending on the driver module (and the cycle that would create, since the driver already
+ * depends on {@link TurnHarnessFactory}). Implemented by {@link EntityTaskEventSink}.
+ */
+export interface TaskEventSink {
+  applyTaskEvent(
+    scope: TaskScope,
+    toolName: string,
+    input: Record<string, unknown>,
+    /** The tool's RAW result — the SDK task tools return a plain string ("Task #8 created…"). */
+    result: unknown,
+  ): Promise<void>;
+}
+
+/** DI token for {@link TaskEventSink}. */
+export const TASK_EVENT_SINK = Symbol('TASK_EVENT_SINK');
+
+/** The default {@link TaskEventSink} — read-modify-writes the scope's tasks jsonb column directly. */
+@Injectable()
+export class EntityTaskEventSink implements TaskEventSink {
+  constructor(
+    @InjectRepository(ThreadEntity, DB_CONNECTION)
+    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly jobs: Repository<JobEntity>,
+  ) {}
+
+  /**
+   * Per-scope FIFO chain. The harness fires task events fire-and-forget, and a batch of task calls in one
+   * turn ("deleted · deleted · deleted") lands as near-simultaneous tool_results — unserialized, their
+   * read-modify-writes clobber each other (a LOST UPDATE: two folds read the same snapshot, the second
+   * write erases the first's change; live-observed as "deleted tasks still showing"). Chaining per scope
+   * key preserves arrival order and makes each fold read its predecessor's write.
+   */
+  private readonly chains = new Map<string, Promise<void>>();
+
+  applyTaskEvent(
+    scope: TaskScope,
+    toolName: string,
+    input: Record<string, unknown>,
+    result: unknown,
+  ): Promise<void> {
+    const key = `${scope.kind}:${scope.id}`;
+    const run = (this.chains.get(key) ?? Promise.resolve()).then(() =>
+      this.apply(scope, toolName, input, result),
+    );
+    // Keep the chain alive past a rejection, and drop the map entry once this tail settles (no growth).
+    const tail = run.catch(() => undefined).finally(() => {
+      if (this.chains.get(key) === tail) this.chains.delete(key);
+    });
+    this.chains.set(key, tail);
+    return run;
+  }
+
+  private async apply(
+    scope: TaskScope,
+    toolName: string,
+    input: Record<string, unknown>,
+    result: unknown,
+  ): Promise<void> {
+    if (scope.kind === 'thread') {
+      const thread = await this.threads.findOne({ where: { id: scope.id } });
+      if (!thread) return;
+      const tasks = foldTaskEvent(thread.tasks ?? [], toolName, input, result);
+      await this.threads.update({ id: scope.id }, { tasks });
+      return;
+    }
+    const job = await this.jobs.findOne({ where: { id: scope.id } });
+    if (!job) return;
+    if (scope.kind === 'main') {
+      const main_tasks = foldTaskEvent(job.main_tasks ?? [], toolName, input, result);
+      await this.jobs.update({ id: scope.id }, { main_tasks });
+    } else {
+      const tasks = foldTaskEvent(job.tasks ?? [], toolName, input, result);
+      await this.jobs.update({ id: scope.id }, { tasks });
+    }
   }
 }
 
@@ -112,7 +204,22 @@ export class TurnHarnessFactory {
   constructor(
     private readonly liveTurns: LiveTurnStore,
     @Inject(BLOCK_SINK) private readonly sink: BlockSink,
+    @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
   ) {}
+
+  /**
+   * Resolve which entity's tasks column a `TaskCreate`/`TaskUpdate` call on this harness belongs to, from
+   * the STABLE lane it rides — `thread:<threadId>` for a thread's own build/orchestrator session,
+   * `pr-review:<jobId>` for the job-level PR Review orchestrator, `main` for the job brain itself (the
+   * navigator's Main row shows its checklist too). Any other lane (`phase:*`, `autofix:*`, `subagent:*`)
+   * isn't a task-tracked session, so `null` — no-op.
+   */
+  private taskScopeFor(lane: string, jobId: string): TaskScope | null {
+    if (lane === 'main') return { kind: 'main', id: jobId };
+    if (lane.startsWith('thread:')) return { kind: 'thread', id: lane.slice('thread:'.length) };
+    if (lane.startsWith('pr-review:')) return { kind: 'job', id: jobId };
+    return null;
+  }
 
   create(options: TurnHarnessOptions): TurnHarness {
     const { jobId, channel } = options;
@@ -213,6 +320,22 @@ export class TurnHarnessFactory {
                   isError: e.isError ?? false,
                   ...(e.structuredPatch ? { structuredPatch: e.structuredPatch } : {}),
                 };
+                // LLM-authored task list: fold TaskCreate/TaskUpdate into the owning thread's/job's `tasks`
+                // column. Excludes a writer subagent's own calls (`parentToolUseId` set) — only the
+                // orchestrating session's task list is tracked. Best-effort: never blocks/sinks the turn.
+                const toolName = typeof b.meta.name === 'string' ? b.meta.name.toLowerCase() : '';
+                if (
+                  (toolName === 'taskcreate' || toolName === 'taskupdate') &&
+                  !b.meta.parentToolUseId
+                ) {
+                  const scope = this.taskScopeFor(lane, jobId);
+                  if (scope) {
+                    const input = (b.meta.input ?? {}) as Record<string, unknown>;
+                    void this.taskSink
+                      .applyTaskEvent(scope, toolName, input, e.result ?? null)
+                      .catch((err) => this.logger.warn(`task-event apply failed (ignored): ${err}`));
+                  }
+                }
                 break;
               }
             }

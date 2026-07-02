@@ -14,12 +14,12 @@ import {
   fetchOrgRepos,
   fetchRepoBranches,
   fetchPipeline,
-  fetchServiceLogs,
   fetchServices,
   fetchThreadContext,
   postReviewComments,
   renameJob,
   retryJob,
+  retryTurn,
   sayMessage,
   type AnswerQuestionBody,
   type ProvideSecretBody,
@@ -89,17 +89,6 @@ export function useServices(ref: JobRef) {
     enabled: hasRef(ref),
     staleTime: 4_000,
     refetchInterval: 5_000,
-  });
-}
-
-/** One supervised process's tailed log. Lazy — only fetched while its log view is open; polls while open. */
-export function useServiceLogs(ref: JobRef, id: string | null) {
-  return useQuery({
-    queryKey: qk.threadServiceLogs(ref, id ?? ''),
-    queryFn: () => fetchServiceLogs(ref, id!),
-    enabled: hasRef(ref) && Boolean(id),
-    staleTime: 2_000,
-    refetchInterval: id ? 3_000 : false,
   });
 }
 
@@ -239,6 +228,18 @@ export function useRetryJob(ref: JobRef) {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
+/** The "Resume" button on a `retryable` system→operator error box — re-pokes the same engine session
+ *  with no new operator message. Refreshes messages (+ the live stream picks up the resumed turn). */
+export function useRetryTurn(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => retryTurn(ref),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
     },
   });
 }

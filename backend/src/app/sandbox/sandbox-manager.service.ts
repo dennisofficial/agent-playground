@@ -46,9 +46,9 @@ function realpathSafe(p: string): string {
  * rev 6 = added per-repo worktree cache mounts from `.atlas/worktree.json`, folded into the fingerprint.
  * rev 7 = added the system-wide shared pnpm store bind at /workspace/.pnpm-store.
  * rev 8 = fnm/python base image + per-repo Node: a repo's .nvmrc/.node-version is resolved at runtime and
- *   downloaded-on-demand into a SHARED cross-thread fnm store bound at /atlas-fnm (no versions baked). NB:
- *   this recreates containers but does NOT rebuild the image — set SANDBOX_REBUILD once so the new
- *   Dockerfile is built, else containers recreate onto the OLD image.)
+ *   downloaded-on-demand into a SHARED cross-thread fnm store bound at /atlas-fnm (no versions baked).
+ *   NB: image rebuilds are automatic now — `ensureImage` hashes the static build context and rebuilds on
+ *   any Dockerfile/script change, so a rev bump never races a stale image.)
  *
  * NOTE: the per-repo mount SET is ALSO hashed into the `atlas.cfg` fingerprint below, so a changed
  * manifest mount list recreates the container even without bumping this rev.
@@ -114,7 +114,9 @@ export class SandboxManager implements SandboxProvider {
     const { sandbox, orgId, jobId } = input;
     const name = this.containerName(orgId, sandbox.repoId, sandbox.branch, jobId);
 
-    const image = await this.images.ensureImage();
+    const image = await this.images.ensureImage(
+      input.onMilestone ? () => input.onMilestone!('image_build') : undefined,
+    );
     // Fold the per-repo mount SET into the fingerprint so a changed `.atlas/worktree.json` mount list
     // recreates an existing (warm) container — binds are only applied at create time.
     const mountKey = (input.mounts ?? []).map((m) => `${m.path}:${m.mode}`).sort().join(',');
@@ -222,6 +224,10 @@ export class SandboxManager implements SandboxProvider {
     this.ensureHostOwnedDir(fnmStore);
     binds.push(`${fnmStore}:${CONTAINER_FNM_STORE}`);
 
+    // Reached ONLY when there was no existing container, or a stale one was just torn down above — never
+    // on the warm-reuse / restart-a-stopped-container paths (both return earlier). The genuinely slow
+    // "build the container from scratch" case.
+    input.onMilestone?.('container_create');
     this.logger.log(`creating sandbox ${name} (image ${image}, net ${network})`);
     const id = await this.engine.createContainer({
       name,

@@ -4,6 +4,14 @@ import type { FeatureSandbox } from '../git';
 export const SANDBOX_PROVIDER = Symbol('SANDBOX_PROVIDER');
 
 /**
+ * A genuinely slow `attach()` sub-step worth narrating to whoever's waiting on the sandbox: a real image
+ * rebuild (`'image_build'`, not the fast label-match skip), or a cold container create (`'container_create'`,
+ * not a warm reuse / restart-a-stopped-container). Deliberately NOT exhaustive — mount resolution, network
+ * create, the ready-wait poll etc. are sub-second-to-a-few-seconds and stay silent, as today.
+ */
+export type SandboxMilestoneStage = 'image_build' | 'container_create';
+
+/**
  * A cache/state directory to bind-mount into the container under the worktree (e.g. `.cocoindex`,
  * `node_modules/.cache`). Declared here (not imported from the driver's manifest types) so the sandbox
  * layer takes no dependency on the driver — the `WorktreeProvisioner` passes already-validated specs.
@@ -41,6 +49,13 @@ export interface SandboxAttachInput {
    * in-worktree mountpoints, and folds them into the recreate fingerprint).
    */
   mounts?: SandboxMount[];
+  /**
+   * Optional callback fired ONLY on genuinely slow attach sub-steps (see {@link SandboxMilestoneStage}) —
+   * never on the common warm/fast path. A plain function param (not DI), so this low-level infra module
+   * takes no dependency on the message store; the caller (ultimately `AgentSessionManager`) decides what
+   * to do with it. Omitted by the acceptance gate (no thread/chat surface exists there).
+   */
+  onMilestone?: (stage: SandboxMilestoneStage) => void;
 }
 
 /**

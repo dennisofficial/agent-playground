@@ -208,6 +208,61 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(byId.get('consistency')?.status).toBe('skipped');
   });
 
+  it('surfaces the LLM-authored task list + PR Review status, with NO fallback default (unlike review agents)', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'task list',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const thread = await threads.save(
+      threads.create({
+        job_id: job.id,
+        org_id: ORG_ID,
+        ordinal: 10,
+        brief: 'Backend — task list',
+        status: 'executing',
+      }),
+    );
+
+    // An un-touched thread/job: `tasks` is `[]` (no computed fallback — unlike reviewAgents, there's no
+    // fixed/expected set for pure LLM output).
+    const empty = (await store.getPipelineState(job.id, ORG_ID)) as {
+      tasks: unknown[];
+      prReviewStatus: string | null;
+      threads: Array<{ tasks: unknown[] }>;
+    };
+    expect(empty.tasks).toEqual([]);
+    expect(empty.prReviewStatus).toBeNull();
+    expect(empty.threads[0].tasks).toEqual([]);
+
+    // Simulate what the harness's fold does — a direct read-modify-write of the jsonb column — for both
+    // the thread's own task list and the job-level PR Review one.
+    await threads.update(
+      { id: thread.id },
+      { tasks: [{ id: 't1', subject: 'Write the migration', status: 'in_progress' }] },
+    );
+    await store.startPrReview(job.id);
+    await store.setPrReviewStatus(job.id, 'running');
+    await jobs.update({ id: job.id }, { tasks: [{ id: 't1', subject: 'Master code review', status: 'completed' }] });
+
+    const state = (await store.getPipelineState(job.id, ORG_ID)) as {
+      tasks: Array<{ id: string; subject: string; status: string }>;
+      prReviewStatus: string | null;
+      threads: Array<{ tasks: Array<{ id: string; subject: string; status: string }> }>;
+    };
+    expect(state.threads[0].tasks).toEqual([
+      { id: 't1', subject: 'Write the migration', status: 'in_progress' },
+    ]);
+    expect(state.tasks).toEqual([{ id: 't1', subject: 'Master code review', status: 'completed' }]);
+    expect(state.prReviewStatus).toBe('running');
+  });
+
   it('still reports `no_job` for a thread that has not entered the build lifecycle', async () => {
     const job = await jobs.save(
       jobs.create({
@@ -219,6 +274,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({ status: 'no_job' });
+    // `no_job` still carries the brain's own task list — the navigator's Main row shows it pre-plan.
+    expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({ status: 'no_job', mainTasks: [] });
   });
 });

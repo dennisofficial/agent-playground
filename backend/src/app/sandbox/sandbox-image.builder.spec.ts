@@ -51,15 +51,6 @@ describe('SandboxImageBuilder.ensureImage — auto-rebuild on context change', (
     expect(buildImage).toHaveBeenCalledOnce();
   });
 
-  it('forces a rebuild WITHOUT a label read when SANDBOX_REBUILD is set', async () => {
-    const { engine, buildImage, imageLabels } = engineWith({ 'atlas.context-hash': 'anything' });
-
-    await new SandboxImageBuilder(env({ SANDBOX_REBUILD: '1' }), engine).ensureImage();
-
-    expect(buildImage).toHaveBeenCalledOnce();
-    expect(imageLabels).not.toHaveBeenCalled();
-  });
-
   it('dedupes concurrent attaches onto a single build', async () => {
     const { engine, buildImage } = engineWith(null);
     const builder = new SandboxImageBuilder(env(), engine);
@@ -67,5 +58,82 @@ describe('SandboxImageBuilder.ensureImage — auto-rebuild on context change', (
     await Promise.all([builder.ensureImage(), builder.ensureImage(), builder.ensureImage()]);
 
     expect(buildImage).toHaveBeenCalledOnce();
+  });
+
+  it('fires onBuildStart exactly once when a real rebuild happens (stale label)', async () => {
+    const { engine } = engineWith({ 'atlas.context-hash': 'stale0000000' });
+    const onBuildStart = vi.fn();
+
+    await new SandboxImageBuilder(env(), engine).ensureImage(onBuildStart);
+
+    expect(onBuildStart).toHaveBeenCalledOnce();
+  });
+
+  it('fires onBuildStart exactly once when the image is absent', async () => {
+    const { engine } = engineWith(null);
+    const onBuildStart = vi.fn();
+
+    await new SandboxImageBuilder(env(), engine).ensureImage(onBuildStart);
+
+    expect(onBuildStart).toHaveBeenCalledOnce();
+  });
+
+  it('never fires onBuildStart on the fast label-match skip', async () => {
+    const hash = await currentHash();
+    const { engine } = engineWith({ 'atlas.context-hash': hash });
+    const onBuildStart = vi.fn();
+
+    await new SandboxImageBuilder(env(), engine).ensureImage(onBuildStart);
+
+    expect(onBuildStart).not.toHaveBeenCalled();
+  });
+
+  it('only the FIRST concurrent caller\'s onBuildStart fires (best-effort, not exactly-once-per-caller)', async () => {
+    const { engine, buildImage } = engineWith(null);
+    const builder = new SandboxImageBuilder(env(), engine);
+    const first = vi.fn();
+    const second = vi.fn();
+
+    await Promise.all([builder.ensureImage(first), builder.ensureImage(second)]);
+
+    expect(buildImage).toHaveBeenCalledOnce();
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).not.toHaveBeenCalled();
+  });
+});
+
+describe('SandboxImageBuilder.onApplicationBootstrap', () => {
+  it('resolves without waiting for the background image warm-up to finish', async () => {
+    let resolveBuild!: () => void;
+    const buildImage = vi.fn(() => new Promise<void>((resolve) => { resolveBuild = resolve; }));
+    const engine = { imageLabels: vi.fn(async () => null), buildImage } as unknown as ContainerEngine;
+    const builder = new SandboxImageBuilder(env(), engine);
+
+    // If the hook AWAITED ensureImage(), this would hang past Vitest's default test timeout, since
+    // buildImage's promise never resolves — it doesn't hang: this line completes on its own.
+    await builder.onApplicationBootstrap();
+
+    resolveBuild!(); // let the background build finish so it doesn't leak into later tests
+  });
+
+  it('kicks off ensureImage() in the background', async () => {
+    const { engine, buildImage } = engineWith(null);
+    const builder = new SandboxImageBuilder(env(), engine);
+
+    await builder.onApplicationBootstrap();
+
+    await vi.waitFor(() => expect(buildImage).toHaveBeenCalled());
+  });
+
+  it('never rejects even when the background image warm-up fails', async () => {
+    const buildImage = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    const engine = { imageLabels: vi.fn(async () => null), buildImage } as unknown as ContainerEngine;
+    const builder = new SandboxImageBuilder(env(), engine);
+
+    await expect(builder.onApplicationBootstrap()).resolves.toBeUndefined();
+    // The background failure is caught internally (logged, not thrown) — confirm the path actually ran.
+    await vi.waitFor(() => expect(buildImage).toHaveBeenCalled());
   });
 });

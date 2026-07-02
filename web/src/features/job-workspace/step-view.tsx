@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { ArrowRight, FileText, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
-import { useContextFile, useServiceLogs, useServices } from '@/lib/api/job-queries';
+import { useContextFile, useServices } from '@/lib/api/job-queries';
 import { threadTitle } from '@/lib/thread-title';
 import { VerdictButtons } from './approval-card';
 import { Markdown } from './markdown';
@@ -26,8 +26,11 @@ import {
 import { useLiveTurn, type LiveTurn } from '@/lib/api/job-stream';
 import { threadLane } from './phases';
 import { codexReviewLane } from './codex-review';
+import { autofixLensLane, REVIEW_JOB_SCOPE } from './review-lane';
+import { PR_REVIEW_NODE, prReviewDisplay, prReviewLane } from './pr-review';
 import { TranscriptView } from './conversation';
 import { DetailTopBar } from './detail-top-bar';
+import { ServiceLogView, serviceHeaderSubtitle } from './service-log-view';
 import { useCommentableRef } from './use-text-selection';
 import { useReviewComments } from './review-comments';
 import { pipelineJob, type JobMessage, type JobRef } from '@/lib/api/job-api';
@@ -36,7 +39,6 @@ import {
   type ContextFileContent,
   type PipelineJob,
   type PipelineState,
-  type ServiceInfo,
   type WebApprovalCard,
 } from '@/lib/api/types';
 
@@ -107,7 +109,7 @@ export function PhaseView({
         : null;
   const fileQuery = useContextFile(jobRef, filePath);
   // Cheap even when the node isn't a service — React Query dedupes against the navigator's own useServices
-  // call (same query key), and gives ServiceView a real name/cmd for its header instead of the bare id.
+  // call (same query key), and gives ServiceLogView a real name/cmd for its header instead of the bare id.
   const servicesQuery = useServices(jobRef);
 
   // Comments can be authored on a spec/generated/artifact file, the plan, the decision record, or the
@@ -124,6 +126,9 @@ export function PhaseView({
   let title: string;
   let subtitle = '';
   let body: React.ReactNode;
+  // Every node type gets the standard search/copy/diff actions EXCEPT a live service log, where none of
+  // them apply — set to `null` in that branch to suppress them entirely (see `DetailTopBar`'s `actions`).
+  let actions: React.ReactNode | undefined;
   if (resolution === 'loading') {
     title = 'Loading…';
     body = <Placeholder title="Loading…" body="Resolving this node against the pipeline." />;
@@ -153,8 +158,9 @@ export function PhaseView({
     const svcId = selectedNode.slice('service:'.length);
     const svc = servicesQuery.data?.services.find((s) => s.id === svcId) ?? null;
     title = svc?.name ?? svcId;
-    subtitle = svc?.cmd ? `atlas-svc · ${svc.cmd}` : 'atlas-svc · supervised process';
-    body = <ServiceView jobRef={jobRef} id={svcId} service={svc} />;
+    subtitle = serviceHeaderSubtitle(svc);
+    body = <ServiceLogView jobRef={jobRef} id={svcId} />;
+    actions = null;
   } else if (selectedNode.startsWith('subagent:')) {
     const parentId = selectedNode.slice('subagent:'.length);
     const summary =
@@ -184,6 +190,21 @@ export function PhaseView({
         onSelectNode={onSelectNode}
       />
     );
+  } else if (selectedNode === PR_REVIEW_NODE) {
+    // PR REVIEW — the pinned FINAL REVIEW thread: the job-level master-review orchestrator session (review
+    // → fix → verify via its own tasks). SAME transcript renderer as Main/threads, on its stable lane.
+    const display = job ? prReviewDisplay(job.prReviewStatus ?? null, job.tasks ?? []) : 'queued';
+    title = 'PR Review';
+    subtitle = `master review over the whole PR diff · ${display}`;
+    body = (
+      <TranscriptView
+        jobRef={jobRef}
+        messages={messages}
+        lane={prReviewLane(jobRef.jobId)}
+        emptyText="No review activity yet — PR Review starts once every build thread finishes."
+        onSelectNode={onSelectNode}
+      />
+    );
   } else if (filePath) {
     title = filePath.split('/').pop() ?? filePath;
     subtitle = fileQuery.data ? `${filePath} · ${formatBytes(fileQuery.data.size)}` : filePath;
@@ -195,13 +216,31 @@ export function PhaseView({
     subtitle = 'thread plan';
     body = <SectionPlanDoc />;
   } else if (selectedNode.startsWith('rev:')) {
-    const [, threadId, lensId = 'review'] = selectedNode.split(':');
-    const revThread = job?.threads.find((s) => s.id === threadId) ?? null;
-    const agent = revThread?.reviewAgents?.find((a) => a.id === lensId) ?? null;
+    const [, threadKey, lensId = 'review'] = selectedNode.split(':');
+    const isJobScope = threadKey === REVIEW_JOB_SCOPE;
+    const revThread = isJobScope ? null : (job?.threads.find((s) => s.id === threadKey) ?? null);
+    const agent = isJobScope
+      ? (job?.reviewAgents?.find((a) => a.id === lensId) ?? null)
+      : (revThread?.reviewAgents?.find((a) => a.id === lensId) ?? null);
     const lensLabel = agent?.label ?? lensId;
+    const autofixId = isJobScope ? jobRef.jobId : threadKey;
     title = lensLabel;
-    subtitle = agent ? `review agent · ${agent.status}` : 'review agent · over the thread diff';
-    body = <ReviewView lens={lensLabel} />;
+    subtitle = agent
+      ? `review agent · ${agent.status}${isJobScope ? ' · over the full PR diff' : ''}`
+      : isJobScope
+        ? 'review agent · over the full PR diff'
+        : 'review agent · over the thread diff';
+    // The SAME transcript renderer as Main/Codex review — the lens's own thinking/tool/text blocks, tagged
+    // `meta.autofixId`+`meta.lensId` on its own `autofix:<autofixId>:<lensId>` lane.
+    body = (
+      <TranscriptView
+        jobRef={jobRef}
+        messages={messages}
+        lane={autofixLensLane(autofixId, lensId)}
+        emptyText="No review activity yet — this lens hasn’t run."
+        onSelectNode={onSelectNode}
+      />
+    );
   } else if (step) {
     title = `step ${phaseIndex + 1}${step.title ? ` · ${step.title}` : ''}`;
     subtitle = 'Claude · execute';
@@ -262,7 +301,7 @@ export function PhaseView({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
-      <DetailTopBar title={title} subtitle={subtitle || undefined} />
+      <DetailTopBar title={title} subtitle={subtitle || undefined} actions={actions} />
       {/* Flex column so a `flex-1` body (TranscriptView) gets a bounded height and scrolls internally —
           a plain block wrapper leaves its `h-full` scroll child resolving against auto height (no scroll). */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{body}</div>
@@ -513,63 +552,6 @@ function DiffView() {
           title="Diff"
           body="The accumulated diff isn't exposed by the web surface yet — it lives in the feature branch and lands in the PR. Open the pull request from ARTIFACTS to review the change on GitHub."
         />
-      </div>
-    </div>
-  );
-}
-
-/** One review-agent lens (a self-review pass over the thread diff). Findings are ephemeral (relayed to chat). */
-function ReviewView({ lens }: { lens: string }) {
-  return (
-    <div className="h-full overflow-y-auto px-8 py-7">
-      <div className="max-w-[720px]">
-        <Placeholder
-          title={`${lens} review`}
-          body="Review lenses run as parallel self-review passes over the thread's diff; their findings are relayed into the conversation rather than persisted, so they aren't browsable here yet."
-        />
-      </div>
-    </div>
-  );
-}
-
-// ── Supervised services (atlas-svc — real data) ─────────────────────────────────────────────────────
-/**
- * A process the agent brought up on demand via `atlas-svc run` — its captured log, tailed via REST. This
- * is a DURABLE snapshot, not a live stream: the panel polls (see `useServiceLogs`), it doesn't push. The
- * footer is deliberately honest about what the host can't verify (see `ServiceInfo`).
- */
-function ServiceView({ jobRef, id, service }: { jobRef: JobRef; id: string; service: ServiceInfo | null }) {
-  const { data, isLoading, error } = useServiceLogs(jobRef, id);
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-4 py-2.5 font-mono text-[10px] text-dim">
-        {service?.pid != null ? <span>pid {service.pid}</span> : null}
-        {service?.startedAt ? <span>started {new Date(service.startedAt).toLocaleTimeString()}</span> : null}
-        {service?.logUpdatedAt ? (
-          <span>log updated {new Date(service.logUpdatedAt).toLocaleTimeString()}</span>
-        ) : null}
-        {!service ? (
-          <span className="text-faint">no marker on disk — this process may have been stopped or the sandbox reset</span>
-        ) : null}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-panel px-4 py-3">
-        {isLoading ? (
-          <p className="font-mono text-[11.5px] text-faint">Loading…</p>
-        ) : error ? (
-          <Placeholder
-            title="Couldn’t load logs"
-            body={error instanceof Error ? error.message : 'Unknown error reading this log.'}
-          />
-        ) : data?.content ? (
-          <pre className="whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-dim">
-            {data.content}
-          </pre>
-        ) : (
-          <p className="font-mono text-[11.5px] italic text-faint">(no log output yet)</p>
-        )}
-      </div>
-      <div className="shrink-0 border-t border-border px-5 py-2 text-center font-mono text-[9px] text-faint">
-        last-known state from atlas-svc · ask Atlas to run atlas-svc ps for the current truth
       </div>
     </div>
   );
@@ -864,9 +846,11 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
   if (node.startsWith('subagent:')) return 'found';
   // The Codex review lane self-handles an empty transcript inside TranscriptView. Always resolvable.
   if (node.startsWith('codex-review:')) return 'found';
+  // The pinned PR Review lane likewise self-handles an empty transcript. Always resolvable.
+  if (node === PR_REVIEW_NODE) return 'found';
   // Sandbox ports are a design-stage mock (no backend port-exposure yet) — always resolvable.
   if (node.startsWith('port:')) return 'found';
-  // Supervised services self-handle a missing marker inside ServiceView (it may have been stopped/cleared
+  // Supervised services self-handle a missing marker inside ServiceLogView (it may have been stopped/cleared
   // since the link was opened) — always resolvable, like ports.
   if (node.startsWith('service:')) return 'found';
 
@@ -876,8 +860,12 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
   if (node.startsWith('secplan:')) return hasSection(job, node.slice('secplan:'.length)) ? 'found' : 'not_found';
   // `rev:<threadId>:<agentId>` — found only when the thread still exists AND still selects that review
   // agent. With the agent list now dynamic, a stale agent id must not render a plausible-but-wrong page.
+  // `rev:job:<agentId>` is the job-level PR-tail pass — validated against `job.reviewAgents` instead.
   if (node.startsWith('rev:')) {
     const [, threadId, lensId] = node.split(':');
+    if (threadId === REVIEW_JOB_SCOPE) {
+      return lensId && (job.reviewAgents ?? []).some((a) => a.id === lensId) ? 'found' : 'not_found';
+    }
     const revThread = threadId ? job.threads.find((s) => s.id === threadId) : undefined;
     return revThread && lensId && (revThread.reviewAgents ?? []).some((a) => a.id === lensId)
       ? 'found'

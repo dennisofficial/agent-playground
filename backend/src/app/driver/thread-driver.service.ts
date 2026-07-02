@@ -28,7 +28,7 @@ import { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { ActiveTurnEntity } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
-import { BuildShipService, LEDGER_COMMIT_MESSAGE } from './build-ship.service';
+import { BuildShipService, CLOUD_SANDBOX_NOTE, LEDGER_COMMIT_MESSAGE } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
   DriverStoreService,
@@ -1316,7 +1316,8 @@ const THREAD_PLAN_SYSTEM =
   "The plan MUST end with VERIFICATION: a final step (or explicit step) that runs the repo's OWN " +
   'typecheck/build/tests and confirms the change works. For a DELETION, an early step must PROVE the code ' +
   'is truly unused — search for every intra-file and cross-file reference (and dynamic/string usages) — ' +
-  'before anything is removed. Never plan to claim done without verifying.';
+  'before anything is removed. Never plan to claim done without verifying. ' +
+  CLOUD_SANDBOX_NOTE;
 
 // Shared tail for the execute prompts: the read-only/advisory subagents a worker can delegate to via
 // Task to stay focused and keep its context clean. `test` runs the verification and reports a diagnosis
@@ -1341,7 +1342,9 @@ const STEP_EXECUTE_SYSTEM =
   'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
   'you cannot fix it within scope, say so explicitly rather than reporting success.' +
-  WORKER_SUBAGENTS_NOTE;
+  WORKER_SUBAGENTS_NOTE +
+  ' ' +
+  CLOUD_SANDBOX_NOTE;
 
 const BATCH_EXECUTE_SYSTEM =
   'You are Atlas executing several ORDERED steps of an approved plan in a feature worktree, in ONE ' +
@@ -1356,7 +1359,9 @@ const BATCH_EXECUTE_SYSTEM =
   'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
   'you cannot fix it within scope, say so explicitly rather than reporting success.' +
-  WORKER_SUBAGENTS_NOTE;
+  WORKER_SUBAGENTS_NOTE +
+  ' ' +
+  CLOUD_SANDBOX_NOTE;
 
 /** Sentinel `commit_sha` for a batch that completed but changed nothing (empty commit) — distinguishes
  *  "done, no diff" from "never committed" (null) so a resume fast-forwards instead of re-running. */
@@ -1400,7 +1405,9 @@ const ORCHESTRATE_EXECUTE_SYSTEM =
   "locked decision, on its own line starting with 'DEVIATION:' and a one-line why — off-spec work is " +
   'never silent. If verification fails and you cannot fix it within scope, say so explicitly.' +
   ORCHESTRATOR_TASKLIST_NOTE +
-  ORCHESTRATOR_SUBAGENTS_NOTE;
+  ORCHESTRATOR_SUBAGENTS_NOTE +
+  ' ' +
+  CLOUD_SANDBOX_NOTE;
 
 /** A locked step row → the `PlannedStep` view the gate/visibility/render read (title null → brief). */
 function asPlannedStep(step: Step): PlannedStep {

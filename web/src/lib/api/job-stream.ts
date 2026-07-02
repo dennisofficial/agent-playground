@@ -70,9 +70,19 @@ export const MAIN_LANE = 'main';
 /** The store keys an in-flight turn by thread AND lane, so a brain turn and a build turn coexist. */
 const laneKey = (jobId: string, lane: string): string => `${jobId}::${lane}`;
 
+/**
+ * ms after an SSE reconnect before un-reconfirmed turns are swept. The server replays its snapshots as
+ * the FIRST frames after connect, so anything genuinely live is re-stamped well within this window.
+ */
+const RECONNECT_SWEEP_GRACE_MS = 3_000;
+
 class ThreadStreamStore {
   /** key: `${jobId}::${lane}` → that lane's in-flight turn. */
   private map = new Map<string, LiveTurn>();
+  /** Reconnect-sweep bookkeeping: the current sweep epoch + the epoch each key was last fed in. */
+  private epoch = 0;
+  private readonly touchedEpoch = new Map<string, number>();
+  private sweepTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Per-key listeners. The repo SSE feeds frames for EVERY in-flight turn in the repo into this one store
    * (so switching to a sibling thread mid-stream is instant — its snapshot+deltas are already here). To
@@ -85,6 +95,8 @@ class ThreadStreamStore {
   apply(jobId: string, lane: string, seq: number, ev: StreamPayload | null | undefined): void {
     if (!jobId || !ev?.kind) return;
     const key = laneKey(jobId, lane);
+    // Any frame for this key proves the server still knows the turn — re-confirms it for the sweep.
+    this.touchedEpoch.set(key, this.epoch);
     const cur = this.map.get(key);
 
     // Snapshot: the authoritative full state at `seq`. Replace, unless we already have newer deltas.
@@ -172,9 +184,34 @@ class ThreadStreamStore {
 
   end(jobId: string, lane: string): void {
     const key = laneKey(jobId, lane);
+    this.touchedEpoch.delete(key);
     if (!this.map.has(key)) return;
     this.map.delete(key);
     this.notify(key);
+  }
+
+  /**
+   * Reconnect reconciliation for turns that ENDED while the SSE was down. On (re)connect the server
+   * replays a snapshot for every turn still in flight — but nothing for one that finished (or was lost
+   * to a backend restart), so its client copy would sit at `active: true` ("working…") forever. Bump the
+   * epoch, give the snapshots a grace window to re-stamp their lanes, then drop whatever wasn't
+   * re-confirmed. Lanes owned by OTHER repos' (currently closed) streams get dropped too — harmless:
+   * reopening that repo's stream replays their snapshots fresh.
+   */
+  sweepAfterReconnect(): void {
+    this.epoch += 1;
+    const sweepEpoch = this.epoch;
+    if (this.sweepTimer) clearTimeout(this.sweepTimer);
+    this.sweepTimer = setTimeout(() => {
+      this.sweepTimer = null;
+      for (const key of [...this.map.keys()]) {
+        if ((this.touchedEpoch.get(key) ?? 0) < sweepEpoch) {
+          this.touchedEpoch.delete(key);
+          this.map.delete(key);
+          this.notify(key);
+        }
+      }
+    }, RECONNECT_SWEEP_GRACE_MS);
   }
 
   /** Current turn for a key — a stable object ref until that key next changes (safe for useSyncExternalStore). */
@@ -216,6 +253,15 @@ export function applyStreamFrame(jobId: string, lane: string, seq: number, event
 /** Clear a thread's live turn lane — call AFTER the durable `/messages` refetch lands (post `turn_end`). */
 export function endLiveTurn(jobId: string, lane: string = MAIN_LANE): void {
   store.end(jobId, lane);
+}
+
+/**
+ * Call on a genuine SSE (re)connect (NOT on a late-join to an already-open stream): after a grace window
+ * for the server's replayed snapshots, clears any live turn the reconnect didn't re-confirm — a turn that
+ * ended (or died with a backend restart) while we were disconnected.
+ */
+export function sweepLiveTurnsAfterReconnect(): void {
+  store.sweepAfterReconnect();
 }
 
 /**

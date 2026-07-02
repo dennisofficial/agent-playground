@@ -9,7 +9,6 @@ import type {
   PipelineState,
   JobContext,
   ServiceInfo,
-  ServiceLogs,
   WebCard,
 } from './types';
 
@@ -225,6 +224,15 @@ export function retryJob(ref: JobRef): Promise<{ ok: boolean; status: string }> 
   return webJson(threadPath(ref, '/retry'), { method: 'POST' });
 }
 
+/**
+ * The "Resume" button on a `retryable` system→operator error box (a chat-turn that hit a transient
+ * engine failure). Distinct from `retryJob` — this re-pokes the SAME engine session with no new operator
+ * message, rather than re-driving a halted BUILD track.
+ */
+export function retryTurn(ref: JobRef): Promise<{ ok: boolean }> {
+  return webJson(threadPath(ref, '/retry-turn'), { method: 'POST' });
+}
+
 // ── Pipeline ───────────────────────────────────────────────────────────────────────────────────
 export function fetchPipeline(ref: JobRef): Promise<PipelineState> {
   return webJson<PipelineState>(threadPath(ref, '/pipeline'));
@@ -235,11 +243,16 @@ export function fetchServices(ref: JobRef): Promise<{ services: ServiceInfo[] }>
   return webJson<{ services: ServiceInfo[] }>(threadPath(ref, '/services'));
 }
 
-export function fetchServiceLogs(ref: JobRef, id: string, n = 200): Promise<ServiceLogs> {
-  return webJson<ServiceLogs>(
-    threadPath(ref, `/services/${encodeURIComponent(id)}/logs?n=${n}`),
+/** The last-N-lines tail of one supervised process's log — the same content the SSE `snapshot` frame carries. */
+export function fetchServiceLogTail(
+  ref: JobRef,
+  id: string,
+): Promise<{ id: string; content: string; truncated: boolean }> {
+  return webJson<{ id: string; content: string; truncated: boolean }>(
+    threadPath(ref, `/services/${encodeURIComponent(id)}/logs`),
   );
 }
+
 
 /** Narrow a pipeline read to its job, or `null` before a plan is approved (`{ status: 'no_job' }`). */
 export function pipelineJob(state: PipelineState | undefined): PipelineJob | null {

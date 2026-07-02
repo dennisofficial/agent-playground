@@ -73,6 +73,17 @@ export class ThreadEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', default: [] })
   review_agents!: ReviewAgentState[];
+
+  /**
+   * The thread's LLM-authored task list — folded incrementally from the orchestrating session's
+   * `TaskCreate`/`TaskUpdate` tool calls at the shared transcript harness (see `TurnHarnessFactory`), so
+   * the navigator's TASKS section renders durable state instead of the client refolding the transcript.
+   * `[]` until the session creates its first task — there is no fixed/expected set (unlike
+   * `review_agents`), so `getPipelineState` does NOT fall back to a computed default here. LITERAL
+   * default — see the `review_agents` doc above for why a function default breaks `migration:generate`.
+   */
+  @Column({ type: 'jsonb', default: [] })
+  tasks!: TaskItem[];
 }
 
 /** One post-build review agent's persisted state on a thread. */
@@ -81,4 +92,18 @@ export interface ReviewAgentState {
   label: string;
   status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
   findings?: number;
+}
+
+/** One LLM-authored task, folded from `TaskCreate`/`TaskUpdate` tool calls (see `ThreadEntity.tasks`). */
+export interface TaskItem {
+  id: string;
+  subject: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'dropped';
+  /** The SDK task's longer description — the navigator shows it under an in_progress task + as tooltip. */
+  description?: string;
+  /** Present-continuous label ("Resolving the router chain") shown while in_progress; falls back to subject. */
+  activeForm?: string;
+  /** Dependency edges — ids of tasks this one waits on. A PENDING task with an incomplete blocker renders
+   *  BLOCKED; the block clears by derivation when every blocker completes or is deleted. */
+  blockedBy?: string[];
 }

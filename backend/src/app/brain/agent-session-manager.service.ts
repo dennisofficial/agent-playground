@@ -63,6 +63,7 @@ import {
   type MountMode,
 } from '../driver/worktree-manifest';
 import { isReservedMountPath } from '../sandbox/container-paths';
+import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { TicketService } from '../tickets';
 import type {
   TicketKind,
@@ -204,6 +205,17 @@ export class AgentSessionManager
   private static readonly SYSTEM_PROMPT = [
     'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
     'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
+    '',
+    "WHERE YOU RUN — A CLOUD SANDBOX, NOT THE OPERATOR'S MACHINE: you live in your own cloud container",
+    'with the repo checked out at `/workspace`. The operator is NOT at a terminal next to you — they talk',
+    'to you through a web console (often from a phone) and share NO filesystem, shell, or running services',
+    'with you. "Local" means YOUR sandbox and nothing else; there is no operator-side checkout for you to',
+    'point at. NEVER hand the operator work that assumes one — "run this locally", "check your terminal",',
+    '"edit the file on your machine", "start the dev server and tell me what you see" are all impossible',
+    'requests. Anything that must happen in the repo or its environment, YOU do in the sandbox; anything',
+    'you genuinely cannot do routes through your tools (request_secret/request_file for credentials,',
+    'ask_question for decisions and facts only the operator knows). Your work reaches their world ONLY',
+    'through what you ship (the PR) and what you post in chat.',
     '',
     `You have 21 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
     `under its fully-qualified name "mcp__${BRIDGE_SERVER_NAME}__<tool>" — that is the ONLY name that works.`,
@@ -517,12 +529,30 @@ export class AgentSessionManager
     '    existing ledger entry, list its slug in `supersedes`. Calling with an empty list is fine (nothing',
     '    durable to record). Idempotent — re-promoting the same slug overwrites.',
     '',
-    'SANDBOX RUNTIME: to bring up long-running processes (dev servers, `docker compose`, watchers) use the',
-    '`atlas-svc` supervisor via Bash — `atlas-svc run --name <id> -- <cmd>` (detached, captured logs),',
-    '`atlas-svc logs [-f] <id>`, `atlas-svc ps`, `atlas-svc stop <id>` — instead of a bare `&`/nohup, so the',
-    'process is tracked and its logs are surfaced. Your sandbox can be restarted between turns (idle reaps,',
+    'SANDBOX RUNTIME: ANY long-running process (dev servers, `docker compose` — run it foreground, not `-d`,',
+    '— watchers) MUST be wrapped with the `atlas-svc` supervisor via Bash — `atlas-svc run --name <id> -- <cmd>`',
+    '(detached, captured logs), `atlas-svc logs [-f] <id>`, `atlas-svc ps`, `atlas-svc stop <id>` — never a bare',
+    '`&`/nohup/`-d`. This is how the OPERATOR sees your services: everything under atlas-svc shows up in their',
+    'UI with live logs; anything started outside it is invisible to them. Your sandbox can be restarted between turns (idle reaps,',
     'crashes); never assume something you started earlier is still running — `atlas-svc ps` shows what died,',
     'and verify a server is actually up (curl/health-check) before relying on it.',
+    '',
+    'ENVIRONMENT GAPS ARE NOT YOUR PROBLEM ALONE — FIX THEM FOR EVERY FUTURE JOB TOO. This repo went through',
+    'an onboarding ceremony once, but that only covers what the ceremony happened to hit; you have the SAME',
+    'capabilities it did, used incrementally instead of all at once. If a build hits a missing secret/env var,',
+    'call `request_secret({ name, path, description })` (or `request_file({ path, description })` for a whole',
+    'file/key) — same secure flow as onboarding: the operator enters it once, it renders into YOUR live',
+    'worktree so you can keep going, and it persists for every future job on this repo (no more hand-off).',
+    'If instead you COMPUTE a value yourself (e.g. `stripe listen --print-secret` from an already-granted API',
+    'key — nobody typed it, nothing for an operator to gate), call `derive_secret({ name, path, value,',
+    'description })` to store it durably with no operator wait — otherwise every future job re-derives it from',
+    'scratch, paying the same tax you just paid.',
+    'If you discover the repo needs a persistent cache/auth mount (e.g. a `.gcloud`/`.stripe` dir a tool',
+    'expects to survive across jobs), call `write_worktree_config({ mounts, seed })` to record it in the',
+    "repo's `atlas.json` — it rides your normal PR like any other file you touch, no separate ship step.",
+    'Small environment fixes (a broken script, a missing build step another package needs) are just a normal',
+    'code change — make them as part of your build like anything else. Do not silently work around something',
+    'that will bite the next job too when it is fixable in the repo.',
     '',
     'ACT WITH CARE, REPORT TRUTHFULLY: the approval gate is your safety net, not a substitute for judgment.',
     'The hard-to-reverse, outward-facing actions are `finalize_build` / `dispatch_build` (they commit code and',
@@ -550,11 +580,20 @@ export class AgentSessionManager
     'job starts with a hydrated, runnable box and never has to do this again. The proof of done is not a',
     'document; it is a stack you personally brought up green.',
     '',
+    "You run in a CLOUD SANDBOX — your own container, not the operator's machine. The operator talks to you",
+    'through a web console and shares NO filesystem, shell, or services with you; "local" means YOUR sandbox.',
+    'Never ask them to run commands, edit files, or boot anything "on their machine" — YOU boot everything',
+    'here. The only things you route to them are secret values/uploads (request_secret/request_file) and',
+    'answers only they know (ask_question).',
+    '',
     'You work in /workspace (a real checkout) with your native tools (Bash, Read, Glob, Grep). Loop:',
     '  1. Learn how the repo runs from ITS OWN docs — package.json scripts, README, CLAUDE.md, compose files,',
     '     .env.example. Do not invent; re-derive. Install deps the way the repo expects (e.g. pnpm install).',
     '  2. Bring services up with the supervisor: `atlas-svc run --name <id> -- <cmd>` (e.g. `docker compose up`,',
-    '     `pnpm --filter backend dev`). Read `atlas-svc logs <id>`; iterate until each service is healthy',
+    '     `pnpm --filter backend dev`). ANY long-running process goes through atlas-svc — never a bare `&`/nohup,',
+    '     and run `docker compose` foreground (no `-d`) — because that is how the operator sees your services:',
+    '     everything under atlas-svc appears in their UI with live logs; anything else is invisible to them.',
+    '     Read `atlas-svc logs <id>`; iterate until each service is healthy',
     '     (curl its endpoint / watch the log say it is listening). `atlas-svc ps` lists what is running.',
     '  3. When a boot fails for a MISSING secret/file/credential, request it on the spot (see SECRETS/AUTH),',
     '     wait for it to render into the worktree, then retry — do not give up and do not fake it.',
@@ -571,7 +610,11 @@ export class AgentSessionManager
     `  - mcp__${BRIDGE_SERVER_NAME}__remember            — store a durable memory fact about this repo`,
     `  - mcp__${BRIDGE_SERVER_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (see SECRETS)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__request_file        — ask the operator to UPLOAD a file (JSON/key file; see SECRETS)`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — author atlas.json (mounts + seed; NOT secrets)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__derive_secret       — store a value YOU computed (not operator-provided; see SECRETS)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — AMEND atlas.json (mounts + seed; NOT secrets) —`,
+    '    merges with what is already committed (upserts a mount by path, unions seed) — never call it with',
+    "    only the ONE new entry you're adding and expect the rest to survive by magic; it already does that,",
+    "    just don't pass a deliberately-truncated list thinking you need to reconstruct the whole file yourself.",
     `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: only after the stack boots green (see FINISH)`,
     '',
     'SECRETS — env-file values (DATABASE_URL, API keys, …) are SECRET. NEVER ask for a secret value in chat,',
@@ -583,6 +626,13 @@ export class AgentSessionManager
     'service-account JSON, a keystore/.pem, a gitignored .env.keys — call request_file({ path, description }):',
     'the operator uploads it, contents stored ENCRYPTED + granted to `path` (which MUST be gitignored). Both',
     'propagate instantly to every future job; request_file is per-card (open several).',
+    '',
+    'DERIVED values — some values are NOT operator-provided at all: you COMPUTE them yourself, using a',
+    "credential you already hold. E.g. `stripe listen --print-secret` prints a webhook signing secret from",
+    'the granted STRIPE_API_KEY — nobody typed it, so there is nothing for an operator to gate. Call',
+    'derive_secret({ name, path, value, description }) to store it durably (same encrypted store + grant as',
+    'request_secret, no operator wait) so every future job inherits it instead of re-deriving it from scratch.',
+    'It refuses if `name` already has a value — pass `overwrite: true` only if deliberately replacing it.',
     '',
     'AUTH / CAPABILITY ACCESS — if the repo talks to a cloud (gcloud/gsutil, Firebase/Firestore, a real DB),',
     'you may need credentials YOU use directly. A static key file is just a request_file secret. For an',
@@ -1012,7 +1062,13 @@ export class AgentSessionManager
       ...(ctx.seed ? { seed: true } : {}),
       ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
     };
-    const tools = this.buildTools(stimulus);
+    // Rebuild the dispatch map with the SAME shape the original kick used: an onboarding thread's
+    // container declares the curated onboarding toolset, so a re-attach that registers the normal map
+    // would reject those calls as "Unknown tool" (finish_onboarding at the end of a long run).
+    const isOnboarding =
+      (await this.store.loadJob(row.job_id).catch(() => null))?.kind ===
+      'onboarding';
+    const tools = this.buildTools(stimulus, isOnboarding);
     const streamer = this.turnHarness.create({
       jobId: row.job_id,
       channel: row.channel,
@@ -1138,16 +1194,20 @@ export class AgentSessionManager
       stimulus.jobId,
       stimulus.orgId,
     );
+    // This is HARNESS narration, not an Atlas reply — appendSystemEvent renders it as a quiet pill (same
+    // treatment as "Codex is reviewing the plan…"), never faking Atlas's voice for operational setup text.
     if (!alreadyProvisioned) {
-      await this.say(
-        stimulus,
+      await this.store.appendSystemEvent(
+        stimulus.jobId,
         'Setting up an isolated workspace for this thread — one moment…',
       );
     }
+    const onMilestone = this.sandboxMilestoneNotifier(stimulus);
     try {
       const provisioned = await this.lifecycle.ensureProvisioned(
         stimulus.jobId,
         stimulus.orgId,
+        onMilestone,
       );
       if (!provisioned) {
         await this.say(
@@ -1181,6 +1241,7 @@ export class AgentSessionManager
       ensured = await this.lifecycle.ensureContainer(
         stimulus.jobId,
         stimulus.orgId,
+        onMilestone,
       );
     } catch (err) {
       this.logger.error(
@@ -1350,19 +1411,20 @@ export class AgentSessionManager
         `in-sandbox turn failed for thread=${stimulus.jobId}: ${err}`,
       );
       await streamer.finish();
-      // An unresumable session is terminal for this thread — retrying re-hits the same missing transcript.
-      // This is an error FOR THE OPERATOR, not Atlas: surface it as a system→operator notice (its own box,
-      // not an Atlas bubble) and don't say "try again". A normal turn error stays an Atlas-voice reply.
+      // A turn failure is a HARNESS error, never Atlas talking — both branches post a system→operator
+      // notice (its own red box, not an Atlas bubble). Show the TRUE error verbatim, no narrative wrapper
+      // ("I ran into an error — please try again") and no truncation — the box is a full panel, not a
+      // card field with a length limit. An unresumable session gets one extra line of guidance and NO
+      // resume option (retrying truly can't help — the transcript is gone, see `isUnresumableSessionMessage`);
+      // any other failure is just the raw error, marked `retryable` so the web offers a "Resume" button
+      // that re-pokes the SAME engine session (`POST …/retry-turn`) without a new operator message.
       if (isUnresumableSessionMessage(String(err))) {
         await this.saySystemOperator(
           stimulus,
-          "This thread can't continue — its engine session state is gone (this happens after an engine update or if the session home was cleared). Retrying won't help. Please start a new thread to pick this back up.",
+          `${String(err)}\n\nThis thread can't continue — its engine session state is gone. Please start a new thread to pick this back up.`,
         );
       } else {
-        await this.say(
-          stimulus,
-          `I ran into an error — please try again. (${String(err).slice(0, 200)})`,
-        );
+        await this.saySystemOperator(stimulus, String(err), { retryable: true });
       }
       return;
     }
@@ -2443,22 +2505,29 @@ export class AgentSessionManager
       },
     };
 
-    // Every thread can request a missing secret/file on the spot (so a build thread that finds the env
-    // incomplete asks for the key instead of failing) — the owner-gated provide endpoints accept any job.
+    // The ceremony and an ordinary build thread share the SAME onboarding capabilities — the ceremony just
+    // does it all up front in one pass; any other thread does it incrementally, on the fly, whenever it
+    // hits the same kind of friction (a missing secret, a repo setup gap worth recording for next time).
+    // Every thread can request a missing secret/file on the spot (the owner-gated provide endpoints accept
+    // any job) AND amend the repo's `atlas.json` (mounts/seed) — a build thread's own commit already rides
+    // its own PR, so no separate "finish" step is needed outside the ceremony (see `write_worktree_config`).
     const intake = {
       request_secret: this.buildRequestSecretTool(stimulus),
       request_file: this.buildRequestFileTool(stimulus),
+      write_worktree_config: this.buildWriteWorktreeConfigTool(stimulus),
+      derive_secret: this.buildDeriveSecretTool(stimulus),
     };
 
     // Normal threads get the full toolset above + intake. Onboarding threads get a curated, build-free
-    // subset (they don't build/PR; they explore, provision, and finish).
+    // subset (they don't build/PR; they explore, provision, and finish) — `finish_onboarding` stays
+    // ceremony-only: it stamps `onboarded_at` and opens the ceremony's OWN dedicated config PR, which only
+    // makes sense when there is no other in-flight build PR to fold the config change into.
     if (!onboarding) return { ...tools, ...intake };
     return {
       ask_question: tools.ask_question,
       recall: tools.recall,
       remember: tools.remember,
       ...intake,
-      write_worktree_config: this.buildWriteWorktreeConfigTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
     };
   }
@@ -2584,9 +2653,78 @@ export class AgentSessionManager
   }
 
   /**
-   * `write_worktree_config({ mounts, seed })` — author the repo's committed `atlas.json` (the NON-secret
-   * hydration half: cache/auth mounts + golden-seed files). Secrets are NEVER written here (they live as
-   * encrypted grants); a `secrets` field is rejected. Validated against the manifest schema before write.
+   * `derive_secret({ name, path, value, description, overwrite? })` — durably store a value YOU already
+   * computed (not operator-provided) — e.g. a webhook signing secret from `stripe listen --print-secret`,
+   * derived from an already-granted API key. Unlike `request_secret`, there is NO operator round-trip: you
+   * already hold the value (it never came from anywhere an operator needed to gate), so it writes straight
+   * to the SAME encrypted store + grant, then renders on your next hydration and EVERY future job's — no
+   * re-derivation tax. Refuses by default if `name` already has a value (protects an operator-provided
+   * secret from being silently clobbered by a same-named derived one) — pass `overwrite: true` only when
+   * you are deliberately replacing it. Posts a quiet system-event pill for operator visibility (name/path
+   * only, never the value — same rule as every other secret path).
+   */
+  private buildDeriveSecretTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const name = String(args['name'] ?? '').trim();
+      const path = String(args['path'] ?? '').trim();
+      const value = String(args['value'] ?? '');
+      const description = String(args['description'] ?? '').trim();
+      const overwrite = args['overwrite'] === true;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        return {
+          ok: false,
+          reason:
+            'name must be an env-var-style identifier (e.g. STRIPE_WEBHOOK_SECRET)',
+        };
+      }
+      if (!path || path.startsWith('/') || path.split('/').includes('..')) {
+        return {
+          ok: false,
+          reason:
+            'path must be a worktree-relative file path (e.g. .env.personal), no leading / or ..',
+        };
+      }
+      if (!value) {
+        return {
+          ok: false,
+          reason:
+            'value is required — this tool stores a value you already computed, it never generates or asks for one',
+        };
+      }
+      if (!description) {
+        return {
+          ok: false,
+          reason:
+            'description is required (what this value is and how you derived it)',
+        };
+      }
+      const existing = await this.secretStore.read(stimulus.orgId, name);
+      if (existing != null && !overwrite) {
+        return {
+          ok: false,
+          reason:
+            `a secret named "${name}" already exists (possibly operator-provided) — pass overwrite: true ` +
+            'only if you are deliberately replacing it, or pick a different name',
+        };
+      }
+      await this.secretStore.write(stimulus.orgId, name, value);
+      await this.secretStore.grant(stimulus.orgId, stimulus.repoId, name, path);
+      await this.store.appendSystemEvent(
+        stimulus.jobId,
+        `🔑 Derived and stored \`${name}\` (${description}) — future jobs on this repo won't need to re-derive it.`,
+      );
+      return { ok: true, name, path, overwritten: existing != null };
+    };
+  }
+
+  /**
+   * `write_worktree_config({ mounts, seed })` — AMEND the repo's committed `atlas.json` (the NON-secret
+   * hydration half: cache/auth mounts + golden-seed files). MERGES with whatever is already on disk — a
+   * mount is upserted by `path` (same path replaces that entry, everything else untouched), seed paths are
+   * unioned — it never blind-overwrites. This is what makes it safe as an ANY-THREAD tool: the ceremony
+   * calls it repeatedly while authoring from scratch, and a later build thread can add ONE mount without
+   * wiping out what the ceremony (or an earlier amendment) already recorded. Secrets are NEVER written
+   * here (they live as encrypted grants); a `secrets` field is rejected. Validated before write.
    */
   private buildWriteWorktreeConfigTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
@@ -2597,16 +2735,25 @@ export class AgentSessionManager
             'secrets do not go in atlas.json — use request_secret instead',
         };
       }
-      const { mounts, warnings: mountWarnings } = this.normalizeMounts(
-        args['mounts'],
-      );
-      const seed = this.normalizeSeed(args['seed']);
+      const { mounts: newMounts, warnings: mountWarnings } =
+        this.normalizeMounts(args['mounts']);
+      const newSeed = this.normalizeSeed(args['seed']);
       const sandbox = await this.lifecycle.findSandbox(
         stimulus.jobId,
         stimulus.orgId,
       );
       if (!sandbox)
         return { ok: false, reason: 'no sandbox for this thread yet' };
+
+      // Merge onto whatever is already committed — never a blind overwrite (see docstring).
+      const { manifest: existing } = loadWorktreeManifest(
+        sandbox.worktreePath,
+      );
+      const mountsByPath = new Map(existing.mounts.map((m) => [m.path, m]));
+      for (const m of newMounts) mountsByPath.set(m.path, m);
+      const mounts = [...mountsByPath.values()];
+      const seed = [...new Set([...existing.seed, ...newSeed])];
+
       const body = JSON.stringify({ mounts, seed }, null, 2) + '\n';
       await writeFile(join(sandbox.worktreePath, 'atlas.json'), body, 'utf8');
       // Re-parse through the loader to surface any limit/shape warnings to the brain.
@@ -3253,6 +3400,25 @@ export class AgentSessionManager
     }
   }
 
+  /**
+   * Build an `onMilestone` callback for the provisioning chain (`ensureProvisioned`/`ensureContainer`) —
+   * narrates the genuinely slow attach sub-steps (a real image rebuild, a cold container create) as a
+   * quiet operator-visible pill via `appendSystemEvent`, NOT a fake Atlas reply and NOT `recordMilestone`
+   * (that mechanism buffers for the BRAIN's own next turn — this needs to be seen by the operator now).
+   * Fire-and-forget with a debug-logged catch, matching this file's other best-effort append style.
+   */
+  private sandboxMilestoneNotifier(stimulus: ChatStimulus): (stage: SandboxMilestoneStage) => void {
+    return (stage) => {
+      const text =
+        stage === 'image_build'
+          ? 'Building the sandbox image — this can take a few minutes on first run or after a workspace-setup change…'
+          : "Preparing this thread's workspace container — one moment…";
+      void this.store
+        .appendSystemEvent(stimulus.jobId, text)
+        .catch((err) => this.logger.debug(`milestone event append failed: ${err}`));
+    };
+  }
+
   /** Buffer a passive pipeline milestone for the brain (no turn runs). Best-effort + idempotent by `id`. */
   private async recordMilestone(
     jobId: string,
@@ -3292,10 +3458,13 @@ export class AgentSessionManager
    * Post a SYSTEM→OPERATOR notice — a runtime/harness message for the OPERATOR ONLY, NOT in Atlas's voice
    * and never seeded into the brain (e.g. an unresumable-thread error). Mirrors {@link say} (live SSE post
    * + durable row) but stamps `meta.source='system_operator'` so the web renders its own system-notice box.
+   * `retryable: true` tells the web to render a "Resume" button (a turn-halting engine error the operator
+   * can re-poke without retyping anything — see `POST …/retry-turn`); omit/false for terminal failures.
    */
   private async saySystemOperator(
     stimulus: ChatStimulus,
     text: string,
+    opts: { retryable?: boolean } = {},
   ): Promise<void> {
     const route = await this.store.route({
       orgId: stimulus.orgId,
@@ -3304,16 +3473,17 @@ export class AgentSessionManager
     });
     const channel = route.channel ?? stimulus.replyRoute.jobRef;
     const threadTs = route.threadTs ?? stimulus.replyRoute.jobRef;
+    const meta = { source: 'system_operator', ...(opts.retryable ? { retryable: true } : {}) };
     try {
       await this.surface.post(channel, text, {
         threadTs,
         orgId: stimulus.orgId,
-        meta: { source: 'system_operator' },
+        meta,
       });
     } catch (err) {
       this.logger.warn(`failed to post system→operator notice: ${err}`);
     }
-    await this.store.appendSystemOperatorMessage(stimulus.jobId, text);
+    await this.store.appendSystemOperatorMessage(stimulus.jobId, text, meta);
   }
 
   /** Find the open scoping job on this thread, or open a fresh one. */

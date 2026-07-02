@@ -206,3 +206,20 @@ describe('JobLifecycleService.rehydrateThread', () => {
     expect(provisionAndAttach).not.toHaveBeenCalled();
   });
 });
+
+describe('JobLifecycleService — onMilestone forwarding', () => {
+  it('ensureContainer forwards onMilestone into provisionAndAttach', async () => {
+    const wt = mkdtempSync(join(tmpdir(), 'atlas-milestone-'));
+    try {
+      const row = makeRow({ worktree_path: wt });
+      const { svc, provisionAndAttach } = makeServiceWithMocks(row);
+      const onMilestone = vi.fn();
+
+      await svc.ensureContainer('thread-1', 'T1', onMilestone);
+
+      expect(provisionAndAttach).toHaveBeenCalledWith(expect.objectContaining({ onMilestone }));
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+});

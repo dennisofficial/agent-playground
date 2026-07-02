@@ -9,7 +9,13 @@ import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, JobEntity, JobSandboxEntity } from '../persistence/entities';
-import { hostExecUser, SANDBOX_PROVIDER, SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
+import {
+  hostExecUser,
+  SANDBOX_PROVIDER,
+  SandboxActivityRegistry,
+  type SandboxMilestoneStage,
+  type SandboxProvider,
+} from '../sandbox';
 import { TicketService } from '../tickets';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
@@ -168,12 +174,16 @@ export class JobLifecycleService {
    * Throws `ProvisioningNotReadyError` if the repo isn't connected/validated (`access_ok`) — fail fast,
    * no clone. Concurrent first turns for the same thread share ONE provision (no double row).
    */
-  async ensureProvisioned(jobId: string, orgId: string): Promise<JobSandboxEntity | null> {
+  async ensureProvisioned(
+    jobId: string,
+    orgId: string,
+    onMilestone?: (stage: SandboxMilestoneStage) => void,
+  ): Promise<JobSandboxEntity | null> {
     const key = `${orgId}:${jobId}`;
     const inflight = this.provisioning.get(key);
     if (inflight) return inflight;
     // Set the promise SYNCHRONOUSLY (before any await) so racing callers share it.
-    const p = this.doEnsureProvisioned(jobId, orgId).finally(() => this.provisioning.delete(key));
+    const p = this.doEnsureProvisioned(jobId, orgId, onMilestone).finally(() => this.provisioning.delete(key));
     this.provisioning.set(key, p);
     return p;
   }
@@ -181,6 +191,7 @@ export class JobLifecycleService {
   private async doEnsureProvisioned(
     jobId: string,
     orgId: string,
+    onMilestone?: (stage: SandboxMilestoneStage) => void,
   ): Promise<JobSandboxEntity | null> {
     const thread = await this.jobs.findOne({ where: { id: jobId, org_id: orgId } });
     if (!thread) return null;
@@ -215,7 +226,7 @@ export class JobLifecycleService {
       );
     }
     const baseBranch = thread.base_branch ?? project.default_branch ?? 'main';
-    return this.provisionSandbox(thread, project, baseBranch);
+    return this.provisionSandbox(thread, project, baseBranch, onMilestone);
   }
 
   /**
@@ -271,6 +282,7 @@ export class JobLifecycleService {
   async ensureContainer(
     jobId: string,
     orgId: string,
+    onMilestone?: (stage: SandboxMilestoneStage) => void,
   ): Promise<{ sandbox: FeatureSandbox; wasReset: boolean } | null> {
     const row = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
     if (!row || row.lifecycle === 'closed') return null;
@@ -297,6 +309,7 @@ export class JobLifecycleService {
       repoDbId: row.repo_id,
       knownSig: row.hydration_sig ?? undefined,
       forceHydrate: worktreeRestored,
+      onMilestone,
     });
 
     const wasReset = attached.warm === false;
@@ -568,6 +581,7 @@ export class JobLifecycleService {
     thread: JobEntity,
     project: RepoEntity,
     baseBranch: string,
+    onMilestone?: (stage: SandboxMilestoneStage) => void,
   ): Promise<JobSandboxEntity> {
     // Persist the row in `provisioning` state first (crash-safe: if we fail after this we can detect
     // the orphaned row on recovery).
@@ -612,6 +626,7 @@ export class JobLifecycleService {
         jobId: thread.id,
         repoDbId: project.id,
         forceHydrate: true,
+        onMilestone,
       });
 
       row.worktree_path = attached.worktreePath;

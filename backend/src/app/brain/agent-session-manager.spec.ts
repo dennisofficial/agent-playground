@@ -36,6 +36,9 @@ import { UNTRUSTED_OPEN } from '../stimulus';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type { CredentialResolver, WorktreeSecretStore } from '../onboarding';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 /**
  * R3 GATE TESTS — two assertions:
@@ -114,6 +117,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     findSandbox: vi.fn(),
     contextDirHost: vi.fn(),
   } as unknown as JobLifecycleService;
+
+  const mockSecretStore = {
+    write: vi.fn().mockResolvedValue(undefined),
+    grant: vi.fn().mockResolvedValue(undefined),
+    listGrants: vi.fn().mockResolvedValue([]),
+    read: vi.fn().mockResolvedValue(null),
+  } as unknown as WorktreeSecretStore;
 
   const mockDockerRunner = {} as unknown as EngineRunnerPort;
 
@@ -206,6 +216,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       markers: [],
       stateChanged: false,
     });
+
+    // Secret-store defaults (resetAllMocks wiped the resolved values) — no existing value by default.
+    (mockSecretStore.write as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockSecretStore.grant as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockSecretStore.listGrants as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockSecretStore.read as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     // By default: no existing open job on the thread → openJob creates a fresh one.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -307,12 +323,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         reposWithGit: async () => [],
       } as unknown as RepoDecisionManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
-      {
-        write: async () => undefined,
-        grant: async () => undefined,
-        listGrants: async () => [],
-        read: async () => null,
-      } as unknown as WorktreeSecretStore,
+      mockSecretStore,
     );
   });
 
@@ -583,6 +594,151 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("'planning'");
     expect(mockShip.ship).not.toHaveBeenCalled();
+  });
+
+  it('write_worktree_config MERGES onto an existing atlas.json — an incremental amendment never drops what the ceremony already recorded', async () => {
+    const wt = mkdtempSync(join(tmpdir(), 'atlas-wtc-'));
+    try {
+      // What the ceremony (or an earlier amendment) already committed.
+      writeFileSync(
+        join(wt, 'atlas.json'),
+        JSON.stringify({
+          mounts: [{ path: '.gcloud', mode: 'shared-rw' }, { path: '.cache/turbo', mode: 'per-thread' }],
+          seed: ['fixtures/golden.sqlite'],
+        }),
+      );
+      (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: wt });
+      const tools = manager.buildTools(fakeStimulus);
+
+      // A build thread discovers it needs ONE new mount — it does NOT resend the existing ones.
+      const result = await tools['write_worktree_config']({
+        mounts: [{ path: '.stripe', mode: 'shared-rw' }],
+        seed: ['fixtures/golden.sqlite'], // re-sent (idempotent) — must not duplicate
+      });
+
+      expect(result).toMatchObject({ ok: true, mounts: 3, seed: 1 });
+      const onDisk = JSON.parse(readFileSync(join(wt, 'atlas.json'), 'utf8'));
+      // The pre-existing entries survived; the new one was added; nothing was dropped or duplicated.
+      expect(onDisk.mounts).toEqual(
+        expect.arrayContaining([
+          { path: '.gcloud', mode: 'shared-rw' },
+          { path: '.cache/turbo', mode: 'per-thread' },
+          { path: '.stripe', mode: 'shared-rw' },
+        ]),
+      );
+      expect(onDisk.mounts).toHaveLength(3);
+      expect(onDisk.seed).toEqual(['fixtures/golden.sqlite']);
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  it('write_worktree_config UPSERTS a mount by path — re-recording the same path replaces its mode, not appends a duplicate', async () => {
+    const wt = mkdtempSync(join(tmpdir(), 'atlas-wtc-'));
+    try {
+      writeFileSync(
+        join(wt, 'atlas.json'),
+        JSON.stringify({ mounts: [{ path: '.gcloud', mode: 'per-thread' }], seed: [] }),
+      );
+      (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: wt });
+      const tools = manager.buildTools(fakeStimulus);
+
+      const result = await tools['write_worktree_config']({
+        mounts: [{ path: '.gcloud', mode: 'shared-rw' }], // corrects the mode for the SAME path
+      });
+
+      expect(result).toMatchObject({ ok: true, mounts: 1 });
+      const onDisk = JSON.parse(readFileSync(join(wt, 'atlas.json'), 'utf8'));
+      expect(onDisk.mounts).toEqual([{ path: '.gcloud', mode: 'shared-rw' }]);
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  it('derive_secret stores a value Atlas computed itself — no operator wait, straight to the encrypted store + grant', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+
+    const result = await tools['derive_secret']({
+      name: 'STRIPE_WEBHOOK_SECRET',
+      path: 'backend/.env.personal',
+      value: 'whsec_abc123',
+      description: 'from stripe listen --print-secret, derived from the granted STRIPE_API_KEY',
+    });
+
+    expect(result).toMatchObject({ ok: true, name: 'STRIPE_WEBHOOK_SECRET', overwritten: false });
+    expect(mockSecretStore.write).toHaveBeenCalledWith(TEAM_ID, 'STRIPE_WEBHOOK_SECRET', 'whsec_abc123');
+    expect(mockSecretStore.grant).toHaveBeenCalledWith(
+      TEAM_ID,
+      PROJECT_ID,
+      'STRIPE_WEBHOOK_SECRET',
+      'backend/.env.personal',
+    );
+    // Visible to the operator (name/path only) — never the value.
+    expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
+    const notice = (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    expect(notice).toContain('STRIPE_WEBHOOK_SECRET');
+    expect(notice).not.toContain('whsec_abc123');
+  });
+
+  it('derive_secret REFUSES to clobber an existing value by default (no overwrite flag)', async () => {
+    (mockSecretStore.read as ReturnType<typeof vi.fn>).mockResolvedValue('sk_live_already_here');
+    const tools = manager.buildTools(fakeStimulus);
+
+    const result = await tools['derive_secret']({
+      name: 'STRIPE_API_KEY',
+      path: '.stripe/api.key',
+      value: 'sk_live_new',
+      description: 'attempted overwrite',
+    });
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('already exists');
+    expect(mockSecretStore.write).not.toHaveBeenCalled();
+    expect(mockSecretStore.grant).not.toHaveBeenCalled();
+  });
+
+  it('derive_secret allows an EXPLICIT overwrite: true to replace an existing value', async () => {
+    (mockSecretStore.read as ReturnType<typeof vi.fn>).mockResolvedValue('whsec_stale');
+    const tools = manager.buildTools(fakeStimulus);
+
+    const result = await tools['derive_secret']({
+      name: 'STRIPE_WEBHOOK_SECRET',
+      path: 'backend/.env.personal',
+      value: 'whsec_fresh',
+      description: 'rotated after re-running stripe listen',
+      overwrite: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, overwritten: true });
+    expect(mockSecretStore.write).toHaveBeenCalledWith(TEAM_ID, 'STRIPE_WEBHOOK_SECRET', 'whsec_fresh');
+  });
+
+  it('derive_secret validates name/path/value/description before touching the store', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+
+    const badName = await tools['derive_secret']({
+      name: 'not a valid name!',
+      path: '.env',
+      value: 'x',
+      description: 'x',
+    });
+    expect(badName).toMatchObject({ ok: false });
+
+    const badPath = await tools['derive_secret']({
+      name: 'X',
+      path: '/etc/passwd',
+      value: 'x',
+      description: 'x',
+    });
+    expect(badPath).toMatchObject({ ok: false });
+
+    const noValue = await tools['derive_secret']({ name: 'X', path: '.env', description: 'x' });
+    expect(noValue).toMatchObject({ ok: false });
+
+    const noDescription = await tools['derive_secret']({ name: 'X', path: '.env', value: 'x' });
+    expect(noDescription).toMatchObject({ ok: false });
+
+    expect(mockSecretStore.write).not.toHaveBeenCalled();
   });
 
   it('(e) ask_question opens the durable gate with a normalized question_card', async () => {
@@ -981,6 +1137,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
+      appendSystemEvent: vi.fn().mockResolvedValue(undefined),
       updateCardMessage: vi.fn().mockResolvedValue(undefined),
       loadJob: vi.fn().mockResolvedValue({ kind: null }),
       awaitingQuestionId: vi.fn().mockResolvedValue(null),
@@ -1111,9 +1268,11 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(stamps.every((t) => typeof t === 'number')).toBe(true);
     for (let i = 1; i < stamps.length; i++) expect(stamps[i]).toBeGreaterThan(stamps[i - 1]);
 
-    // The final reply is NOT also persisted as a separate say() — only the "setting up…" line is.
-    expect((store.appendAtlasMessage as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
-    expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('Setting up');
+    // The "setting up…" line is HARNESS narration (a quiet appendSystemEvent pill), never a fake Atlas
+    // reply — and the final engine reply is persisted via the durable block sink above, not a separate
+    // say(), so appendAtlasMessage is never called in this flow at all.
+    expect((store.appendAtlasMessage as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    expect((store.appendSystemEvent as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('Setting up');
   });
 
   it('persists a turn_meta block LAST when the engine reports usage (per-turn tokens + context occupancy)', async () => {
@@ -1189,6 +1348,74 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     // …and it does NOT tell the operator to "try again" (retrying is futile).
     expect(String(notice![1])).not.toContain('try again');
     expect(String(notice![1]).toLowerCase()).toContain('new thread');
+  });
+
+  it('routes a GENERIC in-sandbox engine failure to a system→operator notice, showing the TRUE error verbatim (no narrative wrapper)', async () => {
+    const run = vi.fn().mockRejectedValue(new Error('boom'));
+    const { manager, store, surface } = makeManager({ run });
+
+    await manager.handleChatTurn(stimulus);
+
+    // Persisted via the system→operator seam (own box), NOT as an Atlas message.
+    expect(store.appendSystemOperatorMessage as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    expect(store.appendAtlasMessage as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    const notice = (surface.post as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[2] as { meta?: { source?: string } } | undefined)?.meta?.source === 'system_operator',
+    );
+    expect(notice).toBeTruthy();
+    // No "I ran into an error — please try again" narrative wrapper — just the true error, verbatim.
+    expect(String(notice![1])).toContain('boom');
+    expect(String(notice![1])).not.toContain('try again');
+    expect(String(notice![1])).not.toContain('I ran into an error');
+    // Marked retryable — the web renders a "Resume" button (POST …/retry-turn) on this box.
+    expect((notice![2] as { meta?: { retryable?: boolean } }).meta?.retryable).toBe(true);
+    expect(
+      (store.appendSystemOperatorMessage as ReturnType<typeof vi.fn>).mock.calls[0][2],
+    ).toMatchObject({ retryable: true });
+  });
+
+  it('does NOT mark the unresumable-session notice as retryable (retrying truly cannot help)', async () => {
+    const run = vi.fn().mockRejectedValue(
+      new Error(`${UNRESUMABLE_SESSION_MARKER}: engine session ghost not found — cannot resume`),
+    );
+    const { manager, surface } = makeManager({ run });
+
+    await manager.handleChatTurn(stimulus);
+
+    const notice = (surface.post as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[2] as { meta?: { source?: string } } | undefined)?.meta?.source === 'system_operator',
+    );
+    expect(notice).toBeTruthy();
+    expect((notice![2] as { meta?: { retryable?: boolean } }).meta?.retryable).toBeUndefined();
+  });
+
+  it('narrates the FIRST-provision + container-attach stages via appendSystemEvent (a quiet pill), not a fake Atlas reply', async () => {
+    let provisionedMilestone: ((stage: string) => void) | undefined;
+    let containerMilestone: ((stage: string) => void) | undefined;
+    const ensureProvisioned = vi.fn(async (_jobId: string, _orgId: string, onMilestone?: (s: string) => void) => {
+      provisionedMilestone = onMilestone;
+      onMilestone?.('image_build');
+      return { id: 'sb-1', lifecycle: 'attached' };
+    });
+    const { manager, store, lifecycle } = makeManager({ ensureProvisioned });
+    // Capture ensureContainer's own onMilestone the same way, then invoke it manually.
+    (lifecycle.ensureContainer as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_jobId: string, _orgId: string, onMilestone?: (s: string) => void) => {
+        containerMilestone = onMilestone;
+        onMilestone?.('container_create');
+        return { sandbox: { worktreePath: '/wt', containerId: 'c1' }, wasReset: false };
+      },
+    );
+
+    await manager.handleChatTurn(stimulus);
+
+    expect(provisionedMilestone).toBeTypeOf('function');
+    expect(containerMilestone).toBeTypeOf('function');
+    const events = (store.appendSystemEvent as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1] as string);
+    expect(events.some((t) => /building the sandbox image/i.test(t))).toBe(true);
+    expect(events.some((t) => /preparing this thread.s workspace container/i.test(t))).toBe(true);
+    // Never a fake Atlas chat reply for any of this narration.
+    expect(store.appendAtlasMessage as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
   });
 
   it('serializes concurrent turns for one thread — a follow-up queues, never two engine turns at once', async () => {
@@ -1329,6 +1556,67 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     await manager.handleChatTurn(stimulus);
 
     expect(store.markQuestionDelivered).not.toHaveBeenCalled();
+  });
+
+  it('boot re-attach of an ONBOARDING turn rebuilds the CURATED onboarding tool map (finish_onboarding dispatchable)', async () => {
+    // The regression: `reattachOne` rebuilt the host dispatch map without the onboarding flag, so after a
+    // mid-turn restart the container (still declaring the onboarding toolset from the original kick) got
+    // "Unknown tool: 'finish_onboarding'" back when the session finally tried to conclude.
+    const { manager, store, dockerRunner } = makeManager({});
+    (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: 'onboarding' });
+    const reattach = vi.fn().mockResolvedValue({ result: 'done', sessionId: 's-re' });
+    (dockerRunner as { reattach?: unknown }).reattach = reattach;
+
+    await (manager as unknown as { reattachOne(row: unknown): Promise<void> }).reattachOne({
+      turn_id: 'turn-re-1',
+      container_id: 'c-re-1',
+      org_id: TEAM_ID,
+      job_id: THREAD_ID,
+      channel: PROJECT_ID,
+      ctx: { repoId: PROJECT_ID, author: { id: 'U-OP', displayName: 'Operator' }, body: 'Begin onboarding' },
+    });
+
+    expect(reattach).toHaveBeenCalledOnce();
+    const opts = reattach.mock.calls[0][2] as { toolBridge: { tools: Record<string, unknown> } };
+    const names = Object.keys(opts.toolBridge.tools);
+    expect(names).toContain('finish_onboarding');
+    expect(names).toContain('write_worktree_config');
+    expect(names).not.toContain('submit_plan');
+  });
+
+  it('boot re-attach of a NORMAL turn rebuilds the full build toolset (no onboarding curation)', async () => {
+    const { manager, store, dockerRunner } = makeManager({});
+    (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: null });
+    const reattach = vi.fn().mockResolvedValue({ result: 'done', sessionId: 's-re' });
+    (dockerRunner as { reattach?: unknown }).reattach = reattach;
+
+    await (manager as unknown as { reattachOne(row: unknown): Promise<void> }).reattachOne({
+      turn_id: 'turn-re-2',
+      container_id: 'c-re-2',
+      org_id: TEAM_ID,
+      job_id: THREAD_ID,
+      channel: PROJECT_ID,
+      ctx: { repoId: PROJECT_ID, author: { id: 'U-OP', displayName: 'Operator' }, body: 'Keep going' },
+    });
+
+    const opts = reattach.mock.calls[0][2] as { toolBridge: { tools: Record<string, unknown> } };
+    const names = Object.keys(opts.toolBridge.tools);
+    expect(names).toContain('submit_plan');
+    expect(names).not.toContain('finish_onboarding');
+  });
+
+  it('a NORMAL (non-onboarding) thread has the SAME on-the-fly capabilities as the ceremony — secrets, files, AND config', () => {
+    // The ceremony and an ordinary build thread share identical onboarding capabilities: the ceremony just
+    // does it all up front, a regular thread does it incrementally whenever it hits the same friction.
+    // `finish_onboarding` is the one ceremony-only exception (it stamps onboarded_at + opens the dedicated
+    // config PR — a regular thread's own build already commits atlas.json as part of its own PR).
+    const { manager } = makeManager({});
+    const tools = manager.buildTools(stimulus);
+    expect(tools.request_secret).toBeDefined();
+    expect(tools.request_file).toBeDefined();
+    expect(tools.derive_secret).toBeDefined();
+    expect(tools.write_worktree_config).toBeDefined();
+    expect(tools.finish_onboarding).toBeUndefined();
   });
 });
 

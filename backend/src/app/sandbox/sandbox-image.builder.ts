@@ -21,8 +21,7 @@ const CONTEXT_FILES = ['Dockerfile', 'sandbox-init.sh', 'shell-init.sh', 'atlas-
  * Build of the sandbox base image. `ensureImage()` is idempotent AND change-aware: it hashes the static
  * build-context files and bakes that hash into the image as a label, so it rebuilds automatically when
  * the Dockerfile / shell scripts change and otherwise skips the (slow) build after a fast label read.
- * `SANDBOX_REBUILD` forces a rebuild past that (to bust Docker's own layer cache). The image tag comes
- * from `SANDBOX_IMAGE` (else a sane default). The build context is the fixed `backend/sandbox/` dir
+ * The image tag comes from `SANDBOX_IMAGE` (else a sane default). The build context is the fixed `backend/sandbox/` dir
  * (Dockerfile + sandbox-init.sh + shell-init.sh + the engine bundle written there at boot).
  *
  * On bootstrap it also REBUNDLES the engine entrypoint (`bundleEngine`) so the API itself keeps the
@@ -43,7 +42,14 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
     @Inject(CONTAINER_ENGINE) private readonly engine: ContainerEngine,
   ) {}
 
-  /** Refresh the engine bundle on boot so engine updates flow without a manual rebundle. Best-effort. */
+  /**
+   * Refresh the engine bundle on boot so engine updates flow without a manual rebundle, then warm the
+   * sandbox image in the BACKGROUND (not awaited) — so a Dockerfile/shell-init.sh change gets rebuilt at
+   * boot, when nobody is waiting on a chat reply, instead of silently eating the build on the next live
+   * thread's first turn (that used to look exactly like "Atlas isn't responding"). `ensureImage()`'s own
+   * `inFlight` dedup means a thread that attaches before this finishes just awaits the SAME promise — no
+   * duplicate build, no regression vs. today. Never throws either the bundle or the warm-up.
+   */
   async onApplicationBootstrap(): Promise<void> {
     try {
       const out = await bundleEngine();
@@ -51,6 +57,12 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
     } catch (err) {
       this.logger.warn(`engine rebundle skipped (using existing bundle): ${err}`);
     }
+    this.logger.log('sandbox image warm-up starting in background');
+    void this.ensureImage()
+      .then((tag) => this.logger.log(`sandbox image warm-up complete (${tag})`))
+      .catch((err) =>
+        this.logger.warn(`sandbox image warm-up failed (will retry lazily on first attach): ${err}`),
+      );
   }
 
   imageTag(): string {
@@ -94,34 +106,38 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
   /**
    * Ensure the base image exists AND matches the current build context. Rebuilds automatically when the
    * static context (Dockerfile + the shell scripts) changed — the image carries its context hash as a
-   * label, so an unchanged image is a fast label read, no build. `SANDBOX_REBUILD` still forces a rebuild
-   * (to bust Docker's OWN layer cache, e.g. to re-pull a floating pnpm/fnm version).
+   * label, so an unchanged image is a fast label read, no build. (To bust Docker's OWN layer cache, e.g.
+   * to re-pull a floating pnpm/fnm version, `docker rmi` the image or `docker build --no-cache` by hand.)
+   *
+   * `onBuildStart`, if given, fires ONLY when a real rebuild is about to happen (never on the fast
+   * label-match skip) — the caller's signal to narrate "this will take a while" to whoever's waiting.
+   * Concurrent callers dedupe via `inFlight`: only the FIRST caller's `onBuildStart` fires for a given
+   * in-flight build (best-effort, not exactly-once-per-caller — acceptable, since today NEITHER caller
+   * gets any signal at all).
    */
-  async ensureImage(): Promise<string> {
+  async ensureImage(onBuildStart?: () => void): Promise<string> {
     if (this.inFlight) return this.inFlight;
-    this.inFlight = this.doEnsureImage().finally(() => {
+    this.inFlight = this.doEnsureImage(onBuildStart).finally(() => {
       this.inFlight = undefined;
     });
     return this.inFlight;
   }
 
-  private async doEnsureImage(): Promise<string> {
+  private async doEnsureImage(onBuildStart?: () => void): Promise<string> {
     const tag = this.imageTag();
     this.ensureContextFiles(); // self-heal a dist context missing a nest-cli asset before hashing/building
     const hash = this.contextHash();
-    const forced = !!this.env.get('SANDBOX_REBUILD');
-    if (!forced) {
-      const labels = await this.engine.imageLabels(tag);
-      if (labels && labels[CONTEXT_HASH_LABEL] === hash) {
-        this.logger.log(`sandbox image ${tag} up to date (context ${hash}) — skipping build`);
-        return tag;
-      }
-      if (labels) {
-        this.logger.log(
-          `sandbox image ${tag} context changed (${labels[CONTEXT_HASH_LABEL] ?? 'unlabelled'} → ${hash}) — rebuilding`,
-        );
-      }
+    const labels = await this.engine.imageLabels(tag);
+    if (labels && labels[CONTEXT_HASH_LABEL] === hash) {
+      this.logger.log(`sandbox image ${tag} up to date (context ${hash}) — skipping build`);
+      return tag;
     }
+    if (labels) {
+      this.logger.log(
+        `sandbox image ${tag} context changed (${labels[CONTEXT_HASH_LABEL] ?? 'unlabelled'} → ${hash}) — rebuilding`,
+      );
+    }
+    onBuildStart?.();
     this.logger.log(`building sandbox image ${tag} (context ${hash}; slow on first run)…`);
     await this.engine.buildImage({
       contextDir: this.contextDir(),

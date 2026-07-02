@@ -173,7 +173,7 @@ Built 2026-06-20 (plan: `/Users/dennis/.claude/plans/this-ai-orchestrator-is-gre
 SANDBOX_MODE=docker pnpm gate -- --repo <url>   # assembled docker proof (dry-run; add --live + --channel for a real PR)
 SANDBOX_MODE=docker pnpm e2e -- --live --repo <url>   # full feature drive, every turn in-container (NOT yet run — billed + opens a PR)
 ```
-**Env (in `_core/config/env/validation.ts`):** `SANDBOX_MODE`, `SANDBOX_IMAGE`, `SANDBOX_REBUILD`, `DOCKER_SOCKET_PATH`(?? `DOCKER_SOCKET_PATH`), `REFS_ROOT`(?? `REFS_ROOT`), `MAX_CONCURRENT_SANDBOXES`. The old v1 `WORKSPACE_*` daemon/redis vars are orphaned (marked deprecated; full prune is a follow-up).
+**Env (in `_core/config/env/validation.ts`):** `SANDBOX_MODE`, `SANDBOX_IMAGE`, `DOCKER_SOCKET_PATH`(?? `DOCKER_SOCKET_PATH`), `REFS_ROOT`(?? `REFS_ROOT`), `MAX_CONCURRENT_SANDBOXES`. The old v1 `WORKSPACE_*` daemon/redis vars are orphaned (marked deprecated; full prune is a follow-up).
 
 **Open follow-ups (designed, not built):** human-facing dev-server **exposure** (reverse-proxy by hostname / TLS — the next plan; per-sandbox networks + labels are in place); the `/refs` per-repo-token registry + refresh/GC + an agent tool; TTL reaping of idle *running* sandboxes (needs job-state awareness — only stopped ones are reaped now); pinning the in-image SDK versions to the host via build args; rebuild the image for the deploy arch (built linux/arm64 on the Mac; OVH is x64); prune the dead `WORKSPACE_*` env vars; the full `e2e --live` docker run.
 

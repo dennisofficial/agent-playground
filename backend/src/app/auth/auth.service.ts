@@ -91,19 +91,35 @@ export class AuthService implements OnApplicationBootstrap {
     return this.toSession(user);
   }
 
-  /** Re-issue tokens from a valid refresh cookie (the access token is expired by design). */
+  /**
+   * Re-issue tokens from a valid refresh cookie (the access token is expired by design).
+   *
+   * Each 401 path logs its exact reason: a refresh 401 was observed TRANSIENTLY around a dev
+   * watch-respawn (07-01) with cookies a plain reload proved valid — which no path here should be able
+   * to produce — so the next occurrence must be attributable (missing cookie vs verify failure and its
+   * jose reason vs user lookup miss).
+   */
   async refresh(req: Request, res: Response): Promise<void> {
     const token = this.readCookie(req, REFRESH_COOKIE);
-    if (!token) throw new UnauthorizedException('No refresh token');
+    if (!token) {
+      this.logger.warn('refresh 401: no refresh_token cookie on the request');
+      throw new UnauthorizedException('No refresh token');
+    }
 
     let sub: string | undefined;
     try {
       ({ sub } = await this.jwt.verifyRefreshToken(token));
-    } catch {
+    } catch (err) {
+      this.logger.warn(
+        `refresh 401: refresh token failed verification — ${err instanceof Error ? err.message : String(err)}`,
+      );
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
     const user = sub ? await this.users.findOne({ where: { id: sub } }) : null;
-    if (!user) throw new UnauthorizedException('Session no longer valid');
+    if (!user) {
+      this.logger.warn(`refresh 401: no user found for sub=${sub ?? '(none)'}`);
+      throw new UnauthorizedException('Session no longer valid');
+    }
 
     await this.issueTokens(user, res);
   }

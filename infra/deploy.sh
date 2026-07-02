@@ -14,11 +14,10 @@
 #     release) before the standby is declared ready. See plan Part A3.
 #   - The migrator runs as a one-shot container on the internal atlas network before
 #     the standby is started, so schema changes land before any code that uses them.
-#   - SANDBOX_REBUILD=1: force a rebuild of atlas-sandbox:latest past Docker's own layer
-#     cache (e.g. re-pull a floating base/tool version). NOTE: a changed build context
-#     (backend/sandbox/**) already auto-rebuilds via the image's context-hash label, so
-#     this is no longer required for ordinary image edits. The script accepts a flag to
-#     set it automatically (see --rebuild-sandbox below).
+#   - The sandbox image (atlas-sandbox:latest) auto-rebuilds on boot when its build
+#     context (backend/sandbox/**) changed, via the image's context-hash label. To bust
+#     Docker's own layer cache (e.g. re-pull a floating base/tool version), run
+#     `docker rmi atlas-sandbox:latest` on the box before deploying.
 #   - Idempotent: if the standby is already running (previous partial deploy), it is
 #     recreated. If the state file is absent, blue is assumed active.
 #
@@ -37,7 +36,6 @@ POLL_INTERVAL=5      # seconds between health polls
 
 # ── Parse arguments ─────────────────────────────────────────────────────────────
 ROLLBACK=false
-SANDBOX_REBUILD="${SANDBOX_REBUILD:-}"  # set externally or via --rebuild-sandbox
 TAG=""
 
 while [[ $# -gt 0 ]]; do
@@ -46,10 +44,6 @@ while [[ $# -gt 0 ]]; do
             ROLLBACK=true
             shift
             TAG="${1:?--rollback requires a tag argument}"
-            shift
-            ;;
-        --rebuild-sandbox)
-            SANDBOX_REBUILD=1
             shift
             ;;
         -*)
@@ -64,7 +58,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$TAG" ]]; then
-    echo "Usage: $0 <tag> | --rollback <tag> [--rebuild-sandbox]" >&2
+    echo "Usage: $0 <tag> | --rollback <tag>" >&2
     exit 1
 fi
 
@@ -161,7 +155,6 @@ log "=== Atlas deploy ==="
 log "Tag:     $TAG"
 log "Active:  backend-${ACTIVE} (tag: ${PREV_TAG})"
 log "Standby: backend-${STANDBY}"
-[[ -n "$SANDBOX_REBUILD" ]] && log "SANDBOX_REBUILD=1 — the new backend will rebuild atlas-sandbox:latest on first boot."
 
 if [[ "$ROLLBACK" == "true" ]]; then
     log "=== ROLLBACK to $TAG ==="
@@ -213,25 +206,6 @@ log "Starting backend-${STANDBY} (tag: ${TAG}) ..."
 
 # Export ATLAS_IMAGE_TAG for docker compose variable substitution.
 export ATLAS_IMAGE_TAG="$TAG"
-
-# SANDBOX_REBUILD: if set, pass it as a container-level override via a temporary env
-# file.  docker compose `up --env-file` injects into the compose file substitution
-# context, not the container — so we use `docker run -e` style via a separate override.
-# The cleanest approach: write a one-line override and use `docker compose run` --env,
-# but `up` doesn't support per-service --env.  Instead we export SANDBOX_REBUILD into
-# the shell environment; the x-backend-common anchor in docker-compose.prod.yml
-# picks it up automatically because docker compose propagates exported shell vars that
-# appear in the `environment:` map with no explicit value (implicit passthrough).
-#
-# docker-compose.prod.yml should include:
-#   SANDBOX_REBUILD: "${SANDBOX_REBUILD:-}"
-# in the x-backend-common environment block.  The parallel agent (Part A) adds this
-# var to IEnvConfig; compose passes it through when the shell has it exported.
-
-if [[ -n "$SANDBOX_REBUILD" ]]; then
-    export SANDBOX_REBUILD=1
-    log "SANDBOX_REBUILD=1 will be injected into backend-${STANDBY}."
-fi
 
 docker compose -f "$COMPOSE_FILE" up -d --no-deps \
     "backend-${STANDBY}" || rollback_and_exit "$STANDBY" "$ACTIVE" "$PREV_TAG"

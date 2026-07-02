@@ -117,6 +117,7 @@ export class BrainStoreService {
   async appendSystemOperatorMessage(
     jobId: string,
     text: string,
+    extraMeta?: Record<string, unknown>,
   ): Promise<void> {
     await this.messages.save(
       this.messages.create({
@@ -126,7 +127,7 @@ export class BrainStoreService {
         author_bot_id: null,
         text,
         kind: 'chat',
-        meta: { source: 'system_operator' },
+        meta: { source: 'system_operator', ...extraMeta },
       }),
     );
   }

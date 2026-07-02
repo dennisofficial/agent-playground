@@ -25,6 +25,8 @@ import { ReviewCommentsCardView } from './review-comments-card';
 import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
 import { BuildInstruction, BuildStepCard, indexPhaseBlocks } from './phases';
 import { CodexReviewCard, codexReviewNode, indexCodexReviewBlocks } from './codex-review';
+import { indexAutofixBlocks } from './review-lane';
+import { indexPrReviewBlocks } from './pr-review';
 import { Composer } from './composer';
 import { DetailTopBar } from './detail-top-bar';
 import type { JobMessage, JobRef } from '@/lib/api/job-api';
@@ -255,14 +257,23 @@ function buildLogItems(
   const sub = indexDurableSubagents(log);
   const phase = indexPhaseBlocks(log);
   const codex = indexCodexReviewBlocks(log);
+  const autofix = indexAutofixBlocks(log);
+  const prReview = indexPrReviewBlocks(log);
 
   const isMain = lane === MAIN_LANE;
+  // The pinned PR Review thread's lane: `pr-review:<jobId>` — see `pr-review.ts`.
+  const isPrReviewLane = lane.startsWith('pr-review:');
   const isCodexLane = lane.startsWith('codex-review:');
   // A build thread/step lane streams on the STABLE `thread:<id>` lane and always passes `phaseIds` (the step
   // anchors to render); the legacy `phase:<id>` derivation is a fallback for any old lane string.
   const phaseAnchor = lane.startsWith('phase:') ? lane.slice('phase:'.length) : null;
   const phaseSet: Set<string> | null =
     opts.phaseIds ?? (phaseAnchor ? new Set([phaseAnchor]) : null);
+  // A review-lens sub-page lane: `autofix:<autofixId>:<lensId>` — see `review-lane.ts`.
+  const isReviewLensLane = lane.startsWith('autofix:');
+  const reviewLensParts = isReviewLensLane ? lane.split(':') : null; // ['autofix', autofixId, lensId]
+  const reviewAutofixId = reviewLensParts?.[1] ?? null;
+  const reviewLensId = reviewLensParts?.[2] ?? null;
 
   const flush = () => {
     if (pending.length === 0) return;
@@ -298,6 +309,17 @@ function buildLogItems(
       if (sub.childKeys.has(message.ts)) continue;
       if (phase.childKeys.has(message.ts)) continue;
       if (codex.childKeys.has(message.ts)) continue;
+      // Auto-fix review blocks + the stage anchor row are peeled too — no card surface exists yet (see
+      // `review-lane.ts`), so they simply don't render in Main; the full transcript lives in the `rev:`
+      // sub-page. The stage's plain "Reviewing the diff — …" notice line (a separate, untagged message)
+      // still renders normally, so the operator isn't left with zero signal.
+      if (autofix.childKeys.has(message.ts)) continue;
+      if (autofix.anchorKeys.has(message.ts)) continue;
+      // The PR Review session's blocks + anchor row are peeled the same way — the pinned FINAL REVIEW row
+      // in the navigator is the surface (its transcript is the `pr-review` lane); the stage's plain
+      // "PR Review — …" notice line still renders here as the in-conversation signal.
+      if (prReview.childKeys.has(message.ts)) continue;
+      if (prReview.anchorKeys.has(message.ts)) continue;
       if (codex.anchorKeys.has(message.ts)) {
         flush();
         nodes.push({
@@ -358,6 +380,25 @@ function buildLogItems(
         continue;
       }
       if (!(phase.childKeys.has(message.ts) && phaseSet.has(pid))) continue;
+      if (sub.anchorKeys.has(message.ts)) {
+        pushSubagentCard(message);
+        continue;
+      }
+    } else if (isReviewLensLane) {
+      // A review-lens lane shows only that lens's own blocks; a subagent spawned within it peels to its own
+      // sub-page, same as any other lane.
+      const m = message.meta ?? {};
+      if (m.autofixId !== reviewAutofixId || m.lensId !== reviewLensId) continue;
+      if (sub.childKeys.has(message.ts)) continue;
+      if (sub.anchorKeys.has(message.ts)) {
+        pushSubagentCard(message);
+        continue;
+      }
+    } else if (isPrReviewLane) {
+      // The PR Review lane shows only the orchestrator session's own blocks (tagged `meta.prReviewId`);
+      // a subagent spawned within it peels to its own sub-page, same as any other lane.
+      if (!prReview.childKeys.has(message.ts)) continue;
+      if (sub.childKeys.has(message.ts)) continue;
       if (sub.anchorKeys.has(message.ts)) {
         pushSubagentCard(message);
         continue;
@@ -431,7 +472,7 @@ function buildLogItems(
         push(<EventBubble key={message.ts} message={message} />);
         break;
       case 'system_operator':
-        push(<SystemOperatorNotice key={message.ts} message={message} />);
+        push(<SystemOperatorNotice key={message.ts} message={message} jobRef={jobRef} />);
         break;
       case 'claude':
       default:

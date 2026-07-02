@@ -38,7 +38,7 @@ type RowDelta =
  * it refetches. If realtime is unavailable (engine off / `wal_level` not logical) the stream errors and we
  * fall back to the query's normal polling — the dots stay correct on refetch, just not instant.
  *
- * Resilience (transient self-heal + a one-shot 401 refresh/reconnect) lives in the shared `sse-manager`.
+ * Resilience (transient self-heal + the refresh/reconnect retry loop) lives in the shared `sse-manager`.
  */
 export function useAllJobsRealtime(): void {
   const qc = useQueryClient();

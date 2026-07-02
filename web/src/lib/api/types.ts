@@ -211,6 +211,24 @@ export interface ReviewAgent {
   findings?: number;
 }
 
+/**
+ * One task in an orchestrating session's LIVE, LLM-authored checklist — folded server-side from its
+ * `TaskCreate`/`TaskUpdate` tool calls (no fixed/expected set, unlike {@link ReviewAgent}: `[]` just means
+ * the session hasn't created any tasks yet, not "not started"). `dropped` is the SDK's `deleted` status.
+ */
+export interface TaskItem {
+  id: string;
+  subject: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'dropped';
+  /** The SDK task's longer description — shown under an in_progress task + as the row tooltip. */
+  description?: string;
+  /** Present-continuous label ("Resolving the router chain") shown while in_progress; falls back to subject. */
+  activeForm?: string;
+  /** Dependency edges — ids of tasks this one waits on. A PENDING task with an incomplete blocker renders
+   *  BLOCKED (derived; the block clears when every blocker completes or is deleted). */
+  blockedBy?: string[];
+}
+
 export interface PipelineThread {
   id: string;
   ordinal: number;
@@ -223,6 +241,8 @@ export interface PipelineThread {
    * The navigator's review folder renders one leaf per agent — never hard-code this list.
    */
   reviewAgents: ReviewAgent[];
+  /** The thread's own live task list — see {@link TaskItem}. `[]` until its session creates a task. */
+  tasks: TaskItem[];
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
   hasPlan: boolean;
   /** The thread's steps (execute folder leaves), ordinal-sorted. */
@@ -254,6 +274,25 @@ export interface PipelineJob {
   decisionRecordId: string | null;
   /** The Codex plan-review dialogue summary (a lane under Main), or null if never reviewed. */
   codexReview?: CodexReviewSummary | null;
+  /** The PR-tail review agents over the whole feature diff (the job-level "Final review" pass). `[]` until
+   *  that pass runs — unlike the per-thread fallback there's no pre-seed default. */
+  reviewAgents: ReviewAgent[];
+  /**
+   * The PR Review orchestrator's live task list ("Master code review" → "Apply fixes" → "Verify build"),
+   * folded from its own `TaskCreate`/`TaskUpdate` calls. `[]` until `prReviewStatus` moves past `queued`.
+   */
+  tasks: TaskItem[];
+  /**
+   * The PR Review card's coarse status. Null until the orchestrator starts. `running` covers the whole
+   * session — derive the finer "reviewing"/"fixing"/"verifying" sub-label from whichever task in `tasks`
+   * is currently `in_progress`.
+   */
+  prReviewStatus: 'queued' | 'running' | 'opened' | 'failed' | null;
+  /**
+   * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
+   * navigator's Main row renders it. A separate list from `tasks` (PR Review's), same TaskItem shape.
+   */
+  mainTasks: TaskItem[];
   /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
   prUrl: string | null;
   prNumber: number | null;
@@ -263,7 +302,17 @@ export interface PipelineJob {
   threads: PipelineThread[];
 }
 
-export type PipelineState = PipelineJob | { status: 'no_job' };
+/**
+ * `no_job` = the job never entered the build lifecycle (still `open`, chatting/planning). It still
+ * carries the brain's own `mainTasks` so the navigator's Main row can show the checklist pre-plan.
+ */
+export type PipelineState = PipelineJob | { status: 'no_job'; mainTasks?: TaskItem[] };
+
+/** The Main brain session's task list, from either pipeline shape (`no_job` carries it too). */
+export function pipelineMainTasks(pipeline: PipelineState | undefined): TaskItem[] {
+  if (!pipeline) return [];
+  return ('mainTasks' in pipeline ? pipeline.mainTasks : undefined) ?? [];
+}
 
 // ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────
 /** One file in a `/context` bucket — mirrors the backend `ContextFile`. */
@@ -316,13 +365,6 @@ export interface ServiceInfo {
   logUpdatedAt: string | null;
 }
 
-/** A supervised process's tailed log (`…/threads/:jobId/services/:id/logs`). */
-export interface ServiceLogs {
-  id: string;
-  content: string;
-  /** True if the log exceeded the server's tail cap and was truncated from the front. */
-  truncated: boolean;
-}
 
 // ── UI job model ───────────────────────────────────────────────────────────────────────────────
 /** The Job UI-presentation status set from handoff §7 (semantic dot colors). */

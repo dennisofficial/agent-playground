@@ -38,6 +38,7 @@ import {
   REQUEST_CHANGES_ACTION_ID,
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
+import { closeTailFd, nextTailFrame, openTailFd, readServiceLogTail } from './service-log-tail';
 import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
 import { BrainStoreService } from '../brain/brain-store.service';
 import { WebSurface } from './web-surface';
@@ -126,6 +127,8 @@ export interface ServiceInfo {
 const SERVICE_ID_RE = /^[a-z0-9_-]+$/;
 /** Tail cap for the logs endpoint — a long-running dev server's log can grow large. */
 const MAX_SERVICE_LOG_TAIL_BYTES = 512 * 1024;
+/** How often the SSE log tail polls the file for new bytes — see `serviceLogEvents` doc comment. */
+const SERVICE_LOG_POLL_MS = 750;
 
 /** Best-effort mime + text/binary split by extension. Unknown → text/plain (we still cap the size). */
 const MIME_BY_EXT: Record<string, { mime: string; binary: boolean }> = {
@@ -725,6 +728,28 @@ export class WebSurfaceController {
   }
 
   /**
+   * `POST …/threads/:jobId/retry-turn` — the "Resume" button on a `retryable` system→operator error box
+   * (a brain chat-turn that hit a transient engine failure, e.g. a 529). Distinct from `/retry` (which only
+   * re-drives a `failed`/`paused` BUILD track) — a chat-turn failure never touches job status, so that
+   * endpoint would no-op here. Seeds a NON-persisted system turn (`seedSystemNotification` — same seam
+   * `provide-secret`/`answer-question` already use) that resumes the SAME engine session
+   * (`resume: sessionId`, already the default across turns) with a minimal harness-authored nudge — never
+   * a new operator-authored chat bubble, and never repeats the original request back to the engine.
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/retry-turn')
+  @UseGuards(OrgMembershipGuard)
+  async retryTurn(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<{ ok: boolean }> {
+    const thread = await this.requireThread(jobId, org.id);
+    this.surface.seedSystemNotification(thread.repo_id, jobId, 'Please continue.', {
+      orgId: org.id,
+    });
+    return { ok: true };
+  }
+
+  /**
    * `POST …/threads/:jobId/answer-question` — answer a brain `ask_question` card. GATED on the CARD's
    * OWN state (there is no single-slot thread pointer; many cards can be open at once): an already-delivered
    * card is stale, an already-answered card is an idempotent no-op (e.g. a double click). The first valid
@@ -1060,18 +1085,77 @@ export class WebSurfaceController {
       throw new BadRequestException('invalid service id');
     }
     const dir = this.threadLifecycle.supervisorDirHost(jobId);
-    let st: ReturnType<typeof statSync>;
-    try {
-      st = statSync(join(dir ?? '', `${id}.log`));
-    } catch {
-      return { id, content: '', truncated: false };
-    }
-    const truncated = st.size > MAX_SERVICE_LOG_TAIL_BYTES;
-    const buf = readFileSync(join(dir as string, `${id}.log`));
-    const tail = truncated ? buf.subarray(buf.length - MAX_SERVICE_LOG_TAIL_BYTES) : buf;
     const wantLines = Math.min(Math.max(parseInt(n ?? '200', 10) || 200, 1), 2000);
-    const content = tail.toString('utf8').split('\n').slice(-wantLines).join('\n');
+    const { content, truncated } = readServiceLogTail(dir, id, wantLines, MAX_SERVICE_LOG_TAIL_BYTES);
     return { id, content, truncated };
+  }
+
+  /**
+   * `GET …/jobs/:jobId/services/:id/log-events` — SSE live tail of a supervised process's log. First frame
+   * is `{ type: 'snapshot', content, truncated }` (same tail the REST endpoint returns); subsequent frames
+   * are `{ type: 'append', chunk }` as the file grows. Polls `statSync` every `SERVICE_LOG_POLL_MS` rather
+   * than `fs.watch` — `fs.watch` is documented as unreliable (and specifically flaky under Docker bind
+   * mounts), so a short poll is the more robust choice here. A restart (`atlas-svc run` truncates the file)
+   * re-emits a fresh `snapshot` instead of an `append`.
+   */
+  @Sse('orgs/:orgId/repos/:repoId/jobs/:jobId/services/:id/log-events')
+  @UseGuards(OrgMembershipGuard)
+  serviceLogEvents(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('id') id: string,
+  ): Observable<MessageEvent> {
+    return defer(() => from(this.requireThread(jobId, org.id))).pipe(
+      switchMap(() => {
+        if (!SERVICE_ID_RE.test(id)) throw new BadRequestException('invalid service id');
+        const dir = this.threadLifecycle.supervisorDirHost(jobId);
+        return new Observable<MessageEvent>((subscriber) => {
+          const snapshot = readServiceLogTail(dir, id, 200, MAX_SERVICE_LOG_TAIL_BYTES);
+          subscriber.next({ data: { type: 'snapshot', content: snapshot.content, truncated: snapshot.truncated } });
+          if (!dir || snapshot.size === 0) {
+            // No file on disk yet — matches the REST endpoint's empty-content behavior. Nothing to poll
+            // until the pane is reopened after the service actually starts writing.
+            return undefined;
+          }
+          const path = join(dir, `${id}.log`);
+          let offset = snapshot.size;
+          let fd: number;
+          try {
+            fd = openTailFd(path);
+          } catch {
+            return undefined; // file vanished between the stat above and opening it — leave snapshot-only
+          }
+          const timer = setInterval(() => {
+            let size: number;
+            try {
+              size = statSync(path).size;
+            } catch {
+              return; // transient stat failure — try again next tick
+            }
+            const result = nextTailFrame(offset, size, fd);
+            if (result.kind === 'unchanged') return;
+            if (result.kind === 'reset') {
+              closeTailFd(fd);
+              const fresh = readServiceLogTail(dir, id, 200, MAX_SERVICE_LOG_TAIL_BYTES);
+              subscriber.next({ data: { type: 'snapshot', content: fresh.content, truncated: fresh.truncated } });
+              offset = fresh.size;
+              try {
+                fd = openTailFd(path);
+              } catch {
+                clearInterval(timer);
+              }
+              return;
+            }
+            offset = result.nextOffset;
+            subscriber.next({ data: { type: 'append', chunk: result.chunk } });
+          }, SERVICE_LOG_POLL_MS);
+          return () => {
+            clearInterval(timer);
+            closeTailFd(fd);
+          };
+        });
+      }),
+    );
   }
 
   /** `PATCH …/threads/:jobId` — rename a thread (the only thread Update op). Org-scoped. */

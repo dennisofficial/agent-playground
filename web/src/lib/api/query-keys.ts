@@ -29,9 +29,6 @@ export const qk = {
   /** One thread's `atlas-svc` supervised-process list. */
   threadServices: (ref: { orgId: string; repoId: string; jobId: string }) =>
     ['thread-services', ref.orgId, ref.repoId, ref.jobId] as const,
-  /** One supervised process's tailed log. */
-  threadServiceLogs: (ref: { orgId: string; repoId: string; jobId: string }, id: string) =>
-    ['thread-service-logs', ref.orgId, ref.repoId, ref.jobId, id] as const,
   /** Every repo across all the operator's orgs (the tickets repo picker). */
   allRepos: () => ['all-repos'] as const,
   /** One repo's board/backlog tickets (`GET /web/orgs/:orgId/repos/:repoId/tickets`). */

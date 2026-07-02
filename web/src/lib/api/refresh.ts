@@ -12,21 +12,42 @@ import { connectivity } from './connectivity';
  * A definitive 401 (the refresh token is also gone) signs the operator out exactly once so the
  * PrivateGuard redirects to `/auth/login`; transient failures (offline / 5xx) just return `false` so the
  * caller can surface an error and a later attempt can retry.
+ *
+ * A 401 is only treated as definitive after a CONFIRMING second attempt: `/auth/refresh` was observed
+ * 401'ing transiently around a backend watch-respawn (07-01) with cookies that a plain reload proved
+ * were still valid — and signing out on that one blip clears the cookies (the signOut fires
+ * `POST /auth/logout`), turning a transient glitch into a real logout.
  */
+const CONFIRM_401_DELAY_MS = 1_500;
+
 let inflight: Promise<boolean> | null = null;
+
+type RefreshOutcome = 'ok' | 'unauthorized' | 'transient';
+
+async function postRefresh(): Promise<RefreshOutcome> {
+  try {
+    const res = await fetch(`${env.NEXT_PUBLIC_HTTP_URL}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (res.ok) return 'ok';
+    return res.status === 401 ? 'unauthorized' : 'transient';
+  } catch {
+    return 'transient'; // network / server down — keep the session; let the caller retry later
+  }
+}
 
 export function refreshSession(): Promise<boolean> {
   inflight ??= (async (): Promise<boolean> => {
     try {
-      const res = await fetch(`${env.NEXT_PUBLIC_HTTP_URL}/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      if (res.ok) return true;
-      if (res.status === 401) auth.signOut(); // session truly gone → flip AuthState → redirect to login
+      const first = await postRefresh();
+      if (first !== 'unauthorized') return first === 'ok';
+      await new Promise((r) => setTimeout(r, CONFIRM_401_DELAY_MS));
+      const second = await postRefresh();
+      if (second === 'ok') return true;
+      // Two 401s in a row → the session is truly gone → flip AuthState → redirect to login.
+      if (second === 'unauthorized') auth.signOut();
       return false;
-    } catch {
-      return false; // transient (network / server down) — keep the session; let the caller retry later
     } finally {
       inflight = null;
     }

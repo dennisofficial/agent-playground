@@ -1,12 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight, Clock } from 'lucide-react';
+import { ChevronRight, Clock, RotateCw } from 'lucide-react';
 import type { SystemTone } from './classify';
 import { Markdown } from './markdown';
 import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import { SubagentCard, indexLiveSubagents, subagentNode } from './subagents';
-import type { JobMessage } from '@/lib/api/job-api';
+import { Button } from '@/components/ui/button';
+import { useRetryTurn } from '@/lib/api/job-queries';
+import type { JobMessage, JobRef } from '@/lib/api/job-api';
 import type { LiveBlock, LiveTurn } from '@/lib/api/job-stream';
 import { formatClockTime, formatTokens } from '@/lib/org-display';
 
@@ -316,8 +318,12 @@ export function LiveIndicator({ text = 'Atlas is working…' }: { text?: string 
  * A SYSTEM→OPERATOR notice — a runtime/harness message addressed to the OPERATOR, not authored by Atlas
  * and never seen by it (e.g. "this thread can't be resumed — start a new one"). Deliberately NOT an Atlas
  * bubble: a full-width warn-toned panel with a "SYSTEM" header so it reads as coming from the harness.
+ * When `meta.retryable` is set (a transient engine failure, not a terminal one), a "Resume" button
+ * re-pokes the SAME engine session (`POST …/retry-turn`) with no new operator-authored message.
  */
-export function SystemOperatorNotice({ message }: { message: JobMessage }) {
+export function SystemOperatorNotice({ message, jobRef }: { message: JobMessage; jobRef: JobRef }) {
+  const retryable = message.meta?.retryable === true;
+  const retry = useRetryTurn(jobRef);
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
@@ -347,6 +353,23 @@ export function SystemOperatorNotice({ message }: { message: JobMessage }) {
       <div className="px-3.5 py-3">
         <Markdown>{message.text}</Markdown>
       </div>
+      {retryable ? (
+        <div className="flex items-center gap-2 border-t px-3.5 py-2.5" style={{ borderColor: 'var(--red-line)' }}>
+          <Button
+            size="sm"
+            loading={retry.isPending}
+            loadingText="Resuming…"
+            disabled={retry.isSuccess}
+            onClick={() => retry.mutate()}
+          >
+            <RotateCw size={12} className="mr-1" />
+            {retry.isSuccess ? 'Resumed' : 'Resume'}
+          </Button>
+          {retry.isError ? (
+            <span className="text-[11.5px] text-red">Couldn&apos;t resume. Try again.</span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

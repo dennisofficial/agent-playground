@@ -57,8 +57,8 @@ jobs:
         id: sandbox_check
         run: |
           # Check if the sandbox image build context changed in the deployed commit
-          # compared to its parent. The image auto-rebuilds on a context-hash change, so
-          # this only forces past Docker's own layer cache — belt-and-suspenders.
+          # compared to its parent — informational only (surfaced in the step summary);
+          # the backend auto-rebuilds the image on a context-hash change at boot.
           git fetch origin "${{ github.event.workflow_run.head_sha }}" --depth=2 2>/dev/null || true
           if git diff --name-only \
               "${{ github.event.workflow_run.head_sha }}~1" \
@@ -71,8 +71,6 @@ jobs:
 
       - name: Deploy
         id: deploy
-        env:
-          SANDBOX_REBUILD: ${{ steps.sandbox_check.outputs.sandbox_changed == 'true' && '1' || '' }}
         run: |
           chmod +x infra/deploy.sh
           infra/deploy.sh "${{ steps.tag.outputs.sha_tag }}"
@@ -94,5 +92,5 @@ jobs:
         run: |
           echo "### Deploy result" >> "$GITHUB_STEP_SUMMARY"
           echo "- Tag: \`${{ steps.tag.outputs.sha_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Sandbox rebuild: ${{ steps.sandbox_check.outputs.sandbox_changed }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Sandbox context changed: ${{ steps.sandbox_check.outputs.sandbox_changed }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Outcome: ${{ steps.deploy.outcome }}" >> "$GITHUB_STEP_SUMMARY"

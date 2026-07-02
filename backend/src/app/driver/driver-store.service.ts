@@ -238,46 +238,22 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { review_agents: agents });
   }
 
-  // ── job-level review agents (PR-tail fan-out, per-agent status) ────────────────────────────────
-  // JOB-level twins of the thread methods above — the PR-tail auto-fix pass reviews the WHOLE diff, so its
-  // agent state lives on the job, not any single thread. Same read-modify-write jsonb pattern.
+  // ── PR Review (job-level orchestrator, replaces the old PR-tail lens fan-out) ───────────────────
+  // Tasks themselves are NOT mutated here — `TaskEventSink`/`EntityTaskEventSink` in
+  // `surface/turn-harness.service.ts` folds `TaskCreate`/`TaskUpdate` events directly, at the shared
+  // harness, for every session regardless of caller (avoids this module depending back on `surface`).
 
-  /** Seed the job's PR-tail review agents at `pending` (call before the PR-tail auto-fix pass). */
-  async seedJobReviewAgents(jobId: string, agents: ReviewAgentState[]): Promise<void> {
-    await this.jobs.update({ id: jobId }, { review_agents: agents });
+  /** Start a fresh PR Review pass: clear any stale task list from an aborted prior attempt and mark
+   *  `queued`. Call once, right before kicking the orchestrator session. */
+  async startPrReview(jobId: string): Promise<void> {
+    await this.jobs.update({ id: jobId }, { tasks: [], pr_review_status: 'queued' });
   }
 
-  /** Transition ONE PR-tail review agent's status. No-op if the job / lens id isn't found (best-effort). */
-  async setJobReviewAgentStatus(
-    jobId: string,
-    lensId: string,
-    status: ReviewAgentState['status'],
-    findings?: number,
-  ): Promise<void> {
-    const job = await this.jobs.findOne({ where: { id: jobId } });
-    if (!job) return;
-    const agents = (job.review_agents ?? []).map((a) =>
-      a.id === lensId
-        ? { ...a, status, ...(findings != null ? { findings } : {}) }
-        : a,
-    );
-    await this.jobs.update({ id: jobId }, { review_agents: agents });
-  }
-
-  /** Resolve any PR-tail review agent still `pending`/`running` once the pass is over. Idempotent. */
-  async finalizeJobReviewAgents(jobId: string, lensesRun: string[]): Promise<void> {
-    const job = await this.jobs.findOne({ where: { id: jobId } });
-    if (!job) return;
-    const ran = new Set(lensesRun);
-    const agents = (job.review_agents ?? []).map((a) =>
-      a.status === 'pending' || a.status === 'running'
-        ? {
-            ...a,
-            status: ran.has(a.id) ? ('passed' as const) : ('skipped' as const),
-          }
-        : a,
-    );
-    await this.jobs.update({ id: jobId }, { review_agents: agents });
+  /** Transition the PR Review card's coarse status (`running` | `opened` | `failed`). Finer-grained
+   *  sub-state ("reviewing"/"fixing"/"verifying") is derived by the reader from whichever task in
+   *  `jobs.tasks` is currently `in_progress` — the orchestrator's own task list is already that detailed. */
+  async setPrReviewStatus(jobId: string, status: string): Promise<void> {
+    await this.jobs.update({ id: jobId }, { pr_review_status: status });
   }
 
   // ── steps ───────────────────────────────────────────────────────────────────────────────────
@@ -353,7 +329,16 @@ export class DriverStoreService {
     const thread = await this.jobs.findOne({
       where: { id: jobId, org_id: orgId },
     });
-    if (!thread || thread.status === 'open') return { status: 'no_job' };
+    if (!thread) return { status: 'no_job' };
+    // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its
+    // brain can already be keeping a task list, and the navigator's Main row shows it. Ride the no_job
+    // payload so the web isn't blind to it before a plan exists.
+    if (thread.status === 'open') {
+      return {
+        status: 'no_job',
+        mainTasks: Array.isArray(thread.main_tasks) ? thread.main_tasks : [],
+      };
+    }
     const threads = await this.threads.find({
       where: { job_id: thread.id },
       order: { ordinal: 'ASC' },
@@ -403,6 +388,14 @@ export class DriverStoreService {
       // the PR-tail pass seeds them; unlike the per-thread fallback there is no pre-seed default (the pass
       // runs once, after all threads), so an empty array simply means "not reviewed yet".
       reviewAgents: Array.isArray(thread.review_agents) ? thread.review_agents : [],
+      // The PR Review orchestrator's LLM-authored task list + card-header status. `[]`/`null` until
+      // `BuildShipService.ship()` starts it — no fallback default (tasks are pure LLM output, there's no
+      // fixed/expected set the way there is for review agents).
+      tasks: Array.isArray(thread.tasks) ? thread.tasks : [],
+      prReviewStatus: thread.pr_review_status,
+      // The Main brain session's own task list (folded from its `main`-lane task-tool calls) — the
+      // navigator's Main row renders it. Same no-fallback rationale as the two lists above.
+      mainTasks: Array.isArray(thread.main_tasks) ? thread.main_tasks : [],
       threads: threads.map((s) => ({
         id: s.id,
         ordinal: s.ordinal,
@@ -421,6 +414,9 @@ export class DriverStoreService {
                 ...a,
                 status: 'pending' as const,
               })),
+        // The thread's own LLM-authored task list — no fallback default, same rationale as the job-level
+        // field above.
+        tasks: Array.isArray(s.tasks) ? s.tasks : [],
         steps: mapBatchedSteps(stepsByThread.get(s.id) ?? []),
       })),
     };

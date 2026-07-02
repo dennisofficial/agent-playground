@@ -7,7 +7,7 @@ import { qk } from './query-keys';
 import { subscribeSse } from './sse-manager';
 import type { InboxThread } from './inbox';
 import type { JobRef } from './job-api';
-import { applyStreamFrame, endLiveTurn } from './job-stream';
+import { applyStreamFrame, endLiveTurn, sweepLiveTurnsAfterReconnect } from './job-stream';
 import { clearQueuedSends } from './queued-sends';
 
 /** A frame off the repo SSE: a durable-post change-signal, a live engine-stream frame, or a meta update. */
@@ -46,7 +46,7 @@ const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts)\//;
  *    fed into the live-turn store (`job-stream.ts`); on `turn_end` we refetch `/messages` (now holding
  *    the persisted blocks) and THEN clear the live buffer (no flicker).
  *
- * Resilience (transient self-heal + a one-shot 401 refresh/reconnect) lives in the shared `sse-manager`.
+ * Resilience (transient self-heal + the refresh/reconnect retry loop) lives in the shared `sse-manager`.
  *
  * The stream is REPO-scoped, so this hook subscribes per `(orgId, repoId)` — NOT per thread — and reads
  * the currently-open thread from a ref. That keeps ONE standing connection across thread switches within a
@@ -171,9 +171,19 @@ export function useJobEvents(ref: JobRef): void {
       refetch();
     };
 
-    // Catch a title generated before this stream subscribed: pull the durable title from `allJobs` on
-    // every (re)connect (a `thread_meta` frame could have fired during the connect gap).
-    const onOpen = () => void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    // (Re)connect catch-up. On a genuine reconnect (a backend watch-restart, a network blip) anything may
+    // have landed while the stream was down AND queries that errored during the outage are stuck on
+    // last-good data — reconcile the open thread's caches (invalidate refetches errored-active queries
+    // too) and sweep live-turn lanes the replayed snapshots don't re-confirm (a turn that ended while we
+    // were down would otherwise show "working…" until a manual reload). On a late-join to an already-open
+    // stream nothing was missed (mounting queries fetch for themselves), so just refresh `allJobs` to
+    // catch a title generated before this subscriber attached.
+    const onOpen = (_handle: unknown, kind: 'connect' | 'late-join') => {
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+      if (kind !== 'connect') return;
+      void reconcileNow(liveRef());
+      sweepLiveTurnsAfterReconnect();
+    };
 
     const url = `${env.NEXT_PUBLIC_HTTP_URL}/web/orgs/${orgId}/repos/${repoId}/events`;
     const unsubscribe = subscribeSse(url, { onFrame, onOpen });

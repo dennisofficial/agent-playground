@@ -11,10 +11,11 @@ The test of "onboarded" is not a document; it's: **a fresh worktree + current gr
 ## Vocabulary
 
 - **Onboarding ceremony** — the first, long, thorough pass where Atlas stands up the whole repo headlessly, discovering the secrets/auth/mounts it needs *live* (asking on the spot), until the stack comes up green. Happens once per repo.
-- **Amendment** — the same machinery on a delta: any job that finds the env can't do something (missing key, new service) requests it on the spot and/or amends `atlas.json`. Every future job inherits it.
+- **Amendment** — the same machinery on a delta, from ANY thread, not just onboarding. The ceremony and an ordinary build thread have the **identical toolset** (`request_secret`/`request_file`/`write_worktree_config`) — the ceremony just uses it exhaustively, up front, in one pass; a build thread uses it incrementally, whenever it hits the same kind of friction. `write_worktree_config` **merges** onto whatever's already committed (upserts a mount by path, unions seed) rather than overwriting, so a thread amending `atlas.json` for ONE new mount can never clobber what the ceremony (or an earlier amendment) already recorded. The one ceremony-only tool is `finish_onboarding` (stamps `onboarded_at` + opens the ceremony's own dedicated config PR) — a build thread's `atlas.json` edit just rides its own existing PR.
 - **Re-validation** — an idempotent re-run of the ceremony; the way drift is detected (by *trying to run*, not by diffing a stored recipe).
 - **Hydration manifest** — `atlas.json` (renamed from `.atlas/worktree.json`). Declares `secrets`, `mounts`, `seed`. The non-re-derivable inputs only. **Never** how to run the app.
 - **Secret** — an encrypted thing that lands at a **gitignored** path. `kind: "value"` (a scalar env var) or `kind: "file"` (a whole `.env`, an SA-key JSON). "Capability creds" (gcloud/Firebase/DB) are *just* file-valued secrets — no separate category.
+- **Derived secret** — a value Atlas *computed itself* (not operator-provided) from a credential it already holds — e.g. a Stripe webhook signing secret from `stripe listen --print-secret`, derived from the granted `STRIPE_API_KEY`. `derive_secret({ name, path, value, description, overwrite? })` writes it straight to the same encrypted store + grant as `request_secret`, with **no operator round-trip** (there's nothing for an operator to gate — Atlas already legitimately held the input). Refuses by default if `name` already has a value (protects an operator-provided secret from being silently clobbered); `overwrite: true` opts in explicitly. Posts a quiet `appendSystemEvent` notice for visibility (name/path only, never the value).
 - **Auth state** — the *mutating* token dir produced by an interactive login (`gcloud auth login` → `CLOUDSDK_CONFIG`). Not a secret you inject; a **persistent per-repo `shared-rw` mount** you set up once and reuse.
 - **Supervisor** — the managed long-running-process layer (`run`/`logs`/`ps`/`stop`) that brings services up **on demand** (never on attach). The agent + its logs are the health check; the repo's own docs are the recipe.
 - **Grant** — the org+repo-scoped store record binding a secret/mount to a destination path. Propagates **instantly** (DB). Distinct from `atlas.json` config, which rides a **PR**.
@@ -53,9 +54,6 @@ The test of "onboarded" is not a document; it's: **a fresh worktree + current gr
 | Sandbox | `sandbox/sandbox-manager.service.ts` mounts; base image (fnm via `BASH_ENV`) | add `shared-rw` per-repo mount; add **direnv** to base image + shell init |
 | Supervisor | — (nothing runs long-lived processes from the manifest) | **net-new**: `run`/`logs`/`ps`/`stop` tools + marker registry on agent-home + web log surface |
 
-## Open for the implementation plan
+## Status
 
-- Exact supervisor process model (detach mechanism, marker schema, log capture path, web streaming seam).
-- The headless-login card flow (URL out, code back) reusing the secret-card mechanism.
-- Migration: `.atlas/worktree.json` → `atlas.json`, and the manifest schema change.
-- `finish_onboarding` green-gate + evidence capture.
+All of the above is built and live-validated (a real onboarding ceremony on a real multi-service repo, plus a *second* job in the same repo inheriting the hydrated environment with zero secret hand-off): the supervisor (`atlas-svc run/logs/ps/stop`, detached + marker-tracked on the durable agent-home), the headless-login card (`url` on `WebSecretInputCard`, reusing the secret-card mechanism), the `atlas.json` rename + legacy-path fallback, and `finish_onboarding`'s green-gate (`verified` evidence required before it stamps `onboarded_at`).

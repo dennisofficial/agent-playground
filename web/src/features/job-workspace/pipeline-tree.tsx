@@ -1,33 +1,33 @@
 'use client';
 
-import { useMemo, type MouseEvent, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { GitPullRequest } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { Dot } from '@/components/ui/badges';
-import { threadColor } from '@/lib/api/status';
 import { threadTitle } from '@/lib/thread-title';
 import { useLiveTurn } from '@/lib/api/job-stream';
 import { threadLane } from './phases';
-import { durableTaskListByPhase, liveTaskListForPhase, type TaskItem } from './thread-todos';
-import type { JobMessage } from '@/lib/api/job-api';
-import type { PipelineJob, PipelineThread, JobStatus, ThreadStatus } from '@/lib/api/types';
+import { overlayLiveTasks } from './live-tasks';
+import { PR_REVIEW_NODE, prReviewDisplay, prReviewLane, type PrReviewDisplay } from './pr-review';
+import type {
+  PipelineJob,
+  PipelineThread,
+  ReviewAgent,
+  TaskItem,
+  JobStatus,
+  ThreadStatus,
+} from '@/lib/api/types';
+
+/**
+ * The Thread Navigator's THREADS region — design handoff "thread navigation": an ACCORDION. Selecting a
+ * thread reveals, in place, the things the thread owns — its LLM-authored TASKS (server-folded from the
+ * session's TaskCreate/TaskUpdate calls) and its read-only REVIEW AGENTS (navigable child threads on
+ * `rev:<threadId>:<agentId>` nodes) capped by the derived "Post-review fixes" row — and whichever thread
+ * was open collapses (open = the selected lane, or the thread whose review agent is open in the detail
+ * pane). Below the list, {@link PrReviewFooter} renders the pinned FINAL REVIEW row — the single job-level
+ * master-review thread with its own tasks and no review agents.
+ */
 
 // ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
-
-/** A 12px disclosure caret — chevron that rotates 0°→90° on expand (handoff §Caret). */
-export function Caret({ expanded, onClick }: { expanded: boolean; onClick?: (e: MouseEvent) => void }) {
-  return (
-    <span
-      onClick={onClick}
-      className="inline-flex w-3 shrink-0 items-center justify-center text-faint group-hover:text-text"
-      style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .12s' }}
-      aria-hidden
-    >
-      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M9 6l6 6-6 6" />
-      </svg>
-    </span>
-  );
-}
 
 /** A divider header (SPECS / ARTIFACTS / PORTS) — mono label, hairline rule, optional right count. */
 export function Divider({ label, count }: { label: string; count?: ReactNode }) {
@@ -42,14 +42,7 @@ export function Divider({ label, count }: { label: string; count?: ReactNode }) 
 
 // ── status helpers ───────────────────────────────────────────────────────────────────────────────
 
-const ACTIVE_THREAD: ThreadStatus[] = ['planning', 'reviewing', 'awaiting_approval', 'executing', 'auto_fixing'];
-const isActiveThread = (s: ThreadStatus) => ACTIVE_THREAD.includes(s);
-
-/** A thread that has begun (or finished) building — so it owns a real task list worth showing. */
-const STARTED_THREAD: ThreadStatus[] = ['executing', 'auto_fixing', 'reviewing', 'done'];
-const isStartedThread = (s: ThreadStatus) => STARTED_THREAD.includes(s);
-
-/** The halt thread for a failed thread: the furthest in-flight (non-done, non-pending) thread, else the
+/** The halt thread for a failed job: the furthest in-flight (non-done, non-pending) thread, else the
  *  last non-done one. Exported so the navigator's halt banner derives the same index. */
 export function haltThreadIdx(threads: { status: ThreadStatus }[]): number {
   for (let i = threads.length - 1; i >= 0; i -= 1) {
@@ -62,235 +55,602 @@ export function haltThreadIdx(threads: { status: ThreadStatus }[]): number {
   return -1;
 }
 
-/** The unique anchor step ids of a thread's steps, in order. In the orchestrate model a thread collapses to
- *  ONE batch → one anchor (= one session); a legacy multi-batch thread yields several. */
-function threadAnchorIds(thread: PipelineThread): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const p of thread.steps) {
-    if (!seen.has(p.anchorStepId)) {
-      seen.add(p.anchorStepId);
-      out.push(p.anchorStepId);
-    }
-  }
-  return out;
+/** The design's four thread states — every wire `ThreadStatus` folds onto one of these. */
+type LaneState = 'draft' | 'in_progress' | 'done' | 'failed';
+
+function laneState(s: ThreadStatus, drafted: boolean): LaneState {
+  if (drafted || s === 'pending') return 'draft';
+  if (s === 'done') return 'done';
+  if (s === 'failed') return 'failed';
+  return 'in_progress'; // planning / reviewing / awaiting_approval / executing / auto_fixing
 }
 
-// ── the THREADS tree — a flat thread list; the open/running thread expands to its live task list ─────
+/** The open accordion's state-colored left rail + soft wash (handoff §State colors). */
+function railStyle(state: LaneState, open: boolean): { borderLeftColor: string; background: string } {
+  if (!open) return { borderLeftColor: 'transparent', background: 'transparent' };
+  switch (state) {
+    case 'in_progress':
+      return {
+        borderLeftColor: 'var(--accent)',
+        background: 'color-mix(in srgb, var(--accent) 4.5%, transparent)',
+      };
+    case 'done':
+      return { borderLeftColor: 'var(--green)', background: 'color-mix(in srgb, var(--green) 6%, transparent)' };
+    case 'failed':
+      return { borderLeftColor: 'var(--red)', background: 'color-mix(in srgb, var(--red) 5%, transparent)' };
+    default:
+      return {
+        borderLeftColor: 'var(--border-2)',
+        background: 'color-mix(in srgb, var(--slate) 5%, transparent)',
+      };
+  }
+}
+
+// ── status glyphs (13px status dots · spinners · discs, straight from the handoff) ────────────────
+
+/** A spinning progress ring — faint track + rotating colored arc (`.status-spin` = the design's 1.05s). */
+function SpinRing({ size = 13, color = 'var(--accent)', track = 'var(--border-2)', trackOpacity = 0.5 }: {
+  size?: number;
+  color?: string;
+  track?: string;
+  trackOpacity?: number;
+}) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
+      <circle cx="10" cy="10" r="7.5" fill="none" stroke={track} strokeWidth="2" opacity={trackOpacity} />
+      <g className="status-spin">
+        <circle
+          cx="10"
+          cy="10"
+          r="7.5"
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeDasharray="14.14 47.12"
+        />
+      </g>
+    </svg>
+  );
+}
+
+/** The solid green disc with a white check — a `done` thread / `completed` task. */
+function DoneDisc({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
+      <circle cx="10" cy="10" r="8" fill="var(--green)" />
+      <path
+        d="M6.2 10.3l2.4 2.4 5-5.4"
+        fill="none"
+        stroke="#fff"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** The dashed pending/draft ring. */
+function DashedRing({ size = 13, color = 'var(--border-2)' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
+      <circle cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.5" strokeDasharray="3 3" />
+    </svg>
+  );
+}
+
+/** The 13px status glyph slot on a thread header row. */
+function ThreadStatusGlyph({ state, isHalt }: { state: LaneState; isHalt: boolean }) {
+  return (
+    <span className="grid h-[13px] w-[13px] shrink-0 place-items-center">
+      {isHalt || state === 'failed' ? (
+        <span className="h-[9px] w-[9px] rounded-full" style={{ background: 'var(--red)' }} />
+      ) : state === 'done' ? (
+        <DoneDisc />
+      ) : state === 'in_progress' ? (
+        <SpinRing />
+      ) : (
+        <span className="h-[9px] w-[9px] rounded-full" style={{ border: '1.5px dashed var(--border-2)' }} />
+      )}
+    </span>
+  );
+}
+
+// ── the accordion ──────────────────────────────────────────────────────────────────────────────────
 
 export interface TreeProps {
   job: PipelineJob;
   status: JobStatus;
-  /** The thread transcript — the source for each thread-session's task list (folded from its task-tool calls). */
-  messages: JobMessage[];
-  /** The open thread id — to subscribe to the active thread's live `phase:<anchor>` lane. */
+  /** The job id — each fold subscribes to its thread's live lane to overlay mid-turn task calls. */
   jobId: string;
-  /** The LEFT pane's open lane (`?lane=`) — the selected thread; drives the orange highlight + task expand. */
+  /** The LEFT pane's open lane (`?lane=`) — the selected thread; opens its fold (state rail + wash). */
   laneNode: string | null;
+  /** The RIGHT pane's open detail node (`?node=`) — a selected `rev:` agent also opens its parent fold. */
+  detailNode: string | null;
   onSelectNode: (node: string) => void;
+  /** Collapse back to Main — clicking the already-selected thread header (accordion toggle). */
+  onConversation: () => void;
 }
 
 /**
- * The THREADS build lanes — one row per thread (formerly "thread"). Each thread is one orchestrator session;
- * its **subitems are the live task list** the session + its workers maintain via the SDK task tools
- * (`TaskCreate`/`TaskUpdate`), folded from the transcript (see {@link durableTaskListByPhase}). The task list
- * shows under the thread that's currently building (live progress) and under any started thread you open in
- * the left pane. Draft threads (pre-approval) render as bare rows — no steps, no tasks (they form at run).
+ * The THREADS build lanes — one accordion fold per thread. Each thread is one orchestrator session; its
+ * fold reveals the session's live TASKS (server-folded `thread.tasks`) and its REVIEW AGENTS (read-only
+ * child threads → `rev:` detail nodes) with the derived Post-review fixes row. Draft threads (pre-approval
+ * or not yet reached) fold to the drafting empty state.
  */
-export function PipelineTree({ job, status, messages, jobId, laneNode, onSelectNode }: TreeProps) {
+export function PipelineTree({ job, status, jobId, laneNode, detailNode, onSelectNode, onConversation }: TreeProps) {
   const threads = job.threads;
-  const activeIdx = threads.findIndex((s) => isActiveThread(s.status));
-  // Failed: threads aren't persisted as `failed` (only the thread flips), so derive the halt point — the
+  // Pre-approval every thread is a draft (dashed dot, no tasks — the plan shows only the threads).
+  const drafted = status === 'planning' || status === 'plan_review' || status === 'awaiting_approval';
+  // Failed: threads aren't persisted as `failed` (only the job flips), so derive the halt point — the
   // in-flight thread (furthest non-`done`/non-`pending`) is where the run stopped; later ones never ran.
   const haltIdx = status === 'failed' ? haltThreadIdx(threads) : -1;
 
-  // Every thread-session's task list, folded once from the transcript's task-tool calls.
-  const tasksByPhase = useMemo(() => durableTaskListByPhase(messages), [messages]);
-
-  // Only ONE thread executes at a time — a single live subscription (the active thread's STABLE lane) carries
-  // its live task list. Hooks can't be conditional, so an inactive tree reads a dead lane.
-  const activeThread = activeIdx === -1 ? null : threads[activeIdx];
-  const live = useLiveTurn(jobId, activeThread ? threadLane(activeThread.id) : '__none__');
-  const liveTasks = useMemo(
-    () => (activeThread && live ? liveTaskListForPhase(live.blocks) : []),
-    [activeThread, live],
-  );
-
   return (
     <>
-      {threads.map((s, i) => {
-        const isActive = i === activeIdx;
-        const anchors = threadAnchorIds(s);
-        const durableTasks = anchors.flatMap((a) => tasksByPhase.get(a) ?? []);
-        // Live wins for the active thread (the mid-turn list before durable rows persist at turn end).
-        const tasks = isActive && liveTasks.length > 0 ? liveTasks : durableTasks;
-        return (
-          <ThreadRow
-            key={s.id}
-            thread={s}
-            index={i}
-            threadStatus={status}
-            isActive={isActive}
-            isHalt={i === haltIdx}
-            notReached={haltIdx !== -1 && i > haltIdx}
-            tasks={tasks}
-            selected={laneNode === s.id}
-            onSelect={() => onSelectNode(s.id)}
-          />
-        );
-      })}
+      {threads.map((s, i) => (
+        <ThreadFold
+          key={s.id}
+          thread={s}
+          index={i}
+          jobId={jobId}
+          drafted={drafted}
+          isHalt={i === haltIdx}
+          notReached={haltIdx !== -1 && i > haltIdx}
+          selected={laneNode === s.id}
+          openAgentId={agentIdIfSelected(detailNode, s.id)}
+          onSelectNode={onSelectNode}
+          onConversation={onConversation}
+        />
+      ))}
     </>
   );
 }
 
-/** One thread row — status dot · §N title · scope tag · task count · chevron. Opens in the LEFT pane; when
- *  it's the building thread (or a started thread you've opened) it expands into its live task list. */
-function ThreadRow({
+/** The `rev:<threadId>:<agentId>` detail node's agent id, when it belongs to this thread (else null). */
+function agentIdIfSelected(detailNode: string | null, threadId: string): string | null {
+  const prefix = `rev:${threadId}:`;
+  return detailNode?.startsWith(prefix) ? detailNode.slice(prefix.length) : null;
+}
+
+/**
+ * One accordion fold — the clickable thread header (status glyph · label · count chip) over the open
+ * body (TASKS → REVIEW AGENTS → Post-review fixes, or the draft empty state). A thread is OPEN when it is
+ * the selected lane OR one of its review agents is the open detail node; clicking the selected header
+ * again collapses back to Main.
+ */
+function ThreadFold({
   thread: s,
   index,
-  threadStatus,
-  isActive,
+  jobId,
+  drafted,
   isHalt,
   notReached,
-  tasks,
   selected,
-  onSelect,
+  openAgentId,
+  onSelectNode,
+  onConversation,
 }: {
   thread: PipelineThread;
   index: number;
-  threadStatus: JobStatus;
-  isActive: boolean;
+  jobId: string;
+  drafted: boolean;
   isHalt: boolean;
   notReached: boolean;
-  tasks: TaskItem[];
   selected: boolean;
-  onSelect: () => void;
+  /** The thread's review agent open in the detail pane (keeps the fold open), or null. */
+  openAgentId: string | null;
+  onSelectNode: (node: string) => void;
+  onConversation: () => void;
 }) {
-  // Pre-approval every thread is a draft (dashed dot, no task list — the plan shows only the threads).
-  const drafted = threadStatus === 'planning' || threadStatus === 'awaiting_approval';
-  const started = !drafted && isStartedThread(s.status);
-  const live = tasks.filter((t) => t.status !== 'dropped');
-  const done = live.filter((t) => t.status === 'completed').length;
-  const dim = notReached || (!started && !drafted && !isActive);
-  // Show the task list under the building thread (live progress) + under any started thread you open.
-  const showTasks = started && (isActive || selected) && live.length > 0;
-  const count = started ? `${done}/${live.length}` : s.steps.length > 0 ? String(s.steps.length) : '';
-  const tag = s.type && s.type !== 'general' ? s.type : null;
+  const state = laneState(s.status, drafted);
+  const open = selected || openAgentId !== null;
+  // REALTIME: fold the thread's live lane over the durable list, so mid-turn task calls tick instantly
+  // (the pipeline query only refetches at turn end). Idle lanes read a dead key — cheap store lookup.
+  const liveTurn = useLiveTurn(jobId, threadLane(s.id));
+  const tasks = overlayLiveTasks(s.tasks ?? [], liveTurn);
+  const done = tasks.filter((t) => t.status === 'completed').length;
+  const agents = s.reviewAgents ?? [];
+  const isDraft = state === 'draft';
+  const count = isDraft ? 'draft' : tasks.length > 0 ? `[${done}/${tasks.length}]` : '';
 
   return (
-    <>
+    <div className="border-l-[3px]" style={railStyle(state, open)}>
       <button
         type="button"
-        onClick={onSelect}
+        onClick={() => (selected ? onConversation() : onSelectNode(s.id))}
         className={cn(
-          'flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-2',
-          selected && 'nav-selected',
-          dim && 'opacity-60',
+          'flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2',
+          notReached && 'opacity-60',
         )}
       >
-        <ThreadDot thread={s} drafted={drafted} isHalt={isHalt} notReached={notReached} />
+        <ThreadStatusGlyph state={state} isHalt={isHalt} />
         <span
           className={cn(
-            'flex-1 truncate text-[11.5px] font-semibold',
-            selected ? 'text-text' : dim ? 'text-faint' : 'text-dim',
+            'flex-1 truncate text-[12px]',
+            open ? 'font-semibold text-text' : notReached ? 'font-medium text-faint' : 'font-medium text-dim',
           )}
         >
           §{index + 1} {threadTitle(s.brief)}
         </span>
-        {tag ? (
-          <span className="shrink-0 font-mono text-[7px] font-bold uppercase tracking-[0.07em] text-faint">{tag}</span>
+        {count ? (
+          <span className="shrink-0 text-right font-mono text-[8px] text-faint">{count}</span>
         ) : null}
-        {count ? <span className="shrink-0 font-mono text-[9px] text-faint">{count}</span> : null}
-        <span className="w-2 shrink-0 text-[11px] font-semibold text-border-2">›</span>
       </button>
-      {showTasks ? <TaskSublist tasks={live} /> : null}
-    </>
-  );
-}
 
-/** The thread's status dot — dashed while drafted (pre-approval), red on the halt, muted when unreached,
- *  else the thread-status color (green done · accent building · grey pending). */
-function ThreadDot({
-  thread: s,
-  drafted,
-  isHalt,
-  notReached,
-}: {
-  thread: PipelineThread;
-  drafted: boolean;
-  isHalt: boolean;
-  notReached: boolean;
-}) {
-  if (isHalt) return <Dot color="var(--red)" size={9} />;
-  if (drafted)
-    return (
-      <span
-        className="h-[9px] w-[9px] shrink-0 rounded-full"
-        style={{ border: '1.5px dashed var(--border-2)', background: 'transparent' }}
-        aria-hidden
-      />
-    );
-  if (notReached) return <Dot color="var(--border-2)" size={9} />;
-  const { color, pulse } = threadColor(s.status);
-  return <Dot color={color} pulse={pulse} size={9} />;
-}
-
-/** The thread's task list — the session + workers' live decomposition (SDK task tools), indented under the
- *  thread row with a "TASKS · done/total" header. A `dropped` task stays struck-through (per the design). */
-function TaskSublist({ tasks }: { tasks: TaskItem[] }) {
-  const done = tasks.filter((t) => t.status === 'completed').length;
-  return (
-    <div
-      className="mb-2 ml-[18px] mt-0.5 flex flex-col gap-2 border-l pl-2.5 pt-1.5"
-      style={{ borderColor: 'var(--border)' }}
-    >
-      <div className="flex items-center gap-1.5">
-        <span className="font-mono text-[7px] font-bold uppercase tracking-[0.1em] text-faint">TASKS</span>
-        <span className="pulse-dot h-1 w-1 rounded-full" style={{ background: 'var(--accent)' }} />
-        <span className="font-mono text-[7px] font-bold text-accent">
-          {done}/{tasks.length}
-        </span>
-      </div>
-      {tasks.map((t) => (
-        <div key={t.id} className="flex items-center gap-2">
-          <TaskCheckbox status={t.status} />
-          <span
-            className={cn(
-              'font-mono text-[9.5px] leading-tight',
-              t.status === 'completed'
-                ? 'text-dim'
-                : t.status === 'in_progress'
-                  ? 'text-text'
-                  : t.status === 'dropped'
-                    ? 'text-faint line-through'
-                    : 'text-faint',
-            )}
-          >
-            {t.subject}
-          </span>
-        </div>
-      ))}
+      {open ? (
+        isDraft ? (
+          <DraftEmptyBody />
+        ) : (
+          <>
+            <TasksBody tasks={tasks} done={done} total={tasks.length} />
+            {agents.length > 0 ? (
+              <ReviewAgentsBody
+                thread={s}
+                agents={agents}
+                openAgentId={openAgentId}
+                onSelectNode={onSelectNode}
+              />
+            ) : null}
+          </>
+        )
+      ) : null}
     </div>
   );
 }
 
-/** The 11px checkbox glyph for a task item, by task status. */
-function TaskCheckbox({ status }: { status: TaskItem['status'] }) {
-  const base = 'grid h-[11px] w-[11px] shrink-0 place-items-center rounded-[2px] text-[7px]';
-  if (status === 'completed') {
-    return (
-      <span className={base} style={{ border: '1px solid var(--green)', background: 'var(--green-soft)', color: 'var(--green)' }}>
-        ✓
+/** The mono "TASKS · done/total" sub-header shared by every fold body. */
+function BodyHeader({ label, right }: { label: string; right: string }) {
+  return (
+    <div className="flex items-center gap-2 px-1.5 pb-1 pt-px">
+      <span className="font-mono text-[8px] tracking-[0.12em] text-faint">{label}</span>
+      <span className="flex-1" />
+      <span className="font-mono text-[8px] text-border-2">{right}</span>
+    </div>
+  );
+}
+
+/** A draft thread's open body — no tasks yet, Atlas is still drafting it (handoff §Draft empty state). */
+function DraftEmptyBody() {
+  return (
+    <div className="nav-expand mb-1.5 ml-[9px] flex flex-col">
+      <BodyHeader label="TASKS" right="—" />
+      <p className="px-1.5 pb-1.5 text-[11px] italic leading-relaxed text-faint">
+        Atlas is drafting this thread — no tasks yet.
+      </p>
+    </div>
+  );
+}
+
+/** Numeric-aware id order — the fold's insertion order scrambles when updates arrive for ids the fold
+ *  hasn't seen (defensive entries append), so the display always sorts by id (SDK ids are monotonic). */
+function byTaskId(a: TaskItem, b: TaskItem): number {
+  const na = Number(a.id);
+  const nb = Number(b.id);
+  if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+  return a.id.localeCompare(b.id);
+}
+
+/** The open thread's TASKS section — the session's live, LLM-authored checklist. Exported for the
+ *  navigator's Main row, whose fold shows the brain session's own list (`job.mainTasks`) the same way. */
+export function TasksBody({ tasks, done, total }: { tasks: TaskItem[]; done: number; total: number }) {
+  const ordered = [...tasks].sort(byTaskId);
+  // BLOCKED is derived, not stored: a pending task whose `blockedBy` edge points at a still-incomplete
+  // sibling. Completing (or deleting — it's gone from the list) a blocker clears the block by itself.
+  const byId = new Map(ordered.map((t) => [t.id, t]));
+  const openBlockers = (t: TaskItem): string[] =>
+    t.status === 'pending'
+      ? (t.blockedBy ?? []).filter((id) => {
+          const b = byId.get(id);
+          return b != null && b.status !== 'completed';
+        })
+      : [];
+  return (
+    <div className="nav-expand mb-1.5 ml-[9px] flex flex-col gap-px">
+      <BodyHeader label="TASKS" right={total > 0 ? `${done}/${total}` : '—'} />
+      {ordered.length === 0 ? (
+        <p className="px-1.5 pb-1.5 text-[11px] italic leading-relaxed text-faint">
+          No tasks yet — Atlas creates them once this thread starts.
+        </p>
+      ) : (
+        ordered.map((t) => <TaskRow key={t.id} task={t} blockers={openBlockers(t)} />)
+      )}
+    </div>
+  );
+}
+
+/**
+ * One task row — 13px status glyph · subject (+ meta line and description while in_progress or blocked —
+ * a density decision: completed/pending stay single-line, full description in the tooltip) · `#id` chip.
+ * BLOCKED (a pending task with open `blockers`) gets the slate ring-and-dot glyph + a "blocked by #N"
+ * note. A legacy `dropped` row stays struck through.
+ */
+function TaskRow({ task: t, blockers = [] }: { task: TaskItem; blockers?: string[] }) {
+  const struck = t.status === 'completed' || t.status === 'dropped';
+  const inProgress = t.status === 'in_progress';
+  const blocked = blockers.length > 0;
+  const expanded = inProgress || blocked; // the rows that earn a second line
+  return (
+    <div className="flex items-start gap-1.5 py-1 pl-1.5 pr-1" title={t.description || t.subject}>
+      <span className="mt-px h-[13px] w-[13px] shrink-0">
+        {t.status === 'completed' ? (
+          <DoneDisc />
+        ) : inProgress ? (
+          <SpinRing />
+        ) : blocked ? (
+          <BlockedRing />
+        ) : t.status === 'dropped' ? (
+          <DashedRing color="var(--faint)" />
+        ) : (
+          <DashedRing />
+        )}
       </span>
-    );
-  }
-  if (status === 'in_progress') {
-    return (
-      <span className={cn(base, 'pulse-dot')} style={{ border: '1px solid var(--accent)', background: 'var(--accent-soft)' }}>
-        <span className="h-1 w-1 rounded-full" style={{ background: 'var(--accent)' }} />
+      <span className="min-w-0 flex-1">
+        <span
+          className={cn(
+            'block text-[11.5px] leading-[1.35]',
+            inProgress ? 'text-text' : struck ? 'text-faint line-through' : 'text-dim',
+          )}
+        >
+          {t.subject}
+        </span>
+        {inProgress ? (
+          <span className="mt-px block font-mono text-[8px] tracking-[0.02em] text-accent">
+            {(t.activeForm || t.subject) + '…'}
+          </span>
+        ) : blocked ? (
+          <span className="mt-px block font-mono text-[8px] tracking-[0.02em]" style={{ color: 'var(--slate)' }}>
+            blocked by {blockers.map((b) => `#${b}`).join(' · ')}
+          </span>
+        ) : null}
+        {expanded && t.description ? (
+          <span className="mt-0.5 block text-[10px] leading-[1.4] text-faint">{t.description}</span>
+        ) : null}
       </span>
-    );
-  }
-  // pending / dropped → empty box
-  return <span className={base} style={{ border: '1px solid var(--border-2)', background: 'transparent' }} />;
+      <span className="mt-px shrink-0 font-mono text-[8px] text-faint">#{t.id}</span>
+    </div>
+  );
+}
+
+/** The blocked glyph — slate ring with a center dot (handoff §Task row). */
+function BlockedRing({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
+      <circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--slate)" strokeWidth="2" />
+      <circle cx="10" cy="10" r="2.7" fill="var(--slate)" />
+    </svg>
+  );
+}
+
+// ── REVIEW AGENTS — read-only child threads + the derived Post-review fixes row ───────────────────
+
+/** The design's three agent states — the wire `ReviewAgent` statuses fold onto these (agents are
+ *  read-only text reviewers: no verdicts/findings surfaced, per the handoff). */
+type AgentDisplay = 'pending' | 'in_progress' | 'done' | 'skipped';
+
+function agentDisplay(status: ReviewAgent['status']): AgentDisplay {
+  if (status === 'running') return 'in_progress';
+  if (status === 'passed' || status === 'failed') return 'done';
+  if (status === 'skipped') return 'skipped';
+  return 'pending';
+}
+
+function ReviewAgentsBody({
+  thread,
+  agents,
+  openAgentId,
+  onSelectNode,
+}: {
+  thread: PipelineThread;
+  agents: ReviewAgent[];
+  openAgentId: string | null;
+  onSelectNode: (node: string) => void;
+}) {
+  // Post-review fixes — the single consolidation agent that runs after ALL review agents complete
+  // (fix · apply · verify). Derived, not stored: queued until every agent is terminal, running while the
+  // thread is still `auto_fixing` past that point, done once the thread moves on.
+  const allTerminal = agents.every((a) => a.status !== 'pending' && a.status !== 'running');
+  const fix: 'queued' | 'running' | 'done' = !allTerminal
+    ? 'queued'
+    : thread.status === 'auto_fixing'
+      ? 'running'
+      : 'done';
+
+  return (
+    <div className="nav-expand mb-2 ml-[9px] flex flex-col gap-[2px]">
+      <BodyHeader label="REVIEW AGENTS" right={String(agents.length)} />
+      {agents.map((a) => (
+        <AgentRow
+          key={a.id}
+          agent={a}
+          selected={openAgentId === a.id}
+          onOpen={() => onSelectNode(`rev:${thread.id}:${a.id}`)}
+        />
+      ))}
+      <PostReviewFixesRow state={fix} />
+    </div>
+  );
+}
+
+/** One review agent — a single-line navigable child thread: status tile · name · status word · chevron.
+ *  Clicking drills into the agent's own transcript (`rev:` detail node); the parent fold stays open. */
+function AgentRow({
+  agent,
+  selected,
+  onOpen,
+}: {
+  agent: ReviewAgent;
+  selected: boolean;
+  onOpen: () => void;
+}) {
+  const d = agentDisplay(agent.status);
+  const word = d === 'done' ? 'done' : d === 'in_progress' ? 'reviewing' : d === 'skipped' ? 'skipped' : 'pending';
+  const wordColor = d === 'done' ? 'var(--green)' : d === 'in_progress' ? 'var(--blue)' : 'var(--faint)';
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={cn(
+        'flex w-full items-center gap-2 px-1.5 py-[3px] text-left transition',
+        selected ? 'bg-panel shadow-[0_1px_3px_rgba(0,0,0,0.06)]' : 'hover:bg-surface-2',
+      )}
+    >
+      <AgentStatusTile display={d} />
+      <span
+        className={cn(
+          'min-w-0 flex-1 truncate text-[11.5px] font-semibold',
+          d === 'pending' || d === 'skipped' ? 'text-dim' : 'text-text',
+        )}
+      >
+        {agent.label}
+      </span>
+      <span className="shrink-0 font-mono text-[8px]" style={{ color: wordColor }}>
+        {word}
+      </span>
+      <svg
+        width="9"
+        height="9"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={selected ? 'var(--accent)' : 'var(--border-2)'}
+        strokeWidth="3"
+        className="shrink-0"
+        aria-hidden
+      >
+        <path d="M9 6l6 6-6 6" />
+      </svg>
+    </button>
+  );
+}
+
+/** The 16px status icon tile on an agent-style row (blue spinner / green check / dashed pending). */
+function AgentStatusTile({ display }: { display: AgentDisplay | 'queued' | 'running' }) {
+  const done = display === 'done';
+  const spinning = display === 'in_progress' || display === 'running';
+  return (
+    <span
+      className="grid h-4 w-4 shrink-0 place-items-center rounded"
+      style={{
+        color: done ? 'var(--green)' : spinning ? 'var(--blue)' : 'var(--faint)',
+        background: done ? 'var(--green-soft)' : spinning ? 'var(--blue-soft)' : 'var(--surface-3)',
+      }}
+    >
+      {done ? (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M20 6L9 17l-5-5" />
+        </svg>
+      ) : spinning ? (
+        <SpinRing size={11} color="currentColor" track="currentColor" trackOpacity={0.28} />
+      ) : (
+        <svg width="11" height="11" viewBox="0 0 20 20" className="block" aria-hidden>
+          <circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeDasharray="3 3" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
+/** The consolidation agent's row — runs after the review agents finish; applies fixes and verifies.
+ *  Not navigable (its activity rides the thread's own lane), separated by a dashed rule per the design. */
+function PostReviewFixesRow({ state }: { state: 'queued' | 'running' | 'done' }) {
+  return (
+    <div
+      title="Runs after the review agents finish — applies fixes and verifies."
+      className="mt-[2px] flex items-center gap-2 border-t border-dashed px-1.5 pb-[3px] pt-1.5"
+      style={{ borderColor: 'var(--border-2)' }}
+    >
+      <AgentStatusTile display={state === 'queued' ? 'pending' : state} />
+      <span
+        className={cn('min-w-0 flex-1 text-[11.5px] font-semibold', state === 'done' ? 'text-text' : 'text-dim')}
+      >
+        Post-review fixes
+      </span>
+    </div>
+  );
+}
+
+// ── the pinned PR Review footer (FINAL REVIEW) ─────────────────────────────────────────────────────
+
+/**
+ * The pinned FINAL REVIEW footer — the single job-level master-review thread that runs against all code
+ * once every worker thread finishes (review + fix + apply + verify via its own tasks; NO review agents).
+ * Rendered below the scrolling regions; the caller hides it entirely while no plan exists. Selecting it
+ * opens the session's transcript in the LEFT pane (`pr-review` lane) and expands its task list in place.
+ */
+export function PrReviewFooter({
+  job,
+  laneNode,
+  onSelectNode,
+  onConversation,
+}: {
+  job: PipelineJob;
+  laneNode: string | null;
+  onSelectNode: (node: string) => void;
+  onConversation: () => void;
+}) {
+  // REALTIME: overlay the PR Review session's live lane over the durable list (see ThreadFold).
+  const liveTurn = useLiveTurn(job.jobId, prReviewLane(job.jobId));
+  const tasks = overlayLiveTasks(job.tasks ?? [], liveTurn);
+  const done = tasks.filter((t) => t.status === 'completed').length;
+  const display = prReviewDisplay(job.prReviewStatus ?? null, tasks);
+  const open = laneNode === PR_REVIEW_NODE;
+  const gated = display === 'queued';
+  const accent = footerAccent(display);
+
+  return (
+    <div className="flex-none border-t border-border bg-surface pb-1.5 pt-2">
+      <div className="px-4 pb-1.5">
+        <span className="font-mono text-[8px] tracking-[0.14em] text-faint">FINAL REVIEW</span>
+      </div>
+      <div className="border-l-[3px]" style={footerRail(display, open)}>
+        <button
+          type="button"
+          onClick={() => (open ? onConversation() : onSelectNode(PR_REVIEW_NODE))}
+          className="flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2"
+        >
+          <span
+            className="grid h-5 w-5 shrink-0 place-items-center rounded-[5px]"
+            style={{
+              color: accent,
+              background:
+                display === 'done'
+                  ? 'var(--green-soft)'
+                  : display === 'failed'
+                    ? 'var(--red-soft)'
+                    : gated
+                      ? 'color-mix(in srgb, var(--slate) 14%, transparent)'
+                      : 'var(--blue-soft)',
+            }}
+          >
+            <GitPullRequest size={12} strokeWidth={2.2} />
+          </span>
+          <span className={cn('min-w-0 flex-1 truncate text-[12px] font-semibold', gated ? 'text-dim' : 'text-text')}>
+            PR Review
+          </span>
+          <span className="shrink-0 font-mono text-[8px]" style={{ color: gated ? 'var(--faint)' : accent }}>
+            {display}
+          </span>
+        </button>
+        {open ? <TasksBody tasks={tasks} done={done} total={tasks.length} /> : null}
+      </div>
+    </div>
+  );
+}
+
+/** The footer's state accent — slate gated · blue reviewing/fixing/verifying · green done · red failed. */
+function footerAccent(display: PrReviewDisplay): string {
+  if (display === 'done') return 'var(--green)';
+  if (display === 'failed') return 'var(--red)';
+  if (display === 'queued') return 'var(--slate)';
+  return 'var(--blue)';
+}
+
+function footerRail(display: PrReviewDisplay, open: boolean): { borderLeftColor: string; background: string } {
+  if (!open) return { borderLeftColor: 'transparent', background: 'transparent' };
+  const accent = footerAccent(display);
+  return {
+    borderLeftColor: display === 'queued' ? 'var(--border-2)' : accent,
+    background: `color-mix(in srgb, ${accent} 5%, transparent)`,
+  };
 }

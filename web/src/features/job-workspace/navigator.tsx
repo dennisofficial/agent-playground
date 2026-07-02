@@ -15,6 +15,7 @@ import {
   Pencil,
   RotateCw,
   Server,
+  SquareTerminal,
   Trash2,
 } from 'lucide-react';
 import { Dot, KindBadge, StatusPie } from '@/components/ui/badges';
@@ -23,11 +24,14 @@ import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/job-api';
 import { useRetryJob, useServices } from '@/lib/api/job-queries';
-import { Divider, PipelineTree, haltThreadIdx } from './pipeline-tree';
+import { Divider, PipelineTree, PrReviewFooter, TasksBody, haltThreadIdx } from './pipeline-tree';
 import { NavigatorApproveButton } from './spec-approval';
 import { codexReviewNode } from './codex-review';
-import type { CodexReviewSummary, ContextFile, PipelineJob, PipelineState, JobContext, JobKind, JobStatus } from '@/lib/api/types';
-import type { JobMessage, JobRef } from '@/lib/api/job-api';
+import { pipelineMainTasks } from '@/lib/api/types';
+import { useLiveTurn } from '@/lib/api/job-stream';
+import { overlayLiveTasks } from './live-tasks';
+import type { CodexReviewSummary, ContextFile, PipelineJob, PipelineState, JobContext, JobKind, JobStatus, TaskItem } from '@/lib/api/types';
+import type { JobRef } from '@/lib/api/job-api';
 
 export interface JobMeta {
   title: string;
@@ -54,7 +58,6 @@ export interface JobMeta {
 export function Navigator({
   meta,
   pipeline,
-  messages,
   context,
   contextLoading,
   laneNode,
@@ -69,9 +72,6 @@ export function Navigator({
 }: {
   meta: JobMeta;
   pipeline: PipelineState | undefined;
-  /** The job's durable transcript — the pipeline tree derives each lane-session's writer-subagent runs
-   *  from it (the `/pipeline` read model doesn't carry them; see `thread-subagents.ts`). */
-  messages: JobMessage[];
   /** The job's `/context` files (specs + generated + artifacts) — feeds the OUTPUTS region. */
   context: JobContext | undefined;
   contextLoading?: boolean;
@@ -217,11 +217,14 @@ export function Navigator({
       <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto py-3">
         <StateBanner status={st} job={job} jobRef={jobRef} onConversation={onConversation} />
 
-        {/* THREADS — the Main planning lane + each build lane. No section header (flat list); selecting one
-            opens it in the LEFT pane (orange highlight). */}
+        {/* THREADS — the Main planning lane + each build lane, as an ACCORDION (design handoff "thread
+            navigation"): selecting a thread opens its fold (state rail + wash + tasks/review agents) and
+            collapses whichever was open. Selecting opens it in the LEFT pane. */}
         <MainLaneRow
           active={laneNode === null}
           running={st === 'running' || st === 'planning'}
+          jobId={jobRef.jobId}
+          durableTasks={pipelineMainTasks(pipeline)}
           onClick={onConversation}
         />
         {/* Codex review — a lane directly under Main, shown once the plan has been submitted for review.
@@ -236,10 +239,11 @@ export function Navigator({
         <ThreadRows
           status={st}
           job={job}
-          messages={messages}
           jobId={jobRef.jobId}
           laneNode={laneNode}
+          detailNode={detailNode}
           onSelectNode={onSelectNode}
+          onConversation={onConversation}
         />
 
         {/* OUTPUTS — specs / artifacts / generated, merged. Open in the RIGHT pane (blue highlight). */}
@@ -258,28 +262,69 @@ export function Navigator({
         {/* PORTS — the sandbox's live dev servers (design-stage mock). Open in the RIGHT pane (blue). */}
         <PortsRegion detailNode={detailNode} onSelectNode={onSelectNode} />
       </div>
+
+      {/* PINNED: the FINAL REVIEW footer — the single job-level master-review thread (PR Review), pinned
+          below the scrolling regions. Hidden entirely while no plan exists (no threads yet). */}
+      {job && job.threads.length > 0 ? (
+        <PrReviewFooter
+          job={job}
+          laneNode={laneNode}
+          onSelectNode={onSelectNode}
+          onConversation={onConversation}
+        />
+      ) : null}
     </div>
   );
 }
 
 // ── THREADS: the Main lane + the build-lane tree ───────────────────────────────────────────────────
 
-/** The Main planning lane — the job's brain conversation. Selecting it clears the detail pane so the
- *  conversation is the focus; active when nothing else is selected. */
-function MainLaneRow({ active, running, onClick }: { active: boolean; running: boolean; onClick: () => void }) {
+/** The Main planning lane — the job's brain conversation, the accordion's always-first row (the design's
+ *  `active` thread: solid green dot, green rail + wash while it's the open lane). Active when no other
+ *  lane is selected; its fold shows the brain session's OWN task list (`job.mainTasks`), with the live
+ *  `main` lane folded on top so mid-turn task calls tick in realtime (see `live-tasks.ts`). */
+function MainLaneRow({
+  active,
+  running,
+  jobId,
+  durableTasks,
+  onClick,
+}: {
+  active: boolean;
+  running: boolean;
+  jobId: string;
+  durableTasks: TaskItem[];
+  onClick: () => void;
+}) {
+  const liveTurn = useLiveTurn(jobId);
+  const tasks = overlayLiveTasks(durableTasks, liveTurn);
+  const done = tasks.filter((t) => t.status === 'completed').length;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2',
-        active && 'nav-selected',
-      )}
+    <div
+      className="border-l-[3px]"
+      style={
+        active
+          ? { borderLeftColor: 'var(--green)', background: 'color-mix(in srgb, var(--green) 6%, transparent)' }
+          : { borderLeftColor: 'transparent', background: 'transparent' }
+      }
     >
-      <Dot color="var(--green)" pulse={running} size={9} />
-      <span className="flex-1 truncate text-[12px] font-semibold text-text">Main</span>
-      <span className="font-mono text-[8px] text-faint">planning</span>
-    </button>
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2"
+      >
+        <span className="grid h-[13px] w-[13px] shrink-0 place-items-center">
+          <Dot color="var(--green)" pulse={running} size={9} />
+        </span>
+        <span className={cn('flex-1 truncate text-[12px]', active ? 'font-semibold text-text' : 'font-medium text-dim')}>
+          Main
+        </span>
+        <span className="shrink-0 font-mono text-[8px] text-faint">
+          {tasks.length > 0 ? `[${done}/${tasks.length}]` : 'planning'}
+        </span>
+      </button>
+      {active && tasks.length > 0 ? <TasksBody tasks={tasks} done={done} total={tasks.length} /> : null}
+    </div>
   );
 }
 
@@ -328,17 +373,19 @@ function CodexReviewRow({
 function ThreadRows({
   status,
   job,
-  messages,
   jobId,
   laneNode,
+  detailNode,
   onSelectNode,
+  onConversation,
 }: {
   status: JobStatus;
   job: PipelineJob | null;
-  messages: JobMessage[];
   jobId: string;
   laneNode: string | null;
+  detailNode: string | null;
   onSelectNode: (node: string) => void;
+  onConversation: () => void;
 }) {
   // Triaging — the autonomous lane: triage findings, not a build tree.
   if (status === 'triaging') {
@@ -357,22 +404,19 @@ function ThreadRows({
   }
 
   // One renderer for every stage: running/done/failed threads expand to their live task list; pre-approval
-  // drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the hint line.
+  // drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the hero ghost row.
   if (!job || job.threads.length === 0) {
-    return (
-      <p className="px-2 pb-1 pt-1 text-[11px] italic leading-relaxed text-faint">
-        No build lanes yet — the plan you approve in the conversation is what creates them.
-      </p>
-    );
+    return <BuildLanesEmpty />;
   }
   return (
     <PipelineTree
       job={job}
       status={status}
-      messages={messages}
       jobId={jobId}
       laneNode={laneNode}
+      detailNode={detailNode}
       onSelectNode={onSelectNode}
+      onConversation={onConversation}
     />
   );
 }
@@ -408,7 +452,12 @@ function OutputsRegion({
         files={specs}
         prefix="spec"
         loading={loading}
-        emptyText="No specs yet — plan.md & diagrams land here as Atlas drafts them."
+        emptyIcon={<FileText size={13} />}
+        emptyText={
+          <>
+            Waiting for <span className="font-mono text-[10px] text-dim">plan.md</span>
+          </>
+        }
         detailNode={detailNode}
         onSelectNode={onSelectNode}
       >
@@ -439,7 +488,8 @@ function OutputsRegion({
         prefix="gen"
         generated
         loading={loading}
-        emptyText="Nothing generated yet — system-owned files like decision-record.md."
+        emptyIcon={<Lock size={13} />}
+        emptyText="Nothing generated yet"
         detailNode={detailNode}
         onSelectNode={onSelectNode}
       />
@@ -450,7 +500,8 @@ function OutputsRegion({
         files={artifacts}
         prefix="artifact"
         loading={loading}
-        emptyText="Nothing shared yet — screenshots & output files land here as Atlas works."
+        emptyIcon={<ImageIcon size={13} />}
+        emptyText="No screenshots or files yet"
         detailNode={detailNode}
         onSelectNode={onSelectNode}
       />
@@ -459,14 +510,16 @@ function OutputsRegion({
 }
 
 /** One OUTPUTS sub-group (SPECS / ARTIFACTS / GENERATED) — its header is ALWAYS shown; the body is the
- *  files, a loading row, or a muted empty-state line. `children` renders above the files (the SPECS
- *  triaging provenance note). */
+ *  files, a loading row, or the section's own dashed empty row (handoff "Navigator Empty States": each
+ *  section populates independently, so each owns its empty state). `children` renders above the files
+ *  (the SPECS triaging provenance note). */
 function OutputGroup({
   label,
   files,
   prefix,
   generated,
   loading,
+  emptyIcon,
   emptyText,
   detailNode,
   onSelectNode,
@@ -477,14 +530,15 @@ function OutputGroup({
   prefix: 'spec' | 'artifact' | 'gen';
   generated?: boolean;
   loading?: boolean;
-  emptyText: string;
+  emptyIcon: ReactNode;
+  emptyText: ReactNode;
   detailNode: string | null;
   onSelectNode: (node: string) => void;
   children?: ReactNode;
 }) {
   return (
     <>
-      <Divider label={label} count={files.length > 0 ? files.length : undefined} />
+      <Divider label={label} count={files.length > 0 ? files.length : <ZeroCount />} />
       {children}
       {files.length > 0 ? (
         files.map((f) => (
@@ -500,7 +554,7 @@ function OutputGroup({
       ) : loading ? (
         <LoadingRow label="Loading…" />
       ) : children ? null : (
-        <p className="px-2 pb-1 pt-1 text-[10.5px] italic leading-relaxed text-faint">{emptyText}</p>
+        <EmptyRow icon={emptyIcon}>{emptyText}</EmptyRow>
       )}
     </>
   );
@@ -525,7 +579,7 @@ function ServicesRegion({
 
   return (
     <>
-      <Divider label="SERVICES" count={services.length > 0 ? services.length : undefined} />
+      <Divider label="SERVICES" count={services.length > 0 ? services.length : <ZeroCount />} />
       {services.length > 0 ? (
         services.map((s) => {
           const node = `service:${s.id}`;
@@ -552,9 +606,7 @@ function ServicesRegion({
       ) : isLoading ? (
         <LoadingRow label="Loading…" />
       ) : (
-        <p className="px-2 pb-1 pt-1 text-[10.5px] italic leading-relaxed text-faint">
-          Nothing running yet — Atlas starts services on demand via atlas-svc, never automatically.
-        </p>
+        <EmptyRow icon={<SquareTerminal size={13} />}>No services running yet</EmptyRow>
       )}
     </>
   );
@@ -592,16 +644,21 @@ function PortsRegion({
   return (
     <>
       {/* PORTS — the sandbox's live dev servers. Same inline-divider style as the OUTPUTS sub-groups; the
-          "N live" green indicator rides the count slot. */}
+          "N live" green indicator rides the count slot (a plain muted 0 while nothing is exposed). */}
       <Divider
         label="PORTS"
         count={
-          <span className="flex items-center gap-1 font-mono text-[8px] font-semibold text-green">
-            <span className="pulse-dot h-[5px] w-[5px] rounded-full" style={{ background: 'var(--green)' }} />
-            {ports.length} live
-          </span>
+          ports.length > 0 ? (
+            <span className="flex items-center gap-1 font-mono text-[8px] font-semibold text-green">
+              <span className="pulse-dot h-[5px] w-[5px] rounded-full" style={{ background: 'var(--green)' }} />
+              {ports.length} live
+            </span>
+          ) : (
+            <ZeroCount />
+          )
         }
       />
+      {ports.length === 0 ? <EmptyRow icon={<Globe size={13} />}>No ports exposed yet</EmptyRow> : null}
       {ports.map((p) => {
         const node = `port:${p.id}`;
         const active = detailNode === node;
@@ -750,6 +807,45 @@ function BannerBtn({
       {icon}
       {label}
     </button>
+  );
+}
+
+// ── empty states (design handoff "Navigator Empty States") ─────────────────────────────────────────
+
+/** A section's dashed empty-placeholder row — 13px faint icon + short muted copy, deliberately
+ *  NON-interactive (no hover, no click; the handoff's "2a" treatment). Each section renders its own,
+ *  independently of its siblings. */
+function EmptyRow({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <div className="mx-2 flex items-center gap-2 rounded-[9px] border border-dashed border-border-2 px-2.5 py-[7px]">
+      <span className="shrink-0 text-faint">{icon}</span>
+      <span className="min-w-0 flex-1 text-[11px] leading-snug text-muted">{children}</span>
+    </div>
+  );
+}
+
+/** The muted `0` a section divider trails with while it's empty (vs the faint real count). */
+function ZeroCount() {
+  return <span className="text-border-2">0</span>;
+}
+
+/** The THREADS hero empty state — a ghost skeleton of the first build lane over a one-line teach caption.
+ *  Shown from job creation until the approved plan creates real threads. */
+function BuildLanesEmpty() {
+  return (
+    <div className="mx-2 mb-1 mt-2 flex flex-col gap-1.5">
+      <div
+        className="flex items-center gap-2 rounded-[9px] border border-dashed border-border-2 px-2.5 py-[7px]"
+        style={{ background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)' }}
+      >
+        <span className="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-dashed border-border-2" />
+        <span className="h-2 flex-1 rounded bg-surface-3" />
+        <span className="h-2 w-6 shrink-0 rounded bg-surface-3" />
+      </div>
+      <p className="px-1 text-[11px] leading-relaxed text-dim">
+        No build lanes yet — approve the plan and Atlas splits the work into lanes here.
+      </p>
+    </div>
   );
 }
 

@@ -302,7 +302,6 @@ export interface IEnvConfig {
   //    DOCKER_SOCKET_PATH, else dockerode's default /var/run/docker.sock).
   //  - SANDBOX_IMAGE: the sandbox base-image tag (default 'atlas-sandbox:latest'). Deliberately
   //    NOT v1's WORKSPACE_IMAGE — that often still points at the deleted v1 workspace base image.
-  //  - SANDBOX_REBUILD: when set (any value), force a rebuild of the sandbox base image at boot.
   //  - REFS_ROOT: root for host-maintained read-only reference clones bind-mounted at /refs
   //    (falls back to REFS_ROOT).
   //  - MAX_CONCURRENT_SANDBOXES: cap on simultaneously-active sandboxes/turns (semaphore).
@@ -312,7 +311,6 @@ export interface IEnvConfig {
   // Reuses the generic DOCKER_SOCKET_PATH / REFS_ROOT via the ATLAS_* ?? fallback above.
   // DOCKER_SOCKET_PATH / REFS_ROOT declared above (shared with v1).
   SANDBOX_IMAGE?: string;
-  SANDBOX_REBUILD?: string;
   MAX_CONCURRENT_SANDBOXES?: number;
   SANDBOX_IDLE_TTL_MS?: number;
   SANDBOX_REAP_INTERVAL_MS?: number;
@@ -487,7 +485,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   DISABLE_RESUME: Joi.string().optional(),
   // Atlas v2 Docker sandbox layer (DOCKER_SOCKET_PATH, REFS_ROOT declared above)
   SANDBOX_IMAGE: Joi.string().optional(),
-  SANDBOX_REBUILD: Joi.string().optional(),
   MAX_CONCURRENT_SANDBOXES: Joi.number().integer().min(1).optional(),
   SANDBOX_IDLE_TTL_MS: Joi.number().integer().min(0).optional(),
   SANDBOX_REAP_INTERVAL_MS: Joi.number().integer().min(1000).optional(),

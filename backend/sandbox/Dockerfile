@@ -8,6 +8,22 @@ FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# No TTY is ever attached to engine execs — signal non-interactive to CLIs that prompt instead of
+# isatty-checking (npx's install confirm, git spawning $EDITOR, pip prompts, credential asks). CI stays
+# UNSET on purpose: it flips pnpm/yarn to frozen-lockfile installs and some builds to warnings-as-errors,
+# which breaks the agent's edit-package.json-then-install loop.
+# TERM: docker exec without -t leaves it unset, so `clear`/`tput` in repo scripts exit non-zero and
+# short-circuit && chains (e.g. tsup --onSuccess 'clear && node dist/main.js' builds but never boots).
+# xterm, not dumb — dumb has no clear capability so `clear` still fails.
+ENV TERM=xterm \
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_EDITOR=true \
+    EDITOR=true \
+    PAGER=cat \
+    GIT_PAGER=cat \
+    npm_config_yes=true \
+    PIP_NO_INPUT=1
+
 # System deps + Docker CE (dockerd + CLI + compose v2 + buildx) from Docker's official apt repo.
 # Also: python3 + a C/C++ toolchain (build-essential) so the agent's repos can run Python build steps and
 # compile native node modules (node-gyp); unzip is needed to unpack the fnm release.

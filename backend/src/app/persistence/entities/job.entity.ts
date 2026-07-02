@@ -4,7 +4,7 @@ import type { Decision } from '../../domain/decision-record';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
-import type { ReviewAgentState } from './thread.entity';
+import type { ReviewAgentState, TaskItem } from './thread.entity';
 import { TicketEntity } from './ticket.entity';
 
 /**
@@ -166,6 +166,35 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', default: [] })
   review_agents!: ReviewAgentState[];
+
+  /**
+   * The PR Review orchestrator's LLM-authored task list — the JOB-level twin of
+   * {@link ThreadEntity.tasks}, folded incrementally from its `TaskCreate`/`TaskUpdate` tool calls at the
+   * shared transcript harness. `[]` until the orchestrator creates its first task. LITERAL default — see
+   * the `review_agents` doc above for why a function default breaks `migration:generate`.
+   */
+  @Column({ type: 'jsonb', default: [] })
+  tasks!: TaskItem[];
+
+  /**
+   * The PR Review orchestrator's card-header state (`queued | reviewing | fixing | verifying | opened |
+   * failed`) — null until `BuildShipService.ship()` starts the orchestrator session. Separate from
+   * {@link status} (the thread's own build lifecycle), which is already `done`/terminal by the time PR
+   * Review runs. `opened` (not `merged`) because Atlas only opens the PR — merging stays a manual GitHub
+   * action.
+   */
+  @Column({ type: 'text', nullable: true })
+  pr_review_status!: string | null;
+
+  /**
+   * The MAIN brain session's own LLM-authored task list (the navigator's Main-row checklist), folded from
+   * its `TaskCreate`/`TaskUpdate` calls on the `main` lane — a SEPARATE column from {@link tasks} (the PR
+   * Review orchestrator's list) so `startPrReview`'s task reset can never wipe the brain's checklist.
+   * LITERAL default — see the `review_agents` doc above for why a function default breaks
+   * `migration:generate`.
+   */
+  @Column({ type: 'jsonb', default: [] })
+  main_tasks!: TaskItem[];
 
   /**
    * PASSIVE pipeline-milestone awareness buffer — durable per-thread record of build milestones the

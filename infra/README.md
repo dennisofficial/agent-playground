@@ -184,12 +184,12 @@ Rollback:
 ```
 
 When you change the sandbox image context (`backend/sandbox/**`) or the engine sources
-(`backend/src/app/sandbox/image/**`), the backend now **rebuilds the image automatically**
+(`backend/src/app/sandbox/image/**`), the backend **rebuilds the image automatically**
 on boot: `ensureImage()` hashes the context files into an `atlas.context-hash` label and
-rebuilds when it changes. `SANDBOX_REBUILD=1` is only needed to bust Docker's own layer
-cache (e.g. re-pull a floating base/tool version):
+rebuilds when it changes. To bust Docker's own layer cache (e.g. re-pull a floating
+base/tool version), remove the image on the box before deploying:
 ```bash
-SANDBOX_REBUILD=1 ./infra/deploy.sh sha-<gitsha>
+docker rmi atlas-sandbox:latest && ./infra/deploy.sh sha-<gitsha>
 ```
 
 ---

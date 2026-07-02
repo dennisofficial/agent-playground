@@ -282,6 +282,19 @@ body {
 .cursor-blink {
   animation: atlas-blink 1s step-end infinite;
 }
+/* Accordion expand (Thread Navigator) — slide only, NEVER opacity: a re-rendering runtime restarts the
+   animation and can strand content at opacity 0 (design handoff "thread navigation"). */
+@keyframes atlas-expand {
+  from {
+    transform: translateY(-3px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.nav-expand {
+  animation: atlas-expand 0.16s ease;
+}
 /* Selected navigator row — a full-width band with a solid left bar, per "Atlas Workspace HiFi". The inset
    box-shadow draws the bar without taking layout space (so content doesn't shift); `border-radius:0`
    overrides the row's `rounded-sm` so the band + bar run flush edge-to-edge. Relies on the navigator body

@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { LocalGitService, type FeatureSandbox } from '../git';
-import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
+import { SANDBOX_PROVIDER, type SandboxMilestoneStage, type SandboxProvider } from '../sandbox';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 
@@ -17,6 +17,8 @@ export interface ProvisionAndAttachInput {
   knownSig?: string;
   /** Force a (re-)hydration regardless of `knownSig` — e.g. a freshly cut / restored worktree. */
   forceHydrate?: boolean;
+  /** Threaded straight through to `SandboxProvider.attach()` — see `SandboxAttachInput.onMilestone`. */
+  onMilestone?: (stage: SandboxMilestoneStage) => void;
 }
 
 export interface ProvisionAndAttachResult {
@@ -87,6 +89,7 @@ export class WorktreeProvisioner {
       orgId,
       mounts,
       jobId,
+      onMilestone: input.onMilestone,
       ...(repoDbId ? { repoDbId } : {}),
     });
     return { sandbox: attached, hydrationSig };
