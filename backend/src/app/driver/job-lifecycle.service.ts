@@ -20,8 +20,14 @@ import { TicketService } from '../tickets';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
-/** Default idle window before an attached-but-quiet container is reaped to `detached` (12h). */
-const DEFAULT_IDLE_TTL_MS = 12 * 60 * 60 * 1000;
+/**
+ * Default idle window before an attached-but-quiet container is reaped to `detached` (2h). Reaping
+ * removes the container, which frees the RAM of any dev servers the job left running under `atlas-svc`;
+ * the durable worktree/branch/session survive and the next turn cold-re-attaches (with the reset
+ * notice). Jobs run in peaks — hard work, then a long idle waiting for PR review — so a short window
+ * reclaims a shared host without meaningfully hurting anyone. Override via `SANDBOX_IDLE_TTL_MS`.
+ */
+const DEFAULT_IDLE_TTL_MS = 2 * 60 * 60 * 1000;
 
 /**
  * Sandbox lifecycle status strings (mirrors the entity comment).
