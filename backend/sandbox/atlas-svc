@@ -14,6 +14,7 @@ usage() {
   echo "       atlas-svc logs <id> [-n N] [-f]" >&2
   echo "       atlas-svc ps" >&2
   echo "       atlas-svc stop <id>" >&2
+  echo "       atlas-svc stop-all" >&2
 }
 
 # Minimal JSON string escaper (backslash, quote, control chars we care about).
@@ -99,26 +100,45 @@ cmd_ps() {
   [ "$any" = 0 ] && echo "(no supervised processes)"
 }
 
-cmd_stop() {
-  local name="${1:-}"
-  if [ -z "$name" ]; then usage; return 2; fi
-  local marker="$SVC_DIR/$name.json"
-  [ -f "$marker" ] || { echo "(no such process: '$name')"; return 0; }
-  local pgid; pgid="$(pgid_of "$marker")"
+# Stop the process group recorded in a marker file (TERM, then KILL) and drop the marker. Safe on a
+# marker whose process is already dead.
+stop_marker() { # <marker-path>
+  local marker="$1" pgid
+  pgid="$(pgid_of "$marker")"
   if [ -n "$pgid" ]; then
     kill -TERM "-$pgid" 2>/dev/null || true
     sleep 1
     kill -KILL "-$pgid" 2>/dev/null || true
   fi
   rm -f "$marker"
+}
+
+cmd_stop() {
+  local name="${1:-}"
+  if [ -z "$name" ]; then usage; return 2; fi
+  local marker="$SVC_DIR/$name.json"
+  [ -f "$marker" ] || { echo "(no such process: '$name')"; return 0; }
+  stop_marker "$marker"
   echo "atlas-svc: stopped '$name'"
 }
 
+# Stop EVERY supervised process — the frugal-cleanup path (end of a test, before finish_onboarding).
+cmd_stop_all() {
+  shopt -s nullglob
+  local m count=0
+  for m in "$SVC_DIR"/*.json; do
+    stop_marker "$m"
+    count=$((count + 1))
+  done
+  echo "atlas-svc: stopped $count service(s)"
+}
+
 case "${1:-}" in
-  run)  shift; cmd_run "$@" ;;
-  logs) shift; cmd_logs "$@" ;;
-  ps)   shift; cmd_ps ;;
-  stop) shift; cmd_stop "$@" ;;
+  run)      shift; cmd_run "$@" ;;
+  logs)     shift; cmd_logs "$@" ;;
+  ps)       shift; cmd_ps ;;
+  stop)     shift; cmd_stop "$@" ;;
+  stop-all) shift; cmd_stop_all ;;
   ""|-h|--help) usage ;;
   *) echo "atlas-svc: unknown subcommand '$1'" >&2; usage; exit 2 ;;
 esac
