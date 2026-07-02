@@ -9,12 +9,7 @@ export * from './driver-store.service';
 export * from './job-lifecycle.service';
 export { WorktreeProvisioner } from './worktree-provisioner.service';
 export { WorktreeHydrator } from './worktree-hydrator.service';
-export {
-  loadWorktreeManifest,
-  type WorktreeManifest,
-  type MountSpec,
-  type MountMode,
-} from './worktree-manifest';
+export { type MountSpec, type MountMode } from '../sandbox/container-paths';
 export {
   resolveSafeTarget,
   resolveSafeSource,

@@ -260,7 +260,11 @@ export class OnboardingService {
     // if any, stays as history.
     await this.repos.update({ id: repoId, org_id: orgId }, { onboarding_job_id: jobId });
     this.logger.log(`re-onboarding thread ${jobId} for ${orgId}/${repo.slug} (operator-initiated)`);
-    await sessions.startOnboardingThread(jobId, orgId, repoId);
+    // Fire-and-forget: the first turn provisions the sandbox and runs a full brain turn (minutes) — the
+    // HTTP caller only needs the job id to deep-link into the thread and watch it live.
+    void sessions.startOnboardingThread(jobId, orgId, repoId).catch((err) =>
+      this.logger.warn(`onboarding first turn failed for job ${jobId}: ${err}`),
+    );
     return { jobId };
   }
 

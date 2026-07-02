@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
   EngineAuthError,
+  EngineDetachedError,
   type EngineEvent,
   type EngineRunResult,
   type EngineRunnerPort,
@@ -15,6 +16,7 @@ import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port'
 import {
   CONTAINER_AGENT_HOME,
   CONTAINER_CONTEXT,
+  CONTAINER_PLAYGROUND,
   CONTAINER_WORKTREE,
 } from './container-paths';
 import { SandboxActivityRegistry } from './sandbox-activity.registry';
@@ -51,6 +53,9 @@ export interface AttachArgs {
 @Injectable()
 export class RedisEngineRunner implements EngineRunnerPort {
   private readonly logger = new Logger(RedisEngineRunner.name);
+
+  /** Turn ids THIS process is currently attach-looping (see {@link isAttached}). */
+  private readonly attached = new Set<string>();
 
   constructor(
     @Inject(CONTAINER_ENGINE) private readonly containers: ContainerEngine,
@@ -109,6 +114,11 @@ export class RedisEngineRunner implements EngineRunnerPort {
     return this.runAttached(turnId, turnKeys(turnId), args, containerId, undefined);
   }
 
+  /** True while this process has a live attach loop on `turnId` (guards the promotion re-attach sweep). */
+  isAttached(turnId: string): boolean {
+    return this.attached.has(turnId);
+  }
+
   /**
    * The shared attach loop: (optionally kick the engine, for a fresh run) then tail events + serve the
    * tool bridge concurrently until the turn ends, and finalize the registry. Used by both `run` (with a
@@ -123,6 +133,12 @@ export class RedisEngineRunner implements EngineRunnerPort {
   ): Promise<EngineRunResult> {
     return this.activity.thread(containerId, async () => {
       const done = { value: false };
+      // Distinguishes "the TURN concluded" (final/error frame, idle-timeout verdict) from "WE lost the
+      // tail" (our Redis client died — typically this process's own shutdown during a watch respawn).
+      // Only a concluded turn may finalize the registry row + reclaim the streams: they are exactly the
+      // state the next boot's re-attach needs to resume a still-running detached engine (ADR 0001).
+      let detached = false;
+      this.attached.add(turnId);
       try {
         // Tool-bridge turns: create the host consumer group up front so no tool_request is missed.
         if (args.toolBridge) await this.redis.ensureGroup(keys.tools, TOOLS_GROUP);
@@ -139,16 +155,26 @@ export class RedisEngineRunner implements EngineRunnerPort {
           : Promise.resolve();
         const [result] = await Promise.all([this.tailEvents(turnId, keys, args, done), toolsLoop]);
         return result;
+      } catch (err) {
+        detached = err instanceof EngineDetachedError;
+        throw err;
       } finally {
         done.value = true;
-        await this.registry
-          .finalize(turnId, 'done')
-          .catch((err) => this.logger.debug(`turn ${turnId}: finalize failed (ignored): ${err}`));
-        // Reclaim the turn's Redis streams — the turn is done + its transcript persisted, and the
-        // registry row is gone, so a re-attach will never need them again (retention; no MAXLEN needed).
-        await this.redis
-          .del(keys.spec, keys.events, keys.tools, keys.replies)
-          .catch((err) => this.logger.debug(`turn ${turnId}: stream cleanup failed (ignored): ${err}`));
+        this.attached.delete(turnId);
+        if (detached) {
+          this.logger.warn(
+            `turn ${turnId}: tail detached mid-turn — leaving registry row + streams for boot re-attach`,
+          );
+        } else {
+          await this.registry
+            .finalize(turnId, 'done')
+            .catch((err) => this.logger.debug(`turn ${turnId}: finalize failed (ignored): ${err}`));
+          // Reclaim the turn's Redis streams — the turn is done + its transcript persisted, and the
+          // registry row is gone, so a re-attach will never need them again (retention; no MAXLEN needed).
+          await this.redis
+            .del(keys.spec, keys.events, keys.tools, keys.replies)
+            .catch((err) => this.logger.debug(`turn ${turnId}: stream cleanup failed (ignored): ${err}`));
+        }
       }
     });
   }
@@ -223,12 +249,29 @@ export class RedisEngineRunner implements EngineRunnerPort {
 
     try {
       while (result === undefined && errorMsg === undefined) {
-        const entries = await this.redis.xread({
-          stream: keys.events,
-          lastId,
-          count: 128,
-          blockMs: 1000,
-        });
+        let entries;
+        try {
+          entries = await this.redis.xread({
+            stream: keys.events,
+            lastId,
+            count: 128,
+            blockMs: 1000,
+          });
+        } catch (err) {
+          // OUR transport failed, not the engine — most often this process's own shutdown closing the
+          // Redis client mid-`XREAD` (a watch respawn). The detached engine is still running and still
+          // writing; throw the marker error so `runAttached` leaves the registry row + streams intact
+          // for the next boot's re-attach instead of finalizing a live turn as done. One quick retry
+          // rides out a transient blip without misclassifying it as a detach.
+          try {
+            await new Promise((r) => setTimeout(r, 250));
+            entries = await this.redis.xread({ stream: keys.events, lastId, count: 128, blockMs: 1000 });
+          } catch {
+            throw new EngineDetachedError(
+              `events tail lost its Redis transport mid-turn (turn ${turnId}): ${err}`,
+            );
+          }
+        }
         if (entries.length === 0) {
           if (Date.now() - lastActivity > TAIL_IDLE_TIMEOUT_MS) {
             errorMsg = `engine produced no events for ${Math.round(TAIL_IDLE_TIMEOUT_MS / 1000)}s (presumed dead)`;
@@ -278,7 +321,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
       engine: args.engine,
       task: args.task,
       cwd: this.toContainerCwd(args.cwd, target),
-      writableRoots: [CONTAINER_CONTEXT, ...(args.writableRoots ?? [])],
+      writableRoots: [CONTAINER_CONTEXT, CONTAINER_PLAYGROUND, ...(args.writableRoots ?? [])],
       systemPrompt: args.systemPrompt,
       sandboxKey: args.sandboxKey,
       mode: args.mode,

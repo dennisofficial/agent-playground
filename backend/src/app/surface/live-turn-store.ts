@@ -71,9 +71,9 @@ export const MAIN_LANE = 'main';
  * since Atlas is single-process). Durability split:
  *   - DURABLE history (survives restart): completed blocks → Postgres `messages` (the brain persists them).
  *   - RESUMABLE live turn (survives client disconnect within the process): this store + snapshot-on-connect.
- *   - A server restart mid-turn loses the in-flight turn — but the engine generation is killed too and
- *     can't be resumed, so showing a frozen partial would be worse; the client falls back to the durable
- *     transcript. (Cross-restart resume is intentionally out of scope.)
+ *   - A server restart mid-turn: the detached engine keeps running against its Redis streams, and the
+ *     boot re-attach (ADR 0001) replays the durable event log from the start through the turn harness —
+ *     which REBUILDS this store's cumulative state, so a reconnecting client recovers the full live turn.
  *
  * `seq` is a process-global monotonic counter stamped on every frame; the client keeps the max it has
  * applied and ignores any delta with `seq <= snapshot.seq` — so the snapshot-then-live merge has no race.

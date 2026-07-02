@@ -29,14 +29,38 @@ export const CONTAINER_PNPM_STORE = `${CONTAINER_WORKTREE}/.pnpm-store`;
 
 /**
  * Worktree-relative paths the SYSTEM already binds under {@link CONTAINER_WORKTREE} on its own. A
- * repo's `.atlas/worktree.json` must NOT also request a cache mount at one of these, or two binds land
+ * repo's worktree config must NOT also request a cache mount at one of these, or two binds land
  * on the same container target and Docker hard-fails container creation ("Duplicate mount point"),
  * wedging every turn on the thread. `.pnpm-store` is the shared store bound at {@link
  * CONTAINER_PNPM_STORE}; the fnm store (`/atlas-fnm`) and `/context` live OUTSIDE `/workspace` so a
  * worktree-relative mount can't reach them. Reserved mounts are dropped (with a warning) both when the
- * brain authors the manifest and when it is loaded at provision time.
+ * brain authors config and when it is resolved at provision time.
  */
 export const RESERVED_WORKTREE_MOUNTS: ReadonlySet<string> = new Set(['.pnpm-store']);
+
+/**
+ * Cache/state mount mode.
+ * - `per-thread` = its own host dir (no cross-thread write contention).
+ * - `shared-ro` = one immutable host dir mounted read-only into every thread.
+ * - `shared-rw` = one PER-REPO host dir mounted read-write across all of a repo's sandboxes. Used for
+ *   persistent auth STATE (e.g. `.gcloud`) that must survive sandbox reap and be reused by every job.
+ *   The concurrent-writer race (two jobs refreshing a token at once) is accepted: login is rare and
+ *   refresh is near-atomic; worst case is one job re-auths, not corruption.
+ */
+export type MountMode = 'per-thread' | 'shared-ro' | 'shared-rw';
+
+/** A cache/state directory bind-mounted into the container at `path` (worktree-relative). */
+export interface MountSpec {
+  path: string;
+  mode: MountMode;
+}
+
+/**
+ * Max length for a worktree-relative mount/seed path recorded in the DB-backed worktree config. This is
+ * now the ONLY size guard on that data (there is no committed file to re-parse under a byte/entry cap),
+ * so it is enforced at write-time by the brain's tool-input normalizers.
+ */
+export const MAX_MOUNT_PATH_LEN = 512;
 
 /**
  * Normalize a worktree-relative mount path for reserved-path comparison + bind construction: strip a
@@ -71,3 +95,13 @@ export const CONTAINER_FNM_STORE = '/atlas-fnm';
  * here; the host reads it back via `SandboxManager.contextDirHost()`. Durable across container restarts.
  */
 export const CONTAINER_CONTEXT = '/context';
+
+/**
+ * The job's durable PLAYGROUND / scratch space INSIDE the sandbox — a freeform, read-write area OUTSIDE
+ * the git worktree (so throwaway scripts/spikes/one-off harnesses never pollute the repo diff or a PR).
+ * Keyed by jobId → shared by every build lane of the job, durable across container recreate/reap (the
+ * host reads it via `SandboxManager.playgroundDirHost()`); removed on deep job delete. Distinct from
+ * `/context` (plan/spec artifacts read by the build engines) — `/playground` is purely Atlas's own
+ * scratch pad, given no imposed structure.
+ */
+export const CONTAINER_PLAYGROUND = '/playground';

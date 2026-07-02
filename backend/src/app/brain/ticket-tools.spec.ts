@@ -53,6 +53,8 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // manifest
     {} as never, // turnRecovery
     {} as never, // secretStore
+    {} as never, // configStore
+    {} as never, // git
   );
   return { manager, store };
 }

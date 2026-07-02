@@ -12,16 +12,17 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
 describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', () => {
   function makeProvisioner() {
     const hydrator = {
-      resolveMounts: vi.fn(() => []),
+      resolveMounts: vi.fn(async () => []),
       computeSig: vi.fn(async () => 'sig-1'),
       hydrateFiles: vi.fn(async () => ({ forbiddenPaths: [], notices: [] })),
     } as unknown as WorktreeHydrator;
     const awareness = { appendMarker: vi.fn(async () => undefined) } as unknown as PipelineAwarenessStore;
     const git = { ensureBuildJunkExcluded: vi.fn(async () => undefined) } as unknown as LocalGitService;
+    const config = { importLegacyIfEmpty: vi.fn(async () => undefined) } as unknown as import('../onboarding').WorktreeConfigStore;
     const attach = vi.fn(async () => ({ repoId: 'proj', branch: 'main', worktreePath: '/wt', gitUrl: '' }));
     const sandboxProvider = { attach } as unknown as import('../sandbox').SandboxProvider;
 
-    const provisioner = new WorktreeProvisioner(hydrator, awareness, git, sandboxProvider);
+    const provisioner = new WorktreeProvisioner(hydrator, awareness, git, config, sandboxProvider);
     return { provisioner, attach };
   }
 

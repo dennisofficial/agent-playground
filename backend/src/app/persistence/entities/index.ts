@@ -22,6 +22,8 @@ export * from './memory.entity';
 export * from './org-credentials.entity';
 export * from './org-worktree-secret.entity';
 export * from './org-worktree-secret-grant.entity';
+export * from './org-worktree-mount.entity';
+export * from './org-worktree-seed.entity';
 export * from './job-sandbox.entity';
 export * from './user.entity';
 export * from './ticket.entity';
@@ -46,6 +48,8 @@ import { MemoryEntity } from './memory.entity';
 import { OrgCredentialsEntity } from './org-credentials.entity';
 import { OrgWorktreeSecretEntity } from './org-worktree-secret.entity';
 import { OrgWorktreeSecretGrantEntity } from './org-worktree-secret-grant.entity';
+import { OrgWorktreeMountEntity } from './org-worktree-mount.entity';
+import { OrgWorktreeSeedEntity } from './org-worktree-seed.entity';
 import { JobSandboxEntity } from './job-sandbox.entity';
 import { UserEntity } from './user.entity';
 import { TicketEntity } from './ticket.entity';
@@ -72,6 +76,8 @@ export const ENTITIES = [
   OrgCredentialsEntity,
   OrgWorktreeSecretEntity,
   OrgWorktreeSecretGrantEntity,
+  OrgWorktreeMountEntity,
+  OrgWorktreeSeedEntity,
   JobSandboxEntity,
   UserEntity,
   TicketEntity,

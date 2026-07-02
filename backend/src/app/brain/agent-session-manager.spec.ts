@@ -35,10 +35,8 @@ import type { EventStimulus } from '../domain';
 import { UNTRUSTED_OPEN } from '../stimulus';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
-import type { CredentialResolver, WorktreeSecretStore } from '../onboarding';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import type { CredentialResolver, WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
+import type { LocalGitService } from '../git';
 
 /**
  * R3 GATE TESTS — two assertions:
@@ -116,6 +114,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockLifecycle = {
     findSandbox: vi.fn(),
     contextDirHost: vi.fn(),
+    markRepoOnboarded: vi.fn().mockResolvedValue(undefined),
   } as unknown as JobLifecycleService;
 
   const mockSecretStore = {
@@ -124,6 +123,17 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     listGrants: vi.fn().mockResolvedValue([]),
     read: vi.fn().mockResolvedValue(null),
   } as unknown as WorktreeSecretStore;
+
+  const mockConfigStore = {
+    listMounts: vi.fn().mockResolvedValue([]),
+    upsertMount: vi.fn().mockResolvedValue(undefined),
+    listSeed: vi.fn().mockResolvedValue([]),
+    addSeed: vi.fn().mockResolvedValue(undefined),
+  } as unknown as WorktreeConfigStore;
+
+  const mockGit = {
+    hasChanges: vi.fn().mockResolvedValue(false),
+  } as unknown as LocalGitService;
 
   const mockDockerRunner = {} as unknown as EngineRunnerPort;
 
@@ -223,6 +233,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockSecretStore.listGrants as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockSecretStore.read as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
+    // Config-store + git defaults (resetAllMocks wiped the resolved values).
+    (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockConfigStore.upsertMount as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockConfigStore.listSeed as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockConfigStore.addSeed as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
     // By default: no existing open job on the thread → openJob creates a fresh one.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
@@ -243,6 +260,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.markQuestionDelivered as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.clearAwaitingQuestion as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockLifecycle.contextDirHost as ReturnType<typeof vi.fn>).mockReturnValue('/tmp/atlas-test-ctx');
+    (mockLifecycle.markRepoOnboarded as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     // R4 plan-review defaults (resetAllMocks wiped resolved values). appendSystemEvent MUST resolve a
     // promise — submit_plan chains `.catch` on it.
@@ -324,6 +342,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       } as unknown as RepoDecisionManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
       mockSecretStore,
+      mockConfigStore,
+      mockGit,
     );
   });
 
@@ -596,63 +616,62 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.ship).not.toHaveBeenCalled();
   });
 
-  it('write_worktree_config MERGES onto an existing atlas.json — an incremental amendment never drops what the ceremony already recorded', async () => {
-    const wt = mkdtempSync(join(tmpdir(), 'atlas-wtc-'));
-    try {
-      // What the ceremony (or an earlier amendment) already committed.
-      writeFileSync(
-        join(wt, 'atlas.json'),
-        JSON.stringify({
-          mounts: [{ path: '.gcloud', mode: 'shared-rw' }, { path: '.cache/turbo', mode: 'per-thread' }],
-          seed: ['fixtures/golden.sqlite'],
-        }),
-      );
-      (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: wt });
-      const tools = manager.buildTools(fakeStimulus);
+  it('write_worktree_config UPSERTS mounts/seed straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
+    // What the ceremony (or an earlier amendment) already recorded, per the config store.
+    (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { path: '.gcloud', mode: 'shared-rw' },
+      { path: '.cache/turbo', mode: 'per-thread' },
+      { path: '.stripe', mode: 'shared-rw' },
+    ]);
+    (mockConfigStore.listSeed as ReturnType<typeof vi.fn>).mockResolvedValue(['fixtures/golden.sqlite']);
+    const tools = manager.buildTools(fakeStimulus);
 
-      // A build thread discovers it needs ONE new mount — it does NOT resend the existing ones.
-      const result = await tools['write_worktree_config']({
-        mounts: [{ path: '.stripe', mode: 'shared-rw' }],
-        seed: ['fixtures/golden.sqlite'], // re-sent (idempotent) — must not duplicate
-      });
+    // A build thread discovers it needs ONE new mount — it does NOT resend the existing ones.
+    const result = await tools['write_worktree_config']({
+      mounts: [{ path: '.stripe', mode: 'shared-rw' }],
+      seed: ['fixtures/golden.sqlite'], // re-sent (idempotent) — must not duplicate
+    });
 
-      expect(result).toMatchObject({ ok: true, mounts: 3, seed: 1 });
-      const onDisk = JSON.parse(readFileSync(join(wt, 'atlas.json'), 'utf8'));
-      // The pre-existing entries survived; the new one was added; nothing was dropped or duplicated.
-      expect(onDisk.mounts).toEqual(
-        expect.arrayContaining([
-          { path: '.gcloud', mode: 'shared-rw' },
-          { path: '.cache/turbo', mode: 'per-thread' },
-          { path: '.stripe', mode: 'shared-rw' },
-        ]),
-      );
-      expect(onDisk.mounts).toHaveLength(3);
-      expect(onDisk.seed).toEqual(['fixtures/golden.sqlite']);
-    } finally {
-      rmSync(wt, { recursive: true, force: true });
-    }
+    expect(mockConfigStore.upsertMount).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, '.stripe', 'shared-rw');
+    expect(mockConfigStore.addSeed).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, 'fixtures/golden.sqlite');
+    // No sandbox lookup — this is a pure DB write now.
+    expect(mockLifecycle.findSandbox).not.toHaveBeenCalled();
+    // Reports the total AFTER the write (from the store, which the test seeded to reflect it).
+    expect(result).toMatchObject({ ok: true, mounts: 3, seed: 1 });
+    expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
+    const notice = (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    expect(notice).toMatch(/3 mount/);
   });
 
-  it('write_worktree_config UPSERTS a mount by path — re-recording the same path replaces its mode, not appends a duplicate', async () => {
-    const wt = mkdtempSync(join(tmpdir(), 'atlas-wtc-'));
-    try {
-      writeFileSync(
-        join(wt, 'atlas.json'),
-        JSON.stringify({ mounts: [{ path: '.gcloud', mode: 'per-thread' }], seed: [] }),
-      );
-      (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: wt });
-      const tools = manager.buildTools(fakeStimulus);
+  it('write_worktree_config upserts by path — re-recording the same path replaces its mode, not a duplicate call', async () => {
+    const tools = manager.buildTools(fakeStimulus);
 
-      const result = await tools['write_worktree_config']({
-        mounts: [{ path: '.gcloud', mode: 'shared-rw' }], // corrects the mode for the SAME path
-      });
+    await tools['write_worktree_config']({
+      mounts: [{ path: '.gcloud', mode: 'shared-rw' }], // corrects the mode for an existing path
+    });
 
-      expect(result).toMatchObject({ ok: true, mounts: 1 });
-      const onDisk = JSON.parse(readFileSync(join(wt, 'atlas.json'), 'utf8'));
-      expect(onDisk.mounts).toEqual([{ path: '.gcloud', mode: 'shared-rw' }]);
-    } finally {
-      rmSync(wt, { recursive: true, force: true });
-    }
+    // The upsert-by-path semantics live in the store itself (see worktree-config.store.spec.ts); the tool's
+    // job is just to call it once per entry with the normalized path/mode.
+    expect(mockConfigStore.upsertMount).toHaveBeenCalledOnce();
+    expect(mockConfigStore.upsertMount).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, '.gcloud', 'shared-rw');
+  });
+
+  it('write_worktree_config rejects a `secrets` field — secrets never go through this tool', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['write_worktree_config']({ secrets: [{ name: 'x' }] });
+    expect(result).toMatchObject({ ok: false });
+    expect(mockConfigStore.upsertMount).not.toHaveBeenCalled();
+  });
+
+  it('write_worktree_config NEVER throws on a store failure — warns and hands Atlas the real error to act on', async () => {
+    (mockConfigStore.upsertMount as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('connect ECONNREFUSED'));
+    const tools = manager.buildTools(fakeStimulus);
+
+    const result = await tools['write_worktree_config']({ mounts: [{ path: '.gcloud', mode: 'shared-rw' }] });
+
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('ECONNREFUSED') });
+    // No misleading "success" notice was posted for a write that never landed.
+    expect(mockStore.appendSystemEvent).not.toHaveBeenCalled();
   });
 
   it('derive_secret stores a value Atlas computed itself — no operator wait, straight to the encrypted store + grant', async () => {
@@ -739,6 +758,70 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(noDescription).toMatchObject({ ok: false });
 
     expect(mockSecretStore.write).not.toHaveBeenCalled();
+  });
+
+  it('finish_onboarding refuses without a substantive `verified` (green-gate)', async () => {
+    const tools = manager.buildTools(fakeStimulus, true);
+    const result = await tools['finish_onboarding']({ summary: 'done', verified: 'too short' });
+    expect(result).toMatchObject({ ok: false });
+    expect(mockLifecycle.markRepoOnboarded).not.toHaveBeenCalled();
+  });
+
+  it('finish_onboarding: no repo diff → marks onboarded, does NOT ship a PR', async () => {
+    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: '/wt' });
+    (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const tools = manager.buildTools(fakeStimulus, true);
+
+    const result = await tools['finish_onboarding']({
+      summary: 'Boots green',
+      verified: 'Brought up the API and worker via atlas-svc; both pass their health checks.',
+    });
+
+    expect(mockGit.hasChanges).toHaveBeenCalledWith('/wt');
+    expect(mockLifecycle.markRepoOnboarded).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
+    expect(mockShip.ship).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, prOpened: false });
+  });
+
+  it('finish_onboarding: a real repo diff → marks onboarded AND ships a PR with the reframed commit message', async () => {
+    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: '/wt' });
+    (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      repoId: PROJECT_ID,
+      orgId: TEAM_ID,
+    });
+    (mockShip.ship as ReturnType<typeof vi.fn>).mockResolvedValue({
+      url: 'https://gh/pr/7',
+      number: 7,
+      existing: false,
+    });
+    const tools = manager.buildTools(fakeStimulus, true);
+
+    const result = await tools['finish_onboarding']({
+      summary: 'Boots green after a script fix',
+      verified: 'Brought up the API and worker via atlas-svc; both pass their health checks.',
+    });
+
+    expect(mockLifecycle.markRepoOnboarded).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
+    expect(mockShip.ship).toHaveBeenCalledWith(
+      expect.objectContaining({ commitMessage: 'Atlas: onboarding — environment setup' }),
+    );
+    expect(result).toMatchObject({ ok: true, prOpened: true, prUrl: 'https://gh/pr/7' });
+  });
+
+  it('finish_onboarding NEVER throws on a markRepoOnboarded/git failure — warns and returns the real error', async () => {
+    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: '/wt' });
+    (mockLifecycle.markRepoOnboarded as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('db down'));
+    const tools = manager.buildTools(fakeStimulus, true);
+
+    const result = await tools['finish_onboarding']({
+      summary: 'Boots green',
+      verified: 'Brought up the API and worker via atlas-svc; both pass their health checks.',
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('db down') });
+    expect(mockShip.ship).not.toHaveBeenCalled();
   });
 
   it('(e) ask_question opens the durable gate with a normalized question_card', async () => {
@@ -1131,6 +1214,9 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     run?: ReturnType<typeof vi.fn>;
     drainAndAdvance?: ReturnType<typeof vi.fn>;
     pendingCard?: unknown;
+    wasReset?: boolean;
+    sessionId?: string | null;
+    resetContainer?: ReturnType<typeof vi.fn>;
   }) {
     const store = {
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
@@ -1157,14 +1243,17 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         opts.ensureProvisioned ?? vi.fn().mockResolvedValue({ id: 'sb-1', lifecycle: 'attached' }),
       ensureContainer: vi
         .fn()
-        .mockResolvedValue({ sandbox: { worktreePath: '/wt', containerId: 'c1' }, wasReset: false }),
+        .mockResolvedValue({ sandbox: { worktreePath: '/wt', containerId: 'c1' }, wasReset: opts.wasReset ?? false }),
+      resetContainer: opts.resetContainer ?? vi.fn().mockResolvedValue({ reset: true }),
     } as unknown as JobLifecycleService;
     const surface = {
       post: vi.fn().mockResolvedValue('ts'),
       name: 'web',
     } as unknown as ChatSurface;
     const sandboxRows = {
-      findOne: vi.fn().mockResolvedValue({ job_id: THREAD_ID, org_id: TEAM_ID, session_id: null }),
+      findOne: vi
+        .fn()
+        .mockResolvedValue({ job_id: THREAD_ID, org_id: TEAM_ID, session_id: opts.sessionId ?? null }),
       save: vi.fn().mockResolvedValue(undefined),
     } as unknown as Repository<JobSandboxEntity>;
     const dockerRunner = { run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }) } as unknown as EngineRunnerPort;
@@ -1221,6 +1310,13 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         listGrants: async () => [],
         read: async () => null,
       } as unknown as WorktreeSecretStore,
+      {
+        listMounts: async () => [],
+        upsertMount: async () => undefined,
+        listSeed: async () => [],
+        addSeed: async () => undefined,
+      } as unknown as WorktreeConfigStore,
+      { hasChanges: async () => false } as unknown as LocalGitService,
     );
     return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
   }
@@ -1618,6 +1714,129 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(tools.write_worktree_config).toBeDefined();
     expect(tools.finish_onboarding).toBeUndefined();
   });
+
+  // ── reset_sandbox: recreate the container to prove the environment cold-boots ────────────────────
+  describe('reset_sandbox', () => {
+    const KEY = `${TEAM_ID}:${THREAD_ID}`;
+
+    it('is available to BOTH normal and onboarding threads and flags a reset (posting the operator cue mid-turn)', async () => {
+      const { manager, store } = makeManager({});
+      expect(manager.buildTools(stimulus).reset_sandbox).toBeDefined();
+      expect(manager.buildTools(stimulus, true).reset_sandbox).toBeDefined();
+
+      const res = (await manager.buildTools(stimulus).reset_sandbox({ reason: 'verify mounts' })) as Record<
+        string,
+        unknown
+      >;
+      expect(res).toMatchObject({ ok: true, willReset: true });
+      // The tool only FLAGS the reset (the tail tears down) — nothing was recreated during the call.
+      expect((manager as unknown as { resetRequests: Map<string, unknown> }).resetRequests.get(KEY)).toEqual({
+        reason: 'verify mounts',
+      });
+      // The visible cue is posted HERE (mid-turn) so it lands on THIS turn's /messages reconcile — a
+      // tail-posted pill would miss it (turn_end already fired). See the tool comment.
+      expect(
+        (store.appendSystemEvent as ReturnType<typeof vi.fn>).mock.calls.some((c) => /reset/i.test(String(c[1]))),
+      ).toBe(true);
+    });
+
+    it('refuses a 4th consecutive reset (loop guard) so a broken setup cannot spin forever', async () => {
+      const { manager } = makeManager({});
+      const tool = manager.buildTools(stimulus).reset_sandbox;
+      for (let i = 0; i < 3; i++) {
+        expect(await tool({ reason: 'again' })).toMatchObject({ ok: true, willReset: true });
+      }
+      const refused = (await tool({ reason: 'again' })) as Record<string, unknown>;
+      expect(refused.ok).toBe(false);
+      expect(String(refused.reason)).toContain('3 times');
+    });
+
+    it('an operator turn clears the consecutive-reset counter (so operator-driven resets never trip the guard)', async () => {
+      const { manager } = makeManager({});
+      const counters = (manager as unknown as { consecutiveResets: Map<string, number> }).consecutiveResets;
+      counters.set(KEY, 3);
+      await manager.handleChatTurn(stimulus); // stimulus.author.id = 'U-OP' → operator
+      expect(counters.has(KEY)).toBe(false);
+    });
+
+    it('the turn tail tears the container down and kicks a verify continuation when a reset was requested', async () => {
+      const resetContainer = vi.fn().mockResolvedValue({ reset: true });
+      const { manager, lifecycle } = makeManager({ resetContainer });
+      (manager as unknown as { resetRequests: Map<string, unknown> }).resetRequests.set(KEY, { reason: 'verify' });
+      const kick = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+
+      await (manager as unknown as { maybeHonorSandboxReset: (s: ChatStimulus) => Promise<void> }).maybeHonorSandboxReset(
+        stimulus,
+      );
+
+      expect(lifecycle.resetContainer as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(THREAD_ID, TEAM_ID);
+      // The verify instruction is owed to the first cold-attached turn…
+      expect((manager as unknown as { pendingResetVerify: Set<string> }).pendingResetVerify.has(KEY)).toBe(true);
+      // …the request is consumed (never honored twice)…
+      expect((manager as unknown as { resetRequests: Map<string, unknown> }).resetRequests.has(KEY)).toBe(false);
+      // …and exactly one synthetic verify continuation is kicked.
+      expect(kick).toHaveBeenCalledTimes(1);
+      const seed = kick.mock.calls[0][0] as ChatStimulus;
+      expect(seed.seed).toBe(true);
+      expect(seed.seedResetVerify).toBe(true);
+    });
+
+    it('the turn tail does NOT reset or kick when a build is running in the container (busy guard)', async () => {
+      const resetContainer = vi.fn().mockResolvedValue({ reset: false, reason: 'busy' });
+      const { manager, store } = makeManager({ resetContainer });
+      (manager as unknown as { resetRequests: Map<string, unknown> }).resetRequests.set(KEY, { reason: 'verify' });
+      const kick = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+
+      await (manager as unknown as { maybeHonorSandboxReset: (s: ChatStimulus) => Promise<void> }).maybeHonorSandboxReset(
+        stimulus,
+      );
+
+      expect(kick).not.toHaveBeenCalled();
+      expect((manager as unknown as { pendingResetVerify: Set<string> }).pendingResetVerify.has(KEY)).toBe(false);
+      expect(
+        (store.appendSystemEvent as ReturnType<typeof vi.fn>).mock.calls.some((c) => /skipped/i.test(String(c[1]))),
+      ).toBe(true);
+    });
+
+    it('the turn tail is a no-op when no reset was requested', async () => {
+      const resetContainer = vi.fn();
+      const { manager } = makeManager({ resetContainer });
+      await (manager as unknown as { maybeHonorSandboxReset: (s: ChatStimulus) => Promise<void> }).maybeHonorSandboxReset(
+        stimulus,
+      );
+      expect(resetContainer).not.toHaveBeenCalled();
+    });
+
+    it('folds the verify instruction into the reset-notice on the FIRST cold-attached turn (e.g. a queued operator turn)', async () => {
+      const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
+      const { manager, dockerRunner } = makeManager({ run, wasReset: true, sessionId: 'sess-prior' });
+      (manager as unknown as { pendingResetVerify: Set<string> }).pendingResetVerify.add(KEY);
+
+      await manager.handleChatTurn(stimulus); // an operator turn that happened to be queued behind the reset
+
+      const runArgs = (dockerRunner.run as ReturnType<typeof vi.fn>).mock.calls[0][0] as RunEngineArgs;
+      expect(runArgs.task).toContain('cold-boot'); // RESET_VERIFY_TEXT rode the notice
+      expect(runArgs.task).toContain('Explain the build step'); // the operator's own message is preserved after it
+      // Consumed — a later synthetic continuation won't re-issue it.
+      expect((manager as unknown as { pendingResetVerify: Set<string> }).pendingResetVerify.has(KEY)).toBe(false);
+    });
+
+    it('the reset-verify continuation is a NO-OP when the notice was already consumed by an earlier turn', async () => {
+      const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
+      const { manager, dockerRunner } = makeManager({ run });
+      // pendingResetVerify is NOT set → an earlier turn already cold-attached and consumed the notice.
+      const seed: ChatStimulus = {
+        ...stimulus,
+        author: { id: 'atlas', displayName: 'Atlas' },
+        seed: true,
+        seedResetVerify: true,
+      };
+
+      await manager.handleChatTurn(seed);
+
+      expect(dockerRunner.run).not.toHaveBeenCalled(); // guarded out — no redundant turn on the warm box
+    });
+  });
 });
 
 describe('AgentSessionManager — create_job tool (independent follow-up)', () => {
@@ -1696,6 +1915,13 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         listGrants: async () => [],
         read: async () => null,
       } as unknown as WorktreeSecretStore,
+      {
+        listMounts: async () => [],
+        upsertMount: async () => undefined,
+        listSeed: async () => [],
+        addSeed: async () => undefined,
+      } as unknown as WorktreeConfigStore,
+      { hasChanges: async () => false } as unknown as LocalGitService,
     );
     return { manager, store };
   }
@@ -1771,7 +1997,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // store … surface + turnRegistry (10)
       inert, // sandboxRows (11)
       stimulusRows as never, // stimulusRows (12)
-      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 13 … 24 (incl. secretStore)
+      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 13 … 26 (incl. secretStore, configStore, git)
     );
     return { manager, stimulusRows };
   }

@@ -47,6 +47,7 @@ import { DriverStoreService } from '../driver/driver-store.service';
 import {
   BuildShipService,
   LEDGER_COMMIT_MESSAGE,
+  TASK_LIST_NOTE,
 } from '../driver/build-ship.service';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
@@ -57,12 +58,9 @@ import {
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/planner-llm';
 import { DecisionClassifier } from '../decision-gate';
-import { CredentialResolver, WorktreeSecretStore } from '../onboarding';
-import {
-  loadWorktreeManifest,
-  type MountMode,
-} from '../driver/worktree-manifest';
-import { isReservedMountPath } from '../sandbox/container-paths';
+import { CredentialResolver, WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
+import { isReservedMountPath, MAX_MOUNT_PATH_LEN, type MountMode } from '../sandbox/container-paths';
+import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { TicketService } from '../tickets';
 import type {
@@ -92,6 +90,7 @@ import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import {
   ENGINE_RUNNER,
+  isEngineDetachedError,
   isUnresumableSessionMessage,
   resolveContextLimit,
   SANDBOX_RESET_NOTICE,
@@ -157,6 +156,14 @@ export class AgentSessionManager
    */
   private readonly turnQueues = new Map<string, Promise<void>>();
 
+  // ── reset_sandbox bookkeeping (all keyed `orgId:jobId`, in-memory, per-process) ─────────────────
+  /** "Tear down before the verify turn": set by the `reset_sandbox` tool, consumed by the turn tail. */
+  private readonly resetRequests = new Map<string, { reason: string }>();
+  /** After a teardown, the verify framing is owed to the FIRST cold-attached turn (operator or synthetic). */
+  private readonly pendingResetVerify = new Set<string>();
+  /** Consecutive autonomous resets — incremented by the tool, cleared ONLY on an operator turn (loop guard). */
+  private readonly consecutiveResets = new Map<string, number>();
+
   constructor(
     private readonly store: BrainStoreService,
     private readonly driverStore: DriverStoreService,
@@ -198,6 +205,10 @@ export class AgentSessionManager
     private readonly turnRecovery: TurnRecoveryService,
     // Repo onboarding: the encrypted per-org secret store + grants the secure `request_secret` flow writes.
     private readonly secretStore: WorktreeSecretStore,
+    // The org+repo-scoped mounts/seed config `write_worktree_config` writes — DB-backed (see docs/adr/0003).
+    private readonly configStore: WorktreeConfigStore,
+    // Used by `finish_onboarding` to decide whether there's an actual repo diff worth shipping a PR for.
+    private readonly git: LocalGitService,
   ) {}
 
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
@@ -207,7 +218,8 @@ export class AgentSessionManager
     'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
     '',
     "WHERE YOU RUN — A CLOUD SANDBOX, NOT THE OPERATOR'S MACHINE: you live in your own cloud container",
-    'with the repo checked out at `/workspace`. The operator is NOT at a terminal next to you — they talk',
+    'with the repo checked out at `/workspace` (and a durable `/playground` scratch pad OUTSIDE it for',
+    'throwaway work — see THE /playground SCRATCH SPACE below). The operator is NOT at a terminal next to you — they talk',
     'to you through a web console (often from a phone) and share NO filesystem, shell, or running services',
     'with you. "Local" means YOUR sandbox and nothing else; there is no operator-side checkout for you to',
     'point at. NEVER hand the operator work that assumes one — "run this locally", "check your terminal",',
@@ -397,6 +409,13 @@ export class AgentSessionManager
     'Treat the repo (`/workspace`) as READ-ONLY until a build is approved — never modify it while planning;',
     'write to `/context/specs` (or `/context/artifacts`) instead.',
     '',
+    'THE /playground SCRATCH SPACE: `/playground` is your durable scratch pad, OUTSIDE the repo. Put',
+    'THROWAWAY work here — spike scripts, one-off test/verification harnesses, screenshot-driving scripts,',
+    'ad-hoc `npm install`s — instead of writing temp files into `/workspace` (which pollutes the git diff and',
+    'risks landing junk in the PR). It survives container restarts and is shared across the job\'s build lanes.',
+    "It is NOT a deliverable: nothing in `/playground` is ever committed. Reach for it any time you'd otherwise",
+    'scribble a temporary file into the repo or `/tmp` (which is wiped on restart).',
+    '',
     'DECISION LEDGER — `/workspace/.atlas/decisions/` is the DURABLE, repo-level record of the cross-cutting',
     'architecture calls that OUTLIVE one feature ("money-out requires SUPER_ADMIN", "credits via Stripe',
     'balance, no internal ledger"). It is committed in the repo, so every thread inherits it.',
@@ -536,6 +555,19 @@ export class AgentSessionManager
     'UI with live logs; anything started outside it is invisible to them. Your sandbox can be restarted between turns (idle reaps,',
     'crashes); never assume something you started earlier is still running — `atlas-svc ps` shows what died,',
     'and verify a server is actually up (curl/health-check) before relying on it.',
+    'SHARED MACHINE — be frugal: you run on a host shared with other Atlas jobs, and idle services are',
+    'wasted RAM that can OOM the box for everyone. Start a service only when a check actually needs it. If',
+    'a test genuinely needs several (or all) services up at once, bring them up — that is fine. But the',
+    'moment the check that needed them is done, STOP them: `atlas-svc stop <id>`, or `atlas-svc stop-all`',
+    'to drop the whole fleet at once. Do NOT leave dev servers idling across turns "just in case" — a later',
+    'turn restarts them in seconds, and `atlas-svc ps` shows what is down. Leave nothing running you are not',
+    'actively using.',
+    '',
+    TASK_LIST_NOTE,
+    'Here the list is the Main row\'s checklist. Use it whenever a turn does real multi-step WORK — implementing',
+    'an approved direct build, a multi-step investigation, working an event, fixing an environment gap — so the',
+    'operator watches structured progress instead of an opaque stream. A pure conversation turn (answering a',
+    'question, grilling) needs no task list.',
     '',
     'ENVIRONMENT GAPS ARE NOT YOUR PROBLEM ALONE — FIX THEM FOR EVERY FUTURE JOB TOO. This repo went through',
     'an onboarding ceremony once, but that only covers what the ceremony happened to hit; you have the SAME',
@@ -548,11 +580,15 @@ export class AgentSessionManager
     'description })` to store it durably with no operator wait — otherwise every future job re-derives it from',
     'scratch, paying the same tax you just paid.',
     'If you discover the repo needs a persistent cache/auth mount (e.g. a `.gcloud`/`.stripe` dir a tool',
-    'expects to survive across jobs), call `write_worktree_config({ mounts, seed })` to record it in the',
-    "repo's `atlas.json` — it rides your normal PR like any other file you touch, no separate ship step.",
+    'expects to survive across jobs), call `write_worktree_config({ mounts, seed })` to record it — it writes',
+    'straight to the DB (org+repo scoped), live for every job on this repo on its very next turn, no PR needed.',
     'Small environment fixes (a broken script, a missing build step another package needs) are just a normal',
     'code change — make them as part of your build like anything else. Do not silently work around something',
     'that will bite the next job too when it is fixable in the repo.',
+    'If you set up environment state by hand and want to confirm it will survive for the next job, call',
+    '`reset_sandbox({ reason })` — it recreates your container fresh on your next turn (worktree, recorded',
+    'mounts, granted secrets, and /atlas-home survive; ephemeral state does not), then STOP and verify what',
+    'came back. Whatever you have to redo by hand is what you forgot to record.',
     '',
     'ACT WITH CARE, REPORT TRUTHFULLY: the approval gate is your safety net, not a substitute for judgment.',
     'The hard-to-reverse, outward-facing actions are `finalize_build` / `dispatch_build` (they commit code and',
@@ -575,10 +611,12 @@ export class AgentSessionManager
    */
   private static readonly ONBOARDING_SYSTEM_PROMPT = [
     'You are Atlas, onboarding a newly-connected repository. Think of it as your first day as a new engineer:',
-    'your job is to get the environment ACTUALLY RUNNING headlessly — boot every service, hit real errors, ask',
-    'for whatever secret/access you are missing on the spot — and then RECORD what you needed so every future',
-    'job starts with a hydrated, runnable box and never has to do this again. The proof of done is not a',
-    'document; it is a stack you personally brought up green.',
+    'your job is to get the environment ACTUALLY RUNNING headlessly — boot EVERY service and tool the repo',
+    'defines, hit real errors, ask for whatever secret/access you are missing on the spot — and then USE the',
+    'running stack like an engineer would (real requests, a real logged-in browser session) to prove it works,',
+    'and RECORD what you needed so every future job starts with a hydrated, runnable box and never has to do',
+    'this again. The proof of done is not a document, and not a row of ports answering; it is a stack you',
+    'personally brought up green and used.',
     '',
     "You run in a CLOUD SANDBOX — your own container, not the operator's machine. The operator talks to you",
     'through a web console and shares NO filesystem, shell, or services with you; "local" means YOUR sandbox.',
@@ -586,20 +624,64 @@ export class AgentSessionManager
     'here. The only things you route to them are secret values/uploads (request_secret/request_file) and',
     'answers only they know (ask_question).',
     '',
-    'You work in /workspace (a real checkout) with your native tools (Bash, Read, Glob, Grep). Loop:',
+    'You work in /workspace (a real checkout) with your native tools (Bash, Read, Glob, Grep). For any',
+    'THROWAWAY work — spike scripts, probe/verification harnesses, ad-hoc installs — use the durable',
+    '`/playground` scratch pad OUTSIDE the repo, never scribble temp files into /workspace (it pollutes the',
+    'diff) or /tmp (wiped on restart). Loop:',
     '  1. Learn how the repo runs from ITS OWN docs — package.json scripts, README, CLAUDE.md, compose files,',
     '     .env.example. Do not invent; re-derive. Install deps the way the repo expects (e.g. pnpm install).',
+    '     Build a FLEET INVENTORY from what you find: EVERY runnable thing the repo defines — every backend',
+    '     app/API, every frontend, every worker/daemon/queue processor/cron, every infra service in compose.',
+    '     That inventory is your checklist for the rest of the ceremony: you are not done until every entry',
+    '     is booted AND validated, or explicitly recorded as not-locally-runnable and why. Booting one',
+    '     representative backend and one frontend and calling it a day is NOT onboarding. The moment the',
+    '     inventory exists, turn it INTO your live task list (see LIVE TASK LIST below) — one task per entry',
+    '     to boot + validate, plus the setup work (deps install, infra up) — BEFORE you start booting.',
     '  2. Bring services up with the supervisor: `atlas-svc run --name <id> -- <cmd>` (e.g. `docker compose up`,',
     '     `pnpm --filter backend dev`). ANY long-running process goes through atlas-svc — never a bare `&`/nohup,',
     '     and run `docker compose` foreground (no `-d`) — because that is how the operator sees your services:',
     '     everything under atlas-svc appears in their UI with live logs; anything else is invisible to them.',
     '     Read `atlas-svc logs <id>`; iterate until each service is healthy',
     '     (curl its endpoint / watch the log say it is listening). `atlas-svc ps` lists what is running.',
-    '  3. When a boot fails for a MISSING secret/file/credential, request it on the spot (see SECRETS/AUTH),',
+    '  3. VALIDATE each inventory entry by USING it, the way a new engineer proves their dev setup works —',
+    '     "it is listening" / a 200 on /health is a boot check, not validation:',
+    '       - APIs: exercise a real endpoint. Where auth applies, make an AUTHED request with a dev login',
+    '         (see DEV LOGINS) and confirm a real, non-error response — a 401 on everything proves nothing',
+    '         past the router.',
+    '       - Web UIs: use them in a real headless browser. Install Playwright on demand',
+    '         (`npx playwright install --with-deps chromium` — you are root with egress; script it via',
+    '         `npx playwright` or a small Node script). Log in through the actual login flow with a dev',
+    '         login, then navigate the main areas — dashboards, list/detail views, settings — and confirm',
+    '         pages actually render with data (not blank screens, error boundaries, or infinite spinners).',
+    '         Check the browser console and server logs for errors as you go.',
+    '       - Workers/daemons/queue processors: confirm they do not just start but PROCESS — enqueue or',
+    '         trigger one job through the repo\'s own seams (a seed script, an HTTP endpoint that enqueues,',
+    '         a CLI) and watch it complete in the logs.',
+    '       - CLIs/dev tools the repo relies on: run one real invocation each.',
+    '     MIND THE RAM — you share this host with other Atlas jobs. You must validate the WHOLE inventory,',
+    '     but you need not hold it ALL resident at once: if the box is tight (an OOM, a killed process),',
+    '     validate in waves — `atlas-svc stop <id>` a service once its validation is recorded and nothing',
+    '     later cross-checks it, then bring up the next. The goal is every entry proven, not every entry',
+    '     running simultaneously.',
+    '  4. When a boot fails for a MISSING secret/file/credential, request it on the spot (see SECRETS/AUTH),',
     '     wait for it to render into the worktree, then retry — do not give up and do not fake it.',
-    '  4. Anything that would mutate EXTERNAL state (terraform apply, real cloud provisioning, live writes):',
+    '  5. Anything that would mutate EXTERNAL state (terraform apply, real cloud provisioning, live writes):',
     '     validate to plan/dry-run ONLY (`terraform plan`, config parse). Never create real infra from here.',
     'NEVER ask the operator anything the repo already answers — investigate first.',
+    '',
+    TASK_LIST_NOTE,
+    'Here the list IS the ceremony made visible: seed it from the fleet inventory as soon as step 1 produces',
+    'one, and let the operator watch each service go pending → in_progress → completed as it boots and',
+    'validates. If discovery reshapes the fleet (a service turns out to be two, one is not locally runnable),',
+    'reshape the list to match.',
+    '',
+    'DEV LOGINS — validation needs accounts. Find them the way the repo intends: seed scripts/fixtures,',
+    'docs/README ("dev login: admin@example.com"), or a seeding CLI. If none exist but the app has open',
+    'registration, REGISTER a throwaway account through the real signup flow and use it. All of this is',
+    'against YOUR sandbox\'s local stack and its throwaway database — never sign up on, log into, or send',
+    'traffic to a real/production deployment of the app. If a surface is only reachable with a role no seed',
+    'or signup can produce, look for the repo\'s own promotion seam (seed flag, admin CLI, direct DB update',
+    'on your local DB is fine); only ask the operator if the repo genuinely has no way in.',
     '',
     `All host tools are served by the "${BRIDGE_SERVER_NAME}" MCP server; call the FULLY-QUALIFIED name`,
     `"mcp__${BRIDGE_SERVER_NAME}__<tool>" (the bare name fails). Every host tool takes a SINGLE object`,
@@ -611,10 +693,13 @@ export class AgentSessionManager
     `  - mcp__${BRIDGE_SERVER_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (see SECRETS)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__request_file        — ask the operator to UPLOAD a file (JSON/key file; see SECRETS)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__derive_secret       — store a value YOU computed (not operator-provided; see SECRETS)`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — AMEND atlas.json (mounts + seed; NOT secrets) —`,
-    '    merges with what is already committed (upserts a mount by path, unions seed) — never call it with',
-    "    only the ONE new entry you're adding and expect the rest to survive by magic; it already does that,",
-    "    just don't pass a deliberately-truncated list thinking you need to reconstruct the whole file yourself.",
+    `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — AMEND worktree config (mounts + seed; NOT secrets) —`,
+    '    a DB write, live instantly for every job on this repo (no PR). Merges with what is already recorded',
+    '    (upserts a mount by path, unions seed) — pass only the ONE new entry you are adding; existing entries',
+    '    survive automatically, you never need to reconstruct the whole set yourself.',
+    `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox       — recreate your container from scratch to PROVE the`,
+    '    environment cold-boots from durable inputs (see RESET). It does not reset instantly — it recreates on',
+    '    your NEXT turn, so call it then STOP; you will be prompted to verify once the fresh box is up.',
     `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: only after the stack boots green (see FINISH)`,
     '',
     'SECRETS — env-file values (DATABASE_URL, API keys, …) are SECRET. NEVER ask for a secret value in chat,',
@@ -637,23 +722,42 @@ export class AgentSessionManager
     'AUTH / CAPABILITY ACCESS — if the repo talks to a cloud (gcloud/gsutil, Firebase/Firestore, a real DB),',
     'you may need credentials YOU use directly. A static key file is just a request_file secret. For an',
     'INTERACTIVE login that writes a token dir (e.g. `gcloud auth login`), that state must PERSIST across jobs:',
-    'record its dir as a `shared-rw` mount in atlas.json (per-repo, reused everywhere — e.g. `.gcloud`, matching',
-    "the repo's own .envrc if it has one), run the headless login (`--no-browser`), and use request_secret with",
-    'a `url` to hand the operator the auth URL and take the code back. Then verify the access actually works',
-    '(e.g. `gsutil ls`, a read query) as part of proving green.',
+    'record its dir as a `shared-rw` mount via write_worktree_config (per-repo, reused everywhere — e.g.',
+    "`.gcloud`, matching the repo's own .envrc if it has one), run the headless login (`--no-browser`), and",
+    'use request_secret with a `url` to hand the operator the auth URL and take the code back. Then verify the',
+    'access actually works (e.g. `gsutil ls`, a read query) as part of proving green.',
     '',
-    'CONFIG — non-secret provisioning goes in atlas.json via write_worktree_config({ mounts, seed }):',
+    'CONFIG — non-secret provisioning is DB-backed via write_worktree_config({ mounts, seed }) (no file, no PR):',
     '  - mounts: cache/auth dirs to persist across jobs. `per-thread` (own dir), `shared-ro` (one read-only',
     '    dir), or `shared-rw` (one per-repo read-write dir — for persistent auth state like `.gcloud`).',
     '  - seed: operator golden files to copy in (rare). Secrets do NOT go here — use request_secret/file.',
     'Do NOT record how-to-run commands here — those are re-derived from the repo. The pnpm store and Node (via',
     'fnm) are AUTO-MANAGED — NEVER add `.pnpm-store`, `node_modules`, or a Node dir as a mount (it collides).',
     '',
-    'FINISH — only when the stack is GREEN (services boot, required secrets/auth in place, external steps',
-    'dry-run-validated). Call finish_onboarding({ summary, verified }): `verified` MUST describe what you',
-    'actually brought up and how you checked it (the services, the health checks/log lines, any dry-run) — it',
-    'is your evidence, saved for the operator. If you wrote an atlas.json it is committed and opened as a small',
-    'PR to merge. Do NOT finish on a stack you could not boot — instead say what is still blocking and why.',
+    'RESET / PROVE-IT-COLD-BOOTS — a stack that runs right now might only run because of ephemeral container',
+    'state YOU created by hand (a package installed outside /workspace, a login that wrote a token dir you',
+    'never recorded as a shared-rw mount, a service you started manually). The next fresh job would NOT have',
+    'it. Before you finish, call reset_sandbox({ reason }) to recreate the container from scratch, then STOP.',
+    'On your next turn the box is fresh — the worktree, recorded mounts, granted secrets, and /atlas-home',
+    'survive; everything else is gone. Re-run setup and see what broke: whatever you have to re-do by hand is',
+    'exactly what you forgot to record (fix it via write_worktree_config / request_secret / derive_secret,',
+    'then reset again to confirm). This is the strongest evidence onboarding is DURABLE, not just working now.',
+    '',
+    'FINISH — only when the FULL fleet inventory is GREEN: every entry booted AND validated in use (authed',
+    'API calls, the logged-in browser walkthrough for each web UI, a processed job per worker), required',
+    'secrets/auth in place, external steps dry-run-validated. Call finish_onboarding({ summary, verified }):',
+    '`verified` MUST enumerate the inventory — each service, how you validated it (the endpoint you hit, the',
+    'screens you walked through logged in as whom, the job you watched process), and any entry you could NOT',
+    'run locally with the concrete reason — it is your evidence, saved for the operator. A bare list of',
+    'ports answering is not evidence. Config/secrets are already durably saved the instant you called',
+    'request_secret/derive_secret/write_worktree_config — only ACTUAL FILE EDITS you made along the way (a',
+    'script fix, a .gitignore change) need shipping, and those are committed and opened as a PR to merge.',
+    'CLEAN UP FIRST — right before you call finish_onboarding, tear the whole fleet down with',
+    '`atlas-svc stop-all`. You proved green and RECORDED the evidence; a future job re-derives how to run',
+    'everything and boots only what it needs, so leaving ~a dozen services resident just wastes RAM on a',
+    'host shared with other Atlas jobs. Your recorded `verified` evidence + saved worktree config ARE the',
+    'proof of done — not a still-running stack.',
+    'Do NOT finish on a stack you could not boot — instead say what is still blocking and why.',
     '',
     'You do NOT plan, grill for decisions, or build features here — this session only makes the repo runnable.',
   ].join('\n');
@@ -1026,6 +1130,15 @@ export class AgentSessionManager
 
   /** Re-attach one in-flight brain turn: rebuild stimulus → tools → harness, resume the engine, persist. */
   private async reattachOne(row: ActiveTurnEntity): Promise<void> {
+    // A mid-day promotion (leader flap between watch respawns) re-fires this sweep while THIS process
+    // may already be tailing the turn it kicked — a second attach loop would double every live frame
+    // and double-persist the transcript at finish. Skip anything we're already attached to.
+    if (this.engineRunner.isAttached?.(row.turn_id)) {
+      this.logger.log(
+        `re-attach turn ${row.turn_id}: already attached in this process — skipping`,
+      );
+      return;
+    }
     const ctx = (row.ctx ?? {}) as {
       repoId?: string;
       author?: { id: string; displayName: string };
@@ -1039,12 +1152,12 @@ export class AgentSessionManager
       !ctx.author ||
       ctx.body === undefined
     ) {
+      // NOT a death sentence: the engine may be alive and running (its Redis stream heartbeats prove or
+      // disprove it) — this process just can't rebuild the tool closure. Leave the row for the watchdog,
+      // whose stream-liveness probe finalizes only genuinely dead turns.
       this.logger.warn(
-        `re-attach turn ${row.turn_id}: insufficient registry ctx — finalizing failed`,
+        `re-attach turn ${row.turn_id}: insufficient registry ctx — skipping (watchdog owns cleanup)`,
       );
-      await this.turnRegistry
-        .finalize(row.turn_id, 'failed')
-        .catch(() => undefined);
       return;
     }
     // Rebuild the ChatStimulus buildTools closes over (orgId/repoId/jobId/author/body).
@@ -1104,6 +1217,14 @@ export class AgentSessionManager
       );
       this.logger.log(`re-attached turn ${row.turn_id} completed + persisted`);
     } catch (err) {
+      if (isEngineDetachedError(err)) {
+        // We lost the tail again (another respawn mid-re-attach), the turn didn't fail — persist NOTHING
+        // (the next boot's re-attach replays the whole stream; a partial flush here would double it).
+        this.logger.warn(
+          `re-attached turn ${row.turn_id} detached again — leaving it for the next boot re-attach`,
+        );
+        return;
+      }
       this.logger.warn(
         `re-attached turn ${row.turn_id} ended in error: ${err}`,
       );
@@ -1137,6 +1258,15 @@ export class AgentSessionManager
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
    *  `handleChatTurn` queue above — never invoked concurrently for the same thread. */
   private async runChatTurnInner(stimulus: ChatStimulus): Promise<void> {
+    const resetKey = `${stimulus.orgId}:${stimulus.jobId}`;
+    // A real operator turn breaks any autonomous reset→verify→reset spiral — clear the loop counter so
+    // operator-driven resets never trip the guard (only unattended self-resets accumulate).
+    if (isOperatorAuthored(stimulus)) this.consecutiveResets.delete(resetKey);
+    // Reset-verify continuation no-op: the verify instruction rides the reset-notice, consumed by whichever
+    // turn cold-attaches FIRST. If an earlier turn (e.g. a queued operator message) already consumed it,
+    // this synthetic wake has nothing to do — drop it rather than run a redundant turn on the warm box.
+    if (stimulus.seedResetVerify && !this.pendingResetVerify.has(resetKey)) return;
+
     // A composer message NEVER answers an open `ask_question` card — answers come ONLY through the
     // question-card component (`/answer-question`, which stamps the card directly + includes its own
     // free-text "Other…" field). Anything typed in the composer while a card is showing — or queued
@@ -1272,11 +1402,28 @@ export class AgentSessionManager
     const sessionId = sandboxRow?.session_id ?? undefined;
 
     // Cold re-attach while resuming a session → the session remembers in-container state that's gone.
-    // Prepend the reset notice so it re-establishes its runtime instead of trusting stale beliefs.
-    let task =
-      ensured.wasReset && sessionId
-        ? `${SANDBOX_RESET_NOTICE}\n\n${stimulus.body}`
-        : stimulus.body;
+    // Prepend the reset notice so it re-establishes its runtime instead of trusting stale beliefs. When this
+    // cold attach follows a `reset_sandbox` teardown, we owe a VERIFY instruction — fold it into the notice
+    // so it lands on THIS (the first cold) turn, whether that's the synthetic wake or a queued operator turn.
+    let task = stimulus.body;
+    if (ensured.wasReset && sessionId) {
+      const owedVerify = this.pendingResetVerify.delete(resetKey);
+      const notice = owedVerify
+        ? `${SANDBOX_RESET_NOTICE}\n\n${RESET_VERIFY_TEXT}`
+        : SANDBOX_RESET_NOTICE;
+      task = `${notice}\n\n${stimulus.body}`;
+      if (owedVerify) {
+        this.logger.log(`reset_sandbox: fresh container up for thread=${stimulus.jobId} — this turn verifies the environment`);
+        // Operator-visible bookend to the reset pill: makes the reset→recreate→verify cycle legible in the
+        // transcript (the fresh container was just attached; this turn re-establishes + checks the stack).
+        await this.store
+          .appendSystemEvent(
+            stimulus.jobId,
+            '🟢 Sandbox is back up on a fresh container — verifying the environment cold-booted from durable config.',
+          )
+          .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
+      }
+    }
 
     // PASSIVE pipeline-milestone awareness (buffer-and-flush, NOT a push). On an OPERATOR turn — and only
     // after the provisioning guards above succeeded, so a closed/failed turn never clears the buffer
@@ -1407,6 +1554,16 @@ export class AgentSessionManager
     try {
       result = await runner.run(runArgs);
     } catch (err) {
+      if (isEngineDetachedError(err)) {
+        // NOT a turn failure — this process lost its tail mid-turn (its own shutdown during a watch
+        // respawn). The detached engine keeps running; the registry row + streams were left in place, and
+        // the next boot's re-attach resumes streaming + persists the turn. Flush NOTHING here (a partial
+        // persist would double against the re-attach's full replay) and post no error box.
+        this.logger.warn(
+          `turn detached mid-flight for thread=${stimulus.jobId} — awaiting boot re-attach: ${err}`,
+        );
+        return;
+      }
       this.logger.error(
         `in-sandbox turn failed for thread=${stimulus.jobId}: ${err}`,
       );
@@ -1483,6 +1640,61 @@ export class AgentSessionManager
         .markFileDelivered(stimulus.jobId, deliveredFileId)
         .catch((err) => this.logger.warn(`markFileDelivered failed: ${err}`));
     }
+
+    // SUCCESS TAIL — honor a pending `reset_sandbox`: tear the container down NOW (safe here — the engine
+    // exec for this turn has already returned) and kick a fresh-container verify turn. Only on the happy
+    // path: an errored/detached turn returns earlier, leaving the request for a retry to honor.
+    await this.maybeHonorSandboxReset(stimulus);
+  }
+
+  /**
+   * If this turn's Atlas called `reset_sandbox`, recreate the sandbox: tear the container down (keeping the
+   * durable worktree + session) and kick a synthetic continuation so Atlas verifies on the fresh box. The
+   * verify instruction itself rides the reset-notice (see the notice fold in `runChatTurnInner`) so it lands
+   * on whichever turn cold-attaches first; this continuation only guarantees a turn happens when nothing
+   * else is queued. Fire-and-forget: awaiting `handleChatTurn` here would deadlock on the per-thread queue.
+   */
+  private async maybeHonorSandboxReset(stimulus: ChatStimulus): Promise<void> {
+    const key = `${stimulus.orgId}:${stimulus.jobId}`;
+    const req = this.resetRequests.get(key);
+    if (!req) return;
+    this.resetRequests.delete(key);
+    this.logger.log(`reset_sandbox: honoring reset for thread=${stimulus.jobId} (reason: ${req.reason}) — tearing down`);
+
+    const res = await this.lifecycle
+      .resetContainer(stimulus.jobId, stimulus.orgId)
+      .catch((err) => {
+        this.logger.warn(`reset_sandbox teardown failed for thread=${stimulus.jobId}: ${err}`);
+        return { reset: false, reason: 'no-container' } as const;
+      });
+
+    if (!res.reset) {
+      this.logger.log(`reset_sandbox: skipped for thread=${stimulus.jobId} — ${res.reason}`);
+      const pill =
+        res.reason === 'busy'
+          ? '🔄 Sandbox reset skipped — a build is currently running in this container. Try again once it finishes.'
+          : '🔄 Sandbox reset skipped — no live container to recreate (it will start fresh on the next turn anyway).';
+      await this.store
+        .appendSystemEvent(stimulus.jobId, pill)
+        .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
+      return;
+    }
+    this.logger.log(`reset_sandbox: container torn down for thread=${stimulus.jobId} — kicking verify continuation`);
+
+    // NOTE: the operator-visible "reset requested" pill is posted by the TOOL (mid-turn, so it lands on this
+    // turn's reconcile); the "back up — verifying" bookend is posted by the verify turn's notice-fold. Nothing
+    // is posted here — a tail-posted pill would miss this turn's reconcile (turn_end already fired).
+    this.pendingResetVerify.add(key);
+
+    void this.handleChatTurn(
+      resetContinuationStimulus({
+        jobId: stimulus.jobId,
+        orgId: stimulus.orgId,
+        repoId: stimulus.repoId,
+      }),
+    ).catch((err) =>
+      this.logger.warn(`reset_sandbox verify continuation failed for thread=${stimulus.jobId}: ${err}`),
+    );
   }
 
   // ── Host-side tool impls ───────────────────────────────────────────────────────────────────────
@@ -2509,13 +2721,14 @@ export class AgentSessionManager
     // does it all up front in one pass; any other thread does it incrementally, on the fly, whenever it
     // hits the same kind of friction (a missing secret, a repo setup gap worth recording for next time).
     // Every thread can request a missing secret/file on the spot (the owner-gated provide endpoints accept
-    // any job) AND amend the repo's `atlas.json` (mounts/seed) — a build thread's own commit already rides
-    // its own PR, so no separate "finish" step is needed outside the ceremony (see `write_worktree_config`).
+    // any job) AND amend the repo's DB-backed worktree config (mounts/seed) — writes land instantly for
+    // every job on the repo, no PR/ship step needed outside the ceremony (see `write_worktree_config`).
     const intake = {
       request_secret: this.buildRequestSecretTool(stimulus),
       request_file: this.buildRequestFileTool(stimulus),
       write_worktree_config: this.buildWriteWorktreeConfigTool(stimulus),
       derive_secret: this.buildDeriveSecretTool(stimulus),
+      reset_sandbox: this.buildResetSandboxTool(stimulus),
     };
 
     // Normal threads get the full toolset above + intake. Onboarding threads get a curated, build-free
@@ -2718,13 +2931,15 @@ export class AgentSessionManager
   }
 
   /**
-   * `write_worktree_config({ mounts, seed })` — AMEND the repo's committed `atlas.json` (the NON-secret
-   * hydration half: cache/auth mounts + golden-seed files). MERGES with whatever is already on disk — a
-   * mount is upserted by `path` (same path replaces that entry, everything else untouched), seed paths are
-   * unioned — it never blind-overwrites. This is what makes it safe as an ANY-THREAD tool: the ceremony
-   * calls it repeatedly while authoring from scratch, and a later build thread can add ONE mount without
-   * wiping out what the ceremony (or an earlier amendment) already recorded. Secrets are NEVER written
-   * here (they live as encrypted grants); a `secrets` field is rejected. Validated before write.
+   * `write_worktree_config({ mounts, seed })` — AMEND the repo's DB-backed worktree config (the NON-secret
+   * hydration half: cache/auth mounts + golden-seed files; see docs/adr/0003). A pure DB write keyed by
+   * org+repo — a mount is upserted by `path` (same path replaces that entry, everything else untouched),
+   * seed paths are unioned — it never blind-overwrites, and it needs no sandbox. This is what makes it safe
+   * as an ANY-THREAD tool: the ceremony calls it repeatedly while authoring from scratch, and a later build
+   * thread can add ONE mount without wiping out what the ceremony (or an earlier amendment) already
+   * recorded, AND it reaches every OTHER in-flight job's very next hydration instantly — no PR, no wait.
+   * Secrets are NEVER written here (they live as encrypted grants); a `secrets` field is rejected.
+   * Validated before write.
    */
   private buildWriteWorktreeConfigTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
@@ -2732,49 +2947,91 @@ export class AgentSessionManager
         return {
           ok: false,
           reason:
-            'secrets do not go in atlas.json — use request_secret instead',
+            'secrets do not go in worktree config — use request_secret instead',
         };
       }
-      const { mounts: newMounts, warnings: mountWarnings } =
-        this.normalizeMounts(args['mounts']);
+      const { mounts: newMounts, warnings } = this.normalizeMounts(args['mounts']);
       const newSeed = this.normalizeSeed(args['seed']);
-      const sandbox = await this.lifecycle.findSandbox(
-        stimulus.jobId,
-        stimulus.orgId,
-      );
-      if (!sandbox)
-        return { ok: false, reason: 'no sandbox for this thread yet' };
 
-      // Merge onto whatever is already committed — never a blind overwrite (see docstring).
-      const { manifest: existing } = loadWorktreeManifest(
-        sandbox.worktreePath,
-      );
-      const mountsByPath = new Map(existing.mounts.map((m) => [m.path, m]));
-      for (const m of newMounts) mountsByPath.set(m.path, m);
-      const mounts = [...mountsByPath.values()];
-      const seed = [...new Set([...existing.seed, ...newSeed])];
+      // A DB hiccup here must never crash the turn — warn, tell Atlas the real error via `reason` (its
+      // next tool call is retryable), don't leave it silently believing the write landed.
+      try {
+        for (const m of newMounts) {
+          await this.configStore.upsertMount(stimulus.orgId, stimulus.repoId, m.path, m.mode);
+        }
+        for (const s of newSeed) {
+          await this.configStore.addSeed(stimulus.orgId, stimulus.repoId, s);
+        }
 
-      const body = JSON.stringify({ mounts, seed }, null, 2) + '\n';
-      await writeFile(join(sandbox.worktreePath, 'atlas.json'), body, 'utf8');
-      // Re-parse through the loader to surface any limit/shape warnings to the brain.
-      const { warnings: loadWarnings } = loadWorktreeManifest(
-        sandbox.worktreePath,
-      );
-      const warnings = [...mountWarnings, ...loadWarnings];
+        const [mounts, seed] = await Promise.all([
+          this.configStore.listMounts(stimulus.orgId, stimulus.repoId),
+          this.configStore.listSeed(stimulus.orgId, stimulus.repoId),
+        ]);
+        await this.store.appendSystemEvent(
+          stimulus.jobId,
+          `⚙️ Updated worktree config (${mounts.length} mount(s), ${seed.length} seed path(s)) — live for every job on this repo immediately.`,
+        );
+        return {
+          ok: true,
+          mounts: mounts.length,
+          seed: seed.length,
+          ...(warnings.length ? { warnings } : {}),
+        };
+      } catch (err) {
+        this.logger.warn(`write_worktree_config failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `reset_sandbox({ reason })` — recreate this thread's sandbox container from scratch, so Atlas can PROVE
+   * its environment cold-boots from durable inputs (worktree + recorded mounts + granted secrets + the
+   * durable `/atlas-home`) instead of ephemeral container state it built by hand. It does NOT tear down
+   * synchronously (that would kill the engine process running this very call); it flags the reset, and the
+   * turn tail (`maybeHonorSandboxReset`) tears down + kicks a fresh-container verify turn once Atlas stops.
+   * A soft loop guard refuses a 4th consecutive unattended reset so a broken setup can't spin forever.
+   */
+  private buildResetSandboxTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const key = `${stimulus.orgId}:${stimulus.jobId}`;
+      const reason = String(args['reason'] ?? '').trim() || 'no reason given';
+      const priorResets = this.consecutiveResets.get(key) ?? 0;
+      if (priorResets >= RESET_LOOP_CAP) {
+        return {
+          ok: false,
+          reason: `You've reset the sandbox ${priorResets} times in a row without operator input — stop and investigate the failing piece (read logs, check what's actually missing) before resetting again.`,
+        };
+      }
+      this.consecutiveResets.set(key, priorResets + 1);
+      this.resetRequests.set(key, { reason });
+      // Post the operator-visible cue HERE (mid-turn) rather than in the tail: `appendSystemEvent` only
+      // surfaces on the next `/messages` reconcile (turn boundary), and the tail runs AFTER this turn's
+      // `streamer.finish` already fired turn_end — so a tail-posted pill would miss this turn's reconcile
+      // and only appear an entire turn later. Posted here, it lands on THIS turn's reconcile — visible the
+      // moment Atlas stops. Best-effort (never fail the tool on a persistence hiccup).
+      await this.store
+        .appendSystemEvent(
+          stimulus.jobId,
+          `🔄 Sandbox reset requested (${reason}) — the container will be recreated from scratch on the next turn, then Atlas verifies the environment cold-boots from durable config.`,
+        )
+        .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
       return {
         ok: true,
-        mounts: mounts.length,
-        seed: seed.length,
-        ...(warnings.length ? { warnings } : {}),
+        willReset: true,
+        message:
+          'Your sandbox will be recreated fresh on your next turn — stop here now. Once it is back you will be prompted to verify the environment cold-boots and record anything that was lost.',
       };
     };
   }
 
   /**
    * `finish_onboarding({ summary })` — conclude the onboarding session. Posts the operator-visible summary.
-   * If an `atlas.json` with mounts/seed was authored, commit it + open a small PR (the repo's
-   * `onboarded_at` is stamped when that PR MERGES, via `pollPrClosures`). Otherwise (secrets-only / nothing
-   * to commit) stamp `onboarded_at` immediately — secrets are already live in the backend.
+   * Secrets and worktree config (mounts/seed) are ALREADY live the instant they were written (encrypted
+   * grants / DB rows — see docs/adr/0003), so `onboarded_at` is stamped immediately regardless. If the
+   * ceremony also made an actual repo edit (a script fix, a `.gitignore` change, a dependency bump — real
+   * code changes are a normal part of onboarding, not just config), that diff still needs to reach the
+   * repo, so it's shipped as its own PR for the operator to merge.
    */
   private buildFinishOnboardingTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
@@ -2799,8 +3056,6 @@ export class AgentSessionManager
       );
       if (!sandbox)
         return { ok: false, reason: 'no sandbox for this thread yet' };
-      const { manifest } = loadWorktreeManifest(sandbox.worktreePath);
-      const hasConfig = manifest.mounts.length > 0 || manifest.seed.length > 0;
 
       // Persist the boot evidence as a durable, operator-visible record before concluding.
       await this.store.appendSystemEvent(
@@ -2813,19 +3068,27 @@ export class AgentSessionManager
           `🎉 Onboarding complete — ${summary}`,
         );
 
-      if (!hasConfig) {
-        // Nothing to commit → the repo is provisioned purely by backend grants; mark it onboarded now.
-        await this.lifecycle.markRepoOnboarded(stimulus.orgId, stimulus.repoId);
-        return {
-          ok: true,
-          prOpened: false,
-          message: 'Onboarding complete. Repo marked ready.',
-        };
-      }
-
-      // Commit `atlas.json` and open a PR for the operator to merge (reuses the shared ship path:
-      // commit → autofix → push → open ONE PR → record pr_url/pr_number on the thread → flips it done).
+      // Everything past this point (marking onboarded, checking for a diff, shipping) can hit a transient
+      // DB/git/GitHub failure — never let that throw and crash the turn. Warn, and give Atlas the real
+      // error via `reason` so it can retry (e.g. re-call finish_onboarding) instead of the ceremony
+      // silently wedging with no feedback.
       try {
+        // Secrets + worktree config are already durably live (encrypted grants / DB rows) the instant
+        // they were written — onboarding is marked done regardless of whether there's a code diff to ship.
+        await this.lifecycle.markRepoOnboarded(stimulus.orgId, stimulus.repoId);
+
+        const hasChanges = await this.git.hasChanges(sandbox.worktreePath);
+        if (!hasChanges) {
+          return {
+            ok: true,
+            prOpened: false,
+            message: 'Onboarding complete. Repo marked ready.',
+          };
+        }
+
+        // A real repo edit was made along the way (script fix, .gitignore change, etc.) — ship it as its
+        // own PR (reuses the shared ship path: commit → autofix → push → open ONE PR → record
+        // pr_url/pr_number on the thread → flips it done).
         const job = await this.store.loadJob(stimulus.jobId);
         const repo = await this.repos.resolve(job);
         const result = await this.ship.ship({
@@ -2833,7 +3096,7 @@ export class AgentSessionManager
           record: null,
           repo,
           sandbox,
-          commitMessage: 'Atlas: add atlas.json (repo onboarding)',
+          commitMessage: 'Atlas: onboarding — environment setup',
           notify: (m) => this.store.appendSystemEvent(stimulus.jobId, m),
         });
         return result
@@ -2842,15 +3105,16 @@ export class AgentSessionManager
               prOpened: true,
               prUrl: result.url,
               message:
-                'Opened a PR with the worktree config. Merge it to activate the config for future threads.',
+                'Opened a PR with the environment-setup changes. Merge it to land them in the repo.',
             }
           : {
               ok: true,
               prOpened: false,
               message:
-                'Wrote the config but no GitHub token is set — connect one to open the PR.',
+                'Made repo changes but no GitHub token is set — connect one to open the PR.',
             };
       } catch (err) {
+        this.logger.warn(`finish_onboarding failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
@@ -2867,7 +3131,12 @@ export class AgentSessionManager
     for (const e of raw) {
       const o = e as Record<string, unknown>;
       const path = String(o?.['path'] ?? '').trim();
-      if (!path || path.startsWith('/') || path.split('/').includes('..'))
+      if (
+        !path ||
+        path.startsWith('/') ||
+        path.split('/').includes('..') ||
+        path.length > MAX_MOUNT_PATH_LEN
+      )
         continue;
       // Reserved paths (e.g. `.pnpm-store`) are bound by the system under /workspace; recording one here
       // would collide at container-create time and wedge the thread — drop it and tell the brain.
@@ -2891,7 +3160,13 @@ export class AgentSessionManager
     if (!Array.isArray(raw)) return [];
     return raw
       .map((e) => String(e ?? '').trim())
-      .filter((p) => p && !p.startsWith('/') && !p.split('/').includes('..'));
+      .filter(
+        (p) =>
+          p &&
+          !p.startsWith('/') &&
+          !p.split('/').includes('..') &&
+          p.length <= MAX_MOUNT_PATH_LEN,
+      );
   }
 
   /**
@@ -3193,6 +3468,12 @@ export class AgentSessionManager
     orgId: string,
     repoId: string,
   ): Promise<void> {
+    // The seed stimulus below bypasses intake (which is what persists operator bubbles), so append a
+    // visible opener — otherwise the transcript starts with the brain's first reply out of nowhere.
+    await this.store.appendAtlasMessage(
+      jobId,
+      '🚀 Atlas is onboarding this repo — it will explore the codebase, register required secrets, and record the build setup.',
+    );
     const body =
       'Begin onboarding this repository. Investigate how it builds and runs, register any required ' +
       'secrets via request_secret, record non-secret config with write_worktree_config, then call ' +
@@ -3553,6 +3834,53 @@ function maskedSecretNotice(name: string, path: string): string {
  */
 function maskedFileNotice(path: string): string {
   return `The operator uploaded the file for \`${path}\` (stored encrypted, granted). Continue onboarding.`;
+}
+
+/** Max consecutive UNATTENDED `reset_sandbox` calls before the tool refuses (cleared by any operator turn). */
+const RESET_LOOP_CAP = 3;
+
+/**
+ * The verify instruction folded into the reset-notice on the FIRST turn that cold-attaches after a
+ * `reset_sandbox` teardown (see the notice fold in `runChatTurnInner`). Frames the reset as a TARGETED test:
+ * durable inputs came back, ephemeral container state did not — so Atlas checks the environment cold-boots
+ * and records whatever it depended on that isn't durably captured.
+ */
+const RESET_VERIFY_TEXT = [
+  'You reset the sandbox — this is a FRESH container. The worktree, DB-backed mounts, granted secrets, seed,',
+  'and your durable /atlas-home (engine transcripts + atlas-svc supervisor state) all came back. Ephemeral',
+  'container state did NOT: anything installed outside /workspace and outside a recorded mount, shell env,',
+  'and every service you started (atlas-svc now shows them stopped). Verify the environment cold-boots on',
+  'this clean box: re-run your setup, bring services back with atlas-svc, and confirm mounts + credentials',
+  'are present. Record anything that was lost so the NEXT fresh box has it — a missing cache/auth dir via',
+  'write_worktree_config (e.g. a shared-rw mount for a login dir like .gcloud), an uncaptured credential via',
+  'request_secret/derive_secret. This is how you prove onboarding is durable, not just working-right-now.',
+].join('\n');
+
+/**
+ * Build the synthetic SEED stimulus that wakes the brain after a `reset_sandbox` teardown. Its only job is
+ * to guarantee a turn happens (so Atlas verifies on the fresh container) — the actual verify instruction
+ * rides the reset-notice ({@link RESET_VERIFY_TEXT}), consumed by whichever turn cold-attaches first. Marked
+ * `seedResetVerify` so it no-ops if an earlier turn already consumed that notice (see `runChatTurnInner`).
+ */
+function resetContinuationStimulus(input: {
+  jobId: string;
+  orgId: string;
+  repoId: string;
+}): ChatStimulus {
+  return {
+    id: randomUUID(),
+    orgId: input.orgId,
+    repoId: input.repoId,
+    body: wrapSystemNotification('Your sandbox was reset — continuing on the fresh container.'),
+    receivedAt: new Date(),
+    kind: 'chat',
+    trust: 'trusted',
+    jobId: input.jobId,
+    author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+    replyRoute: { surfaceId: 'web', jobRef: input.jobId },
+    seed: true,
+    seedResetVerify: true,
+  };
 }
 
 /**

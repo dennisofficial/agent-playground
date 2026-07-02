@@ -109,6 +109,36 @@ function makeServiceWithMocks(row: JobSandboxEntity | null, hydrationSig = 'new'
   return { svc, sandboxes, provisionAndAttach };
 }
 
+/**
+ * Build a service whose sandbox repo + teardown provider + activity registry are controllable, for
+ * `resetContainer` tests (which tear the container down but keep the worktree/session).
+ */
+function makeServiceForReset(row: JobSandboxEntity | null) {
+  const sandboxes = {
+    findOne: vi.fn().mockResolvedValue(row),
+    save: vi.fn(),
+    create: vi.fn(),
+  } as unknown as Repository<JobSandboxEntity>;
+  const teardown = vi.fn().mockResolvedValue(undefined);
+  const activity = new SandboxActivityRegistry();
+  const svc = new JobLifecycleService(
+    { findOne: vi.fn().mockResolvedValue({ id: 'thread-1', feature_branch: null, base_branch: 'main' }) } as unknown as Repository<JobEntity>,
+    sandboxes,
+    { findOne: vi.fn().mockResolvedValue({ id: 'repo-uuid-1', slug: 'proj', default_branch: 'main' }) } as unknown as Repository<RepoEntity>,
+    {} as unknown as LocalGitService,
+    { getPullState: vi.fn() } as unknown as GithubPrService,
+    { githubToken: vi.fn() } as unknown as CredentialResolver,
+    { get: vi.fn() } as unknown as EnvService,
+    activity,
+    { resolve: vi.fn() } as unknown as DriverRepoResolver,
+    { attach: vi.fn(), teardown, teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
+    { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
+    { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+    { get: vi.fn() } as unknown as ModuleRef,
+  );
+  return { svc, sandboxes, teardown, activity };
+}
+
 // Cast to access the private (now-async) rowToSandbox method from tests.
 function rowToSandbox(svc: JobLifecycleService, row: JobSandboxEntity) {
   return (
@@ -204,6 +234,44 @@ describe('JobLifecycleService.rehydrateThread', () => {
     const { svc, provisionAndAttach } = makeServiceWithMocks(null);
     expect(await svc.rehydrateThread('thread-1', 'T1')).toBe(false);
     expect(provisionAndAttach).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobLifecycleService.resetContainer', () => {
+  it('tears down + detaches the container while preserving the durable worktree and resume session', async () => {
+    const row = makeRow({ container_id: 'c-live', worktree_path: '/wt/keep', session_id: 'sess-keep' });
+    const { svc, sandboxes, teardown } = makeServiceForReset(row);
+
+    const res = await svc.resetContainer('thread-1', 'T1');
+
+    expect(res).toEqual({ reset: true });
+    expect(teardown).toHaveBeenCalledTimes(1);
+    expect(row.container_id).toBeNull();
+    expect(row.lifecycle).toBe('detached');
+    expect(row.worktree_path).toBe('/wt/keep'); // host bind — untouched, so files survive the reset
+    expect(row.session_id).toBe('sess-keep'); // resume survives → next attach resumes the same session
+    expect(sandboxes.save).toHaveBeenCalled();
+  });
+
+  it('returns no-container (no teardown) when the row has no live container', async () => {
+    const { svc, teardown } = makeServiceForReset(makeRow({ container_id: null }));
+    expect(await svc.resetContainer('thread-1', 'T1')).toEqual({ reset: false, reason: 'no-container' });
+    expect(teardown).not.toHaveBeenCalled();
+  });
+
+  it('returns no-container when there is no sandbox row', async () => {
+    const { svc } = makeServiceForReset(null);
+    expect(await svc.resetContainer('thread-1', 'T1')).toEqual({ reset: false, reason: 'no-container' });
+  });
+
+  it('refuses (busy) — never tears down a container with a turn/build executing in it', async () => {
+    const row = makeRow({ container_id: 'c-busy' });
+    const { svc, teardown, activity } = makeServiceForReset(row);
+    activity.enter('c-busy'); // a driver build/turn is live on this container right now
+
+    expect(await svc.resetContainer('thread-1', 'T1')).toEqual({ reset: false, reason: 'busy' });
+    expect(teardown).not.toHaveBeenCalled();
+    expect(row.lifecycle).toBe('attached'); // untouched
   });
 });
 

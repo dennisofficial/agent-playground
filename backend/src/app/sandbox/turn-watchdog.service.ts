@@ -1,12 +1,15 @@
 import { EnvService } from '@core/config/env/env.service';
 import {
+  Inject,
   Injectable,
   Logger,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
 import type { Subscription } from 'rxjs';
+import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { LeaderElectionService } from '../cluster';
+import { turnKeys } from './redis-turn-keys';
 import { TurnRegistry } from './turn-registry.service';
 
 /** Default stale window: ~18× the engine's 5s heartbeat — long enough that a slow-but-live turn is safe. */
@@ -36,6 +39,7 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
     private readonly registry: TurnRegistry,
     private readonly election: LeaderElectionService,
     private readonly env: EnvService,
+    @Inject(REDIS_STREAM_PORT) private readonly redis: RedisStreamPort,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -90,6 +94,24 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
       return;
     }
     for (const turn of stale) {
+      // The DB heartbeat measures "a host is attached and relaying", NOT "the engine is alive" — after a
+      // restart (or between watch respawns) no host is attached, the relay freezes, and a perfectly live
+      // detached engine looks stale here. The engine itself writes a heartbeat frame to its events stream
+      // every 5s regardless of any host, so consult THAT before pronouncing death: a recently-active
+      // stream means the turn is alive-but-unattached — freshen the row (so it leaves the stale set until
+      // re-attach resumes the relay) and leave it for the boot re-attach instead of finalizing it.
+      try {
+        const idleSec = await this.redis.objectIdleTime(turnKeys(turn.turn_id).events);
+        if (idleSec !== null && idleSec * 1000 < this.staleMs) {
+          this.logger.log(
+            `turn ${turn.turn_id} DB-stale but its events stream is live (idle ${idleSec}s) — unattached, not dead; skipping`,
+          );
+          await this.registry.heartbeat(turn.turn_id).catch(() => undefined);
+          continue;
+        }
+      } catch (err) {
+        this.logger.debug(`liveness probe for ${turn.turn_id} failed (treating as stale): ${err}`);
+      }
       await this.registry
         .finalize(turn.turn_id, 'failed')
         .then(() =>

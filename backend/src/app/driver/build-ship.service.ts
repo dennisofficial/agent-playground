@@ -23,6 +23,22 @@ export const CLOUD_SANDBOX_NOTE =
   'start servers, or verify anything "on their machine" — whatever the work needs, YOU run here; your work ' +
   'reaches them only through the commits/PR and what you report.';
 
+/**
+ * Task-list discipline shared by every Atlas session that rides a task-tracked lane (the job brain on
+ * `main`, a build thread's orchestrator on `thread:<id>`, PR Review on `pr-review:<jobId>` — see
+ * `turn-harness.service.ts` `taskScopeFor`). The native task tools fold into the owning entity's tasks
+ * column and render live in the operator's navigator, so the list IS the operator's progress view.
+ * Persona prompts splice this in and add their own seeding rule (what the first tasks come from).
+ */
+export const TASK_LIST_NOTE =
+  "LIVE TASK LIST — your native task tools (`TaskCreate`/`TaskUpdate`) render DIRECTLY in the operator's " +
+  'UI as this session\'s checklist; they are how the operator follows your work at a glance. Whenever the ' +
+  'work in front of you has more than one meaningful step, lay the list out FIRST: `TaskCreate` one task ' +
+  'per unit of work (short, outcome-phrased subjects the operator understands), then work it — `TaskUpdate` ' +
+  'a task to `in_progress` when you start it (one at a time) and `completed` the moment it finishes, never ' +
+  'in a batch at the end. Keep the list TRUTHFUL as the work reshapes: add tasks you discover mid-flight, ' +
+  "and drop ones that become moot (`TaskUpdate` with `status:'deleted'`). A stale checklist is worse than none.";
+
 const PR_REVIEW_SYSTEM_PROMPT = [
   "You are Atlas's PR Review orchestrator. You run ONCE per feature, after every build thread has",
   'finished, right before the pull request opens. Maintain a live task list via TaskCreate/TaskUpdate as',

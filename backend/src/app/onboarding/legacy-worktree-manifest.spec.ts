@@ -2,9 +2,9 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadWorktreeManifest } from './worktree-manifest';
+import { loadLegacyManifestFile } from './legacy-worktree-manifest';
 
-describe('loadWorktreeManifest', () => {
+describe('loadLegacyManifestFile', () => {
   let wt: string;
 
   beforeEach(() => {
@@ -22,7 +22,7 @@ describe('loadWorktreeManifest', () => {
   }
 
   it('returns an empty manifest (no warnings) when the file is absent', () => {
-    const { manifest, warnings } = loadWorktreeManifest(wt);
+    const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest).toEqual({ mounts: [], seed: [] });
     expect(warnings).toEqual([]);
   });
@@ -38,7 +38,7 @@ describe('loadWorktreeManifest', () => {
         seed: ['.env.local'],
       }),
     );
-    const { manifest } = loadWorktreeManifest(wt);
+    const { manifest } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([
       { path: '.cocoindex', mode: 'per-thread' },
       { path: 'reference', mode: 'shared-ro' },
@@ -49,7 +49,7 @@ describe('loadWorktreeManifest', () => {
 
   it('reads the legacy .atlas/worktree.json when atlas.json is absent', () => {
     writeLegacyManifest(JSON.stringify({ mounts: [{ path: 'reference', mode: 'shared-ro' }], seed: ['.env.local'] }));
-    const { manifest } = loadWorktreeManifest(wt);
+    const { manifest } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([{ path: 'reference', mode: 'shared-ro' }]);
     expect(manifest.seed).toEqual(['.env.local']);
   });
@@ -57,12 +57,12 @@ describe('loadWorktreeManifest', () => {
   it('prefers atlas.json over the legacy path when both exist', () => {
     writeLegacyManifest(JSON.stringify({ seed: ['legacy'] }));
     writeManifest(JSON.stringify({ seed: ['current'] }));
-    expect(loadWorktreeManifest(wt).manifest.seed).toEqual(['current']);
+    expect(loadLegacyManifestFile(wt).manifest.seed).toEqual(['current']);
   });
 
   it('defaults an unknown/absent mount mode to per-thread (with a warning for unknown)', () => {
     writeManifest(JSON.stringify({ mounts: [{ path: 'a' }, { path: 'b', mode: 'bogus' }] }));
-    const { manifest, warnings } = loadWorktreeManifest(wt);
+    const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([
       { path: 'a', mode: 'per-thread' },
       { path: 'b', mode: 'per-thread' },
@@ -77,7 +77,7 @@ describe('loadWorktreeManifest', () => {
         seed: ['.ok', 42, ''],
       }),
     );
-    const { manifest, warnings } = loadWorktreeManifest(wt);
+    const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([{ path: '.cocoindex', mode: 'per-thread' }]);
     expect(manifest.seed).toEqual(['.ok']);
     expect(warnings.length).toBeGreaterThan(0);
@@ -95,28 +95,28 @@ describe('loadWorktreeManifest', () => {
         ],
       }),
     );
-    const { manifest, warnings } = loadWorktreeManifest(wt);
+    const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([{ path: '.next/cache', mode: 'per-thread' }]);
     expect(warnings.filter((w) => w.includes('auto-managed')).length).toBe(2);
   });
 
   it('ignores a manifest that exceeds the size limit', () => {
     writeManifest(JSON.stringify({ seed: ['x'.repeat(70 * 1024)] }));
-    const { manifest, warnings } = loadWorktreeManifest(wt);
+    const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest.seed).toEqual([]);
     expect(warnings[0]).toMatch(/exceeds/);
   });
 
   it('caps an over-long array and warns', () => {
     writeManifest(JSON.stringify({ seed: Array.from({ length: 250 }, (_, i) => `f${i}`) }));
-    const { manifest, warnings } = loadWorktreeManifest(wt);
+    const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest.seed.length).toBe(100);
     expect(warnings.some((w) => w.includes('exceeds'))).toBe(true);
   });
 
   it('returns empty + a warning on invalid JSON', () => {
     writeManifest('{ not json');
-    const { manifest, warnings } = loadWorktreeManifest(wt);
+    const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest).toEqual({ mounts: [], seed: [] });
     expect(warnings[0]).toMatch(/unreadable/);
   });

@@ -18,7 +18,7 @@ export type SandboxMilestoneStage = 'image_build' | 'container_create';
  * `per-thread` = its own host dir (no cross-thread write contention); `shared-ro` = one immutable host
  * dir mounted read-only into every thread; `shared-rw` = one PER-REPO host dir mounted read-write across
  * all of a repo's sandboxes (persistent auth STATE like `.gcloud` — the rare concurrent-refresh race is
- * accepted; see driver/worktree-manifest.ts).
+ * accepted; see sandbox/container-paths.ts and onboarding/worktree-config.store.ts).
  */
 export interface SandboxMount {
   /** Worktree-relative path (already path-guarded by the provisioner). */
@@ -77,6 +77,12 @@ export interface SandboxProvider {
    * recreate. The brain authors plan/thread specs here and reads them back via this path.
    */
   contextDirHost(orgId: string, jobId: string): string;
+  /**
+   * The HOST path of a job's durable `/playground` scratch folder (the same dir bind-mounted into the
+   * container at `/playground`). Outside the worktree, keyed by `jobId`, durable across container
+   * recreate. Atlas's freeform scratch pad; reclaimed by `JobLifecycleService.deleteJobDeep`.
+   */
+  playgroundDirHost(orgId: string, jobId: string): string;
   /**
    * The HOST path of a thread BRAIN session's Claude transcript root (`<brainHome>/claude/projects`),
    * located by `jobId`. Survives container reaping (host side of the agent-home bind), so crash

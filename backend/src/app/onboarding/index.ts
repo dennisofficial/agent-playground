@@ -24,6 +24,12 @@ export {
   WorktreeSecretStore,
   type WorktreeSecretGrant,
 } from './worktree-secret.store';
+export { WorktreeConfigStore } from './worktree-config.store';
+export {
+  loadLegacyManifestFile,
+  type WorktreeManifest,
+  type LoadedManifest,
+} from './legacy-worktree-manifest';
 export { encryptSecret, decryptSecret, loadSecretsKey } from './secret-cipher';
 export { engineAuthFromEnv } from './env-engine-auth';
 

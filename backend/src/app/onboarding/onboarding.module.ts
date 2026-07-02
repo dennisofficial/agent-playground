@@ -8,6 +8,8 @@ import {
   OrgCredentialsEntity,
   OrgWorktreeSecretEntity,
   OrgWorktreeSecretGrantEntity,
+  OrgWorktreeMountEntity,
+  OrgWorktreeSeedEntity,
   RepoEntity,
   StimulusEntity,
   JobEntity,
@@ -20,6 +22,7 @@ import { OnboardingService } from './onboarding.service';
 import { RepoController } from './repo.controller';
 import { TenantCredentialStore } from './tenant-credential.store';
 import { WorktreeSecretStore } from './worktree-secret.store';
+import { WorktreeConfigStore } from './worktree-config.store';
 import { WorktreeSecretsController } from './worktree-secrets.controller';
 
 /**
@@ -40,6 +43,8 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
         OrgCredentialsEntity,
         OrgWorktreeSecretEntity,
         OrgWorktreeSecretGrantEntity,
+        OrgWorktreeMountEntity,
+        OrgWorktreeSeedEntity,
         OrganizationEntity,
         RepoEntity,
         JobEntity,
@@ -56,7 +61,19 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
     RepoController,
     OnboardingController,
   ],
-  providers: [TenantCredentialStore, WorktreeSecretStore, CredentialResolver, OnboardingService],
-  exports: [TenantCredentialStore, WorktreeSecretStore, CredentialResolver, OnboardingService],
+  providers: [
+    TenantCredentialStore,
+    WorktreeSecretStore,
+    WorktreeConfigStore,
+    CredentialResolver,
+    OnboardingService,
+  ],
+  exports: [
+    TenantCredentialStore,
+    WorktreeSecretStore,
+    WorktreeConfigStore,
+    CredentialResolver,
+    OnboardingService,
+  ],
 })
 export class OnboardingModule {}

@@ -357,6 +357,12 @@ export interface EngineRunnerPort {
       signal?: AbortSignal;
     },
   ): Promise<EngineRunResult>;
+  /**
+   * True while THIS process has a live attach loop tailing `turnId`. Guards the promotion re-attach
+   * sweep from double-attaching a turn this same process kicked (a mid-day leader flap re-fires
+   * `onPromote` while turns are in flight). Only the Redis runner implements it.
+   */
+  isAttached?(turnId: string): boolean;
 }
 
 /** DI token for {@link EngineRunnerPort}. */
@@ -380,6 +386,28 @@ export class EngineAuthError extends Error {
     super(message);
     this.name = 'EngineAuthError';
   }
+}
+
+/**
+ * The host LOST ITS TRANSPORT to a still-running turn — the Redis tail failed mid-turn (typically the
+ * process's own shutdown closing the client during a watch respawn), NOT the engine concluding. The
+ * detached engine keeps running and keeps writing its durable streams, so the correct reaction everywhere
+ * is to WALK AWAY: leave the `active_turns` row and the streams for the next boot's re-attach, persist
+ * nothing (the re-attach replays the log from the start — a partial persist here would double it), and
+ * post no operator-facing failure (the turn didn't fail). See ADR 0001.
+ */
+export class EngineDetachedError extends Error {
+  /** Discriminator that survives error re-wrapping across module seams. */
+  readonly isDetachedError = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'EngineDetachedError';
+  }
+}
+
+/** Whether this error is the host losing its tail mid-turn (see {@link EngineDetachedError}). */
+export function isEngineDetachedError(err: unknown): boolean {
+  return err instanceof EngineDetachedError || (err as { isDetachedError?: boolean })?.isDetachedError === true;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { LocalGitService, type FeatureSandbox } from '../git';
+import { WorktreeConfigStore } from '../onboarding';
 import { SANDBOX_PROVIDER, type SandboxMilestoneStage, type SandboxProvider } from '../sandbox';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { WorktreeHydrator } from './worktree-hydrator.service';
@@ -45,6 +46,7 @@ export class WorktreeProvisioner {
     private readonly hydrator: WorktreeHydrator,
     private readonly awareness: PipelineAwarenessStore,
     private readonly git: LocalGitService,
+    private readonly config: WorktreeConfigStore,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
   ) {}
 
@@ -57,8 +59,16 @@ export class WorktreeProvisioner {
     // Idempotent + fail-soft.
     await this.git.ensureBuildJunkExcluded(worktreePath);
 
+    // One-time, best-effort: import an already-onboarded repo's committed legacy manifest into the DB the
+    // first time it's seen with zero config rows (see docs/adr/0003) — never blocks provisioning.
+    if (repoDbId) {
+      await this.config
+        .importLegacyIfEmpty(orgId, repoDbId, worktreePath)
+        .catch((err) => this.logger.debug(`legacy worktree config import skipped (continuing): ${err}`));
+    }
+
     // Mounts are cheap to (re)compute and must be passed on EVERY attach (a cold recreate needs them).
-    const mounts = this.hydrator.resolveMounts(worktreePath);
+    const mounts = repoDbId ? await this.hydrator.resolveMounts(orgId, repoDbId, worktreePath) : [];
 
     // File hydration is gated: re-run only when the manifest/secret/grant signature changed, or when
     // forced (a freshly cut or restored worktree has no files yet).
@@ -70,14 +80,14 @@ export class WorktreeProvisioner {
         orgId,
         repoDbId,
       });
-      // Surface a bad/incomplete `atlas.json` to the OPERATOR (it never errors the build). The
+      // Surface a bad/incomplete worktree config to the OPERATOR (it never errors the build). The
       // passive-awareness marker is drained into the next operator turn so the brain can relay it — no
       // wake, no spam (this only fires on a (re)hydration, i.e. at thread creation or a config change).
       if (notices.length) {
         await this.awareness
           .appendMarker(jobId, {
             id: 'worktree-hydration-issues',
-            text: `⚠ atlas.json — ${notices.length} issue(s): ${notices.join('; ')}`,
+            text: `⚠ worktree config — ${notices.length} issue(s): ${notices.join('; ')}`,
             at: new Date().toISOString(),
           })
           .catch((err) => this.logger.debug(`worktree notice append failed (continuing): ${err}`));

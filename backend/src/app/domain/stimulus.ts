@@ -68,6 +68,14 @@ export interface ChatStimulus extends BaseStimulus {
    */
   seedFileId?: string;
   /**
+   * RESET-VERIFY SEED: a synthetic continuation kicked by `maybeHonorSandboxReset` after a `reset_sandbox`
+   * teardown, whose sole job is to guarantee a turn happens so Atlas verifies on the fresh container. The
+   * actual verify instruction rides the reset-notice (consumed by whichever turn cold-attaches first), so
+   * this turn is a NO-OP when the notice was already consumed by an earlier turn — see the guard at the top
+   * of `runChatTurnInner`. In-memory only — never persisted.
+   */
+  seedResetVerify?: boolean;
+  /**
    * Optional structured card payload persisted alongside `body` on the `messages` row (render-only — the
    * brain still triages `body`, never `card`). E.g. a batch of review comments renders as a styled card
    * in the web client while `body` carries the formatted markdown Atlas reads.

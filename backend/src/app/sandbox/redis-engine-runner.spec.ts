@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EngineAuthError } from '../engine';
+import { EngineAuthError, EngineDetachedError } from '../engine';
 import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import { InMemoryRedisStream } from '../../_lib/redis/in-memory-redis-stream';
 import { RedisEngineRunner } from './redis-engine-runner';
@@ -89,6 +89,21 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(reg.finalize).toHaveBeenCalledWith(expect.any(String), 'done');
   });
 
+  it('publishes a spec whose writableRoots include the durable /context and /playground mounts', async () => {
+    const redis = new InMemoryRedisStream();
+    const xadd = vi.spyOn(redis, 'xadd');
+    const frames = [{ t: 'final', r: { result: 'DONE', sessionId: 's' } }];
+    const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.run(baseArgs(() => undefined));
+
+    const specCall = xadd.mock.calls.find(([key]) => String(key).endsWith(':spec'));
+    expect(specCall).toBeDefined();
+    const spec = specCall![1] as { writableRoots: string[] };
+    expect(spec.writableRoots).toContain('/context');
+    expect(spec.writableRoots).toContain('/playground');
+  });
+
   it('surfaces an engine error frame as a thrown error', async () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'error', message: 'boom in sandbox' }];
@@ -101,6 +116,60 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     const frames = [{ t: 'error', message: '401 invalid', auth: true, sessionId: 's9' }];
     const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, fakeRegistry());
     await expect(runner.run(baseArgs(() => {}))).rejects.toBeInstanceOf(EngineAuthError);
+  });
+
+  it('a lost Redis transport mid-tail DETACHES: throws EngineDetachedError, leaves the registry row + streams', async () => {
+    const redis = new InMemoryRedisStream();
+    // The "engine" writes one event, then the host's transport dies (xread starts throwing) while the
+    // engine itself is still alive — the watch-respawn shutdown shape.
+    const frames = [{ t: 'event', e: { kind: 'text', text: 'hello' } }];
+    const reg = fakeRegistry();
+    const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, reg);
+
+    const realXread = redis.xread.bind(redis);
+    let reads = 0;
+    const delSpy = vi.spyOn(redis, 'del');
+    vi.spyOn(redis, 'xread').mockImplementation(async (args) => {
+      reads += 1;
+      if (reads > 2) throw new Error('Connection is closed.'); // both the read and its one retry fail
+      return realXread(args);
+    });
+
+    await expect(
+      runner.run({
+        ...baseArgs(() => {}),
+        turnMeta: { jobId: 'th1', orgId: 'org1', channel: 'repo1', lane: 'main', kind: 'brain' },
+      }),
+    ).rejects.toBeInstanceOf(EngineDetachedError);
+
+    // The row + streams are the next boot's re-attach anchor — neither may be touched on a detach.
+    expect(reg.finalize).not.toHaveBeenCalled();
+    expect(delSpy).not.toHaveBeenCalled();
+  });
+
+  it('tracks isAttached for the duration of the attach loop (set mid-turn, cleared after)', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [
+      { t: 'event', e: { kind: 'text', text: 'mid' } },
+      { t: 'final', r: { result: 'DONE' } },
+    ];
+    const reg = fakeRegistry();
+    const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, reg);
+
+    let turnId = '';
+    (reg.register as ReturnType<typeof vi.fn>).mockImplementation(async (input: { turnId: string }) => {
+      turnId = input.turnId;
+    });
+    let attachedMidTurn: boolean | undefined;
+    await runner.run({
+      ...baseArgs(() => {
+        attachedMidTurn ??= runner.isAttached(turnId); // observed while tailing the first event
+      }),
+      turnMeta: { jobId: 'th1', orgId: 'org1', channel: 'repo1', lane: 'main', kind: 'brain' },
+    });
+
+    expect(attachedMidTurn).toBe(true);
+    expect(runner.isAttached(turnId)).toBe(false); // cleared once the loop ends
   });
 
   it('tool-bridge: dispatches a tool_request over redis and feeds the reply back to the engine', async () => {

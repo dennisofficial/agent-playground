@@ -2,7 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { IsNull, Not, Repository } from 'typeorm';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
@@ -402,6 +402,22 @@ export class JobLifecycleService {
     // 1. Reclaim the container + worktree (physical side effects — no DB cascade can do this).
     await this.closeJob(jobId, orgId);
 
+    // 1b. Remove the job's durable host-side scratch dirs — `closeJob` reclaims the container + worktree
+    //     but these live OUTSIDE the worktree (keyed by jobId), so nothing else deletes them. Done ONLY on
+    //     deep delete (not `closeJob`, which also runs on PR-merge/idle-close where the job row survives).
+    //     Best-effort: never block teardown. `/playground` can hold large ad-hoc installs; `/context` was
+    //     also leaking here before this cleanup.
+    for (const dir of [
+      this.sandboxProvider.playgroundDirHost(orgId, jobId),
+      this.sandboxProvider.contextDirHost(orgId, jobId),
+    ]) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch (err) {
+        this.logger.warn(`deleteJobDeep: host scratch dir remove failed for ${dir}: ${err}`);
+      }
+    }
+
     // 2. Hand any linked ticket back to the board BEFORE the thread row vanishes (its `ticket_id` is the
     //    only way to resolve the ticket). The board's in_progress/in_review lanes are thread-driven, so a
     //    deleted thread would otherwise strand its ticket with no driver. Best-effort — never block teardown.
@@ -472,11 +488,6 @@ export class JobLifecycleService {
           // not this thread's worktree, so it's safe to run before closeJob tears the worktree down.
           if (state === 'merged') {
             await this.reconcileLedgerOnMerge(thread.org_id, thread.repo_id);
-            // An onboarding thread's PR adds `.atlas/worktree.json` to the default branch — its merge is
-            // what makes the repo's worktree config LIVE, so stamp the repo onboarded now (Codex #4).
-            if (thread.kind === 'onboarding') {
-              await this.markRepoOnboarded(thread.org_id, thread.repo_id);
-            }
           }
           await this.closeJob(thread.id, thread.org_id);
           closed++;
@@ -570,8 +581,28 @@ export class JobLifecycleService {
     await this.detachContainer(victim, 'lru');
   }
 
+  /**
+   * On-demand RESET of a thread's container: tear it down + flip to `detached`, keeping the durable
+   * worktree AND `session_id` — so the next `ensureContainer` re-attaches a COLD container (`wasReset`) and
+   * resumes the same session. This is the primitive behind the brain's `reset_sandbox` tool (Atlas proves
+   * its environment cold-boots on a fresh box). Refuses to touch a container that a turn is actively running
+   * in (`busy`) — a concurrent driver build would otherwise be killed mid-flight.
+   */
+  async resetContainer(
+    jobId: string,
+    orgId: string,
+  ): Promise<{ reset: true } | { reset: false; reason: 'no-container' | 'busy' }> {
+    const row = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
+    if (!row || row.lifecycle === 'closed' || !row.container_id) {
+      return { reset: false, reason: 'no-container' };
+    }
+    if (this.activity.isBusy(row.container_id)) return { reset: false, reason: 'busy' };
+    await this.detachContainer(row, 'reset');
+    return { reset: true };
+  }
+
   /** Tear down a row's container (best-effort) and flip it to `detached`. Worktree untouched. */
-  private async detachContainer(row: JobSandboxEntity, reason: 'idle' | 'lru'): Promise<void> {
+  private async detachContainer(row: JobSandboxEntity, reason: 'idle' | 'lru' | 'reset'): Promise<void> {
     await this.sandboxProvider.teardown(await this.rowToSandbox(row)).catch((err) => {
       this.logger.warn(`detachContainer(${reason}): teardown failed for thread ${row.job_id}: ${err}`);
     });
@@ -660,9 +691,10 @@ export class JobLifecycleService {
   }
 
   /**
-   * Stamp a repo's `onboarded_at` — proof its worktree provisioning config is live. Called by the brain's
-   * `finish_onboarding` (secrets-only / nothing to commit) and by `pollPrClosures` when an onboarding
-   * thread's `.atlas/worktree.json` PR merges. Idempotent (only stamps when currently null).
+   * Stamp a repo's `onboarded_at` — proof its worktree provisioning config is live. Called from exactly
+   * one place: the brain's `finish_onboarding`, synchronously — secrets and worktree config (mounts/seed)
+   * are DB-backed now (see docs/adr/0003), so there is no PR-merge event to wait on. Idempotent (only
+   * stamps when currently null).
    */
   async markRepoOnboarded(orgId: string, repoId: string): Promise<void> {
     await this.projects.update(

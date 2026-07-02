@@ -511,6 +511,7 @@ function assemble(
       teardown: async () => undefined,
       teardownByIdentity: async () => undefined,
       contextDirHost: () => '/ctx',
+      playgroundDirHost: () => '/playground',
       brainTranscriptProjectsDir: () => null,
     },
     // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.

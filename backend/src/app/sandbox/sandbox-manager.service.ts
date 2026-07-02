@@ -13,6 +13,7 @@ import {
   CONTAINER_CONTEXT,
   CONTAINER_FNM_STORE,
   CONTAINER_GIT_COMMON,
+  CONTAINER_PLAYGROUND,
   CONTAINER_PNPM_STORE,
   CONTAINER_WORKTREE,
 } from './container-paths';
@@ -49,11 +50,12 @@ function realpathSafe(p: string): string {
  *   downloaded-on-demand into a SHARED cross-thread fnm store bound at /atlas-fnm (no versions baked).
  *   NB: image rebuilds are automatic now — `ensureImage` hashes the static build context and rebuilds on
  *   any Dockerfile/script change, so a rev bump never races a stale image.)
+ * rev 9 = added the durable per-job /playground scratch mount (bound at /playground, keyed by jobId).
  *
  * NOTE: the per-repo mount SET is ALSO hashed into the `atlas.cfg` fingerprint below, so a changed
  * manifest mount list recreates the container even without bumping this rev.
  */
-const CONFIG_REV = 8;
+const CONFIG_REV = 9;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -197,6 +199,14 @@ export class SandboxManager implements SandboxProvider {
     mkdirSync(join(contextDir, 'artifacts'), { recursive: true });
     binds.push(`${contextDir}:${CONTAINER_CONTEXT}`);
     binds.push(`${join(contextDir, 'generated')}:${CONTAINER_CONTEXT}/generated:ro`);
+
+    // The job's durable PLAYGROUND scratch mount at /playground — a freeform read-write area OUTSIDE the
+    // worktree (keyed by jobId like /context, so it survives container recreate and never lands in the
+    // repo diff). Atlas writes throwaway spikes/scripts/ad-hoc installs here instead of into /workspace.
+    // ensureHostOwnedDir (not plain mkdir) so in-container writes as the host uid stay host-owned.
+    const playgroundDir = this.playgroundDirHost(orgId, jobId, name);
+    this.ensureHostOwnedDir(playgroundDir);
+    binds.push(`${playgroundDir}:${CONTAINER_PLAYGROUND}`);
 
     // Per-repo CACHE MOUNTS from `.atlas/worktree.json` (resolved + validated by the WorktreeProvisioner).
     // Each lands at /workspace/<path>; per-thread gets its own host dir (no cross-thread write contention),
@@ -459,6 +469,20 @@ export class SandboxManager implements SandboxProvider {
   }
 
   /**
+   * The HOST path of a job's durable `/playground` scratch folder — the same dir bind-mounted into the
+   * container at {@link CONTAINER_PLAYGROUND}. Keyed by `jobId` (like {@link contextDirHost}) so it is
+   * STABLE across the container's lifecycle and shared by every build lane of the job; never deleted by
+   * container teardown (only by a deep job delete, which `JobLifecycleService.deleteJobDeep` reclaims).
+   * Sandboxes WITHOUT a job (gate runs) fall back to a name-keyed dir — never resolved, just keeps the
+   * mount uniform.
+   */
+  playgroundDirHost(orgId: string, jobId?: string, name?: string): string {
+    const root = join(this.agentHomeRootHost(), 'playgrounds');
+    if (jobId) return join(root, orgId, jobId);
+    return join(root, '_sandbox', name ?? 'unkeyed');
+  }
+
+  /**
    * Build the bind strings for the per-repo cache mounts AND pre-create their host dirs + in-worktree
    * mountpoints (chowned to the host uid so docker doesn't create them root-owned). The bind target is
    * /workspace/<path>. Host dir by mode:
@@ -466,7 +490,7 @@ export class SandboxManager implements SandboxProvider {
    *   - `shared-ro`  → one read-only dir per repo (`_shared`).
    *   - `shared-rw`  → one read-WRITE dir per repo (`_shared-rw`) — persistent auth STATE (e.g. `.gcloud`)
    *     reused by every job for the repo; set up once, survives sandbox reap. The concurrent-writer race
-   *     is accepted (see driver/worktree-manifest.ts).
+   *     is accepted (see sandbox/container-paths.ts and onboarding/worktree-config.store.ts).
    */
   private cacheMountBinds(input: SandboxAttachInput): string[] {
     const mounts = input.mounts ?? [];

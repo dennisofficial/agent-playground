@@ -11,7 +11,7 @@ import {
 } from '../decision-gate';
 import { AutoFixStage, reviewAgentsForThread } from '../autofix';
 import type { DecisionRecord, Step, Job } from '../domain';
-import { EngineAuthError } from '../engine';
+import { EngineAuthError, isEngineDetachedError } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
   CHAT_SURFACE,
@@ -28,7 +28,7 @@ import { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { ActiveTurnEntity } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
-import { BuildShipService, CLOUD_SANDBOX_NOTE, LEDGER_COMMIT_MESSAGE } from './build-ship.service';
+import { BuildShipService, CLOUD_SANDBOX_NOTE, LEDGER_COMMIT_MESSAGE, TASK_LIST_NOTE } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
   DriverStoreService,
@@ -1060,6 +1060,13 @@ export class ThreadDriver implements JobDispatcher {
       await harness.finish(result.report);
       return result;
     } catch (err) {
+      if (isEngineDetachedError(err)) {
+        // We lost our OWN tail mid-turn (shutdown during a watch respawn) — the engine is still running.
+        // Persist nothing, finalize nothing (the row + streams are the next boot's re-attach anchor), and
+        // crucially do NOT return null: that would re-kick a live engine's session. Propagate instead.
+        this.logger.warn(`re-attach turn ${row.turn_id} detached — leaving it for the next boot`);
+        throw err;
+      }
       // The engine turn already finished (streams reaped) or its container is gone — persist partials, end
       // the lane once, finalize the stale registry row (so the watchdog/reaper don't race it), and signal
       // the caller to re-run the batch (resuming the persisted session).
@@ -1330,6 +1337,13 @@ const WORKER_SUBAGENTS_NOTE =
   'failure to its fix site), and `test` (run the repo verification and get back a diagnosis instead of ' +
   'thousands of lines of raw output). They report back; only you change files.';
 
+// Shared tail for the execute prompts (NOT plan/review): where throwaway work goes. Keeps spikes out of
+// the worktree so they never pollute the diff/PR. `/playground` is durable across container restarts.
+const PLAYGROUND_NOTE =
+  ' SCRATCH SPACE: for any THROWAWAY work — probe/spike scripts, one-off verification harnesses, ad-hoc ' +
+  'installs — write to the durable `/playground` dir OUTSIDE the worktree, never into /workspace (which ' +
+  'pollutes the diff/PR) or /tmp (wiped on restart). Nothing in /playground is ever committed.';
+
 const STEP_EXECUTE_SYSTEM =
   'You are Atlas executing ONE step of an approved plan in a feature worktree. Implement exactly this ' +
   "step's brief, respecting the locked decisions. Make focused, working changes; do not exceed the step scope. " +
@@ -1343,6 +1357,7 @@ const STEP_EXECUTE_SYSTEM =
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
   'you cannot fix it within scope, say so explicitly rather than reporting success.' +
   WORKER_SUBAGENTS_NOTE +
+  PLAYGROUND_NOTE +
   ' ' +
   CLOUD_SANDBOX_NOTE;
 
@@ -1360,6 +1375,7 @@ const BATCH_EXECUTE_SYSTEM =
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
   'you cannot fix it within scope, say so explicitly rather than reporting success.' +
   WORKER_SUBAGENTS_NOTE +
+  PLAYGROUND_NOTE +
   ' ' +
   CLOUD_SANDBOX_NOTE;
 
@@ -1367,14 +1383,14 @@ const BATCH_EXECUTE_SYSTEM =
  *  "done, no diff" from "never committed" (null) so a resume fast-forwards instead of re-running. */
 const NOTHING_COMMITTED = '(nothing)';
 
-// Orchestrator note — the LIVE task list. The orchestrator maintains its decomposition via the task tools
-// so the operator can watch progress in the navigator (which derives the per-thread checklist from these
-// calls). Used by ORCHESTRATE_EXECUTE_SYSTEM.
+// Orchestrator note — the LIVE task list. The shared discipline (TASK_LIST_NOTE, spliced into every
+// task-tracked Atlas persona) plus the orchestrator's own seeding rule: the list starts from the plan's
+// steps. Used by ORCHESTRATE_EXECUTE_SYSTEM.
 const ORCHESTRATOR_TASKLIST_NOTE =
-  ' Maintain a LIVE TASK LIST as your visible decomposition: at kickoff `TaskCreate` one task per unit of ' +
-  'work (seed from the steps below, splitting/merging as the real work demands), `TaskUpdate` it to ' +
-  "`in_progress` when you start it and `completed` when it's done, and `TaskUpdate` with `status:'deleted'` " +
-  'to drop a task the plan abandons. Keep it current as you go — it is how the operator follows the build.';
+  ' ' +
+  TASK_LIST_NOTE +
+  ' Here the list is your visible decomposition of the plan: at kickoff seed it from the steps below, ' +
+  'splitting/merging as the real work demands.';
 
 // Orchestrator note — adds the WRITER subagents to the read-only set. Used by ORCHESTRATE_EXECUTE_SYSTEM.
 const ORCHESTRATOR_SUBAGENTS_NOTE =
@@ -1406,6 +1422,7 @@ const ORCHESTRATE_EXECUTE_SYSTEM =
   'never silent. If verification fails and you cannot fix it within scope, say so explicitly.' +
   ORCHESTRATOR_TASKLIST_NOTE +
   ORCHESTRATOR_SUBAGENTS_NOTE +
+  PLAYGROUND_NOTE +
   ' ' +
   CLOUD_SANDBOX_NOTE;
 
