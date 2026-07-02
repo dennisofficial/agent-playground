@@ -21,6 +21,9 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DataSource, Repository } from 'typeorm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvService } from '../../_core/config/env/env.service';
@@ -136,8 +139,13 @@ class FakeSandboxProvider {
   async teardownByIdentity({ sandbox, jobId }: { sandbox: FeatureSandbox; orgId: string; jobId?: string }): Promise<void> {
     this.tornDown.push(`fake-c-${jobId ?? sandbox.branch}`);
   }
+  /** Real temp root so the deep-delete host-dir cleanup is observable (created per test run). */
+  readonly stateRoot = mkdtempSync(join(tmpdir(), 'atlas-jl-state-'));
   contextDirHost(orgId: string, jobId: string): string {
-    return `/fake/contexts/${orgId}/${jobId}`;
+    return join(this.stateRoot, 'contexts', orgId, jobId);
+  }
+  playgroundDirHost(orgId: string, jobId: string): string {
+    return join(this.stateRoot, 'playgrounds', orgId, jobId);
   }
 }
 
@@ -400,6 +408,25 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(await count('decision_records')).toBe(0);
     expect(await count('stimuli')).toBe(0);
     expect(await count('job_sandboxes')).toBe(0);
+  });
+
+  it('deleteJobDeep removes the durable host-side /playground and /context scratch dirs', async () => {
+    const { jobId } = await create();
+
+    // Simulate the durable, out-of-worktree scratch dirs a live job would accumulate.
+    const playground = provider.playgroundDirHost(FAKE_TEAM_ID, jobId);
+    const context = provider.contextDirHost(FAKE_TEAM_ID, jobId);
+    for (const dir of [playground, context]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'junk.txt'), 'x');
+    }
+    expect(existsSync(playground)).toBe(true);
+    expect(existsSync(context)).toBe(true);
+
+    await threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID);
+
+    expect(existsSync(playground)).toBe(false);
+    expect(existsSync(context)).toBe(false);
   });
 
   it('claimDeleteJob is single-flight: flips status→deleting once, then returns false', async () => {

@@ -7,7 +7,7 @@ import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FeatureSandbox } from '../git';
 import { bundleEngine } from './bundle-engine';
-import { CONTAINER_CONTEXT, CONTAINER_WORKTREE } from './container-paths';
+import { CONTAINER_CONTEXT, CONTAINER_PLAYGROUND, CONTAINER_WORKTREE } from './container-paths';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import { SandboxManager } from './sandbox-manager.service';
@@ -177,6 +177,49 @@ describe('SandboxManager (integration, needs Docker)', () => {
     expect(hostContext.startsWith(worktree)).toBe(false);
 
     await manager.teardown(attached);
+    containerId = undefined;
+    artifacts = undefined;
+  }, 600_000);
+
+  it('mounts a durable per-job /playground scratch space — host-readable, outside the worktree, survives recreate', async () => {
+    if (!dockerUp) {
+      // eslint-disable-next-line no-console
+      console.warn('Docker not reachable — skipping SandboxManager /playground test');
+      return;
+    }
+    await builder.ensureImage();
+
+    const jobId = 'thread-pg-1';
+    const attached = await manager.attach({ sandbox, orgId: 'team-pg', jobId });
+    const containerName = (await engine.inspect(attached.containerId!))!.name;
+    containerId = attached.containerId;
+    artifacts = { net: `${containerName}-net`, vol: `${containerName}-dind` };
+
+    // Atlas writes a throwaway spike into /playground (NOT the repo).
+    const marker = `pg-${Date.now().toString(36)}`;
+    const w = await engine.exec(
+      attached.containerId!,
+      ['bash', '-c', `echo ${marker} > ${CONTAINER_PLAYGROUND}/spike.mjs`],
+      { user: attached.execUser },
+    );
+    expect(w.exitCode).toBe(0);
+
+    // The HOST reads it back via the resolver — same dir, keyed by jobId, OUTSIDE the worktree.
+    const hostPlayground = manager.playgroundDirHost('team-pg', jobId);
+    expect(readFileSync(join(hostPlayground, 'spike.mjs'), 'utf8').trim()).toBe(marker);
+    expect(hostPlayground.startsWith(worktree)).toBe(false);
+
+    // Durability: tear the container down and re-attach (same jobId → recreate). The scratch file survives.
+    await manager.teardown(attached);
+    const reattached = await manager.attach({ sandbox, orgId: 'team-pg', jobId });
+    containerId = reattached.containerId;
+    const r = await engine.exec(reattached.containerId!, ['cat', `${CONTAINER_PLAYGROUND}/spike.mjs`], {
+      user: reattached.execUser,
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.trim()).toBe(marker);
+
+    await manager.teardown(reattached);
     containerId = undefined;
     artifacts = undefined;
   }, 600_000);

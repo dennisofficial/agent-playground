@@ -98,6 +98,9 @@ class FakeSandboxProvider {
   contextDirHost(orgId: string, jobId: string): string {
     return `/fake/contexts/${orgId}/${jobId}`;
   }
+  playgroundDirHost(orgId: string, jobId: string): string {
+    return `/fake/playgrounds/${orgId}/${jobId}`;
+  }
 }
 
 // ── Sentinel ids — kept distinct from every other int test's tenant so the assertions are isolated. ──

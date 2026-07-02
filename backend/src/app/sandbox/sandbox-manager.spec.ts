@@ -200,9 +200,9 @@ describe('SandboxManager.teardownByIdentity', () => {
 });
 
 describe('SandboxManager.attach — onMilestone', () => {
-  // CONFIG_REV is a private module constant (currently 8); mirrored here to construct a matching
+  // CONFIG_REV is a private module constant (currently 9); mirrored here to construct a matching
   // fingerprint label for the warm-reuse case. `atlas.cfg` mirrors the private L_CFG label key.
-  const CONFIG_REV = 8;
+  const CONFIG_REV = 9;
   const IMAGE_ID = 'img-1';
   const FINGERPRINT = `${IMAGE_ID}|cfg${CONFIG_REV}|mnone`; // no mounts in these tests
 
@@ -268,6 +268,20 @@ describe('SandboxManager.attach — onMilestone', () => {
     expect(createContainer).toHaveBeenCalledOnce();
     expect(onMilestone).toHaveBeenCalledWith('container_create');
     expect(onMilestone).not.toHaveBeenCalledWith('image_build');
+  });
+
+  it('binds the durable per-job /playground scratch mount, keyed by jobId and outside the worktree', async () => {
+    const { engine, createContainer } = fullFakeEngine(null);
+    const mgr = new SandboxManager(engine, fakeBuilder(false), env({ AGENT_HOME_ROOT: agentHomeRoot }));
+
+    await mgr.attach({ sandbox: sandbox(), orgId: 'org1', jobId: 'job1' } as SandboxAttachInput);
+
+    const spec = (createContainer.mock.calls[0] as unknown as [{ binds: string[] }])[0];
+    const playgroundBind = spec.binds.find((b) => b.endsWith(':/playground'));
+    expect(playgroundBind).toBeDefined();
+    // Host side resolves to the jobId-keyed dir (the int test proves it lives outside the worktree).
+    const hostDir = playgroundBind!.slice(0, -':/playground'.length);
+    expect(hostDir).toBe(mgr.playgroundDirHost('org1', 'job1'));
   });
 
   it('does NOT fire container_create on a warm reuse (already running, matching fingerprint)', async () => {
