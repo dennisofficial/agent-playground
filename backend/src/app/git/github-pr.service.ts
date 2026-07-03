@@ -220,6 +220,23 @@ export class GithubPrService {
   }
 
   /**
+   * Find the OPEN PR whose head is `<owner>:<head>` — PR DISCOVERY for the reconciler, so a PR opened
+   * in-sandbox by Atlas (not by the host) is picked up and recorded on the job. null when none is open.
+   */
+  async findOpenPullByHead(
+    token: string,
+    { owner, repo, head }: { owner: string; repo: string; head: string },
+  ): Promise<{ url: string; number: number } | null> {
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(`${owner}:${head}`)}&state=open`,
+      { headers: this.headers(token) },
+    );
+    if (!res.ok) return null;
+    const prs = (await res.json()) as Array<{ html_url: string; number: number }>;
+    return prs[0] ? { url: prs[0].html_url, number: prs[0].number } : null;
+  }
+
+  /**
    * The full PR detail the reconciler needs in ONE request: lifecycle state, GitHub's computed
    * `mergeable_state` (drives the merge-conflict signal — transiently `null` while GitHub recomputes,
    * so the caller must treat null as "not yet known", not "clean"), and the head branch + SHA (for CI

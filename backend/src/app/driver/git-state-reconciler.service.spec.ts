@@ -10,12 +10,14 @@ function make(over: {
   detail: PullDetail;
   runs?: CheckRun[];
   job?: Partial<JobEntity>;
+  discovered?: { url: string; number: number } | null;
 }) {
   const job = {
     id: 'job-1',
     org_id: 'T1',
     repo_id: 'repo-1',
     pr_number: 7,
+    feature_branch: 'feat/a1b2c3d4',
     ci_status: null,
     pr_mergeable: null,
     ...over.job,
@@ -26,14 +28,16 @@ function make(over: {
   const repos = {
     findOne: vi.fn(async () => ({ git_url: 'https://github.com/acme/web.git' })),
   } as unknown as Repository<RepoEntity>;
+  const findOpenPullByHead = vi.fn(async () => over.discovered ?? null);
   const pr = {
     getPullDetail: vi.fn(async () => over.detail),
     listCheckRuns: vi.fn(async () => over.runs ?? []),
+    findOpenPullByHead,
   } as unknown as GithubPrService;
   const creds = { githubToken: vi.fn(async () => 'tok') } as unknown as CredentialResolver;
   const intake = { intakeEvent } as unknown as StimulusIntake;
   const svc = new GitStateReconciler(jobs, repos, pr, creds, intake);
-  return { svc, job, update, intakeEvent, pr };
+  return { svc, job, update, intakeEvent, pr, findOpenPullByHead };
 }
 
 function detail(over: Partial<PullDetail> = {}): PullDetail {
@@ -76,6 +80,32 @@ describe('GitStateReconciler.reconcile', () => {
     expect(intakeEvent).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
     expect(pr.listCheckRuns).not.toHaveBeenCalled();
+  });
+
+  it('DISCOVERY: a branch-only job with an Atlas-opened PR → records pr_url/pr_number', async () => {
+    const { svc, update, findOpenPullByHead } = make({
+      job: { pr_number: null, feature_branch: 'feat/a1b2c3d4' },
+      discovered: { url: 'http://pr/9', number: 9 },
+      detail: detail({ number: 9, mergeableState: 'clean' }),
+    });
+    await svc.reconcile();
+    expect(findOpenPullByHead).toHaveBeenCalledWith('tok', {
+      owner: 'acme',
+      repo: 'web',
+      head: 'feat/a1b2c3d4',
+    });
+    expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_url: 'http://pr/9', pr_number: 9 });
+  });
+
+  it('DISCOVERY: branch-only job with no open PR yet → does nothing', async () => {
+    const { svc, update, intakeEvent } = make({
+      job: { pr_number: null, feature_branch: 'feat/a1b2c3d4' },
+      discovered: null,
+      detail: detail(),
+    });
+    await svc.reconcile();
+    expect(update).not.toHaveBeenCalled();
+    expect(intakeEvent).not.toHaveBeenCalled();
   });
 
   it('no column write when nothing changed (avoids realtime churn)', async () => {

@@ -37,9 +37,15 @@ export class GitStateReconciler {
     private readonly intake: StimulusIntake,
   ) {}
 
-  /** Reconcile every job that has an open PR. Returns the count reconciled. Fail-soft per job. */
+  /**
+   * Reconcile every job with a PR OR a branch that might have one — a `pr_number` job is polled for
+   * conflict/CI; a branch-only job is checked for a PR opened in-sandbox by Atlas (discovery). Returns
+   * the count reconciled. Fail-soft per job.
+   */
   async reconcile(): Promise<number> {
-    const jobs = await this.jobs.find({ where: { pr_number: Not(IsNull()) } });
+    const jobs = await this.jobs.find({
+      where: [{ pr_number: Not(IsNull()) }, { feature_branch: Not(IsNull()), pr_number: IsNull() }],
+    });
     let reconciled = 0;
     for (const job of jobs) {
       try {
@@ -53,16 +59,31 @@ export class GitStateReconciler {
   }
 
   private async reconcileOne(job: JobEntity): Promise<void> {
-    if (job.pr_number == null) return;
     const repo = await this.repos.findOne({ where: { id: job.repo_id } });
     const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
     const token = await this.creds.githubToken(job.org_id);
     if (!parsed || !token) return;
 
+    // PR DISCOVERY: a job with a branch but no recorded PR — pick up a PR Atlas opened in-sandbox and
+    // record it so the merge poll + conflict/CI observation start watching it.
+    let prNumber = job.pr_number;
+    if (prNumber == null) {
+      if (!job.feature_branch) return;
+      const found = await this.pr.findOpenPullByHead(token, {
+        owner: parsed.owner,
+        repo: parsed.repo,
+        head: job.feature_branch,
+      });
+      if (!found) return;
+      await this.jobs.update({ id: job.id }, { pr_url: found.url, pr_number: found.number });
+      this.logger.log(`discovered PR #${found.number} for job ${job.id} on ${job.feature_branch}`);
+      prNumber = found.number;
+    }
+
     const detail = await this.pr.getPullDetail(token, {
       owner: parsed.owner,
       repo: parsed.repo,
-      number: job.pr_number,
+      number: prNumber,
     });
     // Merged / closed / gone → pollPrClosures owns teardown; nothing to observe here.
     if (detail.state !== 'open') return;
@@ -92,12 +113,12 @@ export class GitStateReconciler {
         orgId: job.org_id,
         repoId: job.repo_id,
         source: 'github',
-        dedupeKey: `conflict:${job.pr_number}:${detail.headSha}`,
+        dedupeKey: `conflict:${prNumber}:${detail.headSha}`,
         severity: 'critical',
         body:
-          `Your PR #${job.pr_number} has a merge conflict against its base branch. ` +
+          `Your PR #${prNumber} has a merge conflict against its base branch. ` +
           `Fetch the base, resolve the conflicts in the sandbox, and push the fix.\n${detail.url}`,
-        correlation: { prNumber: job.pr_number },
+        correlation: { prNumber },
       });
     }
   }
