@@ -3,15 +3,14 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import {
-  DecisionClassifier,
-  ParkAndAskService,
-  PlanVisibilityService,
-  type DecisionClassification,
-} from '../decision-gate';
+import { PlanVisibilityService } from '../decision-gate';
 import { AutoFixStage, reviewAgentsForThread } from '../autofix';
 import type { DecisionRecord, Step, Job } from '../domain';
-import { EngineAuthError, isEngineDetachedError } from '../engine';
+import {
+  EngineAuthError,
+  isEngineDetachedError,
+  type ToolBridgeOptions,
+} from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
   CHAT_SURFACE,
@@ -28,7 +27,7 @@ import { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { ActiveTurnEntity } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
-import { LEDGER_COMMIT_MESSAGE, renderSystemPrompt } from '../prompt-kit';
+import { Agent, LEDGER_COMMIT_MESSAGE, renderAgentPrompt } from '../prompt-kit';
 import { BuildShipService } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
@@ -36,8 +35,7 @@ import {
   type DriverThread,
   type JobRoute,
 } from './driver-store.service';
-import { PLANNER_LLM, type PlannedStep, type PlannerLlm } from './planner-llm';
-import { renderPlan } from './render-plan';
+import { renderPlan, type PlannedStep } from './render-plan';
 import {
   DRIVER_REPO,
   type DriverRepoResolver,
@@ -46,16 +44,19 @@ import {
 import { JobLifecycleService } from './job-lifecycle.service';
 
 /**
- * W4 — the SECTION/PHASE DRIVER. The legible, deterministic, resumable replacement for v1's implicit
+ * W4 — the THREAD DRIVER. The legible, deterministic, resumable replacement for v1's implicit
  * status-FSM. Read it top-to-bottom: `dispatch` kicks the build off async, `runJob` walks the threads
- * in order, `runThread` does plan → review → gate → execute steps → auto-fix → handoff, `executeSteps`
- * runs each step as a fresh engine session on the shared feature branch, and `finishWithPr` runs the
- * PR-tail auto-fix and opens ONE PR. `resume` re-enters the SAME straight functions on boot, fast-
+ * in order, `runThread` does lock-step → visibility → execute → auto-fix → handoff, `executeSteps`
+ * runs the thread as ONE orchestrator session on the shared feature branch, and `finalizeBuild` runs the
+ * terminal ship (Atlas opens ONE PR in-sandbox). `resume` re-enters the SAME straight functions on boot, fast-
  * forwarding completed work — no signal racing, no status-enum re-derivation.
  *
- * The "dynamism" (how many threads/steps) is DATA the planner emits; the control flow is a plain
- * `await`-each-step loop. Explicit `status`/`step` rows exist ONLY for resumability — the live path is a
- * straight function. Bound as the real `JOB_DISPATCHER` (overriding W3's logging no-op). Zero v1 imports.
+ * There is no build-time LLM planning: the brain already authored the plan into `/context/specs` and got
+ * operator approval BEFORE dispatch, so the driver locks ONE step per thread (the resume/commit anchor)
+ * and hands the whole thread to a single orchestrator turn that decomposes the work live. The one
+ * mid-build human seam is `request_operator_input` (the orchestrator pauses to ask when a decision the
+ * locked plan does not cover blocks it). Explicit `status`/`step` rows exist ONLY for resumability — the
+ * live path is a straight function. Bound as the real `JOB_DISPATCHER` (overriding W3's logging no-op).
  */
 /** The narrow brain surface the driver needs at ship — resolved lazily to avoid the module cycle. */
 interface LedgerPromoter {
@@ -78,9 +79,6 @@ export class ThreadDriver implements JobDispatcher {
     private readonly git: LocalGitService,
     private readonly pr: GithubPrService,
     private readonly turn: TurnRunnerService,
-    @Inject(PLANNER_LLM) private readonly planner: PlannerLlm,
-    private readonly classifier: DecisionClassifier,
-    private readonly park: ParkAndAskService,
     private readonly visibility: PlanVisibilityService,
     private readonly autofix: AutoFixStage,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
@@ -127,44 +125,18 @@ export class ThreadDriver implements JobDispatcher {
     return this.env.get('MAX_SECTIONS') ?? 12;
   }
 
-  /** Sanity ceiling on a thread's steps — a longer planner output is truncated to this. */
-  private get maxStepsPerThread(): number {
-    return this.env.get('MAX_PHASES_PER_SECTION') ?? 8;
-  }
-
-  /** Hard cap on how many steps a single execution BATCH may contain — the deterministic envelope
-   *  around the LLM batcher so a group can never swallow a whole large thread (keeps the fresh-context
-   *  safety reachable). Default 5. */
-  private get maxStepsPerBatch(): number {
-    const raw = Number(this.env.get('MAX_PHASES_PER_BATCH'));
-    return Number.isFinite(raw) && raw > 0 ? raw : 5;
-  }
-
-  /** ORCHESTRATE mode (default ON): run each thread as ONE Opus orchestrator session that fans the
-   *  implementation out to writer subagents, instead of the old programmatic per-step batching. Set
-   *  `ORCHESTRATE_THREADS=off` to fall back to the legacy LLM-batched per-step path. */
-  private get orchestrate(): boolean {
-    return (this.env.get('ORCHESTRATE_THREADS') ?? '').toLowerCase() !== 'off';
-  }
-
-  /** Per-step wall-clock budget — a single engine turn that runs away is aborted + relayed. Default 20m.
-   *  In orchestrate mode one turn spans the WHOLE thread + its writer fan-out, so the budget is larger. */
+  /** Per-thread wall-clock budget for the orchestrator turn — a single engine turn that runs away is
+   *  aborted + relayed. One turn spans the WHOLE thread + its writer fan-out, so the budget is large.
+   *  Default 60m. A `request_operator_input` pause suspends this clock (see `runTurnBounded`). */
   private get phaseTimeoutMs(): number {
     const raw = Number(this.env.get('PHASE_TIMEOUT_MS'));
     if (Number.isFinite(raw) && raw > 0) return raw;
-    return this.orchestrate ? 60 * 60_000 : 20 * 60_000;
+    return 60 * 60_000;
   }
 
   /** Per-job wall-clock budget (checked at thread boundaries) — backstop against an unbounded build. Default 60m. */
   private get jobTimeoutMs(): number {
     const raw = Number(this.env.get('JOB_TIMEOUT_MS'));
-    return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000;
-  }
-
-  /** How long a mid-build PARK waits for the human before it gives up (fail + relay). Default 60m. The
-   *  job/step timeouts don't cover a park (it's between steps), so this is its dedicated guard. */
-  private get parkTimeoutMs(): number {
-    const raw = Number(this.env.get('PARK_TIMEOUT_MS'));
     return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000;
   }
 
@@ -309,38 +281,62 @@ export class ThreadDriver implements JobDispatcher {
     }
   }
 
-  /** Post a "paused on a credential error" notice so the human fixes creds + pings resume (best-effort). */
+  /** Post a "paused on a credential error" notice so the human fixes creds + pings resume. Durable: writes
+   *  DIRECTLY to `messages` via the block sink FIRST (independent of route resolution / the live SSE post,
+   *  which is only best-effort) — see {@link relayFailure} for why. */
   private async relayPaused(jobId: string, err: unknown): Promise<void> {
+    const text = `:lock: Build paused — a credential/auth error halted the engine (${shortReason(err)}).\n_Your work + the engine session are saved; fix the credentials and ping resume (or reply here) to continue the SAME session._`;
+    await this.blockSink
+      .appendBlock(jobId, {
+        kind: 'chat',
+        text,
+        meta: { source: 'system_operator', severity: 'warning' },
+      })
+      .catch((e) =>
+        this.logger.error(`could not durably record pause for job=${jobId}: ${e}`),
+      );
     try {
       const job = await this.store.loadJob(jobId);
       const route = await this.store.route(job);
-      await this.post(
-        route,
-        `:lock: Build paused — a credential/auth error halted the engine (${shortReason(err)}).\n_Your work + the engine session are saved; fix the credentials and ping resume (or reply here) to continue the SAME session._`,
-      );
+      await this.post(route, text);
     } catch (e) {
-      this.logger.warn(`could not relay pause for job=${jobId}: ${e}`);
+      this.logger.warn(`could not live-relay pause for job=${jobId}: ${e}`);
     }
   }
 
-  /** Post a clear "build failed — why" into the job's thread (best-effort). Root cause, not a stack trace. */
+  /**
+   * Post a clear "build failed — why" into the job's thread. Durable: writes DIRECTLY to `messages` via
+   * the block sink FIRST — `this.post()` only pushes to the in-memory SSE outbox (see `WebSurface.post`),
+   * it never persists a row, so a bare `post()`-only relay is invisible to any client that reconnects or
+   * wasn't connected at the moment of failure (the `/messages` REST history reads the DB, not the outbox).
+   * That gap is what let job 6e467abe-3a79-4be2-b9a8-951a89ab0c84 flip to `failed` with zero trace in
+   * `messages` — `post()`/`route()` themselves didn't even need to throw. The live `post()` below is kept
+   * best-effort on top, purely for the immediate SSE nudge.
+   */
   private async relayFailure(jobId: string, err: unknown): Promise<void> {
+    const text = `:x: Build failed — ${shortReason(err)}\n_The job is marked failed; reply in this thread to retry or adjust the plan._`;
+    await this.blockSink
+      .appendBlock(jobId, {
+        kind: 'chat',
+        text,
+        meta: { source: 'system_operator', severity: 'error' },
+      })
+      .catch((e) =>
+        this.logger.error(`could not durably record failure for job=${jobId}: ${e}`),
+      );
     try {
       const job = await this.store.loadJob(jobId);
       const route = await this.store.route(job);
-      await this.post(
-        route,
-        `:x: Build failed — ${shortReason(err)}\n_The job is marked failed; reply in this thread to retry or adjust the plan._`,
-      );
+      await this.post(route, text);
     } catch (e) {
-      this.logger.warn(`could not relay failure for job=${jobId}: ${e}`);
+      this.logger.warn(`could not live-relay failure for job=${jobId}: ${e}`);
     }
   }
 
   /**
    * Walk a job's threads in order. The whole build flow lives here, readable top-to-bottom:
    *   load the job + record + route → ensure the feature sandbox → for each thread: runThread (which
-   *   carries the prior handoff forward) → after all threads: finishWithPr (PR-tail auto-fix + open PR).
+   *   carries the prior handoff forward) → after all threads: finalizeBuild (ship — Atlas opens the PR in-sandbox).
    * Fast-forwards `done` threads (resume): a finished thread just yields its persisted handoff_out.
    */
   private async runJob(jobId: string): Promise<void> {
@@ -401,18 +397,16 @@ export class ThreadDriver implements JobDispatcher {
       );
     }
 
-    await this.finishWithPr(job, record, route, repo, sandbox);
+    await this.finalizeBuild(job, record, route, repo, sandbox);
   }
 
   /**
    * Run ONE thread, returning its handoff for the next. The per-thread flow, in order:
-   *   a. plan just-in-time (an engine plan turn → steps), or resume the locked plan;
-   *   b. one Codex-style review → revise pass (clean single loop);
-   *   c. the decision gate — classify notable decisions; an uncovered always-ask PARKS & awaits a human;
-   *   d. post the plan for visibility (non-blocking);
-   *   e. execute the steps (fresh session each) on the shared branch;
-   *   f. per-thread auto-fix over the thread's diff;
-   *   g. summarize the handoff for the next thread.
+   *   a. lock the thread's single step (or reuse it on a resume);
+   *   b. post the plan for visibility (non-blocking);
+   *   c. execute — ONE orchestrator turn owns the thread + its writer fan-out on the shared branch;
+   *   d. per-thread auto-fix over the thread's diff;
+   *   e. summarize the handoff for the next thread.
    */
   private async runThread(
     job: Job,
@@ -429,40 +423,24 @@ export class ThreadDriver implements JobDispatcher {
       `:hammer_and_wrench: Planning thread — *${thread.brief}*`,
     );
 
-    // a. PLAN (just-in-time) — or reuse the locked plan on a resume (steps already exist).
-    const { steps, planned } = await this.planThread(
-      job,
-      record,
-      sandbox,
-      thread,
-      handoffIn,
-    );
+    // a. PLAN — lock the thread's single step (its brief IS the thread brief), or reuse it on a resume.
+    //    The brain already authored the real plan (plan.md / sections/NN-*.md / data-model.md) into
+    //    `/context/specs`, and the orchestrator reads it there + decomposes live via TaskCreate — so the
+    //    driver no longer LLM-plans a step list; the one step row is the resume/commit anchor + UI spine.
+    const { steps } = await this.planThread(thread, handoffIn);
 
-    // b. REVIEW → revise once (only when freshly planned this run; a resumed lock skips it).
-    //    (The locked step ROWS are the source of truth; review only reshapes a fresh plan's prose.)
-    if (planned)
-      await this.reviewPlan(record, thread, handoffIn, planned, job.orgId);
-
-    // The plan view the gate + visibility read — derived from the locked step rows (resume-safe).
+    // The plan view visibility reads — derived from the locked step rows (resume-safe).
     const planView = steps.map(asPlannedStep);
 
-    // c. GATE — classify the plan's notable decisions; an uncovered always-ask parks & awaits a human.
-    const classifications = await this.gateSection(
-      job,
-      route,
-      record,
-      thread,
-      planView,
-    );
-
-    // d. VISIBILITY — post the detailed plan into the thread (non-blocking; never gates).
+    // b. VISIBILITY — post the plan into the thread (non-blocking; never gates). Decisions were locked +
+    //    operator-approved UPSTREAM (before dispatch), so there is no per-thread decision gate anymore.
     await this.visibility.postSectionPlan({
       channel: route.channel ?? '',
       ...(route.threadTs ? { threadTs: route.threadTs } : {}),
       ...(route.orgId ? { orgId: route.orgId } : {}),
       title: thread.brief,
       plan: renderPlan(planView),
-      decisions: classifications,
+      decisions: [],
     });
 
     // e. EXECUTE — run each step as a fresh session on the shared feature branch.
@@ -546,13 +524,8 @@ export class ThreadDriver implements JobDispatcher {
       `Auto-fix pass applied over the diff for thread "${thread.brief}".`,
     );
 
-    // g. HANDOFF — summarize what this thread produced for the next.
-    const handoffOut = await this.summarizeHandoff(
-      thread,
-      steps,
-      reports,
-      job.orgId,
-    );
+    // e. HANDOFF — summarize what this thread produced for the next.
+    const handoffOut = this.summarizeHandoff(thread, steps, reports);
     await this.store.setThreadHandoffOut(thread.id, handoffOut);
     await this.store.setThreadStatus(thread.id, 'done');
     this.logger.log(`thread ${thread.ordinal} done`);
@@ -566,239 +539,139 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * Produce (or resume) the thread's locked steps. On a fresh run: an engine PLAN turn in the sandbox
-   * grounded in the record + handoff → the planner LLM shapes the step list (fallback: a single step
-   * whose brief is the thread brief) → persisted. On a resume: the steps already exist, so reuse them
-   * (returns `planned: undefined` to signal "no re-review needed").
+   * Lock (or resume) the thread's SINGLE step — its brief is the thread brief. The build no longer
+   * LLM-plans a multi-step list: the brain already authored the real plan into `/context/specs`
+   * (`plan.md` / `sections/NN-*.md` / `data-model.md`), and the ONE orchestrator turn reads it there and
+   * decomposes the work live via `TaskCreate`. The single step row is the resume/commit anchor + the UI
+   * spine — no finer granularity is needed because the whole thread is one orchestrator turn. On a resume
+   * the step already exists, so reuse it.
    */
   private async planThread(
-    job: Job,
-    record: DecisionRecord | null,
-    sandbox: FeatureSandbox,
     thread: DriverThread,
     handoffIn: string | null,
-  ): Promise<{ steps: Step[]; planned: PlannedStep[] | null }> {
+  ): Promise<{ steps: Step[] }> {
     const existing = await this.store.stepsForThread(thread.id);
     if (existing.length > 0) {
       this.logger.log(
         `thread ${thread.ordinal}: ${existing.length} step(s) already locked — resuming`,
       );
-      return { steps: existing, planned: null };
+      return { steps: existing };
     }
 
     await this.store.setThreadStatus(thread.id, 'planning');
-
-    // An engine PLAN turn explores the worktree read-only; its plan text grounds the structured planner.
-    // The full plan (plan.md, decisions, diagrams) lives in /context/specs — the plan turn reads it there.
-    const planInput = {
-      overview: record?.overview ?? '',
-      decisions: record?.decisions ?? [],
-      brief: thread.brief,
-      handoffIn,
-      orgId: job.orgId,
-    };
-    // Bound the plan turn too (issue #3): exploring a large repo read-only can run away just like an
-    // execute turn. Hard-bounded so the driver gives up even if the SDK won't yield; on breach it falls
-    // back to the structured planner below (graceful — the engine plan text is only grounding).
-    const planTurn = await this.runTurnBounded(
-      {
-        jobId: job.id,
-        sandbox,
-        engine: 'claude',
-        mode: 'plan',
-        systemPrompt: renderSystemPrompt('planner-thread-plan', { jobKind: job.kind }),
-        task: renderPlanTask(planInput),
-        auth: await this.creds.engineAuth(job.orgId, 'claude'),
-      },
-      `thread ${thread.ordinal} plan turn`,
-    ).catch((err) => {
-      this.logger.warn(
-        `thread ${thread.ordinal} plan turn failed (continuing): ${err}`,
-      );
-      return undefined;
-    });
-
-    // Capture the plan turn's `<repo-orientation>` cheat-sheet (repo layout + REAL verify commands) and hand
-    // it to the FRESH builder session. Persisted (not just in-memory) so a resume that skips re-planning
-    // still has it; also mutated onto the in-memory `thread` so THIS run's builder reads it in renderBatchTask.
-    // Falls back to the plan turn's closing summary when it didn't call ExitPlanMode; null on plan-turn
-    // failure/timeout, in which case the builder orients off the repo docs itself (DOCS BEFORE GREP).
-    const orientation = extractOrientation(planTurn?.planText ?? planTurn?.report);
-    if (orientation) {
-      await this.store.setThreadOrientation(thread.id, orientation);
-      thread.orientation = orientation;
-    }
-
-    const planned = (
-      (await this.planner.planThread(planInput).catch(() => undefined)) ??
-      fallbackSteps(thread.brief, planTurn?.planText ?? planTurn?.report)
-    ).slice(0, this.maxStepsPerThread);
-
+    const planned: PlannedStep[] = [{ title: thread.brief, brief: thread.brief }];
     await this.store.setThreadPlan(thread.id, renderPlan(planned), handoffIn);
     const steps = await this.store.lockSteps(thread, planned);
-    return { steps, planned };
+    return { steps };
   }
 
-  /**
-   * ONE Codex-style review → revise pass over the freshly-drafted plan (a clean single loop). When the
-   * reviewer returns a revision it RE-PERSISTS the thread's plan prose; the locked step rows stay the
-   * execution source of truth (they're already gap-numbered + resumable). Best-effort — a failed review
-   * leaves the original plan.
-   */
-  private async reviewPlan(
-    record: DecisionRecord | null,
-    thread: DriverThread,
-    handoffIn: string | null,
-    draft: PlannedStep[],
-    orgId?: string,
-  ): Promise<void> {
-    await this.store.setThreadStatus(thread.id, 'reviewing');
-    const revised = await this.planner
-      .reviewPlan({
-        overview: record?.overview ?? '',
-        decisions: record?.decisions ?? [],
-        brief: thread.brief,
-        handoffIn,
-        draft,
-        ...(orgId ? { orgId } : {}),
-      })
-      .catch(() => undefined);
-    if (revised)
-      await this.store.setThreadPlan(thread.id, renderPlan(revised), handoffIn);
-  }
-
-  /**
-   * The DECISION GATE (W5). Mine the plan for notable decisions, classify each against the record. An
-   * uncovered always-ask (`verdict === 'ask'`) PARKS the thread: post the question in-thread and AWAIT
-   * the human (the thread suspends; resumable across restart). Covered/proceed continue. Returns the
-   * non-ask classifications for the visibility post.
-   */
-  private async gateSection(
-    job: Job,
-    route: JobRoute,
-    record: DecisionRecord | null,
-    thread: DriverThread,
-    planned: PlannedStep[],
-  ): Promise<DecisionClassification[]> {
-    const decisions =
-      (await this.planner
-        .extractDecisions({
-          overview: record?.overview ?? '',
-          decisions: record?.decisions ?? [],
-          brief: thread.brief,
-          handoffIn: thread.handoffIn,
-          steps: planned,
-          orgId: job.orgId,
-        })
-        .catch(() => undefined)) ?? [];
-
-    const classifications: DecisionClassification[] = [];
-    for (const proposed of decisions) {
-      const c = await this.classifier.classify(
-        proposed,
-        { decisions: record?.decisions ?? [] },
-        job.orgId,
-      );
-      if (c.verdict === 'ask') {
-        await this.store.setThreadStatus(thread.id, 'awaiting_approval');
-        this.logger.log(
-          `thread ${thread.ordinal} parks on: ${proposed.description}`,
-        );
-        const handle = await this.park.ask(
-          {
-            channel: route.channel ?? '',
-            ...(route.threadTs ? { threadTs: route.threadTs } : {}),
-            ...(route.orgId ? { orgId: route.orgId } : {}),
-          },
-          parkQuestion(thread.brief, proposed.description, c.reason),
-        );
-        // AWAIT the human — the thread is suspended here, the process is not. Bounded by a wall-clock
-        // budget so an unanswered park can't hang the build forever (the job/step timeouts don't cover a
-        // park, which is between steps): on expiry it throws → the job fails + relays (issue #2/#3).
-        const answer = await this.awaitAnswer(
-          handle.answer,
-          proposed.description,
-        );
-        this.logger.log(
-          `thread ${thread.ordinal} unparked: ${answer.text.slice(0, 80)}`,
-        );
-        // Passive milestone: a guard parked on a decision and the human answered it — a transient moment
-        // the net-state snapshot can't reconstruct (the thread status moves on). Deduped by the decision.
-        await this.recordMilestone(
-          job.id,
-          `thread:${thread.id}:gate:${proposed.description.slice(0, 60)}`,
-          `While planning thread "${thread.brief}" a decision was raised and the operator answered it: ${proposed.description}`,
-        );
-        // The human answered → treat the always-ask as now-settled and continue (it was visible + ruled).
-      } else {
-        classifications.push(c);
-      }
-    }
-    return classifications;
-  }
-
-  /** Run an engine turn under a HARD wall-clock bound (PHASE_TIMEOUT_MS). On breach it signals the
-   *  SDK to abort (best-effort — may not interrupt a stuck subprocess) AND rejects the await so the driver
-   *  gives up regardless. A still-running orphaned turn is harmless (nothing awaits it). */
+  /** Run an engine turn under a HARD, PAUSABLE wall-clock bound (PHASE_TIMEOUT_MS). On breach it signals
+   *  the SDK to abort (best-effort — may not interrupt a stuck subprocess) AND rejects the await so the
+   *  driver gives up regardless. A caller may pass its own {@link PausableDeadline} (the orchestrate turn
+   *  does, so its `request_operator_input` tool can PAUSE the clock across a human wait — the human's
+   *  reply time must not count against the build budget). Otherwise a fresh deadline is created here. */
   private async runTurnBounded(
     input: Parameters<TurnRunnerService['runTurn']>[0],
     label: string,
+    deadline?: PausableDeadline,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const hardTimeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(
-          new Error(
-            `${label} exceeded PHASE_TIMEOUT_MS (${this.phaseTimeoutMs}ms)`,
-          ),
-        );
-      }, this.phaseTimeoutMs);
-    });
+    const dl = deadline ?? new PausableDeadline(this.phaseTimeoutMs, label);
+    dl.start(); // idempotent — arms the clock now (a caller-supplied deadline is armed exactly once here)
     try {
       return await Promise.race([
-        this.turn.runTurn({ ...input, signal: controller.signal }),
-        hardTimeout,
+        this.turn.runTurn({ ...input, signal: dl.signal }),
+        dl.expired,
       ]);
     } finally {
-      clearTimeout(timer!);
-    }
-  }
-
-  /** Await a parked human answer, bounded by PARK_TIMEOUT_MS. On expiry it rejects so the build
-   *  fails + relays (instead of suspending forever); the human can re-engage in-thread to restart. */
-  private async awaitAnswer<T>(
-    answer: Promise<T>,
-    decisionDesc: string,
-  ): Promise<T> {
-    let timer: ReturnType<typeof setTimeout>;
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () =>
-          reject(
-            new Error(
-              `timed out after ${this.parkTimeoutMs}ms waiting for your input on: ${decisionDesc}`,
-            ),
-          ),
-        this.parkTimeoutMs,
-      );
-    });
-    try {
-      return await Promise.race([answer, timeout]);
-    } finally {
-      clearTimeout(timer!);
+      dl.clear();
     }
   }
 
   /**
-   * Execute a thread's steps. A fresh-context step packs the ordered steps into execution BATCHES —
-   * one engine session per batch (fewer sessions than one-per-step, but bounded by `maxStepsPerBatch`
-   * so a batch can't swallow a large thread and lose the small-context safety). The grouping is
-   * assigned + PERSISTED (`batch_ordinal`) the first time the thread runs and reused verbatim on
-   * resume, so a restarted/halted batch re-groups identically (the resume cursor keys off the batch's
-   * anchor-step `session_id`). Each batch: fresh session in the SAME worktree → verify → ONE commit →
-   * mark every step in it done. Returns one report per batch.
+   * Build the host tool bridge for the orchestrate build turn — one tool, `request_operator_input`, the
+   * build's mid-turn "pause and ask the operator" escape hatch (decisions are otherwise locked +
+   * operator-approved UPSTREAM). It opens a DURABLE question card (rides the same `open_question_count`
+   * needs-you spine as the brain, tagged `origin:'build'` so the answer resolves back HERE, not to the
+   * brain), PAUSES the turn's wall-clock deadline, polls the card for the operator's answer, then returns
+   * it as the tool result so the orchestrator resumes in the same turn. `job.status` stays `running`
+   * throughout, so a restart re-drives/reattaches the turn and the still-open card is re-polled.
+   */
+  private operatorInputBridge(
+    job: Job,
+    thread: DriverThread,
+    route: JobRoute,
+    deadline: PausableDeadline,
+  ): ToolBridgeOptions {
+    return {
+      jobId: job.id,
+      tools: {
+        request_operator_input: async (args) => {
+          const question = String(args['question'] ?? '').trim();
+          if (!question) {
+            return { ok: false, error: 'question is required (what you need decided, specifically)' };
+          }
+          // Reuse an already-open build card (a resumed turn re-issuing its pending question) instead of
+          // stacking a duplicate; else open a fresh durable card (+ needs-you bump).
+          const existing = await this.store.findOpenOperatorInputCard(job.id);
+          const questionId =
+            existing?.questionId ??
+            (await this.store.openOperatorInputCard(job.id, question)).questionId;
+          if (!existing) {
+            await this.store
+              .setThreadStatus(thread.id, 'awaiting_input')
+              .catch(() => undefined);
+            await this.post(
+              route,
+              `:raising_hand: I need your input to continue *${thread.brief}*:\n> ${question}\n_Reply in this thread to continue._`,
+            );
+            await this.recordMilestone(
+              job.id,
+              `thread:${thread.id}:input:${questionId.slice(0, 8)}`,
+              `The build paused to ask the operator: ${question}`,
+            );
+          }
+          // Suspend the wall-clock budget across the (human-paced) wait, then poll the durable card.
+          deadline.pause();
+          try {
+            const answer = await this.pollOperatorAnswer(job.id, questionId, deadline.signal);
+            await this.store.markOperatorInputDelivered(job.id, questionId).catch(() => undefined);
+            await this.store
+              .setThreadStatus(thread.id, 'executing')
+              .catch(() => undefined);
+            return { answer };
+          } finally {
+            deadline.resume();
+          }
+        },
+      },
+    };
+  }
+
+  /** Poll a build-origin question card until the operator answers it, bounded by OPERATOR_INPUT_TIMEOUT_MS
+   *  (default 6h). On timeout it returns guidance telling the orchestrator to proceed on its best judgment
+   *  (rather than erroring the turn). Stops early if the turn is aborted (shutdown/kill). */
+  private async pollOperatorAnswer(
+    jobId: string,
+    questionId: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const maxMs = Number(this.env.get('OPERATOR_INPUT_TIMEOUT_MS')) || 6 * 60 * 60_000;
+    const intervalMs = 3_000;
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+      if (signal.aborted) throw new Error('turn aborted while awaiting operator input');
+      const answer = await this.store.readOperatorInputAnswer(jobId, questionId);
+      if (answer != null) return answer;
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    return '(No response from the operator within the time limit. Proceed using your best judgment, keep the change minimal and reversible, and clearly note the assumption you made in your report.)';
+  }
+
+  /**
+   * Execute a thread — ONE orchestrator turn owns the whole thread and fans implementation out to writer
+   * subagents (there is no per-step batching anymore). The thread's single step is the resume/commit
+   * anchor: fresh session in the worktree → the orchestrator verifies in-turn → ONE commit → mark the
+   * step done. Returns the orchestrator's report.
    */
   private async executeSteps(
     job: Job,
@@ -810,36 +683,14 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<string[]> {
     let steps = await this.store.stepsForThread(thread.id);
 
-    // First execute of this thread (a not-yet-run step is still un-batched): ask the planner how to
-    // pack the ordered steps, run it through the deterministic guardrail, and PERSIST the grouping over
-    // ALL steps. On resume every step already has a batch_ordinal → skip the LLM and re-group from the
-    // stored values (stable membership — the in-flight engine session keeps the same task on restart).
+    // First execute of this thread (steps not yet batched): the WHOLE thread is ONE batch. Persist a
+    // constant batch_ordinal over all steps so a resume re-groups identically (the in-flight engine
+    // session keeps the same task on restart).
     if (steps.some((p) => p.status !== 'done' && p.batchOrdinal == null)) {
-      // ORCHESTRATE: the whole thread is ONE batch (one orchestrator session that owns the fan-out) — no
-      // LLM batcher, no per-step split. LEGACY: ask the planner how to pack the ordered steps, run it
-      // through the deterministic guardrail. Either way the grouping is PERSISTED over ALL steps so a
-      // resume re-groups identically.
-      const groups = this.orchestrate
-        ? [steps.map((_, i) => i)]
-        : this.groupSteps(
-            steps,
-            await this.planner
-              .batchSteps({
-                steps: steps.map(asPlannedStep),
-                overview: record?.overview ?? '',
-                brief: thread.brief,
-                orgId: job.orgId,
-              })
-              .catch(() => undefined),
-          );
-      const assignments: Array<[string, number]> = [];
-      groups.forEach((g, bi) =>
-        g.forEach((idx) => assignments.push([steps[idx].id, bi + 1])),
-      );
-      await this.store.setBatchOrdinals(assignments);
+      // One batch for the whole thread — every step gets batch_ordinal 1.
+      await this.store.setBatchOrdinals(steps.map((p) => [p.id, 1]));
       this.logger.log(
-        `thread ${thread.ordinal}: ${steps.length} step(s) packed into ${groups.length} batch(es)` +
-          (this.orchestrate ? ' (orchestrate)' : ''),
+        `thread ${thread.ordinal}: ${steps.length} step(s) as one orchestrator batch`,
       );
       steps = await this.store.stepsForThread(thread.id);
     }
@@ -876,27 +727,6 @@ export class ThreadDriver implements JobDispatcher {
       );
     }
     return reports;
-  }
-
-  /**
-   * Validate the planner's step partition and turn it into consecutive index groups, then CAP each
-   * group at `maxStepsPerBatch`. An invalid/absent partition falls back to one-step-per-group (the
-   * safe default — identical to the pre-batching behavior). The result always covers [0, n) in order.
-   */
-  private groupSteps(
-    steps: Step[],
-    llmGroups: number[][] | undefined,
-  ): number[][] {
-    const n = steps.length;
-    const base = isConsecutivePartition(llmGroups, n)
-      ? llmGroups!
-      : steps.map((_, i) => [i]);
-    const cap = this.maxStepsPerBatch;
-    const out: number[][] = [];
-    for (const g of base) {
-      for (let i = 0; i < g.length; i += cap) out.push(g.slice(i, i + cap));
-    }
-    return out;
   }
 
   /**
@@ -941,7 +771,14 @@ export class ThreadDriver implements JobDispatcher {
     // The instruction the engine receives — the build turn's "first message". Computed once here so it
     // can both kick off the turn AND be persisted on the anchor row (the web renders it like a subagent's
     // Task prompt, so the step transcript shows what was asked, not just the engine's reply).
-    const task = renderBatchTask(record, thread, steps, this.orchestrate);
+    const task = renderBatchTask(record, thread, steps);
+
+    // The orchestrator turn's PAUSABLE wall-clock deadline + the host tool bridge that exposes
+    // `request_operator_input` (open a durable question card → poll it → pause the deadline across the
+    // human wait). One deadline shared by the bounded kick AND the tool so a pause suspends the clock; the
+    // same bridge is re-supplied on re-attach (the host tool closure is in-memory, lost on restart).
+    const deadline = new PausableDeadline(this.phaseTimeoutMs, `batch "${label}"`);
+    const toolBridge = this.operatorInputBridge(job, thread, route, deadline);
 
     // RE-ATTACH or KICK. After a backend restart the engine kept running detached (Redis transport) and is
     // still writing to its streams — re-tail its live stream instead of re-running the batch, exactly like
@@ -980,10 +817,10 @@ export class ThreadDriver implements JobDispatcher {
     // persisted session. Both paths own their harness lifecycle and yield the same RunTurnResult.
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>> | null = null;
     if (reattachRow?.container_id) {
-      result = await this.reattachBatchTurn(job, thread, lane, metaTag, reattachRow, anchor.id);
+      result = await this.reattachBatchTurn(job, thread, lane, metaTag, reattachRow, anchor.id, toolBridge);
     }
     if (!result) {
-      result = await this.kickBatchTurn(job, sandbox, thread, steps, task, lane, channel, metaTag, label, repo);
+      result = await this.kickBatchTurn(job, sandbox, thread, steps, task, lane, channel, metaTag, label, repo, deadline, toolBridge);
     }
 
     // Surface any off-spec deviations the engine flagged in its report (#7) — never silent.
@@ -1053,6 +890,7 @@ export class ThreadDriver implements JobDispatcher {
     metaTag: Record<string, unknown>,
     row: ActiveTurnEntity,
     anchorStepId: string,
+    toolBridge?: ToolBridgeOptions,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>> | null> {
     this.logger.log(
       `thread ${thread.ordinal} — re-attaching in-flight build turn ${row.turn_id} (container ${row.container_id})`,
@@ -1070,6 +908,9 @@ export class ThreadDriver implements JobDispatcher {
         jobId: job.id,
         stepId: anchorStepId,
         onEvent: (e) => harness.onEvent(e),
+        // Re-supply the host tool closure — the in-sandbox session may have an in-flight
+        // `request_operator_input` request whose response the re-attached host must still serve.
+        ...(toolBridge ? { toolBridge } : {}),
       });
       await harness.finish(result.report);
       return result;
@@ -1107,12 +948,15 @@ export class ThreadDriver implements JobDispatcher {
     metaTag: Record<string, unknown>,
     label: string,
     repo: ResolvedRepo,
+    deadline: PausableDeadline,
+    toolBridge: ToolBridgeOptions,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const anchor = steps[0];
     const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
-    // Circuit breaker (#3): bound the engine turn. On breach it both signals the SDK to abort AND hard-
-    // rejects so the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute
-    // to the anchor step (a batch is one turn; minor observability coarsening for the step transcript).
+    // Circuit breaker (#3): bound the engine turn with the shared PAUSABLE deadline (paused across a
+    // `request_operator_input` human wait). On breach it both signals the SDK to abort AND hard-rejects so
+    // the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute to the anchor
+    // step (a batch is one turn; minor observability coarsening for the step transcript).
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
     try {
       result = await this.runTurnBounded(
@@ -1122,23 +966,18 @@ export class ThreadDriver implements JobDispatcher {
           sandbox,
           engine: 'claude',
           mode: 'execute',
-          systemPrompt: renderSystemPrompt(
-            this.orchestrate
-              ? 'worker-orchestrate'
-              : steps.length === 1
-                ? 'worker-step'
-                : 'worker-batch',
-            { jobKind: job.kind },
-          ),
+          systemPrompt: renderAgentPrompt(Agent.WORKER, { jobKind: job.kind }),
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
+          // The orchestrator's host tool bridge — exposes `request_operator_input` (pause & ask). The
+          // orchestrator's OTHER tools (Edit/Bash/Task) run in-sandbox, not over this bridge.
+          toolBridge,
           // Register in `active_turns` so a fresh backend can RE-ATTACH this build turn's live stream after a
-          // restart (parity with the brain), not just re-run it. No toolBridge — a build turn's tools
-          // (Edit/Bash/Task) run in-sandbox, not over the host bridge.
+          // restart (parity with the brain), not just re-run it.
           turnMeta: {
             jobId: job.id,
             orgId: job.orgId,
@@ -1159,6 +998,7 @@ export class ThreadDriver implements JobDispatcher {
           },
         },
         `batch "${label}"`,
+        deadline,
       );
     } catch (err) {
       // Timeout / auth / engine error — persist whatever partials streamed and end the lane exactly once.
@@ -1171,11 +1011,14 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * PR-TAIL. After all threads: one auto-fix pass over the WHOLE accumulated diff, push the branch,
-   * open ONE PR per feature (idempotent — a re-run finds the existing PR), record the url, mark the job
-   * done, and post "PR ready" in-thread. Sections stacked on one branch ⇒ one PR.
+   * FINALIZE THE BUILD. After all threads: promote durable decisions into `.atlas/decisions/`, then run
+   * the terminal `ship` sequence — Atlas opens the PR ITSELF in-sandbox (git push + `gh pr create`),
+   * followed by Master Review as a check on the open PR. The host opens NOTHING; it only kicks the ship
+   * turn, then flips the job `done` once it ran (the reconciler backfills `pr_url`/`pr_number` on
+   * discovery). Idempotent + resumable — a re-entered finalize just re-promotes and re-ships (ship finds
+   * the existing PR). Threads stacked on one branch ⇒ one PR.
    */
-  private async finishWithPr(
+  private async finalizeBuild(
     job: Job,
     record: DecisionRecord | null,
     route: JobRoute,
@@ -1186,9 +1029,14 @@ export class ThreadDriver implements JobDispatcher {
       `job=${job.id} all threads done — promoting decisions + shipping`,
     );
     // Promote durable decisions into `.atlas/decisions/` BEFORE shipping, so they ride the build commit.
-    // Resumable + idempotent: a re-entered `finishWithPr` (driver resume) just re-promotes/overwrites.
+    // `promoteLedger` HONORS the claim: if the ledger is already claimed/complete (a concurrent finalize or
+    // a prior attempt), it SKIPS the promote turn rather than re-firing it — this is what stops the
+    // ship-tail (promote → open-PR → review) from looping.
     const promoted = await this.promoteLedger(job);
-    await this.ship.ship({
+    // `ship` runs the terminal in-sandbox steps: Atlas opens the PR ITSELF (git push + `gh pr create`), then
+    // reports its url back so `ship` latches `pr_url`/`pr_number` (flipping the job `done`), then Master
+    // Review runs as a check on the open PR. See BuildShipService.ship / openPrInSandbox.
+    const outcome = await this.ship.ship({
       job,
       record,
       repo,
@@ -1197,9 +1045,23 @@ export class ThreadDriver implements JobDispatcher {
       commitMessage: LEDGER_COMMIT_MESSAGE,
       notify: (m) => this.post(route, m),
     });
-    // Mark COMPLETE only when the promotion turn actually ran — a failed promotion stays non-complete so
-    // the boot backstop retries it onto the (now open) PR. Never blocks the PR on the ledger.
-    if (promoted) await this.store.markLedgerPromoted(job.id);
+    // Finalize the ledger spine off BOTH signals — did THIS call actually run the promote turn, and did the
+    // PR confirm — never leaving the row stuck `running`:
+    //  • promoted here AND PR confirmed ⇒ COMPLETE (the ledger files were written + shipped on the PR).
+    //  • promoted here but PR not confirmed ⇒ FAILED, so the claim is re-winnable next drive (ship left the
+    //    job `running`, so boot-recovery re-runs the idempotent tail).
+    //  • NOT promoted here ⇒ the claim was already `complete` (nothing to do), OR a crashed `running` from a
+    //    prior attempt whose promote turn may not have written the files. We must NOT mark complete on
+    //    confirmation alone — that would stamp the ledger done with no files. The boot backstop
+    //    (`reconcileLedgerPromotion`) re-promotes the now-`done`, pr_url-set row onto its open PR instead.
+    // Never blocks the PR on the ledger.
+    if (promoted && outcome.opened && outcome.prConfirmed) {
+      await this.store.markLedgerPromoted(job.id);
+    } else if (promoted) {
+      await this.store
+        .setLedgerPromotionStatus(job.id, 'failed')
+        .catch(() => undefined);
+    }
   }
 
   /**
@@ -1209,8 +1071,17 @@ export class ThreadDriver implements JobDispatcher {
    * (boot backstop retries) and returns false so the PR ships regardless.
    */
   private async promoteLedger(job: Job): Promise<boolean> {
+    // HONOR the claim: only run the promote turn when THIS caller won it (`null|pending|failed → running`).
+    // A row already `running`/`complete` means a concurrent finalize or a prior attempt owns it — re-firing
+    // the promote turn here is exactly the loop that made shipped jobs re-run promote_decisions endlessly.
+    const won = await this.store.claimLedgerPromotion(job.id);
+    if (!won) {
+      this.logger.log(
+        `job=${job.id}: ledger promotion already claimed/complete — skipping the promote turn`,
+      );
+      return false;
+    }
     try {
-      await this.store.claimLedgerPromotion(job.id);
       const brain = await this.brain();
       await brain.promoteDurableDecisionsAtShip(job.id, job.orgId, job.repoId);
       return true;
@@ -1268,23 +1139,17 @@ export class ThreadDriver implements JobDispatcher {
     return ensured.sandbox;
   }
 
-  /** Summarize a thread's handoff (LLM, with a terse rule-based fallback). */
-  private async summarizeHandoff(
+  /** Summarize a thread's handoff for the next thread — a terse rule-based note built from the
+   *  orchestrator's own report (richest), falling back to the step titles. No LLM. */
+  private summarizeHandoff(
     thread: DriverThread,
     steps: Step[],
     reports: string[],
-    orgId?: string,
-  ): Promise<string> {
-    const planned = steps.map(asPlannedStep);
-    const llm = await this.planner
-      .handoff({
-        brief: thread.brief,
-        steps: planned,
-        reports,
-        ...(orgId ? { orgId } : {}),
-      })
-      .catch(() => undefined);
-    if (llm) return llm;
+  ): string {
+    const report = reports.filter(Boolean).join('\n\n').trim();
+    if (report) {
+      return `Thread "${thread.brief}" complete.\n\n${report}`.slice(0, 4000);
+    }
     const built = steps.map((p) => p.title ?? p.brief).join('; ');
     return `Thread "${thread.brief}" complete. Built: ${built || '(see commits)'}.`;
   }
@@ -1334,46 +1199,99 @@ export class ThreadDriver implements JobDispatcher {
 
 // ── pure render helpers ──────────────────────────────────────────────────────────────────────────
 
+/**
+ * A hard wall-clock deadline that can be PAUSED and RESUMED — the orchestrate turn's circuit breaker.
+ * Armed once via {@link start}; on expiry it aborts (via {@link signal}) and rejects {@link expired}.
+ * `request_operator_input` calls {@link pause}/{@link resume} around a human wait so the operator's reply
+ * time does NOT count against the build budget. Never armed → never expires (safe for the re-attach path,
+ * which shares the tool bridge but does not race {@link expired}).
+ */
+export class PausableDeadline {
+  private readonly controller = new AbortController();
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private remaining: number;
+  private startedAt = 0;
+  private armed = false;
+  private paused = false;
+  private done = false;
+  readonly expired: Promise<never>;
+  private rejectExpired!: (e: Error) => void;
+
+  constructor(
+    private readonly totalMs: number,
+    private readonly label: string,
+  ) {
+    this.remaining = totalMs;
+    // A floating rejected promise is fine: `runTurnBounded` always races it; an unraced deadline is never
+    // armed, so `rejectExpired` never fires. Swallow to avoid an unhandledRejection if it ever does.
+    this.expired = new Promise<never>((_resolve, reject) => {
+      this.rejectExpired = reject;
+    });
+    this.expired.catch(() => undefined);
+  }
+
+  get signal(): AbortSignal {
+    return this.controller.signal;
+  }
+
+  /** Arm the countdown. Idempotent — subsequent calls are ignored (the deadline is armed exactly once). */
+  start(): void {
+    if (this.armed) return;
+    this.armed = true;
+    this.arm();
+  }
+
+  private arm(): void {
+    this.startedAt = Date.now();
+    this.timer = setTimeout(() => {
+      if (this.done) return;
+      this.done = true;
+      this.controller.abort();
+      this.rejectExpired(
+        new Error(`${this.label} exceeded PHASE_TIMEOUT_MS (${this.totalMs}ms)`),
+      );
+    }, this.remaining);
+  }
+
+  /** Suspend the countdown, banking the elapsed time. No-op if not armed / already paused / finished. */
+  pause(): void {
+    if (!this.armed || this.paused || this.done) return;
+    this.paused = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.remaining = Math.max(0, this.remaining - (Date.now() - this.startedAt));
+  }
+
+  /** Resume a paused countdown with the banked remaining time. */
+  resume(): void {
+    if (!this.armed || !this.paused || this.done) return;
+    this.paused = false;
+    this.arm();
+  }
+
+  /** Stop the timer for good (the turn settled) — after this it can never fire. */
+  clear(): void {
+    this.done = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+}
+
 /** Sentinel `commit_sha` for a batch that completed but changed nothing (empty commit) — distinguishes
  *  "done, no diff" from "never committed" (null) so a resume fast-forwards instead of re-running. */
 const NOTHING_COMMITTED = '(nothing)';
 
-/** A locked step row → the `PlannedStep` view the gate/visibility/render read (title null → brief). */
+/** A locked step row → the `PlannedStep` view visibility/render read (title null → brief). */
 function asPlannedStep(step: Step): PlannedStep {
   return { title: step.title ?? step.brief, brief: step.brief };
 }
 
-function renderPlanTask(input: {
-  overview: string;
-  decisions: { decisionClass: string; title: string; ruling: string }[];
-  brief: string;
-  handoffIn: string | null;
-}): string {
-  const decisions = input.decisions.length
-    ? input.decisions
-        .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
-        .join('\n')
-    : '(none)';
-  const handoff = input.handoffIn
-    ? `\n\nPrior thread handoff:\n${input.handoffIn}`
-    : '';
-  return [
-    `Feature overview:\n${input.overview}`,
-    `\nLocked decisions (respect these):\n${decisions}`,
-    `\nPlan THIS thread:\n${input.brief}${handoff}`,
-    '\nYour grounding is the READ-ONLY directory `/context/specs/` (a folder, not a file): read its' +
-      " `plan.md` index, this thread's `sections/NN-*.md` file, and `data-model.md` before planning steps.",
-    '\nProduce an ordered list of steps. Do not write files.',
-  ].join('\n');
-}
-
-/** Render the execute task for a BATCH of 1+ ordered steps (the unit a single fresh session runs).
- *  In orchestrate mode the batch is the WHOLE thread and the steps are the orchestrator's fan-out menu. */
+/** Render the ORCHESTRATOR turn's task — ONE turn owns the whole thread. The single step's brief is the
+ *  thread brief; the orchestrator reads the real plan in `/context/specs` and decomposes the work live. */
 export function renderBatchTask(
   record: DecisionRecord | null,
   thread: DriverThread,
   steps: Step[],
-  orchestrate = false,
 ): string {
   const decisions = record?.decisions.length
     ? record.decisions
@@ -1385,13 +1303,6 @@ export function renderBatchTask(
       (p, i) => `### Step ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`,
     )
     .join('\n\n');
-  const intro = orchestrate
-    ? `Implement this thread. The ${steps.length} step(s) below are your plan + suggested decomposition` +
-      ' — delegate them IN ORDER to writer subagents (one at a time), making small edits yourself where' +
-      ' a subagent would be overkill, then verify the whole thread:'
-    : steps.length === 1
-      ? 'Implement this step:'
-      : `Implement these ${steps.length} steps IN ORDER (each builds on the previous):`;
   return [
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
@@ -1399,24 +1310,27 @@ export function renderBatchTask(
     `\nYour grounding is the READ-ONLY directory \`/context/specs/\` (a folder): read its \`plan.md\`` +
       ` index, this thread's \`sections/NN-*.md\` file, and \`data-model.md\`. Make ALL code changes under` +
       ` \`/workspace\` — never edit anything in \`/context\`.`,
-    // Advisory handoff from the planning pass — this fresh session did NOT explore the repo. Kept explicitly
-    // subordinate to the code + specs so a stale cheat-sheet can't override authoritative ground truth.
+    // Advisory orientation cheat-sheet, when a prior pass captured one (may be absent — the fresh session
+    // then orients off the repo docs itself). Kept subordinate to the code + specs (authoritative).
     ...(thread.orientation
       ? [
-          `\nRepo orientation (a cheat-sheet from the planning pass — this fresh session did NOT explore the` +
-            ` repo itself; the CODE and \`/context/specs/\` remain authoritative if anything here is stale):\n` +
+          `\nRepo orientation (a cheat-sheet from an earlier pass — the CODE and \`/context/specs/\` remain` +
+            ` authoritative if anything here is stale):\n` +
             thread.orientation,
         ]
       : []),
-    `\n${intro}\n\n${blocks}`,
+    `\nImplement this thread: read the specs, then delegate the work to writer subagents (one at a time),` +
+      ` making small edits yourself where a subagent would be overkill, and verify the whole thread before` +
+      ` finishing. If you hit a decision the locked plan does NOT cover and you cannot safely proceed, call` +
+      ` \`request_operator_input\` with a specific question rather than guessing.\n\n${blocks}`,
   ].join('\n');
 }
 
 /**
- * Pull the plan turn's `<repo-orientation>…</repo-orientation>` cheat-sheet out of its output — the captured
- * plan text, else the closing summary. Returns the trimmed inner text (length-capped), or null when the block
- * is absent/empty (plan-turn failure/timeout, or a model that didn't emit it) — the builder then orients off
- * the repo docs itself (DOCS BEFORE GREP). Tolerates the tags appearing inside a fenced code block.
+ * Pull a `<repo-orientation>…</repo-orientation>` cheat-sheet out of some engine output — the trimmed inner
+ * text (length-capped), or null when the block is absent/empty. A future orientation pass can persist this
+ * onto `thread.orientation` (see {@link renderBatchTask}); the driver no longer runs a dedicated plan turn,
+ * so nothing populates it today, but the extractor + injection point are kept for that.
  */
 export function extractOrientation(text: string | undefined): string | null {
   if (!text) return null;
@@ -1424,42 +1338,6 @@ export function extractOrientation(text: string | undefined): string | null {
   const body = m?.[1]?.trim();
   if (!body) return null;
   return body.length > 1500 ? `${body.slice(0, 1500)}…` : body;
-}
-
-/** True iff `groups` flattens to exactly [0,1,…,n-1] in order with no empty group — i.e. a valid
- *  consecutive, covering, non-overlapping partition of n ordered steps (the batcher's contract). */
-function isConsecutivePartition(
-  groups: number[][] | undefined,
-  n: number,
-): boolean {
-  if (!groups || !groups.length || groups.some((g) => g.length === 0))
-    return false;
-  const flat = groups.flat();
-  if (flat.length !== n) return false;
-  for (let i = 0; i < n; i++) if (flat[i] !== i) return false;
-  return true;
-}
-
-function fallbackSteps(
-  brief: string,
-  planText: string | undefined,
-): PlannedStep[] {
-  return [
-    { title: brief, brief: planText ? `${brief}\n\n${planText}` : brief },
-  ];
-}
-
-function parkQuestion(
-  sectionBrief: string,
-  decision: string,
-  reason: string,
-): string {
-  return [
-    `:raising_hand: While planning *${sectionBrief}* I hit a decision I should check with you first:`,
-    `> ${decision}`,
-    `_${reason}_`,
-    "How would you like me to proceed? (Reply in this thread and I'll continue.)",
-  ].join('\n');
 }
 
 function sandboxKey(sandbox: FeatureSandbox): string {
