@@ -48,6 +48,16 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'general' })
   type!: string;
 
+  /**
+   * TRUE for the single pre-configured master-review thread appended to a full thread-driven build — a Codex
+   * `execute` thread that reviews the whole merged diff AND applies fixes, running LAST (before ship/PR).
+   * Distinguishes it from an ordinary builder without overloading `type`: the driver flips engine/persona/task
+   * on it and SKIPS the per-thread auto-fix stage (the review thread IS the review); the navigator renders it
+   * as "Master review" with no review-agents folder. Default false. See the driver's `kickBatchTurn` branch.
+   */
+  @Column({ type: 'boolean', default: false })
+  is_master_review!: boolean;
+
   /** The detailed plan once authored/generated; null while pending. Steps LOCK once planned. */
   @Column({ type: 'text', nullable: true })
   plan!: string | null;
@@ -68,7 +78,7 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   handoff_out!: string | null;
 
-  // 'pending' | 'planning' | 'reviewing' | 'awaiting_approval' | 'executing' | 'auto_fixing' | 'done' | 'failed'
+  // 'pending' | 'planning' | 'reviewing' | 'awaiting_approval' | 'executing' | 'awaiting_input' | 'auto_fixing' | 'done' | 'failed'
   @Column({ type: 'text', default: 'pending' })
   status!: string;
 

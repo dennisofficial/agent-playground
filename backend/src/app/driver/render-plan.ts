@@ -1,4 +1,10 @@
-import type { PlannedStep } from './planner-llm';
+/** One step of a thread's plan (title + the brief an execute turn runs). The build no longer LLM-plans a
+ *  multi-step list — a thread locks exactly one step whose brief is the thread brief — but the shape is
+ *  kept as the step-render/persistence view shared by the driver + brain store. */
+export interface PlannedStep {
+  title: string;
+  brief: string;
+}
 
 /**
  * Render an ordered step list as the human-readable thread plan stored on `threads.plan` and posted

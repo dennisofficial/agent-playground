@@ -118,10 +118,11 @@ export interface Message {
 /** A thread's lifecycle — explicit, resumable. The driver `await`s each transition. */
 export type ThreadStatus =
   | 'pending' // not started
-  | 'planning' // detailed phased plan being generated
+  | 'planning' // the thread's single step is being locked
   | 'reviewing' // Codex plan-review loop
   | 'awaiting_approval' // an always-ask decision parked & asked async
-  | 'executing' // steps running
+  | 'executing' // the orchestrator turn is running
+  | 'awaiting_input' // the orchestrator paused mid-build to ask the operator (request_operator_input)
   | 'auto_fixing' // per-thread auto-fix stage
   | 'done'
   | 'failed';
@@ -149,6 +150,9 @@ export interface Thread {
   /** This thread's handoff note for the next thread (null until done). */
   handoffOut: string | null;
   status: ThreadStatus;
+  /** The pre-configured Codex master-review thread (whole-diff review & fix), appended last to a full
+   *  thread-driven build. See {@link ThreadEntity.is_master_review}. */
+  isMasterReview: boolean;
 }
 
 /** A step's lifecycle — explicit, resumable; the driver re-enters at the correct step on restart. */

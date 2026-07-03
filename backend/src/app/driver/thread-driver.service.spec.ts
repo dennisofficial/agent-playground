@@ -2,7 +2,7 @@ import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import type { ModuleRef } from '@nestjs/core';
 import { EngineAuthError } from '../engine';
-import type { EngineRunnerPort } from '../engine';
+import type { EngineRunnerPort, ToolBridgeOptions } from '../engine';
 import { ThreadDriver } from './thread-driver.service';
 import { BuildShipService } from './build-ship.service';
 import type {
@@ -10,15 +10,9 @@ import type {
   DriverThread,
   JobRoute,
 } from './driver-store.service';
-import type { PlannerLlm, PlannedStep } from './planner-llm';
+import type { PlannedStep } from './render-plan';
 import type { DriverRepoResolver, ResolvedRepo } from './repo-resolver';
-import type {
-  DecisionClassifier,
-  ParkAndAskService,
-  ParkHandle,
-  ParkResolution,
-  PlanVisibilityService,
-} from '../decision-gate';
+import type { PlanVisibilityService } from '../decision-gate';
 import type { AutoFixStage } from '../autofix';
 import type {
   GithubPrService,
@@ -43,9 +37,9 @@ import type {
 
 /**
  * W4 — the SECTION/PHASE DRIVER unit tests. Every dependency is mocked (NO real LLM / git / network):
- * the driver walks a 2-thread / multi-step job to ONE PR; an uncovered always-ask decision PARKS and
- * resumes on a simulated human answer; step step-state persists; `resume()` fast-forwards completed
- * work after a simulated restart; threads share one branch ⇒ one PR.
+ * the driver walks a 2-thread job to ONE PR, each thread running as ONE orchestrator batch; step
+ * step-state persists; `resume()` fast-forwards completed work after a simulated restart; threads
+ * share one branch ⇒ one PR; a mid-build `request_operator_input` call pauses + resumes a thread.
  *
  * The store is an in-memory fake the test can re-instantiate a fresh driver against — that's how the
  * resumability test simulates a process restart (same rows, new driver). Zero real I/O.
@@ -53,18 +47,27 @@ import type {
 
 // ── an in-memory DriverStore the tests can introspect + survive a "restart" ──────────────────────
 
+interface OperatorInputCard {
+  questionId: string;
+  question: string;
+  answer: string | null;
+  delivered: boolean;
+}
+
 interface StoreState {
   job: Job;
   record: DecisionRecord | null;
   threads: DriverThread[];
   steps: Step[];
   route: JobRoute;
+  operatorInputCards: OperatorInputCard[];
 }
 
 function makeStore(state: StoreState): {
   store: DriverStoreService;
   state: StoreState;
 } {
+  let nextQuestionId = 1;
   const store = {
     loadJob: vi.fn(async () => ({ ...state.job })),
     runningJobs: vi.fn(async () =>
@@ -156,6 +159,29 @@ function makeStore(state: StoreState): {
       if (p) p.commitSha = commitSha;
     }),
     route: vi.fn(async () => state.route),
+    // ── operator-input cards (request_operator_input) — a small in-memory backing on state ─────────
+    findOpenOperatorInputCard: vi.fn(async (_jobId: string) => {
+      const open = state.operatorInputCards.find((c) => c.answer == null);
+      return open ? { questionId: open.questionId, question: open.question } : null;
+    }),
+    openOperatorInputCard: vi.fn(async (_jobId: string, question: string) => {
+      const questionId = `q${nextQuestionId++}`;
+      state.operatorInputCards.push({
+        questionId,
+        question,
+        answer: null,
+        delivered: false,
+      });
+      return { questionId };
+    }),
+    readOperatorInputAnswer: vi.fn(async (_jobId: string, questionId: string) => {
+      const card = state.operatorInputCards.find((c) => c.questionId === questionId);
+      return card?.answer ?? null;
+    }),
+    markOperatorInputDelivered: vi.fn(async (_jobId: string, questionId: string) => {
+      const card = state.operatorInputCards.find((c) => c.questionId === questionId);
+      if (card) card.delivered = true;
+    }),
   } as unknown as DriverStoreService;
   return { store, state };
 }
@@ -221,6 +247,15 @@ function makePr(): { pr: GithubPrService; opened: Array<{ head: string }> } {
         existing: false,
       };
     }),
+    // Atlas opens the PR in-sandbox (that open turn is mocked here, so it doesn't call `report_pr_opened`);
+    // the host CONFIRMS it via head-branch discovery. Return a synthetic PR so `ship` latches
+    // pr_url/pr_number and flips the job `done` — mirroring the real "Atlas opened it, host discovered it"
+    // flow. (`ship` no longer blind-flips `done` on a discovery miss — that was the flaky-loop bug.)
+    findOpenPullByHead: vi.fn(async (_token: string, args: { head: string }) => ({
+      url: `https://github.com/acme/widget/pull/1`,
+      number: 1,
+      head: args.head,
+    })),
   } as unknown as GithubPrService;
   return { pr, opened };
 }
@@ -239,11 +274,7 @@ function makeTurn(): {
       }) => {
         calls.push({ mode: input.mode, stepId: input.stepId });
         return {
-          report:
-            input.mode === 'plan'
-              ? 'I will build it in steps.'
-              : `did step ${input.stepId}`,
-          ...(input.mode === 'plan' ? { planText: 'PLAN: do the thing' } : {}),
+          report: `did step ${input.stepId}`,
           session: {
             id: 'sess',
             jobId: input.jobId,
@@ -260,59 +291,6 @@ function makeTurn(): {
     canReattach: () => false,
   } as unknown as TurnRunnerService;
   return { turn, calls };
-}
-
-/** A planner that emits a fixed 2-step plan per thread. */
-function makePlanner(): PlannerLlm {
-  return {
-    planThread: vi.fn(async (input: { brief: string }) => [
-      { title: `${input.brief} — step A`, brief: 'do A' },
-      { title: `${input.brief} — step B`, brief: 'do B' },
-    ]),
-    reviewPlan: vi.fn(async () => undefined), // no revision
-    extractDecisions: vi.fn(async () => []), // no notable decision by default
-    handoff: vi.fn(
-      async (input: { brief: string }) => `handoff from ${input.brief}`,
-    ),
-    // Default: no grouping → the driver's guardrail falls back to one batch per step (preserves the
-    // pre-batching behavior these tests assert). Batching-specific tests override this mock.
-    batchSteps: vi.fn(async () => undefined),
-  };
-}
-
-function makeClassifier(
-  verdict: 'covered' | 'proceed' | 'ask' = 'proceed',
-): DecisionClassifier {
-  return {
-    classify: vi.fn(async () => ({
-      verdict,
-      reason: 'r',
-      via: 'rule' as const,
-    })),
-  } as unknown as DecisionClassifier;
-}
-
-function makePark(answer?: Promise<ParkResolution>): {
-  park: ParkAndAskService;
-  ask: ReturnType<typeof vi.fn>;
-} {
-  const ask = vi.fn(
-    async (): Promise<ParkHandle> => ({
-      id: 'park1',
-      questionTs: 'q1',
-      threadTs: 't1',
-      answer:
-        answer ??
-        Promise.resolve({
-          parkId: 'park1',
-          text: 'yes go ahead',
-          authorId: 'U1',
-          ts: 'a1',
-        }),
-      resolved: false,
-    }),
-  );
-  return { park: { ask } as unknown as ParkAndAskService, ask };
 }
 
 /** Counters live on the returned object; the service is a thin wrapper bumping them. */
@@ -414,6 +392,7 @@ function thread(
   ordinal: number,
   brief: string,
   status: ThreadStatus = 'pending',
+  isMasterReview = false,
 ): DriverThread {
   return {
     id,
@@ -426,6 +405,7 @@ function thread(
     handoffIn: null,
     handoffOut: null,
     status,
+    isMasterReview,
   };
 }
 
@@ -433,8 +413,6 @@ function thread(
 function assemble(
   state: StoreState,
   opts: {
-    classifierVerdict?: 'covered' | 'proceed' | 'ask';
-    parkAnswer?: Promise<ParkResolution>;
     env?: Record<string, string>;
     turn?: TurnRunnerService;
     turnRegistry?: Pick<import('../sandbox/turn-registry.service').TurnRegistry, 'listRunning'>;
@@ -447,9 +425,6 @@ function assemble(
   const made = makeTurn();
   const turn = opts.turn ?? made.turn;
   const calls = made.calls;
-  const planner = makePlanner();
-  const classifier = makeClassifier(opts.classifierVerdict);
-  const { park, ask } = makePark(opts.parkAnswer);
   const visibility = makeVisibility();
   const autofix = makeAutofix();
   const { surface, posts } = makeSurface();
@@ -503,9 +478,6 @@ function assemble(
     git,
     pr,
     turn,
-    planner,
-    classifier,
-    park,
     visibility.visibility,
     autofix.autofix,
     surface,
@@ -545,9 +517,9 @@ function assemble(
       recordPr: async () => undefined,
     } as unknown as import('./job-lifecycle.service').JobLifecycleService,
     // BuildShipService: the real terminal "ship" over the same git/pr/store fakes, so the push/open/
-    // setPrReady assertions hold exactly as before the extraction. PR Review runs on the same shared
+    // setPrReady assertions hold exactly as before the extraction. The open-PR turn runs on the same shared
     // `turnHarness` + the dedicated `engineRunner` fake above.
-    new BuildShipService(git, pr, store, blockSink, turnHarness, engineRunner),
+    new BuildShipService(git, pr, store, turnHarness, engineRunner),
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     {
       appendMarker: async () => undefined,
@@ -577,9 +549,6 @@ function assemble(
     git,
     pr,
     turn,
-    planner,
-    classifier,
-    ask,
     visibility,
     autofix,
     surface,
@@ -599,44 +568,110 @@ function assemble(
 // ── tests ────────────────────────────────────────────────────────────────────────────────────────
 
 describe('ThreadDriver — the legible thread/step pipeline', () => {
-  it('walks a 2-thread / multi-step job to ONE PR (plan → execute steps → autofix → handoff → next → PR-tail)', async () => {
+  it('walks a 2-thread job to ONE PR (lock one step per thread → orchestrate execute → autofix → handoff → next → PR-tail)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
       threads: makeSections(),
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state);
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // Both threads planned (one plan turn each). Orchestrate mode (default): each thread runs as ONE
-    // orchestrator execute turn that fans its steps out to writer subagents → 2 execute turns, not 4.
+    // No more build-time plan turns — each thread locks ONE step and runs as ONE orchestrator execute
+    // turn: 2 threads ⇒ 2 execute turns, zero plan turns.
     const planTurns = h.calls.filter((c) => c.mode === 'plan');
     const execTurns = h.calls.filter((c) => c.mode === 'execute');
-    expect(planTurns).toHaveLength(2);
+    expect(planTurns).toHaveLength(0);
     expect(execTurns).toHaveLength(2); // 2 threads × 1 orchestrator session
 
-    // Per-thread auto-fix ran once per thread; PR Review (the orchestrator that replaced PR-tail
-    // auto-fix) ran its one execute turn exactly once, on Claude.
+    // Per-thread auto-fix ran once per thread; Atlas opens the PR in-sandbox — ONE ship engine turn (master
+    // review no longer runs in ship; it's now a Codex build thread, absent from this mock's thread list).
     expect(h.autofix.autofixThread).toHaveBeenCalledTimes(2);
     expect(h.engineCalls).toEqual([{ mode: 'execute', engine: 'claude' }]);
 
     // Both threads are done with a handoff; the SECOND thread received the first's handoff.
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
-    expect(state.threads[1].handoffIn).toBe('handoff from Backend');
+    expect(state.threads[1].handoffIn).toContain('Backend');
 
-    // ONE branch, ONE push, ONE PR — threads stacked on the same feature branch.
-    expect(new Set(h.pushed).size).toBe(1);
-    expect(h.opened).toHaveLength(1);
-    expect(state.job.prUrl).toBe('https://github.com/acme/widget/pull/1');
+    // ONE branch — threads stacked on the same feature branch (the host never pushes; Atlas pushes
+    // in-sandbox as part of the ship turn, which ran).
+    expect(state.job.featureBranch).toBe('atlas/feature-job-abcd');
+    expect(
+      h.engineCalls.filter((c) => c.mode === 'execute' && c.engine === 'claude')
+        .length,
+    ).toBeGreaterThanOrEqual(1);
     expect(state.job.status).toBe('done');
-    expect(h.posts.some((p) => p.includes('PR ready'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('opening the PR'))).toBe(true);
   });
 
-  it('build turns ride the shared transcript spine: richStream on, blocks tagged meta.phaseId, a build_anchor per batch', async () => {
+  it('runs the master-review thread as a CODEX execute turn (xhigh) and SKIPS per-thread auto-fix for it', async () => {
+    // Capture per-turn engine + reasoning effort so we can assert the master-review branch flipped them.
+    const runs: Array<{ mode: string; engine: string; effort?: string; stepId?: string | null }> = [];
+    const turn = {
+      runTurn: vi.fn(
+        async (input: {
+          mode: string;
+          engine: string;
+          modelReasoningEffort?: string;
+          stepId?: string | null;
+          jobId: string;
+        }) => {
+          runs.push({
+            mode: input.mode,
+            engine: input.engine,
+            effort: input.modelReasoningEffort,
+            stepId: input.stepId,
+          });
+          return {
+            report: `did step ${input.stepId}`,
+            session: {
+              id: 'sess',
+              jobId: input.jobId,
+              stepId: input.stepId ?? null,
+              engine: input.engine as 'claude' | 'codex',
+              mode: input.mode as 'plan' | 'execute' | 'review',
+              branch: 'b',
+              worktreePath: '/wt/b',
+            },
+          };
+        },
+      ),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+
+    // One feature thread + the appended master-review thread (as persistPlan would leave it).
+    const review = thread('sec-review', 30, 'Master review — whole-diff review & fix', 'pending', true);
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend'), review],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { turn });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // The feature thread runs Claude; the master-review thread runs Codex at xhigh.
+    const execs = runs.filter((r) => r.mode === 'execute');
+    expect(execs).toHaveLength(2);
+    expect(execs[0].engine).toBe('claude');
+    expect(execs[1].engine).toBe('codex');
+    expect(execs[1].effort).toBe('xhigh');
+
+    // Auto-fix ran for the feature thread ONLY — the master-review thread IS the review, so it's skipped.
+    expect(h.autofix.autofixThread).toHaveBeenCalledTimes(1);
+    expect(state.threads.every((s) => s.status === 'done')).toBe(true);
+  });
+
+  it('build turns ride the shared transcript spine: richStream on, blocks tagged meta.phaseId, a build_anchor per thread batch', async () => {
     const seen: Array<{ mode: string; richStream?: boolean }> = [];
     const turn = {
       runTurn: vi.fn(
@@ -648,20 +683,17 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           onEvent?: (e: { kind: string; [k: string]: unknown }) => void;
         }) => {
           seen.push({ mode: input.mode, richStream: input.richStream });
-          if (input.mode === 'execute') {
-            input.onEvent?.({ kind: 'thinking', text: 'planning the edit' });
-            input.onEvent?.({ kind: 'text', text: 'editing the file' });
-            input.onEvent?.({
-              kind: 'tool_use',
-              id: 't1',
-              name: 'Edit',
-              input: { file_path: 'a.ts' },
-            });
-            input.onEvent?.({ kind: 'tool_result', id: 't1', result: 'ok' });
-          }
+          input.onEvent?.({ kind: 'thinking', text: 'planning the edit' });
+          input.onEvent?.({ kind: 'text', text: 'editing the file' });
+          input.onEvent?.({
+            kind: 'tool_use',
+            id: 't1',
+            name: 'Edit',
+            input: { file_path: 'a.ts' },
+          });
+          input.onEvent?.({ kind: 'tool_result', id: 't1', result: 'ok' });
           return {
-            report: input.mode === 'plan' ? 'plan' : `did ${input.stepId}`,
-            ...(input.mode === 'plan' ? { planText: 'PLAN' } : {}),
+            report: `did ${input.stepId}`,
             session: {
               id: 'sess',
               jobId: input.jobId,
@@ -683,17 +715,18 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       threads: makeSections(),
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state, { turn });
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // Every EXECUTE (build) turn requested richStream (plan turns don't).
+    // Every EXECUTE (build) turn requested richStream.
     const exec = seen.filter((c) => c.mode === 'execute');
     expect(exec.length).toBeGreaterThan(0);
     expect(exec.every((c) => c.richStream === true)).toBe(true);
 
-    // A synthetic `build_anchor` row per batch, each tagged with its phaseId.
+    // A synthetic `build_anchor` row per thread's batch, each tagged with its phaseId.
     const anchors = h.sunk.filter((s) => s.block.kind === 'build_anchor');
     expect(anchors.length).toBeGreaterThan(0);
     expect(
@@ -701,11 +734,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     ).toBe(true);
 
     // The transcript blocks landed via the durable sink — all tagged with meta.phaseId (peeled into the
-    // step). Excludes the PR Review orchestrator's own blocks (tagged `prReviewId`, not `phaseId` — a
-    // separate session entirely, see build-ship.service.ts).
+    // step). Excludes the ship turn's own blocks (tagged `shipId` — Atlas opening the PR in-sandbox) and
+    // the Master Review orchestrator's own blocks (tagged `prReviewId`, not `phaseId`) — both separate
+    // sessions entirely, see build-ship.service.ts.
     const transcript = h.sunk.filter(
       (s) =>
-        ['chat', 'thinking', 'tool'].includes(s.block.kind) && s.block.meta?.prReviewId == null,
+        ['chat', 'thinking', 'tool'].includes(s.block.kind) &&
+        s.block.meta?.prReviewId == null &&
+        s.block.meta?.shipId == null,
     );
     expect(transcript.length).toBeGreaterThan(0);
     expect(
@@ -734,27 +770,30 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
   });
 
   it('re-attaches a still-live build turn on resume instead of re-running it (recovery parity with the brain)', async () => {
-    // A single pre-locked thread whose ONLY batch already STARTED before a restart: its steps carry a
+    // A single pre-locked thread whose ONE batch already STARTED before a restart: its step carries a
     // persisted session + batch ordinal but no commit, so the driver re-enters runBatch for that batch.
-    const steps: Step[] = [0, 1].map((i) => ({
-      id: `sec-be-ph${i}`,
-      threadId: 'sec-be',
-      jobId: 'job-abcdef12',
-      ordinal: (i + 1) * 10,
-      title: `P${i}`,
-      brief: `do ${i}`,
-      stage: 'build' as const,
-      status: 'building' as StepStatus,
-      sessionId: 'sess-live', // persisted at turn start → the batch is a RESUME, not a fresh start
-      batchOrdinal: 1,
-      commitSha: null,
-    }));
+    const steps: Step[] = [
+      {
+        id: 'sec-be-ph0',
+        threadId: 'sec-be',
+        jobId: 'job-abcdef12',
+        ordinal: 10,
+        title: 'Backend',
+        brief: 'Backend',
+        stage: 'build' as const,
+        status: 'building' as StepStatus,
+        sessionId: 'sess-live', // persisted at turn start → the batch is a RESUME, not a fresh start
+        batchOrdinal: 1,
+        commitSha: null,
+      },
+    ];
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
       threads: [thread('sec-be', 10, 'Backend')],
       steps,
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
 
     // A runner that CAN re-attach; `reattach` resolves the in-flight turn and `runTurn` is a spy that must
@@ -803,104 +842,12 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(runTurn).not.toHaveBeenCalled();
     // A resume never re-emits the batch's START markers (no duplicate build_anchor).
     expect(h.sunk.filter((s) => s.block.kind === 'build_anchor')).toHaveLength(0);
-    // The resumed turn's transcript persisted + the batch committed → the run finishes to ONE PR.
-    expect(h.opened).toHaveLength(1);
-  });
-
-  // ── §D fresh-context step batching ──────────────────────────────────────────────────────────────
-  // A single thread PRE-LOCKED with N authored steps (the full-plan-up-front path): the driver finds
-  // steps already present → skips JIT planning → packs the ordered steps into execution batches.
-  function authoredState(n: number): StoreState {
-    const steps: Step[] = Array.from({ length: n }, (_, i) => ({
-      id: `sec-be-ph${i}`,
-      threadId: 'sec-be',
-      jobId: 'job-abcdef12',
-      ordinal: (i + 1) * 10,
-      title: `P${i}`,
-      brief: `do ${i}`,
-      stage: 'build',
-      status: 'pending' as StepStatus,
-      sessionId: null,
-      batchOrdinal: null,
-      commitSha: null,
-    }));
-    return {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps,
-      route: { channel: 'C1', threadTs: 't1' },
-    };
-  }
-
-  it('packs authored steps into batches: 5 steps → 2 sessions, one commit per batch, NO JIT plan turn', async () => {
-    const state = authoredState(5);
-    const h = assemble(state, { env: { ORCHESTRATE_THREADS: 'off' } }); // legacy LLM-batcher path
-    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([
-      [0, 1, 2],
-      [3, 4],
-    ]);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    // Pre-locked steps ⇒ NO JIT plan turn; 2 batches ⇒ 2 execute turns (not 5).
-    expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(0);
-    const exec = h.calls.filter((c) => c.mode === 'execute');
-    expect(exec).toHaveLength(2);
-    // Each batch is anchored on its first step (the session/resume cursor).
-    expect(exec.map((c) => c.stepId)).toEqual(['sec-be-ph0', 'sec-be-ph3']);
-    // Every step marked done; batch_ordinal persisted (group 1 / group 2).
-    expect(state.steps.every((p) => p.status === 'done')).toBe(true);
-    expect(state.steps.map((p) => p.batchOrdinal)).toEqual([1, 1, 1, 2, 2]);
-    // ONE commit per batch (2 build commits), then the single PR.
-    expect(h.commits.filter((m) => m.startsWith('Backend —'))).toHaveLength(2);
-    expect(h.opened).toHaveLength(1);
-  });
-
-  it('guardrail: an INVALID partition falls back to one batch per step', async () => {
-    const state = authoredState(3);
-    const h = assemble(state, { env: { ORCHESTRATE_THREADS: 'off' } }); // legacy LLM-batcher path
-    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([
-      [0, 2],
-    ]); // not covering [0,1,2]
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(3);
-    expect(state.steps.map((p) => p.batchOrdinal)).toEqual([1, 2, 3]);
-  });
-
-  it('guardrail: caps a too-large group at MAX_PHASES_PER_BATCH', async () => {
-    const state = authoredState(5);
-    const h = assemble(state, {
-      env: { MAX_PHASES_PER_BATCH: '2', ORCHESTRATE_THREADS: 'off' },
-    });
-    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([
-      [0, 1, 2, 3, 4],
-    ]);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    // One group of 5 capped at 2 → [0,1],[2,3],[4] → 3 sessions.
-    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(3);
-    expect(state.steps.map((p) => p.batchOrdinal)).toEqual([1, 1, 2, 2, 3]);
-  });
-
-  it('resume: batch_ordinal already set ⇒ batchSteps is NOT called again (stable membership)', async () => {
-    const state = authoredState(4);
-    // A prior run already batched (ordinals set) but crashed before any step finished.
-    state.steps.forEach((p, i) => (p.batchOrdinal = i < 2 ? 1 : 2));
-    const h = assemble(state);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(h.planner.batchSteps).not.toHaveBeenCalled();
-    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2); // re-grouped from stored ordinals
-    expect(state.steps.every((p) => p.status === 'done')).toBe(true);
+    // The resumed turn's transcript persisted + the batch committed → the run finishes; the ship turn ran
+    // (Atlas opens the PR in-sandbox, the host never does).
+    expect(
+      h.engineCalls.filter((c) => c.mode === 'execute' && c.engine === 'claude')
+        .length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it('every step ran in the SAME feature branch (threads share one thread sandbox)', async () => {
@@ -910,6 +857,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       threads: makeSections(),
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state);
     await h.driver.dispatch(state.job);
@@ -925,75 +873,34 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(state.steps.every((p) => p.status === 'done')).toBe(true);
   });
 
-  it('an uncovered always-ask decision PARKS the thread and resumes on the human answer', async () => {
+  it('persists resumable step step-state (the locked step ends done/done; session set during the turn)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
       threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
-    // A human reply we resolve LATER — the thread must suspend on `handle.answer` until then.
-    let resolveAnswer!: (r: ParkResolution) => void;
-    const answer = new Promise<ParkResolution>((res) => {
-      resolveAnswer = res;
-    });
-    // The planner surfaces a notable decision; the classifier says ASK → the thread parks.
-    const h = assemble(state, { classifierVerdict: 'ask', parkAnswer: answer });
-    (h.planner.extractDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { description: 'add a new users table' },
-    ]);
-
-    await h.driver.dispatch(state.job);
-    await flush();
-
-    // The thread parked: ask was called, the thread sits awaiting_approval, NO execute turn yet.
-    expect(h.ask).toHaveBeenCalledTimes(1);
-    expect(state.threads[0].status).toBe('awaiting_approval');
-    expect(h.calls.some((c) => c.mode === 'execute')).toBe(false);
-
-    // The human replies → the thread unparks and runs to completion.
-    resolveAnswer({
-      parkId: 'park1',
-      text: 'yes, use a users table',
-      authorId: 'U1',
-      ts: 'a1',
-    });
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(h.calls.some((c) => c.mode === 'execute')).toBe(true);
-    expect(state.threads[0].status).toBe('done');
-    expect(state.job.status).toBe('done');
-  });
-
-  it('persists resumable step step-state (each step ends done/done; session set during the turn)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-    };
-    // Legacy per-step path: asserts the interleaved building→done cursor (orchestrate runs one batch/thread).
-    const h = assemble(state, { env: { ORCHESTRATE_THREADS: 'off' } });
+    const h = assemble(state);
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
     const steps = state.steps.filter((p) => p.threadId === 'sec-be');
-    expect(steps).toHaveLength(2);
+    expect(steps).toHaveLength(1); // one locked step per thread now (the orchestrate anchor)
     expect(steps.every((p) => p.status === 'done' && p.stage === 'done')).toBe(
       true,
     );
-    // setStepState was driven to 'building' then 'done' for each step (explicit, resumable cursor).
+    // setStepState was driven to 'building' then 'done' for the one step (explicit, resumable cursor).
     expect(
       (h.store.setStepState as ReturnType<typeof vi.fn>).mock.calls.map(
         (c) => c[2],
       ),
-    ).toEqual(['building', 'done', 'building', 'done']);
+    ).toEqual(['building', 'done']);
   });
 
   it('resume() fast-forwards completed threads/steps after a simulated restart (no re-execution)', async () => {
-    // Simulate a restart MID-JOB: thread 1 (Backend) already done with a handoff + its steps done;
+    // Simulate a restart MID-JOB: thread 1 (Backend) already done with a handoff + its step done;
     // thread 2 (Frontend) still pending, no steps yet. Same store rows, a FRESH driver.
     const doneBackend = thread('sec-be', 10, 'Backend', 'done');
     doneBackend.handoffOut = 'handoff from Backend';
@@ -1007,49 +914,37 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           threadId: 'sec-be',
           jobId: 'job-abcdef12',
           ordinal: 10,
-          title: 'A',
-          brief: 'do A',
+          title: 'Backend',
+          brief: 'Backend',
           stage: 'done',
           status: 'done',
           sessionId: 's',
           batchOrdinal: 1,
           commitSha: null,
         },
-        {
-          id: 'sec-be-ph1',
-          threadId: 'sec-be',
-          jobId: 'job-abcdef12',
-          ordinal: 20,
-          title: 'B',
-          brief: 'do B',
-          stage: 'done',
-          status: 'done',
-          sessionId: 's',
-          batchOrdinal: 2,
-          commitSha: null,
-        },
       ],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
-    // Legacy per-step path: the pre-locked Backend steps were batched 1-per-ordinal; Frontend runs 2 steps.
-    const h = assemble(state, { env: { ORCHESTRATE_THREADS: 'off' } });
+    const h = assemble(state);
 
     await h.driver.resume();
     await flushUntil(() => state.job.status === 'done');
 
-    // The done Backend thread was NOT re-planned and NOT re-executed (no plan/exec turn for it).
-    // Only the Frontend thread planned (1 plan turn) + ran (2 exec turns).
-    expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(1);
-    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2);
-    // The Frontend thread received Backend's persisted handoff.
-    expect(state.threads[1].handoffIn).toBe('handoff from Backend');
-    // Still ONE PR.
-    expect(h.opened).toHaveLength(1);
+    // The done Backend thread was NOT re-executed (no exec turn for it). Only the Frontend thread ran
+    // (1 execute turn, no plan turn — there is no more build-time planning).
+    expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(0);
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(1);
+    // The ship turn ran (Atlas opens the PR in-sandbox, the host never does).
+    expect(
+      h.engineCalls.filter((c) => c.mode === 'execute' && c.engine === 'claude')
+        .length,
+    ).toBeGreaterThanOrEqual(1);
     expect(state.job.status).toBe('done');
   });
 
   it('orchestrate resume: a batch whose anchor already has a commit_sha FAST-FORWARDS (no re-run) (issue #6)', async () => {
-    // Crash AFTER the batch committed (commit_sha stamped on the anchor) but BEFORE the step rows flipped
+    // Crash AFTER the batch committed (commit_sha stamped on the anchor) but BEFORE the step row flipped
     // to done. Resume must NOT re-run the orchestrator against the already-committed tree.
     const state: StoreState = {
       job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
@@ -1061,112 +956,28 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           threadId: 'sec-be',
           jobId: 'job-abcdef12',
           ordinal: 10,
-          title: 'A',
-          brief: 'do A',
+          title: 'Backend',
+          brief: 'Backend',
           stage: 'build',
           status: 'building',
           sessionId: 's',
           batchOrdinal: 1,
           commitSha: 'abc123',
         },
-        {
-          id: 'sec-be-ph1',
-          threadId: 'sec-be',
-          jobId: 'job-abcdef12',
-          ordinal: 20,
-          title: 'B',
-          brief: 'do B',
-          stage: 'build',
-          status: 'building',
-          sessionId: 's',
-          batchOrdinal: 1,
-          commitSha: null,
-        },
       ],
       route: { channel: 'C1', threadTs: 't1' },
-    };
-    const h = assemble(state); // orchestrate default
-
-    await h.driver.resume();
-    await flushUntil(() => state.job.status === 'done');
-
-    // The committed batch fast-forwarded: NO execute turn, NO new commit, both steps marked done.
-    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
-    expect(h.commits.filter((m) => m.startsWith('Backend —'))).toHaveLength(0);
-    expect(state.steps.every((p) => p.status === 'done')).toBe(true);
-    expect(state.job.status).toBe('done');
-  });
-
-  it('resume() re-runs an interrupted (executing) step — reopens the current step, idempotent commit', async () => {
-    // A step left mid-build by a crash: status 'building'. resume() should re-run it (status not done).
-    const state: StoreState = {
-      job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'executing')],
-      steps: [
-        {
-          id: 'sec-be-ph0',
-          threadId: 'sec-be',
-          jobId: 'job-abcdef12',
-          ordinal: 10,
-          title: 'A',
-          brief: 'do A',
-          stage: 'done',
-          status: 'done',
-          sessionId: 's',
-          batchOrdinal: 1,
-          commitSha: null,
-        },
-        {
-          id: 'sec-be-ph1',
-          threadId: 'sec-be',
-          jobId: 'job-abcdef12',
-          ordinal: 20,
-          title: 'B',
-          brief: 'do B',
-          stage: 'build',
-          status: 'building',
-          sessionId: 's2',
-          batchOrdinal: 2,
-          commitSha: null,
-        },
-      ],
-      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state);
 
     await h.driver.resume();
     await flushUntil(() => state.job.status === 'done');
 
-    // The already-locked steps skip planning; only the unfinished step (B) re-runs.
-    expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(0); // steps already locked
-    const execPhaseIds = h.calls
-      .filter((c) => c.mode === 'execute')
-      .map((c) => c.stepId);
-    expect(execPhaseIds).toEqual(['sec-be-ph1']); // only the interrupted step
-    expect(state.steps.find((p) => p.id === 'sec-be-ph1')?.status).toBe('done');
+    // The committed batch fast-forwarded: NO execute turn, NO new commit, the step marked done.
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
+    expect(h.commits.filter((m) => m.startsWith('Backend —'))).toHaveLength(0);
+    expect(state.steps.every((p) => p.status === 'done')).toBe(true);
     expect(state.job.status).toBe('done');
-  });
-
-  it('a clean stimulus (no always-ask) proceeds without parking — covered/proceed never blocks', async () => {
-    const state: StoreState = {
-      job: makeJob({ kind: 'bugfix' }),
-      record: makeRecord(),
-      threads: [thread('sec-fix', 10, 'Fix the bug')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-    };
-    const h = assemble(state, { classifierVerdict: 'covered' });
-    (h.planner.extractDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { description: 'reuse the existing users table' },
-    ]);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(h.ask).not.toHaveBeenCalled();
-    expect(state.job.status).toBe('done');
-    expect(h.opened).toHaveLength(1);
   });
 
   it('posts in-thread progress as the build advances (issue #2)', async () => {
@@ -1176,6 +987,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       threads: makeSections(),
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state);
     await h.driver.dispatch(state.job);
@@ -1190,7 +1002,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.posts.some((p) => p.toLowerCase().includes('building'))).toBe(
       true,
     );
-    expect(h.posts.some((p) => p.includes('PR ready'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('opening the PR'))).toBe(true);
   });
 
   it('relays a clear "build failed — why" when a step errors, never dead-ends silently (issue #2)', async () => {
@@ -1200,13 +1012,12 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state);
-    // Plan turn succeeds; the execute turn explodes → must propagate to a failure relay.
+    // The execute turn explodes → must propagate to a failure relay.
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: { mode: string }) => {
-        if (input.mode === 'plan')
-          return { report: 'plan', planText: 'PLAN', session: {} };
+      async () => {
         throw new Error('engine exploded mid-step');
       },
     );
@@ -1231,6 +1042,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state);
     // The process is shutting down: the in-flight turn's host-side await is cut off → it throws like a
@@ -1238,9 +1050,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // re-drive it (`runningJobs()` only re-drives `status:'running'`).
     h.electionState.draining = true;
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: { mode: string }) => {
-        if (input.mode === 'plan')
-          return { report: 'plan', planText: 'PLAN', session: {} };
+      async () => {
         throw new Error('aborted: backend draining');
       },
     );
@@ -1248,9 +1058,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await h.driver.dispatch(state.job);
     // Wait until the execute turn has been attempted (so the drive catch has run), then drain a few ticks.
     await flushUntil(() =>
-      (h.turn.runTurn as ReturnType<typeof vi.fn>).mock.calls.some(
-        (c) => c[0].mode !== 'plan',
-      ),
+      (h.turn.runTurn as ReturnType<typeof vi.fn>).mock.calls.length > 0,
     );
     await flushUntil(() => false, 20);
 
@@ -1270,16 +1078,13 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state, { env: { PHASE_TIMEOUT_MS: '20' } });
-    // Plan resolves; the execute turn NEVER settles AND ignores the abort signal (mimics the real SDK
-    // stuck in a non-yielding subprocess). The HARD race-timeout must still bound the driver.
+    // The execute turn NEVER settles AND ignores the abort signal (mimics the real SDK stuck in a
+    // non-yielding subprocess). The HARD race-timeout must still bound the driver.
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: { mode: string }) => {
-        if (input.mode === 'plan')
-          return { report: 'plan', planText: 'PLAN', session: {} };
-        return new Promise(() => {}); // never settles, never honors abort
-      },
+      async () => new Promise(() => {}), // never settles, never honors abort
     );
 
     await h.driver.dispatch(state.job);
@@ -1300,26 +1105,23 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state);
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: { mode: string; stepId?: string | null }) => {
-        if (input.mode === 'plan')
-          return { report: 'plan', planText: 'PLAN', session: {} };
-        return {
-          report:
-            'Implemented the endpoint.\nDEVIATION: added a README nobody asked for.',
-          session: {
-            id: 's',
-            jobId: 'j',
-            stepId: input.stepId ?? null,
-            engine: 'claude',
-            mode: 'execute',
-            branch: 'b',
-            worktreePath: '/wt/b',
-          },
-        };
-      },
+      async (input: { mode: string; stepId?: string | null }) => ({
+        report:
+          'Implemented the endpoint.\nDEVIATION: added a README nobody asked for.',
+        session: {
+          id: 's',
+          jobId: 'j',
+          stepId: input.stepId ?? null,
+          engine: 'claude',
+          mode: 'execute',
+          branch: 'b',
+          worktreePath: '/wt/b',
+        },
+      }),
     );
 
     await h.driver.dispatch(state.job);
@@ -1333,38 +1135,6 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(state.job.status).toBe('done'); // a deviation is surfaced, not a failure
   });
 
-  it('fails + relays a park that is never answered (PARK_TIMEOUT_MS) instead of hanging forever', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-    };
-    const never = new Promise<ParkResolution>(() => {}); // the human never answers
-    const h = assemble(state, {
-      classifierVerdict: 'ask',
-      parkAnswer: never,
-      env: { PARK_TIMEOUT_MS: '20' },
-    });
-    (h.planner.extractDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { description: 'add a new users table' },
-    ]);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'failed');
-
-    expect(h.ask).toHaveBeenCalledTimes(1); // it did park
-    expect(state.job.status).toBe('failed'); // but did NOT hang — timed out
-    expect(
-      h.posts.some(
-        (p) => p.includes('Build failed') && /waiting for your input/i.test(p),
-      ),
-    ).toBe(true);
-    expect(h.calls.some((c) => c.mode === 'execute')).toBe(false); // never got past the gate
-    expect(h.opened).toHaveLength(0);
-  });
-
   it('PAUSES the job (not failed) on an EngineAuthError and relays a pause notice (resume feature)', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -1372,12 +1142,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state);
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: { mode: string }) => {
-        if (input.mode === 'plan')
-          return { report: 'plan', planText: 'PLAN', session: {} };
+      async () => {
         throw new EngineAuthError('401 invalid api key', 'sess-401');
       },
     );
@@ -1400,6 +1169,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       threads: [thread('sec-be', 10, 'Backend', 'done')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const noop = assemble(running);
     await noop.driver.resumePaused(running.job.id);
@@ -1412,40 +1182,88 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
     const h = assemble(state);
     await h.driver.resumePaused(state.job.id);
     await flushUntil(() => state.job.status === 'done');
     expect(state.job.status).toBe('done');
-    expect(h.opened).toHaveLength(1);
+    expect(
+      h.engineCalls.filter((c) => c.mode === 'execute' && c.engine === 'claude')
+        .length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
-  it('bounds a runaway thread PLAN turn — aborts + falls back to the planner, no hang (issue #3)', async () => {
+  it('request_operator_input pauses the thread and resumes on the operator\'s answer', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
       threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
-    const h = assemble(state, { env: { PHASE_TIMEOUT_MS: '20' } });
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: { mode: string; stepId?: string | null }) => {
-        // The plan turn NEVER settles and ignores abort (a runaway read-only exploration the SDK won't
-        // interrupt). The hard race-timeout must bound it and fall back to the planner.
-        if (input.mode === 'plan') return new Promise(() => {});
-        return { report: `did ${input.stepId}`, session: {} };
+    // The build turn calls the tool bridge's `request_operator_input`, then returns using its answer.
+    const turn = {
+      runTurn: vi.fn(
+        async (input: {
+          mode: string;
+          jobId: string;
+          stepId?: string | null;
+          toolBridge?: ToolBridgeOptions;
+        }) => {
+          const result = await input.toolBridge!.tools['request_operator_input']!({
+            question: 'Use Postgres or SQLite?',
+          });
+          return {
+            report: `answered: ${JSON.stringify(result)}`,
+            session: {
+              id: 'sess',
+              jobId: input.jobId,
+              stepId: input.stepId ?? null,
+              engine: 'claude' as const,
+              mode: 'execute' as const,
+              branch: 'b',
+              worktreePath: '/wt/b',
+            },
+          };
+        },
+      ),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+
+    const h = assemble(state, { turn });
+
+    // Pre-seed the answer the moment a card is opened, so the poll loop returns on its very first read.
+    const originalOpen = (h.store.openOperatorInputCard as ReturnType<typeof vi.fn>).getMockImplementation()!;
+    (h.store.openOperatorInputCard as ReturnType<typeof vi.fn>).mockImplementation(
+      async (jobId: string, question: string) => {
+        const opened = await originalOpen(jobId, question);
+        const card = state.operatorInputCards.find((c) => c.questionId === opened.questionId);
+        if (card) card.answer = 'Use Postgres.';
+        return opened;
       },
     );
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // The plan turn timed out but the build did NOT hang: the structured planner supplied steps and
-    // execution proceeded to completion (steps committed, one PR opened).
+    // The tool was consulted (a card was opened) and resolved to the answer.
+    expect(h.store.openOperatorInputCard).toHaveBeenCalledTimes(1);
+    expect(h.store.findOpenOperatorInputCard).toHaveBeenCalled();
+    expect(h.store.readOperatorInputAnswer).toHaveBeenCalled();
+    expect(h.store.markOperatorInputDelivered).toHaveBeenCalledTimes(1);
+
+    // The thread's status went to 'awaiting_input' then back to 'executing' around the pause.
+    const statusCalls = (h.store.setThreadStatus as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c) => c[1],
+    );
+    expect(statusCalls).toContain('awaiting_input');
+    const awaitIdx = statusCalls.indexOf('awaiting_input');
+    expect(statusCalls.slice(awaitIdx + 1)).toContain('executing');
+
+    // The build proceeded to completion carrying the answer in its report.
     expect(state.job.status).toBe('done');
-    expect(h.commits.length).toBeGreaterThan(0);
-    expect(h.opened).toHaveLength(1);
   });
 });
 
@@ -1459,7 +1277,7 @@ async function flush(): Promise<void> {
   }
 }
 
-/** Spin the event loop until a predicate holds (or a cap), for the park/resume cases. */
+/** Spin the event loop until a predicate holds (or a cap), for the pause/resume cases. */
 async function flushUntil(pred: () => boolean, cap = 300): Promise<void> {
   for (let i = 0; i < cap; i++) {
     if (pred()) return;
@@ -1481,12 +1299,11 @@ describe('ThreadDriver — 401 auth recovery', () => {
           stepId?: string | null;
           jobId: string;
         }) => {
-          if (input.mode === 'execute' && ++executes === 1) {
+          if (++executes === 1) {
             throw new EngineAuthError('401 Invalid API key', 'sess-401');
           }
           return {
-            report: input.mode === 'plan' ? 'plan' : `did ${input.stepId}`,
-            ...(input.mode === 'plan' ? { planText: 'P' } : {}),
+            report: `did ${input.stepId}`,
             session: {
               id: 'sess-401',
               jobId: input.jobId,
@@ -1510,6 +1327,7 @@ describe('ThreadDriver — 401 auth recovery', () => {
       threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
     };
   }
 
@@ -1534,8 +1352,10 @@ describe('ThreadDriver — 401 auth recovery', () => {
     await flushUntil(() => state.job.status === 'done');
 
     expect(state.job.status).toBe('done');
-    expect(h.opened).toHaveLength(1);
-    expect(state.job.prUrl).toBe('https://github.com/acme/widget/pull/1');
+    expect(
+      h.engineCalls.filter((c) => c.mode === 'execute' && c.engine === 'claude')
+        .length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it('resumePaused is a no-op when the job is not paused', async () => {

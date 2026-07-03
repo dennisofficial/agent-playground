@@ -3,7 +3,7 @@ import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/
 import { RunnableSequence, type Runnable } from '@langchain/core/runnables';
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { renderSystemPrompt } from '../prompt-kit';
+import { Agent, renderAgentPrompt } from '../prompt-kit';
 
 /**
  * The THREAD-TITLE chain — a tiny non-agentic LLM call that turns a thread's first message into a short,
@@ -30,7 +30,7 @@ export namespace JobTitleChain {
   export const build = (llm: BaseChatModel): Runnable<Input, Output> =>
     RunnableSequence.from<Input, Output>([
       ChatPromptTemplate.fromMessages([
-        new SystemMessage(renderSystemPrompt('meta-job-titler')),
+        new SystemMessage(renderAgentPrompt(Agent.META_TITLER)),
         // The message is fenced as data (never re-parsed — it's a template variable) so the model
         // reads it as the thing to title, not as a prompt addressed to it.
         HumanMessagePromptTemplate.fromTemplate(

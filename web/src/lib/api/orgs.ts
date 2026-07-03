@@ -119,7 +119,7 @@ export function useSaveCredentials(orgId: string) {
 // ── Worktree secrets (named secret files rendered into a thread's sandbox) ─────────────────────────
 // GET returns names + grants only (never values). Writes (secret PUT/DELETE, grant PUT/DELETE) are
 // owner-only server-side. A secret is inert until an owner GRANTS it for a specific repo + path — the
-// grant alone is the authority (worktree config — mounts/seed — is a separate DB record and never
+// grant alone is the authority (worktree config — mounts — is a separate DB record and never
 // carries secrets; see docs/adr/0003-worktree-config-db-not-git.md).
 
 export interface WorktreeSecretGrant {

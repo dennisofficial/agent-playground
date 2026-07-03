@@ -23,11 +23,11 @@ describe('loadLegacyManifestFile', () => {
 
   it('returns an empty manifest (no warnings) when the file is absent', () => {
     const { manifest, warnings } = loadLegacyManifestFile(wt);
-    expect(manifest).toEqual({ mounts: [], seed: [] });
+    expect(manifest).toEqual({ mounts: [] });
     expect(warnings).toEqual([]);
   });
 
-  it('parses a well-formed manifest (incl. shared-rw)', () => {
+  it('parses a well-formed manifest (incl. shared-rw); a legacy seed[] is ignored', () => {
     writeManifest(
       JSON.stringify({
         mounts: [
@@ -39,25 +39,25 @@ describe('loadLegacyManifestFile', () => {
       }),
     );
     const { manifest } = loadLegacyManifestFile(wt);
-    expect(manifest.mounts).toEqual([
-      { path: '.cocoindex', mode: 'per-thread' },
-      { path: 'reference', mode: 'shared-ro' },
-      { path: '.gcloud', mode: 'shared-rw' },
-    ]);
-    expect(manifest.seed).toEqual(['.env.local']);
+    expect(manifest).toEqual({
+      mounts: [
+        { path: '.cocoindex', mode: 'per-thread' },
+        { path: 'reference', mode: 'shared-ro' },
+        { path: '.gcloud', mode: 'shared-rw' },
+      ],
+    });
   });
 
   it('reads the legacy .atlas/worktree.json when atlas.json is absent', () => {
-    writeLegacyManifest(JSON.stringify({ mounts: [{ path: 'reference', mode: 'shared-ro' }], seed: ['.env.local'] }));
+    writeLegacyManifest(JSON.stringify({ mounts: [{ path: 'reference', mode: 'shared-ro' }] }));
     const { manifest } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([{ path: 'reference', mode: 'shared-ro' }]);
-    expect(manifest.seed).toEqual(['.env.local']);
   });
 
   it('prefers atlas.json over the legacy path when both exist', () => {
-    writeLegacyManifest(JSON.stringify({ seed: ['legacy'] }));
-    writeManifest(JSON.stringify({ seed: ['current'] }));
-    expect(loadLegacyManifestFile(wt).manifest.seed).toEqual(['current']);
+    writeLegacyManifest(JSON.stringify({ mounts: [{ path: 'legacy', mode: 'per-thread' }] }));
+    writeManifest(JSON.stringify({ mounts: [{ path: 'current', mode: 'per-thread' }] }));
+    expect(loadLegacyManifestFile(wt).manifest.mounts).toEqual([{ path: 'current', mode: 'per-thread' }]);
   });
 
   it('defaults an unknown/absent mount mode to per-thread (with a warning for unknown)', () => {
@@ -74,12 +74,10 @@ describe('loadLegacyManifestFile', () => {
     writeManifest(
       JSON.stringify({
         mounts: [{ path: '.cocoindex', mode: 'per-thread' }, { mode: 'shared-ro' }],
-        seed: ['.ok', 42, ''],
       }),
     );
     const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([{ path: '.cocoindex', mode: 'per-thread' }]);
-    expect(manifest.seed).toEqual(['.ok']);
     expect(warnings.length).toBeGreaterThan(0);
   });
 
@@ -117,23 +115,25 @@ describe('loadLegacyManifestFile', () => {
   });
 
   it('ignores a manifest that exceeds the size limit', () => {
-    writeManifest(JSON.stringify({ seed: ['x'.repeat(70 * 1024)] }));
+    writeManifest(JSON.stringify({ mounts: [{ path: 'x'.repeat(70 * 1024), mode: 'per-thread' }] }));
     const { manifest, warnings } = loadLegacyManifestFile(wt);
-    expect(manifest.seed).toEqual([]);
+    expect(manifest.mounts).toEqual([]);
     expect(warnings[0]).toMatch(/exceeds/);
   });
 
   it('caps an over-long array and warns', () => {
-    writeManifest(JSON.stringify({ seed: Array.from({ length: 250 }, (_, i) => `f${i}`) }));
+    writeManifest(
+      JSON.stringify({ mounts: Array.from({ length: 250 }, (_, i) => ({ path: `f${i}`, mode: 'per-thread' })) }),
+    );
     const { manifest, warnings } = loadLegacyManifestFile(wt);
-    expect(manifest.seed.length).toBe(100);
+    expect(manifest.mounts.length).toBe(100);
     expect(warnings.some((w) => w.includes('exceeds'))).toBe(true);
   });
 
   it('returns empty + a warning on invalid JSON', () => {
     writeManifest('{ not json');
     const { manifest, warnings } = loadLegacyManifestFile(wt);
-    expect(manifest).toEqual({ mounts: [], seed: [] });
+    expect(manifest).toEqual({ mounts: [] });
     expect(warnings[0]).toMatch(/unreadable/);
   });
 });

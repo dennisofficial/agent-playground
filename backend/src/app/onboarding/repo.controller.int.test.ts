@@ -28,7 +28,6 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { PLANNER_LLM } from '../driver';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
@@ -37,7 +36,6 @@ import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
-  FakePlannerLlm,
 } from '../e2e/e2e-stubs';
 import { CredentialResolver } from './credential-resolver.service';
 
@@ -116,8 +114,6 @@ beforeAll(async () => {
   process.env.SURFACE = 'agent';
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(PLANNER_LLM)
-    .useValue(new FakePlannerLlm())
     .overrideProvider(CLASSIFIER_LLM)
     .useValue(new FakeClassifierLlm())
     .overrideProvider(ENGINE_RUNNER)

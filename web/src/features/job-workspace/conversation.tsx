@@ -26,7 +26,6 @@ import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
 import { BuildInstruction, BuildStepCard, indexPhaseBlocks } from './phases';
 import { CodexReviewCard, codexReviewNode, indexCodexReviewBlocks } from './codex-review';
 import { indexAutofixBlocks } from './review-lane';
-import { indexPrReviewBlocks } from './pr-review';
 import { Composer } from './composer';
 import { DetailTopBar } from './detail-top-bar';
 import type { JobMessage, JobRef } from '@/lib/api/job-api';
@@ -202,7 +201,9 @@ export function TranscriptView({
               ))}
             </div>
           )}
-          {liveTurn && liveBlockCount > 0 ? <LiveTurnView turn={liveTurn} onSelectNode={onSelectNode} /> : null}
+          {liveTurn && liveBlockCount > 0 ? (
+            <LiveTurnView turn={liveTurn} lane={lane} onSelectNode={onSelectNode} />
+          ) : null}
           {live || turnActive ? <LiveIndicator turn={turnActive ? liveTurn : undefined} /> : null}
           {/* Spacer so the last line clears the floating composer (or just breathes on read-only lanes). */}
           <div className="shrink-0" style={{ height: bottomPad }} aria-hidden />
@@ -252,22 +253,23 @@ function buildLogItems(
   const phase = indexPhaseBlocks(log);
   const codex = indexCodexReviewBlocks(log);
   const autofix = indexAutofixBlocks(log);
-  const prReview = indexPrReviewBlocks(log);
 
   const isMain = lane === MAIN_LANE;
-  // The pinned PR Review thread's lane: `pr-review:<jobId>` — see `pr-review.ts`.
-  const isPrReviewLane = lane.startsWith('pr-review:');
   const isCodexLane = lane.startsWith('codex-review:');
   // A build thread/step lane streams on the STABLE `thread:<id>` lane and always passes `phaseIds` (the step
   // anchors to render); the legacy `phase:<id>` derivation is a fallback for any old lane string.
   const phaseAnchor = lane.startsWith('phase:') ? lane.slice('phase:'.length) : null;
   const phaseSet: Set<string> | null =
     opts.phaseIds ?? (phaseAnchor ? new Set([phaseAnchor]) : null);
-  // A review-lens sub-page lane: `autofix:<autofixId>:<lensId>` — see `review-lane.ts`.
-  const isReviewLensLane = lane.startsWith('autofix:');
-  const reviewLensParts = isReviewLensLane ? lane.split(':') : null; // ['autofix', autofixId, lensId]
-  const reviewAutofixId = reviewLensParts?.[1] ?? null;
-  const reviewLensId = reviewLensParts?.[2] ?? null;
+  // An auto-fix sub-page lane: `autofix:<autofixId>:<lensId>` (a review lens) OR `autofix:<autofixId>:fix`
+  // (the post-review fix turn) — see `review-lane.ts`. The two are tagged differently: a lens block carries
+  // `meta.lensId`, the fix turn carries `meta.fixTurn: true` (NO lensId), so the fix lane must match on the
+  // latter or its transcript renders permanently empty.
+  const isAutofixLane = lane.startsWith('autofix:');
+  const autofixParts = isAutofixLane ? lane.split(':') : null; // ['autofix', autofixId, lensId|'fix']
+  const reviewAutofixId = autofixParts?.[1] ?? null;
+  const reviewLensId = autofixParts?.[2] ?? null;
+  const isFixLane = reviewLensId === 'fix';
 
   const flush = () => {
     if (pending.length === 0) return;
@@ -290,7 +292,7 @@ function buildLogItems(
           <SubagentCard
             key={message.ts}
             summary={summary}
-            onOpen={() => onSelectNode?.(subagentNode(summary.parentId))}
+            onOpen={() => onSelectNode?.(subagentNode(lane, summary.parentId))}
           />
         ),
       });
@@ -309,11 +311,6 @@ function buildLogItems(
       // still renders normally, so the operator isn't left with zero signal.
       if (autofix.childKeys.has(message.ts)) continue;
       if (autofix.anchorKeys.has(message.ts)) continue;
-      // The PR Review session's blocks + anchor row are peeled the same way — the pinned FINAL REVIEW row
-      // in the navigator is the surface (its transcript is the `pr-review` lane); the stage's plain
-      // "PR Review — …" notice line still renders here as the in-conversation signal.
-      if (prReview.childKeys.has(message.ts)) continue;
-      if (prReview.anchorKeys.has(message.ts)) continue;
       if (codex.anchorKeys.has(message.ts)) {
         flush();
         nodes.push({
@@ -378,20 +375,12 @@ function buildLogItems(
         pushSubagentCard(message);
         continue;
       }
-    } else if (isReviewLensLane) {
-      // A review-lens lane shows only that lens's own blocks; a subagent spawned within it peels to its own
-      // sub-page, same as any other lane.
+    } else if (isAutofixLane) {
+      // An auto-fix sub-lane shows only its OWN blocks: the fix turn matches `meta.fixTurn` (no lensId), a
+      // review lens matches `meta.lensId`. A subagent spawned within it peels to its own sub-page.
       const m = message.meta ?? {};
-      if (m.autofixId !== reviewAutofixId || m.lensId !== reviewLensId) continue;
-      if (sub.childKeys.has(message.ts)) continue;
-      if (sub.anchorKeys.has(message.ts)) {
-        pushSubagentCard(message);
-        continue;
-      }
-    } else if (isPrReviewLane) {
-      // The PR Review lane shows only the orchestrator session's own blocks (tagged `meta.prReviewId`);
-      // a subagent spawned within it peels to its own sub-page, same as any other lane.
-      if (!prReview.childKeys.has(message.ts)) continue;
+      if (m.autofixId !== reviewAutofixId) continue;
+      if (isFixLane ? m.fixTurn !== true : m.lensId !== reviewLensId) continue;
       if (sub.childKeys.has(message.ts)) continue;
       if (sub.anchorKeys.has(message.ts)) {
         pushSubagentCard(message);

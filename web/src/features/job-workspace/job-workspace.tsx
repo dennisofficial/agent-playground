@@ -6,6 +6,7 @@ import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-re
 import { useAllJobs } from '@/lib/api/inbox';
 import { useJobMessages, usePipeline, useJobContext, useDeleteJob, useRenameJob, useSay } from '@/lib/api/job-queries';
 import { useJobEvents } from '@/lib/api/job-events';
+import { MAIN_LANE } from '@/lib/api/job-stream';
 import { toJobStatus } from '@/lib/api/status';
 import { orgSwatch } from '@/lib/org-display';
 import { ROUTES } from '@/lib/routes';
@@ -31,7 +32,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   const { data: inbox } = useAllJobs();
   const { data: messages = [], isLoading: messagesLoading } = useJobMessages(ref);
-  const { data: pipeline, isLoading: pipelineLoading, isError: pipelineError } = usePipeline(ref);
+  const { data: pipeline, isLoading: pipelineLoading } = usePipeline(ref);
   const { data: context, isLoading: contextLoading } = useJobContext(ref);
   const del = useDeleteJob(ref);
   const rename = useRenameJob(ref);
@@ -46,7 +47,8 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   // Two independent selections: `laneNode` (?lane=) drives the LEFT pane (a THREADS lane — Main or a build
   // thread/step); `detailNode` (?node=) drives the RIGHT pane (an OUTPUT / port / subagent / doc). A thread
   // switch navigates to a fresh clean URL with no query, so both reset — no reset effect needed.
-  const { laneNode, detailNode, subNode, selectNode, openConversation, closeDetail, closeSub } = useSelectedNode();
+  const { laneNode, detailNode, subNode, subLane, selectNode, openConversation, closeDetail, closeSub } =
+    useSelectedNode();
 
   // Persist the conversation/detail split ratio across reloads (per-browser). `panelIds` lets the
   // library remember the layout even though the detail panel is only conditionally mounted.
@@ -155,7 +157,6 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
               jobRef={ref}
               pipeline={pipeline}
               pipelineLoading={pipelineLoading}
-              pipelineError={pipelineError}
               messages={messages}
               approvalCard={approvalCard}
               selectedNode={laneNode}
@@ -193,6 +194,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
                 jobRef={ref}
                 messages={messages}
                 parentId={subNode}
+                lane={subLane ?? MAIN_LANE}
                 base={detailNode ? baseCrumbLabel(detailNode) : null}
                 onBack={closeSub}
               />
@@ -201,7 +203,6 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
                 jobRef={ref}
                 pipeline={pipeline}
                 pipelineLoading={pipelineLoading}
-                pipelineError={pipelineError}
                 messages={messages}
                 approvalCard={approvalCard}
                 selectedNode={detailNode}

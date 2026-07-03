@@ -97,6 +97,8 @@ export function threadColor(status: ThreadStatus): { color: string; pulse: boole
     case 'auto_fixing':
       return { color: 'var(--accent)', pulse: true };
     case 'awaiting_approval':
+    // A mid-build `request_operator_input` pause — same muted "needs you" slate as awaiting_approval.
+    case 'awaiting_input':
       return { color: 'var(--slate)', pulse: false };
     case 'failed':
       return { color: 'var(--red)', pulse: false };

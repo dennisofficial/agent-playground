@@ -1,8 +1,0 @@
-{
-  "//": "ts-node config for the W1 acceptance-gate CLI (`pnpm gate`). Adds a baseUrl so tsconfig-paths can resolve the `@core/*` aliases the gate's composition root uses; includes the atlas tree + the gate entrypoint. NOT a build config (the app builds via nest-cli).",
-  "extends": "./tsconfig.cli.json",
-  "compilerOptions": {
-    "baseUrl": "."
-  },
-  "include": ["src/app/**/*", "src/_core/**/*", "src/_lib/**/*"]
-}

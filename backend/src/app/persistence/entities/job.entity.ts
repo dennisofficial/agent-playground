@@ -4,7 +4,7 @@ import type { Decision } from '../../domain/decision-record';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
-import type { ReviewAgentState, TaskItem } from './thread.entity';
+import type { TaskItem } from './thread.entity';
 import { TicketEntity } from './ticket.entity';
 
 /**
@@ -187,40 +187,24 @@ export class JobEntity extends TimestampedEntity {
   pr_mergeable!: string | null;
 
   /**
-   * The PR-TAIL review agents (lenses) + their per-agent status — the JOB-level twin of
-   * {@link ThreadEntity.review_agents}. Seeded at `pending` when the PR-tail auto-fix pass starts
-   * (`BuildShipService.ship`), transitioned as each lens runs, surfaced by `getPipelineState` so the
-   * navigator's job-level "Final review" node can show each agent's state. `[]` until the PR-tail runs.
-   * LITERAL default — a function default loops `migration:generate` (see the jsonb-default-loop memory).
-   */
-  @Column({ type: 'jsonb', default: [] })
-  review_agents!: ReviewAgentState[];
-
-  /**
-   * The PR Review orchestrator's LLM-authored task list — the JOB-level twin of
-   * {@link ThreadEntity.tasks}, folded incrementally from its `TaskCreate`/`TaskUpdate` tool calls at the
-   * shared transcript harness. `[]` until the orchestrator creates its first task. LITERAL default — see
-   * the `review_agents` doc above for why a function default breaks `migration:generate`.
-   */
-  @Column({ type: 'jsonb', default: [] })
-  tasks!: TaskItem[];
-
-  /**
-   * The PR Review orchestrator's card-header state (`queued | reviewing | fixing | verifying | opened |
-   * failed`) — null until `BuildShipService.ship()` starts the orchestrator session. Separate from
-   * {@link status} (the thread's own build lifecycle), which is already `done`/terminal by the time PR
-   * Review runs. `opened` (not `merged`) because Atlas only opens the PR — merging stays a manual GitHub
-   * action.
+   * Observed PR LIFECYCLE state (`open | merged | closed`) — the reconciler/teardown-owned column that
+   * drives the sidebar's PR-status glyph (green ready / amber conflict / purple merged / red closed).
+   * SEPARATE from {@link status} (the build lifecycle, which latches to `done` the moment a PR opens and
+   * can't distinguish open-vs-merged) and from {@link pr_mergeable} (the merge-conflict signal). Latched
+   * to `open` when the PR is recorded (`setPrReady` / reconciler discovery) and to its terminal value by
+   * `pollPrClosures` before the sandbox is torn down (the job row SURVIVES a merge — never auto-deleted).
+   * Null until a PR exists.
    */
   @Column({ type: 'text', nullable: true })
-  pr_review_status!: string | null;
+  pr_state!: string | null;
 
   /**
    * The MAIN brain session's own LLM-authored task list (the navigator's Main-row checklist), folded from
-   * its `TaskCreate`/`TaskUpdate` calls on the `main` lane — a SEPARATE column from {@link tasks} (the PR
-   * Review orchestrator's list) so `startPrReview`'s task reset can never wipe the brain's checklist.
-   * LITERAL default — see the `review_agents` doc above for why a function default breaks
-   * `migration:generate`.
+   * its `TaskCreate`/`TaskUpdate` calls on the `main` lane. LITERAL default — a function default loops
+   * `migration:generate` (see the jsonb-default-loop memory).
+   *
+   * NOTE: the old JOB-level PR-review columns (`review_agents`, `tasks`, `pr_review_status`) were dropped
+   * when master review became a normal build thread — its lenses/tasks now live on `ThreadEntity`.
    */
   @Column({ type: 'jsonb', default: [] })
   main_tasks!: TaskItem[];
@@ -259,7 +243,7 @@ export class JobEntity extends TimestampedEntity {
    * finished (a crash after claim, before the ledger commit, would look done forever). Mirrors the
    * `plan_reviews` spine (status + a completion timestamp). Values: `pending | running | complete |
    * failed`; null = never started. Claimed atomically (null/pending/failed → `running`); the resumable
-   * driver (`finishWithPr`) + a fail-soft boot backstop re-run anything stuck in `running`.
+   * driver (`finalizeBuild`) + a fail-soft boot backstop re-run anything stuck in `running`.
    */
   @Column({ type: 'text', nullable: true })
   ledger_promotion_status!: string | null;

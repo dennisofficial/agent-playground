@@ -76,7 +76,6 @@ export class WorktreeProvisioner {
     if (input.forceHydrate || hydrationSig !== input.knownSig) {
       const { notices } = await this.hydrator.hydrateFiles({
         worktreePath,
-        slug: sandbox.repoId,
         orgId,
         repoDbId,
       });

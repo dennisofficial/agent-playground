@@ -9,7 +9,6 @@ import { AgentChatSurface, type CapturedApprovalCard } from '../agent-surface';
 import { AppModule } from '../app.module';
 import { AgentSessionManager, DecisionApprovalService } from '../brain';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { PLANNER_LLM } from '../driver';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { SANDBOX_PROVIDER } from '../sandbox';
@@ -26,7 +25,6 @@ import {
   FakeEngineRunner,
   FakeGithubPrService,
   FakeLocalGitService,
-  FakePlannerLlm,
   FakeThreadTitler,
 } from './e2e-stubs';
 import { JobTitler } from '../titling';
@@ -87,7 +85,7 @@ const DEFAULT_HUMAN_ID = 'U-E2E';
  *      it) and NO thread auto-reaches a build — the approval card is the gate, not a second brain.
  *
  * MODES (mirrors the gate's `dryRun`):
- *  - DEFAULT (offline): fake `PLANNER_LLM`/`CLASSIFIER_LLM` + fake engine/
+ *  - DEFAULT (offline): fake `CLASSIFIER_LLM` + fake engine/
  *    git/PR — fully deterministic, in-process, NO real LLM call, NO outward action (no real PR/Slack).
  *  - `--live`: the REAL ports against a `--repo` (clones, opens real draft PRs). The orchestrator runs this.
  *
@@ -108,7 +106,7 @@ export class E2eHarness {
   async boot(): Promise<void> {
     process.env.SURFACE = 'agent';
     if (!this.config.live) {
-      // Offline: give the driver a (fake) token so `finishWithPr` takes the PR branch, and pin a repo
+      // Offline: give the driver a (fake) token so `finalizeBuild` takes the PR branch, and pin a repo
       // url for the seeded project. No real network/LLM is reached — every external seam is overridden.
       process.env.GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? 'e2e-fake-token';
       process.env.GITHUB_WEBHOOK_SECRET =
@@ -124,8 +122,6 @@ export class E2eHarness {
     } else {
       // OFFLINE — compose the SAME AppModule but swap the LLM + engine/git/PR seams for fakes.
       const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-        .overrideProvider(PLANNER_LLM)
-        .useValue(new FakePlannerLlm())
         .overrideProvider(CLASSIFIER_LLM)
         .useValue(new FakeClassifierLlm())
         .overrideProvider(ENGINE_RUNNER)

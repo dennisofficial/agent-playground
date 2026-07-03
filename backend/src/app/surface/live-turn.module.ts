@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, MessageEntity, ThreadEntity } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
+import { ThreadInputService } from './thread-input.service';
 import {
   BLOCK_SINK,
   EntityTaskEventSink,
@@ -30,7 +31,8 @@ import {
     EntityTaskEventSink,
     { provide: TASK_EVENT_SINK, useExisting: EntityTaskEventSink },
     TurnHarnessFactory,
+    ThreadInputService,
   ],
-  exports: [LiveTurnStore, TurnHarnessFactory, BLOCK_SINK, TASK_EVENT_SINK],
+  exports: [LiveTurnStore, TurnHarnessFactory, BLOCK_SINK, TASK_EVENT_SINK, ThreadInputService],
 })
 export class LiveTurnModule {}

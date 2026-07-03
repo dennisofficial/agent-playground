@@ -3,7 +3,8 @@ import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineEvent, ExecutionTarget } from '../engine';
 import { LocalGitService } from '../git';
 import { TurnHarnessFactory, type TurnHarness } from '../surface/turn-harness.service';
-import { renderSystemPrompt } from '../prompt-kit';
+import { laneFor } from '../surface/thread-registry';
+import { Agent, renderAgentPrompt } from '../prompt-kit';
 import {
   buildFixPrompt,
   buildReviewPrompt,
@@ -37,13 +38,15 @@ const DEFAULT_CONCURRENCY = 3;
 //   • block meta (stamped by the harness `metaTag`): `{ autofixId, scope, lensId? , fixTurn? }`.
 //   • the `autofix_anchor` durable row (kind + `meta.autofixAnchor`) is emitted by the CALLER (driver / ship),
 //     paired with a change-signal post so the web wakes at stage start — NOT by this stage.
+// These are thin re-exports of the THREAD_REGISTRY (`../surface/thread-registry`) — the wire strings are
+// byte-identical; the names are kept so existing callers don't churn.
 /** The stage node lane (the card / aggregate opens this). */
-export const autofixLane = (autofixId: string): string => `autofix:${autofixId}`;
+export const autofixLane = (autofixId: string): string => laneFor('autofix-stage', autofixId);
 /** One review lens's sub-lane — live-safe for the concurrent fan-out. */
 export const autofixLensLane = (autofixId: string, lensId: string): string =>
-  `autofix:${autofixId}:${lensId}`;
+  laneFor('autofix-lens', autofixId, lensId);
 /** The fix turn's sub-lane. */
-export const autofixFixLane = (autofixId: string): string => `autofix:${autofixId}:fix`;
+export const autofixFixLane = (autofixId: string): string => laneFor('autofix-fix', autofixId);
 
 /**
  * W7 — the AUTO-FIX STAGE. A fan-out of N parallel read-only review passes (one per lens) over a
@@ -244,7 +247,7 @@ export class AutoFixStage {
         engine: engine ?? 'claude',
         task: buildReviewPrompt(lens, ctx),
         cwd: ctx.worktreePath,
-        systemPrompt: renderSystemPrompt('autofix-review'),
+        systemPrompt: renderAgentPrompt(Agent.AUTOFIX_REVIEW),
         sandboxKey: `${ctx.sandboxKey}--review-${lens.id}`,
         mode: 'review',
         ...(harness ? { richStream: true, onEvent: (e) => harness.onEvent(e) } : {}),
@@ -302,7 +305,7 @@ export class AutoFixStage {
         engine: engine ?? 'claude',
         task: buildFixPrompt(findings, ctx),
         cwd: ctx.worktreePath,
-        systemPrompt: renderSystemPrompt('autofix-fix'),
+        systemPrompt: renderAgentPrompt(Agent.AUTOFIX_FIX),
         sandboxKey: `${ctx.sandboxKey}--fix`,
         mode: 'execute',
         ...(harness ? { richStream: true } : {}),

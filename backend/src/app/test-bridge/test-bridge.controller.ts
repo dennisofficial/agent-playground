@@ -11,7 +11,7 @@ import {
   Query,
 } from '@nestjs/common';
 import type { JobKind } from '../domain';
-import { hasSystemPrompt, listPromptIds, renderSystemPrompt } from '../prompt-kit';
+import { hasAgentPrompt, listAgentPrompts, renderPreview } from '../prompt-kit';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Public } from '@workspace/auth/server';
 import { Repository } from 'typeorm';
@@ -226,9 +226,9 @@ export class TestBridgeController {
    * rendered via `GET /test/prompts/:id`.
    */
   @Get('prompts')
-  listPrompts(): Array<{ id: string; audience: string; usedBy: string }> {
+  listPrompts(): Array<{ id: string; agent: string; note: string }> {
     this.assertEnabled();
-    return listPromptIds();
+    return listAgentPrompts();
   }
 
   /**
@@ -244,12 +244,13 @@ export class TestBridgeController {
     @Query('jobKind') jobKind?: string,
   ): string {
     this.assertEnabled();
-    if (!hasSystemPrompt(id)) {
+    if (!hasAgentPrompt(id)) {
       throw new NotFoundException(
         `Unknown prompt id '${id}'. GET /test/prompts lists the valid ids.`,
       );
     }
-    return renderSystemPrompt(id, { jobKind: (jobKind as JobKind) ?? null });
+    // `jobKind` query overrides the id's representative kind (only affects the job-kind-composed personas).
+    return renderPreview(id, jobKind ? (jobKind as JobKind) : undefined) ?? '';
   }
 
   /**

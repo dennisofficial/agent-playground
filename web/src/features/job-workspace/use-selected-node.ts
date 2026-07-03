@@ -2,6 +2,7 @@
 
 import { useCallback } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { isDetailNode } from './node-registry';
 
 /**
  * The workspace has TWO panes, each with its own selection, plus a stacked sub-agent layer on the right
@@ -24,15 +25,8 @@ const LANE_PARAM = 'lane';
 const NODE_PARAM = 'node';
 const SUB_PARAM = 'sub';
 
-/** DETAIL nodes render in the RIGHT pane; every other (bare thread/step id) is a LANE for the LEFT pane.
- *  (`subagent:` is neither — it stacks via `?sub=`, handled in `selectNode`.) */
-const DETAIL_LITERALS = new Set(['plan', 'decision', 'diff']);
-const DETAIL_PREFIX = /^(spec|gen|artifact|port|rev|secplan|service):/;
-
-/** Whether a navigator node opens in the RIGHT (detail) pane rather than the LEFT (lane/conversation) one. */
-export function isDetailNode(node: string): boolean {
-  return DETAIL_LITERALS.has(node) || DETAIL_PREFIX.test(node);
-}
+// `isDetailNode` (which pane a node opens in) now lives in the node registry — the single source of truth.
+export { isDetailNode } from './node-registry';
 
 export interface SelectedNode {
   /** The LEFT pane's open lane (`?lane=`) — a thread/step id, or `null` for the Main conversation. */
@@ -41,10 +35,14 @@ export interface SelectedNode {
   detailNode: string | null;
   /** The sub-agent (parent tool-use id) stacked on top of the right pane (`?sub=`), or `null`. */
   subNode: string | null;
-  /** Open a node in whichever pane/layer it belongs to: `subagent:<id>` → the stacked `?sub=` layer (base
-   *  detail preserved); {@link isDetailNode} → the right pane (`?node=`, clearing any stacked sub); else the
-   *  left lane (`?lane=`). The other panes' selections are preserved. `{ push: true }` forces a history
-   *  entry (e.g. following a link inside a doc). */
+  /** The lane the open sub-agent's Task anchor lives on (encoded into `?sub=` as `<lane>::<parentId>` by
+   *  {@link subagentNode}), or `null` if no sub-agent is open. Needed to subscribe to the right live turn —
+   *  a subagent spawned inside a build thread streams on THAT thread's lane, never Main's. */
+  subLane: string | null;
+  /** Open a node in whichever pane/layer it belongs to: `subagent:<lane>::<id>` → the stacked `?sub=` layer
+   *  (base detail preserved); {@link isDetailNode} → the right pane (`?node=`, clearing any stacked sub);
+   *  else the left lane (`?lane=`). The other panes' selections are preserved. `{ push: true }` forces a
+   *  history entry (e.g. following a link inside a doc). */
   selectNode: (node: string, opts?: { push?: boolean }) => void;
   /** Return the LEFT pane to the Main conversation (drop `?lane=`); the right detail + sub stay open. */
   openConversation: () => void;
@@ -60,7 +58,11 @@ export function useSelectedNode(): SelectedNode {
   const params = useSearchParams();
   const laneNode = params.get(LANE_PARAM);
   const detailNode = params.get(NODE_PARAM);
-  const subNode = params.get(SUB_PARAM);
+  const subParam = params.get(SUB_PARAM);
+  // `subagentNode` encodes `<lane>::<parentId>`; tolerate a bare id (no `::`) for old links/bookmarks.
+  const subSep = subParam?.indexOf('::') ?? -1;
+  const subLane = subParam && subSep >= 0 ? subParam.slice(0, subSep) : null;
+  const subNode = subParam == null ? null : subSep >= 0 ? subParam.slice(subSep + 2) : subParam;
 
   const selectNode = useCallback(
     (node: string, opts?: { push?: boolean }) => {
@@ -103,5 +105,5 @@ export function useSelectedNode(): SelectedNode {
   const closeDetail = useCallback(() => dropParams([NODE_PARAM, SUB_PARAM]), [dropParams]);
   const closeSub = useCallback(() => dropParams([SUB_PARAM]), [dropParams]);
 
-  return { laneNode, detailNode, subNode, selectNode, openConversation, closeDetail, closeSub };
+  return { laneNode, detailNode, subNode, subLane, selectNode, openConversation, closeDetail, closeSub };
 }

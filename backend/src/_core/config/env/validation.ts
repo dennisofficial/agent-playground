@@ -106,10 +106,6 @@ export interface IEnvConfig {
   // slack-app (the writer) and the Docker daemon (the bind source), exactly like REPO_ROOT in DooD.
   // No code default — unset → the /refs library is disabled. Point at a persistent volume in deployment.
   REFS_ROOT?: string;
-  // Root for the operator GOLDEN-SEED dirs — non-secret gitignored files the worktree hydrator copies
-  // into a fresh worktree, laid out as <ATLAS_GOLDEN_ROOT>/<orgId>/<slug>/<path>. Optional; unset → the
-  // manifest's seed[] is skipped. (Secrets come from the encrypted store, NOT here.)
-  ATLAS_GOLDEN_ROOT?: string;
   // Host-only dir for the worktree hydration sidecar (the forbidden-paths record commitAll's leak-scan
   // reads). Read directly from process.env by git/hydration-sidecar.ts; declared here for completeness.
   // Code default: the repo-relative, gitignored <repoRoot>/.atlas-state/hydration-state. Never under a
@@ -257,24 +253,15 @@ export interface IEnvConfig {
   // unbounded build. Both optional with code defaults:
   //  - MAX_SECTIONS: the most sections one job may have (excess sections are skipped + flagged).
   //    Default 12. The approved section list is human-gated, so this is belt-and-braces.
-  //  - MAX_PHASES_PER_SECTION: the most phases one section may lock (a longer planner output is
-  //    truncated to this). Default 8 — keeps a section's build bounded.
-  //  - MAX_PHASES_PER_BATCH: the most phases one execution batch may run in a single fresh-context
-  //    session (the deterministic cap around the LLM batcher). Default 5.
   MAX_SECTIONS?: number;
-  MAX_PHASES_PER_SECTION?: number;
-  MAX_PHASES_PER_BATCH?: number;
-  // Circuit breakers on the driver (issue #3) — abort + relay a runaway build. Both optional, code
-  // defaults: PHASE_TIMEOUT_MS (per engine turn, default 20m) + JOB_TIMEOUT_MS (whole job,
-  // checked at section boundaries, default 60m).
+  // Circuit breaker on the driver (issue #3) — abort + relay a runaway turn. Optional, code default:
+  // PHASE_TIMEOUT_MS (per orchestrator turn, default 60m). There is deliberately no whole-job timeout —
+  // job length varies too widely (30m–16h+) for a fixed wall-clock cap to be meaningful.
   PHASE_TIMEOUT_MS?: number;
-  JOB_TIMEOUT_MS?: number;
-  // PARK_TIMEOUT_MS: how long a mid-build park waits for the human before it fails + relays
-  // (a park is between phases, so the phase/job timeouts don't cover it). Default 3600000 (60 min).
-  PARK_TIMEOUT_MS?: number;
-  // ORCHESTRATE_THREADS: run each thread as ONE orchestrator session that fans implementation out to
-  // writer subagents (default ON). Set to "off" to fall back to the legacy LLM-batched per-step path.
-  ORCHESTRATE_THREADS?: string;
+  // OPERATOR_INPUT_TIMEOUT_MS: how long a `request_operator_input` pause polls for the operator's answer
+  // before the orchestrator proceeds on its best judgment. The turn's wall-clock budget is SUSPENDED
+  // while waiting, so this can be long. Default 21600000 (6h).
+  OPERATOR_INPUT_TIMEOUT_MS?: number;
   // ── Atlas v2 scoping / grill (W3 — issue #1 tuning) ──────────────────────────────────────────
   // SCOPING_MODE: how the brain investigates the repo to GROUND the grill. 'read_only_tools'
   // (default) runs a strict read-only engine pass (Read/Glob/Grep, no Bash) over the clone; 'native_plan'
@@ -412,7 +399,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   REPOS_ROOT: Joi.string().optional(),
   AGENT_HOME_ROOT: Joi.string().optional(),
   REFS_ROOT: Joi.string().optional(),
-  ATLAS_GOLDEN_ROOT: Joi.string().optional(),
   ATLAS_HYDRATION_STATE: Joi.string().optional(),
   // Sandbox lifecycle (Phase 6)
   DOCKER_SOCKET_PATH: Joi.string().optional(),
@@ -471,12 +457,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   EVENT_RATE_WINDOW_S: Joi.number().integer().min(1).optional(),
   // Atlas v2 section/phase driver (W4) runaway guards
   MAX_SECTIONS: Joi.number().integer().min(1).optional(),
-  MAX_PHASES_PER_SECTION: Joi.number().integer().min(1).optional(),
-  MAX_PHASES_PER_BATCH: Joi.number().integer().min(1).optional(),
   PHASE_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
-  JOB_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
-  PARK_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
-  ORCHESTRATE_THREADS: Joi.string().optional(),
+  OPERATOR_INPUT_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   // Atlas v2 scoping / grill (W3 — issue #1)
   SCOPING_MODE: Joi.string().valid('read_only_tools', 'native_plan').optional(),
   SCOPING_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),

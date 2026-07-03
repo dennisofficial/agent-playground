@@ -18,6 +18,7 @@ import { RealtimeModule } from './realtime';
 import { TicketsModule } from './tickets';
 import { TitlingModule } from './titling';
 import { TestBridgeModule } from './test-bridge';
+import { PromptKitModule } from './prompt-kit';
 
 /**
  * Atlas v2 APP layer — the composition seam for the edge and the local execution substrate:
@@ -47,6 +48,7 @@ import { TestBridgeModule } from './test-bridge';
   imports: [
     RedisModule,
     ClusterModule,
+    PromptKitModule,
     AuthModule,
     OnboardingModule,
     OrgModule,

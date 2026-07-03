@@ -9,7 +9,7 @@ import type {
   WebSecretInputCard,
 } from '../surface';
 import { renderPlan } from '../driver/render-plan';
-import type { PlannedStep } from '../driver/planner-llm';
+import type { PlannedStep } from '../driver/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -953,23 +953,44 @@ export class BrainStoreService {
 
       // Save threads first (to get ids), setting `plan` from any authored steps so `hasPlan` is true
       // in the pipeline view (the authored path never hits the driver's `setThreadPlan`).
-      const savedSections = await threads.save(
-        input.threadTitles.map((brief, i) => {
-          const authored = input.stepsByThread?.[i];
-          return threads.create({
+      const featureThreads = input.threadTitles.map((brief, i) => {
+        const authored = input.stepsByThread?.[i];
+        return threads.create({
+          job_id: input.jobId,
+          org_id: input.orgId,
+          ordinal: (i + 1) * ORDINAL_GAP,
+          brief,
+          // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
+          type: input.threadTypes?.[i] ?? 'general',
+          plan: authored?.length ? renderPlan(authored) : null,
+          handoff_in: null,
+          handoff_out: null,
+          status: 'pending',
+        });
+      });
+
+      // Append the ONE pre-configured master-review thread — a Codex `execute` thread that reviews the whole
+      // merged diff AND applies fixes, running LAST (before ship/PR). GATED to the full thread-driven path:
+      // `threadTitles.length > 0` (direct build passes `[]`; onboarding/event never persist a plan) — the one
+      // gate that satisfies all three skips. No authored steps (the driver plans its single anchor step).
+      if (input.threadTitles.length > 0) {
+        featureThreads.push(
+          threads.create({
             job_id: input.jobId,
             org_id: input.orgId,
-            ordinal: (i + 1) * ORDINAL_GAP,
-            brief,
-            // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
-            type: input.threadTypes?.[i] ?? 'general',
-            plan: authored?.length ? renderPlan(authored) : null,
+            ordinal: (input.threadTitles.length + 1) * ORDINAL_GAP,
+            brief: 'Master review — whole-diff review & fix',
+            type: 'general',
+            is_master_review: true,
+            plan: null,
             handoff_in: null,
             handoff_out: null,
             status: 'pending',
-          });
-        }),
-      );
+          }),
+        );
+      }
+
+      const savedSections = await threads.save(featureThreads);
 
       // Lock the authored steps as `steps` rows — same gap-numbered convention as
       // `DriverStoreService.lockSteps` (ordinal (i+1)*GAP, step 'build', status 'pending') so the
@@ -1090,15 +1111,20 @@ export class BrainStoreService {
    * PR merges + the worktree is torn down, there's nothing to write and the sweep skips it.
    */
   async threadsAwaitingLedgerPromotion(): Promise<Job[]> {
+    // `status: Not('running')` ENFORCES the backstop⇄driver disjointness invariant at the query level: a
+    // `running` job is owned by the driver's `resume()`, so excluding it here guarantees the backstop can
+    // never act on a job a live drive is finalizing (even if some future path set `pr_url` on a still-
+    // `running` row). Every legitimately-shipped row is `done` (`setPrReady` sets both atomically).
     const rows = await this.jobs.find({
       where: {
         pr_url: Not(IsNull()),
+        status: Not('running'),
         ledger_promotion_status: Not('complete'),
       },
     });
     // `Not('complete')` excludes NULLs in SQL, so add the never-started rows explicitly.
     const nullRows = await this.jobs.find({
-      where: { pr_url: Not(IsNull()), ledger_promotion_status: IsNull() },
+      where: { pr_url: Not(IsNull()), status: Not('running'), ledger_promotion_status: IsNull() },
     });
     // Onboarding threads never get `promote_decisions` (see `buildTools`) — there is nothing durable
     // for them to promote by design, so they can never legitimately reach `complete`. Excluded here

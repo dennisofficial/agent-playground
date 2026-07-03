@@ -25,6 +25,7 @@ export type ThreadStatus =
   | 'reviewing'
   | 'awaiting_approval'
   | 'executing'
+  | 'awaiting_input'
   | 'auto_fixing'
   | 'done'
   | 'failed';
@@ -242,6 +243,9 @@ export interface PipelineThread {
   /** The thread's scope type (backend/frontend/docs/…) — selects the review agents. */
   type: string;
   status: ThreadStatus;
+  /** The pre-configured Codex master-review thread (whole-diff review & fix) — rendered "Master review"
+   *  with no review-agents fold. */
+  isMasterReview?: boolean;
   /**
    * The review agents selected to run over this thread's diff (a fixed set today; backend-selected).
    * The navigator's review folder renders one leaf per agent — never hard-code this list.
@@ -280,23 +284,10 @@ export interface PipelineJob {
   decisionRecordId: string | null;
   /** The Codex plan-review dialogue summary (a lane under Main), or null if never reviewed. */
   codexReview?: CodexReviewSummary | null;
-  /** The PR-tail review agents over the whole feature diff (the job-level "Final review" pass). `[]` until
-   *  that pass runs — unlike the per-thread fallback there's no pre-seed default. */
-  reviewAgents: ReviewAgent[];
-  /**
-   * The PR Review orchestrator's live task list ("Master code review" → "Apply fixes" → "Verify build"),
-   * folded from its own `TaskCreate`/`TaskUpdate` calls. `[]` until `prReviewStatus` moves past `queued`.
-   */
-  tasks: TaskItem[];
-  /**
-   * The PR Review card's coarse status. Null until the orchestrator starts. `running` covers the whole
-   * session — derive the finer "reviewing"/"fixing"/"verifying" sub-label from whichever task in `tasks`
-   * is currently `in_progress`.
-   */
-  prReviewStatus: 'queued' | 'running' | 'opened' | 'failed' | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
-   * navigator's Main row renders it. A separate list from `tasks` (PR Review's), same TaskItem shape.
+   * navigator's Main row renders it. (The old job-level PR-review `reviewAgents`/`tasks`/`prReviewStatus`
+   * are gone — master review is now a normal build thread with its own per-thread fields.)
    */
   mainTasks: TaskItem[];
   /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
@@ -394,3 +385,14 @@ export type JobStatus =
 /** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job;
  *  `onboard` is the Atlas-run repo-init (onboarding) job. */
 export type JobKind = 'feat' | 'fix' | 'event' | 'onboard';
+
+/** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
+export type PrState = 'open' | 'merged' | 'closed';
+
+/** The observed PR on a job — drives the sidebar's PR-status glyph (see `PrStatusIcon`). `mergeable` is
+ *  GitHub's `mergeable_state` ('dirty' = merge conflict); `url` links to the PR. */
+export interface InboxPr {
+  state: PrState;
+  mergeable: string | null;
+  url: string | null;
+}

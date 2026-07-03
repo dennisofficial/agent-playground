@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 /**
  * In-memory record of which sandbox containers have a turn EXEC in flight right now, keyed by
  * `containerId`. Every turn flows through `DockerEngineRunner.run` — the single exec chokepoint for
- * all callers (turn-runner, agent-session-manager, plan-review, auto-fix, acceptance-gate) — which
+ * all callers (turn-runner, agent-session-manager, plan-review, auto-fix) — which
  * brackets the exec with {@link enter}/{@link leave}. The thread-sandbox reaper consults {@link isBusy}
  * so it never tears down a container mid-turn (which would kill a live build/plan/auto-fix turn).
  *

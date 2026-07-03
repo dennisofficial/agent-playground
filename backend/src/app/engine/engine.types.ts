@@ -376,7 +376,7 @@ export interface EngineRunResult {
 }
 
 /**
- * The ENGINE_RUNNER port — the seam the driver / auto-fix / acceptance-gate consume to run a turn.
+ * The ENGINE_RUNNER port — the seam the driver / auto-fix consume to run a turn.
  * Always bound to `DockerEngineRunner` (exec inside a sandbox container). Docker is the only execution
  * mode; the former in-process `EngineRunner` has been removed.
  */

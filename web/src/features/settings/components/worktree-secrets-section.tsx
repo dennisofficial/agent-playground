@@ -16,7 +16,7 @@ import { useOrgRepos } from '@/lib/api/job-queries';
  * Worktree secrets — named, encrypted secret files (`.env`, `.env.keys`, a service-account JSON, …) the
  * worktree hydrator renders into a thread's sandbox. The list is names-only (values are never returned). A
  * secret is INERT until an owner GRANTS it to a specific repo + destination path — the grant IS the render
- * instruction (worktree config — mounts/seed — is a separate, DB-backed record and never carries secrets;
+ * instruction (worktree config — mounts — is a separate, DB-backed record and never carries secrets;
  * see docs/adr/0003-worktree-config-db-not-git.md). Grants are created here, or during repo onboarding by
  * the secure secret prompt. Owner-only writes (the server enforces it; members get a read-only view).
  */
@@ -34,7 +34,7 @@ export function WorktreeSecretsSection({ orgId, role }: { orgId: string; role: s
         Named secret files the build renders into a thread’s sandbox (e.g. <code className="font-mono text-[12px]">.env.keys</code>).
         Encrypted at rest — values are never shown. A secret only takes effect once you <strong>grant</strong> it
         to a repo and path — the grant is what renders it (separate, DB-backed worktree config carries mounts
-        and seed only, never secrets). Atlas also creates grants for you during repo onboarding.
+        only, never secrets). Atlas also creates grants for you during repo onboarding.
       </p>
 
       {!isOwner ? (

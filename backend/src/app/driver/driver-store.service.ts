@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { randomUUID } from 'node:crypto';
 import type {
   Decision,
   DecisionRecord,
@@ -14,6 +15,7 @@ import type {
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
+  MessageEntity,
   PlanReviewEntity,
   StepEntity,
   ThreadEntity,
@@ -21,7 +23,8 @@ import {
 } from '../persistence/entities';
 import type { ReviewAgentState } from '../persistence/entities';
 import { reviewAgentsForThread } from '../autofix/autofix-lenses';
-import type { PlannedStep } from './planner-llm';
+import type { WebQuestionCard } from '../surface/web-question-card';
+import type { PlannedStep } from './render-plan';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;
@@ -66,7 +69,112 @@ export class DriverStoreService {
     private readonly records: Repository<DecisionRecordEntity>,
     @InjectRepository(PlanReviewEntity, DB_CONNECTION)
     private readonly reviews: Repository<PlanReviewEntity>,
+    @InjectRepository(MessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<MessageEntity>,
+    @InjectDataSource(DB_CONNECTION)
+    private readonly dataSource: DataSource,
   ) {}
+
+  // ── operator-input cards (the orchestrate build turn's `request_operator_input`) ─────────────────
+  // A build turn can pause mid-orchestration and ask the operator a free-text question. It rides the SAME
+  // durable question-card spine the brain uses — a `messages` card row keyed by `ts` + the denormalized
+  // `threads.open_question_count` counter that lights "needs you" — tagged `origin:'build'` so the web
+  // answer endpoint resolves it back to the DRIVER (which polls the card) instead of seeding a brain turn.
+  // The job stays `running` throughout (so boot recovery still re-drives it); the card is the source of
+  // truth, so a resumed/reattached turn just re-reads it. See ThreadDriver.operatorInputTool.
+
+  /** The newest OPEN (unanswered) build-origin question card on this thread, or null. A resumed turn that
+   *  re-issues its pending question reuses this instead of stacking a duplicate. */
+  async findOpenOperatorInputCard(
+    jobId: string,
+  ): Promise<{ questionId: string; question: string } | null> {
+    const rows = await this.messages.find({
+      where: { job_id: jobId, kind: 'card' },
+      order: { created_at: 'DESC' },
+    });
+    for (const row of rows) {
+      const card = row.card as unknown as WebQuestionCard | undefined;
+      if (
+        card?.type === 'question_card' &&
+        card.origin === 'build' &&
+        card.answer == null
+      ) {
+        return { questionId: card.questionId, question: card.question };
+      }
+    }
+    return null;
+  }
+
+  /** Open a build-origin question card (free-text) + bump `open_question_count` in ONE txn. Returns the
+   *  stable `questionId` (the card row's `ts`) the driver then polls for an answer. */
+  async openOperatorInputCard(
+    jobId: string,
+    question: string,
+  ): Promise<{ questionId: string }> {
+    const questionId = randomUUID();
+    const card: WebQuestionCard = {
+      type: 'question_card',
+      origin: 'build',
+      jobId,
+      questionId,
+      question,
+      options: [],
+      allowOther: true,
+    };
+    await this.dataSource.transaction(async (m) => {
+      const messages = m.getRepository(MessageEntity);
+      await messages.save(
+        messages.create({
+          job_id: jobId,
+          author: 'Atlas',
+          author_id: 'atlas',
+          author_bot_id: 'atlas',
+          text: question,
+          kind: 'card',
+          ts: questionId,
+          card: card as unknown as Record<string, unknown>,
+        }),
+      );
+      await m
+        .getRepository(JobEntity)
+        .createQueryBuilder()
+        .update()
+        .set({ open_question_count: () => 'open_question_count + 1' })
+        .where('id = :jobId', { jobId })
+        .execute();
+    });
+    return { questionId };
+  }
+
+  /** The operator's answer to a build-origin card, or null while still unanswered. */
+  async readOperatorInputAnswer(
+    jobId: string,
+    questionId: string,
+  ): Promise<string | null> {
+    const row = await this.messages.findOne({
+      where: { job_id: jobId, ts: questionId, kind: 'card' },
+    });
+    const card = row?.card as unknown as WebQuestionCard | undefined;
+    return card?.type === 'question_card' ? (card.answer ?? null) : null;
+  }
+
+  /** Stamp a build-origin card `deliveredAt` once the driver has consumed the answer (so the boot
+   *  answered-but-undelivered sweep never treats it as stranded). Jsonb-merge, like the brain's card
+   *  lifecycle writes — no read-modify-write race. */
+  async markOperatorInputDelivered(
+    jobId: string,
+    questionId: string,
+  ): Promise<void> {
+    await this.messages
+      .createQueryBuilder()
+      .update()
+      .set({ card: () => 'card || :patch::jsonb' })
+      .where('job_id = :jobId', { jobId })
+      .andWhere('ts = :questionId', { questionId })
+      .andWhere("kind = 'card'")
+      .setParameter('patch', JSON.stringify({ deliveredAt: new Date().toISOString() }))
+      .execute();
+  }
 
   // ── thread (the build unit) ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +212,9 @@ export class DriverStoreService {
         pr_url: prUrl,
         ...(prNumber != null ? { pr_number: prNumber } : {}),
         status: 'done',
+        // Latch the PR lifecycle to `open` HERE (not on a later reconcile) so the sidebar shows the
+        // pull-request glyph the moment the PR is recorded — the reap-timer reconcile is up to 30 min away.
+        pr_state: 'open',
       },
     );
   }
@@ -115,7 +226,7 @@ export class DriverStoreService {
   /**
    * Atomically CLAIM the ledger promotion: `null | pending | failed` → `running`. Returns true when THIS
    * caller won the claim (so the boot backstop can't race a live driver run). A row already `running` or
-   * `complete` is NOT re-claimed here — but the resumable `finishWithPr` re-runs `running` idempotently.
+   * `complete` is NOT re-claimed here — but the resumable `finalizeBuild` re-runs `running` idempotently.
    */
   async claimLedgerPromotion(jobId: string): Promise<boolean> {
     const res = await this.jobs
@@ -249,24 +360,6 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { review_agents: agents });
   }
 
-  // ── PR Review (job-level orchestrator, replaces the old PR-tail lens fan-out) ───────────────────
-  // Tasks themselves are NOT mutated here — `TaskEventSink`/`EntityTaskEventSink` in
-  // `surface/turn-harness.service.ts` folds `TaskCreate`/`TaskUpdate` events directly, at the shared
-  // harness, for every session regardless of caller (avoids this module depending back on `surface`).
-
-  /** Start a fresh PR Review pass: clear any stale task list from an aborted prior attempt and mark
-   *  `queued`. Call once, right before kicking the orchestrator session. */
-  async startPrReview(jobId: string): Promise<void> {
-    await this.jobs.update({ id: jobId }, { tasks: [], pr_review_status: 'queued' });
-  }
-
-  /** Transition the PR Review card's coarse status (`running` | `opened` | `failed`). Finer-grained
-   *  sub-state ("reviewing"/"fixing"/"verifying") is derived by the reader from whichever task in
-   *  `jobs.tasks` is currently `in_progress` — the orchestrator's own task list is already that detailed. */
-  async setPrReviewStatus(jobId: string, status: string): Promise<void> {
-    await this.jobs.update({ id: jobId }, { pr_review_status: status });
-  }
-
   // ── steps ───────────────────────────────────────────────────────────────────────────────────
 
   /** A thread's steps in execution order. */
@@ -395,17 +488,10 @@ export class DriverStoreService {
       featureBranch: thread.feature_branch,
       baseBranch: thread.base_branch,
       codexReview,
-      // The PR-tail review agents over the WHOLE feature diff (the job-level "Final review" node). `[]` until
-      // the PR-tail pass seeds them; unlike the per-thread fallback there is no pre-seed default (the pass
-      // runs once, after all threads), so an empty array simply means "not reviewed yet".
-      reviewAgents: Array.isArray(thread.review_agents) ? thread.review_agents : [],
-      // The PR Review orchestrator's LLM-authored task list + card-header status. `[]`/`null` until
-      // `BuildShipService.ship()` starts it — no fallback default (tasks are pure LLM output, there's no
-      // fixed/expected set the way there is for review agents).
-      tasks: Array.isArray(thread.tasks) ? thread.tasks : [],
-      prReviewStatus: thread.pr_review_status,
       // The Main brain session's own task list (folded from its `main`-lane task-tool calls) — the
-      // navigator's Main row renders it. Same no-fallback rationale as the two lists above.
+      // navigator's Main row renders it. No fallback default (tasks are pure LLM output — there's no
+      // fixed/expected set the way there is for review agents). The old job-level PR-review fields
+      // (`reviewAgents`/`tasks`/`prReviewStatus`) are gone — master review is now a normal build thread.
       mainTasks: Array.isArray(thread.main_tasks) ? thread.main_tasks : [],
       threads: threads.map((s) => ({
         id: s.id,
@@ -413,13 +499,17 @@ export class DriverStoreService {
         brief: s.brief,
         type: s.type,
         status: s.status,
+        isMasterReview: s.is_master_review ?? false,
         hasPlan: s.plan != null,
         // The review agents that run over this thread's diff, with per-agent status. Once the thread is
         // reviewed `review_agents` carries the live state; before that (the `[]` default for an unseeded /
         // pre-feature thread) fall back to the selected lens set at `pending` so the folder still lists them.
-        // Emptiness check (not nullish) — `[]` is the column default.
-        reviewAgents:
-          Array.isArray(s.review_agents) && s.review_agents.length > 0
+        // Emptiness check (not nullish) — `[]` is the column default. The MASTER-REVIEW thread runs no
+        // review agents (it IS the review + skips auto-fix), so it always resolves to `[]` — the navigator
+        // then renders it with no review-agents folder and no "Post-review fixes" row.
+        reviewAgents: s.is_master_review
+          ? []
+          : Array.isArray(s.review_agents) && s.review_agents.length > 0
             ? s.review_agents
             : reviewAgentsForThread(s).map((a) => ({
                 ...a,
@@ -542,6 +632,7 @@ function toThread(row: ThreadEntity): DriverThread {
     handoffIn: row.handoff_in,
     handoffOut: row.handoff_out,
     status: row.status as ThreadStatus,
+    isMasterReview: row.is_master_review ?? false,
   };
 }
 

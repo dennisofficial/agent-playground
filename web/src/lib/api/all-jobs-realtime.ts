@@ -7,13 +7,14 @@ import { qk } from './query-keys';
 import { subscribeSse, type SseHandle } from './sse-manager';
 import { uiStatus, type InboxThread } from './inbox';
 import { toJobKind } from './status';
-import type { WireJobKind } from './types';
+import type { WireJobKind, PrState } from './types';
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
  * backend `ThreadRealtimeRow` — it carries the server-owned status signal but NOT the joined org/repo
  * display names, so an `update` patches those fields onto the already-enriched cached row, and an
- * `add`/`remove`/snapshot refetches the enriched list instead.
+ * `add`/`remove`/snapshot refetches the enriched list instead. `orgId`/`repoId` ARE present (the guard
+ * scopes on them) — used to key the open thread's detail-pane queries when a status transition arrives.
  */
 interface RealtimeRow {
   jobId: string;
@@ -23,6 +24,12 @@ interface RealtimeRow {
   kind?: string | null;
   status: string;
   needsYou: boolean;
+  orgId: string;
+  repoId: string;
+  /** Observed PR lifecycle ('open'|'merged'|'closed'|null) — drives the PR-status glyph. */
+  prState?: string | null;
+  /** GitHub mergeable_state ('dirty' = conflict); refines the open-PR glyph. */
+  prMergeable?: string | null;
 }
 
 /** A pg-realtime delta (mirrors the backend `RowDelta`), plus the `disabled` control frame. */
@@ -52,22 +59,43 @@ export function useAllJobsRealtime(): void {
 
     const patchUpdate = (row: RealtimeRow) => {
       let found = false;
+      let statusChanged = false;
+      const nextStatus = uiStatus(row.status, row.origin);
       qc.setQueryData<InboxThread[]>(qk.allJobs(), (prev) => {
         if (!prev) return prev;
         const idx = prev.findIndex((t) => t.id === row.jobId);
         if (idx === -1) return prev;
         found = true;
+        statusChanged = prev[idx].status !== nextStatus;
         const next = [...prev];
         next[idx] = {
           ...next[idx],
           title: row.title?.trim() || next[idx].title,
           kind: row.kind ? toJobKind(row.kind as WireJobKind) : next[idx].kind,
-          status: uiStatus(row.status, row.origin),
+          status: nextStatus,
           needsYou: row.needsYou,
+          // The flat WAL row carries no PR url — preserve the enriched one from the fetched row so a
+          // live conflict→ready→merged transition re-glyphs without dropping the click-through link.
+          pr: row.prState
+            ? { state: row.prState as PrState, mergeable: row.prMergeable ?? null, url: next[idx].pr?.url ?? null }
+            : null,
         };
         return next;
       });
-      if (!found) invalidate(); // a thread we don't have cached yet → refetch the enriched list
+      if (!found) {
+        invalidate(); // a thread we don't have cached yet → refetch the enriched list
+        return;
+      }
+      // A status transition (e.g. approve → running, → building, cancelled) means the OPEN thread's
+      // detail pane is stale: the WAL row updates the sidebar in place above, but the pipeline/message
+      // queries are keyed per-thread and only THIS stream carries the (race-free, commit-driven) signal
+      // that they changed. Invalidate them so an open thread's approve bar / phase states go live too;
+      // for any non-open thread these are unobserved queries, so this just marks them stale (no fetch).
+      if (statusChanged) {
+        const ref = { orgId: row.orgId, repoId: row.repoId, jobId: row.jobId };
+        void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+        void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      }
     };
 
     const onFrame = (data: string, handle: SseHandle) => {

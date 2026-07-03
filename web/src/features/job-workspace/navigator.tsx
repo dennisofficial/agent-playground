@@ -24,7 +24,7 @@ import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/job-api';
 import { useRetryJob, useServices } from '@/lib/api/job-queries';
-import { Divider, PipelineTree, PrReviewRegion, TasksBody, haltThreadIdx } from './pipeline-tree';
+import { Divider, PipelineTree, TasksBody, haltThreadIdx } from './pipeline-tree';
 import { NavigatorApproveButton } from './spec-approval';
 import { codexReviewNode } from './codex-review';
 import { pipelineMainTasks } from '@/lib/api/types';
@@ -246,17 +246,8 @@ export function Navigator({
           onConversation={onConversation}
         />
 
-        {/* FINAL REVIEW — the single job-level master-review thread (PR Review). It's technically a thread,
-            so it sits directly under the THREADS list (above OUTPUTS) with its own styling. Hidden entirely
-            while no plan exists (no threads yet). */}
-        {job && job.threads.length > 0 ? (
-          <PrReviewRegion
-            job={job}
-            laneNode={laneNode}
-            onSelectNode={onSelectNode}
-            onConversation={onConversation}
-          />
-        ) : null}
+        {/* The whole-diff master review is now just another thread in the THREADS list above (rendered
+            "Master review", no pinned region) — see the master-review-as-thread change. */}
 
         {/* OUTPUTS — specs / artifacts / generated, merged. Open in the RIGHT pane (blue highlight). */}
         <OutputsRegion

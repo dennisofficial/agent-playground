@@ -4,18 +4,19 @@ import { In, IsNull, Not, Repository } from 'typeorm';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineAuth } from '../engine';
 import type { Decision } from '../domain';
-import type { PlannedStep } from '../driver/planner-llm';
+import type { PlannedStep } from '../driver/render-plan';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, MessageEntity, PlanReviewEntity } from '../persistence/entities';
-import { TurnHarnessFactory } from '../surface';
-import { renderSystemPrompt } from '../prompt-kit';
+import { TurnHarnessFactory, laneFor } from '../surface';
+import { Agent, renderAgentPrompt } from '../prompt-kit';
 
-/** The transcript lane a job's Codex review dialogue streams on (peeled out of Main by the web). */
+/** The transcript lane a job's Codex review dialogue streams on (peeled out of Main by the web).
+ *  Thin re-export of the THREAD_REGISTRY — byte-identical string. */
 export function codexReviewLane(jobId: string): string {
-  return `codex-review:${jobId}`;
+  return laneFor('codex-review', jobId);
 }
 
 /**
@@ -376,7 +377,7 @@ export class PlanReviewService {
             engine: 'codex',
             task: row.prompt,
             cwd: sandbox.worktreePath,
-            systemPrompt: renderSystemPrompt('meta-plan-review'),
+            systemPrompt: renderAgentPrompt(Agent.META_PLAN_REVIEW),
             sandboxKey,
             mode: 'review',
             // Review hard — pin max reasoning (subscription accounts accept this knob; verified by spike).

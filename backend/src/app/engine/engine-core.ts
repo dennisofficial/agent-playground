@@ -6,7 +6,10 @@ import { join, resolve as resolvePath } from 'node:path';
 import { applyClaudeAuth } from './claude-auth';
 import { atlasEngineHomeDir } from './engine-home';
 import { ensureCodexAuthHome } from './codex-auth-home';
-import { renderSystemPrompt } from '../prompt-kit';
+// Import from the DIRECT (Nest-free) assembly path, not the prompt-kit barrel — this module bundles into the
+// in-container engine, and the barrel re-exports the NestJS PromptService/PromptKitModule.
+import { renderAgentPrompt } from '../prompt-kit/assemble';
+import { Agent } from '../prompt-kit/agent';
 import {
   EngineAuthError,
   isAuthErrorMessage,
@@ -206,7 +209,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'naming conventions). For EXTERNAL library/framework/API documentation, use `docs` instead.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'sonnet',
-    prompt: renderSystemPrompt('subagent-explore'),
+    prompt: renderAgentPrompt(Agent.EXPLORE),
   },
   docs: {
     description:
@@ -216,7 +219,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'work; use `docs` for third-party packages, frameworks, and external APIs.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'sonnet',
-    prompt: renderSystemPrompt('subagent-docs'),
+    prompt: renderAgentPrompt(Agent.DOCS),
   },
   review: {
     description:
@@ -226,7 +229,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'is called done. It reports; it does NOT fix.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'sonnet',
-    prompt: renderSystemPrompt('subagent-review'),
+    prompt: renderAgentPrompt(Agent.REVIEW_AGENT),
   },
   debug: {
     description:
@@ -235,7 +238,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       '— it does not run commands or change anything. Use `test` to actually run the verification.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'sonnet',
-    prompt: renderSystemPrompt('subagent-debug'),
+    prompt: renderAgentPrompt(Agent.DEBUG),
   },
   test: {
     description:
@@ -245,7 +248,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'but does NOT edit files or change git state.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS],
     model: 'sonnet',
-    prompt: renderSystemPrompt('subagent-test'),
+    prompt: renderAgentPrompt(Agent.TEST),
   },
 };
 
@@ -269,7 +272,7 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'escalate to `implement-deep`.',
     tools: WRITER_TOOLS,
     model: 'sonnet',
-    prompt: renderSystemPrompt('subagent-writer'),
+    prompt: renderAgentPrompt(Agent.FAN_OUT),
   },
   'implement-deep': {
     description:
@@ -279,7 +282,7 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'rules: it edits only the files you name and returns a tight summary; run one writer at a time.',
     tools: WRITER_TOOLS,
     model: 'opus',
-    prompt: renderSystemPrompt('subagent-writer'),
+    prompt: renderAgentPrompt(Agent.FAN_OUT),
   },
 };
 

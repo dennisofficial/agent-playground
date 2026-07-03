@@ -9,7 +9,7 @@ import { ROUTES, threadHref } from '@/lib/routes';
 import { useOrgs, type OrgSummary } from '@/lib/api/me';
 import { useAllJobs, type InboxThread } from '@/lib/api/inbox';
 import { useAllRepos } from '@/lib/api/tickets-queries';
-import { StatusPie } from '@/components/ui/badges';
+import { PrStatusIcon, StatusPie } from '@/components/ui/badges';
 import { AccountMenu } from './account-menu';
 
 /**
@@ -487,7 +487,13 @@ function ThreadRow({ thread, orgId, active }: { thread: InboxThread; orgId: stri
       style={active ? { background: 'var(--accent-soft)', border: '1px solid var(--accent-line)' } : undefined}
     >
       <span className="mt-px flex-none">
-        <StatusPie status={thread.status} size={14} />
+        {/* Once a PR exists the leaf shows its PR status (GitHub color convention); until then, the
+            build-lifecycle status pie. */}
+        {thread.pr ? (
+          <PrStatusIcon pr={thread.pr} size={14} />
+        ) : (
+          <StatusPie status={thread.status} size={14} />
+        )}
       </span>
       <span className="min-w-0 flex-1">
         <span className="line-clamp-2 text-[12px] font-normal leading-[1.32] text-text">{thread.title}</span>

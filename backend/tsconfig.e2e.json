@@ -1,5 +1,5 @@
 {
-  "//": "ts-node config for the W9 end-to-end harness CLI (`pnpm e2e`). Mirrors tsconfig.gate.json — adds a baseUrl so tsconfig-paths resolves the `@core/*` aliases the harness's composition root uses; includes the atlas tree + core/lib. NOT a build config (the app builds via nest-cli).",
+  "//": "ts-node config for the W9 end-to-end harness CLI (`pnpm e2e`). Adds a baseUrl so tsconfig-paths resolves the `@core/*` aliases the harness's composition root uses; includes the atlas tree + core/lib. NOT a build config (the app builds via nest-cli).",
   "extends": "./tsconfig.cli.json",
   "compilerOptions": {
     "baseUrl": "."

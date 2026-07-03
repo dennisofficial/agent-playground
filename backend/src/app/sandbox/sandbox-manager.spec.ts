@@ -1,8 +1,9 @@
 import type { EnvService } from '@core/config/env/env.service';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CONTAINER_GIT_COMMON } from './container-paths';
 import type {
   ContainerEngine,
   ContainerInfo,
@@ -12,7 +13,7 @@ import type {
 import type { FeatureSandbox } from '../git';
 import type { SandboxAttachInput } from './sandbox-provider.port';
 import { SandboxImageBuilder } from './sandbox-image.builder';
-import { SandboxManager, dedupeBindsByTarget } from './sandbox-manager.service';
+import { SandboxManager, dedupeBindsByTarget, rebaseDotGit, submoduleGitlinks } from './sandbox-manager.service';
 
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
@@ -84,6 +85,91 @@ describe('dedupeBindsByTarget', () => {
     const { binds, dropped } = dedupeBindsByTarget(input);
     expect(binds).toEqual(input);
     expect(dropped).toEqual([]);
+  });
+});
+
+describe('submoduleGitlinks', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'atlas-subgit-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('returns [] for a repo with no .gitmodules', () => {
+    expect(submoduleGitlinks(dir)).toEqual([]);
+  });
+
+  it('parses top-level submodule paths from .gitmodules', () => {
+    writeFileSync(
+      join(dir, '.gitmodules'),
+      [
+        '[submodule "packages/jwt-auth"]',
+        '\tpath = packages/jwt-auth',
+        '\turl = https://github.com/x/jwt-auth.git',
+        '[submodule "packages/ai-testing"]',
+        '  path = packages/ai-testing',
+        '  url = https://github.com/x/ai-testing',
+      ].join('\n'),
+    );
+    expect(submoduleGitlinks(dir).sort()).toEqual(['packages/ai-testing', 'packages/jwt-auth']);
+  });
+
+  it('recurses into a nested submodule .gitmodules (path is relative to the superproject root)', () => {
+    writeFileSync(join(dir, '.gitmodules'), '[submodule "a"]\n\tpath = a\n\turl = u');
+    mkdirSync(join(dir, 'a'));
+    writeFileSync(join(dir, 'a', '.gitmodules'), '[submodule "b"]\n\tpath = b\n\turl = u');
+    expect(submoduleGitlinks(dir).sort()).toEqual(['a', 'a/b']);
+  });
+});
+
+describe('rebaseDotGit', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'atlas-rebase-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('rebases an ABSOLUTE submodule gitdir under the common dir onto CONTAINER_GIT_COMMON', () => {
+    const common = join(dir, 'clone', '.git');
+    mkdirSync(join(common, 'worktrees', 'wt', 'modules', 'packages', 'jwt-auth'), { recursive: true });
+    const ptrDir = join(dir, 'wt', 'packages', 'jwt-auth');
+    mkdirSync(ptrDir, { recursive: true });
+    const ptr = join(ptrDir, '.git');
+    writeFileSync(ptr, `gitdir: ${join(common, 'worktrees', 'wt', 'modules', 'packages', 'jwt-auth')}\n`);
+
+    const out = join(dir, 'out.git');
+    expect(rebaseDotGit(ptr, common, out)).toBe(out);
+    expect(readFileSync(out, 'utf8')).toBe(
+      `gitdir: ${CONTAINER_GIT_COMMON}/worktrees/wt/modules/packages/jwt-auth\n`,
+    );
+  });
+
+  it('resolves a RELATIVE gitdir against the pointer directory before rebasing', () => {
+    const common = join(dir, '.git');
+    mkdirSync(join(common, 'modules', 'sub'), { recursive: true });
+    const ptrDir = join(dir, 'sub');
+    mkdirSync(ptrDir, { recursive: true });
+    const ptr = join(ptrDir, '.git');
+    writeFileSync(ptr, 'gitdir: ../.git/modules/sub\n'); // relative to ptrDir
+
+    const out = join(dir, 'out.git');
+    expect(rebaseDotGit(ptr, common, out)).toBe(out);
+    expect(readFileSync(out, 'utf8')).toBe(`gitdir: ${CONTAINER_GIT_COMMON}/modules/sub\n`);
+  });
+
+  it('bails (undefined, no file written) when the gitdir is not under the common dir', () => {
+    const common = join(dir, '.git');
+    mkdirSync(common, { recursive: true });
+    const ptr = join(dir, '.git-pointer');
+    writeFileSync(ptr, `gitdir: ${join(dir, 'elsewhere', 'modules', 'x')}\n`);
+    expect(rebaseDotGit(ptr, common, join(dir, 'out.git'))).toBeUndefined();
+  });
+
+  it('returns undefined for a missing / unparseable pointer', () => {
+    expect(rebaseDotGit(join(dir, 'nope', '.git'), dir, join(dir, 'out.git'))).toBeUndefined();
+    const bad = join(dir, 'bad');
+    writeFileSync(bad, 'not a gitdir line\n');
+    expect(rebaseDotGit(bad, dir, join(dir, 'out.git'))).toBeUndefined();
   });
 });
 
@@ -200,9 +286,9 @@ describe('SandboxManager.teardownByIdentity', () => {
 });
 
 describe('SandboxManager.attach — onMilestone', () => {
-  // CONFIG_REV is a private module constant (currently 11); mirrored here to construct a matching
+  // CONFIG_REV is a private module constant (currently 12); mirrored here to construct a matching
   // fingerprint label for the warm-reuse case. `atlas.cfg` mirrors the private L_CFG label key.
-  const CONFIG_REV = 11;
+  const CONFIG_REV = 12;
   const IMAGE_ID = 'img-1';
   const FINGERPRINT = `${IMAGE_ID}|cfg${CONFIG_REV}|mnone`; // no mounts in these tests
 

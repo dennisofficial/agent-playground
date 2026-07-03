@@ -74,12 +74,19 @@ describe('GitStateReconciler.reconcile', () => {
     expect(intakeEvent).not.toHaveBeenCalled();
   });
 
-  it('merged/closed PR → skips entirely (pollPrClosures owns teardown)', async () => {
+  it('merged/closed PR → latches pr_state then skips CI/conflict (pollPrClosures owns teardown)', async () => {
     const { svc, intakeEvent, update, pr } = make({ detail: detail({ state: 'merged' }) });
     await svc.reconcile();
     expect(intakeEvent).not.toHaveBeenCalled();
-    expect(update).not.toHaveBeenCalled();
+    // Backfill the terminal lifecycle (purple/red glyph), then bail — no CI/conflict work on a done PR.
+    expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'merged' });
     expect(pr.listCheckRuns).not.toHaveBeenCalled();
+  });
+
+  it('backfills pr_state=open for a legacy open-PR row with a null pr_state', async () => {
+    const { svc, update } = make({ detail: detail({ mergeableState: 'clean' }), job: { pr_state: null } });
+    await svc.reconcile();
+    expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'open' });
   });
 
   it('DISCOVERY: a branch-only job with an Atlas-opened PR → records pr_url/pr_number + flips done', async () => {
@@ -98,7 +105,7 @@ describe('GitStateReconciler.reconcile', () => {
     // `setPrReady` used to own now lives here (Atlas opens the PR in-sandbox; the host learns of it here).
     expect(update).toHaveBeenCalledWith(
       { id: 'job-1' },
-      { pr_url: 'http://pr/9', pr_number: 9, status: 'done' },
+      { pr_url: 'http://pr/9', pr_number: 9, status: 'done', pr_state: 'open' },
     );
   });
 
@@ -116,7 +123,8 @@ describe('GitStateReconciler.reconcile', () => {
   it('no column write when nothing changed (avoids realtime churn)', async () => {
     const { svc, update } = make({
       detail: detail({ mergeableState: 'clean' }),
-      job: { ci_status: 'success', pr_mergeable: 'clean' },
+      // pr_state already 'open' too, so the backfill is a no-op — otherwise it would fire a churn write.
+      job: { ci_status: 'success', pr_mergeable: 'clean', pr_state: 'open' },
       runs: [{ id: 1, name: 'CI', status: 'completed', conclusion: 'success', detailsUrl: null }],
     });
     await svc.reconcile();

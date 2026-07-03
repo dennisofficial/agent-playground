@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { ChevronRight, GitPullRequest } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { threadTitle } from '@/lib/thread-title';
 import { useLiveTurn } from '@/lib/api/job-stream';
 import { threadLane } from './phases';
 import { overlayLiveTasks } from './live-tasks';
-import { PR_REVIEW_NODE, prReviewDisplay, prReviewLane, type PrReviewDisplay } from './pr-review';
+import { revNode, fixNode } from './node-registry';
 import type {
   PipelineJob,
   PipelineThread,
@@ -21,10 +21,10 @@ import type {
  * The Thread Navigator's THREADS region — design handoff "thread navigation": an ACCORDION. Selecting a
  * thread reveals, in place, the things the thread owns — its LLM-authored TASKS (server-folded from the
  * session's TaskCreate/TaskUpdate calls) and its read-only REVIEW AGENTS (navigable child threads on
- * `rev:<threadId>:<agentId>` nodes) capped by the derived "Post-review fixes" row — and whichever thread
- * was open collapses (open = the selected lane, or the thread whose review agent is open in the detail
- * pane). Directly under the list, {@link PrReviewRegion} renders the inline FINAL REVIEW row — the single
- * job-level master-review thread with its own tasks and no review agents.
+ * `rev:<threadId>:<agentId>` nodes) capped by the navigable "Post-review fixes" row (`fix:<threadId>`) —
+ * and whichever thread was open collapses (open = the selected lane, or the thread whose review agent is
+ * open in the detail pane). The whole-diff master review is now just another thread in the list (rendered
+ * "Master review" with no review-agents fold), not a pinned region.
  */
 
 // ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
@@ -62,7 +62,7 @@ function laneState(s: ThreadStatus, drafted: boolean): LaneState {
   if (drafted || s === 'pending') return 'draft';
   if (s === 'done') return 'done';
   if (s === 'failed') return 'failed';
-  return 'in_progress'; // planning / reviewing / awaiting_approval / executing / auto_fixing
+  return 'in_progress'; // planning / reviewing / awaiting_approval / executing / awaiting_input / auto_fixing
 }
 
 /** The open accordion's state-colored left rail + soft wash (handoff §State colors). */
@@ -200,6 +200,7 @@ export function PipelineTree({ job, status, jobId, laneNode, detailNode, onSelec
           notReached={haltIdx !== -1 && i > haltIdx}
           selected={laneNode === s.id}
           openAgentId={agentIdIfSelected(detailNode, s.id)}
+          fixSelected={detailNode === fixNode(s.id)}
           onSelectNode={onSelectNode}
           onConversation={onConversation}
         />
@@ -229,6 +230,7 @@ function ThreadFold({
   notReached,
   selected,
   openAgentId,
+  fixSelected,
   onSelectNode,
   onConversation,
 }: {
@@ -241,11 +243,13 @@ function ThreadFold({
   selected: boolean;
   /** The thread's review agent open in the detail pane (keeps the fold open), or null. */
   openAgentId: string | null;
+  /** Whether this thread's "Post-review fixes" node (`fix:<threadId>`) is open in the detail pane. */
+  fixSelected: boolean;
   onSelectNode: (node: string) => void;
   onConversation: () => void;
 }) {
   const state = laneState(s.status, drafted);
-  const open = selected || openAgentId !== null;
+  const open = selected || openAgentId !== null || fixSelected;
   // REALTIME: fold the thread's live lane over the durable list, so mid-turn task calls tick instantly
   // (the pipeline query only refetches at turn end). Idle lanes read a dead key — cheap store lookup.
   const liveTurn = useLiveTurn(jobId, threadLane(s.id));
@@ -272,7 +276,7 @@ function ThreadFold({
             open ? 'font-semibold text-text' : notReached ? 'font-medium text-faint' : 'font-medium text-dim',
           )}
         >
-          §{index + 1} {threadTitle(s.brief)}
+          {s.isMasterReview ? 'Master review' : `§${index + 1} ${threadTitle(s.brief)}`}
         </span>
         {count ? (
           <span className="shrink-0 text-right font-mono text-[8px] text-faint">{count}</span>
@@ -290,6 +294,7 @@ function ThreadFold({
                 thread={s}
                 agents={agents}
                 openAgentId={openAgentId}
+                fixSelected={fixSelected}
                 onSelectNode={onSelectNode}
               />
             ) : null}
@@ -481,11 +486,13 @@ function ReviewAgentsBody({
   thread,
   agents,
   openAgentId,
+  fixSelected,
   onSelectNode,
 }: {
   thread: PipelineThread;
   agents: ReviewAgent[];
   openAgentId: string | null;
+  fixSelected: boolean;
   onSelectNode: (node: string) => void;
 }) {
   // Post-review fixes — the single consolidation agent that runs after ALL review agents complete
@@ -506,10 +513,14 @@ function ReviewAgentsBody({
           key={a.id}
           agent={a}
           selected={openAgentId === a.id}
-          onOpen={() => onSelectNode(`rev:${thread.id}:${a.id}`)}
+          onOpen={() => onSelectNode(revNode(thread.id, a.id))}
         />
       ))}
-      <PostReviewFixesRow state={fix} />
+      <PostReviewFixesRow
+        state={fix}
+        selected={fixSelected}
+        onOpen={() => onSelectNode(fixNode(thread.id))}
+      />
     </div>
   );
 }
@@ -593,12 +604,26 @@ function AgentStatusTile({ display }: { display: AgentDisplay | 'queued' | 'runn
 }
 
 /** The consolidation agent's row — runs after the review agents finish; applies fixes and verifies.
- *  Not navigable (its activity rides the thread's own lane), separated by a dashed rule per the design. */
-function PostReviewFixesRow({ state }: { state: 'queued' | 'running' | 'done' }) {
+ *  Navigable: opens the fix turn's transcript (`fix:<threadId>` → `autofix:<threadId>:fix` lane) in the
+ *  detail pane, like a review agent. Separated by a dashed rule per the design. */
+function PostReviewFixesRow({
+  state,
+  selected,
+  onOpen,
+}: {
+  state: 'queued' | 'running' | 'done';
+  selected: boolean;
+  onOpen: () => void;
+}) {
   return (
-    <div
-      title="Runs after the review agents finish — applies fixes and verifies."
-      className="mt-[2px] flex items-center gap-2 border-t border-dashed px-1.5 pb-[3px] pt-1.5"
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Runs after the review agents finish — applies fixes and verifies. Open its transcript."
+      className={cn(
+        'mt-[2px] flex w-full items-center gap-2 border-t border-dashed px-1.5 pb-[3px] pt-1.5 text-left transition',
+        selected ? 'bg-panel shadow-[0_1px_3px_rgba(0,0,0,0.06)]' : 'hover:bg-surface-2',
+      )}
       style={{ borderColor: 'var(--border-2)' }}
     >
       <AgentStatusTile display={state === 'queued' ? 'pending' : state} />
@@ -607,92 +632,18 @@ function PostReviewFixesRow({ state }: { state: 'queued' | 'running' | 'done' })
       >
         Post-review fixes
       </span>
-    </div>
+      <svg
+        width="9"
+        height="9"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={selected ? 'var(--accent)' : 'var(--border-2)'}
+        strokeWidth="3"
+        className="shrink-0"
+        aria-hidden
+      >
+        <path d="M9 6l6 6-6 6" />
+      </svg>
+    </button>
   );
-}
-
-// ── the PR Review region (FINAL REVIEW) ────────────────────────────────────────────────────────────
-
-/**
- * The FINAL REVIEW region — the single job-level master-review thread that runs against all code once
- * every worker thread finishes (review + fix + apply + verify via its own tasks; NO review agents). It is
- * technically a thread, so it renders inline directly under the THREADS list (and above OUTPUTS) with its
- * own distinct styling; the caller hides it entirely while no plan exists. Selecting it opens the
- * session's transcript in the LEFT pane (`pr-review` lane) and expands its task list in place.
- */
-export function PrReviewRegion({
-  job,
-  laneNode,
-  onSelectNode,
-  onConversation,
-}: {
-  job: PipelineJob;
-  laneNode: string | null;
-  onSelectNode: (node: string) => void;
-  onConversation: () => void;
-}) {
-  // REALTIME: overlay the PR Review session's live lane over the durable list (see ThreadFold).
-  const liveTurn = useLiveTurn(job.jobId, prReviewLane(job.jobId));
-  const tasks = overlayLiveTasks(job.tasks ?? [], liveTurn);
-  const done = tasks.filter((t) => t.status === 'completed').length;
-  const display = prReviewDisplay(job.prReviewStatus ?? null, tasks);
-  const open = laneNode === PR_REVIEW_NODE;
-  const gated = display === 'queued';
-  const accent = footerAccent(display);
-
-  return (
-    <div className="pb-1.5">
-      <div className="px-4 pb-1.5 pt-3">
-        <span className="font-mono text-[8px] tracking-[0.14em] text-faint">FINAL REVIEW</span>
-      </div>
-      <div className="border-l-[3px]" style={footerRail(display, open)}>
-        <button
-          type="button"
-          onClick={() => (open ? onConversation() : onSelectNode(PR_REVIEW_NODE))}
-          className="flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2"
-        >
-          <span
-            className="grid h-5 w-5 shrink-0 place-items-center rounded-[5px]"
-            style={{
-              color: accent,
-              background:
-                display === 'done'
-                  ? 'var(--green-soft)'
-                  : display === 'failed'
-                    ? 'var(--red-soft)'
-                    : gated
-                      ? 'color-mix(in srgb, var(--slate) 14%, transparent)'
-                      : 'var(--blue-soft)',
-            }}
-          >
-            <GitPullRequest size={12} strokeWidth={2.2} />
-          </span>
-          <span className={cn('min-w-0 flex-1 truncate text-[12px] font-semibold', gated ? 'text-dim' : 'text-text')}>
-            PR Review
-          </span>
-          <span className="shrink-0 font-mono text-[8px]" style={{ color: gated ? 'var(--faint)' : accent }}>
-            {display}
-          </span>
-        </button>
-        {open ? <TasksBody tasks={tasks} done={done} total={tasks.length} /> : null}
-      </div>
-    </div>
-  );
-}
-
-/** The footer's state accent — slate gated · blue reviewing/fixing/verifying · green done · red failed. */
-function footerAccent(display: PrReviewDisplay): string {
-  if (display === 'done') return 'var(--green)';
-  if (display === 'failed') return 'var(--red)';
-  if (display === 'queued') return 'var(--slate)';
-  return 'var(--blue)';
-}
-
-function footerRail(display: PrReviewDisplay, open: boolean): { borderLeftColor: string; background: string } {
-  if (!open) return { borderLeftColor: 'transparent', background: 'transparent' };
-  const accent = footerAccent(display);
-  return {
-    borderLeftColor: display === 'queued' ? 'var(--border-2)' : accent,
-    background: `color-mix(in srgb, ${accent} 5%, transparent)`,
-  };
 }

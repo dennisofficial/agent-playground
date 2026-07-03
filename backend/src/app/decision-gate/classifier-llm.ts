@@ -5,7 +5,7 @@ import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/
 import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
-import { renderSystemPrompt } from '../prompt-kit';
+import { Agent, renderAgentPrompt } from '../prompt-kit';
 
 /**
  * The ambiguous-case LLM port for the decision-class gate. Isolated behind an interface + DI token so
@@ -92,7 +92,7 @@ export namespace ClassifyDecisionChain {
     RunnableSequence.from<Input, Output>([
       RunnableLambda.from((i: Input) => ({ input: renderUser(i) })),
       ChatPromptTemplate.fromMessages([
-        new SystemMessage(renderSystemPrompt('meta-decision-classifier')),
+        new SystemMessage(renderAgentPrompt(Agent.META_CLASSIFIER)),
         HumanMessagePromptTemplate.fromTemplate('{input}'),
       ]),
       llm.withStructuredOutput(Schema, { name: 'classify_decision' }),

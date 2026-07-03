@@ -2,8 +2,8 @@ import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { atlasAgentHomeBase } from '../engine/engine-home';
 import type { FeatureSandbox } from '../git';
@@ -49,6 +49,65 @@ function realpathSafe(p: string): string {
 }
 
 /**
+ * Generate a container-local replacement for a `.git` pointer FILE (a linked worktree's or a submodule
+ * checkout's). The real file reads `gitdir: <hostpath>` — pointing under the repo's shared common dir on
+ * the HOST, which isn't mounted at that path in the box. This writes the SAME pointer rebased onto
+ * {@link CONTAINER_GIT_COMMON} to `outFile` so in-container git resolves the gitdir → objects/refs,
+ * without leaking host paths or mutating the host's real `.git` (the host still uses it). Returns the host
+ * path of the generated file (to bind-mount over the pointer), or undefined if the pointer can't be
+ * read/parsed or its gitdir isn't under `commonDir`.
+ */
+export function rebaseDotGit(gitPointerPath: string, commonDir: string, outFile: string): string | undefined {
+  try {
+    const raw = readFileSync(gitPointerPath, 'utf8').trim();
+    const m = raw.match(/^gitdir:\s*(.+)$/);
+    if (!m) return undefined;
+    // The stored gitdir is usually absolute, but a submodule's `.git` may store it RELATIVE to the
+    // pointer's own directory — resolve against that before diffing.
+    const gitdir = m[1].trim();
+    const abs = isAbsolute(gitdir) ? gitdir : resolve(dirname(gitPointerPath), gitdir);
+    // Realpath-normalize BOTH operands before diffing. `git --git-common-dir` returns a realpath'd
+    // absolute path, but the pointer's stored gitdir may use a symlinked form (on macOS the OS tmp/repos
+    // root is `/var/folders/…` → `/private/var/folders/…`). Without normalizing, `relative()` yields a
+    // bogus `../../…` and we'd bail, leaving no in-container `.git` → "not a git repository".
+    const rel = relative(realpathSafe(commonDir), realpathSafe(abs)); // e.g. "worktrees/thread-X"
+    if (!rel || rel.startsWith('..')) return undefined; // gitdir not under the common dir — bail safely
+    writeFileSync(outFile, `gitdir: ${CONTAINER_GIT_COMMON}/${rel}\n`);
+    return outFile;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Worktree-relative paths of every submodule checkout (recursive), parsed from `.gitmodules` `path =`
+ * entries. Used to shadow each submodule's `.git` pointer for the neutral container mount. Bounded by
+ * actual submodule nesting; returns [] for the common no-submodule repo (no `.gitmodules`).
+ */
+export function submoduleGitlinks(worktreePath: string): string[] {
+  const out: string[] = [];
+  const visit = (relBase: string): void => {
+    const modulesFile = join(worktreePath, relBase, '.gitmodules');
+    if (!existsSync(modulesFile)) return;
+    let content: string;
+    try {
+      content = readFileSync(modulesFile, 'utf8');
+    } catch {
+      return;
+    }
+    for (const line of content.split('\n')) {
+      const m = line.match(/^\s*path\s*=\s*(.+?)\s*$/);
+      if (!m) continue;
+      const rel = relBase ? `${relBase}/${m[1]}` : m[1];
+      out.push(rel);
+      visit(rel); // recurse into nested submodules
+    }
+  };
+  visit('');
+  return out;
+}
+
+/**
  * Container-provisioning revision — bump when the container's CREATE config changes in a way that an
  * existing container must be recreated to pick up (new mounts, volumes, labels, privileges…). Combined
  * with the image id into the `atlas.cfg` fingerprint so a stale container is auto-recreated on its next
@@ -70,11 +129,14 @@ function realpathSafe(p: string): string {
  *   since it moved between pnpm majors: `npm_config_store_dir` for 10.x, a global `XDG_CONFIG_HOME`-redirected
  *   config.yaml for 11.x) instead of relying on pnpm's per-disk fallback, which is what previously put a
  *   live store in the worktree.
+ * rev 12 = shadow the `.git` pointer of every SUBMODULE checkout too (not just the superproject's), each
+ *   rebased onto CONTAINER_GIT_COMMON — so in-container git (`status`/`add -A`/…, which recurse submodules
+ *   by default) resolves a submodule-bearing repo instead of erroring `not a git repository: <hostpath>`.
  *
  * NOTE: the per-repo mount SET is ALSO hashed into the `atlas.cfg` fingerprint below, so a changed
  * manifest mount list recreates the container even without bumping this rev.
  */
-const CONFIG_REV = 11;
+const CONFIG_REV = 12;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -195,8 +257,23 @@ export class SandboxManager implements SandboxProvider {
       // → objects/refs, without leaking host paths or mutating the host's real `.git` (the host still uses
       // it). `commondir` is already relative (`../..`), so it resolves to CONTAINER_GIT_COMMON unchanged.
       binds.push(`${gitDir}:${CONTAINER_GIT_COMMON}`);
-      const dotGit = this.containerDotGit(sandbox.worktreePath, gitDir, hostHome);
+      const dotGit = rebaseDotGit(join(sandbox.worktreePath, '.git'), gitDir, join(hostHome, 'worktree.git'));
       if (dotGit) binds.push(`${dotGit}:${CONTAINER_WORKTREE}/.git`);
+
+      // Same rebase for every SUBMODULE checkout's `.git` pointer. Each holds a gitdir under the SAME
+      // common dir (`<common>/worktrees/<wt>/modules/…` for a linked worktree, or `<common>/modules/…`),
+      // an absolute HOST path that isn't mounted at that path in the box. Without this, in-container git
+      // recursing into submodules (the default for `status`/`add -A`) fails with `not a git repository`,
+      // which is what made a submodule-bearing repo (e.g. cubix-infra) report a spurious "git issue".
+      for (const sub of submoduleGitlinks(sandbox.worktreePath)) {
+        const ptr = join(sandbox.worktreePath, sub, '.git');
+        // Only a gitlink FILE needs rebasing; an uninitialized (missing) or embedded-repo (dir) `.git`
+        // has no host-path pointer to rewrite.
+        if (!existsSync(ptr) || !statSync(ptr).isFile()) continue;
+        const out = join(hostHome, `submodule-${sub.replace(/\//g, '__')}.git`);
+        const rebased = rebaseDotGit(ptr, gitDir, out);
+        if (rebased) binds.push(`${rebased}:${CONTAINER_WORKTREE}/${sub}/.git`);
+      }
     }
     // HOT-RELOAD: bind-mount the host engine bundle (read-only) over the baked-in one, so an engine
     // update (the API rebundles on boot) is picked up by the next `docker exec` in this container —
@@ -716,32 +793,6 @@ export class SandboxManager implements SandboxProvider {
       await new Promise((res) => setTimeout(res, 1000));
     }
     this.logger.warn(`sandbox ${containerId.slice(0, 12)} inner dockerd not ready in ${timeoutMs}ms — continuing`);
-  }
-
-  /**
-   * Generate a container-local replacement for a linked worktree's `.git` pointer file. The real file
-   * reads `gitdir: <hostCommon>/worktrees/<name>` — an absolute HOST path that isn't mounted in the box.
-   * This writes the SAME pointer rebased onto {@link CONTAINER_GIT_COMMON} so in-container git resolves
-   * the worktree's gitdir. Returns the host path of the generated file (to bind-mount over the worktree's
-   * `.git`), or undefined if the worktree `.git` can't be read/parsed.
-   */
-  private containerDotGit(worktreePath: string, commonDir: string, hostHome: string): string | undefined {
-    try {
-      const raw = readFileSync(join(worktreePath, '.git'), 'utf8').trim();
-      const m = raw.match(/^gitdir:\s*(.+)$/);
-      if (!m) return undefined;
-      // Realpath-normalize BOTH operands before diffing. `git --git-common-dir` returns a realpath'd
-      // absolute path, but the `.git` pointer's stored gitdir may use a symlinked form (on macOS the OS
-      // tmp/repos root is `/var/folders/…` → `/private/var/folders/…`). Without normalizing, `relative()`
-      // yields a bogus `../../…` and we'd bail, leaving no in-container `.git` → "not a git repository".
-      const rel = relative(realpathSafe(commonDir), realpathSafe(m[1].trim())); // e.g. "worktrees/thread-X"
-      if (!rel || rel.startsWith('..')) return undefined; // gitdir not under the common dir — bail safely
-      const file = join(hostHome, 'worktree.git');
-      writeFileSync(file, `gitdir: ${CONTAINER_GIT_COMMON}/${rel}\n`);
-      return file;
-    } catch {
-      return undefined;
-    }
   }
 
   /** Absolute git common dir for a worktree (so a linked worktree's external .git can be mounted). */

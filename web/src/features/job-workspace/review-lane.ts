@@ -15,6 +15,11 @@ import type { JobMessage } from '@/lib/api/job-api';
 export const autofixLensLane = (autofixId: string, lensId: string): string =>
   `autofix:${autofixId}:${lensId}`;
 
+/** The auto-fix FIX turn's sub-lane (fix · apply · verify) — byte-identical to the backend `autofixFixLane`
+ *  (see `backend/.../thread-registry.ts` / `autofix.stage.ts`). The fix turn tags its blocks `meta.fixTurn`
+ *  (NOT `meta.lensId`), so `TranscriptView` filters this lane on `fixTurn` — see `conversation.tsx`. */
+export const autofixFixLane = (autofixId: string): string => `autofix:${autofixId}:fix`;
+
 /** The `?node=` sentinel used in place of a thread id to mean "the job-level PR-tail pass". */
 export const REVIEW_JOB_SCOPE = 'job';
 

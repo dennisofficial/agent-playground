@@ -1,33 +1,29 @@
-import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { cp, mkdir, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { LocalGitService, writeForbiddenPaths } from '../git';
 import { WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
 import { isExternalMountPath, type MountSpec } from '../sandbox/container-paths';
-import { resolveExternalMountTarget, resolveSafeSource, resolveSafeTarget } from './worktree-path-guard';
+import { resolveExternalMountTarget, resolveSafeTarget } from './worktree-path-guard';
 
 export interface HydrateInput {
   worktreePath: string;
-  /** The repo's slug (on-disk identity) — used for the golden seed source path. */
-  slug: string;
   /** The tenant org id (or the gate's synthetic `'gate'`, which resolves to no secrets). */
   orgId: string;
-  /** The repo's uuid (`repos.id`) — grants + config are keyed by this. Absent → no secrets/mounts/seed. */
+  /** The repo's uuid (`repos.id`) — grants + config are keyed by this. Absent → no secrets/mounts. */
   repoDbId?: string;
 }
 
 /**
  * Hydrates a worktree from two DB-backed sources — owner GRANTS (per-org secrets, see
- * {@link WorktreeSecretStore}) and the org+repo-scoped worktree config (mounts + golden seed, see
+ * {@link WorktreeSecretStore}) and the org+repo-scoped worktree config (cache/auth mounts, see
  * {@link WorktreeConfigStore}) — never a committed file (see docs/adr/0003: a `write_worktree_config` call
  * from ANY thread propagates to every other in-flight job's next hydration instantly, no PR/merge/rebase
- * lag). It renders each granted secret to its destination, copies operator golden-seed files, and returns
- * the validated cache mounts for the sandbox to bind. Every materialized path is gitignore-guarded (so
- * `commitAll`'s `git add -A` can't sweep it into a PR) and traversal/symlink-guarded; the set is persisted
- * to a host-only sidecar so `commitAll`'s leak-scan can reject them even if config changes mid-turn.
+ * lag). It renders each granted secret to its destination and returns the validated cache mounts for the
+ * sandbox to bind. Every materialized path is gitignore-guarded (so `commitAll`'s `git add -A` can't sweep
+ * it into a PR) and traversal/symlink-guarded; the set is persisted to a host-only sidecar so `commitAll`'s
+ * leak-scan can reject them even if config changes mid-turn.
  *
  * Stateless and idempotent: callers decide WHEN to (re-)hydrate (thread paths gate on {@link computeSig};
  * gate/legacy paths re-hydrate every attach). This service never touches the container — the
@@ -42,11 +38,10 @@ export class WorktreeHydrator {
     private readonly git: LocalGitService,
     private readonly secrets: WorktreeSecretStore,
     private readonly config: WorktreeConfigStore,
-    private readonly env: EnvService,
   ) {}
 
   /**
-   * Read the repo's DB-backed mount/seed config, tolerating a transient store failure (a Postgres hiccup
+   * Read the repo's DB-backed mount config, tolerating a transient store failure (a Postgres hiccup
    * must never fail a sandbox attach) — logs a warning and returns empty so the caller proceeds as if the
    * repo simply has no config THIS pass; the next attach re-reads and self-heals once the store recovers.
    */
@@ -55,15 +50,6 @@ export class WorktreeHydrator {
       return await this.config.listMounts(orgId, repoId);
     } catch (err) {
       this.logger.warn(`worktree mount config read failed for repo=${repoId} (treating as none this pass): ${(err as Error).message}`);
-      return [];
-    }
-  }
-
-  private async safeListSeed(orgId: string, repoId: string): Promise<string[]> {
-    try {
-      return await this.config.listSeed(orgId, repoId);
-    } catch (err) {
-      this.logger.warn(`worktree seed config read failed for repo=${repoId} (treating as none this pass): ${(err as Error).message}`);
       return [];
     }
   }
@@ -87,17 +73,15 @@ export class WorktreeHydrator {
   }
 
   /**
-   * A cheap signature of what hydration WOULD produce — hash of the repo's live mounts/seed rows + the
+   * A cheap signature of what hydration WOULD produce — hash of the repo's live mount rows + the
    * referenced secrets' versions (updated_at, no decryption) + the repo's grant set. Stable unless a
-   * mount/seed row, a referenced secret, OR a grant changes — so a thread sandbox re-hydrates when stale,
+   * mount row, a referenced secret, OR a grant changes — so a thread sandbox re-hydrates when stale,
    * INCLUDING when an owner adds or revokes a grant (otherwise a freshly-granted secret wouldn't render
    * until something else changed). Hashes live content directly (not `updated_at` timestamps) so an
    * idempotent no-op upsert can never spuriously bump the signature.
    */
   async computeSig(worktreePath: string, orgId: string, repoDbId?: string): Promise<string> {
-    const [mounts, seed] = repoDbId
-      ? await Promise.all([this.safeListMounts(orgId, repoDbId), this.safeListSeed(orgId, repoDbId)])
-      : [[], []];
+    const mounts = repoDbId ? await this.safeListMounts(orgId, repoDbId) : [];
     const versions = await this.secrets.secretVersions(orgId);
     const grantList = repoDbId ? await this.secrets.listGrants(orgId, repoDbId) : [];
     // Rendering is grant-driven, so the sig must thread the GRANTED secrets' versions (a rotated value
@@ -106,20 +90,19 @@ export class WorktreeHydrator {
     const referenced = grantList.map((g) => `${g.name}:${versions[g.name] ?? 0}`).sort();
     const grants = grantList.map((g) => `${g.name}:${g.path}`).sort();
     const mountSig = mounts.map((m) => `${m.path}:${m.mode}`).sort();
-    const seedSig = [...seed].sort();
     return createHash('sha256')
-      .update(JSON.stringify({ mounts: mountSig, seed: seedSig, referenced, grants }))
+      .update(JSON.stringify({ mounts: mountSig, referenced, grants }))
       .digest('hex');
   }
 
   /**
-   * Render granted secrets + golden seed into the worktree and persist the forbidden-paths sidecar.
+   * Render granted secrets into the worktree and persist the forbidden-paths sidecar.
    * Returns the materialized paths AND operator-facing `notices` for anything that was skipped/rejected (a
    * bad config entry never throws — it just doesn't hydrate; the notices are surfaced to the operator by
    * the provisioner so a misconfiguration isn't silent). Idempotent.
    */
   async hydrateFiles(input: HydrateInput): Promise<{ forbiddenPaths: string[]; notices: string[] }> {
-    const { worktreePath, slug, orgId, repoDbId } = input;
+    const { worktreePath, orgId, repoDbId } = input;
     const forbidden: string[] = [];
     const notices: string[] = [];
     // Operator/Atlas-facing notice + matching server-log warning in one place — this is the channel the
@@ -131,18 +114,17 @@ export class WorktreeHydrator {
     };
 
     let mounts: MountSpec[] = [];
-    let seed: string[] = [];
     if (repoDbId) {
       try {
-        [mounts, seed] = await Promise.all([this.config.listMounts(orgId, repoDbId), this.config.listSeed(orgId, repoDbId)]);
+        mounts = await this.config.listMounts(orgId, repoDbId);
       } catch (err) {
-        note(`worktree config unavailable — mounts/seed skipped this hydration (will retry next attach): ${(err as Error).message}`);
+        note(`worktree config unavailable — mounts skipped this hydration (will retry next attach): ${(err as Error).message}`);
       }
     }
 
     // ── secrets (category 1) — rendered from owner GRANTS, not worktree config ──────────────────
-    // The grant IS the render instruction AND the authority (owner-authored). Worktree config (mounts +
-    // seed) never carries secrets — so a `write_worktree_config` call can't read an org secret.
+    // The grant IS the render instruction AND the authority (owner-authored). Worktree config (mounts)
+    // never carries secrets — so a `write_worktree_config` call can't read an org secret.
     // NOTE: EVERY thread (incl. onboarding) renders real secret values now. The brain has Bash and can
     // read them in-sandbox — that is INTENTIONAL and accepted: this is a private, trusted deployment where
     // Atlas is at least as capable as local Claude Code (which runs with the user's full unisolated creds).
@@ -167,39 +149,6 @@ export class WorktreeHydrator {
         }
         await this.writeAtomic(target, value, 0o600);
         forbidden.push(g.path);
-      }
-    }
-
-    // ── seed (category 3) ─────────────────────────────────────────────────────────────────────
-    const goldenRoot = this.env.get('ATLAS_GOLDEN_ROOT');
-    if (seed.length && !goldenRoot) {
-      note(`worktree config has seed paths but ATLAS_GOLDEN_ROOT is not configured — seed files skipped`);
-    }
-    if (seed.length && goldenRoot) {
-      const sourceRoot = join(goldenRoot, orgId, slug);
-      for (const rel of seed) {
-        let target: string;
-        try {
-          target = resolveSafeTarget(worktreePath, rel);
-        } catch (err) {
-          note(`worktree seed "${rel}" rejected (unsafe path): ${(err as Error).message}`);
-          continue;
-        }
-        if (existsSync(target)) continue; // materialize-if-missing (never clobber agent edits)
-        let src: string;
-        try {
-          src = resolveSafeSource(sourceRoot, rel);
-        } catch {
-          note(`worktree seed "${rel}" has no source under the golden dir — skipped`);
-          continue;
-        }
-        if (!(await this.git.isIgnored(worktreePath, rel))) {
-          note(`worktree seed target "${rel}" is NOT gitignored — refusing to copy (it would leak into the PR); add it to .gitignore`);
-          continue;
-        }
-        await mkdir(dirname(target), { recursive: true });
-        await cp(src, target, { recursive: true });
-        forbidden.push(rel);
       }
     }
 

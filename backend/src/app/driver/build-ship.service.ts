@@ -2,21 +2,23 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { DecisionRecord, Job } from '../domain';
 import { ENGINE_RUNNER, type EngineRunnerPort, type ExecutionTarget, type ToolImpl } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
-import { renderSystemPrompt } from '../prompt-kit';
-import { BLOCK_SINK, type BlockSink, TurnHarnessFactory } from '../surface/turn-harness.service';
+import { Agent, renderAgentPrompt } from '../prompt-kit';
+import { TurnHarnessFactory } from '../surface/turn-harness.service';
+import { laneFor } from '../surface/thread-registry';
 import { DriverStoreService } from './driver-store.service';
 import type { ResolvedRepo } from './repo-resolver';
 
-/** The PR Review orchestrator's transcript lane — stable per job, so the web can subscribe by job identity
- *  the same way a build thread rides `thread:<threadId>` (see `atlas-build-thread-stable-lane-reattach`). */
-const prReviewLane = (jobId: string): string => `pr-review:${jobId}`;
-
-/** The opened (or pre-existing) pull request. */
-export interface ShipResult {
-  url: string;
-  number: number;
-  existing: boolean;
-}
+/**
+ * The outcome of the terminal ship sequence. Atlas opens the PR ITSELF in-sandbox, then reports its url
+ * back through the `report_pr_opened` bridge tool, so `ship` LATCHES `pr_url`/`pr_number` deterministically
+ * (no dependence on the reconcile poll to discover it). `prConfirmed` says whether that latch succeeded —
+ * callers gate terminal state (job `done`, ledger `complete`) on it, and must NOT treat "opened" alone as
+ * "shipped" (the in-sandbox open turn best-effort-catches its own failures).
+ */
+export type ShipOutcome =
+  | { opened: true; prConfirmed: true; url: string; number: number }
+  | { opened: true; prConfirmed: false }
+  | { opened: false; reason: 'no-token' };
 
 /** The slice of the decision record the ship step needs (overview + decisions → the PR body). */
 export type ShipRecord = Pick<DecisionRecord, 'overview' | 'decisions'>;
@@ -40,13 +42,14 @@ export interface ShipInput {
  * The shared TERMINAL "ship" sequence — extracted from the thread-driver's PR-tail so BOTH the full
  * thread build and the direct-build fast path finalize identically:
  *
- *   PR-tail auto-fix (whole accumulated diff) → push the branch → open ONE PR (idempotent; a re-run
- *   finds the existing PR) → record `pr_url`/`pr_number` on the THREAD (which flips it to `done`, so the
- *   merge poll watches it) → relay "PR ready".
+ *   push the branch → open ONE PR (idempotent; a re-run finds the existing PR) → record `pr_url`/`pr_number`
+ *   on the THREAD (which flips it to `done`, so the merge poll watches it) → relay "PR ready".
  *
- * References NO threads/steps — its only inputs are the job row, the (optional) decision record, the
- * resolved repo, and the sandbox. Returns the opened PR, or `null` when no GitHub token is configured
- * (the caller is notified; the thread stays `running` so a later token + re-run can ship it).
+ * The whole-diff review-and-fix now runs UPSTREAM as the build's last thread (the Codex master-review
+ * builder — see `thread-driver.service.ts`), so the branch reaching `ship` is already reviewed and fixed;
+ * `ship` just publishes it. References NO threads/steps — its only inputs are the job row, the (optional)
+ * decision record, the resolved repo, and the sandbox. Returns the opened PR, or `null` when no GitHub token
+ * is configured (the caller is notified; the thread stays `running` so a later token + re-run can ship it).
  */
 @Injectable()
 export class BuildShipService {
@@ -56,17 +59,14 @@ export class BuildShipService {
     private readonly git: LocalGitService,
     private readonly pr: GithubPrService,
     private readonly store: DriverStoreService,
-    // The @Global durable-block writer — for the PR Review anchor row (paired with a `notify` post).
-    @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
-    // The @Global shared transcript spine — the PR Review orchestrator rides it like a build thread, on
-    // the stable `pr-review:<jobId>` lane.
+    // The @Global shared transcript spine — the in-sandbox open-PR turn rides it on the `ship:<jobId>` lane.
     private readonly turnHarness: TurnHarnessFactory,
-    // Direct engine access (not `TurnRunnerService` — build turns pass no tool bridge; the orchestrator
-    // needs one for `run_master_review`), same seam the brain uses for its own host-tool turns.
+    // Direct engine access (not `TurnRunnerService` — the open-PR turn passes its own `report_pr_opened`
+    // tool bridge), same seam the brain uses for its own host-tool turns.
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
   ) {}
 
-  async ship(input: ShipInput): Promise<ShipResult | null> {
+  async ship(input: ShipInput): Promise<ShipOutcome> {
     const { job, record, repo, sandbox } = input;
     const notify = async (m: string): Promise<void> => {
       try {
@@ -86,9 +86,6 @@ export class BuildShipService {
       );
     }
 
-    this.logger.log(`job=${job.id} ship — PR Review`);
-    await this.runPrReview(job, record, repo, sandbox, notify);
-
     if (!repo.token) {
       this.logger.warn(
         `job=${job.id}: no GitHub token — cannot push / open PR. Leaving as running.`,
@@ -96,120 +93,195 @@ export class BuildShipService {
       await notify(
         ':warning: Build complete but no GitHub token is configured — PR not opened.',
       );
-      return null;
+      return { opened: false, reason: 'no-token' };
     }
 
-    // Push with auth from the RESOLVED repo, not the sandbox: a row-sourced `FeatureSandbox` (resume
-    // path) carries an empty `gitUrl`/no token, so `push()` would otherwise run unauthenticated and lean
-    // on ambient host credentials. Enriching from `repo` makes the host push robust in prod.
-    await this.git.push({
-      ...sandbox,
-      gitUrl: repo.projectRepo.gitUrl,
-      token: repo.token,
-    });
-    const opened = await this.pr.openPullRequest(repo.token, {
-      owner: repo.owner,
-      repo: repo.repo,
-      head: sandbox.branch,
-      base: repo.defaultBranch,
-      title: job.title ?? 'Atlas build',
-      body: shipPrBody(job, record),
-      draft: false,
-    });
+    // OPEN, THEN REVIEW AS A CHECK. Atlas opens the PR FIRST — a final IN-SANDBOX turn (the host runs no
+    // git/PR commands itself; it kicks an execute turn where Atlas, with authenticated git + `gh`, pushes
+    // the branch and `gh pr create`s). Atlas reports the URL back through the `report_pr_opened` bridge tool,
+    // so the host learns it deterministically here — no dependence on the reconcile poll for discovery.
+    const reported = await this.openPrInSandbox(job, record, repo, sandbox, notify);
 
-    // The PR (url + number) lives on the THREAD now — one owner — so the merge poll watches it there.
-    await this.store.setPrReady(job.id, opened.url, opened.number);
-    await this.store.setPrReviewStatus(job.id, 'opened').catch(() => undefined);
-    this.logger.log(
-      `thread=${job.id} PR ${opened.existing ? 'existing' : 'ready'}: ${opened.url}`,
-    );
-    await notify(`:tada: PR ready for review: ${opened.url}`);
-    return opened;
+    // LATCH the completion signal. Resolve the PR by BRANCH first — `findOpenPullByHead` is scoped to
+    // `sandbox.branch`, so it is authoritative for WHICH PR belongs to this build (its head IS our branch).
+    // Fall back to the url Atlas reported via `report_pr_opened` ONLY when the branch lookup misses (GitHub
+    // indexing lag right after `gh pr create`) AND the reported PR's HEAD really is our branch — the tool
+    // only validated owner/repo, so verify the head before trusting it, else a mis-reported same-repo url
+    // could latch the wrong PR.
+    let confirmed = await this.discoverOpenPr(repo, sandbox);
+    if (
+      !confirmed &&
+      reported &&
+      (await this.reportedHeadMatches(repo, reported.number, sandbox.branch))
+    ) {
+      confirmed = reported;
+    }
+    if (confirmed) {
+      // Record `pr_url`/`pr_number` (via `setPrReady`, which also flips `done`). Applies to onboarding too:
+      // the reconciler already discovers + records an onboarding PR the same way, so latching it here is
+      // consistent (the ledger backstop still excludes onboarding by kind, so no promote turn fires on it).
+      await this.store.setPrReady(job.id, confirmed.url, confirmed.number);
+    } else {
+      // Could NOT confirm the PR url (the ship turn was interrupted before reporting AND the branch lookup
+      // missed — e.g. GitHub hasn't indexed a just-created PR). Deliberately do NOT flip `done` with a null
+      // `pr_url`: that strands the completion signal and makes boot-recovery re-ship the job forever (the
+      // flaky-loop bug this fix targets). Leaving it `running` lets recovery re-run the idempotent ship
+      // tail, which finds the existing PR and latches its url on the next pass.
+      this.logger.warn(
+        `job=${job.id}: ship could not confirm a PR url — leaving 'running' for recovery to re-latch`,
+      );
+    }
+
+    // The whole-diff review + fixes already ran upstream (the Codex master-review builder thread), so the
+    // branch is published as-is — `ship` no longer runs a review pass of its own.
+    return confirmed
+      ? { opened: true, prConfirmed: true, url: confirmed.url, number: confirmed.number }
+      : { opened: true, prConfirmed: false };
   }
 
   /**
-   * PR REVIEW — a single Claude orchestrator session, on the stable `pr-review:<jobId>` lane, that
-   * maintains its own live task list (native `TaskCreate`/`TaskUpdate`) through three stages: get an
-   * independent review over the whole diff (via the `run_master_review` host tool, which fires ONE
-   * synchronous Codex pass — Codex has no custom-tool pathway in this codebase, so it can only be the
-   * reviewer, not the orchestrator), apply fixes, then verify the build. Best-effort: a failure here is
-   * logged and the PR opens anyway (never blocks shipping — same posture as the auto-fix pass it replaces).
+   * Best-effort direct lookup of the just-opened PR by head branch — the fallback when the ship turn didn't
+   * report its url (interrupted before the `report_pr_opened` call). Returns undefined on a miss (GitHub
+   * hasn't indexed the fresh PR yet) or a transient error; the caller then leaves the job for recovery.
    */
-  private async runPrReview(
+  private async discoverOpenPr(
+    repo: ResolvedRepo,
+    sandbox: FeatureSandbox,
+  ): Promise<{ url: string; number: number } | undefined> {
+    if (!repo.token) return undefined;
+    try {
+      const found = await this.pr.findOpenPullByHead(repo.token, {
+        owner: repo.owner,
+        repo: repo.repo,
+        head: sandbox.branch,
+      });
+      return found ?? undefined;
+    } catch (err) {
+      this.logger.debug(
+        `ship: PR discovery by head failed for ${repo.owner}/${repo.repo}#${sandbox.branch}: ${err}`,
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Verify a REPORTED PR (from `report_pr_opened`, which only checked owner/repo) actually has `branch` as
+   * its head, before trusting it as the branch-lookup fallback. `getPullDetail` fetches the PR by number
+   * directly (available the instant it's created, unlike the `pulls?head=` list query that can lag), so this
+   * is a reliable head check. Best-effort: any error → false (treat as unconfirmed rather than latch a
+   * possibly-wrong PR).
+   */
+  private async reportedHeadMatches(
+    repo: ResolvedRepo,
+    number: number,
+    branch: string,
+  ): Promise<boolean> {
+    if (!repo.token) return false;
+    try {
+      const detail = await this.pr.getPullDetail(repo.token, {
+        owner: repo.owner,
+        repo: repo.repo,
+        number,
+      });
+      return detail.state === 'open' && detail.headRef === branch;
+    } catch (err) {
+      this.logger.debug(`ship: reported-PR head check failed for #${number}: ${err}`);
+      return false;
+    }
+  }
+
+  /**
+   * THE SHIP TURN — the build's terminal in-sandbox step: Atlas opens the PR itself with its own git +
+   * `gh` (host touches no GitHub API). Best-effort like PR Review — a failure is logged; the reconciler
+   * re-discovers on the next pass once Atlas retries or the operator nudges. The target carries per-turn
+   * git auth so the push authenticates and `gh` picks up the token from the exec env.
+   */
+  private async openPrInSandbox(
     job: Job,
     record: ShipRecord | null,
     repo: ResolvedRepo,
     sandbox: FeatureSandbox,
     notify: (m: string) => Promise<void>,
-  ): Promise<void> {
-    await this.store.startPrReview(job.id).catch(() => undefined);
-    await notify(':mag: PR Review — reviewing the whole PR diff.');
-    await this.blockSink
-      .appendBlock(job.id, {
-        kind: 'pr_review_anchor',
-        text: 'PR Review — the whole PR diff',
-        meta: { prReviewAnchor: true, jobId: job.id },
-      })
-      .catch((err) => this.logger.debug(`pr_review_anchor append failed for job=${job.id}: ${err}`));
-
-    const target = this.targetFor(sandbox);
-    // `prReviewId` tags every durable block from this session — the discriminator a future PR-Review
-    // transcript view would peel on, same role `phaseId`/`autofixId` play for build/lens blocks.
+  ): Promise<{ url: string; number: number } | null> {
+    const base = this.targetFor(sandbox);
+    const target: ExecutionTarget | undefined = base
+      ? { ...base, gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token } }
+      : undefined;
     const harness = this.turnHarness.create({
       jobId: job.id,
       channel: job.repoId,
-      lane: prReviewLane(job.id),
-      metaTag: { prReviewId: job.id },
+      lane: laneFor('ship', job.id),
+      metaTag: { shipId: job.id },
     });
+
+    // Atlas reports the opened PR's url back through this bridge tool → the host latches it (see `ship`).
+    // Validated against THIS repo (guards a hallucinated/wrong url) and idempotent (a repeat call just
+    // re-sets the same value). The number is derived from the url, not trusted from a separate arg.
+    let reported: { url: string; number: number } | null = null;
+    const reportPrOpened: ToolImpl = async (args) => {
+      const parsed = parsePrUrl(String(args['url'] ?? ''));
+      if (!parsed) {
+        return {
+          ok: false,
+          reason: 'url must be a full https://github.com/<owner>/<repo>/pull/<number> URL',
+        };
+      }
+      if (
+        parsed.owner.toLowerCase() !== repo.owner.toLowerCase() ||
+        parsed.repo.toLowerCase() !== repo.repo.toLowerCase()
+      ) {
+        return {
+          ok: false,
+          reason: `url must be a PR on ${repo.owner}/${repo.repo} (got ${parsed.owner}/${parsed.repo})`,
+        };
+      }
+      reported = { url: parsed.url, number: parsed.number };
+      return { ok: true, recorded: reported };
+    };
+
     try {
-      await this.store.setPrReviewStatus(job.id, 'running').catch(() => undefined);
+      await notify(':outbox_tray: Build complete — opening the PR.');
       const res = await this.engine.run({
         engine: 'claude',
-        task: `Run PR Review for **${job.title ?? 'this feature'}**. Diff range: origin/${repo.defaultBranch}...HEAD.`,
+        task:
+          `The build is complete on branch \`${sandbox.branch}\`. Publish it as a pull request against ` +
+          `\`${repo.defaultBranch}\`:\n` +
+          `  1. Commit anything uncommitted, then \`git push -u origin ${sandbox.branch}\`.\n` +
+          `  2. Open the PR: \`gh pr create --base ${repo.defaultBranch} --head ${sandbox.branch} ` +
+          `--title ${JSON.stringify(job.title ?? 'Atlas build')} --body-file -\` (pipe the body below on stdin). ` +
+          `If a PR for this branch already exists, use it — don't open a second one.\n` +
+          `  3. Report it: call \`report_pr_opened\` with the PR url (\`gh pr create\` prints it, or run ` +
+          `\`gh pr view ${sandbox.branch} --json url -q .url\`). This step is REQUIRED — the host records the ` +
+          `PR from that call.\n\n` +
+          `PR body:\n${shipPrBody(job, record)}`,
         cwd: sandbox.worktreePath,
-        systemPrompt: renderSystemPrompt('ship-pr-review', { jobKind: job.kind }),
-        sandboxKey: `${shipSandboxKey(sandbox)}--pr-review`,
+        systemPrompt: renderAgentPrompt(Agent.SHIP_OPEN_PR),
+        sandboxKey: `${shipSandboxKey(sandbox)}--ship`,
         mode: 'execute',
         richStream: true,
         onEvent: (e) => harness.onEvent(e),
         ...(target ? { target } : {}),
-        toolBridge: { jobId: job.id, tools: this.buildPrReviewTools(job, repo, sandbox) },
+        toolBridge: { jobId: job.id, tools: { report_pr_opened: reportPrOpened } },
       });
       await harness.finish(res.result, res.usage ? { usage: res.usage } : undefined);
+      // Fallback when the model forgot the tool: pull the first PR url out of its final text, and only
+      // accept it if it's on THIS repo. (The tool is the deterministic path; this rescues a missed call.)
+      if (!reported) {
+        const fromText = firstPrUrlIn(res.result);
+        if (
+          fromText &&
+          fromText.owner.toLowerCase() === repo.owner.toLowerCase() &&
+          fromText.repo.toLowerCase() === repo.repo.toLowerCase()
+        ) {
+          reported = { url: fromText.url, number: fromText.number };
+        }
+      }
+      return reported;
     } catch (err) {
       await harness.abort().catch(() => undefined);
-      this.logger.warn(`PR Review failed (continuing to open the PR anyway): ${err}`);
-      await this.store.setPrReviewStatus(job.id, 'failed').catch(() => undefined);
+      this.logger.warn(`ship turn (open PR) failed for job=${job.id}: ${err}`);
+      return reported; // a report that landed before the throw still counts
     }
-  }
-
-  /** The one host tool the PR Review orchestrator gets: an independent Codex pass over the whole diff. */
-  private buildPrReviewTools(
-    job: Job,
-    repo: ResolvedRepo,
-    sandbox: FeatureSandbox,
-  ): Record<string, ToolImpl> {
-    const runMasterReview: ToolImpl = async () => {
-      const target = this.targetFor(sandbox);
-      try {
-        const res = await this.engine.run({
-          engine: 'codex',
-          task:
-            `Review the diff \`git diff origin/${repo.defaultBranch}...HEAD\` — the WHOLE merged feature ` +
-            'across every build thread. Look for correctness bugs, security issues, and integration seams ' +
-            'where separately-built pieces of this feature don\'t fit together cleanly.',
-          cwd: sandbox.worktreePath,
-          systemPrompt: renderSystemPrompt('ship-master-review'),
-          sandboxKey: `${shipSandboxKey(sandbox)}--master-review`,
-          mode: 'review',
-          ...(target ? { target } : {}),
-        });
-        return { ok: true, report: res.result };
-      } catch (err) {
-        return { ok: false, reason: `master review failed: ${err instanceof Error ? err.message : String(err)}` };
-      }
-    };
-    return { run_master_review: runMasterReview };
   }
 
   /** The execution target for a turn — the sandbox container when the driver ran in docker mode. */
@@ -221,6 +293,25 @@ export class BuildShipService {
       ...(sandbox.execUser ? { user: sandbox.execUser } : {}),
     };
   }
+}
+
+/** System prompt for the ship turn — a tight, single-purpose "open the PR" instruction (Atlas in-sandbox). */
+
+/** Parse a GitHub PR url → owner/repo/number (+ the normalized url). Null when it is not a github.com PR url. */
+function parsePrUrl(
+  url: string,
+): { owner: string; repo: string; number: number; url: string } | null {
+  const m = /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/.exec(url.trim());
+  return m ? { owner: m[1], repo: m[2], number: Number(m[3]), url: m[0] } : null;
+}
+
+/** The first GitHub PR url appearing in free text (the ship turn's final report) → owner/repo/number. */
+function firstPrUrlIn(
+  text: string | null | undefined,
+): { owner: string; repo: string; number: number; url: string } | null {
+  if (!text) return null;
+  const m = /https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/.exec(text);
+  return m ? { owner: m[1], repo: m[2], number: Number(m[3]), url: m[0] } : null;
 }
 
 /** The PR body — feature title, decision-record overview, and the locked decisions. */

@@ -10,5 +10,4 @@ export {
   FakeEngineRunner,
   FakeGithubPrService,
   FakeLocalGitService,
-  FakePlannerLlm,
 } from './e2e-stubs';

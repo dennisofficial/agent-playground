@@ -133,8 +133,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockConfigStore = {
     listMounts: vi.fn().mockResolvedValue([]),
     upsertMount: vi.fn().mockResolvedValue(undefined),
-    listSeed: vi.fn().mockResolvedValue([]),
-    addSeed: vi.fn().mockResolvedValue(undefined),
   } as unknown as WorktreeConfigStore;
 
   const mockGit = {
@@ -242,8 +240,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // Config-store + git defaults (resetAllMocks wiped the resolved values).
     (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockConfigStore.upsertMount as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (mockConfigStore.listSeed as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (mockConfigStore.addSeed as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
     // By default: no existing open job on the thread → openJob creates a fresh one.
@@ -355,6 +351,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockSecretStore,
       mockConfigStore,
       mockGit,
+      { generate: () => 'SYSTEM PROMPT' } as never, // prompts (PromptService)
+      { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
   });
 
@@ -573,7 +571,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
 
-  it('(c) finalize_build: an APPROVED (running) direct build ships + returns the PR url', async () => {
+  it('(c) finalize_build: an APPROVED (running) direct build ships (Atlas opens the PR in-sandbox)', async () => {
     // Regression: finalize_build previously resolved the job via openJobOnThread (planning-only), so once
     // approval flipped the job to 'running' the gate ALWAYS returned "No open job — nothing to finalize"
     // and the PR was never opened. It must now load the running job by id and ship it.
@@ -596,10 +594,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       defaultBranch: 'main',
       token: 't',
     });
+    // Atlas opens the PR in-sandbox and reports its url back; ship latches it and returns prConfirmed.
     (mockShip.ship as ReturnType<typeof vi.fn>).mockResolvedValue({
-      url: 'https://gh/pr/42',
-      number: 42,
-      existing: false,
+      opened: true,
+      prConfirmed: true,
+      url: 'https://github.com/acme/widget/pull/1',
+      number: 1,
     });
 
     const result = await tools['finalize_build']({});
@@ -607,8 +607,40 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.ship).toHaveBeenCalledOnce();
     // The old planning-only lookup must NOT gate this path anymore.
     expect(mockStore.openJobOnThread).not.toHaveBeenCalled();
+    // PR confirmed ⇒ the ledger is stamped complete and the operator gets the PR link.
     expect(mockStore.markLedgerPromoted).toHaveBeenCalledWith(FAKE_JOB_ID);
-    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, prUrl: 'https://gh/pr/42', prNumber: 42 });
+    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
+    expect((result as { message: string }).message).toContain('PR opened');
+  });
+
+  it('(c) finalize_build: an UNCONFIRMED PR (ship couldn\'t latch a url) does NOT stamp the ledger complete', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'running',
+      title: 'Fix the pagination cursor',
+      repoId: PROJECT_ID,
+      orgId: TEAM_ID,
+    });
+    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'sbx-1' });
+    (mockDriverStore.getDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'x',
+      decisions: [],
+    });
+    (mockRepos.resolve as ReturnType<typeof vi.fn>).mockResolvedValue({
+      owner: 'o',
+      repo: 'r',
+      defaultBranch: 'main',
+      token: 't',
+    });
+    (mockShip.ship as ReturnType<typeof vi.fn>).mockResolvedValue({ opened: true, prConfirmed: false });
+
+    const result = await tools['finalize_build']({});
+
+    expect(mockShip.ship).toHaveBeenCalledOnce();
+    // Not confirmed ⇒ never mark complete (boot-recovery re-runs the idempotent ship tail to latch the url).
+    expect(mockStore.markLedgerPromoted).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
   });
 
   it('(c) finalize_build: refuses a non-running job (no ship)', async () => {
@@ -627,28 +659,25 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.ship).not.toHaveBeenCalled();
   });
 
-  it('write_worktree_config UPSERTS mounts/seed straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
+  it('write_worktree_config UPSERTS mounts straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
     // What the ceremony (or an earlier amendment) already recorded, per the config store.
     (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([
       { path: '.gcloud', mode: 'shared-rw' },
       { path: '.cache/turbo', mode: 'per-thread' },
       { path: '.stripe', mode: 'shared-rw' },
     ]);
-    (mockConfigStore.listSeed as ReturnType<typeof vi.fn>).mockResolvedValue(['fixtures/golden.sqlite']);
     const tools = manager.buildTools(fakeStimulus);
 
     // A build thread discovers it needs ONE new mount — it does NOT resend the existing ones.
     const result = await tools['write_worktree_config']({
       mounts: [{ path: '.stripe', mode: 'shared-rw' }],
-      seed: ['fixtures/golden.sqlite'], // re-sent (idempotent) — must not duplicate
     });
 
     expect(mockConfigStore.upsertMount).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, '.stripe', 'shared-rw');
-    expect(mockConfigStore.addSeed).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, 'fixtures/golden.sqlite');
     // No sandbox lookup — this is a pure DB write now.
     expect(mockLifecycle.findSandbox).not.toHaveBeenCalled();
     // Reports the total AFTER the write (from the store, which the test seeded to reflect it).
-    expect(result).toMatchObject({ ok: true, mounts: 3, seed: 1 });
+    expect(result).toMatchObject({ ok: true, mounts: 3 });
     expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
     const notice = (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
     expect(notice).toMatch(/3 mount/);
@@ -817,10 +846,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       repoId: PROJECT_ID,
       orgId: TEAM_ID,
     });
+    // Atlas opens the PR in-sandbox and reports its url; ship confirms + latches it.
     (mockShip.ship as ReturnType<typeof vi.fn>).mockResolvedValue({
-      url: 'https://gh/pr/7',
-      number: 7,
-      existing: false,
+      opened: true,
+      prConfirmed: true,
+      url: 'https://github.com/acme/widget/pull/3',
+      number: 3,
     });
     const tools = manager.buildTools(fakeStimulus, true);
 
@@ -833,7 +864,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.ship).toHaveBeenCalledWith(
       expect.objectContaining({ commitMessage: 'Atlas: onboarding — environment setup' }),
     );
-    expect(result).toMatchObject({ ok: true, prOpened: true, prUrl: 'https://gh/pr/7' });
+    expect(result).toMatchObject({ ok: true, prOpened: true });
   });
 
   it('finish_onboarding NEVER throws on a markRepoOnboarded/git failure — warns and returns the real error', async () => {
@@ -1346,10 +1377,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {
         listMounts: async () => [],
         upsertMount: async () => undefined,
-        listSeed: async () => [],
-        addSeed: async () => undefined,
       } as unknown as WorktreeConfigStore,
       { hasChanges: async () => false } as unknown as LocalGitService,
+      { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
+      { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
     return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
   }
@@ -1972,10 +2003,10 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       {
         listMounts: async () => [],
         upsertMount: async () => undefined,
-        listSeed: async () => [],
-        addSeed: async () => undefined,
       } as unknown as WorktreeConfigStore,
       { hasChanges: async () => false } as unknown as LocalGitService,
+      { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
+      { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
     return { manager, store };
   }
@@ -2053,6 +2084,8 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       stimulusRows as never, // stimulusRows (12)
       inert, // stimulusStore (13)
       inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 14 … 27 (incl. secretStore, configStore, git)
+      { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
+      { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
     return { manager, stimulusRows };
   }
@@ -2152,6 +2185,8 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
       election, // election (21)
       inert, inert, inert, inert, inert, inert, // ledger…git (27)
+      { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
+      { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
     return { manager, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
   }

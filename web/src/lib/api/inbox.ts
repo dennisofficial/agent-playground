@@ -5,7 +5,7 @@ import { env } from '@/lib/env';
 import { fetchWithRefresh } from './refresh';
 import { qk } from './query-keys';
 import { toJobStatus, toJobKind } from './status';
-import type { WireJobStatus, WireJobKind, JobStatus, JobKind } from './types';
+import type { WireJobStatus, WireJobKind, JobStatus, JobKind, InboxPr } from './types';
 
 /**
  * The unified cross-org inbox — every thread across ALL the operator's orgs (`GET /web/jobs`), the
@@ -29,6 +29,8 @@ export interface RawInboxThread {
   /** Server-derived: the thread is awaiting the operator (AI idle, not terminal). */
   needsYou: boolean;
   createdAt: string;
+  /** The observed PR (null until one exists) — drives the sidebar PR-status glyph. */
+  pr?: InboxPr | null;
   org: { id: string; slug?: string; name?: string };
   repo: { id: string; name?: string };
 }
@@ -42,6 +44,9 @@ export interface InboxThread {
   /** The alert dot: this thread is waiting on you. */
   needsYou: boolean;
   createdAt: string;
+  /** The observed PR (null until one exists) — when present the sidebar shows a PR-status glyph
+   *  instead of the build `status` pie. */
+  pr: InboxPr | null;
   org: { id: string; slug: string; name: string };
   repo: { id: string; name: string };
 }
@@ -70,6 +75,7 @@ export function normalize(r: RawInboxThread): InboxThread {
     status: uiStatus(r.status, r.origin),
     needsYou: r.needsYou,
     createdAt: r.createdAt,
+    pr: r.pr ?? null,
     org: { id: r.org.id, slug: r.org.slug ?? r.org.id, name: r.org.name ?? 'Organization' },
     repo: { id: r.repo.id, name: r.repo.name ?? r.repo.id },
   };

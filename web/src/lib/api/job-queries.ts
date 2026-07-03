@@ -218,15 +218,16 @@ export function useSendReviewComments(ref: JobRef) {
   });
 }
 
-/** Submit a plan verdict (approve / request changes / deny). Refreshes the conversation + pipeline. */
+/**
+ * Submit a plan verdict (approve / request changes / deny). Every verdict flips the job status
+ * (→ running / planning / cancelled), which the WAL realtime stream (`useAllJobsRealtime`) delivers
+ * race-free on the DB commit and uses to invalidate this thread's pipeline + messages. So NO
+ * `onSuccess` refetch here — an immediate one would race the async status flip and re-cache stale
+ * state (the flip happens in the brain after the gate resolves, not in this request).
+ */
 export function useApprove(ref: JobRef) {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ApproveBody) => approveThread(ref, body),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-    },
   });
 }
 

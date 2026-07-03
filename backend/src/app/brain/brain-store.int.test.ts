@@ -4,7 +4,6 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataSource } from 'typeorm';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { PLANNER_LLM } from '../driver';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
@@ -14,7 +13,6 @@ import {
   FakeEngineRunner,
   FakeGithubPrService,
   FakeLocalGitService,
-  FakePlannerLlm,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
 import { JobTitler } from '../titling';
@@ -44,8 +42,6 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     process.env.SURFACE = 'agent';
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(PLANNER_LLM)
-      .useValue(new FakePlannerLlm())
       .overrideProvider(CLASSIFIER_LLM)
       .useValue(new FakeClassifierLlm())
       .overrideProvider(ENGINE_RUNNER)
@@ -121,6 +117,8 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       'backend middleware',
       'frontend banner',
     ]);
+    // A full plan (threadTitles.length > 0) appends exactly ONE master-review thread after the features.
+    expect(await masterReviewCount(dataSource, jobId)).toBe(1);
 
     // Human requests changes → back to planning.
     await store.reopenPlanning(jobId);
@@ -490,12 +488,22 @@ async function messageTexts(ds: DataSource, jobId: string): Promise<string[]> {
   return rows.map((r) => r.text);
 }
 
+/** The FEATURE thread briefs (excludes the auto-appended master-review thread — asserted separately). */
 async function threadTitles(ds: DataSource, jobId: string): Promise<string[]> {
   const rows: Array<{ brief: string }> = await ds.query(
-    `SELECT brief FROM threads WHERE job_id = $1 ORDER BY ordinal ASC`,
+    `SELECT brief FROM threads WHERE job_id = $1 AND is_master_review = false ORDER BY ordinal ASC`,
     [jobId],
   );
   return rows.map((r) => r.brief);
+}
+
+/** The count of appended master-review threads for a job (should be exactly 1 after a full plan). */
+async function masterReviewCount(ds: DataSource, jobId: string): Promise<number> {
+  const rows: Array<{ n: string }> = await ds.query(
+    `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND is_master_review = true`,
+    [jobId],
+  );
+  return Number(rows[0]?.n ?? '0');
 }
 
 async function phasesFor(
@@ -510,9 +518,10 @@ async function phasesFor(
   );
 }
 
+/** FEATURE thread plans (excludes the auto-appended master-review thread, whose plan is null). */
 async function sectionPlans(ds: DataSource, jobId: string): Promise<Array<string | null>> {
   const rows: Array<{ plan: string | null }> = await ds.query(
-    `SELECT plan FROM threads WHERE job_id = $1 ORDER BY ordinal ASC`,
+    `SELECT plan FROM threads WHERE job_id = $1 AND is_master_review = false ORDER BY ordinal ASC`,
     [jobId],
   );
   return rows.map((r) => r.plan);

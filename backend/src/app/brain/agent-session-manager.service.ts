@@ -26,6 +26,7 @@ import {
   type ChatSurface,
   type DecisionApprovalCard,
   TurnHarnessFactory,
+  ThreadInputService,
   SYSTEM_SEED_AUTHOR,
   type WebQuestionCard,
   webFileRequestCard,
@@ -45,10 +46,10 @@ import {
 } from '../driver/job-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { BuildShipService } from '../driver/build-ship.service';
-import { LEDGER_COMMIT_MESSAGE, renderSystemPrompt } from '../prompt-kit';
-// The ledger-promotion prompt is delivered as a TASK message (`body:`), not a system prompt, so it stays a
-// direct import; the brain's system prompts are assembled by id via `renderSystemPrompt`.
-import { BRAIN_LEDGER_PROMOTION_PROMPT } from '../prompt-kit/bodies/brain.body';
+import { Agent, LEDGER_COMMIT_MESSAGE, PromptService } from '../prompt-kit';
+// The ledger-promotion prompt is delivered as a TASK message (`body:`), not a system prompt; the brain's
+// system prompt is assembled from fragments via `PromptService.generate`.
+import { BRAIN_LEDGER_PROMOTION_PROMPT } from '../prompt-kit/messages/brain-ledger';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -56,7 +57,7 @@ import {
   renderPipelineStateSummary,
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
-import type { PlannedStep } from '../driver/planner-llm';
+import type { PlannedStep } from '../driver/render-plan';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
 import {
@@ -232,6 +233,11 @@ export class AgentSessionManager
     private readonly configStore: WorktreeConfigStore,
     // Used by `finish_onboarding` to decide whether there's an actual repo diff worth shipping a PR for.
     private readonly git: LocalGitService,
+    // The fragment-library assembler for the brain's system prompt (ATLAS_MAIN; onboarding is a jobKind).
+    private readonly prompts: PromptService,
+    // The shared send seam — the brain registers its `main`-lane transport (the durable steer/fresh-turn
+    // pump) so a generic caller can `postToThread(laneFor('main', jobId), …)` without knowing it's the brain.
+    private readonly threadInput: ThreadInputService,
   ) {}
 
   /**
@@ -270,6 +276,35 @@ export class AgentSessionManager
    * instance is already leader.
    */
   onApplicationBootstrap(): void {
+    // Register the two input-accepting thread transports on the shared send seam, so a generic caller can
+    // `postToThread(lane, ctx, message)` without knowing the kind. Delivery is UNCHANGED — the seam just
+    // routes to these existing paths (see `ThreadInputService`).
+    //
+    // `main` (a chat turn to the brain): persist the message as a durable chat stimulus, then hand it to the
+    // same at-least-once pump the web composer uses (steer a live turn / coalesce into a fresh one). Authored
+    // `System` because a programmatic post is not the human operator typing.
+    this.threadInput.register('main', {
+      post: async ({ jobId, orgId, repoId }, message) => {
+        const recorded = await this.stimulusStore.recordChatStimulus({
+          orgId,
+          repoId,
+          jobId,
+          author: { id: 'U-SYSTEM', displayName: 'System' },
+          replyRoute: { surfaceId: 'web', jobRef: jobId },
+          body: message,
+        });
+        await this.enqueueChat(recorded);
+      },
+    });
+    // `codex-review` (Atlas's rebuttal to Codex): open a reply round + resume the Codex thread and deliver
+    // its reply — the same orchestration the `respond_to_review` tool runs, minus the round-cap surfacing
+    // (a generic caller gets fire-and-forget delivery; a capped round is a no-op).
+    this.threadInput.register('codex-review', {
+      post: async ({ jobId, orgId }, message) => {
+        const started = await this.planReview.openReplyRound({ jobId, orgId, rebuttal: message });
+        if (!('capped' in started)) void this.runAndDeliverReview(started.reviewId);
+      },
+    });
     this.leaderBootSub = this.election.onPromote(() =>
       this.runLeaderBootSweeps(),
     );
@@ -562,10 +597,25 @@ export class AgentSessionManager
    * Boot-recovery for one shipped-but-unpromoted thread: re-run the promotion turn, then commit + push the
    * ledger onto the EXISTING PR branch (ship is idempotent — it finds the open PR). Skips silently when the
    * worktree is gone (the PR already merged + the thread closed), since there's nothing left to write.
+   *
+   * This is the RECOVERY AUTHORITY for a ledger row stuck non-`complete` (incl. a `running` row a crash left
+   * behind — which `claimLedgerPromotion` can't reclaim). It deliberately does NOT claim: it must be able to
+   * re-promote a stale `running`. That's safe here — it only runs at boot (`bootReconciled`-guarded, single
+   * leader) over `pr_url IS NOT NULL` (i.e. `done`) rows, which are disjoint from the `running` jobs the
+   * driver's own resume re-drives, so it can't race a live finalize. It only marks the row complete when the
+   * PR re-confirms (below); an unconfirmable PR is left for the next boot's pass (a real problem, not a loop).
    */
   private async reconcileLedgerPromotion(thread: Job): Promise<void> {
     const sandbox = await this.lifecycle.findSandbox(thread.id, thread.orgId);
-    if (!sandbox) return; // worktree torn down (merged/closed) — nothing to promote
+    if (!sandbox) {
+      // Worktree torn down (PR merged/closed + thread reaped) — promotion is no longer POSSIBLE. Close the
+      // spine so this row stops being re-selected on every boot; the durable-decision promotion for this
+      // thread is abandoned (best-effort — the per-feature decision-record.md still holds the full set).
+      // Without this, a row left `running` by a crash whose worktree was later reaped would be stuck
+      // `running` forever with no recovery path.
+      await this.store.markLedgerPromoted(thread.id).catch(() => undefined);
+      return;
+    }
     await this.promoteDurableDecisionsAtShip(
       thread.id,
       thread.orgId,
@@ -576,14 +626,19 @@ export class AgentSessionManager
       .getDecisionRecord(thread.id)
       .catch(() => null)) as { overview: string; decisions: Decision[] } | null;
     // No `notify` — a silent recovery commit must not re-post "PR ready".
-    await this.ship.ship({
+    const outcome = await this.ship.ship({
       job: thread,
       record: rec,
       repo,
       sandbox,
       commitMessage: LEDGER_COMMIT_MESSAGE,
     });
-    await this.store.markLedgerPromoted(thread.id);
+    // Stamp complete ONLY when the PR is confirmed shipped (its `pr_url` latched). Otherwise leave the
+    // spine for the next backstop pass — never mark a ledger complete for a job whose PR we couldn't
+    // confirm (that would drop the retry that finishes the ledger onto the real PR).
+    if (outcome.opened && outcome.prConfirmed) {
+      await this.store.markLedgerPromoted(thread.id);
+    }
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────────────────────────
@@ -1190,10 +1245,12 @@ export class AgentSessionManager
       engine: 'claude',
       task,
       cwd: sandbox.worktreePath,
-      systemPrompt: renderSystemPrompt(
-        isOnboarding ? 'brain-onboarding' : 'brain',
-        { jobKind: brainJob?.kind ?? null },
-      ),
+      // Assembled from fragments (ATLAS_MAIN): the onboarding vs normal-brain split is a jobKind condition,
+      // not a separate prompt id — `isOnboarding` still gates the toolset above. Byte-identical to the legacy
+      // (see prompt-service.spec — the brain is assembled purely from `@Fragment`s).
+      systemPrompt: this.prompts.generate(Agent.ATLAS_MAIN, {
+        jobKind: brainJob?.kind ?? null,
+      }),
       sandboxKey,
       ...(auth ? { auth } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
@@ -2098,17 +2155,20 @@ export class AgentSessionManager
           notify: (m) => this.say(stimulus, m),
         });
 
-        // The build (incl. any `.atlas/decisions/` the brain promoted before finalizing) is now committed —
-        // mark the ledger promotion complete so the boot backstop won't re-run it.
-        await this.store
-          .markLedgerPromoted(jobId)
-          .catch((err) =>
-            this.logger.debug(
-              `markLedgerPromoted failed for ${jobId} (boot backstop will retry): ${err}`,
-            ),
-          );
+        // The build (incl. any `.atlas/decisions/` the brain promoted before finalizing) is now committed.
+        // Stamp the ledger complete ONLY when the PR is CONFIRMED shipped (its `pr_url` latched) — so a
+        // ship that couldn't confirm the PR is not marked done, and the boot backstop can retry it.
+        if (result.opened && result.prConfirmed) {
+          await this.store
+            .markLedgerPromoted(jobId)
+            .catch((err) =>
+              this.logger.debug(
+                `markLedgerPromoted failed for ${jobId} (boot backstop will retry): ${err}`,
+              ),
+            );
+        }
 
-        if (!result) {
+        if (!result.opened) {
           return {
             ok: true,
             jobId,
@@ -2116,12 +2176,20 @@ export class AgentSessionManager
               'Committed, but no GitHub token is configured — PR not opened.',
           };
         }
+        if (!result.prConfirmed) {
+          // The PR was opened in-sandbox but the host couldn't confirm its url this pass (a just-created PR
+          // GitHub hasn't indexed, or the report was missed). Recovery re-runs the idempotent ship tail.
+          return {
+            ok: true,
+            jobId,
+            message:
+              'Committed and pushed — the PR is opening; its link will appear on this job shortly.',
+          };
+        }
         return {
           ok: true,
           jobId,
-          prUrl: result.url,
-          prNumber: result.number,
-          message: `PR opened: ${result.url}`,
+          message: `Committed and pushed — PR opened: ${result.url}`,
         };
       },
 
@@ -2469,7 +2537,7 @@ export class AgentSessionManager
     };
   }
 
-  // ── Repo-onboarding tools (only handed to `kind='onboarding'` threads; see BRAIN_ONBOARDING_SYSTEM_PROMPT) ──
+  // ── Repo-onboarding tools (only handed to `kind='onboarding'` threads; see the onboarding fragments) ──
 
   /**
    * `request_secret({ name, path, description })` — securely request an env-file SECRET VALUE from the
@@ -2709,15 +2777,14 @@ export class AgentSessionManager
   }
 
   /**
-   * `write_worktree_config({ mounts, seed })` — AMEND the repo's DB-backed worktree config (the NON-secret
-   * hydration half: cache/auth mounts + golden-seed files; see docs/adr/0003). A pure DB write keyed by
-   * org+repo — a mount is upserted by `path` (same path replaces that entry, everything else untouched),
-   * seed paths are unioned — it never blind-overwrites, and it needs no sandbox. This is what makes it safe
-   * as an ANY-THREAD tool: the ceremony calls it repeatedly while authoring from scratch, and a later build
-   * thread can add ONE mount without wiping out what the ceremony (or an earlier amendment) already
-   * recorded, AND it reaches every OTHER in-flight job's very next hydration instantly — no PR, no wait.
-   * Secrets are NEVER written here (they live as encrypted grants); a `secrets` field is rejected.
-   * Validated before write.
+   * `write_worktree_config({ mounts })` — AMEND the repo's DB-backed worktree config (the NON-secret
+   * hydration half: cache/auth mounts; see docs/adr/0003). A pure DB write keyed by org+repo — a mount is
+   * upserted by `path` (same path replaces that entry, everything else untouched) — it never
+   * blind-overwrites, and it needs no sandbox. This is what makes it safe as an ANY-THREAD tool: the
+   * ceremony calls it repeatedly while authoring from scratch, and a later build thread can add ONE mount
+   * without wiping out what the ceremony (or an earlier amendment) already recorded, AND it reaches every
+   * OTHER in-flight job's very next hydration instantly — no PR, no wait. Secrets are NEVER written here
+   * (they live as encrypted grants); a `secrets` field is rejected. Validated before write.
    */
   private buildWriteWorktreeConfigTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
@@ -2729,7 +2796,6 @@ export class AgentSessionManager
         };
       }
       const { mounts: newMounts, warnings } = this.normalizeMounts(args['mounts']);
-      const newSeed = this.normalizeSeed(args['seed']);
 
       // A DB hiccup here must never crash the turn — warn, tell Atlas the real error via `reason` (its
       // next tool call is retryable), don't leave it silently believing the write landed.
@@ -2747,20 +2813,14 @@ export class AgentSessionManager
         for (const m of newMounts) {
           await this.configStore.upsertMount(stimulus.orgId, stimulus.repoId, m.path, m.mode);
         }
-        for (const s of newSeed) {
-          await this.configStore.addSeed(stimulus.orgId, stimulus.repoId, s);
-        }
 
-        const [mounts, seed] = await Promise.all([
-          this.configStore.listMounts(stimulus.orgId, stimulus.repoId),
-          this.configStore.listSeed(stimulus.orgId, stimulus.repoId),
-        ]);
+        const mounts = await this.configStore.listMounts(stimulus.orgId, stimulus.repoId);
         const mountSetChanged =
           mounts.map((m) => `${m.path}:${m.mode}`).sort().join(',') !==
           priorMountSig;
         await this.store.appendSystemEvent(
           stimulus.jobId,
-          `⚙️ Updated worktree config (${mounts.length} mount(s), ${seed.length} seed path(s)) — live for every job on this repo immediately.` +
+          `⚙️ Updated worktree config (${mounts.length} mount(s)) — live for every job on this repo immediately.` +
             (mountSetChanged
               ? ' The mount set changed — this sandbox recreates on your NEXT turn (in-container processes/state are lost); configure mounts BEFORE starting a login or other long-running process.'
               : ''),
@@ -2768,7 +2828,6 @@ export class AgentSessionManager
         return {
           ok: true,
           mounts: mounts.length,
-          seed: seed.length,
           ...(mountSetChanged ? { restarts_sandbox: true } : {}),
           ...(warnings.length ? { warnings } : {}),
         };
@@ -2905,20 +2964,23 @@ export class AgentSessionManager
               `markLedgerPromoted failed for onboarding thread=${stimulus.jobId} (harmless — boot backstop would just no-op): ${err}`,
             ),
           );
-        return result
-          ? {
-              ok: true,
-              prOpened: true,
-              prUrl: result.url,
-              message:
-                'Opened a PR with the environment-setup changes. Merge it to land them in the repo.',
-            }
-          : {
-              ok: true,
-              prOpened: false,
-              message:
-                'Made repo changes but no GitHub token is set — connect one to open the PR.',
-            };
+        // Only claim the PR opened when it was actually CONFIRMED (its url latched). `opened:true` alone is
+        // not enough — the in-sandbox open turn best-effort-catches its own failures, so it can return
+        // `opened:true, prConfirmed:false` with no PR. A no-token ship returns `opened:false`.
+        if (result.opened && result.prConfirmed) {
+          return {
+            ok: true,
+            prOpened: true,
+            message: `Opened a PR with the environment-setup changes: ${result.url}. Merge it to land them in the repo.`,
+          };
+        }
+        return {
+          ok: true,
+          prOpened: false,
+          message: !result.opened
+            ? 'Made repo changes but no GitHub token is set — connect one to open the PR.'
+            : 'Made repo changes and pushed, but the PR could not be confirmed yet — it will appear on this job shortly.',
+        };
       } catch (err) {
         this.logger.warn(`finish_onboarding failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
@@ -2959,20 +3021,6 @@ export class AgentSessionManager
       out.push({ path, mode });
     }
     return { mounts: out, warnings };
-  }
-
-  /** Coerce `write_worktree_config` seed arg into a list of worktree-relative paths (drops malformed). */
-  private normalizeSeed(raw: unknown): string[] {
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((e) => String(e ?? '').trim())
-      .filter(
-        (p) =>
-          p &&
-          !p.startsWith('/') &&
-          !p.split('/').includes('..') &&
-          p.length <= MAX_MOUNT_PATH_LEN,
-      );
   }
 
   /**
@@ -3266,7 +3314,7 @@ export class AgentSessionManager
    * Kick a repo-ONBOARDING thread's first turn (spawned by `OnboardingService` when a repo is connected on
    * a runnable org). The thread is born `kind='onboarding'`; this seeds a synthetic Atlas-authored stimulus
    * so the brain starts initialising the repo immediately (no human first message). The detailed mission +
-   * tool list live in `BRAIN_ONBOARDING_SYSTEM_PROMPT`; the seed body is just the opening nudge. The sandbox is
+   * tool list live in the onboarding fragments (ATLAS_MAIN, `jobKind==='onboarding'`); the seed body is just the opening nudge. The sandbox is
    * lazily provisioned on this first turn.
    */
   async startOnboardingThread(

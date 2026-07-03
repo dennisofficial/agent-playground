@@ -5,7 +5,6 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataSource } from 'typeorm';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { PLANNER_LLM } from '../driver';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
@@ -17,7 +16,6 @@ import {
   FakeEngineRunner,
   FakeGithubPrService,
   FakeLocalGitService,
-  FakePlannerLlm,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
 import { JobTitler } from '../titling';
@@ -79,8 +77,6 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
     provider = new FakeSandboxProvider();
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(PLANNER_LLM)
-      .useValue(new FakePlannerLlm())
       .overrideProvider(CLASSIFIER_LLM)
       .useValue(new FakeClassifierLlm())
       .overrideProvider(ENGINE_RUNNER)

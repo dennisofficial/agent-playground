@@ -522,6 +522,12 @@ export class JobLifecycleService {
         });
         if (state !== 'open') {
           this.logger.log(`thread ${thread.id} PR #${thread.pr_number} is ${state} — closing thread`);
+          // Latch the terminal PR lifecycle for the sidebar glyph (purple merged / red closed) BEFORE the
+          // sandbox teardown — this is the authoritative observer, so purple/red are immediate and don't
+          // wait on a separately-fired reconcile pass. `gone` (PR/repo deleted) reads as closed. The JOB
+          // ROW SURVIVES — only the sandbox is torn down (see closeJob); merged jobs stay as "truly done".
+          const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
+          await this.jobs.update({ id: thread.id }, { pr_state: prState });
           // On MERGE, the thread's promoted decisions are now canonical on the default branch: reconcile
           // the repo's ledger manifest (proposed→accepted + human-edit detection). Reads the base checkout,
           // not this thread's worktree, so it's safe to run before closeJob tears the worktree down.
@@ -702,7 +708,7 @@ export class JobLifecycleService {
       // does NOT do this; auth rides the org PAT just like the clone. Fail-soft.
       await this.git.ensureSubmodules(branched.worktreePath, projectRepo);
 
-      // Hydrate the freshly-cut worktree (granted secrets + golden seed + cache mounts) and attach the
+      // Hydrate the freshly-cut worktree (granted secrets + cache mounts) and attach the
       // execution environment (thread-keyed container). forceHydrate: the worktree is brand new.
       const { sandbox: attached, hydrationSig } = await this.provisioner.provisionAndAttach({
         sandbox: branched,

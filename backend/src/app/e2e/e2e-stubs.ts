@@ -1,12 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { ClassifierLlm } from '../decision-gate/classifier-llm';
-import type {
-  PlanThreadInput,
-  PlannedDecision,
-  PlannedStep,
-  PlannerLlm,
-} from '../driver';
 import type { EngineRunResult, RunEngineArgs } from '../engine';
 import type {
   FeatureSandbox,
@@ -26,41 +20,6 @@ import type {
  *
  * Zero v1 imports — these implement only the Atlas-owned ports.
  */
-
-/**
- * Fake `PLANNER_LLM`. Returns a single, deterministic step per thread (the same degraded-but-
- * correct shape the real driver falls back to key-less), and surfaces NO notable decisions (so the
- * feature path's gate stays clean and never parks). Handoff is a terse canned line.
- */
-export class FakePlannerLlm implements PlannerLlm {
-  async planThread(input: PlanThreadInput): Promise<PlannedStep[] | undefined> {
-    return [{ title: input.brief, brief: input.brief }];
-  }
-
-  async reviewPlan(): Promise<PlannedStep[] | undefined> {
-    // No revision — keep the drafted plan (a clean single review loop with no change).
-    return undefined;
-  }
-
-  async extractDecisions(): Promise<PlannedDecision[] | undefined> {
-    // A docs edit surfaces no always-ask decisions — the gate stays clean (no park on the feature path).
-    return [];
-  }
-
-  async handoff(): Promise<string | undefined> {
-    return '(e2e fake) thread complete.';
-  }
-
-  async batchSteps(input: { steps: PlannedStep[] }): Promise<number[][] | undefined> {
-    // Deterministic: pack consecutive steps into PAIRS (exercises M<N batching in tests; the driver's
-    // guardrail still validates + caps the result). A 0/1-step list yields no group → driver fallback.
-    const groups: number[][] = [];
-    for (let i = 0; i < input.steps.length; i += 2) {
-      groups.push(i + 1 < input.steps.length ? [i, i + 1] : [i]);
-    }
-    return groups.length ? groups : undefined;
-  }
-}
 
 /**
  * Fake `CLASSIFIER_LLM` — the ambiguous-tail adjudicator the real `DecisionClassifier` only
@@ -226,6 +185,7 @@ export class FakeLocalGitService {
  */
 export class FakeGithubPrService {
   private prSeq = 0;
+  private readonly byHead = new Map<string, { url: string; number: number }>();
   readonly opened: Array<{ args: OpenPullRequestArgs; url: string }> = [];
 
   async openPullRequest(_token: string, args: OpenPullRequestArgs): Promise<PullRequestResult> {
@@ -233,6 +193,31 @@ export class FakeGithubPrService {
     const url = `https://github.com/${args.owner}/${args.repo}/pull/${9000 + this.prSeq}`;
     this.opened.push({ args, url });
     return { url, number: 9000 + this.prSeq, existing: false };
+  }
+
+  /**
+   * Atlas opens the PR in-sandbox (the e2e engine stub doesn't call `report_pr_opened`), so `ship` confirms
+   * it via head-branch discovery. Deterministic + idempotent PER head, so a re-ship finds the SAME PR and
+   * `opened` stays at one entry per feature branch (mirroring "one PR per feature").
+   */
+  async findOpenPullByHead(
+    _token: string,
+    args: { owner: string; repo: string; head: string },
+  ): Promise<{ url: string; number: number } | null> {
+    let pr = this.byHead.get(args.head);
+    if (!pr) {
+      this.prSeq += 1;
+      pr = {
+        url: `https://github.com/${args.owner}/${args.repo}/pull/${9000 + this.prSeq}`,
+        number: 9000 + this.prSeq,
+      };
+      this.byHead.set(args.head, pr);
+      this.opened.push({
+        args: { owner: args.owner, repo: args.repo, head: args.head } as unknown as OpenPullRequestArgs,
+        url: pr.url,
+      });
+    }
+    return pr;
   }
 
   async markReadyForReview(): Promise<{ isDraft: boolean }> {

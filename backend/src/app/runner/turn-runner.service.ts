@@ -3,7 +3,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '../domain';
 import { ENGINE_RUNNER, EngineAuthError, SANDBOX_RESET_NOTICE, type EngineRunnerPort } from '../engine';
-import type { EngineAuth, EngineEvent, EngineRunResult, EngineUsage, TurnMeta } from '../engine';
+import type {
+  CodexReasoningEffort,
+  EngineAuth,
+  EngineEvent,
+  EngineRunResult,
+  EngineUsage,
+  ToolBridgeOptions,
+  TurnMeta,
+} from '../engine';
 import type { FeatureSandbox } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { StepEntity } from '../persistence/entities';
@@ -24,6 +32,9 @@ export interface RunTurnInput {
   systemPrompt: string;
   /** Override the engine model for this turn. */
   model?: string;
+  /** Codex-only reasoning effort (maps to the engine's `modelReasoningEffort`). The master-review thread
+   *  pins `'xhigh'`; ignored by Claude turns. */
+  modelReasoningEffort?: CodexReasoningEffort;
   /** How the turn authenticates (defaults derived from env by the EngineRunner). */
   auth?: EngineAuth;
   /**
@@ -40,6 +51,12 @@ export interface RunTurnInput {
   /** Progress callback. */
   onEvent?: (e: EngineEvent) => void;
   signal?: AbortSignal;
+  /**
+   * Activate the bidirectional host-side tool bridge for this turn (the in-sandbox session calls host
+   * tools over the frame protocol). The brain always sets this; the orchestrate build turn sets it to
+   * expose `request_operator_input`. Omit for the plain one-shot build turns (backward-compatible).
+   */
+  toolBridge?: ToolBridgeOptions;
   /**
    * Registry context for a RESTART-SURVIVABLE Redis-transport turn. When set (and `ENGINE_TRANSPORT=redis`),
    * the runner records an `active_turns` row so a fresh backend can RE-ATTACH this turn's live stream after a
@@ -138,7 +155,10 @@ export class TurnRunnerService {
           : {}),
         ...(input.auth ? { auth: input.auth } : {}),
         ...(input.model ? { model: input.model } : {}),
+        ...(input.modelReasoningEffort ? { modelReasoningEffort: input.modelReasoningEffort } : {}),
         ...(input.richStream ? { richStream: true } : {}),
+        // Host-side tool bridge (e.g. the orchestrate build turn's `request_operator_input`).
+        ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
         // Register the turn (Redis transport only) so a fresh backend can RE-ATTACH it after a restart.
         ...(input.turnMeta ? { turnMeta: input.turnMeta } : {}),
         onEvent,
@@ -189,7 +209,8 @@ export class TurnRunnerService {
    * streams WITHOUT re-kicking the engine (which kept running detached), persisting the resumed engine
    * session id onto the step so a later re-run can still resume it. Returns the same {@link RunTurnResult}
    * shape as {@link runTurn}. Throws if the bound runner has no `reattach` (guard with {@link canReattach}).
-   * Build turns pass no tool bridge (their tools run in-sandbox) — only `onEvent` is forwarded.
+   * The caller must RE-SUPPLY `toolBridge` on re-attach when the original turn had one (the host tool
+   * closure is in-memory and lost on restart) — else the in-sandbox session's tool requests go unserved.
    */
   async reattach(input: {
     turnId: string;
@@ -197,6 +218,7 @@ export class TurnRunnerService {
     jobId: string;
     stepId?: string | null;
     onEvent?: (e: EngineEvent) => void;
+    toolBridge?: ToolBridgeOptions;
     signal?: AbortSignal;
   }): Promise<RunTurnResult> {
     if (!this.engine.reattach) {
@@ -212,6 +234,7 @@ export class TurnRunnerService {
     this.logger.log(`Re-attach turn=${turnId} container=${containerId} step=${stepId ?? '-'}`);
     const result = await this.engine.reattach(turnId, containerId, {
       onEvent,
+      ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
     });
     if (stepId && result.sessionId) {

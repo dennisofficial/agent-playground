@@ -23,6 +23,13 @@ export interface WebQuestionOption {
 export interface WebQuestionCard {
   /** Discriminant — the web client checks `type` to decide which component to render. */
   type: 'question_card';
+  /**
+   * Who posed the question and therefore who consumes the answer. `'brain'` (default/undefined) → the
+   * `answer-question` endpoint seeds a delivery turn to the brain. `'build'` → the orchestrate build
+   * turn's `request_operator_input`; the endpoint stamps the answer but does NOT seed a brain turn (the
+   * driver polls this card for the answer instead). Keeps the two consumers off each other's spine.
+   */
+  origin?: 'brain' | 'build';
   jobId: string;
   /** Stable key for this question (the card row's `ts`); the answer POST echoes it back. */
   questionId: string;

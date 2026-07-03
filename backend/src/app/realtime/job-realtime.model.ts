@@ -44,6 +44,8 @@ export interface ThreadRealtimeRow extends Row {
   ciStatus: string | null;
   /** Observed GitHub mergeable_state ('clean'|'dirty'|…|null) — 'dirty' drives the conflict badge. */
   prMergeable: string | null;
+  /** Observed PR lifecycle ('open'|'merged'|'closed'|null) — drives the sidebar PR-status glyph. */
+  prState: string | null;
 }
 
 /** Row-level scope: a user may stream only threads belonging to an org they are a member of. */
@@ -83,6 +85,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     currentBranch: (raw.current_branch as string | null) ?? null,
     ciStatus: (raw.ci_status as string | null) ?? null,
     prMergeable: (raw.pr_mergeable as string | null) ?? null,
+    prState: (raw.pr_state as string | null) ?? null,
   };
 }
 

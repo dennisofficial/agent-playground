@@ -12,7 +12,6 @@ import { AutoFixModule } from '../autofix';
 import { JOB_DISPATCHER } from '../brain';
 import { LeaderElectionService } from '../cluster';
 import { DecisionGateModule } from '../decision-gate';
-import { CredentialResolver, OnboardingService } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -30,7 +29,6 @@ import { StimulusModule } from '../stimulus';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { GitStateReconciler } from './git-state-reconciler.service';
-import { PLANNER_LLM, AnthropicPlannerLlm } from './planner-llm';
 import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
@@ -43,12 +41,10 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
  * turns an approved `Job` into ONE PR:
- *   - `ThreadDriver` — the legible top-to-bottom driver (plan → review → gate → execute steps →
- *     auto-fix → handoff → one PR), bound as the REAL `JOB_DISPATCHER`.
+ *   - `ThreadDriver` — the legible top-to-bottom driver (lock-step → visibility → execute → auto-fix →
+ *     handoff → one PR), bound as the REAL `JOB_DISPATCHER`.
  *   - `DriverStoreService` — the thread/step row reads/writes (explicit, resumable `status`/`step`).
  *   - `GitDriverRepoResolver` (behind `DRIVER_REPO`) — a job's project → a ready-to-use repo.
- *   - `PLANNER_LLM` — the thread planner's chat-model port (a declarative chain on a hardcoded Sonnet,
- *     keyed off `ANTHROPIC_API_KEY`; key-less → the driver falls back to a single-step plan).
  *
  * THE DISPATCH SEAM OVERRIDE: `BrainModule` no longer binds the `JOB_DISPATCHER` no-op (it kept
  * `LoggingJobDispatcher` only as an exported fallback) — exactly the precedent W3 set with the
@@ -56,7 +52,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
  * (`useExisting: ThreadDriver`), so the brain's `@Inject(JOB_DISPATCHER)` resolves to the driver with
  * ZERO changes anywhere else.
  *
- * Consumes W5 (`DecisionGateModule`: classifier + park-and-ask + visibility), W7 (`AutoFixModule`), and
+ * Consumes W5 (`DecisionGateModule`: classifier + visibility), W7 (`AutoFixModule`), and
  * W1 (`RunnerModule`: turn-runner + engine + git). `CHAT_SURFACE` comes from the @Global `SurfaceModule`.
  * On boot it reconciles in-flight jobs (`ThreadDriver.resume`). Zero v1 imports.
  */
@@ -87,12 +83,6 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     PipelineAwarenessStore,
     BuildShipService,
     { provide: DRIVER_REPO, useClass: GitDriverRepoResolver },
-    {
-      provide: PLANNER_LLM,
-      inject: [CredentialResolver],
-      useFactory: (creds: CredentialResolver) =>
-        new AnthropicPlannerLlm((orgId) => creds.anthropicKey(orgId)),
-    },
     ThreadDriver,
     JobLifecycleService,
     GitStateReconciler,

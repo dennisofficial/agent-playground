@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { OrgWorktreeMountEntity, OrgWorktreeSeedEntity } from '../persistence/entities';
+import type { OrgWorktreeMountEntity } from '../persistence/entities';
 import { WorktreeConfigStore } from './worktree-config.store';
 
 /** A tiny in-memory stand-in for a TypeORM repository (composite-key find/save/delete). */
@@ -37,7 +37,6 @@ describe('WorktreeConfigStore', () => {
   beforeEach(() => {
     store = new WorktreeConfigStore(
       memRepo<OrgWorktreeMountEntity>(['org_id', 'repo_id', 'path']),
-      memRepo<OrgWorktreeSeedEntity>(['org_id', 'repo_id', 'path']),
     );
   });
 
@@ -57,18 +56,10 @@ describe('WorktreeConfigStore', () => {
     expect(await store.listMounts(ORG, REPO)).toEqual([{ path: 'b', mode: 'per-thread' }]);
   });
 
-  it('addSeed is idempotent (no duplicates)', async () => {
-    await store.addSeed(ORG, REPO, '.env.local');
-    await store.addSeed(ORG, REPO, '.env.local');
-    expect(await store.listSeed(ORG, REPO)).toEqual(['.env.local']);
-  });
-
-  it('scopes mounts/seed by org+repo — another org/repo sees nothing', async () => {
+  it('scopes mounts by org+repo — another org/repo sees nothing', async () => {
     await store.upsertMount(ORG, REPO, 'a', 'per-thread');
-    await store.addSeed(ORG, REPO, 's');
     expect(await store.listMounts('other-org', REPO)).toEqual([]);
     expect(await store.listMounts(ORG, 'other-repo')).toEqual([]);
-    expect(await store.listSeed('other-org', REPO)).toEqual([]);
   });
 
   describe('importLegacyIfEmpty', () => {
@@ -78,14 +69,13 @@ describe('WorktreeConfigStore', () => {
     });
     afterEach(() => rmSync(wt, { recursive: true, force: true }));
 
-    it('imports from a legacy atlas.json when the DB is empty', async () => {
+    it('imports mounts from a legacy atlas.json when the DB is empty (a legacy seed[] is ignored)', async () => {
       writeFileSync(
         join(wt, 'atlas.json'),
         JSON.stringify({ mounts: [{ path: '.cocoindex', mode: 'per-thread' }], seed: ['.env.local'] }),
       );
       await store.importLegacyIfEmpty(ORG, REPO, wt);
       expect(await store.listMounts(ORG, REPO)).toEqual([{ path: '.cocoindex', mode: 'per-thread' }]);
-      expect(await store.listSeed(ORG, REPO)).toEqual(['.env.local']);
     });
 
     it('no-ops when the DB already has rows, even if a legacy file exists', async () => {
@@ -98,7 +88,6 @@ describe('WorktreeConfigStore', () => {
     it('no-ops when the DB is empty and there is no legacy file', async () => {
       await store.importLegacyIfEmpty(ORG, REPO, wt);
       expect(await store.listMounts(ORG, REPO)).toEqual([]);
-      expect(await store.listSeed(ORG, REPO)).toEqual([]);
     });
   });
 });

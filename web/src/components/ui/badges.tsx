@@ -1,6 +1,7 @@
+import { GitMerge, GitPullRequest, GitPullRequestClosed } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { KIND_META, STATUS_META } from '@/lib/api/status';
-import type { JobKind, JobStatus } from '@/lib/api/types';
+import type { InboxPr, JobKind, JobStatus } from '@/lib/api/types';
 
 /** A status dot — colored by status, optionally pulsing (running/triaging) with a soft glow. */
 export function StatusDot({
@@ -200,6 +201,37 @@ export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: nu
       {kids}
     </svg>
   );
+}
+
+/**
+ * PR-status glyph — shown on a job leaf INSTEAD of the build {@link StatusPie} once the job has a PR
+ * ({@link InboxThread.pr} is non-null). Follows GitHub's color convention so the sidebar reads at a glance:
+ *   open & ready → green  pull-request
+ *   merge conflict (`mergeable === 'dirty'`) → amber pull-request
+ *   merged → purple git-merge     · closed (unmerged) → red pull-request-closed
+ * The job row itself never disappears on merge (the sandbox is torn down but the job stays "truly done").
+ */
+export function PrStatusIcon({ pr, size = 14 }: { pr: InboxPr; size?: number }) {
+  const { Icon, color, title } = prGlyph(pr);
+  return (
+    <Icon size={size} strokeWidth={2} style={{ color }} className="block shrink-0" aria-label={title}>
+      <title>{title}</title>
+    </Icon>
+  );
+}
+
+function prGlyph(pr: InboxPr): {
+  Icon: typeof GitPullRequest;
+  color: string;
+  title: string;
+} {
+  if (pr.state === 'merged') return { Icon: GitMerge, color: 'var(--purple)', title: 'PR merged' };
+  if (pr.state === 'closed') return { Icon: GitPullRequestClosed, color: 'var(--red)', title: 'PR closed' };
+  // open — conflict refines the ready state.
+  if (pr.mergeable === 'dirty') {
+    return { Icon: GitPullRequest, color: 'var(--amber)', title: 'PR has a merge conflict' };
+  }
+  return { Icon: GitPullRequest, color: 'var(--green)', title: 'PR open' };
 }
 
 /** Status pill: a dot + label, tinted by status. */

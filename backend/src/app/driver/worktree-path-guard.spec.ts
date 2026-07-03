@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   resolveExternalMountTarget,
-  resolveSafeSource,
   resolveSafeTarget,
   WorktreePathError,
 } from './worktree-path-guard';
@@ -71,26 +70,5 @@ describe('resolveSafeTarget', () => {
     symlinkSync(outside, join(wt, 'evil'));
     expect(() => resolveSafeTarget(wt, 'evil/x')).toThrow(/symlink/);
     rmSync(outside, { recursive: true, force: true });
-  });
-});
-
-describe('resolveSafeSource', () => {
-  let root: string;
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'atlas-golden-'));
-  });
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
-
-  it('resolves an existing source under the root', () => {
-    writeFileSync(join(root, '.env.local'), 'x');
-    expect(resolveSafeSource(root, '.env.local')).toBe(join(realpathSync(root), '.env.local'));
-  });
-
-  it('throws when the source does not exist', () => {
-    expect(() => resolveSafeSource(root, 'missing')).toThrow();
-  });
-
-  it('rejects traversal out of the golden root', () => {
-    expect(() => resolveSafeSource(root, '../x')).toThrow(WorktreePathError);
   });
 });

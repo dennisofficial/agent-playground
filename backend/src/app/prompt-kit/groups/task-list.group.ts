@@ -1,0 +1,37 @@
+/**
+ * prompt-kit / groups / task-list — the live task-list discipline. Both variants reuse the shared
+ * `TASK_LIST_NOTE` catalog block and add their own seeding rule (what the first tasks come from).
+ *
+ * TOPIC bucket: the live task list.
+ */
+import { Agent } from '../agent';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
+import { isOnboarding, notOnboarding } from '../conditions';
+import { TASK_LIST_NOTE } from '../fragments';
+
+@FragmentGroup()
+export class TaskListGroup {
+  /** normal block 27 — task list + Main-row seeding rule. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1270, condition: notOnboarding })
+  taskListNormal(): string {
+    return [
+      TASK_LIST_NOTE,
+      "Here the list is the Main row's checklist. Use it whenever a turn does real multi-step WORK — implementing",
+      'an approved direct build, a multi-step investigation, working an event, fixing an environment gap — so the',
+      'operator watches structured progress instead of an opaque stream. A pure conversation turn (answering a',
+      'question, grilling) needs no task list.',
+    ].join('\n');
+  }
+
+  /** onboarding block 03 — task list + fleet-inventory seeding rule. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2030, condition: isOnboarding })
+  taskListOnboarding(): string {
+    return [
+      TASK_LIST_NOTE,
+      'Here the list IS the ceremony made visible: seed it from the fleet inventory as soon as step 1 produces',
+      'one, and let the operator watch each service go pending → in_progress → completed as it boots and',
+      'validates. If discovery reshapes the fleet (a service turns out to be two, one is not locally runnable),',
+      'reshape the list to match.',
+    ].join('\n');
+  }
+}

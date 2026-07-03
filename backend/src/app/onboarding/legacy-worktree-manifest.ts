@@ -5,13 +5,13 @@ import type { MountMode, MountSpec } from '../sandbox/container-paths';
 
 /**
  * The shape of a legacy committed `atlas.json` (repo root) or its predecessor `.atlas/worktree.json`.
- * Worktree config (mounts + seed) now lives in the DB (see `WorktreeConfigStore`) — this parser exists
- * ONLY to import an already-onboarded repo's committed file, once, into the DB (see
- * `WorktreeConfigStore.importLegacyIfEmpty`). It is NOT part of the live hydration path.
+ * Worktree config (mounts) now lives in the DB (see `WorktreeConfigStore`) — this parser exists ONLY to
+ * import an already-onboarded repo's committed file, once, into the DB (see
+ * `WorktreeConfigStore.importLegacyIfEmpty`). It is NOT part of the live hydration path. A legacy file's
+ * `seed` array (a removed feature) is ignored.
  */
 export interface WorktreeManifest {
   mounts: MountSpec[];
-  seed: string[];
 }
 
 export interface LoadedManifest {
@@ -28,7 +28,7 @@ const MAX_BYTES = 64 * 1024;
 const MAX_ENTRIES = 100; // per array
 const MAX_PATH_LEN = 512;
 
-const EMPTY: WorktreeManifest = { mounts: [], seed: [] };
+const EMPTY: WorktreeManifest = { mounts: [] };
 
 /**
  * Load + validate a repo's committed legacy manifest file (`atlas.json`, falling back to the older
@@ -55,8 +55,7 @@ export function loadLegacyManifestFile(worktreePath: string): LoadedManifest {
     const obj = raw as Record<string, unknown>;
 
     const mounts = parseMounts(obj.mounts, warnings);
-    const seed = parseSeed(obj.seed, warnings);
-    return { manifest: { mounts, seed }, warnings };
+    return { manifest: { mounts }, warnings };
   } catch (err) {
     return { manifest: EMPTY, warnings: [`legacy worktree manifest is unreadable: ${(err as Error).message}`] };
   }
@@ -108,18 +107,6 @@ function parseMounts(v: unknown, warnings: string[]): MountSpec[] {
       warnings.push(`legacy worktree manifest: mounts[] entry "${String(o.path)}" has unknown mode — defaulting to per-thread`);
     }
     out.push({ path: o.path, mode });
-  }
-  return out;
-}
-
-function parseSeed(v: unknown, warnings: string[]): string[] {
-  const out: string[] = [];
-  for (const e of asArray(v, 'seed', warnings)) {
-    if (!validPath(e)) {
-      warnings.push('legacy worktree manifest: dropped invalid seed[] entry');
-      continue;
-    }
-    out.push(e);
   }
   return out;
 }

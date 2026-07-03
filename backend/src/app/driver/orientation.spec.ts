@@ -61,6 +61,7 @@ describe('renderBatchTask orientation injection', () => {
     handoffIn: null,
     handoffOut: null,
     status: 'executing',
+    isMasterReview: false,
   };
 
   it('includes the orientation cheat-sheet, framed as subordinate to code + specs, when set', () => {
@@ -68,7 +69,6 @@ describe('renderBatchTask orientation injection', () => {
       record,
       { ...baseThread, orientation: 'Monorepo — verify: pnpm -C backend test:unit' },
       steps,
-      true,
     );
     expect(task).toContain('Repo orientation');
     expect(task).toContain('Monorepo — verify: pnpm -C backend test:unit');
@@ -77,7 +77,7 @@ describe('renderBatchTask orientation injection', () => {
   });
 
   it('omits the orientation section entirely when the thread has none', () => {
-    const task = renderBatchTask(record, baseThread, steps, true);
+    const task = renderBatchTask(record, baseThread, steps);
     expect(task).not.toContain('Repo orientation');
   });
 });

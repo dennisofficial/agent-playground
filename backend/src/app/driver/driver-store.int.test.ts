@@ -208,7 +208,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(byId.get('consistency')?.status).toBe('skipped');
   });
 
-  it('surfaces the LLM-authored task list + PR Review status, with NO fallback default (unlike review agents)', async () => {
+  it('surfaces the per-thread LLM-authored task list, with NO fallback default (unlike review agents)', async () => {
     const job = await jobs.save(
       jobs.create({
         org_id: ORG_ID,
@@ -230,37 +230,25 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       }),
     );
 
-    // An un-touched thread/job: `tasks` is `[]` (no computed fallback — unlike reviewAgents, there's no
+    // An un-touched thread: `tasks` is `[]` (no computed fallback — unlike reviewAgents, there's no
     // fixed/expected set for pure LLM output).
     const empty = (await store.getPipelineState(job.id, ORG_ID)) as {
-      tasks: unknown[];
-      prReviewStatus: string | null;
       threads: Array<{ tasks: unknown[] }>;
     };
-    expect(empty.tasks).toEqual([]);
-    expect(empty.prReviewStatus).toBeNull();
     expect(empty.threads[0].tasks).toEqual([]);
 
-    // Simulate what the harness's fold does — a direct read-modify-write of the jsonb column — for both
-    // the thread's own task list and the job-level PR Review one.
+    // Simulate what the harness's fold does — a direct read-modify-write of the thread's jsonb column.
     await threads.update(
       { id: thread.id },
       { tasks: [{ id: 't1', subject: 'Write the migration', status: 'in_progress' }] },
     );
-    await store.startPrReview(job.id);
-    await store.setPrReviewStatus(job.id, 'running');
-    await jobs.update({ id: job.id }, { tasks: [{ id: 't1', subject: 'Master code review', status: 'completed' }] });
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
-      tasks: Array<{ id: string; subject: string; status: string }>;
-      prReviewStatus: string | null;
       threads: Array<{ tasks: Array<{ id: string; subject: string; status: string }> }>;
     };
     expect(state.threads[0].tasks).toEqual([
       { id: 't1', subject: 'Write the migration', status: 'in_progress' },
     ]);
-    expect(state.tasks).toEqual([{ id: 't1', subject: 'Master code review', status: 'completed' }]);
-    expect(state.prReviewStatus).toBe('running');
   });
 
   it('persists the repo-orientation cheat-sheet and surfaces it on the mapped thread (resume-durable)', async () => {

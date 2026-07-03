@@ -6,6 +6,7 @@ import { foldTaskEvent } from '../driver/task-fold';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, MessageEntity, ThreadEntity } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
+import { type TaskScope, taskScopeForLane } from './thread-registry';
 
 /**
  * The durable destination for a turn's transcript blocks — a narrow port (just `appendBlock`) so a
@@ -51,16 +52,6 @@ export class MessageBlockSink implements BlockSink {
       }),
     );
   }
-}
-
-/**
- * The scope a task event folds into: a build thread's own list (`thread` → `threads.tasks`), the PR Review
- * orchestrator's job-level list (`job` → `jobs.tasks`), or the Main brain session's list (`main` →
- * `jobs.main_tasks` — a separate column so PR Review's `startPrReview` reset can never wipe it).
- */
-export interface TaskScope {
-  kind: 'thread' | 'job' | 'main';
-  id: string;
 }
 
 /**
@@ -132,15 +123,11 @@ export class EntityTaskEventSink implements TaskEventSink {
       await this.threads.update({ id: scope.id }, { tasks });
       return;
     }
+    // scope.kind === 'main' — the brain's own checklist on `jobs.main_tasks`.
     const job = await this.jobs.findOne({ where: { id: scope.id } });
     if (!job) return;
-    if (scope.kind === 'main') {
-      const main_tasks = foldTaskEvent(job.main_tasks ?? [], toolName, input, result);
-      await this.jobs.update({ id: scope.id }, { main_tasks });
-    } else {
-      const tasks = foldTaskEvent(job.tasks ?? [], toolName, input, result);
-      await this.jobs.update({ id: scope.id }, { tasks });
-    }
+    const main_tasks = foldTaskEvent(job.main_tasks ?? [], toolName, input, result);
+    await this.jobs.update({ id: scope.id }, { main_tasks });
   }
 }
 
@@ -209,16 +196,10 @@ export class TurnHarnessFactory {
 
   /**
    * Resolve which entity's tasks column a `TaskCreate`/`TaskUpdate` call on this harness belongs to, from
-   * the STABLE lane it rides — `thread:<threadId>` for a thread's own build/orchestrator session,
-   * `pr-review:<jobId>` for the job-level PR Review orchestrator, `main` for the job brain itself (the
-   * navigator's Main row shows its checklist too). Any other lane (`phase:*`, `autofix:*`, `subagent:*`)
-   * isn't a task-tracked session, so `null` — no-op.
+   * the STABLE lane it rides. Delegates to the {@link THREAD_REGISTRY} single source of truth.
    */
   private taskScopeFor(lane: string, jobId: string): TaskScope | null {
-    if (lane === 'main') return { kind: 'main', id: jobId };
-    if (lane.startsWith('thread:')) return { kind: 'thread', id: lane.slice('thread:'.length) };
-    if (lane.startsWith('pr-review:')) return { kind: 'job', id: jobId };
-    return null;
+    return taskScopeForLane(lane, jobId);
   }
 
   create(options: TurnHarnessOptions): TurnHarness {

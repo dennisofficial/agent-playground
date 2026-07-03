@@ -10,12 +10,8 @@ export * from './job-lifecycle.service';
 export { WorktreeProvisioner } from './worktree-provisioner.service';
 export { WorktreeHydrator } from './worktree-hydrator.service';
 export { type MountSpec, type MountMode } from '../sandbox/container-paths';
-export {
-  resolveSafeTarget,
-  resolveSafeSource,
-  WorktreePathError,
-} from './worktree-path-guard';
-export { BuildShipService, type ShipInput, type ShipResult } from './build-ship.service';
+export { resolveSafeTarget, WorktreePathError } from './worktree-path-guard';
+export { BuildShipService, type ShipInput, type ShipOutcome } from './build-ship.service';
 export { PipelineAwarenessStore } from './pipeline-awareness.store';
 export {
   pipelineStateSignature,
@@ -29,13 +25,4 @@ export {
   type DriverRepoResolver,
   type ResolvedRepo,
 } from './repo-resolver';
-export {
-  PLANNER_LLM,
-  AnthropicPlannerLlm,
-  PlannerChains,
-  renderPlanContext,
-  type PlannerLlm,
-  type PlannedStep,
-  type PlannedDecision,
-  type PlanThreadInput,
-} from './planner-llm';
+export { renderPlan, type PlannedStep } from './render-plan';

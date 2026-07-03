@@ -6,7 +6,6 @@ import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { AppModule } from '../app.module';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { PLANNER_LLM } from '../driver';
 import { ENGINE_RUNNER } from '../engine';
 import type { RunEngineArgs, EngineRunResult } from '../engine/engine.types';
 import { GithubPrService, LocalGitService } from '../git';
@@ -20,7 +19,6 @@ import {
   FakeClassifierLlm,
   FakeGithubPrService,
   FakeLocalGitService,
-  FakePlannerLlm,
 } from '../e2e/e2e-stubs';
 
 /**
@@ -78,8 +76,6 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
   async function bootApp() {
     runner = new FakeStreamingRunner();
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(PLANNER_LLM)
-      .useValue(new FakePlannerLlm())
       .overrideProvider(CLASSIFIER_LLM)
       .useValue(new FakeClassifierLlm())
       // The brain injects ENGINE_RUNNER (= `useExisting: RedisEngineRunner`), so the streaming fake must be

@@ -26,8 +26,8 @@ import {
 import { useLiveTurn, type LiveTurn } from '@/lib/api/job-stream';
 import { threadLane } from './phases';
 import { codexReviewLane } from './codex-review';
-import { autofixLensLane, REVIEW_JOB_SCOPE } from './review-lane';
-import { PR_REVIEW_NODE, prReviewDisplay, prReviewLane } from './pr-review';
+import { autofixLensLane, autofixFixLane } from './review-lane';
+import { resolveNode } from './node-resolution';
 import { TranscriptView } from './conversation';
 import { DetailTopBar } from './detail-top-bar';
 import { ServiceLogView, serviceHeaderSubtitle } from './service-log-view';
@@ -54,7 +54,6 @@ export function PhaseView({
   jobRef,
   pipeline,
   pipelineLoading,
-  pipelineError,
   messages,
   approvalCard,
   selectedNode,
@@ -64,9 +63,9 @@ export function PhaseView({
 }: {
   jobRef: JobRef;
   pipeline: PipelineState | undefined;
-  /** The pipeline query's loading / error state — needed to tell "still loading" from "node is gone". */
+  /** The pipeline query's loading state — needed to tell "still loading" from "node is gone" when no
+   *  cached pipeline is available yet. */
   pipelineLoading?: boolean;
-  pipelineError?: boolean;
   messages: JobMessage[];
   approvalCard: WebApprovalCard | null;
   selectedNode: string;
@@ -96,7 +95,7 @@ export function PhaseView({
   // Resolve EVERY job-derived token against the live job so a stale link shows NodeNotFound rather than a
   // misleading generic placeholder or a silently-empty build view. `spec:`/`artifact:` self-handle a 404
   // inside FileView; `plan`/`decision`/`diff` render from card/derived data and are always resolvable.
-  const resolution = resolveNode(selectedNode, job, Boolean(pipelineLoading), Boolean(pipelineError));
+  const resolution = resolveNode(selectedNode, job, Boolean(pipelineLoading));
 
   // Context-file nodes (specs / generated / artifacts) resolve to a single `/context` path. The header's
   // byte count reads from the same (cached) query FileView uses, so calling it here costs nothing extra.
@@ -190,18 +189,21 @@ export function PhaseView({
         onSelectNode={onSelectNode}
       />
     );
-  } else if (selectedNode === PR_REVIEW_NODE) {
-    // PR REVIEW — the pinned FINAL REVIEW thread: the job-level master-review orchestrator session (review
-    // → fix → verify via its own tasks). SAME transcript renderer as Main/threads, on its stable lane.
-    const display = job ? prReviewDisplay(job.prReviewStatus ?? null, job.tasks ?? []) : 'queued';
-    title = 'PR Review';
-    subtitle = `master review over the whole PR diff · ${display}`;
+  } else if (selectedNode.startsWith('fix:')) {
+    // POST-REVIEW FIXES — the auto-fix stage's fix turn (fix · apply · verify) over a thread's diff, on the
+    // `autofix:<threadId>:fix` lane. SAME transcript renderer as a review lens. The fix turn is SKIPPED when
+    // the diff was clean or no finding hit the fix threshold, so an empty transcript is a legitimate state,
+    // handled by TranscriptView's emptyText (not a not-found).
+    const fixKey = selectedNode.slice('fix:'.length);
+    const fixThread = job?.threads.find((s) => s.id === fixKey) ?? null;
+    title = 'Post-review fixes';
+    subtitle = fixThread?.status === 'auto_fixing' ? 'applying fixes · verify' : 'fix · apply · verify';
     body = (
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
-        lane={prReviewLane(jobRef.jobId)}
-        emptyText="No review activity yet — PR Review starts once every build thread finishes."
+        lane={autofixFixLane(fixKey)}
+        emptyText="No fixes were needed — the review found nothing to change."
         onSelectNode={onSelectNode}
       />
     );
@@ -217,26 +219,17 @@ export function PhaseView({
     body = <SectionPlanDoc />;
   } else if (selectedNode.startsWith('rev:')) {
     const [, threadKey, lensId = 'review'] = selectedNode.split(':');
-    const isJobScope = threadKey === REVIEW_JOB_SCOPE;
-    const revThread = isJobScope ? null : (job?.threads.find((s) => s.id === threadKey) ?? null);
-    const agent = isJobScope
-      ? (job?.reviewAgents?.find((a) => a.id === lensId) ?? null)
-      : (revThread?.reviewAgents?.find((a) => a.id === lensId) ?? null);
-    const lensLabel = agent?.label ?? lensId;
-    const autofixId = isJobScope ? jobRef.jobId : threadKey;
-    title = lensLabel;
-    subtitle = agent
-      ? `review agent · ${agent.status}${isJobScope ? ' · over the full PR diff' : ''}`
-      : isJobScope
-        ? 'review agent · over the full PR diff'
-        : 'review agent · over the thread diff';
+    const revThread = job?.threads.find((s) => s.id === threadKey) ?? null;
+    const agent = revThread?.reviewAgents?.find((a) => a.id === lensId) ?? null;
+    title = agent?.label ?? lensId;
+    subtitle = agent ? `review agent · ${agent.status}` : 'review agent · over the thread diff';
     // The SAME transcript renderer as Main/Codex review — the lens's own thinking/tool/text blocks, tagged
     // `meta.autofixId`+`meta.lensId` on its own `autofix:<autofixId>:<lensId>` lane.
     body = (
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
-        lane={autofixLensLane(autofixId, lensId)}
+        lane={autofixLensLane(threadKey, lensId)}
         emptyText="No review activity yet — this lens hasn’t run."
         onSelectNode={onSelectNode}
       />
@@ -258,8 +251,8 @@ export function PhaseView({
       />
     );
   } else if (thread) {
-    title = `§ ${threadTitle(thread.brief)}`;
-    subtitle = 'Claude · execute';
+    title = thread.isMasterReview ? 'Master review' : `§ ${threadTitle(thread.brief)}`;
+    subtitle = thread.isMasterReview ? 'Codex · whole-diff review & fix' : 'Claude · execute';
     // A build thread is a Claude Code session like Main — subscribe to its STABLE `thread:<id>` lane (no
     // guessing the active phase from pipeline status) and aggregate its steps' durable transcripts.
     const phaseIds = new Set(thread.steps.map((s) => s.anchorStepId));
@@ -827,59 +820,6 @@ function FileBody({ file, onSelectNode }: { file: ContextFileContent; onSelectNo
   );
 }
 
-// ── node resolution (stale `?node=` → not-found) ─────────────────────────────────────────────────
-type NodeResolution = 'loading' | 'found' | 'not_found';
-
-/** Literals that render from card / derived data — no live-id dependency, always resolvable. */
-const ID_FREE_NODES = new Set(['plan', 'decision', 'diff']);
-
-/**
- * Classify a `?node=` token against the live job. Job-derived tokens (`secplan:`/`rev:` carry a
- * thread id; a bare token is a thread or step id) become `not_found` when their id is gone — otherwise a
- * stale URL would render a misleading generic placeholder or a silently-empty build view. `spec:`/`artifact:`
- * self-handle a missing file inside `FileView`, so they stay `found` here.
- */
-function resolveNode(node: string, job: PipelineJob | null, loading: boolean, error: boolean): NodeResolution {
-  if (ID_FREE_NODES.has(node)) return 'found';
-  if (node.startsWith('spec:') || node.startsWith('gen:') || node.startsWith('artifact:')) return 'found';
-  // Subagent runs aren't job nodes — they self-handle a missing run inside SubagentView. Always resolvable.
-  if (node.startsWith('subagent:')) return 'found';
-  // The Codex review lane self-handles an empty transcript inside TranscriptView. Always resolvable.
-  if (node.startsWith('codex-review:')) return 'found';
-  // The pinned PR Review lane likewise self-handles an empty transcript. Always resolvable.
-  if (node === PR_REVIEW_NODE) return 'found';
-  // Sandbox ports are a design-stage mock (no backend port-exposure yet) — always resolvable.
-  if (node.startsWith('port:')) return 'found';
-  // Supervised services self-handle a missing marker inside ServiceLogView (it may have been stopped/cleared
-  // since the link was opened) — always resolvable, like ports.
-  if (node.startsWith('service:')) return 'found';
-
-  if (loading) return 'loading';
-  if (error || !job) return 'not_found';
-
-  if (node.startsWith('secplan:')) return hasSection(job, node.slice('secplan:'.length)) ? 'found' : 'not_found';
-  // `rev:<threadId>:<agentId>` — found only when the thread still exists AND still selects that review
-  // agent. With the agent list now dynamic, a stale agent id must not render a plausible-but-wrong page.
-  // `rev:job:<agentId>` is the job-level PR-tail pass — validated against `job.reviewAgents` instead.
-  if (node.startsWith('rev:')) {
-    const [, threadId, lensId] = node.split(':');
-    if (threadId === REVIEW_JOB_SCOPE) {
-      return lensId && (job.reviewAgents ?? []).some((a) => a.id === lensId) ? 'found' : 'not_found';
-    }
-    const revThread = threadId ? job.threads.find((s) => s.id === threadId) : undefined;
-    return revThread && lensId && (revThread.reviewAgents ?? []).some((a) => a.id === lensId)
-      ? 'found'
-      : 'not_found';
-  }
-  // Bare token — a thread or a step leaf.
-  const matches = job.threads.some((s) => s.id === node || s.steps.some((p) => p.id === node));
-  return matches ? 'found' : 'not_found';
-}
-
-function hasSection(job: PipelineJob, id: string): boolean {
-  return id.length > 0 && job.threads.some((s) => s.id === id);
-}
-
 /** A `?node=` that no longer resolves (deleted file, re-planned thread/step). Placeholder styling — the
  *  designer will restyle/replace this. */
 function NodeNotFound({ node, onConversation }: { node: string; onConversation: () => void }) {
@@ -913,16 +853,20 @@ export function SubagentPane({
   jobRef,
   messages,
   parentId,
+  lane,
   base,
   onBack,
 }: {
   jobRef: JobRef;
   messages: JobMessage[];
   parentId: string;
+  /** The lane the spawning Task anchor lives on — the subagent's blocks stream on THIS lane's live turn,
+   *  never Main's (see {@link subagentNode}). */
+  lane: string;
   base: string | null;
   onBack: () => void;
 }) {
-  const liveTurn = useLiveTurn(jobRef.jobId);
+  const liveTurn = useLiveTurn(jobRef.jobId, lane);
   const summary =
     indexDurableSubagents(messages).summaryById.get(parentId) ??
     (liveTurn ? indexLiveSubagents(liveTurn.blocks).summaryById.get(parentId) : undefined);

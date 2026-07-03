@@ -127,19 +127,14 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
       );
     });
 
-    it('folds TaskUpdate on the pr-review:<jobId> lane into job scope, using the harness jobId', async () => {
+    it('does NOT fold tasks on an autofix:* lane (not a task-tracked session)', async () => {
       const { taskSink, factory } = setup();
-      const h = factory.create({ jobId: 'J', channel: 'R', lane: 'pr-review:J' });
+      const h = factory.create({ jobId: 'J', channel: 'R', lane: 'autofix:AF1:fix' });
       h.onEvent({ kind: 'tool_use', id: 't1', name: 'TaskUpdate', input: { taskId: 'tsk1', status: 'completed' } });
       h.onEvent({ kind: 'tool_result', id: 't1', result: {} });
       await h.finish();
 
-      expect(taskSink.applyTaskEvent).toHaveBeenCalledWith(
-        { kind: 'job', id: 'J' },
-        'taskupdate',
-        { taskId: 'tsk1', status: 'completed' },
-        {},
-      );
+      expect(taskSink.applyTaskEvent).not.toHaveBeenCalled();
     });
 
     it('ignores a subagent’s own TaskCreate (parentToolUseId set)', async () => {

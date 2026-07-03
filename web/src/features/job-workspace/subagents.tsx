@@ -18,7 +18,10 @@ import type { LiveBlock } from '@/lib/api/job-stream';
  */
 
 export const SUBAGENT_NODE_PREFIX = 'subagent:';
-export const subagentNode = (parentId: string): string => `${SUBAGENT_NODE_PREFIX}${parentId}`;
+/** Encodes the ORIGIN lane alongside the parent tool-use id (`<lane>::<parentId>`) — the pane needs the
+ *  lane to subscribe to the right live turn; a subagent spawned inside a build thread runs on THAT
+ *  thread's lane, not Main, and its blocks are invisible to a lane-unaware subscriber. */
+export const subagentNode = (lane: string, parentId: string): string => `${SUBAGENT_NODE_PREFIX}${lane}::${parentId}`;
 
 /** Known subagent types → display model (the engine pins these; mirrors `SUBAGENTS` / `WRITER_SUBAGENTS`
  *  in engine-core.ts). The writer subagents fan out on execute turns: `implement` (Sonnet) is the default

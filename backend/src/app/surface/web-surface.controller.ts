@@ -38,7 +38,12 @@ import {
   REQUEST_CHANGES_ACTION_ID,
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
-import { closeTailFd, nextTailFrame, openTailFd, readServiceLogTail } from './service-log-tail';
+import {
+  closeTailFd,
+  nextTailFrame,
+  openTailFd,
+  readServiceLogTail,
+} from './service-log-tail';
 import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
 import { BrainStoreService } from '../brain/brain-store.service';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
@@ -159,7 +164,8 @@ export function serviceStatus(
   if (marker.pgid == null || marker.startedAt == null) return 'unknown';
   const started = Date.parse(marker.startedAt);
   const generation = Date.parse(probe.containerStartedAt);
-  if (!Number.isFinite(started) || !Number.isFinite(generation)) return 'unknown';
+  if (!Number.isFinite(started) || !Number.isFinite(generation))
+    return 'unknown';
   if (started < generation - GENERATION_SKEW_MS) return 'stopped'; // previous container — reused pgid must not read as running
   return probe.alive.includes(marker.pgid) ? 'running' : 'stopped';
 }
@@ -432,6 +438,11 @@ export class WebSurfaceController {
           t.open_question_count > 0,
         ),
         createdAt: t.created_at,
+        // The observed PR (null until one exists) — drives the sidebar's PR-status glyph. `mergeable`
+        // ('dirty' = conflict) refines the open state; `state` gives merged/closed.
+        pr: t.pr_state
+          ? { state: t.pr_state, mergeable: t.pr_mergeable, url: t.pr_url }
+          : null,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,
@@ -678,7 +689,12 @@ export class WebSurfaceController {
             jobId: s.jobId,
             lane: s.lane,
             seq: s.seq,
-            event: { kind: 'snapshot', blocks: s.blocks, active: s.active, startedAt: s.startedAt },
+            event: {
+              kind: 'snapshot',
+              blocks: s.blocks,
+              active: s.active,
+              startedAt: s.startedAt,
+            },
           },
         }),
       ),
@@ -786,9 +802,14 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
   ): Promise<{ ok: boolean }> {
     const thread = await this.requireThread(jobId, org.id);
-    this.surface.seedSystemNotification(thread.repo_id, jobId, 'Please continue.', {
-      orgId: org.id,
-    });
+    this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      'Please continue.',
+      {
+        orgId: org.id,
+      },
+    );
     return { ok: true };
   }
 
@@ -849,6 +870,11 @@ export class WebSurfaceController {
       answer,
     );
     if (!firstAnswer) return { ok: true, ts: '' };
+    // A `request_operator_input` card (origin 'build') is consumed by the DRIVER, not the brain: the paused
+    // build turn polls this card for `answer`. `markQuestionAnswered` above already stamped it + decremented
+    // the needs-you counter, so there is nothing more to do — do NOT seed a brain turn (there is no brain
+    // question to deliver). The driver stamps `deliveredAt` when it reads the answer.
+    if (payload.origin === 'build') return { ok: true, ts: '' };
     // Deliver the answer to the brain as a SYSTEM SEED — a `<system_notification>` framed turn that is NOT
     // persisted as a chat bubble (the answer lives on the card). The seed carries `deliveredQuestionId` so
     // its delivery turn stamps exactly THIS card `deliveredAt` on success (at-least-once recovery on boot).
@@ -906,7 +932,9 @@ export class WebSurfaceController {
     if (payload.ephemeral) {
       const deliverTo = payload.deliver_to ?? '';
       if (!deliverTo) {
-        throw new BadRequestException('ephemeral request has no delivery target');
+        throw new BadRequestException(
+          'ephemeral request has no delivery target',
+        );
       }
       const delivered = await this.threadLifecycle.deliverEphemeralSecret({
         jobId,
@@ -928,7 +956,10 @@ export class WebSurfaceController {
       }
       // Delivered — stamp the card provided (no value) + hand the brain a masked confirmation. The gate clears
       // on the delivery turn's success tail (same at-least-once path as a durable secret).
-      card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
+      card.card = {
+        ...(card.card ?? {}),
+        provided_at: new Date().toISOString(),
+      };
       await this.messages.save(card);
       const ts = this.surface.seedSystemNotification(
         thread.repo_id,
@@ -940,7 +971,9 @@ export class WebSurfaceController {
     }
 
     if (!payload.path) {
-      throw new BadRequestException('secret request is missing its destination path');
+      throw new BadRequestException(
+        'secret request is missing its destination path',
+      );
     }
     // Write the value to the ENCRYPTED store + create the owner grant (name → repo → path). This is the
     // value's only resting place; everything downstream is masked.
@@ -1144,7 +1177,10 @@ export class WebSurfaceController {
       if (!SERVICE_ID_RE.test(id)) continue; // defensive — atlas-svc only ever writes validated names
       let parsed: Record<string, unknown>;
       try {
-        parsed = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<string, unknown>;
+        parsed = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<
+          string,
+          unknown
+        >;
       } catch {
         continue; // a marker mid-write / corrupt — skip rather than fail the whole list
       }
@@ -1163,7 +1199,8 @@ export class WebSurfaceController {
         cmd: typeof parsed.cmd === 'string' ? parsed.cmd : '',
         pid: typeof parsed.pid === 'number' ? parsed.pid : null,
         pgid: typeof parsed.pgid === 'number' ? parsed.pgid : null,
-        startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : null,
+        startedAt:
+          typeof parsed.startedAt === 'string' ? parsed.startedAt : null,
         logBytes,
         logUpdatedAt,
         status: 'unknown', // overwritten by the liveness probe below
@@ -1174,7 +1211,9 @@ export class WebSurfaceController {
     // Join the durable markers with a LIVE liveness probe (exec `kill -0` into the container), gated on
     // the container generation so a recreated container reusing a pgid can't fake `running`. Memoized so
     // overlapping polls / multiple open clients collapse into one docker exec.
-    const pgids = services.map((s) => s.pgid).filter((p): p is number => p != null);
+    const pgids = services
+      .map((s) => s.pgid)
+      .filter((p): p is number => p != null);
     const probe = await this.probeLivenessMemoized(jobId, pgids);
     for (const s of services) s.status = serviceStatus(s, probe);
 
@@ -1182,14 +1221,20 @@ export class WebSurfaceController {
   }
 
   /** In-flight/recent liveness probes keyed by job + the exact pgid set (a changed set busts it). */
-  private readonly livenessMemo = new Map<string, { at: number; probe: Promise<ServiceLivenessProbe> }>();
+  private readonly livenessMemo = new Map<
+    string,
+    { at: number; probe: Promise<ServiceLivenessProbe> }
+  >();
 
   /**
    * Rate-limit the liveness probe: within {@link LIVENESS_MEMO_TTL_MS} the same job + pgid set reuses the
    * one in-flight/resolved probe, so the ~5s status poll (× however many open clients) collapses to a
    * single `docker exec`. Keyed by the pgid SET so a service starting/stopping mid-window isn't masked.
    */
-  private probeLivenessMemoized(jobId: string, pgids: number[]): Promise<ServiceLivenessProbe> {
+  private probeLivenessMemoized(
+    jobId: string,
+    pgids: number[],
+  ): Promise<ServiceLivenessProbe> {
     const key = `${jobId}|${[...pgids].sort((a, b) => a - b).join(',')}`;
     const now = Date.now();
     const hit = this.livenessMemo.get(key);
@@ -1197,7 +1242,8 @@ export class WebSurfaceController {
     const probe = this.threadLifecycle.probeLiveness(jobId, pgids);
     this.livenessMemo.set(key, { at: now, probe });
     if (this.livenessMemo.size > 256) {
-      for (const [k, v] of this.livenessMemo) if (now - v.at >= LIVENESS_MEMO_TTL_MS) this.livenessMemo.delete(k);
+      for (const [k, v] of this.livenessMemo)
+        if (now - v.at >= LIVENESS_MEMO_TTL_MS) this.livenessMemo.delete(k);
     }
     return probe;
   }
@@ -1219,8 +1265,16 @@ export class WebSurfaceController {
       throw new BadRequestException('invalid service id');
     }
     const dir = this.threadLifecycle.supervisorDirHost(jobId);
-    const wantLines = Math.min(Math.max(parseInt(n ?? '200', 10) || 200, 1), 2000);
-    const { content, truncated } = readServiceLogTail(dir, id, wantLines, MAX_SERVICE_LOG_TAIL_BYTES);
+    const wantLines = Math.min(
+      Math.max(parseInt(n ?? '200', 10) || 200, 1),
+      2000,
+    );
+    const { content, truncated } = readServiceLogTail(
+      dir,
+      id,
+      wantLines,
+      MAX_SERVICE_LOG_TAIL_BYTES,
+    );
     return { id, content, truncated };
   }
 
@@ -1241,11 +1295,23 @@ export class WebSurfaceController {
   ): Observable<MessageEvent> {
     return defer(() => from(this.requireThread(jobId, org.id))).pipe(
       switchMap(() => {
-        if (!SERVICE_ID_RE.test(id)) throw new BadRequestException('invalid service id');
+        if (!SERVICE_ID_RE.test(id))
+          throw new BadRequestException('invalid service id');
         const dir = this.threadLifecycle.supervisorDirHost(jobId);
         return new Observable<MessageEvent>((subscriber) => {
-          const snapshot = readServiceLogTail(dir, id, 200, MAX_SERVICE_LOG_TAIL_BYTES);
-          subscriber.next({ data: { type: 'snapshot', content: snapshot.content, truncated: snapshot.truncated } });
+          const snapshot = readServiceLogTail(
+            dir,
+            id,
+            200,
+            MAX_SERVICE_LOG_TAIL_BYTES,
+          );
+          subscriber.next({
+            data: {
+              type: 'snapshot',
+              content: snapshot.content,
+              truncated: snapshot.truncated,
+            },
+          });
           if (!dir || snapshot.size === 0) {
             // No file on disk yet — matches the REST endpoint's empty-content behavior. Nothing to poll
             // until the pane is reopened after the service actually starts writing.
@@ -1270,8 +1336,19 @@ export class WebSurfaceController {
             if (result.kind === 'unchanged') return;
             if (result.kind === 'reset') {
               closeTailFd(fd);
-              const fresh = readServiceLogTail(dir, id, 200, MAX_SERVICE_LOG_TAIL_BYTES);
-              subscriber.next({ data: { type: 'snapshot', content: fresh.content, truncated: fresh.truncated } });
+              const fresh = readServiceLogTail(
+                dir,
+                id,
+                200,
+                MAX_SERVICE_LOG_TAIL_BYTES,
+              );
+              subscriber.next({
+                data: {
+                  type: 'snapshot',
+                  content: fresh.content,
+                  truncated: fresh.truncated,
+                },
+              });
               offset = fresh.size;
               try {
                 fd = openTailFd(path);
@@ -1331,9 +1408,15 @@ export class WebSurfaceController {
       // a crash. Best-effort — never throw out of the fire-and-forget.
       void this.threadLifecycle
         .deleteJobDeep(jobId, org.id)
-        .catch((err) => this.logger.warn(`web delete: background teardown failed for job ${jobId}: ${err}`));
+        .catch((err) =>
+          this.logger.warn(
+            `web delete: background teardown failed for job ${jobId}: ${err}`,
+          ),
+        );
     }
-    this.logger.log(`web deleting thread ${jobId} (org ${org.id}); claimed=${claimed}`);
+    this.logger.log(
+      `web deleting thread ${jobId} (org ${org.id}); claimed=${claimed}`,
+    );
     return { ok: true };
   }
 

@@ -29,9 +29,15 @@ ENV TERM=xterm \
 # compile native node modules (node-gyp); unzip is needed to unpack the fnm release.
 # direnv: honor a repo's own `.envrc` (e.g. `CLOUDSDK_CONFIG=./.gcloud`) so Atlas boots the app exactly
 # how the repo is set up locally. shell-init.sh evaluates it for each non-interactive agent shell.
+# ripgrep (rg), fd-find (fd), jq: the CLI tools the engine agents (Claude Code / Codex) reach for by
+# default — both prefer `rg` for code search and `fd` for file discovery and fall back to slower
+# `grep`/`find`/`sed` when they're missing; `jq` is their JSON-in-pipeline workhorse. Debian ships fd as
+# `fdfind` (name clash with another package), so we add an `fd` symlink below so the agents find it by the
+# name they actually invoke.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg git iptables openssh-client procps direnv \
-      python3 python3-venv python3-pip build-essential unzip \
+      python3 python3-venv python3-pip build-essential unzip xz-utils \
+      ripgrep fd-find jq \
   && install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
   && chmod a+r /etc/apt/keyrings/docker.asc \
@@ -45,6 +51,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update && apt-get install -y --no-install-recommends \
       docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin gh \
+  # Debian's fd-find installs the binary as `fdfind`; expose it under `fd`, the name the agents invoke.
+  && ln -sf "$(command -v fdfind)" /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
 
 # pnpm via corepack (the agent's typical package manager). `corepack prepare pnpm@10 --activate` seeds a
@@ -90,6 +98,57 @@ RUN arch="$(dpkg --print-architecture)" \
   && unzip -q /tmp/fnm.zip -d /usr/local/bin \
   && chmod +x /usr/local/bin/fnm \
   && rm /tmp/fnm.zip
+
+# Modern CLI toolbelt the engine agents (Claude Code / Codex) reach for beyond the rg/fd/jq in the apt
+# block above — installed as pinned, arch-aware static binaries into /usr/local/bin (NOT apt: several
+# aren't packaged for bookworm, and pinning keeps a turn reproducible like the SDK/fnm pins). musl builds
+# are used where a tool ships them so they run regardless of the glibc base. None shadow a system binary
+# (ast-grep's `sg` short alias is deliberately NOT installed — the base already has shadow-utils' `sg`).
+#   ast-grep   syntax-aware structural search/rewrite    sd         ergonomic sed alternative
+#   yq         YAML/TOML/JSON surgery (jq for YAML)       shfmt      shell formatter
+#   shellcheck shell linter (catches bad commands early)  actionlint GitHub Actions workflow linter
+#   difftastic (difft) syntax-aware structural diffs      delta      syntax-highlighting diff pager
+#   watchexec  re-run a command on file changes           hyperfine  benchmarking   scc  code stats
+ARG SHELLCHECK_VERSION=0.11.0
+ARG SD_VERSION=1.1.0
+ARG YQ_VERSION=4.53.3
+ARG DIFFTASTIC_VERSION=0.69.0
+ARG SHFMT_VERSION=3.13.1
+ARG ACTIONLINT_VERSION=1.7.12
+ARG WATCHEXEC_VERSION=2.5.1
+ARG SCC_VERSION=3.7.0
+ARG HYPERFINE_VERSION=1.20.0
+ARG DELTA_VERSION=0.19.2
+ARG ASTGREP_VERSION=0.44.0
+RUN set -eu; \
+  arch="$(dpkg --print-architecture)"; \
+  case "$arch" in \
+    amd64) rust=x86_64; scc=x86_64 ;; \
+    arm64) rust=aarch64; scc=arm64 ;; \
+    *) echo "unsupported arch for CLI toolbelt: $arch" >&2; exit 1 ;; \
+  esac; \
+  gh=https://github.com; \
+  # download to a file (no curl|tar pipe, so a bad URL fails the build via curl -f) then pluck the binary
+  tarbin() { u="$1"; f="$2"; shift 2; d="$(mktemp -d)"; curl -fsSL "$u" -o "$d/a"; tar -x"$f" -f "$d/a" -C "$d"; \
+    for b in "$@"; do install -m0755 "$(find "$d" -type f -name "$b" | head -n1)" "/usr/local/bin/$b"; done; rm -rf "$d"; }; \
+  rawbin() { curl -fsSL "$1" -o "/usr/local/bin/$2"; chmod 0755 "/usr/local/bin/$2"; }; \
+  tarbin "$gh/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.${rust}.tar.gz" z shellcheck; \
+  tarbin "$gh/chmln/sd/releases/download/v${SD_VERSION}/sd-v${SD_VERSION}-${rust}-unknown-linux-musl.tar.gz" z sd; \
+  tarbin "$gh/Wilfred/difftastic/releases/download/${DIFFTASTIC_VERSION}/difft-${rust}-unknown-linux-gnu.tar.gz" z difft; \
+  tarbin "$gh/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz" z actionlint; \
+  tarbin "$gh/watchexec/watchexec/releases/download/v${WATCHEXEC_VERSION}/watchexec-${WATCHEXEC_VERSION}-${rust}-unknown-linux-musl.tar.xz" J watchexec; \
+  tarbin "$gh/boyter/scc/releases/download/v${SCC_VERSION}/scc_Linux_${scc}.tar.gz" z scc; \
+  tarbin "$gh/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine-v${HYPERFINE_VERSION}-${rust}-unknown-linux-gnu.tar.gz" z hyperfine; \
+  tarbin "$gh/dandavison/delta/releases/download/${DELTA_VERSION}/delta-${DELTA_VERSION}-${rust}-unknown-linux-gnu.tar.gz" z delta; \
+  rawbin "$gh/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${arch}" yq; \
+  rawbin "$gh/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_${arch}" shfmt; \
+  d="$(mktemp -d)"; curl -fsSL "$gh/ast-grep/ast-grep/releases/download/${ASTGREP_VERSION}/app-${rust}-unknown-linux-gnu.zip" -o "$d/a.zip"; \
+    unzip -q "$d/a.zip" -d "$d"; install -m0755 "$(find "$d" -type f -name ast-grep | head -n1)" /usr/local/bin/ast-grep; rm -rf "$d"; \
+  # smoke-test: every binary must resolve + run on THIS arch, so a wrong asset fails the build not a turn
+  shellcheck --version >/dev/null; sd --version >/dev/null; difft --version >/dev/null; \
+  actionlint --version >/dev/null; watchexec --version >/dev/null; scc --version >/dev/null; \
+  hyperfine --version >/dev/null; delta --version >/dev/null; yq --version >/dev/null; \
+  shfmt --version >/dev/null; ast-grep --version >/dev/null
 
 # Engine runtime: the two SDKs (each ships its native CLI via a per-platform package) + the bundled
 # atlas engine entrypoint. Pinned to match the host so a turn behaves identically (keep in sync; D5

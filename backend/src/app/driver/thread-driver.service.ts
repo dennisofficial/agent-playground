@@ -5,7 +5,7 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { PlanVisibilityService } from '../decision-gate';
 import { AutoFixStage, reviewAgentsForThread } from '../autofix';
-import type { DecisionRecord, Step, Job } from '../domain';
+import type { DecisionRecord, Step, Job, SessionEngine } from '../domain';
 import {
   EngineAuthError,
   isEngineDetachedError,
@@ -18,6 +18,7 @@ import {
   BLOCK_SINK,
   type BlockSink,
   TurnHarnessFactory,
+  laneFor,
 } from '../surface';
 import { CredentialResolver } from '../onboarding';
 import { LeaderElectionService } from '../cluster';
@@ -132,12 +133,6 @@ export class ThreadDriver implements JobDispatcher {
     const raw = Number(this.env.get('PHASE_TIMEOUT_MS'));
     if (Number.isFinite(raw) && raw > 0) return raw;
     return 60 * 60_000;
-  }
-
-  /** Per-job wall-clock budget (checked at thread boundaries) — backstop against an unbounded build. Default 60m. */
-  private get jobTimeoutMs(): number {
-    const raw = Number(this.env.get('JOB_TIMEOUT_MS'));
-    return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000;
   }
 
   /**
@@ -357,10 +352,15 @@ export class ThreadDriver implements JobDispatcher {
     );
 
     const allSections = await this.store.threadsForJob(jobId);
-    const threads = allSections.slice(0, this.maxThreads);
-    if (allSections.length > threads.length) {
+    // Cap the FEATURE threads at MAX_SECTIONS, but NEVER drop the appended master-review thread (it rides on
+    // top of the feature threads and must always run last) — partition it out, cap the rest, re-append.
+    const featureSections = allSections.filter((s) => !s.isMasterReview);
+    const reviewSection = allSections.find((s) => s.isMasterReview);
+    const cappedFeatures = featureSections.slice(0, this.maxThreads);
+    const threads = reviewSection ? [...cappedFeatures, reviewSection] : cappedFeatures;
+    if (featureSections.length > cappedFeatures.length) {
       this.logger.warn(
-        `job=${jobId} has ${allSections.length} threads > MAX_SECTIONS (${this.maxThreads}) — capping`,
+        `job=${jobId} has ${featureSections.length} threads > MAX_SECTIONS (${this.maxThreads}) — capping`,
       );
     }
     const pending = threads.filter((s) => s.status !== 'done').length;
@@ -371,20 +371,12 @@ export class ThreadDriver implements JobDispatcher {
       );
     }
 
-    // Per-job wall-clock backstop (issue #3) — checked at each thread boundary; the per-step timeout
-    // guards within a thread. A breach aborts + relays (caught in drive()).
-    const deadline = Date.now() + this.jobTimeoutMs;
     let handoff: string | null = null;
     for (const thread of threads) {
       if (thread.status === 'done') {
         // Already built (a resume) — carry its persisted handoff to the next thread, don't re-run.
         handoff = thread.handoffOut ?? handoff;
         continue;
-      }
-      if (Date.now() > deadline) {
-        throw new Error(
-          `job exceeded JOB_TIMEOUT_MS (${this.jobTimeoutMs}ms) before thread "${thread.brief}"`,
-        );
       }
       handoff = await this.runThread(
         job,
@@ -450,7 +442,9 @@ export class ThreadDriver implements JobDispatcher {
     await this.store.setThreadStatus(thread.id, 'executing');
     const reports = await this.executeSteps(job, route, sandbox, thread, record, repo);
 
-    // f. AUTO-FIX — fan-out review → fix over this thread's diff.
+    // f. AUTO-FIX — fan-out review → fix over this thread's diff. SKIPPED for the master-review thread: it
+    // IS the review (a whole-diff Codex review-and-fix), so a per-thread auto-fix pass over it is redundant.
+    if (!thread.isMasterReview) {
     await this.store.setThreadStatus(thread.id, 'auto_fixing');
     // Seed the review agents at `pending` so the navigator shows them queued; the stage's onLensStatus hook
     // transitions each as it runs, and the `finally` resolves any left pending/running (empty diff / throw).
@@ -523,6 +517,7 @@ export class ThreadDriver implements JobDispatcher {
       `thread:${thread.id}:autofix`,
       `Auto-fix pass applied over the diff for thread "${thread.brief}".`,
     );
+    }
 
     // e. HANDOFF — summarize what this thread produced for the next.
     const handoffOut = this.summarizeHandoff(thread, steps, reports);
@@ -762,7 +757,7 @@ export class ThreadDriver implements JobDispatcher {
     // it into the step sub-page (like a subagent). The channel falls back to the repo id so durable
     // persistence works even if the route has no live channel.
     const channel = route.channel ?? job.repoId;
-    const lane = `thread:${thread.id}`;
+    const lane = laneFor('builder', thread.id);
     const batchOrdinal = anchor.batchOrdinal ?? null;
     const metaTag: Record<string, unknown> = {
       phaseId: anchor.id,
@@ -771,7 +766,9 @@ export class ThreadDriver implements JobDispatcher {
     // The instruction the engine receives — the build turn's "first message". Computed once here so it
     // can both kick off the turn AND be persisted on the anchor row (the web renders it like a subagent's
     // Task prompt, so the step transcript shows what was asked, not just the engine's reply).
-    const task = renderBatchTask(record, thread, steps);
+    const task = thread.isMasterReview
+      ? renderMasterReviewTask(record, repo)
+      : renderBatchTask(record, thread, steps);
 
     // The orchestrator turn's PAUSABLE wall-clock deadline + the host tool bridge that exposes
     // `request_operator_input` (open a durable question card → poll it → pause the deadline across the
@@ -953,6 +950,13 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const anchor = steps[0];
     const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    // The master-review thread runs CODEX in execute mode over the whole diff (review + fix + verify) with a
+    // dedicated persona and high reasoning effort; every other builder runs Claude with the WORKER persona.
+    const isMasterReview = thread.isMasterReview;
+    const engine: SessionEngine = isMasterReview ? 'codex' : 'claude';
+    const systemPrompt = isMasterReview
+      ? renderAgentPrompt(Agent.MASTER_REVIEW)
+      : renderAgentPrompt(Agent.WORKER, { jobKind: job.kind });
     // Circuit breaker (#3): bound the engine turn with the shared PAUSABLE deadline (paused across a
     // `request_operator_input` human wait). On breach it both signals the SDK to abort AND hard-rejects so
     // the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute to the anchor
@@ -964,11 +968,14 @@ export class ThreadDriver implements JobDispatcher {
           jobId: job.id,
           stepId: anchor.id,
           sandbox,
-          engine: 'claude',
+          engine,
           mode: 'execute',
-          systemPrompt: renderAgentPrompt(Agent.WORKER, { jobKind: job.kind }),
+          systemPrompt,
+          // High reasoning effort for the whole-diff review pass (parity with plan-review). Ignored by Claude
+          // builder turns (undefined). `toolBridge`/steering are unused by `runCodex` on the master path.
+          ...(isMasterReview ? { modelReasoningEffort: 'xhigh' as const } : {}),
           task,
-          auth: await this.creds.engineAuth(job.orgId, 'claude'),
+          auth: await this.creds.engineAuth(job.orgId, engine),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
@@ -1323,6 +1330,33 @@ export function renderBatchTask(
       ` making small edits yourself where a subagent would be overkill, and verify the whole thread before` +
       ` finishing. If you hit a decision the locked plan does NOT cover and you cannot safely proceed, call` +
       ` \`request_operator_input\` with a specific question rather than guessing.\n\n${blocks}`,
+  ].join('\n');
+}
+
+/**
+ * The task for the MASTER-REVIEW thread — a Codex `execute` turn that reviews the whole merged feature diff
+ * and applies fixes IN-CONTAINER (where the repo toolchain lives), then verifies with the repo's own build.
+ * Execute-voice counterpart to the old read-only `run_master_review` tool prompt. No writer-subagent mention
+ * (Codex has none). Does NOT push — the host commits the edits and ships.
+ */
+export function renderMasterReviewTask(record: DecisionRecord | null, repo: ResolvedRepo): string {
+  const decisions = record?.decisions.length
+    ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
+    : '(none)';
+  return [
+    `Feature overview:\n${record?.overview ?? ''}`,
+    `\nLocked decisions (respect these):\n${decisions}`,
+    `\nThis is the FINAL review-and-fix pass over the whole feature branch before its pull request opens.`,
+    `\n1. Review the whole merged diff: \`git diff origin/${repo.defaultBranch}...HEAD\`. Look for real,` +
+      ` in-scope defects — correctness bugs, security issues, and cross-thread integration mistakes (where` +
+      ` two threads' changes don't line up). Ignore style nits and anything outside this feature's scope.`,
+    `\n2. FIX what you find: the smallest safe change per finding, never expanding scope; skip anything` +
+      ` unsafe or ambiguous rather than guessing. Make edits directly under \`/workspace\`.`,
+    `\n3. VERIFY: run the repo's own typecheck/build/test commands and confirm they pass — do this even if` +
+      ` you changed nothing (a clean review still deserves a green build). If verification fails, fix and` +
+      ` re-verify rather than leaving it red.`,
+    `\nDo NOT \`git push\` or open a PR — the host commits your edits and ships. If the review found nothing` +
+      ` actionable, change nothing.`,
   ].join('\n');
 }
 

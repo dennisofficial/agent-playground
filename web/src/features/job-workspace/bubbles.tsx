@@ -152,7 +152,17 @@ export function ThinkingBlock({ text, streaming = false, time }: { text: string;
 }
 
 /** Render a thread's in-flight LIVE turn (token-streamed text, thinking, and grouped tool calls). */
-export function LiveTurnView({ turn, onSelectNode }: { turn: LiveTurn; onSelectNode?: (node: string) => void }) {
+export function LiveTurnView({
+  turn,
+  lane,
+  onSelectNode,
+}: {
+  turn: LiveTurn;
+  /** The lane `turn` is streaming on — baked into any subagent card's node so its pane subscribes to the
+   *  right live turn (see {@link subagentNode}). */
+  lane: string;
+  onSelectNode?: (node: string) => void;
+}) {
   // Collapse runs of consecutive tool blocks into one group; text/thinking break the run.
   const items: Array<{ key: string; node: React.ReactNode }> = [];
   let pending: ToolItem[] = [];
@@ -176,7 +186,7 @@ export function LiveTurnView({ turn, onSelectNode }: { turn: LiveTurn; onSelectN
         const parentId = summary.parentId;
         items.push({
           key: b.key,
-          node: <SubagentCard summary={summary} onOpen={() => onSelectNode?.(subagentNode(parentId))} />,
+          node: <SubagentCard summary={summary} onOpen={() => onSelectNode?.(subagentNode(lane, parentId))} />,
         });
       }
       continue;

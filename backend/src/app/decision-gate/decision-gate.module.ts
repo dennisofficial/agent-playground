@@ -5,14 +5,13 @@ import {
   AnthropicClassifierLlm,
 } from './classifier-llm';
 import { DecisionClassifier } from './decision-classifier.service';
-import { ParkAndAskService } from './park-and-ask.service';
 import { PlanVisibilityService } from './plan-visibility.service';
 
 /**
- * W5 — the DECISION-CLASS GATE module. Bundles the three W5 services so W4's thread driver can import
+ * W5 — the DECISION-CLASS GATE module. Bundles the W5 services so W4's thread driver can import
  * one module:
  *   - `DecisionClassifier` — always-ask / never-ask / covered classification (rules + LLM fallback);
- *   - `ParkAndAskService` — park a thread & ask in-thread, resolve on the human's reply;
+ *     still used by the brain's `start_direct_build` fast-path safety gate;
  *   - `PlanVisibilityService` — post a thread's plan for non-blocking visibility.
  *
  * The classifier's ambiguous-case LLM is bound behind `CLASSIFIER_LLM` (a declarative chain on a cheap
@@ -32,12 +31,10 @@ import { PlanVisibilityService } from './plan-visibility.service';
         new AnthropicClassifierLlm((orgId) => creds.anthropicKey(orgId)),
     },
     DecisionClassifier,
-    ParkAndAskService,
     PlanVisibilityService,
   ],
   exports: [
     DecisionClassifier,
-    ParkAndAskService,
     PlanVisibilityService,
     CLASSIFIER_LLM,
   ],

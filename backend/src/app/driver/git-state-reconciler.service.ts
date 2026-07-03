@@ -80,8 +80,9 @@ export class GitStateReconciler {
       // learns of it here, on discovery, so this is where the flip belongs.
       await this.jobs.update(
         { id: job.id },
-        { pr_url: found.url, pr_number: found.number, status: 'done' },
+        { pr_url: found.url, pr_number: found.number, status: 'done', pr_state: 'open' },
       );
+      job.pr_state = 'open';
       this.logger.log(`discovered PR #${found.number} for job ${job.id} on ${job.feature_branch}`);
       prNumber = found.number;
     }
@@ -91,7 +92,16 @@ export class GitStateReconciler {
       repo: parsed.repo,
       number: prNumber,
     });
-    // Merged / closed / gone → pollPrClosures owns teardown; nothing to observe here.
+
+    // Backfill the PR lifecycle column (safety net for legacy rows with a null pr_state, and for the
+    // authoritative merged/closed latch in pollPrClosures). `gone` reads as closed. Only write on change.
+    const nextPrState = detail.state === 'gone' ? 'closed' : detail.state;
+    if (nextPrState !== job.pr_state) {
+      await this.jobs.update({ id: job.id }, { pr_state: nextPrState });
+      job.pr_state = nextPrState;
+    }
+
+    // Merged / closed / gone → pollPrClosures owns teardown; nothing more to observe here.
     if (detail.state !== 'open') return;
 
     // CI status column (UI badge). Routing of CI FAILURES rides the webhook (check_run) so it isn't
