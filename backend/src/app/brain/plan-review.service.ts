@@ -621,6 +621,46 @@ export class PlanReviewService {
       where: { status: In(['complete', 'failed']), delivered_at: IsNull() },
     });
   }
+
+  /**
+   * The WEDGE worklist: the latest review round of every job STILL sitting in `plan_review` whose review
+   * is settled (`complete`/`failed`) AND was already delivered to the brain `graceMs` ago, but was never
+   * finalize-nudged. This is the frozen-plan signature: `submit_plan` persisted the plan + ran the review,
+   * the findings reached the brain, but the brain's turn ended without calling `finalize_plan` (a crash cut
+   * it off mid-tool-call, or it stopped) — and `plan_review` has NO driver to move it. The `delivered_at <
+   * cutoff` window keeps us off a job whose brain only just received the findings and is legitimately still
+   * working (that turn also shows up as a live turn, which the caller separately guards on). The
+   * `finalize_nudged_at IS NULL` + latest-round scoping bound this to ONE nudge per round (no loop). The
+   * `jobs.status = 'plan_review'` join keeps terminal/awaiting jobs out of the worklist entirely (so a
+   * finalized job's delivered rows aren't re-scanned every sweep).
+   */
+  async findFinalizeStalledReviews(graceMs: number): Promise<PlanReviewEntity[]> {
+    const cutoff = new Date(Date.now() - graceMs);
+    return this.reviews
+      .createQueryBuilder('pr')
+      .innerJoin('jobs', 'j', 'j.id = pr.job_id AND j.status = :st', {
+        st: 'plan_review',
+      })
+      .where('pr.status IN (:...terminal)', {
+        terminal: ['complete', 'failed'],
+      })
+      .andWhere('pr.delivered_at IS NOT NULL')
+      .andWhere('pr.delivered_at < :cutoff', { cutoff })
+      .andWhere('pr.finalize_nudged_at IS NULL')
+      .andWhere(
+        'pr.round = (SELECT MAX(p2.round) FROM plan_reviews p2 WHERE p2.job_id = pr.job_id)',
+      )
+      .getMany();
+  }
+
+  /**
+   * Stamp a review round finalize-nudged (the wedge reconciler re-drove a `finalize_plan` prompt into the
+   * brain). Set only AFTER the nudge turn ran, so a crash before it re-nudges next sweep (at-least-once),
+   * and so a landed nudge is never repeated (the query filters `finalize_nudged_at IS NULL`).
+   */
+  async markFinalizeNudged(reviewId: string): Promise<void> {
+    await this.reviews.update({ id: reviewId }, { finalize_nudged_at: new Date() });
+  }
 }
 
 /**

@@ -57,7 +57,10 @@ export class CredentialResolver {
     if (orgId) {
       const creds = await this.store.read(orgId);
       const secret = engine === 'claude' ? creds?.claudeOauthToken : creds?.codexAuthSecret;
-      if (secret) return { secret };
+      // Stamp `refreshBack` provenance ONLY on an org-sourced secret — it marks this credential as one the
+      // auth-refresh write-back may persist a refreshed blob back to (the env fallback below has nowhere to
+      // write, so it stays bare and never triggers a readback).
+      if (secret) return { secret, refreshBack: { orgId, engine } };
       // A partial/absent posture falls through to the env-derived default.
     }
     return engineAuthFromEnv(this.env, engine);

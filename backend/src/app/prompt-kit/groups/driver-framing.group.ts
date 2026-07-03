@@ -8,7 +8,7 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { CLOUD_SANDBOX_NOTE } from '../fragments';
+import { CLOUD_SANDBOX_NOTE, SOLE_AUTHOR_NOTE } from '../fragments';
 import { jobKindFragment } from '../job-kind';
 import type { PromptCtx } from '../prompt-ctx';
 
@@ -20,6 +20,12 @@ export class DriverFramingGroup {
   @Fragment({ usedBy: DRIVER, order: 200 })
   cloudSandbox(): string {
     return CLOUD_SANDBOX_NOTE;
+  }
+
+  /** The sole-author invariant — no phantom outside/concurrent editor (worker + ship). */
+  @Fragment({ usedBy: DRIVER, order: 201 })
+  soleAuthor(): string {
+    return SOLE_AUTHOR_NOTE;
   }
 
   /** The job-kind orientation block (composer injected `jobKindFragment` for worker + ship). */

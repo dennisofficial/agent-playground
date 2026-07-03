@@ -13,7 +13,16 @@ import type { SessionEngine, SessionMode } from '../domain';
  * `CLAUDE_CODE_OAUTH_TOKEN`; for Codex it's an `auth.json` blob the overlay home is seeded with.
  * (The non-agentic LangChain chains keep using `ANTHROPIC_API_KEY` — that path is unrelated.)
  */
-export type EngineAuth = { secret: string };
+export type EngineAuth = {
+  secret: string;
+  /**
+   * HOST-SIDE provenance for the auth-refresh write-back: where to persist a refreshed `auth.json` back
+   * to. Set ONLY when `secret` came from an org credential (never the env fallback — a process env var
+   * can't be persisted). It is STRIPPED before the turn spec enters the container (the container never
+   * needs it), so it never rides Redis into the sandbox. Absent → no write-back (env/local-dev runs).
+   */
+  refreshBack?: { orgId: string; engine: SessionEngine };
+};
 
 /**
  * One hunk of an Edit/MultiEdit's structured patch (the SDK `tool_use_result.structuredPatch` shape):
@@ -290,6 +299,14 @@ export interface RunEngineArgs {
   mode: SessionMode;
   /** How this run authenticates. Unset → the engine falls back to its ambient env. */
   auth?: EngineAuth;
+  /**
+   * NON-SECRET gate telling the in-container Codex engine to READ its refreshed `auth.json` overlay back
+   * after the turn (and relay it on {@link EngineRunResult.refreshedAuthSecret}). Serialized into the turn
+   * spec (unlike the secret-bearing `auth.refreshBack`, which is host-only). The runner sets it to
+   * `!!auth.refreshBack`, so ONLY org-sourced runs read back — env-fallback runs (which inject an ambient
+   * `CODEX_OAUTH_TOKEN` the container can't distinguish) never emit a secret into the final frame.
+   */
+  persistAuthRefresh?: boolean;
   /** Override the model for this run. Falls back to the engine's env/default when unset. */
   model?: string;
   /**
@@ -373,6 +390,13 @@ export interface EngineRunResult {
   /** The captured plan text on a Claude 'plan' turn (the substance is the plan, not the summary). */
   planText?: string;
   usage?: EngineUsage;
+  /**
+   * The post-run Codex `auth.json` overlay when the turn REFRESHED its tokens (Codex rewrites the file in
+   * place) AND `RunEngineArgs.persistAuthRefresh` was set. Relayed back over the final frame so the host
+   * can persist it to the org credential store, keeping the stored subscription credential live instead of
+   * a rotting snapshot. Contains a SECRET — never log it. Absent on the common (no-refresh) path.
+   */
+  refreshedAuthSecret?: string;
 }
 
 /**

@@ -861,6 +861,8 @@ export class WebSurfaceController {
     // Stale (already delivered) → no-op. Already answered (delivery in flight) → idempotent ok. These are
     // cheap fast-paths off the snapshot; `markQuestionAnswered` below is the authoritative conditional gate.
     if (payload.deliveredAt) return { ok: false, ts: '' };
+    // Withdrawn by the brain (`withdraw_question`) → terminal, no longer answerable. No-op.
+    if (payload.withdrawnAt) return { ok: false, ts: '' };
     if (payload.answer != null) return { ok: true, ts: '' };
     // Atomic first-answer: only the txn that flips the still-unanswered card "wins" (decrements the
     // open-question counter); a concurrent loser returns ok without firing a second delivery turn.

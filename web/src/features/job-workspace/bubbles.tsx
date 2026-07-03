@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronRight, RotateCw } from 'lucide-react';
 import type { SystemTone } from './classify';
 import { Markdown } from './markdown';
@@ -125,7 +125,11 @@ export function StreamTextBubble({ text, streaming = false }: { text: string; st
 
 /** A collapsible thinking block (the model's reasoning) — dimmed + italic, like Claude Code. */
 export function ThinkingBlock({ text, streaming = false, time }: { text: string; streaming?: boolean; time?: string }) {
-  const [open, setOpen] = useState(false);
+  // Auto-expand while the reasoning is streaming (watch it think live), then collapse it once the turn
+  // finishes so the transcript stays tidy. Manual toggles between streaming-state changes are preserved —
+  // the effect only re-fires when `streaming` itself flips. Persisted blocks render with streaming=false → closed.
+  const [open, setOpen] = useState(streaming);
+  useEffect(() => setOpen(streaming), [streaming]);
   return (
     <div className="anim-fadeUp">
       <div className="flex items-center gap-2">
@@ -144,7 +148,9 @@ export function ThinkingBlock({ text, streaming = false, time }: { text: string;
           className="mt-1.5 whitespace-pre-wrap pl-[18px] text-[12.5px] italic leading-relaxed text-dim"
           style={{ borderLeft: '2px solid var(--border)' }}
         >
-          {text}
+          {/* trim: summarized thinking arrives with leading/trailing newlines that whitespace-pre-wrap
+              would otherwise render as blank-line padding above the text; internal formatting is preserved. */}
+          {text.trim()}
         </p>
       ) : null}
     </div>

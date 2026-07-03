@@ -76,20 +76,33 @@ describe('CredentialResolver — env-fallback contract', () => {
       expect(await r.engineAuth(undefined, 'claude')).toBeUndefined();
     });
 
-    it('tenant claude secret wins over env', async () => {
+    it('tenant claude secret wins over env, carrying refreshBack provenance', async () => {
       const r = new CredentialResolver(
         fakeStore({ T1: { claudeOauthToken: 'tenant-oauth' } }),
         fakeEnv({ CLAUDE_OAUTH_TOKEN: 'env-oauth' }),
       );
-      expect(await r.engineAuth('T1', 'claude')).toEqual({ secret: 'tenant-oauth' });
+      expect(await r.engineAuth('T1', 'claude')).toEqual({
+        secret: 'tenant-oauth',
+        refreshBack: { orgId: 'T1', engine: 'claude' },
+      });
     });
 
-    it('tenant codex secret is used for codex', async () => {
+    it('tenant codex secret is used for codex, carrying refreshBack provenance', async () => {
       const r = new CredentialResolver(
         fakeStore({ T1: { codexAuthSecret: 'tenant-codex' } }),
         fakeEnv({}),
       );
-      expect(await r.engineAuth('T1', 'codex')).toEqual({ secret: 'tenant-codex' });
+      expect(await r.engineAuth('T1', 'codex')).toEqual({
+        secret: 'tenant-codex',
+        refreshBack: { orgId: 'T1', engine: 'codex' },
+      });
+    });
+
+    it('env-fallback auth carries NO refreshBack (nowhere to persist a refresh)', async () => {
+      const r = new CredentialResolver(fakeStore({}), fakeEnv({ CODEX_OAUTH_TOKEN: 'env-codex' }));
+      const auth = await r.engineAuth('T1', 'codex'); // org has no row → env fallback
+      expect(auth).toEqual({ secret: 'env-codex' });
+      expect(auth?.refreshBack).toBeUndefined();
     });
 
     it('is engine-specific: a tenant claude secret does not satisfy a codex request', async () => {

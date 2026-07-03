@@ -28,6 +28,7 @@ export type ThreadStatus =
   | 'awaiting_input'
   | 'auto_fixing'
   | 'done'
+  | 'incomplete'
   | 'failed';
 
 /** Per-step status (the execute folder's leaves). Mirrors backend `StepStatus` in `domain/thread.ts`. */
@@ -114,6 +115,10 @@ export interface WebQuestionCard {
   answer?: string;
   answeredAt?: string;
   loggedDecision?: boolean;
+  /** Set when the brain RETRACTED this still-unanswered question (`withdraw_question`) — renders a compact
+   *  "withdrawn" state with no answer buttons. Terminal, like `answer`. */
+  withdrawnAt?: string;
+  withdrawnReason?: string;
 }
 
 /**

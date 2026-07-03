@@ -102,6 +102,9 @@ export function threadColor(status: ThreadStatus): { color: string; pulse: boole
       return { color: 'var(--slate)', pulse: false };
     case 'failed':
       return { color: 'var(--red)', pulse: false };
+    // Halted without asserting completion (ADR 0004) — a needs-attention amber, distinct from a crash (red).
+    case 'incomplete':
+      return { color: 'var(--amber)', pulse: false };
     case 'pending':
     default:
       return { color: 'var(--border-2)', pulse: false };

@@ -8,10 +8,11 @@ import { isDetailNode } from './node-registry';
  * The workspace has TWO panes, each with its own selection, plus a stacked sub-agent layer on the right
  * (design "Atlas Workspace HiFi"):
  *
- *  - the LEFT pane (`?lane=`) is a THREADS lane — the Main brain conversation (no param) or a build
- *    thread/step transcript. Highlighted ORANGE in the navigator.
- *  - the RIGHT pane (`?node=`) is a DETAIL node — an OUTPUT (spec/artifact/generated), a sandbox port, the
- *    diff/plan/decision docs, a review lens. Highlighted BLUE in the navigator.
+ *  - the LEFT pane (`?lane=`) is a THREADS lane — the Main brain conversation (no param), a build
+ *    thread/step transcript, the Codex plan-review dialogue, or a review-agent / post-review-fix child
+ *    thread (`rev:`/`fix:` — they're threads, not detail nodes). Highlighted ORANGE in the navigator.
+ *  - the RIGHT pane (`?node=`) is a DETAIL node — an OUTPUT (spec/artifact/generated), a sandbox port, a
+ *    service log, the diff/plan/decision docs. Highlighted BLUE in the navigator.
  *  - a SUB-AGENT (`?sub=`) STACKS on top of the right pane: opening one keeps `?node=` (its nav row stays
  *    selected) and renders the sub-agent transcript with a breadcrumb back to that base node. It's a
  *    second-level page, not a replacement — closing it returns to the base.

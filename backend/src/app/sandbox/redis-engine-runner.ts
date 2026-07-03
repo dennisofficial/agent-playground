@@ -1,7 +1,9 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
+  AUTH_REFRESH_SINK,
+  type AuthRefreshSink,
   EngineAuthError,
   EngineDetachedError,
   type EngineEvent,
@@ -21,7 +23,7 @@ import {
   CONTAINER_WORKTREE,
 } from './container-paths';
 import { SandboxActivityRegistry } from './sandbox-activity.registry';
-import { TurnRegistry } from './turn-registry.service';
+import { BrainTurnAlreadyRunningError, TurnRegistry } from './turn-registry.service';
 import { turnKeys, TOOLS_GROUP } from './redis-turn-keys';
 
 /** A frame the in-container engine appends to `turn:{T}:events` (mirrors the pipe runner's NDJSON frames). */
@@ -31,8 +33,17 @@ type EventFrame =
   | { t: 'final'; r: EngineRunResult }
   | { t: 'error'; message: string; auth?: boolean; sessionId?: string };
 
-/** How long the host waits with NO new event/heartbeat before declaring the engine dead (safety net). */
-const TAIL_IDLE_TIMEOUT_MS = 120_000;
+/** How long the host waits with NO new event/heartbeat before checking container liveness (safety net). */
+export const TAIL_IDLE_TIMEOUT_MS = 120_000;
+
+/** Absolute ceiling on extended patience for a container that's still `running` past the idle timeout —
+ *  covers a real (if unusual) live-verification turn that starves the heartbeat under heavy CPU/IO, without
+ *  granting infinite grace to a container whose engine process died while its own init stayed up. */
+export const TAIL_ALIVE_GRACE_CEILING_MS = 600_000;
+
+/** Minimum gap between `docker inspect` liveness re-checks during an extended grace window — the idle poll
+ *  ticks roughly every second (`blockMs`), and re-inspecting that often would needlessly load the daemon. */
+export const TAIL_INSPECT_THROTTLE_MS = 10_000;
 
 /** The subset of a turn the attach loop needs — shared by a fresh `run` and a boot `reattach`. */
 export interface AttachArgs {
@@ -64,6 +75,9 @@ export class RedisEngineRunner implements EngineRunnerPort {
     private readonly env: EnvService,
     private readonly activity: SandboxActivityRegistry,
     private readonly registry: TurnRegistry,
+    // Optional so direct-instantiation unit tests (and any runner built without the onboarding module)
+    // still construct — absent → the auth-refresh write-back is simply skipped.
+    @Optional() @Inject(AUTH_REFRESH_SINK) private readonly authRefreshSink?: AuthRefreshSink,
   ) {}
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
@@ -85,19 +99,31 @@ export class RedisEngineRunner implements EngineRunnerPort {
     //    turn on failure (the message stays pending; the delivery pump retries) rather than claiming a
     //    hand-off that can't be re-attached.
     if (args.turnMeta) {
-      const register = this.registry.register({
-        turnId,
-        jobId: args.turnMeta.jobId,
-        orgId: args.turnMeta.orgId,
-        channel: args.turnMeta.channel,
-        lane: args.turnMeta.lane,
-        kind: args.turnMeta.kind,
-        containerId: target.containerId,
-        // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
-        ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, jobId: args.turnMeta.jobId },
-      });
-      if (args.onTurnRegistered) await register;
-      else await register.catch((err) => this.logger.warn(`turn ${turnId}: registry.register failed (continuing): ${err}`));
+      try {
+        await this.registry.register({
+          turnId,
+          jobId: args.turnMeta.jobId,
+          orgId: args.turnMeta.orgId,
+          channel: args.turnMeta.channel,
+          lane: args.turnMeta.lane,
+          kind: args.turnMeta.kind,
+          containerId: target.containerId,
+          // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
+          ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, jobId: args.turnMeta.jobId },
+        });
+      } catch (err) {
+        if (err instanceof BrainTurnAlreadyRunningError) {
+          // The single-running-brain-turn guard rejected us: a brain turn is already live for this job. Do
+          // NOT kick a second engine (the whole point) — the spec XADD'd above is unread and TTL-reaped. The
+          // caller (AgentSessionManager) catches this and steers this stimulus into the live turn instead.
+          throw err;
+        }
+        // Any other registry failure: a delivery hand-off (`onTurnRegistered` stamps `delivered_at` off the
+        // row) needs a durable row, so rethrow — the message stays pending and the pump retries. Without a
+        // hand-off the turn can still run un-registered (loses restart re-attach only), so warn + continue.
+        if (args.onTurnRegistered) throw err;
+        this.logger.warn(`turn ${turnId}: registry.register failed (continuing): ${err}`);
+      }
     }
 
     // 3) Kick the engine detached, then attach (tail events + serve the tool bridge). `onTurnRegistered`
@@ -105,7 +131,27 @@ export class RedisEngineRunner implements EngineRunnerPort {
     //    (registered row + a running engine; boot re-attach never re-kicks). Only when the row exists.
     const onKicked =
       args.turnMeta && args.onTurnRegistered ? () => args.onTurnRegistered!(turnId) : undefined;
-    return this.runAttached(turnId, keys, args, target.containerId, target, onKicked);
+    const result = await this.runAttached(turnId, keys, args, target.containerId, target, onKicked);
+    await this.persistAuthRefresh(args, result);
+    return result;
+  }
+
+  /**
+   * Auth-refresh write-back (best-effort, host-side). When a Codex turn refreshed its `auth.json` the
+   * in-container engine relays the fresh blob on `result.refreshedAuthSecret`; persist it to the org
+   * credential via the sink, keyed by the host-only `auth.refreshBack` provenance (never serialized into
+   * the container). Never throws — a failed persist must not fail an already-completed turn. NOTE: this
+   * runs after `runAttached` has reclaimed the Redis streams, so the refreshed blob only survives in the
+   * in-memory `result`; a host crash in this window drops that one refresh (self-corrects next turn).
+   */
+  private async persistAuthRefresh(args: RunEngineArgs, result: EngineRunResult): Promise<void> {
+    const provenance = args.auth?.refreshBack;
+    if (!result.refreshedAuthSecret || !provenance || !this.authRefreshSink) return;
+    try {
+      await this.authRefreshSink.persist(provenance.orgId, provenance.engine, result.refreshedAuthSecret);
+    } catch (err) {
+      this.logger.warn(`auth-refresh write-back failed (ignored): ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   /**
@@ -191,7 +237,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
         const toolsLoop = args.toolBridge
           ? this.consumeTools(turnId, keys, args.toolBridge, done)
           : Promise.resolve();
-        const [result] = await Promise.all([this.tailEvents(turnId, keys, args, done), toolsLoop]);
+        const [result] = await Promise.all([
+          this.tailEvents(turnId, keys, containerId, args, done),
+          toolsLoop,
+        ]);
         return result;
       } catch (err) {
         detached = err instanceof EngineDetachedError;
@@ -266,11 +315,18 @@ export class RedisEngineRunner implements EngineRunnerPort {
   private async tailEvents(
     turnId: string,
     keys: ReturnType<typeof turnKeys>,
+    containerId: string,
     args: AttachArgs,
     done: { value: boolean },
   ): Promise<EngineRunResult> {
     let lastId = '0-0';
     let lastActivity = Date.now();
+    // First moment we saw a live container past the idle deadline — null while genuinely active. Tracks
+    // total time spent in "confirmed alive but quiet" grace, separate from `lastActivity` (which a mere
+    // liveness re-check must NOT reset, or a wedged-forever container would grant itself infinite grace).
+    let aliveGraceSince: number | null = null;
+    /** Last time we actually asked docker — throttles `inspect` calls during an extended grace window. */
+    let lastInspectAt = 0;
     let result: EngineRunResult | undefined;
     let errorMsg: string | undefined;
     let errorAuth = false;
@@ -312,12 +368,44 @@ export class RedisEngineRunner implements EngineRunnerPort {
         }
         if (entries.length === 0) {
           if (Date.now() - lastActivity > TAIL_IDLE_TIMEOUT_MS) {
-            errorMsg = `engine produced no events for ${Math.round(TAIL_IDLE_TIMEOUT_MS / 1000)}s (presumed dead)`;
+            // A quiet tail does NOT mean a dead engine: the in-container heartbeat is an independent 5s
+            // timer (engine-entrypoint.ts), so it should keep landing even mid a long silent tool call —
+            // but under heavy CPU/IO contention (the engine's OWN verify step building/testing/booting the
+            // repo it just changed) the container can genuinely starve the Node event loop long enough to
+            // miss several beats. Ask docker directly rather than presuming death. NOTE: this can't reuse
+            // `EngineDetachedError` — that leaves the job `running` for a BOOT re-attach, but this backend
+            // runs as a long-lived dev process with no periodic re-attach sweep, so a live-but-quiet verdict
+            // here would strand the job `running` forever with no path back. Instead: extend patience while
+            // the container keeps proving itself alive, capped by an absolute ceiling so a container whose
+            // engine process silently died (while the container's own init/supervisor stays up) still ends
+            // the turn instead of hanging indefinitely.
+            if (aliveGraceSince !== null) {
+              if (Date.now() - aliveGraceSince >= TAIL_ALIVE_GRACE_CEILING_MS) {
+                errorMsg = `engine produced no events for ${Math.round((Date.now() - aliveGraceSince) / 1000)}s despite the container staying 'running' (exceeded the ${Math.round(TAIL_ALIVE_GRACE_CEILING_MS / 1000)}s alive-grace ceiling — presumed dead)`;
+                break;
+              }
+              // Already in a confirmed-alive grace window — don't hammer `docker inspect` on every ~1s
+              // poll tick, just keep waiting until the next throttled re-check is due.
+              if (Date.now() - lastInspectAt < TAIL_INSPECT_THROTTLE_MS) continue;
+            }
+            lastInspectAt = Date.now();
+            const info = await this.containers.inspect(containerId).catch(() => null);
+            if (info?.state === 'running') {
+              aliveGraceSince ??= Date.now();
+              this.logger.warn(
+                `turn ${turnId}: no events for ${Math.round((Date.now() - lastActivity) / 1000)}s but container ${containerId} is still running — extending patience (grace elapsed ${Math.round((Date.now() - aliveGraceSince) / 1000)}s / ${Math.round(TAIL_ALIVE_GRACE_CEILING_MS / 1000)}s ceiling)`,
+              );
+              continue;
+            }
+            errorMsg = aliveGraceSince
+              ? `engine produced no events and container ${containerId} went from 'running' to '${info?.state ?? 'gone'}' mid-grace (presumed dead)`
+              : `engine produced no events for ${Math.round(TAIL_IDLE_TIMEOUT_MS / 1000)}s and container is ${info?.state ?? 'gone'} (presumed dead)`;
             break;
           }
           continue;
         }
         lastActivity = Date.now();
+        aliveGraceSince = null;
         for (const entry of entries) {
           lastId = entry.id;
           const frame = entry.data as EventFrame;
@@ -364,7 +452,16 @@ export class RedisEngineRunner implements EngineRunnerPort {
       sandboxKey: args.sandboxKey,
       mode: args.mode,
       ...(args.sessionId ? { sessionId: args.sessionId } : {}),
-      ...(args.auth ? { auth: args.auth } : {}),
+      // Send ONLY the secret into the container — STRIP the host-only `refreshBack` provenance so org ids
+      // never ride Redis into the sandbox. Instead carry the non-secret `persistAuthRefresh` gate ONLY when
+      // set (omit-when-false, like richStream/steerable) so the in-container engine reads its refreshed
+      // auth.json back solely for org-sourced credentials.
+      ...(args.auth
+        ? {
+            auth: { secret: args.auth.secret },
+            ...(args.auth.refreshBack ? { persistAuthRefresh: true } : {}),
+          }
+        : {}),
       ...(args.model ? { model: args.model } : {}),
       ...(args.richStream ? { richStream: args.richStream } : {}),
       // Steering: tell the entrypoint to run streaming-input mode + subscribe to `turn:{T}:input`/`:abort`.

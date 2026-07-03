@@ -10,10 +10,15 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
+  CLARITY_OVER_COMMENTS_NOTE,
   DEVIATION_NOTE,
+  LSP_NAV_NOTE,
+  LSP_TOOLS_NOTE,
   MONOREPO_VERIFY_HINT,
   REPORT_ONLY_NOTE,
   REVIEW_SCOPE_NOTE,
+  SOLE_AUTHOR_NOTE,
+  VERIFY_CURRENCY,
 } from '../fragments';
 
 @FragmentGroup()
@@ -29,6 +34,14 @@ export class SubagentsGroup {
       'than one at a time. Scale your effort to the breadth the caller asked for — "quick" is a single ' +
       'targeted lookup, "medium" is moderate exploration, "very thorough" sweeps multiple locations and ' +
       'naming conventions. ' +
+      'If answering would require judging whether an external dependency/tool is current, modern, outdated, ' +
+      'or the standard choice, that is NOT answerable from repo contents — either verify it on the web ' +
+      '(you have WebSearch/WebFetch) or flag it as unchecked and say the `docs` subagent should confirm; ' +
+      'never volunteer such a claim from package.json alone. ' +
+      VERIFY_CURRENCY +
+      ' ' +
+      LSP_NAV_NOTE +
+      ' ' +
       REPORT_ONLY_NOTE +
       ' Be concise; the caller wants conclusions, not transcripts.'
     );
@@ -45,6 +58,11 @@ export class SubagentsGroup {
       'imported) so your answer matches the version in use — do NOT answer the question from this repo\'s ' +
       'source. Synthesize a direct answer, quote the exact API/signature/config, and cite the URL (and ' +
       'the version it applies to). Flag where the docs lag the installed version or are ambiguous. ' +
+      'If a Context7 documentation tool is available (resolve-library-id → query-docs), prefer it ' +
+      "for a library's own API/config docs — it returns version-pinned, curated snippets — and fall back " +
+      'to WebSearch/WebFetch for release/currency questions and anything Context7 does not cover. ' +
+      VERIFY_CURRENCY +
+      ' ' +
       REPORT_ONLY_NOTE +
       ' Be concise: the answer plus its sources.'
     );
@@ -60,6 +78,8 @@ export class SubagentsGroup {
       '. Read the neighboring code to ground ' +
       'EVERY finding — do not guess. Report each finding on its own line as `file:line — what is wrong ' +
       'and why it matters`, most severe first; if the change is clean, say so plainly. ' +
+      LSP_NAV_NOTE +
+      ' ' +
       REPORT_ONLY_NOTE
     );
   }
@@ -73,7 +93,9 @@ export class SubagentsGroup {
       '(follow the stack, the data flow, the call sites). Use the web to check library behavior when ' +
       'relevant. Return: the root cause in one or two sentences, the exact `file:line` where the fix ' +
       'belongs, and the smallest change that would fix it (described, not applied). Distinguish what you ' +
-      'PROVED from what you merely suspect. Do NOT run commands or edit files — diagnose and report only.'
+      'PROVED from what you merely suspect. ' +
+      LSP_NAV_NOTE +
+      ' Do NOT run commands or edit files — diagnose and report only.'
     );
   }
 
@@ -103,7 +125,13 @@ export class SubagentsGroup {
       'Stay strictly within the files you were told to touch: if the work genuinely needs a file outside ' +
       'that set, STOP and report it rather than editing it (the orchestrator coordinates who owns what). ' +
       'Always Read a file before you Edit it. ' +
+      LSP_TOOLS_NOTE +
+      ' ' +
       DEVIATION_NOTE +
+      ' ' +
+      SOLE_AUTHOR_NOTE +
+      ' ' +
+      CLARITY_OVER_COMMENTS_NOTE +
       ' When you finish, return a ' +
       'TIGHT summary — the files you changed and the key choices — NOT a transcript or the full diff. Do ' +
       'NOT commit or otherwise change git state; the orchestrator integrates, verifies, and commits.'

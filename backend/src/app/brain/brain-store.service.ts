@@ -393,6 +393,9 @@ export class BrainStoreService {
         .andWhere("card ->> 'type' = 'question_card'")
         .andWhere("card ->> 'answer' IS NULL")
         .andWhere("card ->> 'deliveredAt' IS NULL")
+        // A withdrawn card is terminal — it already decremented the counter, so an answer that races in
+        // after withdrawal must NOT fire (else a double-decrement + a phantom delivery turn).
+        .andWhere("card ->> 'withdrawnAt' IS NULL")
         .setParameter('patch', patch)
         .execute();
       const firstAnswer = (res.affected ?? 0) === 1;
@@ -407,6 +410,65 @@ export class BrainStoreService {
           .execute();
       }
       return { firstAnswer };
+    });
+  }
+
+  /**
+   * The thread's currently-OPEN brain question cards — asked, but not yet answered OR withdrawn — newest
+   * first. Surfaced back into each turn's context ({@link AgentSessionManager.buildOpenQuestionsPrefix}) so a
+   * fresh turn (a new operator message, an event delivery, or a restart-rebuilt session that lost its
+   * in-context memory of what it asked) doesn't re-ask something already awaiting the operator. Excludes
+   * `origin:'build'` cards — those belong to the driver's `request_operator_input`, not the conversational brain.
+   */
+  async openQuestionCards(jobId: string): Promise<WebQuestionCard[]> {
+    const cards = await this.questionCards(jobId);
+    return cards
+      .map((m) => m.card as unknown as WebQuestionCard)
+      .filter((c) => c.answer == null && c.withdrawnAt == null && c.origin !== 'build');
+  }
+
+  /**
+   * Withdraw a still-unanswered question card ATOMICALLY and IDEMPOTENTLY — the mirror of
+   * {@link markQuestionAnswered}: a conditional update that only fires `WHERE the card is still unanswered
+   * AND not already withdrawn`, so it can't race the operator's answer (only one of the two wins). The
+   * winner stamps `withdrawnAt` (+ optional `withdrawnReason`) and decrements `open_question_count`.
+   * Returns `{ withdrawn:true }` for the winner, `{ withdrawn:false }` when the card is missing, already
+   * answered (the operator got there first), or already withdrawn.
+   */
+  async withdrawQuestion(
+    jobId: string,
+    questionId: string,
+    reason?: string,
+  ): Promise<{ withdrawn: boolean }> {
+    return this.dataSource.transaction(async (m) => {
+      const patch = JSON.stringify({
+        withdrawnAt: new Date().toISOString(),
+        ...(reason ? { withdrawnReason: reason } : {}),
+      });
+      const res = await m
+        .createQueryBuilder()
+        .update(MessageEntity)
+        .set({ card: () => 'card || :patch::jsonb' })
+        .where('job_id = :jobId', { jobId })
+        .andWhere('ts = :questionId', { questionId })
+        .andWhere("kind = 'card'")
+        .andWhere("card ->> 'type' = 'question_card'")
+        .andWhere("card ->> 'answer' IS NULL")
+        .andWhere("card ->> 'withdrawnAt' IS NULL")
+        .setParameter('patch', patch)
+        .execute();
+      const withdrawn = (res.affected ?? 0) === 1;
+      if (withdrawn) {
+        await m
+          .createQueryBuilder()
+          .update(JobEntity)
+          .set({
+            open_question_count: () => 'GREATEST(0, open_question_count - 1)',
+          })
+          .where('id = :jobId', { jobId })
+          .execute();
+      }
+      return { withdrawn };
     });
   }
 
@@ -493,6 +555,7 @@ export class BrainStoreService {
          WHERE m.job_id = t.id AND m.kind = 'card'
            AND m.card ->> 'type' = 'question_card'
            AND m.card ->> 'answer' IS NULL
+           AND m.card ->> 'withdrawnAt' IS NULL
        )`,
     );
   }

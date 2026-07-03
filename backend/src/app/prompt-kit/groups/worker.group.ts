@@ -7,9 +7,11 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
+  CLARITY_OVER_COMMENTS_NOTE,
   DELETION_SAFETY_NOTE,
   DEVIATION_NOTE,
   DOCS_BEFORE_GREP,
+  LSP_TOOLS_NOTE,
   MONOREPO_VERIFY_HINT,
   PLAYGROUND_NOTE,
   SPIKE_FIRST_NOTE,
@@ -24,6 +26,16 @@ const ORCHESTRATOR_TASKLIST_NOTE =
   TASK_LIST_NOTE +
   ' Here the list is your visible decomposition of the plan: at kickoff seed it from the steps below, ' +
   'splitting/merging as the real work demands.';
+
+// Orchestrator note — the TYPED TERMINAL ASSERTION (ADR 0004). The driver reads this tool call to decide the
+// thread's outcome; ending the turn without it marks the thread INCOMPLETE and ships nothing.
+const COMPLETE_THREAD_NOTE =
+  ' WHEN YOU ARE DONE, you MUST call the `complete_thread` tool to declare the thread finished — this is the ' +
+  'ONLY way the driver knows you succeeded. Ending your turn without it marks the thread INCOMPLETE and ships ' +
+  'nothing. Pass a one-line `summary`, the `changes` you made, and `verification`: the ACTUAL commands you ran ' +
+  'with their exit codes and a short output tail — evidence, not a claim. Do NOT call `complete_thread` if you ' +
+  'have not genuinely verified the work, or if it is not actually finished. If a decision the plan does not ' +
+  'cover blocks you, call `request_operator_input` (do not just stop).';
 
 // Orchestrator note — the WRITER subagents (`implement`/`implement-deep`) alongside the read-only set.
 const ORCHESTRATOR_SUBAGENTS_NOTE =
@@ -57,6 +69,8 @@ export class WorkerGroup {
       "implemented, VERIFY: discover and run the repository's OWN typecheck/build/test tooling and FIX any " +
       'failures (use `debug`/`test` subagents) — do NOT claim done on a guess. If verification fails and you ' +
       'cannot fix it within scope, say so explicitly. ' +
+      COMPLETE_THREAD_NOTE +
+      ' ' +
       MONOREPO_VERIFY_HINT +
       ' ' +
       DELETION_SAFETY_NOTE +
@@ -73,8 +87,18 @@ export class WorkerGroup {
     return VALIDATE_BY_RUNNING_NOTE;
   }
 
+  @Fragment({ usedBy: [Agent.WORKER], order: 405 })
+  lspTools(): string {
+    return LSP_TOOLS_NOTE;
+  }
+
   @Fragment({ usedBy: [Agent.WORKER], order: 410 })
   spikeFirst(): string {
     return SPIKE_FIRST_NOTE;
+  }
+
+  @Fragment({ usedBy: [Agent.WORKER], order: 415 })
+  clarityOverComments(): string {
+    return CLARITY_OVER_COMMENTS_NOTE;
   }
 }

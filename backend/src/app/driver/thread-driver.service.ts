@@ -5,10 +5,11 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { PlanVisibilityService } from '../decision-gate';
 import { AutoFixStage, reviewAgentsForThread } from '../autofix';
-import type { DecisionRecord, Step, Job, SessionEngine } from '../domain';
+import type { DecisionRecord, Step, Job, SessionEngine, ThreadStatus } from '../domain';
 import {
   EngineAuthError,
   isEngineDetachedError,
+  UNRESUMABLE_SESSION_MARKER,
   type ToolBridgeOptions,
 } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
@@ -25,7 +26,7 @@ import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import type { ActiveTurnEntity } from '../persistence/entities';
+import type { ActiveTurnEntity, ThreadTerminalRecord } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import { Agent, LEDGER_COMMIT_MESSAGE, renderAgentPrompt } from '../prompt-kit';
@@ -59,6 +60,51 @@ import { JobLifecycleService } from './job-lifecycle.service';
  * locked plan does not cover blocks it). Explicit `status`/`step` rows exist ONLY for resumability — the
  * live path is a straight function. Bound as the real `JOB_DISPATCHER` (overriding W3's logging no-op).
  */
+/**
+ * A thread's resolved terminal outcome (ADR 0004). `done` is the only outcome that advances the build to
+ * the next thread + ship; every other outcome HALTS the drive loop (no PR on an unfinished build) and is
+ * surfaced. `incomplete` = the turn ended without asserting completion (no `complete_thread`) — the key fix
+ * for "clean exit misread as done." `blocked` is written by Phase-3 `block_thread`.
+ */
+type ThreadOutcome = 'done' | 'blocked' | 'failed' | 'incomplete';
+
+/** A batch turn's result: the engine report plus the terminal outcome the driver resolved for it. */
+interface BatchResult {
+  outcome: ThreadOutcome;
+  report: string;
+}
+
+/** A thread's result: its outcome plus the handoff note for the next thread (null unless `done`). */
+interface ThreadResult {
+  outcome: ThreadOutcome;
+  handoff: string | null;
+}
+
+/**
+ * Whether a thrown drive-loop error is a TRANSIENT infra blip (sandbox/network/engine hiccup) that a bounded
+ * silent retry should paper over — NOT a real failure to surface to the operator (ADR 0004, failure #1: a
+ * plain retry fixed the last two "errors"). A build FAILURE never throws here — the orchestrator reports it
+ * via its `terminal_record`/report — so a raw exception at the driver level is almost always infra. The few
+ * exceptions that are genuinely terminal (auth → paused; detached → boot re-attach; unresumable session; a
+ * runaway PHASE_TIMEOUT that must not re-run for another full timeout) are excluded so drive() handles them.
+ */
+function isTransientDriveError(err: unknown): boolean {
+  if (err instanceof EngineAuthError) return false; // → paused
+  if (isEngineDetachedError(err)) return false; // → leave running for boot re-attach
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  if (msg.includes(UNRESUMABLE_SESSION_MARKER.toLowerCase())) return false; // session gone — retry futile
+  if (msg.includes('phase_timeout_ms')) return false; // a runaway turn stays terminal (ADR 0001 §52)
+  // A SMALL allowlist of known infra shapes (sandbox/container/network/redis/stream blips). Deliberately
+  // conservative: an UNRECOGNISED error is NOT retried (it may be a real bug), so we never mask a genuine
+  // failure as transient — we only paper over the connection/sandbox hiccups that produced the phantom
+  // "errors" a plain retry cleared (ADR 0004, failure #1).
+  return TRANSIENT_ERROR_RE.test(msg);
+}
+
+/** Infra-blip signatures a bounded silent retry papers over (see {@link isTransientDriveError}). */
+const TRANSIENT_ERROR_RE =
+  /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable/;
+
 /** The narrow brain surface the driver needs at ship — resolved lazily to avoid the module cycle. */
 interface LedgerPromoter {
   promoteDurableDecisionsAtShip(
@@ -133,6 +179,14 @@ export class ThreadDriver implements JobDispatcher {
     const raw = Number(this.env.get('PHASE_TIMEOUT_MS'));
     if (Number.isFinite(raw) && raw > 0) return raw;
     return 60 * 60_000;
+  }
+
+  /** Base backoff between transient-error drive retries (ADR 0004). Grows linearly per attempt. Default 2s;
+   *  the tests set it near-zero. */
+  private get transientRetryMs(): number {
+    const raw = Number(this.env.get('DRIVER_TRANSIENT_RETRY_MS'));
+    if (Number.isFinite(raw) && raw >= 0) return raw;
+    return 2_000;
   }
 
   /**
@@ -240,8 +294,17 @@ export class ThreadDriver implements JobDispatcher {
     }
     this.active.add(jobId);
     try {
-      await this.runJob(jobId);
+      await this.runJobWithTransientRetry(jobId);
     } catch (err) {
+      if (isEngineDetachedError(err)) {
+        // The host lost its tail to a still-running turn (see EngineDetachedError) — the engine is alive and
+        // writing its durable streams. Leave the job `running` so the next boot re-attaches; never `failed`,
+        // and never re-drive here (that would re-kick a live engine's session).
+        this.logger.warn(
+          `job=${jobId} left running — engine detached (lost tail); boot will re-attach`,
+        );
+        return;
+      }
       if (this.election.isDraining()) {
         // PROCESS SHUTDOWN, not a failure: the drain cut off the in-flight turn's host-side await (the
         // container keeps running, reparented to init). Leave the job `running` so boot-resume re-drives
@@ -273,6 +336,38 @@ export class ThreadDriver implements JobDispatcher {
       }
     } finally {
       this.active.delete(jobId);
+    }
+  }
+
+  /**
+   * Run the job, silently retrying a bounded number of times on TRANSIENT infra errors (ADR 0004, failure
+   * #1). `runJob` is resumable — a re-entry fast-forwards completed threads/batches and resumes the
+   * interrupted turn — so a retry is safe. Non-transient errors and an exhausted budget propagate to
+   * `drive()`'s classification (paused / detached / failed). Skipped entirely while draining (a shutdown is
+   * not a retryable error — drive() leaves the job running for boot-resume).
+   */
+  private async runJobWithTransientRetry(jobId: string): Promise<void> {
+    const maxRetries = 2;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.runJob(jobId);
+        return;
+      } catch (err) {
+        if (
+          this.election.isDraining() ||
+          attempt >= maxRetries ||
+          !isTransientDriveError(err)
+        ) {
+          throw err;
+        }
+        const backoffMs = this.transientRetryMs * (attempt + 1);
+        this.logger.warn(
+          `job=${jobId} transient drive error (attempt ${attempt + 1}/${maxRetries}) — retrying in ${backoffMs}ms: ${
+            err instanceof Error ? err.message : err
+          }`,
+        );
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
     }
   }
 
@@ -378,7 +473,7 @@ export class ThreadDriver implements JobDispatcher {
         handoff = thread.handoffOut ?? handoff;
         continue;
       }
-      handoff = await this.runThread(
+      const res = await this.runThread(
         job,
         record,
         route,
@@ -387,9 +482,66 @@ export class ThreadDriver implements JobDispatcher {
         thread,
         handoff,
       );
+      if (res.outcome !== 'done') {
+        // HALT the build (ADR 0004): an unfinished thread must not ship. Relay a durable card, flip the job
+        // to a needs-you state, and SKIP finalizeBuild — no PR on an unfinished build.
+        await this.haltJob(job, route, thread, res.outcome);
+        return;
+      }
+      handoff = res.handoff;
     }
 
     await this.finalizeBuild(job, record, route, repo, sandbox);
+  }
+
+  /**
+   * HALT the build on a non-`done` thread outcome (ADR 0004): flip the job to a needs-you state and relay a
+   * DURABLE card so the halt never dead-ends silently (durable-first via the block sink — see
+   * {@link relayFailure} for why a bare `post()` is invisible to reconnecting clients). `incomplete` →
+   * `paused` (recoverable via a ping/re-drive; Phase 3 will auto-wake Atlas instead); `failed` → `failed`;
+   * `blocked` (Phase 3) leaves the job `running` with the thread `awaiting_input`.
+   */
+  private async haltJob(
+    job: Job,
+    route: JobRoute,
+    thread: DriverThread,
+    outcome: ThreadOutcome,
+  ): Promise<void> {
+    const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
+    let text: string;
+    let severity: 'warning' | 'error' = 'warning';
+    if (outcome === 'failed') {
+      await this.store.setJobStatus(job.id, 'failed').catch(() => undefined);
+      const why = term?.failure
+        ? `${term.failure.kind} failed${term.failure.command ? ` (\`${term.failure.command}\`)` : ''}${
+            term.failure.stderrTail ? `:\n${term.failure.stderrTail.slice(0, 500)}` : ''
+          }`
+        : (term?.summary ?? 'the thread reported a failure');
+      text = `:x: Build failed in *${thread.brief}* — ${why}\n_The job is marked failed; reply in this thread to retry or adjust._`;
+      severity = 'error';
+    } else if (outcome === 'blocked') {
+      // Job stays `running`; the thread is `awaiting_input` (Phase 3 routes the block to the brain).
+      text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
+    } else {
+      // incomplete
+      await this.store.setJobStatus(job.id, 'paused').catch(() => undefined);
+      text = `:warning: Build halted — *${thread.brief}* ended without asserting completion (no \`complete_thread\`), so nothing shipped. Ping to retry, or open the thread to see what it did.`;
+    }
+    await this.blockSink
+      .appendBlock(job.id, {
+        kind: 'chat',
+        text,
+        meta: { source: 'system_operator', severity },
+      })
+      .catch((e) =>
+        this.logger.error(`could not durably record halt for job=${job.id}: ${e}`),
+      );
+    await this.post(route, text).catch(() => undefined);
+    await this.recordMilestone(
+      job.id,
+      `thread:${thread.id}:${outcome}`,
+      text,
+    ).catch(() => undefined);
   }
 
   /**
@@ -408,7 +560,7 @@ export class ThreadDriver implements JobDispatcher {
     sandbox: FeatureSandbox,
     thread: DriverThread,
     handoffIn: string | null,
-  ): Promise<string | null> {
+  ): Promise<ThreadResult> {
     this.logger.log(`thread ${thread.ordinal} "${thread.brief}" — planning`);
     await this.post(
       route,
@@ -440,7 +592,18 @@ export class ThreadDriver implements JobDispatcher {
       .headSha(sandbox.worktreePath)
       .catch(() => undefined);
     await this.store.setThreadStatus(thread.id, 'executing');
-    const reports = await this.executeSteps(job, route, sandbox, thread, record, repo);
+    const { outcome, reports } = await this.executeSteps(job, route, sandbox, thread, record, repo);
+
+    // The thread did NOT assert `done` (no `complete_thread`, an explicit block, or a failure) — HALT here:
+    // skip auto-fix + handoff, set the thread status, and let runJob relay + skip finalize. NEVER fall through
+    // to the done path (ADR 0004: a clean turn is not evidence of completion).
+    if (outcome !== 'done') {
+      const status: ThreadStatus =
+        outcome === 'blocked' ? 'awaiting_input' : outcome; // 'incomplete' | 'failed'
+      await this.store.setThreadStatus(thread.id, status).catch(() => undefined);
+      this.logger.warn(`thread ${thread.ordinal} "${thread.brief}" halted — ${outcome}`);
+      return { outcome, handoff: null };
+    }
 
     // f. AUTO-FIX — fan-out review → fix over this thread's diff. SKIPPED for the master-review thread: it
     // IS the review (a whole-diff Codex review-and-fix), so a per-thread auto-fix pass over it is redundant.
@@ -530,7 +693,7 @@ export class ThreadDriver implements JobDispatcher {
       `Thread "${thread.brief}" finished building.`,
     );
     await this.post(route, `:white_check_mark: Thread done — *${thread.brief}*`);
-    return handoffOut;
+    return { outcome: 'done', handoff: handoffOut };
   }
 
   /**
@@ -583,15 +746,15 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * Build the host tool bridge for the orchestrate build turn — one tool, `request_operator_input`, the
-   * build's mid-turn "pause and ask the operator" escape hatch (decisions are otherwise locked +
-   * operator-approved UPSTREAM). It opens a DURABLE question card (rides the same `open_question_count`
-   * needs-you spine as the brain, tagged `origin:'build'` so the answer resolves back HERE, not to the
-   * brain), PAUSES the turn's wall-clock deadline, polls the card for the operator's answer, then returns
-   * it as the tool result so the orchestrator resumes in the same turn. `job.status` stays `running`
-   * throughout, so a restart re-drives/reattaches the turn and the still-open card is re-polled.
+   * Build the host tool bridge for the orchestrate build turn. Two tools:
+   *  - `request_operator_input` — the mid-build "pause and ask" escape hatch (open a durable card → poll →
+   *    pause the deadline across the human wait → return the answer so the SAME turn resumes).
+   *  - `complete_thread` — the TYPED TERMINAL ASSERTION (ADR 0004): the orchestrator MUST call this to
+   *    declare the thread finished, passing what it did + the verification it actually ran. The driver reads
+   *    the persisted record after the turn instead of inferring done-ness from "the turn didn't throw." A
+   *    turn that ends without it is `incomplete`, never `done`. (Phase 3 adds `block_thread`.)
    */
-  private operatorInputBridge(
+  private buildTurnBridge(
     job: Job,
     thread: DriverThread,
     route: JobRoute,
@@ -600,6 +763,39 @@ export class ThreadDriver implements JobDispatcher {
     return {
       jobId: job.id,
       tools: {
+        complete_thread: async (args) => {
+          const summary = String(args['summary'] ?? '').trim();
+          if (!summary) {
+            return { ok: false, error: 'summary is required (one line: what this thread built)' };
+          }
+          const asStrings = (v: unknown): string[] | undefined =>
+            Array.isArray(v) && v.length
+              ? v.map((x) => String(x).trim()).filter(Boolean)
+              : undefined;
+          const verification = Array.isArray(args['verification'])
+            ? (args['verification'] as unknown[])
+                .map((e) => {
+                  const o = (e ?? {}) as Record<string, unknown>;
+                  return {
+                    kind: String(o['kind'] ?? '').trim(),
+                    command: String(o['command'] ?? '').trim(),
+                    exitCode: Number.isFinite(Number(o['exitCode'])) ? Number(o['exitCode']) : -1,
+                    outputTail: String(o['outputTail'] ?? '').slice(0, 2000),
+                  };
+                })
+                .filter((v) => v.command)
+            : undefined;
+          const record: ThreadTerminalRecord = {
+            status: 'done',
+            summary,
+            ...(asStrings(args['changes']) ? { changes: asStrings(args['changes']) } : {}),
+            ...(verification && verification.length ? { verification } : {}),
+            ...(asStrings(args['deviations']) ? { deviations: asStrings(args['deviations']) } : {}),
+            ...(asStrings(args['gaps']) ? { gaps: asStrings(args['gaps']) } : {}),
+          };
+          await this.store.recordThreadTermination(thread.id, record);
+          return { ok: true };
+        },
         request_operator_input: async (args) => {
           const question = String(args['question'] ?? '').trim();
           if (!question) {
@@ -675,7 +871,7 @@ export class ThreadDriver implements JobDispatcher {
     thread: DriverThread,
     record: DecisionRecord | null,
     repo: ResolvedRepo,
-  ): Promise<string[]> {
+  ): Promise<{ outcome: ThreadOutcome; reports: string[] }> {
     let steps = await this.store.stepsForThread(thread.id);
 
     // First execute of this thread (steps not yet batched): the WHOLE thread is ONE batch. Persist a
@@ -704,11 +900,15 @@ export class ThreadDriver implements JobDispatcher {
     }
 
     const reports: string[] = [];
-    for (const key of [...byBatch.keys()].sort((a, b) => a - b)) {
+    let outcome: ThreadOutcome = 'done';
+    const keys = [...byBatch.keys()].sort((a, b) => a - b);
+    const lastKey = keys[keys.length - 1];
+    for (const key of keys) {
       const batch = byBatch.get(key)!;
       // Atomic-resume fast-forward (#6): if the batch's anchor already carries a commit_sha, the batch
       // committed before a crash interrupted the done-status writes — re-running would redo work against
-      // an already-committed tree. Mark the steps done and skip the session instead.
+      // an already-committed tree. Mark the steps done and skip the session instead. (Only a `done` batch
+      // commits, so a committed terminal batch implies the thread asserted done — outcome stays `done`.)
       if (batch[0].commitSha) {
         this.logger.log(
           `batch [${batch.map((p) => p.ordinal).join(',')}] already committed — fast-forward`,
@@ -717,11 +917,17 @@ export class ThreadDriver implements JobDispatcher {
           await this.store.setStepState(p.id, 'done', 'done');
         continue;
       }
-      reports.push(
-        await this.runBatch(job, route, sandbox, thread, record, batch, repo),
+      const res = await this.runBatch(
+        job, route, sandbox, thread, record, batch, repo, key === lastKey,
       );
+      reports.push(res.report);
+      if (res.outcome !== 'done') {
+        // Non-done terminal outcome — halt the thread; don't run later batches on an unfinished thread.
+        outcome = res.outcome;
+        break;
+      }
     }
-    return reports;
+    return { outcome, reports };
   }
 
   /**
@@ -738,7 +944,8 @@ export class ThreadDriver implements JobDispatcher {
     record: DecisionRecord | null,
     steps: Step[],
     repo: ResolvedRepo,
-  ): Promise<string> {
+    isLastBatch: boolean,
+  ): Promise<BatchResult> {
     const anchor = steps[0];
     const label =
       steps.length === 1
@@ -775,7 +982,7 @@ export class ThreadDriver implements JobDispatcher {
     // human wait). One deadline shared by the bounded kick AND the tool so a pause suspends the clock; the
     // same bridge is re-supplied on re-attach (the host tool closure is in-memory, lost on restart).
     const deadline = new PausableDeadline(this.phaseTimeoutMs, `batch "${label}"`);
-    const toolBridge = this.operatorInputBridge(job, thread, route, deadline);
+    const toolBridge = this.buildTurnBridge(job, thread, route, deadline);
 
     // RE-ATTACH or KICK. After a backend restart the engine kept running detached (Redis transport) and is
     // still writing to its streams — re-tail its live stream instead of re-running the batch, exactly like
@@ -790,6 +997,12 @@ export class ThreadDriver implements JobDispatcher {
     // markers (the :gear: milestone + the synthetic build_anchor the in-conversation BuildStepCard latches
     // onto) exactly ONCE. On a resume/reattach they already exist (durable), so re-emitting would duplicate.
     if (!reattachRow && !anchor.sessionId) {
+      // Fresh start of the TERMINAL batch: clear any stale terminal record from a prior failed attempt so
+      // the assertion we read after this turn can only be THIS turn's (staleness guard — ADR 0004). A
+      // resume/reattach deliberately does NOT clear, preserving a pre-crash assertion.
+      if (isLastBatch && !thread.isMasterReview) {
+        await this.store.clearTerminalRecord(thread.id).catch(() => undefined);
+      }
       await this.post(route, `:gear: ${thread.brief} — building: ${label}`);
       await this.blockSink
         .appendBlock(job.id, {
@@ -833,6 +1046,28 @@ export class ThreadDriver implements JobDispatcher {
     // run the repo's OWN typecheck/build/test (and fix failures) before finishing, and report rather than
     // claim success on a guess. The host does NOT reach into the sandbox to run commands.
 
+    // Resolve the TERMINAL OUTCOME (ADR 0004). A non-terminal batch, or the master-review thread (Codex —
+    // no host tool bridge, so it can't call `complete_thread`), keeps exception-shape semantics: the turn
+    // returned → done. The terminal Claude batch READS the assertion the orchestrator wrote instead of
+    // inferring done-ness. No assertion after a clean turn ⇒ `incomplete` (NEVER silently done).
+    let outcome: ThreadOutcome = 'done';
+    if (isLastBatch && !thread.isMasterReview) {
+      const term = await this.store.getTerminalRecord(thread.id);
+      outcome = term?.status ?? 'incomplete';
+      if (outcome === 'incomplete') {
+        this.logger.warn(
+          `thread ${thread.ordinal} batch [${steps.map((p) => p.ordinal).join(',')}] ended WITHOUT complete_thread — marking incomplete`,
+        );
+      }
+    }
+
+    if (outcome !== 'done') {
+      // Do NOT commit-as-done or mark steps done — leave the batch resumable (the atomic-resume fast-forward
+      // keys on commit_sha + step `done`, so an un-finalized batch correctly re-runs) and let runThread/runJob
+      // set the thread status + halt. The working tree is left intact for diagnosis.
+      return { outcome, report: result.report };
+    }
+
     // ONE commit for the whole batch onto the shared feature branch.
     const sha = await this.git.commitAll(
       sandbox.worktreePath,
@@ -846,7 +1081,7 @@ export class ThreadDriver implements JobDispatcher {
     // marks complete so the batch never re-runs. `NOTHING` is the sentinel for an empty commit.
     await this.store.setStepCommit(anchor.id, sha || NOTHING_COMMITTED);
     for (const p of steps) await this.store.setStepState(p.id, 'done', 'done');
-    return result.report;
+    return { outcome: 'done', report: result.report };
   }
 
   /**
@@ -1388,9 +1623,18 @@ function extractDeviations(report: string): string[] {
     .filter(Boolean);
 }
 
-/** A concise human root-cause for a failure relay — the error's first line, never a stack trace. */
-function shortReason(err: unknown): string {
+/** A concise human root-cause for a failure relay — never a stack trace, but never JUST the first line
+ *  either: a `child_process.exec`/`execFile` rejection's `.message` is "Command failed: <cmd>\n<stderr>" —
+ *  the ACTUAL reason (git's fatal:, a permission error, etc.) is that appended stderr. Keeping only the
+ *  first line left every git/shell failure relay saying just "Command failed: git ... add -A" with no way
+ *  to tell why (confirmed: Node's execFile error already embeds stderr in `.message`, so there is nothing
+ *  further to pull from `.stderr` separately — the bug was purely the truncation below). */
+export function shortReason(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
-  const firstLine = msg.split('\n')[0]?.trim() || 'unknown error';
-  return firstLine.length > 300 ? `${firstLine.slice(0, 297)}...` : firstLine;
+  const detail = msg
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join(' | ');
+  return detail.length > 500 ? `${detail.slice(0, 497)}...` : detail || 'unknown error';
 }

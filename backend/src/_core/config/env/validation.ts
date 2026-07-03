@@ -262,6 +262,9 @@ export interface IEnvConfig {
   // before the orchestrator proceeds on its best judgment. The turn's wall-clock budget is SUSPENDED
   // while waiting, so this can be long. Default 21600000 (6h).
   OPERATOR_INPUT_TIMEOUT_MS?: number;
+  // DRIVER_TRANSIENT_RETRY_MS: base backoff between silent retries of a TRANSIENT drive error (sandbox/
+  // network/engine blip — ADR 0004). Grows linearly per attempt (×1, ×2). Default 2000. Tests set it ~0.
+  DRIVER_TRANSIENT_RETRY_MS?: number;
   // ── Atlas v2 scoping / grill (W3 — issue #1 tuning) ──────────────────────────────────────────
   // SCOPING_MODE: how the brain investigates the repo to GROUND the grill. 'read_only_tools'
   // (default) runs a strict read-only engine pass (Read/Glob/Grep, no Bash) over the clone; 'native_plan'
@@ -459,6 +462,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   MAX_SECTIONS: Joi.number().integer().min(1).optional(),
   PHASE_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   OPERATOR_INPUT_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
+  DRIVER_TRANSIENT_RETRY_MS: Joi.number().integer().min(0).optional(),
   // Atlas v2 scoping / grill (W3 — issue #1)
   SCOPING_MODE: Joi.string().valid('read_only_tools', 'native_plan').optional(),
   SCOPING_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),

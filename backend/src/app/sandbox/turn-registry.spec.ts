@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Repository } from 'typeorm';
-import { TurnRegistry } from './turn-registry.service';
+import { QueryFailedError, type Repository } from 'typeorm';
+import {
+  BrainTurnAlreadyRunningError,
+  TurnRegistry,
+} from './turn-registry.service';
 import type { ActiveTurnEntity } from '../persistence/entities';
+
+/** A Postgres unique-violation error as TypeORM surfaces it (SQLSTATE 23505 on `.code`). */
+function uniqueViolation(): QueryFailedError {
+  const err = new QueryFailedError('insert', [], new Error('duplicate key'));
+  (err as QueryFailedError & { code?: string }).code = '23505';
+  return err;
+}
 
 /** A vi-mock repo capturing the calls TurnRegistry makes (no real Postgres). */
 function makeRepo(rows: Partial<ActiveTurnEntity>[] = []) {
@@ -43,6 +53,34 @@ describe('TurnRegistry', () => {
       kind: 'brain',
       ctx: REGISTER.ctx,
     });
+  });
+
+  it('register maps a unique-violation on a BRAIN turn to BrainTurnAlreadyRunningError (the single-turn guard)', async () => {
+    const repo = makeRepo();
+    repo.save.mockRejectedValueOnce(uniqueViolation());
+    await expect(
+      new TurnRegistry(repo, makeRepo() as never).register(REGISTER),
+    ).rejects.toBeInstanceOf(BrainTurnAlreadyRunningError);
+  });
+
+  it('register rethrows a unique-violation for a NON-brain turn (only brain turns are guarded)', async () => {
+    const repo = makeRepo();
+    repo.save.mockRejectedValueOnce(uniqueViolation());
+    await expect(
+      new TurnRegistry(repo, makeRepo() as never).register({
+        ...REGISTER,
+        kind: 'step',
+      }),
+    ).rejects.not.toBeInstanceOf(BrainTurnAlreadyRunningError);
+  });
+
+  it('register rethrows a non-unique DB error unchanged', async () => {
+    const repo = makeRepo();
+    const boom = new Error('connection reset');
+    repo.save.mockRejectedValueOnce(boom);
+    await expect(
+      new TurnRegistry(repo, makeRepo() as never).register(REGISTER),
+    ).rejects.toBe(boom);
   });
 
   it('heartbeat stamps last_heartbeat_at and advances the cursor when an id is given', async () => {

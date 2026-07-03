@@ -17,6 +17,8 @@ import { randomUUID } from 'node:crypto';
 import { EngineCore } from '../../engine/engine-core';
 import type { EngineEvent, RunEngineArgs } from '../../engine/engine.types';
 import { BRIDGE_SERVER_NAME, buildBridgeClaudeOptions, type BridgeClaudeOptions } from './bridge-options';
+import { buildLspBridgeOptions } from './lsp-bridge-options';
+import { buildContext7BridgeOptions } from './context7-bridge-options';
 
 /** The serialized turn — everything `RunEngineArgs` carries except host-only, non-serializable bits. */
 type TurnSpec = Omit<RunEngineArgs, 'onEvent' | 'signal' | 'target' | 'toolBridge' | 'steerInput'> & {
@@ -148,6 +150,16 @@ async function runOverRedis(turnId: string): Promise<void> {
       bridge = buildBridgeClaudeOptions(server, spec.toolBridgeTools);
     }
 
+    // ── LSP bridge (atlas-lsp-ts, external stdio MCP server) ────────────────────────────────────
+    // Unlike the host bridge above, the SDK spawns this process itself — no Redis round-trip. See
+    // lsp-bridge-options.ts for why it's gated to execute-mode turns and confined to `spec.cwd`.
+    const lsp = buildLspBridgeOptions(spec.mode, spec.cwd);
+
+    // ── Context7 docs bridge (remote HTTP MCP server) ───────────────────────────────────────────
+    // Version-pinned library docs for the `docs` subagent. OFF unless CONTEXT7_API_KEY is in the
+    // container env; execute-mode only (same gate as the LSP bridge). See context7-bridge-options.ts.
+    const context7 = buildContext7BridgeOptions(spec.mode);
+
     // ── Mid-turn steering + cooperative stop (the operator-facing brain turn) ───────────────────
     // Only wired when the host marked the turn `steerable`. The abort channel (pub/sub) cancels the SDK
     // query; the input channel (a durable stream) feeds operator steers into the live turn.
@@ -195,10 +207,23 @@ async function runOverRedis(turnId: string): Promise<void> {
       onEvent: (e: EngineEvent) => void xadd(eventsKey, { t: 'event', e }).catch(() => undefined),
       ...(spec.steerable ? { signal: abortController.signal, steerInput } : {}),
     };
+    // `extraClaudeOptions`/bridge tool names are each a SINGLE object/array spread verbatim into the SDK
+    // Options (see bridge-options.ts) — so the host bridge's and the LSP bridge's `mcpServers` must be
+    // merged into ONE object here, not passed as two separate `extraClaudeOptions`.
+    const mergedMcpServers = {
+      ...(bridge?.extraClaudeOptions.mcpServers ?? {}),
+      ...(lsp?.extraClaudeOptions.mcpServers ?? {}),
+      ...(context7?.extraClaudeOptions.mcpServers ?? {}),
+    };
+    const mergedToolNames = [
+      ...(bridge?.bridgeToolNames ?? []),
+      ...(lsp?.lspToolNames ?? []),
+      ...(context7?.context7ToolNames ?? []),
+    ];
     const result = await core.runWithExtras(
       runArgs,
-      bridge?.extraClaudeOptions,
-      bridge?.bridgeToolNames,
+      Object.keys(mergedMcpServers).length > 0 ? { mcpServers: mergedMcpServers } : undefined,
+      mergedToolNames.length > 0 ? mergedToolNames : undefined,
     );
     await xadd(eventsKey, { t: 'final', r: result });
   } catch (err) {

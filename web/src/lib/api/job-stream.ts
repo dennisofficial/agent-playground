@@ -149,6 +149,20 @@ class ThreadStreamStore {
     // subagent's forwarded text never appends onto the brain's open text block (or another subagent's).
     const pid = ev.parentToolUseId;
     const sameAuthor = (b: LiveBlock | undefined): boolean => !!b && b.parentToolUseId === pid;
+    // Finalize the most-recent still-open block of this kind+author. Interleaved thinking (auto-enabled by
+    // adaptive thinking) means a turn can have TWO open delta blocks at once — an open `thinking` and an open
+    // `text` — so the authoritative block we're closing is NOT necessarily `last`. Checking only `last` here
+    // pushed a duplicate instead of merging (the "double stream" bug). Scan back for the matching open block.
+    const finalizeOpen = (kind: 'text' | 'thinking'): boolean => {
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        const b = blocks[i];
+        if (b.kind === kind && !b.done && b.parentToolUseId === pid) {
+          blocks[i] = { ...b, text, done: true };
+          return true;
+        }
+      }
+      return false;
+    };
 
     switch (ev.kind) {
       case 'text_delta':
@@ -157,9 +171,8 @@ class ThreadStreamStore {
         else blocks.push({ kind: 'text', key: `c${blockSeq++}`, text, done: false, parentToolUseId: pid });
         break;
       case 'text':
-        if (last && last.kind === 'text' && !last.done && sameAuthor(last))
-          blocks[blocks.length - 1] = { ...last, text, done: true };
-        else blocks.push({ kind: 'text', key: `c${blockSeq++}`, text, done: true, parentToolUseId: pid });
+        if (!finalizeOpen('text'))
+          blocks.push({ kind: 'text', key: `c${blockSeq++}`, text, done: true, parentToolUseId: pid });
         break;
       case 'thinking_delta':
         if (last && last.kind === 'thinking' && !last.done && sameAuthor(last))
@@ -167,9 +180,8 @@ class ThreadStreamStore {
         else blocks.push({ kind: 'thinking', key: `c${blockSeq++}`, text, done: false, parentToolUseId: pid });
         break;
       case 'thinking':
-        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last))
-          blocks[blocks.length - 1] = { ...last, text, done: true };
-        else blocks.push({ kind: 'thinking', key: `c${blockSeq++}`, text, done: true, parentToolUseId: pid });
+        if (!finalizeOpen('thinking'))
+          blocks.push({ kind: 'thinking', key: `c${blockSeq++}`, text, done: true, parentToolUseId: pid });
         break;
       case 'tool_use':
         blocks.push({

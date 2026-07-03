@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
-import type { Repository } from 'typeorm';
+import type { DataSource, Repository } from 'typeorm';
 import type { OrgCredentialsEntity } from '../persistence/entities';
 import { TenantCredentialStore } from './tenant-credential.store';
 
@@ -10,26 +10,56 @@ function fakeEnv(map: Record<string, string | undefined>): EnvService {
   return { get: (k: string) => map[k] } as unknown as EnvService;
 }
 
-/** A minimal in-memory Repository<OrgCredentialsEntity> keyed by (org_id, scope). */
-function fakeRepo(): Repository<OrgCredentialsEntity> {
+/**
+ * One in-memory `rows` store shared by BOTH a fake Repository (used by `read`/`write`/`presence`) and a
+ * fake DataSource whose `transaction` runs the callback with a fake EntityManager (used by
+ * `advanceCodexAuthSecret`). The pessimistic lock is a no-op here — this covers the guard LOGIC; true
+ * lock atomicity is a Postgres guarantee exercised in real runs.
+ */
+function fakeDb(): { repo: Repository<OrgCredentialsEntity>; dataSource: DataSource } {
   const rows = new Map<string, OrgCredentialsEntity>();
   const k = (t: string, s: string): string => `${t} ${s}`;
-  return {
-    async findOne({ where }: { where: { org_id: string; scope: string } }) {
-      return rows.get(k(where.org_id, where.scope)) ?? null;
+  const findOne = ({ where }: { where: { org_id: string; scope: string } }) =>
+    rows.get(k(where.org_id, where.scope)) ?? null;
+  const save = (row: OrgCredentialsEntity) => {
+    rows.set(k(row.org_id, row.scope ?? '*'), row);
+    return row;
+  };
+  const repo = {
+    async findOne(opts: { where: { org_id: string; scope: string } }) {
+      return findOne(opts);
     },
     create(partial: Partial<OrgCredentialsEntity>) {
       return { ...partial } as OrgCredentialsEntity;
     },
     async save(row: OrgCredentialsEntity) {
-      rows.set(k(row.org_id, row.scope ?? '*'), row);
-      return row;
+      return save(row);
     },
   } as unknown as Repository<OrgCredentialsEntity>;
+  const manager = {
+    async findOne(_entity: unknown, opts: { where: { org_id: string; scope: string } }) {
+      return findOne(opts);
+    },
+    async save(row: OrgCredentialsEntity) {
+      return save(row);
+    },
+  };
+  const dataSource = {
+    async transaction(fn: (m: typeof manager) => Promise<unknown>) {
+      return fn(manager);
+    },
+  } as unknown as DataSource;
+  return { repo, dataSource };
 }
 
 function makeStore(env: Record<string, string | undefined> = { SECRETS_ENCRYPTION_KEY: KEY }) {
-  return new TenantCredentialStore(fakeRepo(), fakeEnv(env));
+  const { repo, dataSource } = fakeDb();
+  return new TenantCredentialStore(repo, dataSource, fakeEnv(env));
+}
+
+/** A minimal Codex `auth.json` carrying a top-level `last_refresh` (what the monotonic guard reads). */
+function codexBlob(lastRefresh: string, tag = 'x'): string {
+  return JSON.stringify({ last_refresh: lastRefresh, tokens: { id_token: 'i', access_token: tag } });
 }
 
 describe('TenantCredentialStore', () => {
@@ -96,5 +126,60 @@ describe('TenantCredentialStore', () => {
     await expect(store.write('T1', { anthropicApiKey: 'x' })).rejects.toThrow(
       /SECRETS_ENCRYPTION_KEY is not set/,
     );
+  });
+
+  describe('advanceCodexAuthSecret (atomic monotonic write-back)', () => {
+    it('advances to a blob with a NEWER last_refresh', async () => {
+      const store = makeStore();
+      await store.write('T1', { codexAuthSecret: codexBlob('2026-07-01T00:00:00.000Z') });
+      const next = codexBlob('2026-07-02T00:00:00.000Z', 'newer');
+      await store.advanceCodexAuthSecret('T1', next);
+      expect((await store.read('T1'))?.codexAuthSecret).toBe(next);
+    });
+
+    it('SKIPS a blob with an OLDER last_refresh (never clobbers a newer credential)', async () => {
+      const store = makeStore();
+      const current = codexBlob('2026-07-02T00:00:00.000Z', 'current');
+      await store.write('T1', { codexAuthSecret: current });
+      await store.advanceCodexAuthSecret('T1', codexBlob('2026-07-01T00:00:00.000Z', 'stale'));
+      expect((await store.read('T1'))?.codexAuthSecret).toBe(current);
+    });
+
+    it('SKIPS an equal last_refresh', async () => {
+      const store = makeStore();
+      const current = codexBlob('2026-07-02T00:00:00.000Z', 'current');
+      await store.write('T1', { codexAuthSecret: current });
+      await store.advanceCodexAuthSecret('T1', codexBlob('2026-07-02T00:00:00.000Z', 'sametime-different'));
+      expect((await store.read('T1'))?.codexAuthSecret).toBe(current);
+    });
+
+    it('when timestamps are absent, writes only on a real change', async () => {
+      const store = makeStore();
+      const current = JSON.stringify({ tokens: { access_token: 'a' } }); // no last_refresh
+      await store.write('T1', { codexAuthSecret: current });
+      // identical → no-op
+      await store.advanceCodexAuthSecret('T1', current);
+      expect((await store.read('T1'))?.codexAuthSecret).toBe(current);
+      // changed → written
+      const changed = JSON.stringify({ tokens: { access_token: 'b' } });
+      await store.advanceCodexAuthSecret('T1', changed);
+      expect((await store.read('T1'))?.codexAuthSecret).toBe(changed);
+    });
+
+    it('no-ops when the org has no credentials row', async () => {
+      const store = makeStore();
+      await store.advanceCodexAuthSecret('ghost', codexBlob('2026-07-02T00:00:00.000Z'));
+      expect(await store.read('ghost')).toBeNull();
+    });
+
+    it('invalidates the read cache after an advance', async () => {
+      const store = makeStore();
+      const v1 = codexBlob('2026-07-01T00:00:00.000Z', 'v1');
+      await store.write('T1', { codexAuthSecret: v1 });
+      expect((await store.read('T1'))?.codexAuthSecret).toBe(v1); // populate cache
+      const v2 = codexBlob('2026-07-02T00:00:00.000Z', 'v2');
+      await store.advanceCodexAuthSecret('T1', v2);
+      expect((await store.read('T1'))?.codexAuthSecret).toBe(v2); // cache busted → sees v2
+    });
   });
 });

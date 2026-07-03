@@ -21,7 +21,7 @@ import {
   ThreadEntity,
   JobEntity,
 } from '../persistence/entities';
-import type { ReviewAgentState } from '../persistence/entities';
+import type { ReviewAgentState, ThreadTerminalRecord } from '../persistence/entities';
 import { reviewAgentsForThread } from '../autofix/autofix-lenses';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import type { PlannedStep } from './render-plan';
@@ -309,6 +309,32 @@ export class DriverStoreService {
   /** Record the thread's handoff note for the next thread (set when the thread is done). */
   async setThreadHandoffOut(threadId: string, handoffOut: string): Promise<void> {
     await this.threads.update({ id: threadId }, { handoff_out: handoffOut });
+  }
+
+  // ── typed terminal record (ADR 0004: the thread ASSERTS its outcome; the driver reads it) ──────────
+
+  /** Persist the orchestrator's typed terminal assertion (from `complete_thread`/`block_thread`). */
+  async recordThreadTermination(
+    threadId: string,
+    record: ThreadTerminalRecord,
+  ): Promise<void> {
+    await this.threads.update({ id: threadId }, { terminal_record: record });
+  }
+
+  /** Clear any prior terminal record before a (re-)drive so a stale assertion from an earlier attempt is
+   *  never misread as this turn's outcome. Called at thread start. */
+  async clearTerminalRecord(threadId: string): Promise<void> {
+    await this.threads.update({ id: threadId }, { terminal_record: null });
+  }
+
+  /** Read the thread's terminal record FRESH from the DB (the tool wrote it mid-turn; the in-memory thread
+   *  object is stale). Null when the turn never asserted an outcome → the driver treats it as `incomplete`. */
+  async getTerminalRecord(threadId: string): Promise<ThreadTerminalRecord | null> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, terminal_record: true },
+    });
+    return row?.terminal_record ?? null;
   }
 
   // ── review agents (post-build review fan-out, per-agent status) ────────────────────────────────

@@ -2,12 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { EngineAuthError, EngineDetachedError } from '../engine';
 import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import { InMemoryRedisStream } from '../../_lib/redis/in-memory-redis-stream';
-import { RedisEngineRunner } from './redis-engine-runner';
+import {
+  RedisEngineRunner,
+  TAIL_ALIVE_GRACE_CEILING_MS,
+  TAIL_IDLE_TIMEOUT_MS,
+} from './redis-engine-runner';
 import { turnKeys } from './redis-turn-keys';
 import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
 import type { TurnRegistry } from './turn-registry.service';
-import type { ContainerEngine } from './container-engine.port';
+import type { ContainerEngine, ContainerInfo } from './container-engine.port';
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
 const fakeActivity = { thread: (_id: string, fn: () => unknown) => fn() } as unknown as SandboxActivityRegistry;
@@ -102,6 +106,89 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     const spec = specCall![1] as { writableRoots: string[] };
     expect(spec.writableRoots).toContain('/context');
     expect(spec.writableRoots).toContain('/playground');
+  });
+
+  describe('auth-refresh write-back', () => {
+    const authArgs = (onEvent: (e: EngineEvent) => void): RunEngineArgs => ({
+      ...baseArgs(onEvent),
+      engine: 'codex',
+      auth: { secret: 'the-blob', refreshBack: { orgId: 'org1', engine: 'codex' } },
+    });
+
+    it('buildSpec sends only the secret + persistAuthRefresh, STRIPPING refreshBack from the container spec', async () => {
+      const redis = new InMemoryRedisStream();
+      const xadd = vi.spyOn(redis, 'xadd');
+      const frames = [{ t: 'final', r: { result: 'DONE', sessionId: 's' } }];
+      const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, fakeRegistry());
+
+      await runner.run(authArgs(() => undefined));
+
+      const spec = xadd.mock.calls.find(([k]) => String(k).endsWith(':spec'))![1] as {
+        auth: { secret: string; refreshBack?: unknown };
+        persistAuthRefresh?: boolean;
+      };
+      expect(spec.auth).toEqual({ secret: 'the-blob' }); // refreshBack stripped
+      expect(spec.persistAuthRefresh).toBe(true);
+    });
+
+    it('omits persistAuthRefresh for env-fallback auth (no refreshBack provenance)', async () => {
+      const redis = new InMemoryRedisStream();
+      const xadd = vi.spyOn(redis, 'xadd');
+      const frames = [{ t: 'final', r: { result: 'DONE', sessionId: 's' } }];
+      const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, fakeRegistry());
+
+      await runner.run({ ...baseArgs(() => undefined), engine: 'codex', auth: { secret: 'env-blob' } });
+
+      const spec = xadd.mock.calls.find(([k]) => String(k).endsWith(':spec'))![1] as {
+        auth: { secret: string };
+        persistAuthRefresh?: boolean;
+      };
+      expect(spec.auth).toEqual({ secret: 'env-blob' });
+      expect(spec.persistAuthRefresh).toBeUndefined();
+    });
+
+    it('fires the sink with provenance when the final frame carries a refreshed secret', async () => {
+      const redis = new InMemoryRedisStream();
+      const frames = [{ t: 'final', r: { result: 'DONE', sessionId: 's', refreshedAuthSecret: 'fresh-blob' } }];
+      const sink = { persist: vi.fn(async () => undefined) };
+      const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, fakeRegistry(), sink);
+
+      await runner.run(authArgs(() => undefined));
+
+      expect(sink.persist).toHaveBeenCalledWith('org1', 'codex', 'fresh-blob');
+    });
+
+    it('does NOT fire the sink when the result has no refreshed secret', async () => {
+      const redis = new InMemoryRedisStream();
+      const frames = [{ t: 'final', r: { result: 'DONE', sessionId: 's' } }];
+      const sink = { persist: vi.fn(async () => undefined) };
+      const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, fakeRegistry(), sink);
+
+      await runner.run(authArgs(() => undefined));
+
+      expect(sink.persist).not.toHaveBeenCalled();
+    });
+
+    it('does NOT fire the sink without refreshBack provenance (env-fallback run)', async () => {
+      const redis = new InMemoryRedisStream();
+      const frames = [{ t: 'final', r: { result: 'DONE', sessionId: 's', refreshedAuthSecret: 'fresh-blob' } }];
+      const sink = { persist: vi.fn(async () => undefined) };
+      const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, fakeRegistry(), sink);
+
+      await runner.run({ ...baseArgs(() => undefined), engine: 'codex', auth: { secret: 'env-blob' } });
+
+      expect(sink.persist).not.toHaveBeenCalled();
+    });
+
+    it('a sink throw never fails the turn (best-effort)', async () => {
+      const redis = new InMemoryRedisStream();
+      const frames = [{ t: 'final', r: { result: 'DONE', sessionId: 's', refreshedAuthSecret: 'fresh-blob' } }];
+      const sink = { persist: vi.fn(async () => { throw new Error('store down'); }) };
+      const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, fakeRegistry(), sink);
+
+      const out = await runner.run(authArgs(() => undefined));
+      expect(out.result).toBe('DONE');
+    });
   });
 
   it('surfaces an engine error frame as a thrown error', async () => {
@@ -281,5 +368,109 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     await runner.stop('T2');
 
     expect(publish).toHaveBeenCalledWith(turnKeys('T2').abort, { t: 'abort' });
+  });
+
+  describe('idle-tail liveness (a quiet tail is not presumed dead while the container proves itself alive)', () => {
+    /** Drive the fake clock + release any parked xread so the tail loop's next Date.now() check runs. */
+    async function tick(redis: InMemoryRedisStream, ms: number): Promise<void> {
+      await vi.advanceTimersByTimeAsync(ms);
+      redis.releaseBlockingReads();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    it('extends patience past the idle timeout while the container is still running, then succeeds once the engine catches up', async () => {
+      vi.useFakeTimers();
+      try {
+        const redis = new InMemoryRedisStream();
+        const inspect = vi.fn(
+          async (): Promise<ContainerInfo> => ({ id: 'c1', name: 'c1', state: 'running', startedAt: null }),
+        );
+        const containers = { execDetached: vi.fn(async () => ({})), inspect } as unknown as ContainerEngine;
+        const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+        const runPromise = runner.run(baseArgs(() => {}));
+        await vi.advanceTimersByTimeAsync(0); // let run() reach the point of calling execDetached
+
+        // Cross the idle timeout with nothing on the stream — the container is still 'running', so this
+        // must NOT throw; it should keep waiting.
+        await tick(redis, TAIL_IDLE_TIMEOUT_MS + 5_000);
+        expect(inspect).toHaveBeenCalled();
+
+        // The "engine" finally catches up and finishes the turn.
+        const execCall = (containers.execDetached as unknown as { mock: { calls: [string, string[], { env?: Record<string, string> }][] } })
+          .mock.calls[0];
+        const turnId = execCall[2]?.env?.TURN_ID;
+        expect(turnId).toBeTruthy();
+        await redis.xadd(turnKeys(turnId!).events, { t: 'final', r: { result: 'DONE' } });
+        redis.releaseBlockingReads();
+
+        await expect(runPromise).resolves.toEqual({ result: 'DONE' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('fails cleanly (never EngineDetachedError) once a still-running container exceeds the alive-grace ceiling', async () => {
+      vi.useFakeTimers();
+      try {
+        const redis = new InMemoryRedisStream();
+        const inspect = vi.fn(
+          async (): Promise<ContainerInfo> => ({ id: 'c1', name: 'c1', state: 'running', startedAt: null }),
+        );
+        const containers = { execDetached: vi.fn(async () => ({})), inspect } as unknown as ContainerEngine;
+        const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+        const rejection = runner.run(baseArgs(() => {})).then(
+          () => {
+            throw new Error('expected the run to reject');
+          },
+          (err: unknown) => err,
+        );
+
+        // Never emit another frame — the container claims 'running' the whole time, so this must extend
+        // patience past the idle timeout, but not forever: it should give up once the ceiling passes.
+        const totalMs = TAIL_IDLE_TIMEOUT_MS + TAIL_ALIVE_GRACE_CEILING_MS + 15_000;
+        for (let elapsed = 0; elapsed < totalMs; elapsed += 5_000) {
+          await tick(redis, 5_000);
+        }
+
+        const err = (await rejection) as Error;
+        expect(err).toBeInstanceOf(Error);
+        expect(err).not.toBeInstanceOf(EngineDetachedError);
+        expect(err.message).toMatch(/alive-grace ceiling/);
+        expect(inspect).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('still fails immediately at the idle timeout when the container is actually gone (no grace granted)', async () => {
+      vi.useFakeTimers();
+      try {
+        const redis = new InMemoryRedisStream();
+        const inspect = vi.fn(
+          async (): Promise<ContainerInfo> => ({ id: 'c1', name: 'c1', state: 'exited', startedAt: null }),
+        );
+        const containers = { execDetached: vi.fn(async () => ({})), inspect } as unknown as ContainerEngine;
+        const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+        const rejection = runner.run(baseArgs(() => {})).then(
+          () => {
+            throw new Error('expected the run to reject');
+          },
+          (err: unknown) => err,
+        );
+
+        await tick(redis, TAIL_IDLE_TIMEOUT_MS + 1_000);
+
+        const err = (await rejection) as Error;
+        expect(err).toBeInstanceOf(Error);
+        expect(err).not.toBeInstanceOf(EngineDetachedError);
+        expect(err.message).toMatch(/presumed dead/);
+        expect(inspect).toHaveBeenCalledTimes(1); // no grace loop — declared dead on the very first check
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

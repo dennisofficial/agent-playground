@@ -125,6 +125,9 @@ export type ThreadStatus =
   | 'awaiting_input' // the orchestrator paused mid-build to ask the operator (request_operator_input)
   | 'auto_fixing' // per-thread auto-fix stage
   | 'done'
+  | 'incomplete' // the build turn ended without asserting completion (no `complete_thread`) — surfaced &
+  // halted, NEVER treated as done. Distinct from `failed` (nothing threw) and `awaiting_input` (an explicit
+  // pause). The driver relays a durable card and the job waits on a human/Atlas. See ADR 0004.
   | 'failed';
 
 /** One thread of a thread's build — a coherent slice (e.g. backend) that becomes a phased plan. */

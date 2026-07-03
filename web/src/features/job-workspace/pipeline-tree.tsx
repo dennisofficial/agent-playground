@@ -61,7 +61,7 @@ type LaneState = 'draft' | 'in_progress' | 'done' | 'failed';
 function laneState(s: ThreadStatus, drafted: boolean): LaneState {
   if (drafted || s === 'pending') return 'draft';
   if (s === 'done') return 'done';
-  if (s === 'failed') return 'failed';
+  if (s === 'failed' || s === 'incomplete') return 'failed'; // both are terminal halts (nothing shipped)
   return 'in_progress'; // planning / reviewing / awaiting_approval / executing / awaiting_input / auto_fixing
 }
 
@@ -164,10 +164,10 @@ export interface TreeProps {
   status: JobStatus;
   /** The job id — each fold subscribes to its thread's live lane to overlay mid-turn task calls. */
   jobId: string;
-  /** The LEFT pane's open lane (`?lane=`) — the selected thread; opens its fold (state rail + wash). */
+  /** The LEFT pane's open lane (`?lane=`) — the selected thread. A bare thread id opens the thread's fold;
+   *  a `rev:<threadId>:…`/`fix:<threadId>` lane (review agents + post-review fixes are threads too) opens
+   *  its PARENT thread's fold and highlights that child row. */
   laneNode: string | null;
-  /** The RIGHT pane's open detail node (`?node=`) — a selected `rev:` agent also opens its parent fold. */
-  detailNode: string | null;
   onSelectNode: (node: string) => void;
   /** Collapse back to Main — clicking the already-selected thread header (accordion toggle). */
   onConversation: () => void;
@@ -179,7 +179,7 @@ export interface TreeProps {
  * child threads → `rev:` detail nodes) with the derived Post-review fixes row. Draft threads (pre-approval
  * or not yet reached) fold to the drafting empty state.
  */
-export function PipelineTree({ job, status, jobId, laneNode, detailNode, onSelectNode, onConversation }: TreeProps) {
+export function PipelineTree({ job, status, jobId, laneNode, onSelectNode, onConversation }: TreeProps) {
   const threads = job.threads;
   // Pre-approval every thread is a draft (dashed dot, no tasks — the plan shows only the threads).
   const drafted = status === 'planning' || status === 'plan_review' || status === 'awaiting_approval';
@@ -199,8 +199,8 @@ export function PipelineTree({ job, status, jobId, laneNode, detailNode, onSelec
           isHalt={i === haltIdx}
           notReached={haltIdx !== -1 && i > haltIdx}
           selected={laneNode === s.id}
-          openAgentId={agentIdIfSelected(detailNode, s.id)}
-          fixSelected={detailNode === fixNode(s.id)}
+          openAgentId={agentIdIfSelected(laneNode, s.id)}
+          fixSelected={laneNode === fixNode(s.id)}
           onSelectNode={onSelectNode}
           onConversation={onConversation}
         />
@@ -209,17 +209,17 @@ export function PipelineTree({ job, status, jobId, laneNode, detailNode, onSelec
   );
 }
 
-/** The `rev:<threadId>:<agentId>` detail node's agent id, when it belongs to this thread (else null). */
-function agentIdIfSelected(detailNode: string | null, threadId: string): string | null {
+/** The `rev:<threadId>:<agentId>` lane's agent id, when it belongs to this thread (else null). */
+function agentIdIfSelected(laneNode: string | null, threadId: string): string | null {
   const prefix = `rev:${threadId}:`;
-  return detailNode?.startsWith(prefix) ? detailNode.slice(prefix.length) : null;
+  return laneNode?.startsWith(prefix) ? laneNode.slice(prefix.length) : null;
 }
 
 /**
  * One accordion fold — the clickable thread header (status glyph · label · count chip) over the open
  * body (TASKS → REVIEW AGENTS → Post-review fixes, or the draft empty state). A thread is OPEN when it is
- * the selected lane OR one of its review agents is the open detail node; clicking the selected header
- * again collapses back to Main.
+ * the selected lane OR one of its review agents / its post-review fixes is the open lane (they're child
+ * threads that ride the same LEFT pane); clicking the selected header again collapses back to Main.
  */
 function ThreadFold({
   thread: s,
@@ -241,9 +241,9 @@ function ThreadFold({
   isHalt: boolean;
   notReached: boolean;
   selected: boolean;
-  /** The thread's review agent open in the detail pane (keeps the fold open), or null. */
+  /** The thread's review agent open in the LEFT lane pane (keeps the fold open), or null. */
   openAgentId: string | null;
-  /** Whether this thread's "Post-review fixes" node (`fix:<threadId>`) is open in the detail pane. */
+  /** Whether this thread's "Post-review fixes" thread (`fix:<threadId>`) is the open LEFT-pane lane. */
   fixSelected: boolean;
   onSelectNode: (node: string) => void;
   onConversation: () => void;
@@ -526,7 +526,7 @@ function ReviewAgentsBody({
 }
 
 /** One review agent — a single-line navigable child thread: status tile · name · status word · chevron.
- *  Clicking drills into the agent's own transcript (`rev:` detail node); the parent fold stays open. */
+ *  Clicking opens the agent's own transcript in the LEFT pane (`rev:` lane); the parent fold stays open. */
 function AgentRow({
   agent,
   selected,
@@ -605,7 +605,7 @@ function AgentStatusTile({ display }: { display: AgentDisplay | 'queued' | 'runn
 
 /** The consolidation agent's row — runs after the review agents finish; applies fixes and verifies.
  *  Navigable: opens the fix turn's transcript (`fix:<threadId>` → `autofix:<threadId>:fix` lane) in the
- *  detail pane, like a review agent. Separated by a dashed rule per the design. */
+ *  LEFT pane, like a review agent. Separated by a dashed rule per the design. */
 function PostReviewFixesRow({
   state,
   selected,

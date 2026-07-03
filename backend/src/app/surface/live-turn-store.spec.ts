@@ -44,6 +44,25 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
     expect(store.snapshot(REPO, THREAD)).toBeNull();
     expect(store.snapshotsForRepo(REPO)).toHaveLength(0);
   });
+
+  it('interleaved thinking: authoritative text/thinking finalize their OPEN delta block, not the last one (no double stream)', () => {
+    const store = new LiveTurnStore();
+    // Adaptive thinking interleaves a thinking block before the text block, so BOTH stream open at once:
+    // deltas build [thinking(open), text(open)]. The authoritative events then arrive in content order.
+    store.push(REPO, THREAD, { kind: 'thinking_delta', text: 'reason' });
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'lo' });
+    // Authoritative blocks close each open block by KIND — not by "last" (which pushed dupes before the fix).
+    store.push(REPO, THREAD, { kind: 'thinking', text: 'reasoning' });
+    store.push(REPO, THREAD, { kind: 'text', text: 'Hello' });
+    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: {} });
+
+    const snap = store.snapshot(REPO, THREAD)!;
+    // Exactly one thinking + one text block (pre-fix this was thinking,text,thinking,text — the dup).
+    expect(snap.blocks.map((b) => b.kind)).toEqual(['thinking', 'text', 'tool']);
+    expect(snap.blocks[0]).toMatchObject({ kind: 'thinking', text: 'reasoning', done: true });
+    expect(snap.blocks[1]).toMatchObject({ kind: 'text', text: 'Hello', done: true });
+  });
 });
 
 describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via snapshot, then streams live', () => {

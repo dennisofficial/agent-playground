@@ -39,6 +39,7 @@ import {
   ActiveTurnEntity,
   StimulusEntity,
   JobSandboxEntity,
+  PlanReviewEntity,
 } from '../persistence/entities';
 import {
   ProvisioningNotReadyError,
@@ -94,7 +95,10 @@ import {
   type PromotedManifestInput,
 } from './repo-decision-manifest.service';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
-import { TurnRegistry } from '../sandbox/turn-registry.service';
+import {
+  BrainTurnAlreadyRunningError,
+  TurnRegistry,
+} from '../sandbox/turn-registry.service';
 import {
   ENGINE_RUNNER,
   isEngineDetachedError,
@@ -323,7 +327,13 @@ export class AgentSessionManager
 
   private startChatDeliverySweep(): void {
     if (this.chatSweepTimer) return;
-    this.chatSweepTimer = setInterval(() => void this.sweepUndeliveredChat(), CHAT_SWEEP_INTERVAL_MS);
+    this.chatSweepTimer = setInterval(() => {
+      void this.sweepUndeliveredChat();
+      // Same leader cadence re-drives plan-review WEDGES (a plan stuck in `plan_review` whose review is
+      // settled + delivered but was never finalized — no driver moves it). Independent of the chat sweep;
+      // both are leader-guarded internally.
+      void this.reconcileWedgedPlanReviews();
+    }, CHAT_SWEEP_INTERVAL_MS);
     if (typeof this.chatSweepTimer.unref === 'function') this.chatSweepTimer.unref();
   }
 
@@ -657,8 +667,24 @@ export class AgentSessionManager
 
     // NOTE: plain operator chat no longer enters here — it rides the durable delivery pump (`enqueueChat`
     // → `pumpThread`), which owns the steer-vs-fresh-turn decision AND the delivered/sweep guarantee. This
-    // method now serves only SYSTEM turns (seeds, event/harness deliveries), which always run as their own
-    // queued turn (never steered). Kept as the shared "run this stimulus as a serialized turn" primitive.
+    // method now serves only SYSTEM turns (seeds, event/harness deliveries).
+    //
+    // STEER-VS-FRESH-TURN for seeds too: if a brain turn is ALREADY live for this job, steer this stimulus
+    // straight into it (a mid-turn user message) instead of spawning a SECOND turn on the same session — the
+    // "answers don't steer, they spawn a parallel turn" bug. This is also how N queued answers all reach the
+    // brain "in one go": each steers into the one live turn. A reset-verify no-op seed is EXEMPT — it must
+    // run its own (guarded) turn so its fresh-container cold-attach semantics are unchanged. The DB-level
+    // single-brain-turn guard (`register` → `BrainTurnAlreadyRunningError`) backstops the check→queue race.
+    if (
+      !stimulus.seedResetVerify &&
+      (await this.steerIntoLiveBrainTurn(stimulus).catch((err) => {
+        this.logger.warn(`steer-into-live pre-check failed for job=${stimulus.jobId}: ${err}`);
+        return false;
+      }))
+    ) {
+      return;
+    }
+
     const key = `${stimulus.orgId}:${stimulus.jobId}`;
     const prev = this.turnQueues.get(key) ?? Promise.resolve();
     // Chain after any in-flight turn (swallow its error so a failed turn doesn't break the queue).
@@ -673,6 +699,70 @@ export class AgentSessionManager
       }),
     );
     return next;
+  }
+
+  /**
+   * If a brain turn is ALREADY live for this stimulus's job, steer the stimulus straight into it — a queued
+   * user message injected mid-turn (the engine's `priority:'now'`) — and report handled, so the caller does
+   * NOT spawn a second turn on the same session. This is the single-running-turn guarantee at delivery time
+   * (the DB unique index is the hard backstop for the check→register race) AND how several queued answers all
+   * reach the brain "in one go": each steers into the one live turn. Returns false when there is no live turn
+   * or the runner can't steer (the caller then runs its own turn). The steer id is the stimulus id, so a
+   * card-answer seed also stamps its card `deliveredAt` on success (the XADD is durable → this IS delivery;
+   * the answered card then stops re-surfacing in `<open-questions>` and the boot re-seed sweep skips it).
+   */
+  private async steerIntoLiveBrainTurn(stimulus: ChatStimulus): Promise<boolean> {
+    if (typeof this.engineRunner.steer !== 'function') return false;
+    const live = await this.turnRegistry
+      .runningBrainTurn(stimulus.jobId)
+      .catch(() => null);
+    if (!live?.turn_id) return false;
+    try {
+      await this.engineRunner.steer(live.turn_id, stimulus.id, stimulus.body);
+    } catch (err) {
+      // A live turn exists but the steer XADD failed (transient). Report handled anyway — falling back to a
+      // fresh turn would just hit the single-turn guard. A dropped card-answer self-heals: the boot re-seed
+      // sweep re-drives an answered-but-undelivered card.
+      this.logger.warn(
+        `steer into live turn ${live.turn_id} failed for job=${stimulus.jobId}: ${err}`,
+      );
+      return true;
+    }
+    await this.stampSteeredSeedCard(stimulus);
+    return true;
+  }
+
+  /**
+   * After a card-answer/confirmation seed is steered into a live turn, stamp its card `deliveredAt` (the
+   * per-stimulus equivalent of the fresh-turn tail stamp in `runChatTurnInner`). Guarded + idempotent: only
+   * an answered/provided, not-yet-delivered card is stamped. A plain chat message or bare nudge (no card id)
+   * is a no-op.
+   */
+  private async stampSteeredSeedCard(stimulus: ChatStimulus): Promise<void> {
+    if (stimulus.seedQuestionId) {
+      const card = await this.store
+        .getQuestionCard(stimulus.jobId, stimulus.seedQuestionId)
+        .catch(() => null);
+      if (card?.answer != null && card.deliveredAt == null) {
+        await this.store
+          .markQuestionDelivered(stimulus.jobId, stimulus.seedQuestionId)
+          .catch((err) =>
+            this.logger.warn(`markQuestionDelivered (steer) failed: ${err}`),
+          );
+      }
+    }
+    if (stimulus.seedFileId) {
+      const card = await this.store
+        .getFileCard(stimulus.jobId, stimulus.seedFileId)
+        .catch(() => null);
+      if (card?.provided_at != null && card.delivered_at == null) {
+        await this.store
+          .markFileDelivered(stimulus.jobId, stimulus.seedFileId)
+          .catch((err) =>
+            this.logger.warn(`markFileDelivered (steer) failed: ${err}`),
+          );
+      }
+    }
   }
 
   // ── Durable operator-message delivery (the pump) ─────────────────────────────────────────────────
@@ -806,6 +896,74 @@ export class AgentSessionManager
         this.logger.debug(`chat sweep pump failed for thread=${t.jobId}: ${err}`),
       );
     }
+  }
+
+  /**
+   * LEADER periodic + boot re-drive of WEDGED plan-review jobs. `submit_plan` flips a job to `plan_review`
+   * and runs the Codex review in the background; the findings are delivered to the brain in a turn, and the
+   * brain is expected to end that turn by calling `finalize_plan` (→ the operator approval card). But
+   * `plan_review` is a passive state with NO driver — if the brain's turn ends without finalizing (a
+   * host restart cut it off mid-tool-call, or it simply stopped), the job sits frozen forever, invisible to
+   * the operator, until a human sends another message. This sweep is the missing safety net: it finds such
+   * jobs (review settled + delivered, no turn running) and re-drives the brain with ONE server-initiated
+   * nudge turn to finalize (or revise). Bounded to one nudge per review round via `finalize_nudged_at`.
+   */
+  private async reconcileWedgedPlanReviews(): Promise<void> {
+    if (this.election.getState() !== 'leader') return;
+    let stalled: PlanReviewEntity[];
+    try {
+      stalled = await this.planReview.findFinalizeStalledReviews(
+        PLAN_REVIEW_WEDGE_GRACE_MS,
+      );
+    } catch (err) {
+      this.logger.debug(`plan-review wedge sweep query failed (will retry): ${err}`);
+      return;
+    }
+    for (const review of stalled) {
+      void this.nudgeFinalizeStalledPlan(review).catch((err) =>
+        this.logger.warn(
+          `plan-review wedge re-drive failed for job=${review.job_id}: ${err}`,
+        ),
+      );
+    }
+  }
+
+  /**
+   * Re-drive ONE wedged plan-review job. Re-checks the wedge conditions the batch query can't (they race
+   * the query): the job is still in `plan_review`, no brain turn is live (the brain isn't already working —
+   * a live turn means the findings-delivery turn is still going, or a reattach is in flight), and no
+   * operator/system chat is pending (the chat sweep already drives those). Then injects a single
+   * server-initiated nudge turn via `handleChatTurn` (which itself steers into any turn that appeared since,
+   * and is backstopped by the DB single-brain-turn guard). Stamps `finalize_nudged_at` only AFTER that turn
+   * completes — a crash before then re-nudges next sweep (at-least-once); a landed nudge is never repeated.
+   */
+  private async nudgeFinalizeStalledPlan(review: PlanReviewEntity): Promise<void> {
+    const job = await this.store.loadJob(review.job_id).catch(() => null);
+    if (!job || job.status !== 'plan_review') return; // finalized/moved on since the query
+    const live = await this.turnRegistry
+      .runningBrainTurn(review.job_id)
+      .catch(() => null);
+    if (live?.turn_id) return; // a turn is already driving this job
+    const pendingChat = await this.stimulusStore
+      .eligiblePendingChat(
+        review.job_id,
+        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+      )
+      .catch(() => [] as ChatStimulus[]);
+    if (pendingChat.length > 0) return; // the chat sweep will re-drive this job
+
+    this.logger.log(
+      `plan-review wedge: re-driving finalize for job=${review.job_id} (round ${review.round}, ${review.status})`,
+    );
+    const stimulus = harnessDeliveryStimulus({
+      jobId: review.job_id,
+      orgId: review.org_id,
+      repoId: job.repoId,
+      body: renderFinalizeNudge(review),
+    });
+    await this.handleChatTurn(stimulus);
+    // Reached only when the nudge turn completed — stamp so this round is never nudged again (no loop).
+    await this.planReview.markFinalizeNudged(review.id);
   }
 
   /**
@@ -1205,6 +1363,16 @@ export class AgentSessionManager
       if (awarenessPrefix) task = `${awarenessPrefix}\n\n${task}`;
     }
 
+    // Surface the brain's OWN still-open questions back into THIS turn. Question cards live outside the
+    // engine session — a fresh turn (a new operator message, an event delivery, or a restart-rebuilt session
+    // whose context was compacted) has no in-context memory of what it already asked, so without this the
+    // brain re-asks the same question over and over. Advisory prefix listing each open card's id + gist, so
+    // it waits (or `withdraw_question`s) instead of re-posting. Applies to every turn; best-effort.
+    const openQuestionsPrefix = await this.buildOpenQuestionsPrefix(
+      stimulus.jobId,
+    );
+    if (openQuestionsPrefix) task = `${openQuestionsPrefix}\n\n${task}`;
+
     // Onboarding threads (`kind='onboarding'`) run a different mission prompt + a curated, build-free
     // toolset (the gating is enforced here, not just in prose — omitted tool names aren't registered).
     const brainJob = await this.store
@@ -1335,6 +1503,20 @@ export class AgentSessionManager
     try {
       result = await runner.run(runArgs);
     } catch (err) {
+      if (err instanceof BrainTurnAlreadyRunningError) {
+        // Lost the check→register race: a concurrent/reattached brain turn is already live for this job, so
+        // the runner refused to kick a second engine. Steer this stimulus into the live turn instead of
+        // surfacing a scary error box. Do NOT `streamer.finish()` here — this aborted turn shares the `main`
+        // lane with the live turn, and ending it would clobber the live turn's stream (no turn_start was
+        // fanned yet — the first engine event fans it — so there is nothing to clean up). If the live turn
+        // vanished in the meantime there is nothing to steer into; the pump sweep / boot re-seed re-drives.
+        if (!(await this.steerIntoLiveBrainTurn(stimulus))) {
+          this.logger.warn(
+            `single-brain-turn guard hit but no live turn to steer for job=${stimulus.jobId} — leaving for re-drive`,
+          );
+        }
+        return;
+      }
       if (isEngineDetachedError(err)) {
         // NOT a turn failure — this process lost its tail mid-turn (its own shutdown during a watch
         // respawn). The detached engine keeps running; the registry row + streams were left in place, and
@@ -1647,6 +1829,35 @@ export class AgentSessionManager
             'MAY post more than one card when you have several distinct things to settle — they can be answered ' +
             'in any order. Each answer arrives on a later turn; when one settles an always-ask decision, call ' +
             'create_decision (pass `questionId` to attach that exact question).',
+        };
+      },
+
+      // Retract a still-unanswered question card — the escape hatch for "I need to reword this" or "this is
+      // no longer relevant". Idempotent + race-safe: if the operator already answered it, the withdraw is a
+      // no-op and the brain should handle the answer rather than re-ask. Decrements the open-question gate.
+      withdraw_question: async (args) => {
+        const questionId = String(args['questionId'] ?? '').trim();
+        if (!questionId) return { ok: false, reason: 'questionId is required' };
+        const reason = String(args['reason'] ?? '').trim();
+        const res = await this.store.withdrawQuestion(
+          stimulus.jobId,
+          questionId,
+          reason || undefined,
+        );
+        if (!res.withdrawn) {
+          return {
+            ok: false,
+            reason:
+              'That question could not be withdrawn — it was already answered, already withdrawn, or not ' +
+              'found. If the operator answered it, work from that answer instead of re-asking.',
+          };
+        }
+        return {
+          ok: true,
+          questionId,
+          message:
+            'Question withdrawn — the operator no longer sees it as awaiting an answer. Re-ask a reworded ' +
+            'version with ask_question if you still need the input.',
         };
       },
 
@@ -2530,6 +2741,7 @@ export class AgentSessionManager
     if (!onboarding) return { ...tools, ...intake };
     return {
       ask_question: tools.ask_question,
+      withdraw_question: tools.withdraw_question,
       recall: tools.recall,
       remember: tools.remember,
       ...intake,
@@ -3536,6 +3748,37 @@ export class AgentSessionManager
   }
 
   /**
+   * An advisory prefix listing this thread's still-OPEN `ask_question` cards (asked, not yet answered or
+   * withdrawn) so a fresh turn doesn't re-ask them — the fix for the "brain keeps asking the same question"
+   * loop, whose root cause is that question cards live OUTSIDE the engine session and are never otherwise
+   * re-surfaced once the session's in-context memory is lost (a new turn, an event, a restart/compaction).
+   * Null when nothing is open. Best-effort — a failure here never blocks the turn.
+   */
+  private async buildOpenQuestionsPrefix(
+    jobId: string,
+  ): Promise<string | null> {
+    try {
+      const open = await this.store.openQuestionCards(jobId);
+      if (open.length === 0) return null;
+      const lines = open.map((c) => {
+        const gist = (c.header?.trim() || c.question || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+        return `  • [${c.questionId}] ${gist}`;
+      });
+      const n = open.length;
+      return (
+        `<open-questions>\n` +
+        `You have ${n} question${n === 1 ? '' : 's'} already posted to the operator and still awaiting an ` +
+        `answer. Do NOT re-ask ${n === 1 ? 'it' : 'them'} — wait for the answer to arrive on a later turn, or ` +
+        `call withdraw_question({ questionId, reason }) to retract one (e.g. to reword it or if it's no longer ` +
+        `needed).\n${lines.join('\n')}\n</open-questions>`
+      );
+    } catch (err) {
+      this.logger.debug(`open-questions prefix failed (continuing): ${err}`);
+      return null;
+    }
+  }
+
+  /**
    * Build an `onMilestone` callback for the provisioning chain (`ensureProvisioned`/`ensureContainer`) —
    * narrates the genuinely slow attach sub-steps (a real image rebuild, a cold container create) as a
    * quiet operator-visible pill via `appendSystemEvent`, NOT a fake Atlas reply and NOT `recordMilestone`
@@ -3655,6 +3898,15 @@ export class AgentSessionManager
 /** How often the leader re-drives any operator message still undelivered (the at-least-once chat sweep). */
 const CHAT_SWEEP_INTERVAL_MS = 30_000;
 
+/**
+ * How long a review's findings must have been delivered before a still-`plan_review` job counts as WEDGED.
+ * A brain that just received the findings finalizes within the SAME turn (which reads as a live turn — the
+ * separate guard); this grace is belt-and-suspenders against a transient active-turns gap (e.g. a reattach
+ * settling right after boot) briefly looking like "no turn running". Comfortably shorter than a human's
+ * reaction time, so a genuinely stuck plan recovers within a sweep or two.
+ */
+const PLAN_REVIEW_WEDGE_GRACE_MS = 90_000;
+
 /** Options threaded from the delivery pump into a fresh turn (stamp delivery at the registration hand-off). */
 interface TurnDeliveryOpts {
   /** Fired when the turn becomes restart-survivable (registered + kicked). */
@@ -3758,6 +4010,38 @@ function resetContinuationStimulus(input: {
  * paths (passive-awareness drain + typed-answer linkage). The wrapped body is what the brain reads; the
  * operator sees the same findings as the durable, idempotent "Codex review" message.
  */
+/**
+ * The nudge body for a WEDGED plan-review job (see `reconcileWedgedPlanReviews`). States the wedge plainly,
+ * recaps the settled review's outcome so the brain has context without re-reading, and pushes it to a
+ * terminal action — `finalize_plan` (ready) or `submit_plan` (needs a revision) — never to just stop. Wrapped
+ * as a system notification by `harnessDeliveryStimulus`, so it reads as a trusted harness instruction.
+ */
+function renderFinalizeNudge(review: PlanReviewEntity): string {
+  const outcome =
+    review.status === 'failed'
+      ? `The last Codex review (round ${review.round}) did NOT run cleanly (${
+          review.error?.trim() || 'infrastructure error'
+        }), so the plan was never validated by the reviewer — treat it as "no automated pass", not a clean bill.`
+      : review.findings && review.findings.trim()
+        ? `The last Codex review (round ${review.round}) returned findings, which were already delivered to you.`
+        : `The last Codex review (round ${review.round}) completed with no findings.`;
+  return [
+    'This plan is STUCK: it is still in review with no turn running, but the Codex review is settled and its',
+    'result was already delivered to you — you never sent the plan to the operator (no `finalize_plan` landed,',
+    'most likely because an earlier turn was interrupted mid-action). The operator is blocked until you act.',
+    '',
+    outcome,
+    '',
+    'Decide now and finish with a tool call:',
+    '• If the plan is ready (findings addressed, or the review could not run and you have no further changes),',
+    '  call `finalize_plan` to send it to the operator for approval — and if the review did not run cleanly,',
+    '  say so plainly on the card.',
+    '• If it still needs a revision, make it and call `submit_plan` (note the review-round cap may already be',
+    '  reached, in which case finalize instead of looping).',
+    'Do not end this turn without calling one of them.',
+  ].join('\n');
+}
+
 function harnessDeliveryStimulus(input: {
   jobId: string;
   orgId: string;

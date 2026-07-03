@@ -7,6 +7,7 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
+import { VERIFY_CURRENCY } from '../fragments';
 
 @FragmentGroup()
 export class OrientationGroup {
@@ -28,15 +29,20 @@ export class OrientationGroup {
       'on a cheaper model, searches the repo and the web for you, and returns a tight findings summary instead',
       'of flooding your context with raw file dumps. State the breadth you want in the prompt — "quick",',
       '"medium", or "very thorough". Use it to stay oriented on large repos without burning tokens.',
+      "DON'T LAUNDER SUBAGENT CLAIMS: a subagent's findings are ITS work, not verified fact — especially",
+      'evaluative claims ("modern", "up to date", "the standard choice"). If a delegated summary asserts a',
+      "library's currency or quality without showing it actually checked the web for it, treat it as",
+      'unconfirmed: verify it yourself (or send the subagent back to) before you repeat it to the operator.',
       'OTHER SUBAGENTS (same Task tool, all Sonnet + advisory — they report, they do NOT edit files):',
       "  • `docs` — look up EXTERNAL library/framework/API documentation (this repo's own docs are `explore`);",
       '  • `review` — a second pass on a diff + intent for bugs, removed behavior, and convention drift;',
       '  • `debug` — trace a failure (error/stack/failing test) to its root cause and fix site;',
       "  • `test` — run the repo's verification and get back a diagnosis instead of raw logs.",
       'Reach for `review` and `test` especially when you implement a direct build yourself (FAST PATH).',
-      'WEB ACCESS: you have WebSearch and WebFetch — use them to check current library docs, latest versions, and',
-      'recent changes rather than relying on memory; the codebase is authoritative for THIS repo, the web for the',
-      'outside world.',
+      'WEB ACCESS: you have WebSearch and WebFetch — the codebase is authoritative for THIS repo, the web for',
+      'the outside world; reach for them to check current library docs, latest versions, and recent changes',
+      'instead of relying on memory.',
+      VERIFY_CURRENCY,
     ].join('\n');
   }
 

@@ -102,6 +102,44 @@ export class ThreadEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', default: [] })
   tasks!: TaskItem[];
+
+  /**
+   * The thread's TYPED terminal assertion — written by the orchestrator's `complete_thread`/`block_thread`
+   * tool call at the end of its build turn, then READ by the driver to decide the thread's outcome instead
+   * of inferring it from whether the turn threw (ADR 0004). Null until the tool is called; a clean turn
+   * that never wrote one is treated as `incomplete`, NOT `done`. `nullable` (no jsonb function-default — a
+   * `() => '...'::jsonb` default makes `migration:generate` loop forever; nullable avoids a default entirely).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  terminal_record!: ThreadTerminalRecord | null;
+}
+
+/**
+ * A thread's typed terminal assertion (see {@link ThreadEntity.terminal_record}). The orchestrator writes
+ * exactly one at the end of its work; the driver reads it to branch done / blocked / failed / incomplete.
+ */
+export interface ThreadTerminalRecord {
+  status: 'done' | 'blocked' | 'failed';
+  /** One-line summary of what the thread did (or why it's blocked/failed). */
+  summary: string;
+  /** What changed, terse — feeds the next thread's handoff. */
+  changes?: string[];
+  /** Verification the orchestrator actually ran, with captured evidence (not prose claims). */
+  verification?: { kind: string; command: string; exitCode: number; outputTail: string }[];
+  /** Off-spec changes the orchestrator flagged. */
+  deviations?: string[];
+  /** Honest known gaps / things to know — routed to the brain + next-thread orientation. */
+  gaps?: string[];
+  /** Set when status='blocked' (Phase 3 `block_thread`). */
+  blocked?: { reason: 'question' | 'needs_env' | 'decision'; detail: string };
+  /** Set when status='failed' — the structured failure the driver relays. */
+  failure?: {
+    kind: 'build' | 'verification';
+    failingStep?: string;
+    command?: string;
+    exitCode?: number;
+    stderrTail?: string;
+  };
 }
 
 /** One post-build review agent's persisted state on a thread. */

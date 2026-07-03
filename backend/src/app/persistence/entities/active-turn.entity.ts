@@ -26,6 +26,16 @@ import { JobEntity } from './job.entity';
 @Entity({ name: 'active_turns' })
 @Index(['status'])
 @Index(['job_id'])
+// HARD cross-process backstop: at most ONE `running` brain turn per job. Two brain turns resuming the
+// same engine session id concurrently is the "parallel co-author" bug (a fresh turn spawned while one is
+// already in flight — reattached, steered, or started by a second app instance). The in-memory turn queue
+// can't coordinate across processes; this partial unique index rejects the second `register()` at the DB,
+// and the loser degrades to an idempotent steer. Partial: only brain turns in `running` are constrained —
+// step/review/autofix turns and terminal (`done`/`failed`) rows are exempt.
+@Index('ux_active_turns_one_running_brain_per_job', ['job_id'], {
+  unique: true,
+  where: `"kind" = 'brain' AND "status" = 'running'`,
+})
 export class ActiveTurnEntity extends TimestampedEntity {
   /** The turn id — also the Redis stream-key namespace (`turn:{turn_id}:*`). */
   @PrimaryColumn({ type: 'uuid' })

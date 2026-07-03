@@ -1,8 +1,25 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThan, Not, Repository } from 'typeorm';
+import { LessThan, Not, QueryFailedError, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ActiveTurnEntity, ToolExecutionEntity } from '../persistence/entities';
+
+/** Postgres unique-violation SQLSTATE. */
+const PG_UNIQUE_VIOLATION = '23505';
+
+/**
+ * Raised when {@link TurnRegistry.register} is rejected by the partial unique index
+ * `ux_active_turns_one_running_brain_per_job` — i.e. a `running` brain turn already exists for this job.
+ * The HARD cross-process backstop against two brain turns resuming one engine session concurrently (the
+ * "parallel co-author" bug). The runner must NOT kick a second engine on this; the caller steers the
+ * stimulus into the existing live turn instead.
+ */
+export class BrainTurnAlreadyRunningError extends Error {
+  constructor(public readonly jobId: string) {
+    super(`A brain turn is already running for job ${jobId}`);
+    this.name = 'BrainTurnAlreadyRunningError';
+  }
+}
 
 /** The context a fresh host needs to rebuild a turn's harness (+ brain `buildTools` closure) on re-attach. */
 export interface TurnContext {
@@ -59,23 +76,42 @@ export class TurnRegistry {
     );
   }
 
-  /** Record a newly-started turn as `running` (idempotent on turn_id — re-register overwrites). */
+  /**
+   * Record a newly-started turn as `running` (each turn has a fresh `turn_id`, so this always INSERTs — a
+   * re-attach resumes the existing row rather than re-registering). For a `brain` turn the partial unique
+   * index enforces at most one `running` brain turn per job: a racing second registration (a reattached or
+   * concurrent turn already running) is rejected here as {@link BrainTurnAlreadyRunningError}, so the runner
+   * aborts the kick and the caller steers into the live turn instead of spawning a second engine.
+   */
   async register(input: RegisterTurnInput): Promise<void> {
-    await this.turns.save(
-      this.turns.create({
-        turn_id: input.turnId,
-        job_id: input.jobId,
-        org_id: input.orgId,
-        channel: input.channel,
-        lane: input.lane,
-        kind: input.kind,
-        container_id: input.containerId ?? null,
-        status: 'running',
-        events_last_id: '0-0',
-        last_heartbeat_at: null,
-        ctx: input.ctx,
-      }),
-    );
+    try {
+      // `save` on a fresh `turn_id` (every turn has one; re-attach never re-registers) INSERTs, so the
+      // partial unique index on (job_id) WHERE brain+running is what a racing second brain turn violates.
+      await this.turns.save(
+        this.turns.create({
+          turn_id: input.turnId,
+          job_id: input.jobId,
+          org_id: input.orgId,
+          channel: input.channel,
+          lane: input.lane,
+          kind: input.kind,
+          container_id: input.containerId ?? null,
+          status: 'running',
+          events_last_id: '0-0',
+          last_heartbeat_at: null,
+          ctx: input.ctx,
+        }),
+      );
+    } catch (err) {
+      if (
+        input.kind === 'brain' &&
+        err instanceof QueryFailedError &&
+        (err as QueryFailedError & { code?: string }).code === PG_UNIQUE_VIOLATION
+      ) {
+        throw new BrainTurnAlreadyRunningError(input.jobId);
+      }
+      throw err;
+    }
   }
 
   /** Stamp a heartbeat (engine liveness) and, when given, advance the event-tail resume cursor. */

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { CheckCircle2, HelpCircle } from 'lucide-react';
+import { CheckCircle2, HelpCircle, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAnswerQuestion } from '@/lib/api/job-queries';
 import type { JobRef } from '@/lib/api/job-api';
@@ -25,6 +25,22 @@ export function QuestionCardView({ card, jobRef }: { card: WebQuestionCard; jobR
     const trimmed = text.trim();
     if (!trimmed) return;
     answer.mutate({ questionId: card.questionId, answer: trimmed, answeredBy: ANSWERED_BY });
+  }
+
+  if (card.withdrawnAt != null && card.answer == null) {
+    return (
+      <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <XCircle size={15} className="text-faint" />
+          <div className="min-w-0">
+            <p className="truncate text-[12.5px] text-dim line-through">{card.question}</p>
+            <p className="text-[12px] text-faint">
+              Withdrawn{card.withdrawnReason ? ` — ${card.withdrawnReason}` : ''}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (card.answer != null) {

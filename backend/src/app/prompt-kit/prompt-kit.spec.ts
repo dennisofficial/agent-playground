@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   BASELINE_FIRST_NOTE,
+  CANDOR_NOTE,
+  CLARITY_OVER_COMMENTS_NOTE,
   CLOUD_SANDBOX_NOTE,
   DELETION_SAFETY_NOTE,
   DEVIATION_NOTE,
   REPORT_ONLY_NOTE,
+  SOLE_AUTHOR_NOTE,
   SPIKE_FIRST_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from './fragments';
@@ -38,6 +41,30 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(renderAgentPrompt(Agent.WORKER)).toContain(DELETION_SAFETY_NOTE);
   });
 
+  it('CLARITY_OVER_COMMENTS_NOTE reaches every code author but no reviewer or minimal-diff persona', () => {
+    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.FAN_OUT]) {
+      const out = renderAgentPrompt(agent, { jobKind: 'feature' });
+      expect(out.split(CLARITY_OVER_COMMENTS_NOTE).length - 1, String(agent)).toBe(1);
+    }
+    // onboarding brain authors code too (script fixes) — it rides the un-gated behavioral tail.
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' })).toContain(
+      CLARITY_OVER_COMMENTS_NOTE,
+    );
+    // deliberately excluded: reviewers and the minimal-diff autofix apply persona.
+    for (const agent of [Agent.REVIEW_AGENT, Agent.PR_REVIEW, Agent.MASTER_REVIEW, Agent.AUTOFIX_FIX]) {
+      expect(renderAgentPrompt(agent), String(agent)).not.toContain(CLARITY_OVER_COMMENTS_NOTE);
+    }
+  });
+
+  it('CANDOR_NOTE reaches the brain (feature + onboarding) but no worker/subagent persona', () => {
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' })).toContain(CANDOR_NOTE);
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' })).toContain(CANDOR_NOTE);
+    // brain-only conversational stance: not the build/review/writer personas.
+    for (const agent of [Agent.WORKER, Agent.FAN_OUT, Agent.REVIEW_AGENT, Agent.PR_REVIEW]) {
+      expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(CANDOR_NOTE);
+    }
+  });
+
   it('REPORT_ONLY_NOTE reaches the advisory subagents but NOT debug (it keeps its own line)', () => {
     for (const agent of [
       Agent.EXPLORE,
@@ -53,6 +80,16 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(debug).toContain('Do NOT run commands');
     expect(debug).not.toContain(REPORT_ONLY_NOTE);
     expect(renderAgentPrompt(Agent.TEST)).toContain('using Bash'); // test/debug command distinction preserved
+  });
+
+  it('the sole-author invariant reaches every file-touching / operator-facing agent, exactly once', () => {
+    // brain (feature + onboarding), worker orchestrator, pr-review, and the fan-out writer.
+    for (const agent of [Agent.WORKER, Agent.PR_REVIEW, Agent.FAN_OUT]) {
+      const out = renderAgentPrompt(agent, { jobKind: 'feature' });
+      expect(out.split(SOLE_AUTHOR_NOTE).length - 1, String(agent)).toBe(1);
+    }
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' })).toContain(SOLE_AUTHOR_NOTE);
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' })).toContain(SOLE_AUTHOR_NOTE);
   });
 
   it('the cloud-sandbox note is ONE shared fragment across the composed driver personas (dedup)', () => {

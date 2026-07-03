@@ -87,4 +87,15 @@ export class PlanReviewEntity extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   codex_session_id!: string | null;
+
+  /**
+   * When the plan-review WEDGE reconciler re-drove a finalize nudge for this round (null = never). Set
+   * AFTER the nudge turn ran. Guards the reconciler against an infinite loop: a job left stuck in
+   * `plan_review` (review terminal + delivered, but the brain never called `finalize_plan` — a crash cut
+   * the turn off, or it simply stopped) is nudged AT MOST ONCE per review round. A later `submit_plan`
+   * opens a NEW round (a fresh row, null again), so a genuine re-review is still eligible for its own
+   * one-shot nudge. See `AgentSessionManager.reconcileWedgedPlanReviews`.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  finalize_nudged_at!: Date | null;
 }

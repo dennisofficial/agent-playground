@@ -9,6 +9,7 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
+import { SOLE_AUTHOR_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class SandboxGroup {
@@ -28,6 +29,12 @@ export class SandboxGroup {
       'ask_question for decisions and facts only the operator knows). Your work reaches their world ONLY',
       'through what you ship (the PR) and what you post in chat.',
     ].join('\n');
+  }
+
+  /** normal block 01b — you are the sole author of the checkout (no phantom outside/concurrent editor). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1015, condition: notOnboarding })
+  soleAuthor(): string {
+    return SOLE_AUTHOR_NOTE;
   }
 
   /** normal block 02 — you own git in the sandbox. */
@@ -104,6 +111,8 @@ export class SandboxGroup {
       'Never ask them to run commands, edit files, or boot anything "on their machine" — YOU boot everything',
       'here. The only things you route to them are secret values/uploads (request_secret/request_file) and',
       'answers only they know (ask_question).',
+      '',
+      SOLE_AUTHOR_NOTE,
     ].join('\n');
   }
 }

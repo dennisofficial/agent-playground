@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AUTH_REFRESH_SINK } from '../engine/auth-refresh.port';
 import { GitModule } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -14,6 +15,7 @@ import {
   JobEntity,
   JobSandboxEntity,
 } from '../persistence/entities';
+import { AuthRefreshSinkService } from './auth-refresh.sink';
 import { CredentialResolver } from './credential-resolver.service';
 import { OrgCredentialsController } from './credentials.controller';
 import { OnboardingController } from './onboarding.controller';
@@ -65,6 +67,8 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
     WorktreeConfigStore,
     CredentialResolver,
     OnboardingService,
+    AuthRefreshSinkService,
+    { provide: AUTH_REFRESH_SINK, useExisting: AuthRefreshSinkService },
   ],
   exports: [
     TenantCredentialStore,
@@ -72,6 +76,7 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
     WorktreeConfigStore,
     CredentialResolver,
     OnboardingService,
+    AUTH_REFRESH_SINK,
   ],
 })
 export class OnboardingModule {}

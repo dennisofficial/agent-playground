@@ -151,6 +151,50 @@ function fakeCodexSdk() {
   return { sdk, ctorCalls, threadCalls };
 }
 
+/** A complete ChatGPT-plan `auth.json` blob (passes `assertValidCodexAuthJson`). */
+function codexAuthBlob(lastRefresh: string, accessToken = 'a'): string {
+  return JSON.stringify({
+    OPENAI_API_KEY: null,
+    tokens: { id_token: 'i', access_token: accessToken, refresh_token: 'r' },
+    last_refresh: lastRefresh,
+  });
+}
+const VALID_CODEX_AUTH = codexAuthBlob('2026-07-01T00:00:00.000Z');
+
+/**
+ * A fake Codex SDK that, on `runStreamed`, overwrites its CODEX_HOME `auth.json` with `refreshedBlob`
+ * (simulating an in-place token refresh) — or leaves it untouched when `refreshedBlob` is null.
+ */
+function fakeRefreshingCodexSdk(refreshedBlob: string | null) {
+  let codexHome: string | undefined;
+  class FakeCodex {
+    constructor(opts: Record<string, unknown>) {
+      codexHome = (opts.env as Record<string, string> | undefined)?.CODEX_HOME;
+    }
+    startThread() {
+      return {
+        id: 'thread-1',
+        runStreamed: async () => {
+          if (refreshedBlob !== null && codexHome) {
+            writeFileSync(join(codexHome, 'auth.json'), refreshedBlob);
+          }
+          return {
+            events: (async function* () {
+              yield { type: 'thread.started', job_id: 'thread-1' };
+              yield { type: 'item.completed', item: { type: 'agent_message', text: 'codex done' } };
+              yield { type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } };
+            })(),
+          };
+        },
+      };
+    }
+    resumeThread() {
+      return this.startThread();
+    }
+  }
+  return { Codex: FakeCodex } as unknown as typeof import('@openai/codex-sdk');
+}
+
 describe('EngineCore — Claude mode/home/credential wiring', () => {
   it('execute mode: write tools, default permission, isolated CLAUDE_CONFIG_DIR, subscription token threaded', async () => {
     const { sdk, captured } = fakeClaudeSdk();
@@ -575,7 +619,7 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
       systemPrompt: 'persona',
       sandboxKey: 'acme--feat',
       mode: 'execute',
-      auth: { secret: 'codex-oauth' },
+      auth: { secret: VALID_CODEX_AUTH },
     });
     // Subscription-only: the CLI reads auth.json from CODEX_HOME, so NO apiKey is passed to the client.
     expect(ctorCalls[0].apiKey).toBeUndefined();
@@ -598,9 +642,53 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
       systemPrompt: 'persona',
       sandboxKey: 'acme--feat',
       mode: 'plan',
-      auth: { secret: 'codex-oauth' },
+      auth: { secret: VALID_CODEX_AUTH },
     });
     expect(threadCalls[0].sandboxMode).toBe('read-only');
+  });
+});
+
+describe('EngineCore — Codex auth-refresh readback', () => {
+  const runCodex = async (opts: {
+    refreshedBlob: string | null;
+    persistAuthRefresh?: boolean;
+    sandboxKey: string;
+  }) => {
+    const core = new EngineCore(fakeClaudeSdk().sdk, fakeRefreshingCodexSdk(opts.refreshedBlob), {
+      homeRoot: HOME_ROOT,
+    });
+    return core.run({
+      engine: 'codex',
+      task: 'do it',
+      cwd: '/tmp/wt',
+      systemPrompt: 'persona',
+      sandboxKey: opts.sandboxKey,
+      mode: 'execute',
+      auth: { secret: VALID_CODEX_AUTH },
+      ...(opts.persistAuthRefresh ? { persistAuthRefresh: true } : {}),
+    });
+  };
+
+  it('relays the refreshed auth.json when Codex rewrote it AND persistAuthRefresh is set', async () => {
+    const refreshed = codexAuthBlob('2026-07-02T00:00:00.000Z', 'a2');
+    const res = await runCodex({ refreshedBlob: refreshed, persistAuthRefresh: true, sandboxKey: 'rb--hit' });
+    expect(res.refreshedAuthSecret).toBe(refreshed);
+  });
+
+  it('does NOT relay when the overlay is unchanged (no real refresh)', async () => {
+    const res = await runCodex({ refreshedBlob: VALID_CODEX_AUTH, persistAuthRefresh: true, sandboxKey: 'rb--same' });
+    expect(res.refreshedAuthSecret).toBeUndefined();
+  });
+
+  it('does NOT relay when persistAuthRefresh is unset (env-fallback gate) even though the file changed', async () => {
+    const refreshed = codexAuthBlob('2026-07-02T00:00:00.000Z', 'a3');
+    const res = await runCodex({ refreshedBlob: refreshed, sandboxKey: 'rb--gated' });
+    expect(res.refreshedAuthSecret).toBeUndefined();
+  });
+
+  it('does NOT relay a corrupt refreshed overlay (never propagates an invalid blob)', async () => {
+    const res = await runCodex({ refreshedBlob: '{not valid json', persistAuthRefresh: true, sandboxKey: 'rb--corrupt' });
+    expect(res.refreshedAuthSecret).toBeUndefined();
   });
 });
 

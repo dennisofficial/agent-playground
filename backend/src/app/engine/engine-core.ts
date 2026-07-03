@@ -5,11 +5,13 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { applyClaudeAuth } from './claude-auth';
 import { atlasEngineHomeDir } from './engine-home';
-import { ensureCodexAuthHome } from './codex-auth-home';
+import { assertValidCodexAuthJson, ensureCodexAuthHome, readCodexAuthHome } from './codex-auth-home';
 // Import from the DIRECT (Nest-free) assembly path, not the prompt-kit barrel — this module bundles into the
 // in-container engine, and the barrel re-exports the NestJS PromptService/PromptKitModule.
 import { renderAgentPrompt } from '../prompt-kit/assemble';
 import { Agent } from '../prompt-kit/agent';
+import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
+import { context7Enabled, qualifyContext7ToolNames } from './context7-tools';
 import {
   EngineAuthError,
   isAuthErrorMessage,
@@ -174,6 +176,10 @@ export function claudeSessionExists(configDir: string, sessionId: string): boole
 // the sandbox (the per-sandbox bridge network has NAT egress). Enabled on every turn so the engine can
 // pull current docs / latest versions. This is a personal, trusted deployment — see `agents/web` notes.
 const WEB_TOOLS = ['WebSearch', 'WebFetch'];
+// Context7 (curated, version-pinned library docs) — see engine/context7-tools.ts. Gated on CONTEXT7_API_KEY:
+// empty (the default) unless the deployment injects the key into the sandbox env, so `docs` sees these tools
+// only when the remote server is actually registered (context7-bridge-options.ts), never a phantom name.
+const CONTEXT7_TOOLS = context7Enabled() ? qualifyContext7ToolNames() : [];
 // `Task` spawns a subagent — see SUBAGENTS below (read-only, Sonnet-pinned) for token-cheap exploration.
 // The task tools (TaskCreate/TaskUpdate/TaskList/TaskGet — the SDK 0.3.x successors to the legacy
 // TodoWrite) let the orchestrator maintain a LIVE task list as its visible decomposition; the navigator
@@ -189,8 +195,16 @@ const PLAN_TOOLS = [...WORKER_TOOLS, 'ExitPlanMode'];
 // review turn shouldn't fan out.
 const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS];
 // Auto-approve safe reads, web, and subagent spawning; writes/bash fall through to canUseTool where the
-// boundary is re-applied.
-const AUTO_APPROVE = ['Read', 'Glob', 'Grep', 'Task', ...TASK_TOOLS, ...WEB_TOOLS];
+// boundary is re-applied. Context7 docs tools (read-only, gated off by default) auto-approve too so the
+// `docs` subagent never stalls on a permission prompt for them.
+const AUTO_APPROVE = ['Read', 'Glob', 'Grep', 'Task', ...TASK_TOOLS, ...WEB_TOOLS, ...CONTEXT7_TOOLS];
+
+// LSP navigation/rename (`atlas-lsp-ts`, registered per-turn — see sandbox/image/lsp-bridge-options.ts).
+// Subagent `tools:` arrays are explicit, not inherited from the parent turn's `allowedTools`, so each
+// subagent that should get these needs them listed here. Read-only investigators get navigation only
+// (no `rename_symbol`); writers get the full set since they're the ones actually renaming things.
+const LSP_NAV_TOOLS = qualifyLspToolNames(LSP_NAV_TOOL_NAMES);
+const LSP_WRITE_TOOLS = qualifyLspToolNames(LSP_TOOL_NAMES);
 
 // Subagent types the engine can spawn via `Task`. With `settingSources: []` there are NO on-disk agent
 // definitions, so this map is the ONLY set of spawnable subagents — every subagent is Sonnet-pinned by
@@ -207,7 +221,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'README, ARCHITECTURE.md, docs/). State the search breadth you want: "quick" (one targeted ' +
       'lookup), "medium" (moderate exploration), or "very thorough" (sweep multiple locations and ' +
       'naming conventions). For EXTERNAL library/framework/API documentation, use `docs` instead.',
-    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'sonnet',
     prompt: renderAgentPrompt(Agent.EXPLORE),
   },
@@ -217,7 +231,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'current API for Y" from the LIBRARY\'S OWN docs on the web, not from this repo\'s source. Returns a ' +
       'synthesized, cited, version-aware answer. Use `explore` for how THIS codebase (and its own docs) ' +
       'work; use `docs` for third-party packages, frameworks, and external APIs.',
-    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...CONTEXT7_TOOLS],
     model: 'sonnet',
     prompt: renderAgentPrompt(Agent.DOCS),
   },
@@ -227,7 +241,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'concrete findings — correctness bugs, behavior silently removed, convention/altitude drift, ' +
       'missing edge cases — grounded in the surrounding code. A cheap second pair of eyes before a step ' +
       'is called done. It reports; it does NOT fix.',
-    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'sonnet',
     prompt: renderAgentPrompt(Agent.REVIEW_AGENT),
   },
@@ -236,7 +250,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'Read-only root-cause tracer. Give it a failure (error, stack trace, failing test, wrong ' +
       'behavior) and it traces the cause through the code and names the exact fix site and smallest fix ' +
       '— it does not run commands or change anything. Use `test` to actually run the verification.',
-    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'sonnet',
     prompt: renderAgentPrompt(Agent.DEBUG),
   },
@@ -259,7 +273,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
 // boxed). They have NO `Task` tool — writers cannot recursively fan out (no nesting blowup). The
 // orchestrator owns the decomposition and runs writers ONE AT A TIME; file ownership between writers is
 // by serialization, not a hard lock (see ORCHESTRATE_EXECUTE_SYSTEM in the driver).
-const WRITER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', ...WEB_TOOLS];
+const WRITER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', ...WEB_TOOLS, ...LSP_WRITE_TOOLS];
 const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
   implement: {
     description:
@@ -484,7 +498,14 @@ export class EngineCore {
       // forwardSubagentText: forward a subagent's FULL text+thinking (not just its tool calls) tagged with
       // `parent_tool_use_id`, so the brain turn can render each subagent run as its own nested transcript.
       ...(richStream
-        ? { includePartialMessages: true, thinking: { type: 'adaptive' as const }, forwardSubagentText: true }
+        ? {
+            includePartialMessages: true,
+            // `display: 'summarized'` is load-bearing: without it the adaptive default is `omitted`, which
+            // streams thinking blocks with EMPTY text — the `&& block.thinking` guards below then drop them,
+            // so nothing is ever emitted or persisted. Summarized surfaces the reasoning for debugging.
+            thinking: { type: 'adaptive' as const, display: 'summarized' as const },
+            forwardSubagentText: true,
+          }
         : {}),
       // R1 tool-bridge: optional extra options (e.g. mcpServers) from the in-container entrypoint.
       ...(extraClaudeOptions ?? {}),
@@ -825,11 +846,38 @@ export class EngineCore {
         }
       : undefined;
 
+    // Auth-refresh write-back: Codex re-mints its short-lived tokens from the stored `refresh_token` and
+    // rewrites `auth.json` in place. Read the overlay back and relay it so the host can persist the fresh
+    // blob (else the stored credential is a rotting snapshot). Gated on `persistAuthRefresh` — the host
+    // only sets it for ORG-sourced auth, so an env-fallback run never leaks its ambient token here.
+    const refreshedAuthSecret = args.persistAuthRefresh
+      ? this.readBackCodexRefresh(sandboxKey, auth.secret)
+      : undefined;
+
     return {
       result: summary,
       sessionId: resolvedSession ?? thread.id ?? undefined,
       ...(usage ? { usage } : {}),
+      ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
     };
+  }
+
+  /**
+   * Read the Codex overlay `auth.json` back after a turn and return it ONLY when it changed from what we
+   * wrote (a real token refresh) AND still parses as a valid auth.json. Best-effort: any failure returns
+   * `undefined` (never fail the turn, never propagate a corrupt overlay). Cheap string compare → no-op on
+   * the common path where Codex didn't refresh.
+   */
+  private readBackCodexRefresh(sandboxKey: string, writtenSecret: string): string | undefined {
+    try {
+      const after = readCodexAuthHome(this.homeRoot(), sandboxKey);
+      if (!after || after === writtenSecret) return undefined;
+      assertValidCodexAuthJson(JSON.parse(after));
+      return after;
+    } catch (err) {
+      this.logger.warn(`codex auth-refresh readback skipped: ${err instanceof Error ? err.message : err}`);
+      return undefined;
+    }
   }
 }
 

@@ -421,6 +421,30 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await dataSource.query(`UPDATE jobs SET open_question_count = 99 WHERE id = $1`, [jobId]);
     await store.reconcileOpenQuestionCounts();
     expect(await openCount(dataSource, jobId)).toBe(1); // q-2 still unanswered
+
+    // OPEN-CARD SURFACING: only q-2 is still open (q-1 answered) → it's what the brain gets re-surfaced.
+    const open1 = await store.openQuestionCards(jobId);
+    expect(open1.map((c) => c.questionId)).toEqual(['q-2']);
+
+    // WITHDRAW q-2 → terminal, decrements the counter, drops out of the open list.
+    expect(await store.withdrawQuestion(jobId, 'q-2', 'reworded')).toEqual({ withdrawn: true });
+    expect(await openCount(dataSource, jobId)).toBe(0);
+    expect((await store.getQuestionCard(jobId, 'q-2'))?.withdrawnAt).toBeTruthy();
+    expect((await store.getQuestionCard(jobId, 'q-2'))?.withdrawnReason).toBe('reworded');
+    expect(await store.openQuestionCards(jobId)).toEqual([]);
+
+    // Idempotent: a second withdraw is a no-op; an answer racing in after withdrawal must NOT fire.
+    expect(await store.withdrawQuestion(jobId, 'q-2', 'again')).toEqual({ withdrawn: false });
+    expect(await store.markQuestionAnswered(jobId, 'q-2', 'too late')).toEqual({ firstAnswer: false });
+    expect(await openCount(dataSource, jobId)).toBe(0); // no double-decrement, no phantom answer
+
+    // A withdrawn (unanswered) card is not a boot-recovery candidate, and reconcile ignores it.
+    expect(
+      (await store.findUndeliveredAnsweredQuestions()).some((q) => q.questionId === 'q-2'),
+    ).toBe(false);
+    await dataSource.query(`UPDATE jobs SET open_question_count = 42 WHERE id = $1`, [jobId]);
+    await store.reconcileOpenQuestionCounts();
+    expect(await openCount(dataSource, jobId)).toBe(0); // withdrawn q-2 no longer counts as open
   }, 30_000);
 
   it('hasRecentSystemOperatorNotice matches an identical recent notice, and only that (dedup guard)', async () => {

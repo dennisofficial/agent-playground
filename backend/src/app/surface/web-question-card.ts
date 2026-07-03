@@ -53,6 +53,15 @@ export interface WebQuestionCard {
   deliveredAt?: string;
   /** Set true once a `create_decision` has consumed this Q&A, so the same answer can't attach twice. */
   loggedDecision?: boolean;
+  /**
+   * ISO-8601 time the brain RETRACTED this still-unanswered question via `withdraw_question` — e.g. to
+   * reword it, or because a later answer/turn made it moot. A withdrawn card is terminal (like answered):
+   * it no longer counts toward the open-question gate, is not re-surfaced to the brain, and the web renders
+   * it as a compact "withdrawn" state (the answer buttons disappear).
+   */
+  withdrawnAt?: string;
+  /** Optional operator-visible note on WHY the brain withdrew the question. */
+  withdrawnReason?: string;
 }
 
 /** Lowercase-kebab a label into a stable option id. */

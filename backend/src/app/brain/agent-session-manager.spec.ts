@@ -82,6 +82,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     getQuestionCard: vi.fn().mockResolvedValue(null),
     markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
     findUndeliveredAnsweredQuestions: vi.fn().mockResolvedValue([]),
+    // Open-question surfacing + withdraw (the "stop re-asking" fixes); default to "none open" / "withdrew ok".
+    openQuestionCards: vi.fn().mockResolvedValue([]),
+    withdrawQuestion: vi.fn().mockResolvedValue({ withdrawn: true }),
     // Secure secret-request gate (request_secret lifecycle); default to "no request open".
     openSecretRequest: vi.fn().mockResolvedValue({ ok: true }),
     awaitingSecretId: vi.fn().mockResolvedValue(null),
@@ -910,6 +913,27 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect((result as { questionId: string }).questionId).toBeTruthy();
   });
 
+  it('(e3) withdraw_question retracts an open card by id (and reports a no-op when it could not be withdrawn)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+
+    // Happy path: a still-open card is withdrawn (the store decrements the gate).
+    (mockStore.withdrawQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: true });
+    const ok = await tools['withdraw_question']({ questionId: 'q-123', reason: 'reworded' });
+    expect(mockStore.withdrawQuestion).toHaveBeenCalledWith(THREAD_ID, 'q-123', 'reworded');
+    expect(ok).toMatchObject({ ok: true, questionId: 'q-123' });
+
+    // Missing questionId → refused before touching the store.
+    (mockStore.withdrawQuestion as ReturnType<typeof vi.fn>).mockClear();
+    const bad = await tools['withdraw_question']({});
+    expect(bad).toMatchObject({ ok: false });
+    expect(mockStore.withdrawQuestion).not.toHaveBeenCalled();
+
+    // The operator answered first → the store reports no winner → the tool surfaces a no-op (don't re-ask).
+    (mockStore.withdrawQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: false });
+    const raced = await tools['withdraw_question']({ questionId: 'q-123' });
+    expect(raced).toMatchObject({ ok: false });
+  });
+
   it('(f) create_decision attaches the most-recently-answered question and returns the resolved decision + id', async () => {
     // With no explicit questionId / delivery seedQuestionId, create_decision falls back to the newest
     // answered, not-yet-logged card (ordered by answeredAt) — its `ts` is the card it stamps consumed.
@@ -1274,6 +1298,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     wasReset?: boolean;
     sessionId?: string | null;
     resetContainer?: ReturnType<typeof vi.fn>;
+    /** A live brain turn `runningBrainTurn` returns (drives the steer-into-live path); default none. */
+    runningBrainTurn?: { turn_id: string } | null;
+    /** The engine runner's `steer` mock (present → `steerIntoLiveBrainTurn` can fire). */
+    steer?: ReturnType<typeof vi.fn>;
   }) {
     const store = {
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
@@ -1286,6 +1314,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       loadJob: vi.fn().mockResolvedValue({ kind: null }),
       // `pendingCard` simulates an open `ask_question` card (the live "currently-open card" reader).
       getQuestionCard: vi.fn().mockResolvedValue(opts.pendingCard ?? null),
+      // The open-question surfacing prefix reads this each turn; default to "none open".
+      openQuestionCards: vi.fn().mockResolvedValue([]),
       markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
       awaitingSecretId: vi.fn().mockResolvedValue(null),
       getSecretCard: vi.fn().mockResolvedValue(null),
@@ -1312,7 +1342,11 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         .mockResolvedValue({ job_id: THREAD_ID, org_id: TEAM_ID, session_id: opts.sessionId ?? null }),
       save: vi.fn().mockResolvedValue(undefined),
     } as unknown as Repository<JobSandboxEntity>;
-    const dockerRunner = { run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }) } as unknown as EngineRunnerPort;
+    const steer = opts.steer ?? vi.fn().mockResolvedValue(undefined);
+    const dockerRunner = {
+      run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }),
+      steer,
+    } as unknown as EngineRunnerPort;
     const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
     // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
     // end-to-end through the brain (push/end + the durable blocks) exactly as in production.
@@ -1335,7 +1369,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as DecisionApprovalService,
       lifecycle,
       dockerRunner,
-      { listRunning: async () => [] } as never, // turnRegistry
+      {
+        listRunning: async () => [],
+        runningBrainTurn: async () => opts.runningBrainTurn ?? null,
+      } as never, // turnRegistry
       {} as unknown as PlanReviewService,
       {} as unknown as JobDispatcher,
       surface,
@@ -1620,6 +1657,78 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     expect((dockerRunner.run as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
     expect(maxActive).toBe(1); // never two concurrent engine turns resuming the same session
+  });
+
+  it('steers a queued question-answer into a LIVE brain turn instead of spawning a second turn (+ stamps the card)', async () => {
+    const steer = vi.fn().mockResolvedValue(undefined);
+    const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
+    const { manager, dockerRunner, store } = makeManager({
+      findSandbox: { worktreePath: '/wt' },
+      run,
+      steer,
+      runningBrainTurn: { turn_id: 'T-live' },
+      // the answered, not-yet-delivered card the seed carries
+      pendingCard: { type: 'question_card', answer: 'napi-rs', deliveredAt: null },
+    });
+
+    const answerSeed: ChatStimulus = {
+      ...stimulus,
+      id: 'seed-ans-1',
+      body: '<system_notification>The operator answered your question "toolchain?": napi-rs</system_notification>',
+      author: { id: 'U-SYSTEM', displayName: 'System' },
+      seed: true,
+      seedQuestionId: 'q-1',
+    };
+    await manager.handleChatTurn(answerSeed);
+
+    // Steered into the live turn; NO second engine turn kicked.
+    expect(steer).toHaveBeenCalledWith('T-live', 'seed-ans-1', answerSeed.body);
+    expect(dockerRunner.run).not.toHaveBeenCalled();
+    // The answered card is stamped delivered at steer time (stops it re-surfacing / re-seeding).
+    expect(store.markQuestionDelivered).toHaveBeenCalledWith(THREAD_ID, 'q-1');
+  });
+
+  it('does NOT steer a reset-verify seed — it runs its own (guarded) turn even when a turn is live', async () => {
+    const steer = vi.fn().mockResolvedValue(undefined);
+    const { manager } = makeManager({
+      findSandbox: { worktreePath: '/wt' },
+      steer,
+      runningBrainTurn: { turn_id: 'T-live' },
+    });
+
+    const resetVerify: ChatStimulus = {
+      ...stimulus,
+      id: 'seed-reset-1',
+      author: { id: 'U-SYSTEM', displayName: 'System' },
+      seed: true,
+      seedResetVerify: true,
+    };
+    await manager.handleChatTurn(resetVerify);
+
+    // Reset-verify is exempt from the steer-into-live shortcut (its cold-attach semantics are load-bearing).
+    expect(steer).not.toHaveBeenCalled();
+  });
+
+  it('with NO live turn, a question-answer seed runs its own turn (steer path is skipped)', async () => {
+    const steer = vi.fn().mockResolvedValue(undefined);
+    const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
+    const { manager, dockerRunner } = makeManager({
+      findSandbox: { worktreePath: '/wt' },
+      run,
+      steer,
+      runningBrainTurn: null,
+      pendingCard: { type: 'question_card', answer: 'napi-rs', deliveredAt: null },
+    });
+
+    await manager.handleChatTurn({
+      ...stimulus,
+      id: 'seed-ans-2',
+      seed: true,
+      seedQuestionId: 'q-2',
+    });
+
+    expect(steer).not.toHaveBeenCalled();
+    expect(dockerRunner.run).toHaveBeenCalledTimes(1);
   });
 
   it('posts an actionable message and does NOT run a turn when the repo is not connected', async () => {
@@ -1943,6 +2052,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       createFollowUpJob: vi.fn().mockResolvedValue('th-followup'),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       getQuestionCard: vi.fn().mockResolvedValue(null),
+      openQuestionCards: vi.fn().mockResolvedValue([]),
       markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
       awaitingSecretId: vi.fn().mockResolvedValue(null),
       getSecretCard: vi.fn().mockResolvedValue(null),
@@ -2328,6 +2438,127 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
       expect(stimulusStore.undeliveredChatThreads).not.toHaveBeenCalled();
       expect(pumpSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reconcileWedgedPlanReviews (the leader plan_review wedge re-drive)', () => {
+    const REVIEW = {
+      id: 'rev-1',
+      job_id: JOB_ID,
+      org_id: ORG_ID,
+      round: 3,
+      status: 'failed' as const,
+      error: 'Codex Exec exited 1: missing field `id_token`',
+      findings: null,
+    };
+
+    /** A manager wired with the deps the wedge reconciler touches; everything else inert. */
+    function makeWedgeManager(opts: {
+      stalled?: unknown[];
+      job?: { status: string; repoId: string } | null;
+      liveTurn?: { turn_id: string } | null;
+      pendingChat?: ChatStimulus[];
+      leader?: boolean;
+    } = {}) {
+      const planReview = {
+        findFinalizeStalledReviews: vi.fn().mockResolvedValue(opts.stalled ?? []),
+        markFinalizeNudged: vi.fn().mockResolvedValue(undefined),
+      };
+      const store = {
+        loadJob: vi
+          .fn()
+          .mockResolvedValue(
+            opts.job === undefined ? { status: 'plan_review', repoId: REPO_ID } : opts.job,
+          ),
+      };
+      const runningBrainTurn = vi.fn().mockResolvedValue(opts.liveTurn ?? null);
+      const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
+      const stimulusStore = {
+        eligiblePendingChat: vi.fn().mockResolvedValue(opts.pendingChat ?? []),
+      };
+      const getState = vi.fn().mockReturnValue(opts.leader === false ? 'follower' : 'leader');
+      const election = { getState } as unknown as LeaderElectionService;
+      const inert = {} as never;
+      const manager = new AgentSessionManager(
+        store as never, inert, inert, inert, inert, // store, driverStore, memory, approvals, lifecycle (5)
+        inert, // engineRunner (6)
+        turnRegistry, // turnRegistry (7)
+        planReview as never, inert, inert, // planReview, dispatcher, surface (10)
+        inert, // sandboxRows (11)
+        inert, // stimulusRows (12)
+        stimulusStore as never, // stimulusStore (13)
+        inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
+        election, // election (21)
+        inert, inert, inert, inert, inert, inert, // ledger…git (27)
+        { generate: () => 'SYSTEM' } as never, // prompts (28)
+        { register: () => undefined } as never, // threadInput (29)
+      );
+      // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
+      const handleChatTurn = vi
+        .spyOn(manager, 'handleChatTurn')
+        .mockResolvedValue(undefined);
+      const run = () =>
+        (manager as never as { reconcileWedgedPlanReviews: () => Promise<void> }).reconcileWedgedPlanReviews();
+      return { manager, run, planReview, store, runningBrainTurn, stimulusStore, handleChatTurn, getState };
+    }
+
+    it('NON-LEADER: does nothing (no query, no nudge)', async () => {
+      const { run, planReview, handleChatTurn } = makeWedgeManager({ stalled: [REVIEW], leader: false });
+      await run();
+      expect(planReview.findFinalizeStalledReviews).not.toHaveBeenCalled();
+      expect(handleChatTurn).not.toHaveBeenCalled();
+    });
+
+    it('a wedged job (settled+delivered review, no live turn, no pending chat): nudges then stamps', async () => {
+      const { run, handleChatTurn, planReview } = makeWedgeManager({ stalled: [REVIEW] });
+      await run();
+      await new Promise((r) => setTimeout(r, 0)); // let the fire-and-forget per-candidate promise settle
+
+      expect(handleChatTurn).toHaveBeenCalledOnce();
+      const stim = handleChatTurn.mock.calls[0][0] as ChatStimulus;
+      expect(stim.jobId).toBe(JOB_ID);
+      expect(stim.seed).toBe(true); // invisible system seed, not an operator bubble
+      expect(stim.body).toMatch(/finalize_plan/);
+      expect(stim.body).toMatch(/id_token/); // the failed-review outcome is recapped
+      // Stamped ONLY after the nudge turn completed (at-least-once loop guard).
+      expect(planReview.markFinalizeNudged).toHaveBeenCalledWith('rev-1');
+    });
+
+    it('a LIVE brain turn is already driving the job: skips (no nudge, no stamp)', async () => {
+      const { run, handleChatTurn, planReview } = makeWedgeManager({
+        stalled: [REVIEW],
+        liveTurn: { turn_id: 'turn-live' },
+      });
+      await run();
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(handleChatTurn).not.toHaveBeenCalled();
+      expect(planReview.markFinalizeNudged).not.toHaveBeenCalled();
+    });
+
+    it('the job already left plan_review (finalized since the query): skips without stamping', async () => {
+      const { run, handleChatTurn, planReview } = makeWedgeManager({
+        stalled: [REVIEW],
+        job: { status: 'awaiting_approval', repoId: REPO_ID },
+      });
+      await run();
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(handleChatTurn).not.toHaveBeenCalled();
+      // NOT stamped — the row stays eligible in case the job wedges again on a later round.
+      expect(planReview.markFinalizeNudged).not.toHaveBeenCalled();
+    });
+
+    it('an operator/system chat is still pending: defers to the chat sweep (no nudge)', async () => {
+      const { run, handleChatTurn, planReview } = makeWedgeManager({
+        stalled: [REVIEW],
+        pendingChat: [pendingRow('s1', 'hold on', new Date())],
+      });
+      await run();
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(handleChatTurn).not.toHaveBeenCalled();
+      expect(planReview.markFinalizeNudged).not.toHaveBeenCalled();
     });
   });
 

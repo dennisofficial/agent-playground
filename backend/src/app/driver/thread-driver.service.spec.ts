@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ModuleRef } from '@nestjs/core';
 import { EngineAuthError } from '../engine';
 import type { EngineRunnerPort, ToolBridgeOptions } from '../engine';
-import { ThreadDriver } from './thread-driver.service';
+import { ThreadDriver, shortReason } from './thread-driver.service';
 import { BuildShipService } from './build-ship.service';
 import type {
   DriverStoreService,
@@ -34,6 +34,7 @@ import type {
   ThreadStatus,
   Job,
 } from '../domain';
+import type { ThreadTerminalRecord } from '../persistence/entities';
 
 /**
  * W4 — the SECTION/PHASE DRIVER unit tests. Every dependency is mocked (NO real LLM / git / network):
@@ -182,6 +183,22 @@ function makeStore(state: StoreState): {
       const card = state.operatorInputCards.find((c) => c.questionId === questionId);
       if (card) card.delivered = true;
     }),
+    // ── typed terminal record (ADR 0004) — backed on the thread object so a "restart" (fresh driver, same
+    //    state) preserves the assertion, exactly like the DB column. ────────────────────────────────────
+    recordThreadTermination: vi.fn(
+      async (threadId: string, terminal: ThreadTerminalRecord) => {
+        const s = state.threads.find((x) => x.id === threadId);
+        if (s) (s as { terminal_record?: ThreadTerminalRecord | null }).terminal_record = terminal;
+      },
+    ),
+    clearTerminalRecord: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId);
+      if (s) (s as { terminal_record?: ThreadTerminalRecord | null }).terminal_record = null;
+    }),
+    getTerminalRecord: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId);
+      return (s as { terminal_record?: ThreadTerminalRecord | null })?.terminal_record ?? null;
+    }),
   } as unknown as DriverStoreService;
   return { store, state };
 }
@@ -260,10 +277,21 @@ function makePr(): { pr: GithubPrService; opened: Array<{ head: string }> } {
   return { pr, opened };
 }
 
-function makeTurn(): {
+/**
+ * The mock engine turn. By default it simulates the orchestrator asserting completion — it calls the host
+ * bridge's `complete_thread` before returning, so the driver reads a `done` record (ADR 0004). Options let a
+ * test simulate the two new failure shapes: `completeThread: false` → the turn ends WITHOUT asserting (→
+ * `incomplete`); `transientFailures: N` → the turn throws a transient infra error its first N invocations
+ * (→ the driver's silent retry) before succeeding.
+ */
+function makeTurn(
+  opts: { completeThread?: boolean; transientFailures?: number } = {},
+): {
   turn: TurnRunnerService;
   calls: Array<{ mode: string; stepId?: string | null }>;
 } {
+  const completeThread = opts.completeThread ?? true;
+  let remainingFailures = opts.transientFailures ?? 0;
   const calls: Array<{ mode: string; stepId?: string | null }> = [];
   const turn = {
     runTurn: vi.fn(
@@ -271,8 +299,23 @@ function makeTurn(): {
         mode: string;
         stepId?: string | null;
         jobId: string;
+        toolBridge?: ToolBridgeOptions;
       }) => {
         calls.push({ mode: input.mode, stepId: input.stepId });
+        if (remainingFailures > 0) {
+          remainingFailures -= 1;
+          // A transient infra blip (NOT auth/detached/timeout/unresumable) — the driver retries it silently.
+          throw new Error('sandbox exec failed: connection reset by peer');
+        }
+        // Simulate the orchestrator's terminal assertion (what a real build turn MUST do).
+        if (completeThread && input.toolBridge?.tools?.['complete_thread']) {
+          await input.toolBridge.tools['complete_thread']({
+            summary: `built step ${input.stepId}`,
+            verification: [
+              { kind: 'test', command: 'pnpm test', exitCode: 0, outputTail: 'ok' },
+            ],
+          });
+        }
         return {
           report: `did step ${input.stepId}`,
           session: {
@@ -291,6 +334,17 @@ function makeTurn(): {
     canReattach: () => false,
   } as unknown as TurnRunnerService;
   return { turn, calls };
+}
+
+/** Simulate the orchestrator's ADR-0004 terminal assertion (`complete_thread`) from an INLINE turn mock, so
+ *  the driver reads a `done` record and advances. Inline mocks that omit this ⇒ the thread is `incomplete`. */
+async function assertThreadDone(input: {
+  stepId?: string | null;
+  toolBridge?: ToolBridgeOptions;
+}): Promise<void> {
+  await input.toolBridge?.tools?.['complete_thread']?.({
+    summary: `built step ${input.stepId}`,
+  });
 }
 
 /** Counters live on the returned object; the service is a thin wrapper bumping them. */
@@ -620,6 +674,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           modelReasoningEffort?: string;
           stepId?: string | null;
           jobId: string;
+          toolBridge?: ToolBridgeOptions;
         }) => {
           runs.push({
             mode: input.mode,
@@ -627,6 +682,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
             effort: input.modelReasoningEffort,
             stepId: input.stepId,
           });
+          await assertThreadDone(input);
           return {
             report: `did step ${input.stepId}`,
             session: {
@@ -680,6 +736,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           jobId: string;
           stepId?: string | null;
           richStream?: boolean;
+          toolBridge?: ToolBridgeOptions;
           onEvent?: (e: { kind: string; [k: string]: unknown }) => void;
         }) => {
           seen.push({ mode: input.mode, richStream: input.richStream });
@@ -692,6 +749,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
             input: { file_path: 'a.ts' },
           });
           input.onEvent?.({ kind: 'tool_result', id: 't1', result: 'ok' });
+          await assertThreadDone(input);
           return {
             report: `did ${input.stepId}`,
             session: {
@@ -799,7 +857,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // A runner that CAN re-attach; `reattach` resolves the in-flight turn and `runTurn` is a spy that must
     // NOT fire for the execute batch (no re-run). Typed with its real `TurnRunnerService.reattach` param so
     // `reattach.mock.calls[0][0]` below type-checks against what the driver actually passed it.
-    const reattach = vi.fn(async (_input: Parameters<TurnRunnerService['reattach']>[0]) => ({
+    const reattach = vi.fn(async (_input: Parameters<TurnRunnerService['reattach']>[0]) => {
+      // The re-supplied bridge serves the in-flight `complete_thread` the pre-restart turn was mid-way through.
+      await _input.toolBridge?.tools?.['complete_thread']?.({ summary: 'resumed and finished' });
+      return {
       report: 'resumed build',
       session: {
         id: 'sess-live',
@@ -810,7 +871,8 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
         branch: 'b',
         worktreePath: '/wt/b',
       },
-    }));
+      };
+    });
     const runTurn = vi.fn();
     const turn = { runTurn, reattach, canReattach: () => true } as unknown as TurnRunnerService;
     // A matching in-flight registry row for the thread's batch (lane `thread:<threadId>`, ctx.anchorStepId).
@@ -1035,6 +1097,60 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.opened).toHaveLength(0); // no PR opened on a failed build
   });
 
+  it('marks the thread INCOMPLETE and HALTS (no PR) when the orchestrator never calls complete_thread (ADR 0004)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    // The build turn runs CLEAN but never asserts completion — a clean exit is NOT evidence of done.
+    const { turn } = makeTurn({ completeThread: false });
+    const h = assemble(state, { turn });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'paused');
+
+    expect(state.threads[0].status).toBe('incomplete'); // halted, NOT silently done
+    expect(state.job.status).toBe('paused'); // needs-you, recoverable — NOT done, NOT failed
+    expect(h.opened).toHaveLength(0); // nothing shipped
+    expect(
+      h.posts.some((p) => p.includes('without asserting completion')),
+    ).toBe(true); // a durable halt card, never a silent dead-end
+    expect(h.autofix.autofixThread).not.toHaveBeenCalled(); // auto-fix skipped on a halt
+  });
+
+  it('SILENTLY RETRIES a transient infra blip and completes — never surfaces a phantom "failed" (ADR 0004)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    // First execute throws a transient (allowlisted) sandbox error; the retry succeeds and asserts done.
+    const { turn, calls } = makeTurn({ transientFailures: 1 });
+    const h = assemble(state, {
+      turn,
+      env: { DRIVER_TRANSIENT_RETRY_MS: '1' },
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(state.job.status).toBe('done'); // recovered
+    expect(calls.filter((c) => c.mode === 'execute').length).toBeGreaterThanOrEqual(2); // retried
+    expect(
+      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c) => c[1] === 'failed',
+      ),
+    ).toBe(false); // never stamped failed
+    expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no phantom error relay
+  });
+
   it('shutdown drain: a step error WHILE DRAINING leaves the job running (resumable on boot), never failed', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -1109,19 +1225,26 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
     const h = assemble(state);
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: { mode: string; stepId?: string | null }) => ({
-        report:
-          'Implemented the endpoint.\nDEVIATION: added a README nobody asked for.',
-        session: {
-          id: 's',
-          jobId: 'j',
-          stepId: input.stepId ?? null,
-          engine: 'claude',
-          mode: 'execute',
-          branch: 'b',
-          worktreePath: '/wt/b',
-        },
-      }),
+      async (input: {
+        mode: string;
+        stepId?: string | null;
+        toolBridge?: ToolBridgeOptions;
+      }) => {
+        await assertThreadDone(input);
+        return {
+          report:
+            'Implemented the endpoint.\nDEVIATION: added a README nobody asked for.',
+          session: {
+            id: 's',
+            jobId: 'j',
+            stepId: input.stepId ?? null,
+            engine: 'claude',
+            mode: 'execute',
+            branch: 'b',
+            worktreePath: '/wt/b',
+          },
+        };
+      },
     );
 
     await h.driver.dispatch(state.job);
@@ -1215,6 +1338,8 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           const result = await input.toolBridge!.tools['request_operator_input']!({
             question: 'Use Postgres or SQLite?',
           });
+          // The orchestrator resumes with the answer, finishes the work, and asserts completion.
+          await assertThreadDone(input);
           return {
             report: `answered: ${JSON.stringify(result)}`,
             session: {
@@ -1298,10 +1423,12 @@ describe('ThreadDriver — 401 auth recovery', () => {
           mode: string;
           stepId?: string | null;
           jobId: string;
+          toolBridge?: ToolBridgeOptions;
         }) => {
           if (++executes === 1) {
             throw new EngineAuthError('401 Invalid API key', 'sess-401');
           }
+          await assertThreadDone(input);
           return {
             report: `did ${input.stepId}`,
             session: {
@@ -1364,5 +1491,32 @@ describe('ThreadDriver — 401 auth recovery', () => {
     const h = assemble(state);
     await h.driver.resumePaused(state.job.id);
     expect(state.job.status).toBe('running'); // the ping itself does not flip a non-paused job
+  });
+});
+
+describe('shortReason', () => {
+  it('surfaces a child_process exec error\'s real stderr, not just "Command failed: <cmd>"', () => {
+    // Exactly Node's promisified execFile/exec rejection shape: `.message` is "Command failed: <cmd>\n<stderr>".
+    const err = new Error(
+      "Command failed: git -C /repo add -A\nfatal: cannot change to '/repo': No such file or directory\n",
+    );
+    expect(shortReason(err)).toBe(
+      "Command failed: git -C /repo add -A | fatal: cannot change to '/repo': No such file or directory",
+    );
+  });
+
+  it('returns a plain single-line message unchanged', () => {
+    expect(shortReason(new Error('econnreset'))).toBe('econnreset');
+  });
+
+  it('caps pathologically long messages instead of dumping a stack trace worth of text', () => {
+    const err = new Error(`Command failed: x\n${'y'.repeat(600)}`);
+    const out = shortReason(err);
+    expect(out.length).toBe(500);
+    expect(out.endsWith('...')).toBe(true);
+  });
+
+  it('falls back to String(err) for a non-Error throw', () => {
+    expect(shortReason('boom')).toBe('boom');
   });
 });

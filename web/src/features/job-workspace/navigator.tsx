@@ -228,7 +228,7 @@ export function Navigator({
           onClick={onConversation}
         />
         {/* Codex review — a lane directly under Main, shown once the plan has been submitted for review.
-            Opens the full round-by-round review dialogue in the detail pane (blue-highlighted, like a node). */}
+            Opens the full round-by-round review dialogue in the LEFT pane (orange-highlighted, a thread). */}
         {job?.codexReview ? (
           <CodexReviewRow
             review={job.codexReview}
@@ -241,7 +241,6 @@ export function Navigator({
           job={job}
           jobId={jobRef.jobId}
           laneNode={laneNode}
-          detailNode={detailNode}
           onSelectNode={onSelectNode}
           onConversation={onConversation}
         />
@@ -367,7 +366,6 @@ function ThreadRows({
   job,
   jobId,
   laneNode,
-  detailNode,
   onSelectNode,
   onConversation,
 }: {
@@ -375,7 +373,6 @@ function ThreadRows({
   job: PipelineJob | null;
   jobId: string;
   laneNode: string | null;
-  detailNode: string | null;
   onSelectNode: (node: string) => void;
   onConversation: () => void;
 }) {
@@ -406,7 +403,6 @@ function ThreadRows({
       status={status}
       jobId={jobId}
       laneNode={laneNode}
-      detailNode={detailNode}
       onSelectNode={onSelectNode}
       onConversation={onConversation}
     />

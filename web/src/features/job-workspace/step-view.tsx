@@ -75,7 +75,8 @@ export function PhaseView({
   onSelectNode?: (node: string) => void;
   /**
    * Only the RIGHT (detail) pane's `PhaseView` instance owns the review-comments `activeTarget` — the LEFT
-   * (lane) instance's `selectedNode` is always a bare thread/step id (never commentable, see
+   * (lane) instance's `selectedNode` is always a transcript lane (a bare thread/step id, or a
+   * `rev:`/`fix:`/`codex-review:` child-thread lane), never a commentable file/doc (see
    * `use-selected-node.ts`'s `isDetailNode`), so it must NOT clear the right pane's active target to null
    * every time the operator switches lanes. Defaults false; `job-workspace.tsx` passes true only for the
    * `detailNode`-driven instance.

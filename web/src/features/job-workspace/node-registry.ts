@@ -22,16 +22,20 @@ export type NodeResolution = 'loading' | 'found' | 'not_found';
 /** A build thread / step leaf — a BARE id (no prefix); opens in the LEFT lane pane. */
 export const threadNode = (threadId: string): string => threadId;
 export const stepNode = (stepId: string): string => stepId;
-/** A review-agent lens sub-page — `rev:<threadId>:<agentId>`. */
+/** A review-agent lens thread — `rev:<threadId>:<agentId>`; a read-only child thread, so it opens in the
+ *  LEFT lane pane like the build thread it hangs off of (NOT the right subagent/detail pane). */
 export const revNode = (threadId: string, agentId: string): string => `rev:${threadId}:${agentId}`;
-/** The post-review fix turn (fix · apply · verify) — `fix:<threadId>`; opens in the RIGHT detail pane. */
+/** The post-review fix turn (fix · apply · verify) — `fix:<threadId>`; a thread, so it opens in the LEFT
+ *  lane pane like the review agents above it. */
 export const fixNode = (threadId: string): string => `fix:${threadId}`;
 
 // ── placement: which pane a node opens in ───────────────────────────────────────────────────────
 /** Literals that render from card/derived data in the RIGHT detail pane. */
 const DETAIL_LITERALS = new Set(['plan', 'decision', 'diff']);
-/** Prefixed detail-pane nodes (files, ports, services, review lenses, the fix turn, section plans). */
-const DETAIL_PREFIX = /^(spec|gen|artifact|port|rev|fix|secplan|service):/;
+/** Prefixed detail-pane nodes (files, ports, services, section plans). Review lenses (`rev:`) and the
+ *  post-review fix turn (`fix:`) are THREADS, not detail nodes — they open in the LEFT lane pane like the
+ *  build/Codex-review threads (the RIGHT pane is reserved for tool-called sub-agents + outputs/docs). */
+const DETAIL_PREFIX = /^(spec|gen|artifact|port|secplan|service):/;
 
 /** Whether a node opens in the RIGHT (detail) pane rather than the LEFT (lane/conversation) one.
  *  (`subagent:` is neither — it stacks via `?sub=`, handled in `use-selected-node`.) */

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
+import { HelpCircle } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { classifyMessage } from './classify';
 import { JumpToLatestButton, useTailFollow } from './tail-follow';
@@ -109,6 +110,13 @@ export function TranscriptView({
   // the last line never slips under it as the box auto-grows. Read-only lanes just reserve a small pad.
   const [composerHeight, setComposerHeight] = useState(116);
   const bottomPad = composer ? composerHeight : 20;
+
+  // A brief ring flash on the question card we just jumped to, so it's easy to spot after the scroll lands.
+  const [flashKey, setFlashKey] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Cursor for cycling the pinned "awaiting you" chip through multiple open questions on repeated clicks.
+  const cycleRef = useRef(0);
+
   const liveTurn = useLiveTurn(jobRef.jobId, lane);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
 
@@ -140,6 +148,16 @@ export function TranscriptView({
     () => buildLogItems(log, jobRef, { lane, phaseIds, onOpenPlan, onSelectNode }),
     [log, jobRef, lane, phaseIds, onOpenPlan, onSelectNode],
   );
+
+  // Unanswered question cards on the Main lane (each card's message `ts` IS its LogItem key). The operator
+  // can jump to a buried one via the pinned chip below instead of scrolling the transcript to hunt for it.
+  const openQuestions = useMemo(() => {
+    if (!composer) return [] as JobMessage[];
+    return messages.filter((m) => {
+      const c = m.card;
+      return c?.type === 'question_card' && !c.answer && !c.withdrawnAt;
+    });
+  }, [messages, composer]);
 
   // `pin` snaps the view to the bottom for the virtualized case (see useTailFollow). Assigned into a ref so
   // the callback passed to useTailFollow stays stable while still reaching the freshly-built `virtualizer`
@@ -173,6 +191,19 @@ export function TranscriptView({
 
   const virtualItems = virtualizer.getVirtualItems();
 
+  // Scroll to the next unanswered question (cycles oldest→newest on repeated clicks) and flash its card.
+  const jumpToOpenQuestion = () => {
+    if (openQuestions.length === 0) return;
+    const i = cycleRef.current % openQuestions.length;
+    cycleRef.current = i + 1;
+    const ts = openQuestions[i].ts;
+    const idx = items.findIndex((it) => it.key === ts);
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: 'center' });
+    setFlashKey(ts);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashKey(null), 2200);
+  };
+
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-7 pt-5">
@@ -193,7 +224,11 @@ export function TranscriptView({
                   key={vi.key}
                   data-index={vi.index}
                   ref={virtualizer.measureElement}
-                  className="absolute left-0 top-0 w-full"
+                  className={`absolute left-0 top-0 w-full${
+                    items[vi.index].key === flashKey
+                      ? ' rounded-lg ring-2 ring-accent ring-offset-2 ring-offset-surface transition'
+                      : ''
+                  }`}
                   style={{ transform: `translateY(${vi.start}px)`, paddingBottom: 9 }}
                 >
                   {items[vi.index].node}
@@ -211,8 +246,48 @@ export function TranscriptView({
         </div>
       </div>
       {showJump ? <JumpToLatestButton onClick={jumpToLatest} style={{ bottom: bottomPad + 8 }} /> : null}
+      {openQuestions.length > 0 ? (
+        <OpenQuestionsChip
+          count={openQuestions.length}
+          onClick={jumpToOpenQuestion}
+          style={{ bottom: bottomPad + 8 }}
+        />
+      ) : null}
       {composer ? <Composer jobRef={jobRef} onHeightChange={setComposerHeight} context={contextMeta} /> : null}
     </div>
+  );
+}
+
+/**
+ * A pinned "N awaiting you" chip, shown whenever the Main lane has unanswered question cards. Clicking it
+ * scrolls to the next open question (cycling on repeated clicks) and flashes it — so a card buried by a wall
+ * of the brain's thinking is one click away instead of a scroll-hunt. Anchored bottom-LEFT so it never
+ * collides with the centered {@link JumpToLatestButton}.
+ */
+function OpenQuestionsChip({
+  count,
+  onClick,
+  style,
+}: {
+  count: number;
+  onClick: () => void;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={count > 1 ? `Jump to the next of ${count} unanswered questions` : 'Jump to the unanswered question'}
+      style={style}
+      className="absolute left-4 z-10 flex items-center gap-1.5 rounded-full border border-accent bg-surface-2 py-1.5 pl-2.5 pr-3.5 text-[12px] font-medium text-accent shadow-md transition hover:bg-surface"
+    >
+      <HelpCircle size={14} />
+      {count > 1 ? `${count} awaiting you` : 'Awaiting you'}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 19V5" />
+        <path d="M5 12l7-7 7 7" />
+      </svg>
+    </button>
   );
 }
 

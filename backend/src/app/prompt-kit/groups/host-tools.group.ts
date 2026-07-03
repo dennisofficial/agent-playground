@@ -9,7 +9,7 @@ import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
 import { BRIDGE_SERVER_NAME } from '../../sandbox/image/bridge-options';
-import { TOOL_QUALIFICATION_NOTE } from '../fragments';
+import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class HostToolsGroup {
@@ -21,6 +21,7 @@ export class HostToolsGroup {
       `The prose below abbreviates these to short names for readability, but you must call the`,
       `mcp__${BRIDGE_SERVER_NAME}__ form. Your host tools:`,
       `  - mcp__${BRIDGE_SERVER_NAME}__ask_question         — ask the operator one focused question (renders as a card; you may have several open at once; see GRILLING)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_question    — retract a still-unanswered question BY questionId (to reword it or if it's now moot; never re-ask an open one — see the <open-questions> turn header)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__create_decision      — lock an always-ask decision (attaches the answered question — pass questionId to name which one, else the one just answered; set confirmedByOperator when the operator chose it, see GRILLING); returns its stable id`,
       `  - mcp__${BRIDGE_SERVER_NAME}__update_decision      — revise a locked decision BY ID (ruling/title/class)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__delete_decision      — drop a locked decision BY ID`,
@@ -48,6 +49,17 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — amend the repo's DB-backed worktree config (mounts) — a live write for every future job on this repo, no PR`,
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox        — recreate your container from scratch to prove the setup cold-boots (recreates on your NEXT turn — call it, then STOP)`,
     ].join('\n');
+  }
+
+  /**
+   * normal block 045 — the LSP tools (`atlas-lsp-ts`, a SEPARATE MCP server from the host bridge above;
+   * the SDK spawns it directly, no host round-trip). Unlike the host-bridge tools, these carry real,
+   * specific descriptions from mcp-language-server's own tool registration, so — unlike `hostTools()`
+   * above — there is no need to hand-enumerate what each one does here; just the behavioral nudge.
+   */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1045, condition: notOnboarding })
+  lspTools(): string {
+    return LSP_TOOLS_NOTE;
   }
 
   /** normal block 05 — the args-wrapper calling convention. */
@@ -102,6 +114,7 @@ export class HostToolsGroup {
       'parameter named `args` — put ALL fields inside it (e.g. request_secret({ args: { name, path, description } })).',
       'Your host tools this session:',
       `  - mcp__${BRIDGE_SERVER_NAME}__ask_question        — ask/verify ONE thing with the operator (renders as a card)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_question   — retract a still-unanswered question BY questionId (reword/moot; never re-ask an open one)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__recall              — retrieve relevant memory facts`,
       `  - mcp__${BRIDGE_SERVER_NAME}__remember            — store a durable memory fact about this repo`,
       `  - mcp__${BRIDGE_SERVER_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (see SECRETS)`,
