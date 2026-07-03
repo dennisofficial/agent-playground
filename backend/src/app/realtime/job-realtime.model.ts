@@ -36,6 +36,14 @@ export interface ThreadRealtimeRow extends Row {
   createdAt: string;
   orgId: string;
   repoId: string;
+  /** The canonical feature branch (host-named); null until assigned. UI shows it + drift vs currentBranch. */
+  featureBranch: string | null;
+  /** The branch the sandbox HEAD is actually on (sampled) — differs from featureBranch = drift. */
+  currentBranch: string | null;
+  /** Observed PR CI status ('success'|'failure'|'pending'|null) — reconciler-owned UI badge. */
+  ciStatus: string | null;
+  /** Observed GitHub mergeable_state ('clean'|'dirty'|…|null) — 'dirty' drives the conflict badge. */
+  prMergeable: string | null;
 }
 
 /** Row-level scope: a user may stream only threads belonging to an org they are a member of. */
@@ -71,6 +79,10 @@ function mapRow(raw: Row): ThreadRealtimeRow {
       createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
     orgId: String(raw.org_id),
     repoId: String(raw.repo_id),
+    featureBranch: (raw.feature_branch as string | null) ?? null,
+    currentBranch: (raw.current_branch as string | null) ?? null,
+    ciStatus: (raw.ci_status as string | null) ?? null,
+    prMergeable: (raw.pr_mergeable as string | null) ?? null,
   };
 }
 

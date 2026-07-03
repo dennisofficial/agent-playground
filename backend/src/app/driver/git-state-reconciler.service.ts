@@ -1,0 +1,115 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
+import { CredentialResolver } from '../onboarding';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { JobEntity, RepoEntity } from '../persistence/entities';
+import { GithubPrService, parseGithubRepoUrl, type CheckRun } from '../git';
+import { StimulusIntake } from '../stimulus';
+
+/**
+ * The GIT-STATE RECONCILER — the poll half of "host observes GitHub, Atlas acts". Runs on the driver's
+ * leader-gated reap timer. For every job with an open PR it:
+ *
+ *  - refreshes the UI columns `ci_status` (from the head-SHA check-runs) + `pr_mergeable` (GitHub's
+ *    computed `mergeable_state`), and
+ *  - routes a **merge-conflict** back to the owning job's brain when `mergeable_state === 'dirty'` — the
+ *    flagship signal GitHub does NOT emit as a clean webhook, so the poll is the ONLY way to catch it.
+ *
+ * Routing goes through {@link StimulusIntake.intakeEvent} with a PR correlation hint, so the conflict
+ * lands as a harness message on THIS job's session (dedup on the `stimuli` unique index → delivered
+ * exactly once per conflicting head SHA; a pushed fix that stays conflicted re-notifies on the new SHA).
+ *
+ * CI-FAILURE routing rides the webhook (`check_run`) to avoid double-delivery — here we only keep the
+ * `ci_status` column fresh for the UI badge. Merged/closed PRs are left to `pollPrClosures` (teardown).
+ */
+@Injectable()
+export class GitStateReconciler {
+  private readonly logger = new Logger(GitStateReconciler.name);
+
+  constructor(
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly jobs: Repository<JobEntity>,
+    @InjectRepository(RepoEntity, DB_CONNECTION)
+    private readonly repos: Repository<RepoEntity>,
+    private readonly pr: GithubPrService,
+    private readonly creds: CredentialResolver,
+    private readonly intake: StimulusIntake,
+  ) {}
+
+  /** Reconcile every job that has an open PR. Returns the count reconciled. Fail-soft per job. */
+  async reconcile(): Promise<number> {
+    const jobs = await this.jobs.find({ where: { pr_number: Not(IsNull()) } });
+    let reconciled = 0;
+    for (const job of jobs) {
+      try {
+        await this.reconcileOne(job);
+        reconciled++;
+      } catch (err) {
+        this.logger.warn(`git-state reconcile failed for job ${job.id}: ${err}`);
+      }
+    }
+    return reconciled;
+  }
+
+  private async reconcileOne(job: JobEntity): Promise<void> {
+    if (job.pr_number == null) return;
+    const repo = await this.repos.findOne({ where: { id: job.repo_id } });
+    const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
+    const token = await this.creds.githubToken(job.org_id);
+    if (!parsed || !token) return;
+
+    const detail = await this.pr.getPullDetail(token, {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      number: job.pr_number,
+    });
+    // Merged / closed / gone → pollPrClosures owns teardown; nothing to observe here.
+    if (detail.state !== 'open') return;
+
+    // CI status column (UI badge). Routing of CI FAILURES rides the webhook (check_run) so it isn't
+    // double-delivered; here we only summarise the head-SHA check-runs into the column.
+    let ci = job.ci_status;
+    if (detail.headSha) {
+      const runs = await this.pr.listCheckRuns(token, {
+        owner: parsed.owner,
+        repo: parsed.repo,
+        ref: detail.headSha,
+      });
+      ci = summarizeChecks(runs);
+    }
+
+    // Persist observed columns only when they changed — avoid needless WAL/realtime deltas.
+    if (ci !== job.ci_status || detail.mergeableState !== job.pr_mergeable) {
+      await this.jobs.update({ id: job.id }, { ci_status: ci, pr_mergeable: detail.mergeableState });
+    }
+
+    // MERGE CONFLICT — `dirty` = the PR no longer merges cleanly into its base. Route to the owning
+    // brain so Atlas fetches base, resolves in the sandbox, and pushes. `null` mergeable_state means
+    // GitHub is still computing it → skip this pass (a later reconcile catches it).
+    if (detail.mergeableState === 'dirty' && detail.headSha) {
+      await this.intake.intakeEvent({
+        orgId: job.org_id,
+        repoId: job.repo_id,
+        source: 'github',
+        dedupeKey: `conflict:${job.pr_number}:${detail.headSha}`,
+        severity: 'critical',
+        body:
+          `Your PR #${job.pr_number} has a merge conflict against its base branch. ` +
+          `Fetch the base, resolve the conflicts in the sandbox, and push the fix.\n${detail.url}`,
+        correlation: { prNumber: job.pr_number },
+      });
+    }
+  }
+}
+
+/** Roll a PR head's check-runs into a single UI status. null = no checks reported. */
+export function summarizeChecks(runs: CheckRun[]): string | null {
+  if (runs.length === 0) return null;
+  const FAILED = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'stale']);
+  if (runs.some((r) => r.status === 'completed' && r.conclusion != null && FAILED.has(r.conclusion))) {
+    return 'failure';
+  }
+  if (runs.every((r) => r.status === 'completed')) return 'success';
+  return 'pending';
+}

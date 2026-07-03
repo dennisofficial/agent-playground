@@ -26,8 +26,10 @@ import {
   JobSandboxEntity,
 } from '../persistence/entities';
 import { RunnerModule } from '../runner';
+import { StimulusModule } from '../stimulus';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
+import { GitStateReconciler } from './git-state-reconciler.service';
 import { PLANNER_LLM, AnthropicPlannerLlm } from './planner-llm';
 import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
@@ -64,6 +66,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     RunnerModule,
     DecisionGateModule,
     AutoFixModule,
+    StimulusModule, // the reconciler routes GitHub state-changes back to the owning brain via StimulusIntake
     TypeOrmModule.forFeature(
       [
         ThreadEntity,
@@ -92,6 +95,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     },
     ThreadDriver,
     JobLifecycleService,
+    GitStateReconciler,
     WorktreeHydrator,
     WorktreeProvisioner,
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
@@ -119,6 +123,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     private readonly driver: ThreadDriver,
     private readonly env: EnvService,
     private readonly lifecycle: JobLifecycleService,
+    private readonly reconciler: GitStateReconciler,
     private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
   ) {}
@@ -170,6 +175,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     this.reapTimer = setInterval(() => {
       void this.lifecycle.reapIdle().catch(() => undefined);
       void this.lifecycle.pollPrClosures().catch(() => undefined);
+      // Observe GitHub for every open PR: refresh CI/mergeable UI columns + route merge conflicts back
+      // to the owning brain (the flagship signal webhooks don't emit).
+      void this.reconciler.reconcile().catch(() => undefined);
       void this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
     }, everyMs);
     this.reapTimer.unref?.();
