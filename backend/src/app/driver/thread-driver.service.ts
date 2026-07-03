@@ -618,6 +618,17 @@ export class ThreadDriver implements JobDispatcher {
       return undefined;
     });
 
+    // Capture the plan turn's `<repo-orientation>` cheat-sheet (repo layout + REAL verify commands) and hand
+    // it to the FRESH builder session. Persisted (not just in-memory) so a resume that skips re-planning
+    // still has it; also mutated onto the in-memory `thread` so THIS run's builder reads it in renderBatchTask.
+    // Falls back to the plan turn's closing summary when it didn't call ExitPlanMode; null on plan-turn
+    // failure/timeout, in which case the builder orients off the repo docs itself (DOCS BEFORE GREP).
+    const orientation = extractOrientation(planTurn?.planText ?? planTurn?.report);
+    if (orientation) {
+      await this.store.setThreadOrientation(thread.id, orientation);
+      thread.orientation = orientation;
+    }
+
     const planned = (
       (await this.planner.planThread(planInput).catch(() => undefined)) ??
       fallbackSteps(thread.brief, planTurn?.planText ?? planTurn?.report)
@@ -1358,7 +1369,7 @@ function renderPlanTask(input: {
 
 /** Render the execute task for a BATCH of 1+ ordered steps (the unit a single fresh session runs).
  *  In orchestrate mode the batch is the WHOLE thread and the steps are the orchestrator's fan-out menu. */
-function renderBatchTask(
+export function renderBatchTask(
   record: DecisionRecord | null,
   thread: DriverThread,
   steps: Step[],
@@ -1388,8 +1399,31 @@ function renderBatchTask(
     `\nYour grounding is the READ-ONLY directory \`/context/specs/\` (a folder): read its \`plan.md\`` +
       ` index, this thread's \`sections/NN-*.md\` file, and \`data-model.md\`. Make ALL code changes under` +
       ` \`/workspace\` — never edit anything in \`/context\`.`,
+    // Advisory handoff from the planning pass — this fresh session did NOT explore the repo. Kept explicitly
+    // subordinate to the code + specs so a stale cheat-sheet can't override authoritative ground truth.
+    ...(thread.orientation
+      ? [
+          `\nRepo orientation (a cheat-sheet from the planning pass — this fresh session did NOT explore the` +
+            ` repo itself; the CODE and \`/context/specs/\` remain authoritative if anything here is stale):\n` +
+            thread.orientation,
+        ]
+      : []),
     `\n${intro}\n\n${blocks}`,
   ].join('\n');
+}
+
+/**
+ * Pull the plan turn's `<repo-orientation>…</repo-orientation>` cheat-sheet out of its output — the captured
+ * plan text, else the closing summary. Returns the trimmed inner text (length-capped), or null when the block
+ * is absent/empty (plan-turn failure/timeout, or a model that didn't emit it) — the builder then orients off
+ * the repo docs itself (DOCS BEFORE GREP). Tolerates the tags appearing inside a fenced code block.
+ */
+export function extractOrientation(text: string | undefined): string | null {
+  if (!text) return null;
+  const m = text.match(/<repo-orientation>([\s\S]*?)<\/repo-orientation>/i);
+  const body = m?.[1]?.trim();
+  if (!body) return null;
+  return body.length > 1500 ? `${body.slice(0, 1500)}…` : body;
 }
 
 /** True iff `groups` flattens to exactly [0,1,…,n-1] in order with no empty group — i.e. a valid

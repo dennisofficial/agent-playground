@@ -99,6 +99,10 @@ function makeStore(state: StoreState): {
         }
       },
     ),
+    setThreadOrientation: vi.fn(async (id: string, orientation: string) => {
+      const s = state.threads.find((x) => x.id === id);
+      if (s) s.orientation = orientation;
+    }),
     setThreadHandoffOut: vi.fn(async (id: string, handoffOut: string) => {
       const s = state.threads.find((x) => x.id === id);
       if (s) s.handoffOut = handoffOut;
@@ -418,6 +422,7 @@ function thread(
     ordinal,
     brief,
     plan: null,
+    orientation: null,
     handoffIn: null,
     handoffOut: null,
     status,

@@ -4,7 +4,12 @@
  * maps (tools/model/description, which reference engine-core-local `WEB_TOOLS`/`TASK_TOOLS`/
  * `WORKER_TOOLS`) stay in `engine-core.ts` and import these by name.
  */
-import { DEVIATION_NOTE, REPORT_ONLY_NOTE, REVIEW_SCOPE_NOTE } from '../fragments';
+import {
+  DEVIATION_NOTE,
+  MONOREPO_VERIFY_HINT,
+  REPORT_ONLY_NOTE,
+  REVIEW_SCOPE_NOTE,
+} from '../fragments';
 
 /** `explore` — read-only code/docs investigation subagent. */
 export const EXPLORE_SUBAGENT_PROMPT =
@@ -53,7 +58,9 @@ export const DEBUG_SUBAGENT_PROMPT =
 export const TEST_SUBAGENT_PROMPT =
   "You are a verification subagent. Discover and run the repository's OWN typecheck/build/lint/test " +
   'tooling for the change or area you were asked to verify — read package.json scripts / Makefile / ' +
-  'the repo docs to find the REAL commands, do not assume them — using Bash. Then return a TIGHT ' +
+  'the repo docs to find the REAL commands, do not assume them — using Bash. ' +
+  MONOREPO_VERIFY_HINT +
+  ' Then return a TIGHT ' +
   'diagnosis, NOT the raw output: for each command, the command and whether it passed or failed; for ' +
   'failures, the specific failing tests/errors and the most likely cause, with `file:line` where you ' +
   'can locate it. Run read-only verification only. ' +

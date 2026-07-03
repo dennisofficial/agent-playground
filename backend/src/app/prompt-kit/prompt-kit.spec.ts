@@ -4,6 +4,8 @@ import {
   CLOUD_SANDBOX_NOTE,
   DELETION_SAFETY_NOTE,
   DEVIATION_NOTE,
+  DOCS_BEFORE_GREP,
+  MONOREPO_VERIFY_HINT,
   REPORT_ONLY_NOTE,
   SPIKE_FIRST_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
@@ -93,6 +95,17 @@ describe('catalog blocks (the full-sweep de-duplication)', () => {
   // (occurrence count === 1 catches a double-splice). This is the anti-drift guarantee.
   const BLOCK_CONSUMERS: Array<{ name: string; block: string; ids: string[] }> = [
     { name: 'VERIFY_NOTE', block: VERIFY_NOTE, ids: ['worker-step', 'worker-batch'] },
+    {
+      name: 'DOCS_BEFORE_GREP',
+      block: DOCS_BEFORE_GREP,
+      ids: ['planner-thread-plan', 'worker-step', 'worker-batch', 'worker-orchestrate'],
+    },
+    {
+      // Appears via VERIFY_NOTE in step/batch, inline in orchestrate + the test subagent.
+      name: 'MONOREPO_VERIFY_HINT',
+      block: MONOREPO_VERIFY_HINT,
+      ids: ['worker-step', 'worker-batch', 'worker-orchestrate', 'subagent-test'],
+    },
     {
       name: 'DEVIATION_NOTE',
       block: DEVIATION_NOTE,

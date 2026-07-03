@@ -184,6 +184,17 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { plan, handoff_in: handoffIn });
   }
 
+  /**
+   * Persist the thread's repo-orientation cheat-sheet (captured by the plan turn). Kept separate from
+   * {@link setThreadPlan} so a later plan-prose rewrite (the review→revise pass) can't clobber it.
+   */
+  async setThreadOrientation(
+    threadId: string,
+    orientation: string,
+  ): Promise<void> {
+    await this.threads.update({ id: threadId }, { orientation });
+  }
+
   /** Record the thread's handoff note for the next thread (set when the thread is done). */
   async setThreadHandoffOut(threadId: string, handoffOut: string): Promise<void> {
     await this.threads.update({ id: threadId }, { handoff_out: handoffOut });
@@ -527,6 +538,7 @@ function toThread(row: ThreadEntity): DriverThread {
     ordinal: row.ordinal,
     brief: row.brief,
     plan: row.plan,
+    orientation: row.orientation,
     handoffIn: row.handoff_in,
     handoffOut: row.handoff_out,
     status: row.status as ThreadStatus,

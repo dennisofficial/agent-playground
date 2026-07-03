@@ -263,6 +263,38 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.prReviewStatus).toBe('running');
   });
 
+  it('persists the repo-orientation cheat-sheet and surfaces it on the mapped thread (resume-durable)', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'orientation',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const thread = await threads.save(
+      threads.create({
+        job_id: job.id,
+        org_id: ORG_ID,
+        ordinal: 10,
+        brief: 'Backend — orientation',
+        status: 'planning',
+      }),
+    );
+
+    // Fresh thread has no orientation yet (null → the builder would orient off the docs itself).
+    const before = await store.threadsForJob(job.id);
+    expect(before[0].orientation).toBeNull();
+
+    // The plan turn captured a cheat-sheet → persisted so a resume (which skips re-planning) still has it.
+    await store.setThreadOrientation(thread.id, 'Monorepo — verify: pnpm -C backend test:unit');
+    const after = await store.threadsForJob(job.id);
+    expect(after[0].orientation).toBe('Monorepo — verify: pnpm -C backend test:unit');
+  });
+
   it('still reports `no_job` for a thread that has not entered the build lifecycle', async () => {
     const job = await jobs.save(
       jobs.create({

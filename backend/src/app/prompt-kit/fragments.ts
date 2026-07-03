@@ -71,11 +71,35 @@ export const REVIEW_SCOPE_NOTE =
  * execute prompts (STEP/BATCH/ORCHESTRATE). Coexists with {@link VALIDATE_BY_RUNNING_NOTE} (the "then
  * actually run it" step): this is the floor, that is beyond it.
  */
+/**
+ * MONOREPO discovery hint for the verify step — shared by {@link VERIFY_NOTE} (STEP/BATCH executors), the
+ * ORCHESTRATE prompt's inline verify clause, and the `test` subagent. A single root `package.json` with no
+ * aggregate test script does NOT mean "no tests": in a workspace the real commands live per-package or in
+ * the workspace tooling. Kept as its own const so the three verify surfaces can't drift. (Declared before
+ * VERIFY_NOTE, which concatenates it — module-const init order matters.)
+ */
+export const MONOREPO_VERIFY_HINT =
+  "In a monorepo/workspace the real typecheck/build/test commands often live in a sub-package's " +
+  'package.json or the workspace config (turbo/nx/pnpm/lerna workspaces), NOT a single root script — check ' +
+  "the sub-packages; do not conclude 'no tests' from the root package.json alone.";
+
+/**
+ * DOCS BEFORE GREP — orient off the repo's own docs before spelunking. Shared by the thread PLANNER and the
+ * three EXECUTE prompts (STEP/BATCH/ORCHESTRATE): an execute session is FRESH (no planner context), so it
+ * must orient itself just like the planner instead of rediscovering the layout/conventions with a grep-storm.
+ */
+export const DOCS_BEFORE_GREP =
+  'DOCS BEFORE GREP: if the repo has orienting docs (CLAUDE.md, AGENTS.md, README.md, ARCHITECTURE.md, ' +
+  'CONTRIBUTING.md, docs/), read those FIRST to skip a grep-storm rediscovering where things live and how ' +
+  'this codebase does things, then Grep/Read to confirm the exact files you will touch. Docs may be stale — ' +
+  'the CODE is authoritative; where they disagree, trust the code.';
+
 export const VERIFY_NOTE =
   "VERIFY before you finish: discover and run the repository's OWN typecheck/build/test tooling (read the " +
   'package.json scripts / Makefile / repo docs for the REAL commands — do not assume them) and make sure ' +
   'the change compiles and the relevant tests pass — do NOT claim the work is done on the basis of a guess. ' +
-  'If verification fails and you cannot fix it within scope, say so explicitly rather than reporting success.';
+  'If verification fails and you cannot fix it within scope, say so explicitly rather than reporting success. ' +
+  MONOREPO_VERIFY_HINT;
 
 /**
  * DEVIATION flagging — off-spec work is never silent. Shared by the worker execute prompts + the `implement`

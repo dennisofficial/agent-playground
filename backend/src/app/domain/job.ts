@@ -138,6 +138,12 @@ export interface Thread {
   brief: string;
   /** The detailed just-in-time plan once generated (null while pending). */
   plan: string | null;
+  /**
+   * A compact repo-orientation cheat-sheet the plan turn captured (repo layout + the REAL verify commands),
+   * handed to the FRESH builder session so it need not rediscover the repo blind. Null while pending, or on
+   * resume of a thread planned before this field existed (the builder then orients off the repo docs itself).
+   */
+  orientation: string | null;
   /** The prior thread's handoff note threaded into this thread's plan prompt. */
   handoffIn: string | null;
   /** This thread's handoff note for the next thread (null until done). */

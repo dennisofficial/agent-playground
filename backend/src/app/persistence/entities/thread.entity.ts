@@ -52,6 +52,14 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   plan!: string | null;
 
+  /**
+   * A compact repo-orientation cheat-sheet from the plan turn (repo layout + the REAL verify commands),
+   * handed to the fresh builder session via the execute task so it need not rediscover the repo. Persisted
+   * so a resume that skips re-planning still has it. Null while pending.
+   */
+  @Column({ type: 'text', nullable: true })
+  orientation!: string | null;
+
   /** The prior thread's handoff note threaded into this thread's plan prompt. */
   @Column({ type: 'text', nullable: true })
   handoff_in!: string | null;
