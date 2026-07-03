@@ -6,6 +6,7 @@ import { join, resolve as resolvePath } from 'node:path';
 import { applyClaudeAuth } from './claude-auth';
 import { atlasEngineHomeDir } from './engine-home';
 import { ensureCodexAuthHome } from './codex-auth-home';
+import { renderSystemPrompt } from '../prompt-kit';
 import {
   EngineAuthError,
   isAuthErrorMessage,
@@ -205,15 +206,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'naming conventions). For EXTERNAL library/framework/API documentation, use `docs` instead.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'sonnet',
-    prompt:
-      'You are a read-only exploration subagent. Investigate exactly what you were asked and return a ' +
-      'tight, factual summary: the relevant file paths (with line numbers where useful), how the ' +
-      'pieces fit together, and the specific answer to the question. Use Read/Glob/Grep to search the ' +
-      'repo and WebSearch/WebFetch for external docs, and fire multiple searches in parallel rather ' +
-      'than one at a time. Scale your effort to the breadth the caller asked for — "quick" is a single ' +
-      'targeted lookup, "medium" is moderate exploration, "very thorough" sweeps multiple locations and ' +
-      'naming conventions. Do NOT propose changes or write files — report findings only. Be concise; ' +
-      'the caller wants conclusions, not transcripts.',
+    prompt: renderSystemPrompt('subagent-explore'),
   },
   docs: {
     description:
@@ -223,15 +216,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'work; use `docs` for third-party packages, frameworks, and external APIs.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'sonnet',
-    prompt:
-      'You are a read-only documentation research subagent for EXTERNAL libraries, frameworks, and APIs. ' +
-      'Answer from the official/third-party documentation via WebSearch/WebFetch — current versions, ' +
-      'syntax, configuration, migration notes, CLI usage. Read the repo ONLY to ground the answer in ' +
-      "what's actually installed (the version in package.json / the lockfile, how the package is already " +
-      'imported) so your answer matches the version in use — do NOT answer the question from this repo\'s ' +
-      'source. Synthesize a direct answer, quote the exact API/signature/config, and cite the URL (and ' +
-      'the version it applies to). Flag where the docs lag the installed version or are ambiguous. Do ' +
-      'NOT propose changes or write files — report findings only. Be concise: the answer plus its sources.',
+    prompt: renderSystemPrompt('subagent-docs'),
   },
   review: {
     description:
@@ -241,14 +226,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'is called done. It reports; it does NOT fix.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'sonnet',
-    prompt:
-      'You are a read-only code-review subagent. You are given changed code (a diff or file list) and ' +
-      'the intent behind it. Review skeptically against the real surrounding code: find correctness ' +
-      'bugs, behavior the change silently removed or broke, violations of the conventions this codebase ' +
-      'already follows, and missing edge cases or error handling. Read the neighboring code to ground ' +
-      'EVERY finding — do not guess. Report each finding on its own line as `file:line — what is wrong ' +
-      'and why it matters`, most severe first; if the change is clean, say so plainly. Do NOT edit ' +
-      'files — report findings only.',
+    prompt: renderSystemPrompt('subagent-review'),
   },
   debug: {
     description:
@@ -257,13 +235,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       '— it does not run commands or change anything. Use `test` to actually run the verification.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'sonnet',
-    prompt:
-      'You are a read-only debugging subagent. Given a failure — an error message, stack trace, failing ' +
-      'test, or described misbehavior — trace it to its ROOT CAUSE by reading the code paths involved ' +
-      '(follow the stack, the data flow, the call sites). Use the web to check library behavior when ' +
-      'relevant. Return: the root cause in one or two sentences, the exact `file:line` where the fix ' +
-      'belongs, and the smallest change that would fix it (described, not applied). Distinguish what you ' +
-      'PROVED from what you merely suspect. Do NOT run commands or edit files — diagnose and report only.',
+    prompt: renderSystemPrompt('subagent-debug'),
   },
   test: {
     description:
@@ -273,14 +245,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'but does NOT edit files or change git state.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS],
     model: 'sonnet',
-    prompt:
-      "You are a verification subagent. Discover and run the repository's OWN typecheck/build/lint/test " +
-      'tooling for the change or area you were asked to verify — read package.json scripts / Makefile / ' +
-      'the repo docs to find the REAL commands, do not assume them — using Bash. Then return a TIGHT ' +
-      'diagnosis, NOT the raw output: for each command, the command and whether it passed or failed; for ' +
-      'failures, the specific failing tests/errors and the most likely cause, with `file:line` where you ' +
-      'can locate it. Run read-only verification only — do NOT edit files, commit, or change git state. ' +
-      'Be concise; the caller wants the verdict and the actionable failures, not the transcript.',
+    prompt: renderSystemPrompt('subagent-test'),
   },
 };
 
@@ -292,15 +257,6 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
 // orchestrator owns the decomposition and runs writers ONE AT A TIME; file ownership between writers is
 // by serialization, not a hard lock (see ORCHESTRATE_EXECUTE_SYSTEM in the driver).
 const WRITER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', ...WEB_TOOLS];
-const WRITER_PROMPT =
-  'You are an implementation subagent. Implement EXACTLY the slice the orchestrator assigned — the ' +
-  'specific change to the specific files it named — and nothing else. Respect the locked decisions. ' +
-  'Stay strictly within the files you were told to touch: if the work genuinely needs a file outside ' +
-  'that set, STOP and report it rather than editing it (the orchestrator coordinates who owns what). ' +
-  'Always Read a file before you Edit it. If you make ANY change not called for by your assignment, ' +
-  "flag it on its own line starting with 'DEVIATION:' and a one-line why. When you finish, return a " +
-  'TIGHT summary — the files you changed and the key choices — NOT a transcript or the full diff. Do ' +
-  'NOT commit or otherwise change git state; the orchestrator integrates, verifies, and commits.';
 const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
   implement: {
     description:
@@ -313,7 +269,7 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'escalate to `implement-deep`.',
     tools: WRITER_TOOLS,
     model: 'sonnet',
-    prompt: WRITER_PROMPT,
+    prompt: renderSystemPrompt('subagent-writer'),
   },
   'implement-deep': {
     description:
@@ -323,7 +279,7 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'rules: it edits only the files you name and returns a tight summary; run one writer at a time.',
     tools: WRITER_TOOLS,
     model: 'opus',
-    prompt: WRITER_PROMPT,
+    prompt: renderSystemPrompt('subagent-writer'),
   },
 };
 

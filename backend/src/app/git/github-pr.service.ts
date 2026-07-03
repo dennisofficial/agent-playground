@@ -29,6 +29,43 @@ export interface PullRequestResult {
   existing: boolean;
 }
 
+/** One-request PR snapshot the reconciler polls (state + computed mergeability + head for CI). */
+export interface PullDetail {
+  number: number;
+  url: string;
+  state: 'open' | 'merged' | 'closed' | 'gone';
+  /**
+   * GitHub's computed `mergeable_state` — `clean | dirty | behind | blocked | unstable | has_hooks |
+   * draft | unknown`, or `null` while GitHub is still computing it (treat null as "unknown", retry).
+   * `dirty` = merge conflict against the base.
+   */
+  mergeableState: string | null;
+  headSha: string | null;
+  headRef: string | null;
+}
+
+/** A single CI check-run for a commit (from the check-runs API). */
+export interface CheckRun {
+  id: number;
+  name: string;
+  /** `queued | in_progress | completed`. */
+  status: string;
+  /** `success | failure | neutral | cancelled | timed_out | action_required | skipped | null` (null until completed). */
+  conclusion: string | null;
+  detailsUrl: string | null;
+}
+
+/** A submitted PR review (approve / request-changes / comment). */
+export interface PullReview {
+  id: number;
+  author: string | null;
+  /** `APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED`. */
+  state: string;
+  body: string | null;
+  submittedAt: string | null;
+  url: string | null;
+}
+
 export interface RepoInfo {
   fullName: string;
   owner: string;
@@ -180,6 +217,123 @@ export class GithubPrService {
     const pr = (await res.json()) as { state: 'open' | 'closed'; merged?: boolean; merged_at?: string | null };
     if (pr.merged || pr.merged_at) return 'merged';
     return pr.state;
+  }
+
+  /**
+   * The full PR detail the reconciler needs in ONE request: lifecycle state, GitHub's computed
+   * `mergeable_state` (drives the merge-conflict signal — transiently `null` while GitHub recomputes,
+   * so the caller must treat null as "not yet known", not "clean"), and the head branch + SHA (for CI
+   * correlation). `state:'gone'` on 404.
+   */
+  async getPullDetail(
+    token: string,
+    { owner, repo, number }: { owner: string; repo: string; number: number },
+  ): Promise<PullDetail> {
+    const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
+      headers: this.headers(token),
+    });
+    if (res.status === 404) {
+      return { number, url: '', state: 'gone', mergeableState: null, headSha: null, headRef: null };
+    }
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+      throw new Error(`GitHub couldn't load PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`);
+    }
+    const pr = (await res.json()) as {
+      html_url: string;
+      number: number;
+      state: 'open' | 'closed';
+      merged?: boolean;
+      merged_at?: string | null;
+      mergeable_state?: string | null;
+      head?: { sha?: string; ref?: string };
+    };
+    const state = pr.merged || pr.merged_at ? 'merged' : pr.state;
+    return {
+      number: pr.number,
+      url: pr.html_url,
+      state,
+      mergeableState: pr.mergeable_state ?? null,
+      headSha: pr.head?.sha ?? null,
+      headRef: pr.head?.ref ?? null,
+    };
+  }
+
+  /**
+   * List the check-runs for a commit SHA (or branch/ref) — the reconciler aggregates these into a CI
+   * status and routes a harness event to the brain when any run FAILS. Capped at 100 (one page is
+   * plenty for a PR head). Returns `[]` on 404 (no checks / SHA gone).
+   */
+  async listCheckRuns(
+    token: string,
+    { owner, repo, ref }: { owner: string; repo: string; ref: string },
+  ): Promise<CheckRun[]> {
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}/check-runs?per_page=100`,
+      { headers: this.headers(token) },
+    );
+    if (res.status === 404) return [];
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+      throw new Error(
+        `GitHub couldn't list check-runs for ${owner}/${repo}@${ref} (${res.status}): ${errBody.message ?? 'no detail'}`,
+      );
+    }
+    const json = (await res.json()) as {
+      check_runs?: Array<{
+        id: number;
+        name: string;
+        status: string;
+        conclusion: string | null;
+        details_url?: string | null;
+        html_url?: string | null;
+      }>;
+    };
+    return (json.check_runs ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      status: c.status,
+      conclusion: c.conclusion,
+      detailsUrl: c.details_url ?? c.html_url ?? null,
+    }));
+  }
+
+  /**
+   * List a PR's submitted reviews (APPROVE / REQUEST_CHANGES / COMMENT with a body) — the poll backstop
+   * for review feedback that the webhook may have missed. The reconciler routes new ones to the brain.
+   * Capped at 100.
+   */
+  async listPullReviews(
+    token: string,
+    { owner, repo, number }: { owner: string; repo: string; number: number },
+  ): Promise<PullReview[]> {
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls/${number}/reviews?per_page=100`,
+      { headers: this.headers(token) },
+    );
+    if (res.status === 404) return [];
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+      throw new Error(
+        `GitHub couldn't list reviews for ${owner}/${repo}#${number} (${res.status}): ${errBody.message ?? 'no detail'}`,
+      );
+    }
+    const json = (await res.json()) as Array<{
+      id: number;
+      user?: { login?: string };
+      state?: string;
+      body?: string | null;
+      submitted_at?: string | null;
+      html_url?: string | null;
+    }>;
+    return json.map((r) => ({
+      id: r.id,
+      author: r.user?.login ?? null,
+      state: r.state ?? 'COMMENTED',
+      body: r.body ?? null,
+      submittedAt: r.submitted_at ?? null,
+      url: r.html_url ?? null,
+    }));
   }
 
   /**

@@ -16,7 +16,7 @@ import type { JobStatus as WireJobStatus } from '@workspace/shared';
  */
 export type { WireJobStatus };
 
-export type WireJobKind = 'feature' | 'bugfix';
+export type WireJobKind = 'feature' | 'bugfix' | 'onboarding' | 'event';
 
 /** The lane (Thread) status — one build lane within a Job. */
 export type ThreadStatus =
@@ -391,5 +391,6 @@ export type JobStatus =
   | 'failed'
   | 'deleting';
 
-/** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job. */
-export type JobKind = 'feat' | 'fix' | 'event';
+/** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job;
+ *  `onboard` is the Atlas-run repo-init (onboarding) job. */
+export type JobKind = 'feat' | 'fix' | 'event' | 'onboard';

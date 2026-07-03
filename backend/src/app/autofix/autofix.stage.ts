@@ -3,6 +3,7 @@ import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineEvent, ExecutionTarget } from '../engine';
 import { LocalGitService } from '../git';
 import { TurnHarnessFactory, type TurnHarness } from '../surface/turn-harness.service';
+import { renderSystemPrompt } from '../prompt-kit';
 import {
   buildFixPrompt,
   buildReviewPrompt,
@@ -43,13 +44,6 @@ export const autofixLensLane = (autofixId: string, lensId: string): string =>
   `autofix:${autofixId}:${lensId}`;
 /** The fix turn's sub-lane. */
 export const autofixFixLane = (autofixId: string): string => `autofix:${autofixId}:fix`;
-
-const REVIEW_SYSTEM_PROMPT =
-  'You are a precise, terse senior code reviewer embedded in an automated pipeline. You report only ' +
-  'real, in-scope issues and always answer in the exact JSON contract you are given.';
-const FIX_SYSTEM_PROMPT =
-  'You are a senior engineer applying a curated, minimal set of review fixes. You make the smallest ' +
-  'safe change per finding, never expand scope, and skip anything unsafe rather than guessing.';
 
 /**
  * W7 — the AUTO-FIX STAGE. A fan-out of N parallel read-only review passes (one per lens) over a
@@ -250,7 +244,7 @@ export class AutoFixStage {
         engine: engine ?? 'claude',
         task: buildReviewPrompt(lens, ctx),
         cwd: ctx.worktreePath,
-        systemPrompt: REVIEW_SYSTEM_PROMPT,
+        systemPrompt: renderSystemPrompt('autofix-review'),
         sandboxKey: `${ctx.sandboxKey}--review-${lens.id}`,
         mode: 'review',
         ...(harness ? { richStream: true, onEvent: (e) => harness.onEvent(e) } : {}),
@@ -308,7 +302,7 @@ export class AutoFixStage {
         engine: engine ?? 'claude',
         task: buildFixPrompt(findings, ctx),
         cwd: ctx.worktreePath,
-        systemPrompt: FIX_SYSTEM_PROMPT,
+        systemPrompt: renderSystemPrompt('autofix-fix'),
         sandboxKey: `${ctx.sandboxKey}--fix`,
         mode: 'execute',
         ...(harness ? { richStream: true } : {}),

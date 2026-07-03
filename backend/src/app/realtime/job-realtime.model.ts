@@ -28,6 +28,8 @@ export interface ThreadRealtimeRow extends Row {
   jobId: string;
   title: string | null;
   origin: string;
+  /** Job build kind ('feature'|'bugfix'|'onboarding'|'event'|null) — small text col, always in SELECT */
+  kind: string | null;
   status: string;
   turnActive: boolean;
   needsYou: boolean;
@@ -61,6 +63,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     jobId: String(raw.id),
     title: (raw.title as string | null) ?? null,
     origin: String(raw.origin),
+    kind: (raw.kind as string | null) ?? null,
     status,
     turnActive,
     needsYou: deriveNeedsYou(status, turnActive, awaitingQuestion),

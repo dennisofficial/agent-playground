@@ -3,11 +3,15 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Logger,
   NotFoundException,
+  Param,
   Post,
   Query,
 } from '@nestjs/common';
+import type { JobKind } from '../domain';
+import { hasSystemPrompt, listPromptIds, renderSystemPrompt } from '../prompt-kit';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Public } from '@workspace/auth/server';
 import { Repository } from 'typeorm';
@@ -214,6 +218,38 @@ export class TestBridgeController {
       isAtlas: m.author_bot_id != null,
       text: m.text,
     }));
+  }
+
+  /**
+   * `GET /test/prompts` — list every previewable system prompt id (from the prompt-kit registry), with the
+   * audience it composes as + where production sends it. Lets an agent (or an operator) discover what can be
+   * rendered via `GET /test/prompts/:id`.
+   */
+  @Get('prompts')
+  listPrompts(): Array<{ id: string; audience: string; usedBy: string }> {
+    this.assertEnabled();
+    return listPromptIds();
+  }
+
+  /**
+   * `GET /test/prompts/:id?jobKind=feature` — render a system prompt EXACTLY as production composes it
+   * (global + audience layers + the job-kind block + the relocated body), for the given job kind. Returns
+   * `text/plain` so it's readable straight from `curl`. `jobKind` is optional (omit → no job-kind block).
+   * This is the faithful window into "how did this prompt assemble itself?".
+   */
+  @Get('prompts/:id')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  previewPrompt(
+    @Param('id') id: string,
+    @Query('jobKind') jobKind?: string,
+  ): string {
+    this.assertEnabled();
+    if (!hasSystemPrompt(id)) {
+      throw new NotFoundException(
+        `Unknown prompt id '${id}'. GET /test/prompts lists the valid ids.`,
+      );
+    }
+    return renderSystemPrompt(id, { jobKind: (jobKind as JobKind) ?? null });
   }
 
   /**

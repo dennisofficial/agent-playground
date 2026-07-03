@@ -149,4 +149,66 @@ describe('GithubNotificationSource.handle', () => {
     const res = await src.handle(raw(bad, { 'x-hub-signature-256': sign(json), 'x-github-event': 'workflow_run' }));
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'malformed' });
   });
+
+  it('emits a correlation hint (branch + PR) on a failed workflow_run so it routes to the owning job', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      repository: { full_name: 'Acme/Web' },
+      workflow_run: {
+        id: 7,
+        name: 'CI',
+        status: 'completed',
+        conclusion: 'failure',
+        head_branch: 'feat/a1b2c3d4',
+        pull_requests: [{ number: 12 }],
+      },
+    };
+    const json = JSON.stringify(payload);
+    const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'workflow_run' }));
+    if (res.outcome !== 'accepted') throw new Error('expected accepted');
+    expect(res.event.correlation).toEqual({ branch: 'feat/a1b2c3d4', prNumber: 12 });
+  });
+
+  it('routes a pull_request_review CHANGES_REQUESTED → accepted (critical) with PR correlation', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      action: 'submitted',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: { number: 5, head: { ref: 'feat/a1b2c3d4' } },
+      review: { id: 900, state: 'changes_requested', body: 'fix the null check', user: { login: 'dennis' } },
+    };
+    const json = JSON.stringify(payload);
+    const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request_review' }));
+    if (res.outcome !== 'accepted') throw new Error('expected accepted');
+    expect(res.event).toMatchObject({ severity: 'critical', dedupeKey: 'pull_request_review:900' });
+    expect(res.event.correlation).toEqual({ branch: 'feat/a1b2c3d4', prNumber: 5 });
+    expect(res.event.body).toContain('fix the null check');
+  });
+
+  it('routes an issue_comment on a PR → accepted with PR correlation', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      action: 'created',
+      repository: { full_name: 'Acme/Web' },
+      issue: { number: 8, pull_request: { url: 'http://pr' } },
+      comment: { id: 111, body: 'can you rebase?', user: { login: 'dennis' } },
+    };
+    const json = JSON.stringify(payload);
+    const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'issue_comment' }));
+    if (res.outcome !== 'accepted') throw new Error('expected accepted');
+    expect(res.event.correlation).toEqual({ prNumber: 8 });
+  });
+
+  it('ignores an issue_comment on a plain issue (not a PR)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      action: 'created',
+      repository: { full_name: 'Acme/Web' },
+      issue: { number: 8 }, // no pull_request field → a real issue, not a PR
+      comment: { id: 111, body: 'hi', user: { login: 'dennis' } },
+    };
+    const json = JSON.stringify(payload);
+    const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'issue_comment' }));
+    expect(res).toMatchObject({ outcome: 'ignored' });
+  });
 });

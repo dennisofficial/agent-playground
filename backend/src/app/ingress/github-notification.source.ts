@@ -88,6 +88,7 @@ export class GithubNotificationSource implements NotificationSource {
       dedupeKey: deriveDedupeKey(eventType, body, raw.headers['x-github-delivery']),
       severity: summary.severity,
       body: summary.body,
+      ...(summary.correlation ? { correlation: summary.correlation } : {}),
     };
     return { outcome: 'accepted', event };
   }
@@ -97,9 +98,43 @@ export class GithubNotificationSource implements NotificationSource {
 interface GithubWebhookBody {
   action?: string;
   repository?: { full_name?: string };
-  workflow_run?: { id?: number; name?: string; conclusion?: string; status?: string; html_url?: string };
-  check_run?: { id?: number; name?: string; conclusion?: string; status?: string; html_url?: string };
-  check_suite?: { id?: number; conclusion?: string; status?: string; head_branch?: string };
+  workflow_run?: {
+    id?: number;
+    name?: string;
+    conclusion?: string;
+    status?: string;
+    html_url?: string;
+    head_branch?: string;
+    pull_requests?: Array<{ number?: number }>;
+  };
+  check_run?: {
+    id?: number;
+    name?: string;
+    conclusion?: string;
+    status?: string;
+    html_url?: string;
+    check_suite?: { head_branch?: string };
+    pull_requests?: Array<{ number?: number }>;
+  };
+  check_suite?: {
+    id?: number;
+    conclusion?: string;
+    status?: string;
+    head_branch?: string;
+    pull_requests?: Array<{ number?: number }>;
+  };
+  pull_request?: { number?: number; head?: { ref?: string } };
+  review?: { id?: number; state?: string; body?: string | null; html_url?: string; user?: { login?: string } };
+  comment?: { id?: number; body?: string | null; html_url?: string; user?: { login?: string } };
+  issue?: { number?: number; pull_request?: unknown };
+  sender?: { login?: string; type?: string };
+}
+
+/** A triage summary + the correlation hint that routes it to the owning job (branch/PR). */
+interface EventSummary {
+  severity: EventSeverity;
+  body: string;
+  correlation?: { branch?: string | null; prNumber?: number | null };
 }
 
 /** Verify GitHub's `sha256=<hex>` HMAC of the raw bytes, constant-time. */
@@ -112,20 +147,24 @@ export function verifyGithubSignature(rawBody: Buffer, signature: string, secret
 }
 
 /**
- * Map a GitHub event to a triage summary, or null when it's not actionable. MVP acts on FAILED CI /
- * checks — the autonomous-fix path's bread and butter.
+ * Map a GitHub event to a triage summary + correlation hint, or null when it's not actionable. Acts on
+ * FAILED CI / checks (the autonomous-fix path) AND — so an owning job's brain hears about its own PR —
+ * review submissions / comments. The correlation hint (branch + PR number) routes each to the job that
+ * owns it; a match that finds no owner falls through to seed-a-new-thread (external CI).
  */
 function summarizeGithubEvent(
   eventType: string,
   body: GithubWebhookBody,
-): { severity: EventSeverity; body: string } | null {
+): EventSummary | null {
+  const repo = body.repository?.full_name;
   if (eventType === 'workflow_run') {
     const run = body.workflow_run;
     if (run?.status !== 'completed') return null;
     if (run.conclusion === 'failure' || run.conclusion === 'timed_out') {
       return {
         severity: 'critical',
-        body: `GitHub Actions workflow "${run.name ?? 'unknown'}" ${run.conclusion} in ${body.repository?.full_name}.\n${run.html_url ?? ''}`.trim(),
+        body: `GitHub Actions workflow "${run.name ?? 'unknown'}" ${run.conclusion} in ${repo}.\n${run.html_url ?? ''}`.trim(),
+        correlation: { branch: run.head_branch ?? null, prNumber: run.pull_requests?.[0]?.number ?? null },
       };
     }
     return null;
@@ -136,7 +175,11 @@ function summarizeGithubEvent(
     if (check.conclusion === 'failure' || check.conclusion === 'timed_out') {
       return {
         severity: 'critical',
-        body: `GitHub check "${check.name ?? 'unknown'}" ${check.conclusion} in ${body.repository?.full_name}.\n${check.html_url ?? ''}`.trim(),
+        body: `GitHub check "${check.name ?? 'unknown'}" ${check.conclusion} in ${repo}.\n${check.html_url ?? ''}`.trim(),
+        correlation: {
+          branch: check.check_suite?.head_branch ?? null,
+          prNumber: check.pull_requests?.[0]?.number ?? null,
+        },
       };
     }
     return null;
@@ -147,10 +190,51 @@ function summarizeGithubEvent(
     if (suite.conclusion === 'failure') {
       return {
         severity: 'critical',
-        body: `GitHub check suite failed on branch "${suite.head_branch ?? '?'}" in ${body.repository?.full_name}.`,
+        body: `GitHub check suite failed on branch "${suite.head_branch ?? '?'}" in ${repo}.`,
+        correlation: { branch: suite.head_branch ?? null, prNumber: suite.pull_requests?.[0]?.number ?? null },
       };
     }
     return null;
+  }
+  if (eventType === 'pull_request_review') {
+    // A submitted review: route CHANGES_REQUESTED (critical) + non-empty COMMENT/APPROVED so Atlas can
+    // read the feedback on its own PR. Skip empty approvals (no body → nothing to act on).
+    if (body.action !== 'submitted') return null;
+    const review = body.review;
+    const state = (review?.state ?? '').toUpperCase();
+    const hasBody = !!review?.body?.trim();
+    if (state !== 'CHANGES_REQUESTED' && !hasBody) return null;
+    const who = review?.user?.login ?? 'a reviewer';
+    return {
+      severity: state === 'CHANGES_REQUESTED' ? 'critical' : 'warning',
+      body: `${who} ${state === 'CHANGES_REQUESTED' ? 'requested changes on' : 'reviewed'} PR #${body.pull_request?.number} in ${repo}.\n${review?.body ?? ''}\n${review?.html_url ?? ''}`.trim(),
+      correlation: {
+        branch: body.pull_request?.head?.ref ?? null,
+        prNumber: body.pull_request?.number ?? null,
+      },
+    };
+  }
+  if (eventType === 'pull_request_review_comment') {
+    if (body.action !== 'created') return null;
+    const who = body.comment?.user?.login ?? 'a reviewer';
+    return {
+      severity: 'warning',
+      body: `${who} left a review comment on PR #${body.pull_request?.number} in ${repo}.\n${body.comment?.body ?? ''}\n${body.comment?.html_url ?? ''}`.trim(),
+      correlation: {
+        branch: body.pull_request?.head?.ref ?? null,
+        prNumber: body.pull_request?.number ?? null,
+      },
+    };
+  }
+  if (eventType === 'issue_comment') {
+    // Only PR comments (issues carry a `pull_request` field when they are PRs); skip plain-issue chatter.
+    if (body.action !== 'created' || !body.issue?.pull_request) return null;
+    const who = body.comment?.user?.login ?? 'someone';
+    return {
+      severity: 'warning',
+      body: `${who} commented on PR #${body.issue?.number} in ${repo}.\n${body.comment?.body ?? ''}\n${body.comment?.html_url ?? ''}`.trim(),
+      correlation: { prNumber: body.issue?.number ?? null },
+    };
   }
   return null;
 }
@@ -164,8 +248,14 @@ function deriveDedupeKey(
   body: GithubWebhookBody,
   deliveryId: string | undefined,
 ): string {
-  const runId =
-    body.workflow_run?.id ?? body.check_run?.id ?? body.check_suite?.conclusion;
-  if (runId !== undefined && runId !== null) return `${eventType}:${runId}`;
+  // Prefer a stable per-item grouping id so redeliveries of the SAME item collapse. Review/comment
+  // ids are unique per item (one delivered message per review or comment); run ids collapse CI retries.
+  const groupId =
+    body.workflow_run?.id ??
+    body.check_run?.id ??
+    body.review?.id ??
+    body.comment?.id ??
+    body.check_suite?.conclusion;
+  if (groupId !== undefined && groupId !== null) return `${eventType}:${groupId}`;
   return `delivery:${deliveryId ?? 'unknown'}`;
 }

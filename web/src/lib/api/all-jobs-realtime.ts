@@ -6,6 +6,8 @@ import { env } from '@/lib/env';
 import { qk } from './query-keys';
 import { subscribeSse, type SseHandle } from './sse-manager';
 import { uiStatus, type InboxThread } from './inbox';
+import { toJobKind } from './status';
+import type { WireJobKind } from './types';
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
@@ -17,6 +19,8 @@ interface RealtimeRow {
   jobId: string;
   title: string | null;
   origin: string;
+  /** Job build kind; null until scoped. Preferred over origin for the badge when present. */
+  kind?: string | null;
   status: string;
   needsYou: boolean;
 }
@@ -57,6 +61,7 @@ export function useAllJobsRealtime(): void {
         next[idx] = {
           ...next[idx],
           title: row.title?.trim() || next[idx].title,
+          kind: row.kind ? toJobKind(row.kind as WireJobKind) : next[idx].kind,
           status: uiStatus(row.status, row.origin),
           needsYou: row.needsYou,
         };

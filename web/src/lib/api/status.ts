@@ -44,6 +44,7 @@ export const KIND_META: Record<JobKind, KindMeta> = {
   feat: { label: 'FEAT', color: 'var(--dim)' },
   fix: { label: 'FIX', color: 'var(--dim)' },
   event: { label: 'EVENT', color: 'var(--dim)' },
+  onboard: { label: 'INIT', color: 'var(--dim)' },
 };
 
 /** Wire JobStatus → UI JobStatus. (`cancelled` reads as paused-terminal in the UI.) */
@@ -71,9 +72,18 @@ export function toJobStatus(status: WireJobStatus): JobStatus {
   }
 }
 
-/** Wire JobKind → UI JobKind (event jobs are tagged at the stimulus layer, not the wire kind). */
-export function toJobKind(kind: WireJobKind): JobKind {
-  return kind === 'bugfix' ? 'fix' : 'feat';
+/** Wire JobKind → UI JobKind. `null`/unknown (a job not yet scoped) reads as `feat`. */
+export function toJobKind(kind: WireJobKind | null | undefined): JobKind {
+  switch (kind) {
+    case 'bugfix':
+      return 'fix';
+    case 'onboarding':
+      return 'onboard';
+    case 'event':
+      return 'event';
+    default:
+      return 'feat';
+  }
 }
 
 /** Per-thread dot color for the navigator pipeline tree. */

@@ -67,6 +67,41 @@ export class StimulusIntake {
     }
 
     try {
+      // RETURN-PATH ROUTING: if the event carries a correlation hint (a GitHub event on a PR/branch an
+      // existing job already owns), deliver it to THAT job's brain instead of seeding a fresh event
+      // thread — this is how a CI failure / merge conflict / review comment reaches the Atlas session
+      // that can act on it. Falls through to seed-a-new-thread when nothing owns it (external CI).
+      const owner = await this.resolveOwningJob(event);
+      if (owner) {
+        try {
+          const stimulus = await this.store.attachEventToJob({
+            jobId: owner.id,
+            orgId: event.orgId,
+            repoId: event.repoId,
+            source: event.source,
+            dedupeKey: event.dedupeKey,
+            severity: event.severity,
+            body: event.body,
+          });
+          void this.sink
+            .deliverEvent(stimulus)
+            .catch((err) => this.logger.error(`event delivery failed for ${stimulus.id}: ${err}`));
+          this.logger.log(
+            `event admitted: ${stimulus.id} routed to owning job ${owner.id} ` +
+              `(project ${event.repoId}, severity ${event.severity})`,
+          );
+          return { admitted: true, stimulusId: stimulus.id, jobId: owner.id };
+        } catch (err) {
+          if (err instanceof DuplicateStimulusError) {
+            this.logger.log(
+              `event dropped (db-duplicate on owning job ${owner.id}): source=${event.source} key=${event.dedupeKey}`,
+            );
+            return { admitted: false, reason: 'duplicate', detail: 'db unique backstop' };
+          }
+          throw err;
+        }
+      }
+
       // Route the derived headline through the shared titler so the seeded thread's sidebar label is a
       // short, scannable title — critical because a parked/ignored event never reaches persistPlan, so
       // this seeded title can stay the permanent label. Fail-soft (degrades to the trimmed first line);
@@ -123,6 +158,23 @@ export class StimulusIntake {
       }
       throw err;
     }
+  }
+
+  /**
+   * Resolve the existing job an event belongs to from its correlation hint — PR number first (most
+   * specific), then branch. Null when there's no hint or nothing owns it (→ seed a new event thread).
+   */
+  private async resolveOwningJob(event: ParsedEvent) {
+    const corr = event.correlation;
+    if (!corr) return null;
+    if (corr.prNumber != null) {
+      const byPr = await this.store.findOwningJobByPrNumber(event.orgId, event.repoId, corr.prNumber);
+      if (byPr) return byPr;
+    }
+    if (corr.branch) {
+      return this.store.findOwningJobByBranch(event.orgId, event.repoId, corr.branch);
+    }
+    return null;
   }
 
   /**

@@ -48,6 +48,6 @@ import { SurfaceOrchestration } from './surface-orchestration.service';
     StimulusIntake,
     ChatStimulusBridge,
   ],
-  exports: [StimulusIntake, ProjectRoutingService],
+  exports: [StimulusIntake, ProjectRoutingService, StimulusStoreService],
 })
 export class StimulusModule {}

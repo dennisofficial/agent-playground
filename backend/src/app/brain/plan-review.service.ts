@@ -11,6 +11,7 @@ import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, MessageEntity, PlanReviewEntity } from '../persistence/entities';
 import { TurnHarnessFactory } from '../surface';
+import { renderSystemPrompt } from '../prompt-kit';
 
 /** The transcript lane a job's Codex review dialogue streams on (peeled out of Main by the web). */
 export function codexReviewLane(jobId: string): string {
@@ -75,70 +76,6 @@ export type PlanReviewStartInput = {
 export type PlanReviewStart =
   | { reviewId: string; round: number }
   | { capped: true; round: number };
-
-/**
- * System prompt for the Codex plan-review turn — a STRUCTURED brief, not "review this and tell me your
- * findings". It frames Codex as an independent reviewer (it did NOT write the plan), points it at the
- * authored specs + the repo to GROUND its critique, names the failure modes to hunt in priority order
- * (intent gaps first), and pins a tight FINDING:/NO_FINDINGS output contract. The operator's INTENT and
- * the structured plan arrive in the per-run task (`renderPlanForReview`).
- */
-const REVIEW_SYSTEM = [
-  '<role>',
-  'You are an independent senior software engineer doing a pre-review of a feature PLAN that another',
-  'engineer ("Atlas") authored for THIS repository, before it goes to the operator for approval. You did',
-  'NOT write this plan — review it skeptically. Your job: find the REAL, actionable problems, and above',
-  "all judge whether the plan actually ACHIEVES the operator's stated intent (see <intent> in the task).",
-  'Read the repository (read-only) to ground EVERY claim against its real architecture and conventions.',
-  'Do NOT implement anything, do NOT change any files, and do NOT nitpick wording.',
-  '</role>',
-  '',
-  '<plan_location>',
-  'The full plan is authored under `/context/specs/` — READ THESE before judging (they are authoritative;',
-  'the <authored_plan> summary in the task is just an index):',
-  '  - `plan.md` — goal · overview · architecture/diagrams · the ordered thread list',
-  '  - `sections/NN-<slug>.md` — ONE per thread: its goal, context, execute-ready steps, validation',
-  '  - `data-model.md` — cross-cutting schema/migrations (when the work touches the schema)',
-  '  - `generated/decision-record.md` — the locked always-ask decisions',
-  'Then read the codebase files the steps reference to verify the plan is GROUNDED in what actually exists.',
-  '</plan_location>',
-  '',
-  '<what_to_hunt>',
-  'Report only REAL, actionable problems. Highest-value first:',
-  '  1. INTENT GAP — the plan does not achieve what the operator asked for: a missing capability, a misread',
-  '     requirement, scope that drifts from the goal/ticket, or an obvious failure mode / edge case the goal',
-  '     implies that the plan never handles. This is the most important class.',
-  '  2. UNGROUNDED / WRONG touch points — a step cites a `path:line` or symbol that is wrong or does not',
-  '     exist, or builds against an API/pattern this repo does not actually have. Verify against the code.',
-  '  3. MISSING / CONTRADICTORY decisions — an always-ask decision (data model, API contract, dependency,',
-  '     infra, cross-cutting pattern, one-way door) the plan needs but never locks, or two that conflict.',
-  '  4. ORDERING / INTEGRATION risk — thread/step ordering that breaks the build (e.g. a step depends on a',
-  '     migration a later step creates).',
-  '  5. UNBUILDABLE step — too vague to build without re-asking the operator, or with no real verification.',
-  '     Atlas authors the FULL implementation detail up front (there is no later "step planning"), so grade',
-  '     that detail at the altitude of an implementation diff.',
-  '  6. VERSION / DEPENDENCY mismatch — the plan assumes an API shape, config flag, component name, or CLI',
-  '     syntax that does not match the version actually installed in this repo (check package.json / the',
-  '     lockfile / the imports). Flag anything that mixes patterns from a different version or generation of',
-  '     a library, SDK, framework, or platform than what is in use.',
-  '  7. OVER-ENGINEERING / SCOPE CREEP — the plan introduces a NEW abstraction, dependency, service, or',
-  '     pattern where an EXISTING one in this repo would do, or builds more than the goal needs. Changes',
-  '     should be minimal and tightly scoped; flag speculative generality and gold-plating.',
-  "  8. CONVENTION BREAK — the plan's approach contradicts THIS repo's OWN established conventions: its",
-  '     naming, type style, file/module layout, error-handling, state/data-access, and test patterns. Judge',
-  '     against what the repo actually does (read neighboring code), NOT an external style preference.',
-  'Do NOT report: stylistic nits, personal preferences not grounded in the repo, anything already settled',
-  'in the decision record.',
-  '</what_to_hunt>',
-  '',
-  '<output_contract>',
-  'Output ONLY findings, one per line, each EXACTLY in this form:',
-  '  FINDING: <concise, actionable problem — what is wrong and why it matters>',
-  'Be a demanding reviewer: surface every substantive issue you can justify from the specs + the code.',
-  'Output EXACTLY `NO_FINDINGS` (and nothing else) ONLY if, after reading the specs and the referenced',
-  'code, you genuinely cannot find a substantive problem and the plan clearly achieves the intent.',
-  '</output_contract>',
-].join('\n');
 
 /** Render the structured review task: the operator's INTENT first, then the authored plan to grade. */
 function renderPlanForReview(input: PlanReviewStartInput): string {
@@ -439,7 +376,7 @@ export class PlanReviewService {
             engine: 'codex',
             task: row.prompt,
             cwd: sandbox.worktreePath,
-            systemPrompt: REVIEW_SYSTEM,
+            systemPrompt: renderSystemPrompt('meta-plan-review'),
             sandboxKey,
             mode: 'review',
             // Review hard — pin max reasoning (subscription accounts accept this knob; verified by spike).

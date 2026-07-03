@@ -325,6 +325,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockSurface,
       mockSandboxRows,
       { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
+      {
+        eligiblePendingChat: async () => [],
+        leaseChatStimuli: async () => undefined,
+        markChatDelivered: async () => undefined,
+        undeliveredChatThreads: async () => [],
+        resetChatLeases: async () => undefined,
+      } as never, // stimulusStore
       noopTurnHarness,
       mockClassifier,
       mockShip,
@@ -1303,6 +1310,13 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       surface,
       sandboxRows,
       { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
+      {
+        eligiblePendingChat: async () => [],
+        leaseChatStimuli: async () => undefined,
+        markChatDelivered: async () => undefined,
+        undeliveredChatThreads: async () => [],
+        resetChatLeases: async () => undefined,
+      } as never, // stimulusStore
       turnHarness,
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
@@ -1919,6 +1933,13 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       { post: vi.fn(), name: 'web' } as unknown as ChatSurface,
       { findOne: vi.fn(), save: vi.fn() } as unknown as Repository<JobSandboxEntity>,
       { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
+      {
+        eligiblePendingChat: async () => [],
+        leaseChatStimuli: async () => undefined,
+        markChatDelivered: async () => undefined,
+        undeliveredChatThreads: async () => [],
+        resetChatLeases: async () => undefined,
+      } as never, // stimulusStore
       noopTurnHarness,
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
@@ -2030,7 +2051,8 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // store … surface + turnRegistry (10)
       inert, // sandboxRows (11)
       stimulusRows as never, // stimulusRows (12)
-      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 13 … 26 (incl. secretStore, configStore, git)
+      inert, // stimulusStore (13)
+      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 14 … 27 (incl. secretStore, configStore, git)
     );
     return { manager, stimulusRows };
   }
@@ -2082,43 +2104,35 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   const ORG_ID = 'T-PUMP';
   const REPO_ID = 'repo-pump';
 
-  /** A chainable TypeORM QueryBuilder fake — every builder method returns `this`; terminals resolve. */
-  function makeQueryBuilder(rows: {
-    getMany?: unknown[];
-    getRawMany?: unknown[];
-  }) {
-    const qb: Record<string, ReturnType<typeof vi.fn>> = {};
-    for (const m of ['where', 'andWhere', 'orderBy', 'select', 'addSelect', 'distinct']) {
-      qb[m] = vi.fn().mockReturnValue(qb);
-    }
-    qb.getMany = vi.fn().mockResolvedValue(rows.getMany ?? []);
-    qb.getRawMany = vi.fn().mockResolvedValue(rows.getRawMany ?? []);
-    return qb;
-  }
-
-  /** A pending chat `stimuli` row shape as `eligiblePendingChat`'s query would resolve it. */
-  function pendingRow(id: string, body: string, createdAt: Date) {
+  /** A pending chat stimulus, ChatStimulus-shaped, as `stimulusStore.eligiblePendingChat` would resolve it. */
+  function pendingRow(id: string, body: string, createdAt: Date): ChatStimulus {
     return {
       id,
-      org_id: ORG_ID,
-      repo_id: REPO_ID,
-      job_id: JOB_ID,
+      orgId: ORG_ID,
+      repoId: REPO_ID,
+      kind: 'chat',
+      trust: 'trusted',
+      jobId: JOB_ID,
       body,
-      author_id: 'U1',
-      author_name: 'Dennis',
-      reply_route: { surfaceId: 'web', jobRef: JOB_ID },
-      created_at: createdAt,
+      author: { id: 'U1', displayName: 'Dennis' },
+      replyRoute: { surfaceId: 'web', jobRef: JOB_ID },
+      receivedAt: createdAt,
     };
   }
 
   /** A manager wired with only the deps `pumpThread`/`sweepUndeliveredChat` touch; everything else inert. */
-  function makeManager(opts: { pending?: unknown[]; threads?: unknown[] } = {}) {
-    const qb = makeQueryBuilder({ getMany: opts.pending, getRawMany: opts.threads });
+  function makeManager(opts: { pending?: ChatStimulus[]; threads?: Array<{ jobId: string; orgId: string; repoId: string }> } = {}) {
+    const stimulusStore = {
+      eligiblePendingChat: vi.fn().mockResolvedValue(opts.pending ?? []),
+      leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
+      markChatDelivered: vi.fn().mockResolvedValue(undefined),
+      undeliveredChatThreads: vi.fn().mockResolvedValue(opts.threads ?? []),
+      resetChatLeases: vi.fn().mockResolvedValue(undefined),
+    };
     const stimulusRows = {
       findOne: vi.fn().mockResolvedValue(null),
       update: vi.fn().mockResolvedValue(undefined),
       find: vi.fn().mockResolvedValue([]),
-      createQueryBuilder: vi.fn().mockReturnValue(qb),
     };
     const runningBrainTurn = vi.fn().mockResolvedValue(null);
     const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
@@ -2134,27 +2148,25 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert, inert, inert, // planReview, dispatcher, surface (10)
       inert, // sandboxRows (11)
       stimulusRows as never, // stimulusRows (12)
-      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (19)
-      election, // election (20)
-      inert, inert, inert, inert, inert, inert, // ledger…git (26)
+      stimulusStore as never, // stimulusStore (13)
+      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
+      election, // election (21)
+      inert, inert, inert, inert, inert, inert, // ledger…git (27)
     );
-    return { manager, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState, qb };
+    return { manager, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
   }
 
   it('a LIVE brain turn: steers every pending message (leases first), never starts a fresh turn', async () => {
     const t0 = new Date('2026-07-02T12:00:00Z');
     const pending = [pendingRow('s1', 'first message', t0), pendingRow('s2', 'second message', t0)];
-    const { manager, stimulusRows, runningBrainTurn, steer } = makeManager({ pending });
+    const { manager, stimulusStore, runningBrainTurn, steer } = makeManager({ pending });
     runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live' });
     const runChatTurnSpy = vi.spyOn(manager as never as { runChatTurn: () => void }, 'runChatTurn');
 
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
 
     // Leased BEFORE steering (so a concurrent sweep can't re-take these rows mid-flight).
-    expect(stimulusRows.update).toHaveBeenCalledWith(
-      { id: expect.anything() },
-      expect.objectContaining({ attempted_at: expect.any(Date) }),
-    );
+    expect(stimulusStore.leaseChatStimuli).toHaveBeenCalledWith(['s1', 's2']);
     expect(steer).toHaveBeenCalledTimes(2);
     expect(steer).toHaveBeenNthCalledWith(1, 'turn-live', 's1', 'first message');
     expect(steer).toHaveBeenNthCalledWith(2, 'turn-live', 's2', 'second message');
@@ -2163,20 +2175,20 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   });
 
   it('a LIVE turn but no pending messages: no-op — no steer, no lease write', async () => {
-    const { manager, stimulusRows, runningBrainTurn, steer } = makeManager({ pending: [] });
+    const { manager, stimulusStore, runningBrainTurn, steer } = makeManager({ pending: [] });
     runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live' });
 
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
 
     expect(steer).not.toHaveBeenCalled();
-    expect(stimulusRows.update).not.toHaveBeenCalled();
+    expect(stimulusStore.leaseChatStimuli).not.toHaveBeenCalled();
   });
 
   it('NO live turn: coalesces the pending batch into ONE fresh turn and stamps delivery at registration', async () => {
     const t0 = new Date('2026-07-02T12:00:00Z');
     const t1 = new Date('2026-07-02T12:00:05Z');
     const pending = [pendingRow('s1', 'first message', t0), pendingRow('s2', 'second message', t1)];
-    const { manager, stimulusRows } = makeManager({ pending });
+    const { manager, stimulusStore } = makeManager({ pending });
     const runChatTurnSpy = vi
       .spyOn(manager as never as { runChatTurn: (...a: unknown[]) => Promise<void> }, 'runChatTurn')
       .mockResolvedValue(undefined);
@@ -2192,27 +2204,14 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     expect(typeof opts?.onRegistered).toBe('function');
 
     // Nothing stamped delivered YET — only at the registration hand-off (restart-survivable point).
-    expect(stimulusRows.update).not.toHaveBeenCalledWith(
-      expect.objectContaining({ delivered_at: undefined }),
-      expect.anything(),
-    );
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
 
     // Simulate the runner's hand-off firing `onTurnRegistered` → onRegistered().
     opts.onRegistered!();
     await Promise.resolve(); // let the fire-and-forget markChatDelivered promises settle one microtask
 
-    // The idempotency guard is TypeORM's `IsNull()` FindOperator, not a literal `null` — match on `id` +
-    // the operator's `isNull` type rather than a deep-equal against the FindOperator instance.
-    const isNullDeliveredAt = (arg: unknown): boolean =>
-      typeof arg === 'object' && arg !== null && (arg as { _type?: string })._type === 'isNull';
-    expect(stimulusRows.update).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 's1', delivered_at: expect.toSatisfy(isNullDeliveredAt) }),
-      expect.objectContaining({ delivered_at: expect.any(Date) }),
-    );
-    expect(stimulusRows.update).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 's2', delivered_at: expect.toSatisfy(isNullDeliveredAt) }),
-      expect.objectContaining({ delivered_at: expect.any(Date) }),
-    );
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s1');
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s2');
   });
 
   it('NO pending messages and no live turn: a fresh turn is never started', async () => {
@@ -2254,28 +2253,25 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   });
 
   it('stampInputAck marks the acked stimulus delivered; ignores non-ack / id-less events', async () => {
-    const { manager, stimulusRows } = makeManager();
+    const { manager, stimulusStore } = makeManager();
     const stamp = (manager as never as { stampInputAck: (e: EngineEvent) => void }).stampInputAck.bind(
       manager,
     );
 
     stamp({ kind: 'input_ack', id: 's1' });
     await Promise.resolve();
-    expect(stimulusRows.update).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 's1' }),
-      expect.objectContaining({ delivered_at: expect.any(Date) }),
-    );
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s1');
 
-    stimulusRows.update.mockClear();
+    stimulusStore.markChatDelivered.mockClear();
     stamp({ kind: 'text', text: 'hello' } as EngineEvent);
-    expect(stimulusRows.update).not.toHaveBeenCalled();
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
   });
 
   describe('sweepUndeliveredChat (the leader periodic + boot re-drive)', () => {
     it('LEADER: pumps every distinct thread with an undelivered chat stimulus', async () => {
       const threads = [
-        { job_id: 'th-a', org_id: 'T1', repo_id: 'r1' },
-        { job_id: 'th-b', org_id: 'T1', repo_id: 'r1' },
+        { jobId: 'th-a', orgId: 'T1', repoId: 'r1' },
+        { jobId: 'th-b', orgId: 'T1', repoId: 'r1' },
       ];
       const { manager, getState } = makeManager({ threads });
       getState.mockReturnValue('leader');
@@ -2289,24 +2285,24 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     });
 
     it('NON-LEADER: does nothing (no query, no pump)', async () => {
-      const { manager, getState, qb } = makeManager({ threads: [{ job_id: 'th-a', org_id: 'T1', repo_id: 'r1' }] });
+      const { manager, getState, stimulusStore } = makeManager({ threads: [{ jobId: 'th-a', orgId: 'T1', repoId: 'r1' }] });
       getState.mockReturnValue('follower');
       const pumpSpy = vi.spyOn(manager, 'pumpThread').mockResolvedValue(undefined);
 
       await (manager as never as { sweepUndeliveredChat: () => Promise<void> }).sweepUndeliveredChat();
 
-      expect(qb.getRawMany).not.toHaveBeenCalled();
+      expect(stimulusStore.undeliveredChatThreads).not.toHaveBeenCalled();
       expect(pumpSpy).not.toHaveBeenCalled();
     });
   });
 
   it('DRAINING: pumpThread is a no-op (new turns are already rejected at the surface; this guards internal callers)', async () => {
-    const { manager, getState, steer, stimulusRows } = makeManager({ pending: [{ id: 's1' }] });
+    const { manager, getState, steer, stimulusStore } = makeManager({ pending: [pendingRow('s1', 'msg', new Date())] });
     getState.mockReturnValue('draining');
 
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
 
     expect(steer).not.toHaveBeenCalled();
-    expect(stimulusRows.createQueryBuilder).not.toHaveBeenCalled();
+    expect(stimulusStore.eligiblePendingChat).not.toHaveBeenCalled();
   });
 });

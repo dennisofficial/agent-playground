@@ -16,7 +16,7 @@ import {
   JobEntity,
   JobSandboxEntity,
 } from '../persistence/entities';
-import { BRAIN_SINK, type BrainSink } from '../stimulus';
+import { BRAIN_SINK, StimulusModule, type BrainSink } from '../stimulus';
 import { AgentSessionManager } from './agent-session-manager.service';
 import { DrainService } from './drain.service';
 import { BrainStoreService } from './brain-store.service';
@@ -54,6 +54,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
     DecisionGateModule,
     GitModule,
     MemoryModule,
+    StimulusModule,
     TypeOrmModule.forFeature(
       [
         JobEntity,

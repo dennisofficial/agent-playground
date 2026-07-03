@@ -152,6 +152,58 @@ describe('StimulusIntake.intakeEvent', () => {
     expect(out).toMatchObject({ admitted: false, reason: 'duplicate' });
     expect(events).toHaveLength(0);
   });
+
+  it('RETURN-PATH: correlation branch matches an owning job → attaches to it, NO new seed', async () => {
+    const attach = vi.fn(async () => ({ ...seeded({ id: 'stim-2', jobId: 'job-owner' }).stimulus }));
+    const store = {
+      findOwningJobByBranch: vi.fn(async () => ({ id: 'job-owner' })),
+      findOwningJobByPrNumber: vi.fn(async () => null),
+      attachEventToJob: attach,
+      seedEventThread: vi.fn(),
+    } as unknown as StimulusStoreService;
+    const { sink, events } = collectSink();
+    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, fakeOrchestration(), sink, fakeTitler());
+
+    const out = await intake.intakeEvent({ ...EVENT, correlation: { branch: 'feat/a1b2c3d4' } });
+    expect(out).toEqual({ admitted: true, stimulusId: 'stim-2', jobId: 'job-owner' });
+    expect(store.attachEventToJob).toHaveBeenCalledOnce();
+    expect(store.seedEventThread).not.toHaveBeenCalled(); // routed, not seeded
+    expect(events).toHaveLength(1);
+    expect(events[0].jobId).toBe('job-owner');
+  });
+
+  it('RETURN-PATH: PR number takes precedence over branch when resolving the owner', async () => {
+    const store = {
+      findOwningJobByPrNumber: vi.fn(async () => ({ id: 'job-by-pr' })),
+      findOwningJobByBranch: vi.fn(async () => ({ id: 'job-by-branch' })),
+      attachEventToJob: vi.fn(async () => seeded({ id: 'stim-3', jobId: 'job-by-pr' }).stimulus),
+      seedEventThread: vi.fn(),
+    } as unknown as StimulusStoreService;
+    const { sink } = collectSink();
+    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, fakeOrchestration(), sink, fakeTitler());
+
+    const out = await intake.intakeEvent({ ...EVENT, correlation: { branch: 'feat/x', prNumber: 42 } });
+    expect(out).toMatchObject({ admitted: true, jobId: 'job-by-pr' });
+    expect(store.findOwningJobByPrNumber).toHaveBeenCalledWith('T1', 'web', 42);
+    expect(store.findOwningJobByBranch).not.toHaveBeenCalled(); // PR matched first, short-circuit
+  });
+
+  it('RETURN-PATH: correlation present but NO owner → falls through to seed a new thread', async () => {
+    const store = {
+      findOwningJobByPrNumber: vi.fn(async () => null),
+      findOwningJobByBranch: vi.fn(async () => null),
+      attachEventToJob: vi.fn(),
+      seedEventThread: vi.fn(async () => seeded()),
+    } as unknown as StimulusStoreService;
+    const { sink, events } = collectSink();
+    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, fakeOrchestration(), sink, fakeTitler());
+
+    const out = await intake.intakeEvent({ ...EVENT, correlation: { branch: 'nobody-owns-this' } });
+    expect(out).toMatchObject({ admitted: true, jobId: 'thread-1' });
+    expect(store.attachEventToJob).not.toHaveBeenCalled();
+    expect(store.seedEventThread).toHaveBeenCalledOnce(); // external CI → new event thread
+    expect(events).toHaveLength(1);
+  });
 });
 
 describe('StimulusIntake.intakeChat', () => {

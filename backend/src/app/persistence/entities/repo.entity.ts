@@ -41,6 +41,21 @@ export class RepoEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'main' })
   default_branch!: string;
 
+  /**
+   * Per-repo branch-naming prefix for the canonical feature branch the host computes and Atlas cuts
+   * (name = `<prefix><job-id-first-8>`, e.g. `feat/a1b2c3d4`). Null → the built-in `atlas/thread-`
+   * default. Lets a repo enforce its own convention (e.g. `feat/`) without random branch names.
+   */
+  @Column({ type: 'text', nullable: true })
+  branch_prefix!: string | null;
+
+  /**
+   * Optional regex the computed/observed feature branch name must satisfy — a soft convention guard
+   * (validation + surfaced warning, not a hard block; Atlas owns git in-sandbox). Null → no validation.
+   */
+  @Column({ type: 'text', nullable: true })
+  branch_regex!: string | null;
+
   /** Named GitHub-token override; null → the org default token. */
   @Column({ type: 'text', nullable: true })
   token_name!: string | null;

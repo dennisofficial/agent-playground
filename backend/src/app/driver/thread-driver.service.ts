@@ -28,7 +28,8 @@ import { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { ActiveTurnEntity } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
-import { BuildShipService, CLOUD_SANDBOX_NOTE, LEDGER_COMMIT_MESSAGE, TASK_LIST_NOTE } from './build-ship.service';
+import { LEDGER_COMMIT_MESSAGE, renderSystemPrompt } from '../prompt-kit';
+import { BuildShipService } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
   DriverStoreService,
@@ -605,7 +606,7 @@ export class ThreadDriver implements JobDispatcher {
         sandbox,
         engine: 'claude',
         mode: 'plan',
-        systemPrompt: THREAD_PLAN_SYSTEM,
+        systemPrompt: renderSystemPrompt('planner-thread-plan', { jobKind: job.kind }),
         task: renderPlanTask(planInput),
         auth: await this.creds.engineAuth(job.orgId, 'claude'),
       },
@@ -1110,11 +1111,14 @@ export class ThreadDriver implements JobDispatcher {
           sandbox,
           engine: 'claude',
           mode: 'execute',
-          systemPrompt: this.orchestrate
-            ? ORCHESTRATE_EXECUTE_SYSTEM
-            : steps.length === 1
-              ? STEP_EXECUTE_SYSTEM
-              : BATCH_EXECUTE_SYSTEM,
+          systemPrompt: renderSystemPrompt(
+            this.orchestrate
+              ? 'worker-orchestrate'
+              : steps.length === 1
+                ? 'worker-step'
+                : 'worker-batch',
+            { jobKind: job.kind },
+          ),
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
@@ -1319,118 +1323,9 @@ export class ThreadDriver implements JobDispatcher {
 
 // ── pure render helpers ──────────────────────────────────────────────────────────────────────────
 
-const THREAD_PLAN_SYSTEM =
-  'You are Atlas planning ONE thread of an approved feature. Explore the codebase read-only and produce ' +
-  'a concrete phased plan for this thread, respecting the locked decision record. Do not write any files. ' +
-  'DOCS BEFORE GREP: if the repo has orienting docs (CLAUDE.md, AGENTS.md, README.md, ARCHITECTURE.md, ' +
-  'CONTRIBUTING.md, docs/), read those FIRST to skip a grep-storm rediscovering where things live and how ' +
-  'this codebase does things, then Grep/Read to confirm the exact files you will touch. Docs may be stale — ' +
-  'the CODE is authoritative; where they disagree, trust the code. ' +
-  "The plan MUST end with VERIFICATION: a final step (or explicit step) that runs the repo's OWN " +
-  'typecheck/build/tests and confirms the change works. For a DELETION, an early step must PROVE the code ' +
-  'is truly unused — search for every intra-file and cross-file reference (and dynamic/string usages) — ' +
-  'before anything is removed. Never plan to claim done without verifying. ' +
-  CLOUD_SANDBOX_NOTE;
-
-// Shared tail for the execute prompts: the read-only/advisory subagents a worker can delegate to via
-// Task to stay focused and keep its context clean. `test` runs the verification and reports a diagnosis
-// (not raw logs); the rest only read and report. None of them edit files — only the worker does.
-const WORKER_SUBAGENTS_NOTE =
-  ' To stay focused and keep your context clean, you can delegate to read-only subagents via the Task ' +
-  "tool: `explore` (trace how the code works, incl. this repo's own docs), `docs` (look up EXTERNAL " +
-  'library/framework/API documentation), `review` ' +
-  '(a second pass on your diff for bugs + convention drift before you finish), `debug` (root-cause a ' +
-  'failure to its fix site), and `test` (run the repo verification and get back a diagnosis instead of ' +
-  'thousands of lines of raw output). They report back; only you change files.';
-
-// Shared tail for the execute prompts (NOT plan/review): where throwaway work goes. Keeps spikes out of
-// the worktree so they never pollute the diff/PR. `/playground` is durable across container restarts.
-const PLAYGROUND_NOTE =
-  ' SCRATCH SPACE: for any THROWAWAY work — probe/spike scripts, one-off verification harnesses, ad-hoc ' +
-  'installs — write to the durable `/playground` dir OUTSIDE the worktree, never into /workspace (which ' +
-  'pollutes the diff/PR) or /tmp (wiped on restart). Nothing in /playground is ever committed.';
-
-const STEP_EXECUTE_SYSTEM =
-  'You are Atlas executing ONE step of an approved plan in a feature worktree. Implement exactly this ' +
-  "step's brief, respecting the locked decisions. Make focused, working changes; do not exceed the step scope. " +
-  'If you make ANY change not explicitly called for by this brief, or you depart from a locked decision ' +
-  '(e.g. adding a file/dependency/config nobody asked for), you MUST flag it: put each such change on its ' +
-  "own line in your final report starting with 'DEVIATION:' and a one-line why. Off-spec work is never silent. " +
-  "VERIFY before you finish: discover and run the repository's OWN typecheck/build/test tooling and make " +
-  'sure your change compiles and the relevant tests pass — do NOT claim the work is done on the basis of a ' +
-  'guess. If this step REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
-  'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
-  'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
-  'you cannot fix it within scope, say so explicitly rather than reporting success.' +
-  WORKER_SUBAGENTS_NOTE +
-  PLAYGROUND_NOTE +
-  ' ' +
-  CLOUD_SANDBOX_NOTE;
-
-const BATCH_EXECUTE_SYSTEM =
-  'You are Atlas executing several ORDERED steps of an approved plan in a feature worktree, in ONE ' +
-  'session. Implement each step IN ORDER, exactly to its brief, respecting the locked decisions; finish ' +
-  "one step before starting the next and do not exceed the steps' scope. " +
-  'If you make ANY change not explicitly called for by these briefs, or you depart from a locked decision ' +
-  '(e.g. adding a file/dependency/config nobody asked for), you MUST flag it: put each such change on its ' +
-  "own line in your final report starting with 'DEVIATION:' and a one-line why. Off-spec work is never silent. " +
-  "VERIFY before you finish: discover and run the repository's OWN typecheck/build/test tooling and make " +
-  'sure the changes compile and the relevant tests pass — do NOT claim the work is done on the basis of a ' +
-  'guess. If a step REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
-  'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
-  'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
-  'you cannot fix it within scope, say so explicitly rather than reporting success.' +
-  WORKER_SUBAGENTS_NOTE +
-  PLAYGROUND_NOTE +
-  ' ' +
-  CLOUD_SANDBOX_NOTE;
-
 /** Sentinel `commit_sha` for a batch that completed but changed nothing (empty commit) — distinguishes
  *  "done, no diff" from "never committed" (null) so a resume fast-forwards instead of re-running. */
 const NOTHING_COMMITTED = '(nothing)';
-
-// Orchestrator note — the LIVE task list. The shared discipline (TASK_LIST_NOTE, spliced into every
-// task-tracked Atlas persona) plus the orchestrator's own seeding rule: the list starts from the plan's
-// steps. Used by ORCHESTRATE_EXECUTE_SYSTEM.
-const ORCHESTRATOR_TASKLIST_NOTE =
-  ' ' +
-  TASK_LIST_NOTE +
-  ' Here the list is your visible decomposition of the plan: at kickoff seed it from the steps below, ' +
-  'splitting/merging as the real work demands.';
-
-// Orchestrator note — adds the WRITER subagents to the read-only set. Used by ORCHESTRATE_EXECUTE_SYSTEM.
-const ORCHESTRATOR_SUBAGENTS_NOTE =
-  ' You have subagents (Task tool). WRITERS that change files: `implement` (Sonnet — your DEFAULT ' +
-  'writer) and `implement-deep` (Opus — escalation for genuinely hard, judgment-heavy slices) — hand ' +
-  'each a SUBSTANTIAL, long-running slice and the EXACT files it may touch; it edits and returns a ' +
-  'tight summary. Writers are for big, context-heavy work — anything small or quick you do yourself. ' +
-  'Run writers ONE AT A TIME (they share one worktree — concurrent writers corrupt it). Read-only ' +
-  'helpers: `explore` (trace the code/own docs), `docs` (external library docs), `review` (a second ' +
-  'pass on a diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw logs).';
-
-// The PER-THREAD ORCHESTRATOR system prompt (orchestrate mode): one Opus session owns the whole thread and
-// fans the implementation out to writer subagents, integrating + verifying as it goes.
-const ORCHESTRATE_EXECUTE_SYSTEM =
-  'You are Atlas, the ORCHESTRATOR for ONE thread of an approved plan, working in a feature worktree. The ' +
-  'steps below are your plan and your suggested decomposition — YOU own the fan-out. DELEGATE the ' +
-  'substantial, long-running coding to writer subagents via the Task tool — `implement` (Sonnet) is ' +
-  'your default writer; escalate to `implement-deep` (Opus) ONLY for the genuinely hard, ' +
-  'judgment-heavy slices — telling each the exact files it may touch. Offloading the heavy coding ' +
-  'keeps YOUR context clean and your orchestration sharp; that is the point. You keep full read/write ' +
-  'access and SHOULD make small or quick edits yourself (glue, wiring, a one-line fix) rather than ' +
-  'spinning up a writer — writers are for big slices, not little tasks. Steps are ORDERED and build on each other: ' +
-  'delegate them IN ORDER and run writers ONE AT A TIME (they share this worktree; concurrent writers ' +
-  'corrupt it). After each writer returns, sanity-check its work before moving on. When every step is ' +
-  "implemented, VERIFY: discover and run the repository's OWN typecheck/build/test tooling and FIX any " +
-  'failures (use `debug`/`test` subagents) — do NOT claim done on a guess. If a step REMOVES code, prove ' +
-  'it is genuinely unreferenced first. Flag ANY change not called for by the plan, or any departure from a ' +
-  "locked decision, on its own line starting with 'DEVIATION:' and a one-line why — off-spec work is " +
-  'never silent. If verification fails and you cannot fix it within scope, say so explicitly.' +
-  ORCHESTRATOR_TASKLIST_NOTE +
-  ORCHESTRATOR_SUBAGENTS_NOTE +
-  PLAYGROUND_NOTE +
-  ' ' +
-  CLOUD_SANDBOX_NOTE;
 
 /** A locked step row → the `PlannedStep` view the gate/visibility/render read (title null → brief). */
 function asPlannedStep(step: Step): PlannedStep {

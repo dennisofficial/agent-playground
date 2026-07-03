@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { QueryFailedError, Repository } from 'typeorm';
+import { In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import type {
   ChatStimulus,
   EventStimulus,
@@ -79,6 +79,7 @@ export class StimulusStoreService {
         org_id: input.orgId,
         repo_id: input.repoId,
         origin: 'event',
+        kind: 'event', // notification/CI-seeded intake — first-class job kind (drives the EVENT badge + job-kind prompt)
         surface_thread_ref: null, // set when the announcement is posted (W6)
         title: input.title,
       }),
@@ -143,6 +144,115 @@ export class StimulusStoreService {
   }
 
   /**
+   * Attach an event to an EXISTING job (its brain) instead of seeding a new thread — the return-path
+   * for a GitHub event on a PR/branch Atlas already owns (CI failure, merge conflict, review comment).
+   * Mirrors {@link seedEventThread} (message row with `system_event` provenance + a `kind:'event'`
+   * stimulus row) but reuses the given `jobId`, so the same at-least-once boot sweep + `delivered_at`
+   * machinery drives delivery. Dedup rides the SAME (org, repo, source, dedupe_key) unique index — a
+   * repeated conflict/CI/review event collapses to one delivered message.
+   */
+  async attachEventToJob(input: {
+    jobId: string;
+    orgId: string;
+    repoId: string;
+    source: string;
+    dedupeKey: string;
+    severity: EventStimulus['severity'];
+    body: string;
+    /** Optional render-only card payload persisted on the message row. */
+    card?: Record<string, unknown>;
+  }): Promise<EventStimulus> {
+    const message = await this.messages.save(
+      this.messages.create({
+        job_id: input.jobId,
+        author: input.source,
+        author_id: input.source,
+        author_bot_id: null,
+        text: input.body,
+        card: input.card ?? null,
+        meta: { source: 'system_event', eventSource: input.source, severity: input.severity },
+      }),
+    );
+
+    let row: StimulusEntity;
+    try {
+      row = await this.stimuli.save(
+        this.stimuli.create({
+          org_id: input.orgId,
+          repo_id: input.repoId,
+          kind: 'event',
+          trust: 'untrusted',
+          body: input.body,
+          job_id: input.jobId,
+          author_id: null,
+          reply_route: null,
+          source: input.source,
+          dedupe_key: input.dedupeKey,
+          severity: input.severity,
+        }),
+      );
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        // A duplicate of this exact event was already recorded for the job — drop the message we just
+        // wrote and signal the caller to skip re-delivery.
+        await this.messages.delete({ id: message.id }).catch(() => undefined);
+        throw new DuplicateStimulusError(input.dedupeKey);
+      }
+      throw err;
+    }
+
+    return {
+      id: row.id,
+      orgId: input.orgId,
+      repoId: input.repoId,
+      kind: 'event',
+      trust: 'untrusted',
+      jobId: input.jobId,
+      body: input.body,
+      source: input.source,
+      dedupeKey: input.dedupeKey,
+      severity: input.severity,
+      receivedAt: row.created_at,
+    };
+  }
+
+  /**
+   * Find the OPEN job that owns a branch in a repo — the correlation key for routing a GitHub event
+   * back to Atlas. Matches either the canonical {@link JobEntity.feature_branch} (frozen once a PR
+   * exists) or the observed {@link JobEntity.current_branch} (pre-PR, sampled from sandbox HEAD).
+   * Newest first; null if none. Closed jobs are excluded so a stale merged branch never re-wakes.
+   */
+  async findOwningJobByBranch(
+    orgId: string,
+    repoId: string,
+    branch: string,
+  ): Promise<JobEntity | null> {
+    return this.jobs
+      .createQueryBuilder('j')
+      .where('j.org_id = :orgId', { orgId })
+      .andWhere('j.repo_id = :repoId', { repoId })
+      .andWhere('(j.feature_branch = :branch OR j.current_branch = :branch)', { branch })
+      .andWhere('j.status != :closed', { closed: 'closed' })
+      .orderBy('j.created_at', 'DESC')
+      .getOne();
+  }
+
+  /** Find the job that owns a PR number in a repo (for review/PR events). Newest first; null if none. */
+  async findOwningJobByPrNumber(
+    orgId: string,
+    repoId: string,
+    prNumber: number,
+  ): Promise<JobEntity | null> {
+    return this.jobs
+      .createQueryBuilder('j')
+      .where('j.org_id = :orgId', { orgId })
+      .andWhere('j.repo_id = :repoId', { repoId })
+      .andWhere('j.pr_number = :prNumber', { prNumber })
+      .orderBy('j.created_at', 'DESC')
+      .getOne();
+  }
+
+  /**
    * Persist a chat message continuing an existing thread + its chat stimulus row. Returns the
    * `ChatStimulus` with its minted id. No new thread, no dedupe (chat bypasses the filter).
    */
@@ -194,6 +304,81 @@ export class StimulusStoreService {
       jobId: input.jobId,
       author: input.author,
       replyRoute: input.replyRoute,
+      receivedAt: row.created_at,
+    };
+  }
+
+  // ── Durable operator-message delivery: the chat-inbox queries ─────────────────────────────────────
+  //
+  // These back the brain's durable-delivery pump (AgentSessionManager). They live here — not inline on
+  // the manager — so the query logic is independently unit/integration-testable without the manager's
+  // full constructor. Chat rows ARE the durable operator-message inbox; see StimulusEntity.{delivered_at,
+  // attempted_at}.
+
+  /** A thread's eligible pending chat stimuli (undelivered + lease-free), oldest first, as ChatStimulus. */
+  async eligiblePendingChat(jobId: string, leaseMs: number): Promise<ChatStimulus[]> {
+    const cutoff = new Date(Date.now() - leaseMs);
+    const rows = await this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id = :j', { j: jobId })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere('(s.attempted_at IS NULL OR s.attempted_at < :cutoff)', { cutoff })
+      .orderBy('s.created_at', 'ASC')
+      .getMany();
+    return rows.map((r) => this.rowToChatStimulus(r));
+  }
+
+  /** Stamp the delivery lease (`attempted_at = now`) so a concurrent sweep can't re-take these rows. */
+  async leaseChatStimuli(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.stimuli.update({ id: In(ids) }, { attempted_at: new Date() });
+  }
+
+  /** Mark a chat stimulus delivered (idempotent — only stamps a still-null row). */
+  async markChatDelivered(id: string): Promise<void> {
+    await this.stimuli.update({ id, delivered_at: IsNull() }, { delivered_at: new Date() });
+  }
+
+  /** Distinct (thread, org, repo) tuples with at least one undelivered chat stimulus — the sweep worklist. */
+  async undeliveredChatThreads(): Promise<Array<{ jobId: string; orgId: string; repoId: string }>> {
+    const rows = await this.stimuli
+      .createQueryBuilder('s')
+      .select('s.job_id', 'job_id')
+      .addSelect('s.org_id', 'org_id')
+      .addSelect('s.repo_id', 'repo_id')
+      .distinct(true)
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere('s.job_id IS NOT NULL')
+      .getRawMany<{ job_id: string; org_id: string; repo_id: string }>();
+    return rows.map((r) => ({ jobId: r.job_id, orgId: r.org_id, repoId: r.repo_id }));
+  }
+
+  /** Clear the lease on every undelivered chat row (boot reconcile — re-drive anything mid-attempt at crash). */
+  async resetChatLeases(): Promise<void> {
+    await this.stimuli.update(
+      { kind: 'chat', delivered_at: IsNull() },
+      { attempted_at: null },
+    );
+  }
+
+  /** Reconstruct the in-memory `ChatStimulus` from a persisted chat row (for re-drive). */
+  private rowToChatStimulus(row: StimulusEntity): ChatStimulus {
+    return {
+      id: row.id,
+      orgId: row.org_id,
+      repoId: row.repo_id,
+      kind: 'chat',
+      trust: 'trusted',
+      body: row.body,
+      jobId: row.job_id as string,
+      author: {
+        id: row.author_id ?? '',
+        // Rows written before author_name existed fall back to the scope id as the display label.
+        displayName: row.author_name ?? row.author_id ?? 'operator',
+      },
+      replyRoute: row.reply_route ?? { surfaceId: '', jobRef: row.job_id as string },
       receivedAt: row.created_at,
     };
   }

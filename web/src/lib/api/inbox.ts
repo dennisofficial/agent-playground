@@ -4,8 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { env } from '@/lib/env';
 import { fetchWithRefresh } from './refresh';
 import { qk } from './query-keys';
-import { toJobStatus } from './status';
-import type { WireJobStatus, JobStatus, JobKind } from './types';
+import { toJobStatus, toJobKind } from './status';
+import type { WireJobStatus, WireJobKind, JobStatus, JobKind } from './types';
 
 /**
  * The unified cross-org inbox — every thread across ALL the operator's orgs (`GET /web/jobs`), the
@@ -21,6 +21,9 @@ export interface RawInboxThread {
   jobId: string;
   title: string | null;
   origin: string; // 'chat' | 'event' | 'control'
+  /** The job's build kind ('feature' | 'bugfix' | 'onboarding' | 'event'); null until scoped. Preferred
+   *  over `origin` for the badge when present (see `deriveInboxKind`). */
+  kind?: string | null;
   /** Raw backend thread status ('open' | 'planning' | … | 'cancelled'). */
   status: string;
   /** Server-derived: the thread is awaiting the operator (AI idle, not terminal). */
@@ -43,9 +46,14 @@ export interface InboxThread {
   repo: { id: string; name: string };
 }
 
-/** Coarse kind from the thread origin. Only `event` is distinguishable; `chat`/`control` read as `feat`. */
-function kindFromOrigin(origin: string): JobKind {
-  return origin === 'event' ? 'event' : 'feat';
+/**
+ * The badge kind: prefer the authoritative job `kind` when the backend supplies it (covers `onboarding`
+ * and scoped feature/bugfix), and fall back to the thread `origin` for older rows where `kind` is null
+ * (only `event` is distinguishable from origin; `chat`/`control` read as `feat`).
+ */
+function deriveInboxKind(r: RawInboxThread): JobKind {
+  if (r.kind) return toJobKind(r.kind as WireJobKind);
+  return r.origin === 'event' ? 'event' : 'feat';
 }
 
 /** Backend status (incl. `open`, which `toJobStatus` doesn't cover) → UI status for the pie. */
@@ -58,7 +66,7 @@ export function normalize(r: RawInboxThread): InboxThread {
   return {
     id: r.jobId,
     title: r.title?.trim() || 'Untitled thread',
-    kind: kindFromOrigin(r.origin),
+    kind: deriveInboxKind(r),
     status: uiStatus(r.status, r.origin),
     needsYou: r.needsYou,
     createdAt: r.createdAt,

@@ -145,9 +145,23 @@ export class JobEntity extends TimestampedEntity {
   @JoinColumn({ name: 'decision_record_id' })
   decisionRecord?: DecisionRecordEntity | null;
 
-  /** The feature branch all threads stack on; null until the branch is cut. */
+  /**
+   * The CANONICAL feature branch name all threads stack on — computed host-side from the repo's
+   * branch-naming prefix at provision time and stored as the exact name Atlas must `git checkout -b`
+   * in the sandbox. Atlas OWNS the actual branch creation/push now; the host only names it (so GitHub
+   * events correlate back to this job by branch). Null until the name is assigned.
+   */
   @Column({ type: 'text', nullable: true })
   feature_branch!: string | null;
+
+  /**
+   * The branch the sandbox's HEAD is actually on right now — sampled at each turn boundary
+   * (`git symbolic-ref --short HEAD`). OBSERVED, never asserted: pre-PR it mirrors the work; once a PR
+   * exists it stays a display field, and a divergence from {@link feature_branch} is surfaced as DRIFT
+   * (not blocked). Null until first sampled / on detached HEAD.
+   */
+  @Column({ type: 'text', nullable: true })
+  current_branch!: string | null;
 
   /** The opened PR url; null until the PR-tail stage opens one. */
   @Column({ type: 'text', nullable: true })
@@ -156,6 +170,21 @@ export class JobEntity extends TimestampedEntity {
   /** The opened PR number — what the merge poll queries GitHub with; null until opened. */
   @Column({ type: 'int', nullable: true })
   pr_number!: number | null;
+
+  /**
+   * Last observed CI conclusion for the PR head (e.g. `success | failure | pending`) — set by the
+   * reconciler from GitHub check-runs, surfaced as a UI badge. Null until first reconciled.
+   */
+  @Column({ type: 'text', nullable: true })
+  ci_status!: string | null;
+
+  /**
+   * Last observed GitHub PR `mergeable_state` (e.g. `clean | dirty | behind | blocked`) — set by the
+   * reconciler; `dirty` drives the merge-conflict badge + the conflict harness event to the brain.
+   * Null until first reconciled (GitHub also reports it transiently null while computing).
+   */
+  @Column({ type: 'text', nullable: true })
+  pr_mergeable!: string | null;
 
   /**
    * The PR-TAIL review agents (lenses) + their per-agent status — the JOB-level twin of

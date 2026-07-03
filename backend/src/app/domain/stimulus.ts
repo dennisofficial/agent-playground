@@ -99,4 +99,11 @@ export interface EventStimulus extends BaseStimulus {
   dedupeKey: string;
   /** Severity the adapter mapped from its payload. */
   severity: EventSeverity;
+  /**
+   * OPTIONAL correlation hint for routing to an EXISTING job's brain instead of seeding a new thread —
+   * a GitHub event on a PR/branch Atlas already owns (CI failure, merge conflict, review comment) should
+   * reach that job's session, not open a fresh event thread. Intake matches `branch` against a job's
+   * `feature_branch`/`current_branch` and `prNumber` against its `pr_number`. Absent → seed as before.
+   */
+  correlation?: { branch?: string | null; prNumber?: number | null };
 }

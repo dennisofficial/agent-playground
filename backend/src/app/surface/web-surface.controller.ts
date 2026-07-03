@@ -423,6 +423,7 @@ export class WebSurfaceController {
         jobId: t.id,
         title: t.title,
         origin: t.origin,
+        kind: t.kind, // job build kind ('onboarding'/'event'/'feature'/'bugfix'/null) — drives the web badge
         status: t.status,
         turnActive: t.turn_active,
         needsYou: deriveNeedsYou(

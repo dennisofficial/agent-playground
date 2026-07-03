@@ -62,9 +62,10 @@ export function deriveNeedsYou(
  * Whether the thread builds a multi-thread feature or a single-thread bugfix (both run the same driver), or
  * is a one-off `'onboarding'` thread that initialises a newly-connected repo (the Atlas-run `claude init`:
  * discovers env/secrets/setup + authors `.atlas/worktree.json`). An onboarding thread never builds/PRs via
- * the driver — its tools are gated and it has its own mission prompt.
+ * the driver — its tools are gated and it has its own mission prompt. `'event'` is a job seeded by an
+ * external notification/CI signal (see the stimulus firehose) — untrusted intake, not an operator-shaped build.
  */
-export type JobKind = 'feature' | 'bugfix' | 'onboarding';
+export type JobKind = 'feature' | 'bugfix' | 'onboarding' | 'event';
 
 /** A conversation + (optionally) the build it drives. One intent, one branch, one PR. */
 export interface Job {

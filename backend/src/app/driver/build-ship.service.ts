@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { DecisionRecord, Job } from '../domain';
 import { ENGINE_RUNNER, type EngineRunnerPort, type ExecutionTarget, type ToolImpl } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
+import { renderSystemPrompt } from '../prompt-kit';
 import { BLOCK_SINK, type BlockSink, TurnHarnessFactory } from '../surface/turn-harness.service';
 import { DriverStoreService } from './driver-store.service';
 import type { ResolvedRepo } from './repo-resolver';
@@ -9,70 +10,6 @@ import type { ResolvedRepo } from './repo-resolver';
 /** The PR Review orchestrator's transcript lane — stable per job, so the web can subscribe by job identity
  *  the same way a build thread rides `thread:<threadId>` (see `atlas-build-thread-stable-lane-reattach`). */
 const prReviewLane = (jobId: string): string => `pr-review:${jobId}`;
-
-/**
- * Environment framing shared by every driver-side engine prompt (this file + the thread-driver's plan/
- * execute/orchestrate prompts — exported from here because build-ship is the leaf both import, like
- * {@link LEDGER_COMMIT_MESSAGE}). These sessions stream to the operator's web console, so they must never
- * hand the operator "run this locally" homework — there is no operator-side machine.
- */
-export const CLOUD_SANDBOX_NOTE =
-  "You run in a CLOUD SANDBOX — your own container with the checkout at /workspace — not on the operator's " +
-  'machine. The operator follows along through a web console and shares NO filesystem, shell, or running ' +
-  'services with you; "local" means YOUR sandbox and nothing else. Never suggest the operator run commands, ' +
-  'start servers, or verify anything "on their machine" — whatever the work needs, YOU run here; your work ' +
-  'reaches them only through the commits/PR and what you report.';
-
-/**
- * Task-list discipline shared by every Atlas session that rides a task-tracked lane (the job brain on
- * `main`, a build thread's orchestrator on `thread:<id>`, PR Review on `pr-review:<jobId>` — see
- * `turn-harness.service.ts` `taskScopeFor`). The native task tools fold into the owning entity's tasks
- * column and render live in the operator's navigator, so the list IS the operator's progress view.
- * Persona prompts splice this in and add their own seeding rule (what the first tasks come from).
- */
-export const TASK_LIST_NOTE =
-  "LIVE TASK LIST — your native task tools (`TaskCreate`/`TaskUpdate`) render DIRECTLY in the operator's " +
-  'UI as this session\'s checklist; they are how the operator follows your work at a glance. Whenever the ' +
-  'work in front of you has more than one meaningful step, lay the list out FIRST: `TaskCreate` one task ' +
-  'per unit of work (short, outcome-phrased subjects the operator understands), then work it — `TaskUpdate` ' +
-  'a task to `in_progress` when you start it (one at a time) and `completed` the moment it finishes, never ' +
-  'in a batch at the end. Keep the list TRUTHFUL as the work reshapes: add tasks you discover mid-flight, ' +
-  "and drop ones that become moot (`TaskUpdate` with `status:'deleted'`). A stale checklist is worse than none.";
-
-const PR_REVIEW_SYSTEM_PROMPT = [
-  "You are Atlas's PR Review orchestrator. You run ONCE per feature, after every build thread has",
-  'finished, right before the pull request opens. Maintain a live task list via TaskCreate/TaskUpdate as',
-  'you work through exactly these three tasks, IN ORDER, one `in_progress` at a time:',
-  '',
-  '1. "Master code review — full merged diff": call the `run_master_review` tool ONCE to get an',
-  '   independent review over the whole merged diff, then read its findings.',
-  '2. "Apply fixes across threads": fix whatever the review found — the smallest safe change per',
-  '   finding, never expand scope, skip anything unsafe rather than guessing. If the review found',
-  "   nothing actionable, mark this task completed immediately with no changes — don't invent work.",
-  "3. \"Verify build & full test suite\": run the repo's own build and test commands and confirm they",
-  '   pass. Do this even if task 2 made no changes — a clean review still deserves a green build.',
-  '',
-  'Create all three tasks up front (pending), then mark each in_progress right before you start it and',
-  'completed right after it finishes. Do not skip ahead or run them out of order.',
-  '',
-  CLOUD_SANDBOX_NOTE,
-].join('\n');
-
-/** The Codex system prompt for the ONE holistic master-review pass `run_master_review` kicks off. */
-const MASTER_REVIEW_SYSTEM_PROMPT =
-  'You are a precise, terse senior code reviewer doing a final pass on a feature branch before its pull ' +
-  'request opens. Report real, in-scope issues in prose — correctness bugs, security issues, and seams ' +
-  'where separately-built pieces of this feature integrate badly with each other. This is a READ-ONLY ' +
-  'review — do not modify any files. ' +
-  CLOUD_SANDBOX_NOTE;
-
-/**
- * Commit message for the ledger-only commit that records durable decisions into `.atlas/decisions/`
- * (passed as `ShipInput.commitMessage` on the full path + boot recovery; the direct path uses its own).
- * Shared so the driver and the brain don't drift on the string.
- */
-export const LEDGER_COMMIT_MESSAGE =
-  'Atlas: record durable decisions in .atlas/decisions';
 
 /** The opened (or pre-existing) pull request. */
 export interface ShipResult {
@@ -230,7 +167,7 @@ export class BuildShipService {
         engine: 'claude',
         task: `Run PR Review for **${job.title ?? 'this feature'}**. Diff range: origin/${repo.defaultBranch}...HEAD.`,
         cwd: sandbox.worktreePath,
-        systemPrompt: PR_REVIEW_SYSTEM_PROMPT,
+        systemPrompt: renderSystemPrompt('ship-pr-review', { jobKind: job.kind }),
         sandboxKey: `${shipSandboxKey(sandbox)}--pr-review`,
         mode: 'execute',
         richStream: true,
@@ -262,7 +199,7 @@ export class BuildShipService {
             'across every build thread. Look for correctness bugs, security issues, and integration seams ' +
             'where separately-built pieces of this feature don\'t fit together cleanly.',
           cwd: sandbox.worktreePath,
-          systemPrompt: MASTER_REVIEW_SYSTEM_PROMPT,
+          systemPrompt: renderSystemPrompt('ship-master-review'),
           sandboxKey: `${shipSandboxKey(sandbox)}--master-review`,
           mode: 'review',
           ...(target ? { target } : {}),
