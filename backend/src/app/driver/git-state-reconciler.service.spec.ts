@@ -82,7 +82,7 @@ describe('GitStateReconciler.reconcile', () => {
     expect(pr.listCheckRuns).not.toHaveBeenCalled();
   });
 
-  it('DISCOVERY: a branch-only job with an Atlas-opened PR → records pr_url/pr_number', async () => {
+  it('DISCOVERY: a branch-only job with an Atlas-opened PR → records pr_url/pr_number + flips done', async () => {
     const { svc, update, findOpenPullByHead } = make({
       job: { pr_number: null, feature_branch: 'feat/a1b2c3d4' },
       discovered: { url: 'http://pr/9', number: 9 },
@@ -94,7 +94,12 @@ describe('GitStateReconciler.reconcile', () => {
       repo: 'web',
       head: 'feat/a1b2c3d4',
     });
-    expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_url: 'http://pr/9', pr_number: 9 });
+    // Discovery flips the job to `done` — the invariant "PR recorded ⇒ job done" that host-side
+    // `setPrReady` used to own now lives here (Atlas opens the PR in-sandbox; the host learns of it here).
+    expect(update).toHaveBeenCalledWith(
+      { id: 'job-1' },
+      { pr_url: 'http://pr/9', pr_number: 9, status: 'done' },
+    );
   });
 
   it('DISCOVERY: branch-only job with no open PR yet → does nothing', async () => {

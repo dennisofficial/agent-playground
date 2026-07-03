@@ -75,7 +75,13 @@ export class GitStateReconciler {
         head: job.feature_branch,
       });
       if (!found) return;
-      await this.jobs.update({ id: job.id }, { pr_url: found.url, pr_number: found.number });
+      // Record the PR AND flip the job to `done` — the invariant "PR recorded ⇒ job done" used to be set
+      // host-side by `setPrReady` when the host opened the PR. Now Atlas opens it in-sandbox and the host
+      // learns of it here, on discovery, so this is where the flip belongs.
+      await this.jobs.update(
+        { id: job.id },
+        { pr_url: found.url, pr_number: found.number, status: 'done' },
+      );
       this.logger.log(`discovered PR #${found.number} for job ${job.id} on ${job.feature_branch}`);
       prNumber = found.number;
     }
