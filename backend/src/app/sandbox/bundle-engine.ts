@@ -91,7 +91,18 @@ export async function bundleEngine(): Promise<string> {
     platform: 'node',
     format: 'esm',
     target: 'node22',
-    external: ['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk'],
+    external: [
+      '@anthropic-ai/claude-agent-sdk',
+      '@openai/codex-sdk',
+      // `@nestjs/core`'s NestApplication/NestFactory lazily `require`s these OPTIONAL transport packages
+      // (websockets/microservices) behind runtime guards. They aren't installed and the in-sandbox engine
+      // never uses them, but esbuild fails the WHOLE bundle trying to resolve them (→ "engine rebundle
+      // skipped, using existing bundle", leaving the sandbox on a STALE engine). Mark them external so the
+      // rebundle succeeds; at runtime they're never required down the engine's code path.
+      '@nestjs/microservices',
+      '@nestjs/microservices/microservices-module',
+      '@nestjs/websockets/socket-module',
+    ],
     // The dev runtime is `nest start --watch` → bundles the COMPILED (CommonJS) entry, whose
     // `require("node:crypto")` becomes esbuild's throwing `__require` shim in ESM output. Provide a real
     // `require` so those dynamic requires of Node builtins resolve. (Harmless when the entry is TS/ESM.)
