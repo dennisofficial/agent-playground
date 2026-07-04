@@ -20,6 +20,7 @@ import { TicketsModule } from './tickets';
 import { TitlingModule } from './titling';
 import { TestBridgeModule } from './test-bridge';
 import { PromptKitModule } from './prompt-kit';
+import { ThreadKindModule } from './thread-kind';
 
 /**
  * Atlas v2 APP layer — the composition seam for the edge and the local execution substrate:
@@ -50,6 +51,7 @@ import { PromptKitModule } from './prompt-kit';
     RedisModule,
     ClusterModule,
     PromptKitModule,
+    ThreadKindModule,
     AnalyticsModule,
     AuthModule,
     OnboardingModule,

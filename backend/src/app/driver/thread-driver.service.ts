@@ -32,6 +32,7 @@ import type { ActiveTurnEntity, ThreadTerminalRecord } from '../persistence/enti
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import { Agent, LEDGER_COMMIT_MESSAGE, renderAgentPrompt } from '../prompt-kit';
+import { isDriverExecutableKind, threadKindSpec } from '../thread-kind';
 import { BuildShipService } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
@@ -576,12 +577,18 @@ export class ThreadDriver implements JobDispatcher {
     );
 
     const allSections = await this.store.threadsForJob(jobId);
-    // Cap the FEATURE threads at MAX_SECTIONS, but NEVER drop the appended master-review thread (it rides on
-    // top of the feature threads and must always run last) — partition it out, cap the rest, re-append.
-    const featureSections = allSections.filter((s) => !s.isMasterReview);
-    const reviewSection = allSections.find((s) => s.isMasterReview);
+    // EXECUTABLE-KIND SELECTOR (Codex BLOCK): the driver's top loop drives ONLY driver-executable kinds
+    // (`builder` + `master_review`). `main`/`plan_review` are render-only rows (their runtime lives in the
+    // brain / codex_reviews — the driver never executes them), and `review_lens`/`post_review` are driven as
+    // CHILDREN of their builder, never entered here. `threadsForJob` returns every row, so this gate is what
+    // keeps the non-executable rows out of the section loop once they exist.
+    const executable = allSections.filter((s) => isDriverExecutableKind(s.kind));
+    // Cap the BUILDER lanes at MAX_SECTIONS, but NEVER drop the master-review thread (it rides on top of the
+    // builders and must always run last) — partition by kind, cap the builders, re-append the review last.
+    const featureSections = executable.filter((s) => s.kind === 'builder');
+    const reviewSections = executable.filter((s) => s.kind === 'master_review');
     const cappedFeatures = featureSections.slice(0, this.maxThreads);
-    const threads = reviewSection ? [...cappedFeatures, reviewSection] : cappedFeatures;
+    const threads = [...cappedFeatures, ...reviewSections];
     if (featureSections.length > cappedFeatures.length) {
       this.logger.warn(
         `job=${jobId} has ${featureSections.length} threads > MAX_SECTIONS (${this.maxThreads}) — capping`,
@@ -1634,13 +1641,13 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const anchor = steps[0];
     const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
-    // The master-review thread runs CODEX in execute mode over the whole diff (review + fix + verify) with a
-    // dedicated persona and high reasoning effort; every other builder runs Claude with the WORKER persona.
-    const isMasterReview = thread.isMasterReview;
-    const engine: SessionEngine = isMasterReview ? 'codex' : 'claude';
-    const systemPrompt = isMasterReview
-      ? renderAgentPrompt(Agent.MASTER_REVIEW)
-      : renderAgentPrompt(Agent.WORKER, { jobKind: job.kind });
+    // Engine / persona / reasoning effort come from the thread-kind spec (the prompt-kit `Agent` binding).
+    // The master-review kind runs CODEX in execute mode over the whole diff (review + fix + verify) with a
+    // dedicated persona + high reasoning effort; a builder runs Claude with the WORKER persona. `jobKind` is
+    // ignored by MASTER_REVIEW's fragments, so passing it uniformly is byte-identical for both.
+    const spec = threadKindSpec(thread.kind);
+    const engine: SessionEngine = spec.engine;
+    const systemPrompt = renderAgentPrompt(spec.agent, { jobKind: job.kind });
     // Circuit breaker (#3): bound the engine turn with the shared PAUSABLE deadline (paused across a
     // `request_operator_input` human wait). On breach it both signals the SDK to abort AND hard-rejects so
     // the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute to the anchor
@@ -1655,9 +1662,9 @@ export class ThreadDriver implements JobDispatcher {
           engine,
           mode: 'execute',
           systemPrompt,
-          // High reasoning effort for the whole-diff review pass (parity with plan-review). Ignored by Claude
-          // builder turns (undefined). `toolBridge`/steering are unused by `runCodex` on the master path.
-          ...(isMasterReview ? { modelReasoningEffort: 'xhigh' as const } : {}),
+          // High reasoning effort for the whole-diff review pass (parity with plan-review), from the spec.
+          // Undefined for Claude builder turns. `toolBridge`/steering are unused by `runCodex` on the master path.
+          ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
           auth: await this.creds.engineAuth(job.orgId, engine),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
