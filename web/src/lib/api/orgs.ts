@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { env } from '@/lib/env';
-import type { OrgSummary } from './me';
-import { fetchWithRefresh } from './refresh';
-import { qk } from './query-keys';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { env } from "@/lib/env";
+import type { OrgSummary } from "./me";
+import { fetchWithRefresh } from "./refresh";
+import { qk } from "./query-keys";
 
 /**
  * Org-scoped reads + the credentials write for the settings page. All hit the Atlas app directly with the
@@ -17,7 +17,11 @@ const BASE = `${env.NEXT_PUBLIC_HTTP_URL}/web`;
 async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetchWithRefresh(`${BASE}${path}`, {
     ...init,
-    headers: { accept: 'application/json', 'content-type': 'application/json', ...init?.headers },
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      ...init?.headers,
+    },
   });
   if (!res.ok) {
     let detail = res.statusText;
@@ -105,7 +109,7 @@ export function useSaveCredentials(orgId: string) {
   return useMutation({
     mutationFn: (body: SaveCredentialsBody) =>
       webJson<SaveCredentialsResult>(`/orgs/${orgId}/credentials`, {
-        method: 'PUT',
+        method: "PUT",
         body: JSON.stringify(body),
       }),
     onSuccess: () => {
@@ -135,7 +139,8 @@ export interface WorktreeSecretsView {
 export function useWorktreeSecrets(orgId: string) {
   return useQuery({
     queryKey: qk.orgWorktreeSecrets(orgId),
-    queryFn: () => webJson<WorktreeSecretsView>(`/orgs/${orgId}/worktree-secrets`),
+    queryFn: () =>
+      webJson<WorktreeSecretsView>(`/orgs/${orgId}/worktree-secrets`),
     enabled: Boolean(orgId),
     staleTime: 15_000,
   });
@@ -146,11 +151,15 @@ export function useSaveWorktreeSecret(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ name, value }: { name: string; value: string }) =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/secrets/${encodeURIComponent(name)}`, {
-        method: 'PUT',
-        body: JSON.stringify({ value }),
-      }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
+      webJson<{ ok: boolean }>(
+        `/orgs/${orgId}/worktree-secrets/secrets/${encodeURIComponent(name)}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ value }),
+        },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
   });
 }
 
@@ -159,10 +168,14 @@ export function useDeleteWorktreeSecret(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/secrets/${encodeURIComponent(name)}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
+      webJson<{ ok: boolean }>(
+        `/orgs/${orgId}/worktree-secrets/secrets/${encodeURIComponent(name)}`,
+        {
+          method: "DELETE",
+        },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
   });
 }
 
@@ -172,10 +185,11 @@ export function useGrantWorktreeSecret(orgId: string) {
   return useMutation({
     mutationFn: (body: WorktreeSecretGrant) =>
       webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/grants`, {
-        method: 'PUT',
+        method: "PUT",
         body: JSON.stringify(body),
       }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
   });
 }
 
@@ -185,10 +199,11 @@ export function useRevokeWorktreeSecret(orgId: string) {
   return useMutation({
     mutationFn: (body: WorktreeSecretGrant) =>
       webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/grants`, {
-        method: 'DELETE',
+        method: "DELETE",
         body: JSON.stringify(body),
       }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
   });
 }
 
@@ -202,7 +217,10 @@ export function useCreateOrg() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) =>
-      webJson<OrgSummary>(`/orgs`, { method: 'POST', body: JSON.stringify({ name }) }),
+      webJson<OrgSummary>(`/orgs`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.session() });
     },
@@ -220,7 +238,10 @@ export function useUpdateOrg(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: UpdateOrgBody) =>
-      webJson<OrgSummary>(`/orgs/${orgId}`, { method: 'PATCH', body: JSON.stringify(body) }),
+      webJson<OrgSummary>(`/orgs/${orgId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.session() });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
@@ -232,7 +253,8 @@ export function useUpdateOrg(orgId: string) {
 export function useDeleteOrg(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => webJson<{ ok: boolean }>(`/orgs/${orgId}`, { method: 'DELETE' }),
+    mutationFn: () =>
+      webJson<{ ok: boolean }>(`/orgs/${orgId}`, { method: "DELETE" }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.session() });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
@@ -271,7 +293,10 @@ export function useConnectRepo(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ConnectRepoBody) =>
-      webJson<ConnectedRepo>(`/orgs/${orgId}/repos`, { method: 'POST', body: JSON.stringify(body) }),
+      webJson<ConnectedRepo>(`/orgs/${orgId}/repos`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -284,7 +309,9 @@ export function useRevalidateRepo(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (repoId: string) =>
-      webJson<ConnectedRepo>(`/orgs/${orgId}/repos/${repoId}/revalidate`, { method: 'POST' }),
+      webJson<ConnectedRepo>(`/orgs/${orgId}/repos/${repoId}/revalidate`, {
+        method: "POST",
+      }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -301,7 +328,9 @@ export function useReonboardRepo(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (repoId: string) =>
-      webJson<{ jobId: string }>(`/orgs/${orgId}/repos/${repoId}/onboard`, { method: 'POST' }),
+      webJson<{ jobId: string }>(`/orgs/${orgId}/repos/${repoId}/onboard`, {
+        method: "POST",
+      }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
     },
@@ -320,7 +349,7 @@ export function useUpdateRepo(orgId: string) {
   return useMutation({
     mutationFn: ({ repoId, body }: { repoId: string; body: UpdateRepoBody }) =>
       webJson<ConnectedRepo>(`/orgs/${orgId}/repos/${repoId}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify(body),
       }),
     onSuccess: () => {
@@ -339,9 +368,12 @@ export function useDisconnectRepo(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (repoId: string) =>
-      webJson<{ ok: boolean; threadsDeleted: number }>(`/orgs/${orgId}/repos/${repoId}`, {
-        method: 'DELETE',
-      }),
+      webJson<{ ok: boolean; threadsDeleted: number }>(
+        `/orgs/${orgId}/repos/${repoId}`,
+        {
+          method: "DELETE",
+        },
+      ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });

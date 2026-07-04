@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { use } from 'react';
-import { TicketsWorkspace } from '@/features/tickets/tickets-workspace';
+import { use } from "react";
+import { TicketsWorkspace } from "@/features/tickets/tickets-workspace";
 
 /**
  * One repo's tickets board + backlog. `orgId`/`repoId` come from the route (the repo sidebar links here);

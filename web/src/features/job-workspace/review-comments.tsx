@@ -1,6 +1,15 @@
-'use client';
+"use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 /**
  * The inline review-comment feature ("Atlas Workspace HiFi" — select text in the detail pane → comment →
@@ -53,20 +62,24 @@ const ReviewCommentsContext = createContext<ReviewCommentsApi | null>(null);
 
 /** Feature-detect the CSS Custom Highlight API once — degrades gracefully (chips + send still work, just
  *  no visual underline) on browsers that lack it (older Firefox/Safari). */
-const HL_SUPPORTED = typeof CSS !== 'undefined' && typeof CSS.highlights !== 'undefined';
+const HL_SUPPORTED =
+  typeof CSS !== "undefined" && typeof CSS.highlights !== "undefined";
 
-const COMMITTED_NAME = 'atlas-comment';
-const PENDING_NAME = 'atlas-comment-pending';
+const COMMITTED_NAME = "atlas-comment";
+const PENDING_NAME = "atlas-comment-pending";
 
 function newId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+    return crypto.randomUUID();
   return `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export function ReviewCommentsProvider({ children }: { children: ReactNode }) {
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [pending, setPending] = useState<PendingSelection | null>(null);
-  const [activeTarget, setActiveTargetState] = useState<CommentTarget | null>(null);
+  const [activeTarget, setActiveTargetState] = useState<CommentTarget | null>(
+    null,
+  );
 
   // Every mutator below is wrapped in `useCallback(fn, [])` so its identity is STABLE across renders —
   // consumers (like `PhaseView`'s `setActiveTarget` effect) can safely depend on it without re-firing every
@@ -75,7 +88,9 @@ export function ReviewCommentsProvider({ children }: { children: ReactNode }) {
   // with an empty dep array) — so `pending`/`activeTarget` are mirrored into refs alongside their state.
   const committedHl = useRef<Highlight | null>(null);
   const pendingHl = useRef<Highlight | null>(null);
-  const rangesRef = useRef<Map<string, { range: Range; file: CommentTarget }>>(new Map());
+  const rangesRef = useRef<Map<string, { range: Range; file: CommentTarget }>>(
+    new Map(),
+  );
   const activeTargetRef = useRef<CommentTarget | null>(null);
   const pendingRef = useRef<PendingSelection | null>(null);
 
@@ -125,17 +140,20 @@ export function ReviewCommentsProvider({ children }: { children: ReactNode }) {
     [rebuildCommittedHighlight],
   );
 
-  const beginPending = useCallback((sel: { quote: string; rect: DOMRect; range: Range }) => {
-    const file = activeTargetRef.current;
-    if (!file) return;
-    if (HL_SUPPORTED && pendingHl.current) {
-      pendingHl.current.clear();
-      pendingHl.current.add(sel.range);
-    }
-    const next: PendingSelection = { ...sel, file };
-    pendingRef.current = next;
-    setPending(next);
-  }, []);
+  const beginPending = useCallback(
+    (sel: { quote: string; rect: DOMRect; range: Range }) => {
+      const file = activeTargetRef.current;
+      if (!file) return;
+      if (HL_SUPPORTED && pendingHl.current) {
+        pendingHl.current.clear();
+        pendingHl.current.add(sel.range);
+      }
+      const next: PendingSelection = { ...sel, file };
+      pendingRef.current = next;
+      setPending(next);
+    },
+    [],
+  );
 
   const cancelPending = useCallback(() => {
     pendingHl.current?.clear();
@@ -151,7 +169,10 @@ export function ReviewCommentsProvider({ children }: { children: ReactNode }) {
       rangesRef.current.set(id, { range: current.range, file: current.file });
       pendingHl.current?.clear();
       rebuildCommittedHighlight();
-      setComments((cs) => [...cs, { id, file: current.file, quote: current.quote, note: note.trim() }]);
+      setComments((cs) => [
+        ...cs,
+        { id, file: current.file, quote: current.quote, note: note.trim() },
+      ]);
       pendingRef.current = null;
       setPending(null);
     },
@@ -185,15 +206,32 @@ export function ReviewCommentsProvider({ children }: { children: ReactNode }) {
       removeComment,
       clearComments,
     }),
-    [comments, pending, activeTarget, setActiveTarget, beginPending, cancelPending, addComment, removeComment, clearComments],
+    [
+      comments,
+      pending,
+      activeTarget,
+      setActiveTarget,
+      beginPending,
+      cancelPending,
+      addComment,
+      removeComment,
+      clearComments,
+    ],
   );
 
-  return <ReviewCommentsContext.Provider value={api}>{children}</ReviewCommentsContext.Provider>;
+  return (
+    <ReviewCommentsContext.Provider value={api}>
+      {children}
+    </ReviewCommentsContext.Provider>
+  );
 }
 
 export function useReviewComments(): ReviewCommentsApi {
   const ctx = useContext(ReviewCommentsContext);
-  if (!ctx) throw new Error('useReviewComments must be used within a ReviewCommentsProvider');
+  if (!ctx)
+    throw new Error(
+      "useReviewComments must be used within a ReviewCommentsProvider",
+    );
   return ctx;
 }
 
@@ -202,22 +240,28 @@ export function useReviewComments(): ReviewCommentsApi {
  * `formatReviewComments` so the operator's chip preview matches what's actually delivered. Kept here (not
  * shared with the backend) since the two run in different runtimes; the shapes are the shared contract.
  */
-export function formatReviewComments(comments: ReviewComment[], message?: string): string {
+export function formatReviewComments(
+  comments: ReviewComment[],
+  message?: string,
+): string {
   const byFile = new Map<string, ReviewComment[]>();
   for (const c of comments) {
     const list = byFile.get(c.file.label);
     if (list) list.push(c);
     else byFile.set(c.file.label, [c]);
   }
-  const lines: string[] = [`${comments.length} review comment${comments.length === 1 ? '' : 's'}:`, ''];
+  const lines: string[] = [
+    `${comments.length} review comment${comments.length === 1 ? "" : "s"}:`,
+    "",
+  ];
   for (const [file, items] of byFile) {
     lines.push(`**${file}**`);
     for (const c of items) {
       lines.push(`> "${c.quote}"`);
       if (c.note) lines.push(`— ${c.note}`);
-      lines.push('');
+      lines.push("");
     }
   }
   if (message?.trim()) lines.push(message.trim());
-  return lines.join('\n').trim();
+  return lines.join("\n").trim();
 }

@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
-import { PublicGuard } from '@/features/auth/components/guards';
-import { BrandLockup } from '@/components/ui/brand';
+import type { ReactNode } from "react";
+import { PublicGuard } from "@/features/auth/components/guards";
+import { BrandLockup } from "@/components/ui/brand";
 
 /**
  * Public auth shell: the Atlas grid background (from <body>), brand lockup above a centered 396px

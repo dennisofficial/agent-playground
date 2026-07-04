@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
-import { ServerUnreachable } from '@/components/error/server-unreachable';
-import { auth, type AuthState } from '@/lib/auth';
-import { ROUTES, safeNext } from '@/lib/routes';
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState, type ReactNode } from "react";
+import { ServerUnreachable } from "@/components/error/server-unreachable";
+import { auth, type AuthState } from "@/lib/auth";
+import { ROUTES, safeNext } from "@/lib/routes";
 
 /**
  * Protected-route guards (the rs-crm/cubix pattern): subscribe to `auth.onAuthStateChanged`, render
@@ -12,10 +12,22 @@ import { ROUTES, safeNext } from '@/lib/routes';
  * `onAuthStateChanged` only fires after the global `AuthInitializer` resolves `initialize()`.
  */
 
-function FullScreenMessage({ children, tone = 'muted' }: { children: ReactNode; tone?: 'muted' | 'error' }) {
+function FullScreenMessage({
+  children,
+  tone = "muted",
+}: {
+  children: ReactNode;
+  tone?: "muted" | "error";
+}) {
   return (
     <main className="flex min-h-dvh items-center justify-center px-6">
-      <p className={tone === 'error' ? 'text-[13px] text-red' : 'text-[13px] text-dim'}>{children}</p>
+      <p
+        className={
+          tone === "error" ? "text-[13px] text-red" : "text-[13px] text-dim"
+        }
+      >
+        {children}
+      </p>
     </main>
   );
 }
@@ -30,7 +42,8 @@ export function PrivateGuard({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (state && !state.authenticated && !state.backendUnreachable) {
-      const search = typeof window !== 'undefined' ? window.location.search : '';
+      const search =
+        typeof window !== "undefined" ? window.location.search : "";
       router.replace(ROUTES.auth.login(`${pathname}${search}`));
     }
   }, [state, router, pathname]);
@@ -50,7 +63,10 @@ export function PublicGuard({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (state?.authenticated) {
-      const next = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('next') : null;
+      const next =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("next")
+          : null;
       router.replace(safeNext(next));
     }
   }, [state, router]);

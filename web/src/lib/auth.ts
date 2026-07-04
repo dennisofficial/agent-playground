@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { Auth, type AuthState } from '@workspace/auth';
-import { env } from './env';
+import { Auth, type AuthState } from "@workspace/auth";
+import { env } from "./env";
 
 export type { AuthState };
 
@@ -36,11 +36,15 @@ export interface AtlasAuth {
  * failures arrive as a `string[]`; join them. Falls back to the generic message when absent.
  */
 function authErrorMessage(err: unknown, fallback: string): Error {
-  const data = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data;
+  const data = (
+    err as { response?: { data?: { message?: string | string[] } } }
+  )?.response?.data;
   const message = data?.message;
-  if (Array.isArray(message)) return new Error(message.join('; '));
-  if (typeof message === 'string' && message) return new Error(message);
-  return new Error(err instanceof Error && err.message ? err.message : fallback);
+  if (Array.isArray(message)) return new Error(message.join("; "));
+  if (typeof message === "string" && message) return new Error(message);
+  return new Error(
+    err instanceof Error && err.message ? err.message : fallback,
+  );
 }
 
 /** Real adapter — wraps `@workspace/auth` against the Atlas app's `/auth/*` (direct, credentialed CORS). */
@@ -51,8 +55,12 @@ class RealAuth implements AtlasAuth {
     this.inner.configure({
       // Absolute base → the Atlas HTTP app directly (cookie session rides on credentialed CORS).
       apiBaseUrl: env.NEXT_PUBLIC_HTTP_URL,
-      authBasePath: '/auth',
-      sessionToAuthState: (s) => ({ authenticated: true, authProviderId: s.id, profileId: s.id }),
+      authBasePath: "/auth",
+      sessionToAuthState: (s) => ({
+        authenticated: true,
+        authProviderId: s.id,
+        profileId: s.id,
+      }),
     });
   }
 
@@ -73,7 +81,7 @@ class RealAuth implements AtlasAuth {
     try {
       await this.inner.signIn(email, password);
     } catch (err) {
-      throw authErrorMessage(err, 'Sign in failed.');
+      throw authErrorMessage(err, "Sign in failed.");
     }
   }
   async register(email: string, password: string): Promise<void> {
@@ -82,14 +90,14 @@ class RealAuth implements AtlasAuth {
     } catch (err) {
       // New accounts are created blocked → the backend returns 403 with the pending-approval message,
       // which surfaces in the signup banner here.
-      throw authErrorMessage(err, 'Could not create your account.');
+      throw authErrorMessage(err, "Could not create your account.");
     }
   }
   async signInWithGoogle(): Promise<void> {
-    throw new Error('Google sign-in is not configured on the backend yet.');
+    throw new Error("Google sign-in is not configured on the backend yet.");
   }
   async requestPasswordReset(): Promise<void> {
-    throw new Error('Password reset is not configured on the backend yet.');
+    throw new Error("Password reset is not configured on the backend yet.");
   }
   signOut(): void {
     this.inner.signOut();

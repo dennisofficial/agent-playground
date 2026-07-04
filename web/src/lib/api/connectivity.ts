@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { useSyncExternalStore } from 'react';
-import { auth } from '@/lib/auth';
-import { env } from '@/lib/env';
+import { useSyncExternalStore } from "react";
+import { auth } from "@/lib/auth";
+import { env } from "@/lib/env";
 
 /**
  * Global backend-connectivity signal — orthogonal to auth (a `/web/*` outage is not an auth state).
@@ -18,7 +18,7 @@ import { env } from '@/lib/env';
  *   online ──(failure persists ≥ RECONNECTING_AFTER_MS)──▶ reconnecting ──(≥ OFFLINE_AFTER_MS)──▶ offline
  *   └──────────────────────── any reachable signal / successful probe ────────────────────────────┘
  */
-export type ConnectivityStatus = 'online' | 'reconnecting' | 'offline';
+export type ConnectivityStatus = "online" | "reconnecting" | "offline";
 
 /** ms a failure must persist before we surface the "Reconnecting…" banner (debounces transient blips). */
 const RECONNECTING_AFTER_MS = 1500;
@@ -30,7 +30,7 @@ const PROBE_BACKOFF_MS = [600, 1500, 3000, 5000, 8000];
 type Timer = ReturnType<typeof setTimeout>;
 
 class ConnectivityStore {
-  private status: ConnectivityStatus = 'online';
+  private status: ConnectivityStatus = "online";
   /** Wall-clock of the first failure in the current degraded streak; `null` while healthy. */
   private degradedSince: number | null = null;
   private bannerTimer: Timer | null = null;
@@ -40,21 +40,21 @@ class ConnectivityStore {
   private readonly listeners = new Set<() => void>();
 
   constructor() {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       // Network restored / tab refocused → recheck immediately instead of waiting out the backoff.
-      window.addEventListener('online', this.kickProbe);
-      window.addEventListener('focus', this.kickProbe);
-      document.addEventListener('visibilitychange', this.onVisibility);
+      window.addEventListener("online", this.kickProbe);
+      window.addEventListener("focus", this.kickProbe);
+      document.addEventListener("visibilitychange", this.onVisibility);
     }
   }
 
   /** Any HTTP *response* proves the backend answered — even a 401/500. Clears a degraded streak. */
   reportReachable(): void {
-    if (this.degradedSince === null && this.status === 'online') return; // hot-path no-op (healthy)
+    if (this.degradedSince === null && this.status === "online") return; // hot-path no-op (healthy)
     this.clearTimers();
     this.degradedSince = null;
     this.probeAttempt = 0;
-    this.setStatus('online');
+    this.setStatus("online");
   }
 
   /**
@@ -66,10 +66,10 @@ class ConnectivityStore {
     if (this.degradedSince !== null) return; // already degraded — timers + probe already running
     this.degradedSince = Date.now();
     this.bannerTimer = setTimeout(() => {
-      if (this.degradedSince !== null) this.setStatus('reconnecting');
+      if (this.degradedSince !== null) this.setStatus("reconnecting");
     }, RECONNECTING_AFTER_MS);
     this.offlineTimer = setTimeout(() => {
-      if (this.degradedSince !== null) this.setStatus('offline');
+      if (this.degradedSince !== null) this.setStatus("offline");
     }, OFFLINE_AFTER_MS);
     this.scheduleProbe();
   }
@@ -82,7 +82,7 @@ class ConnectivityStore {
     };
   };
   getSnapshot = (): ConnectivityStatus => this.status;
-  getServerSnapshot = (): ConnectivityStatus => 'online';
+  getServerSnapshot = (): ConnectivityStatus => "online";
 
   private setStatus(next: ConnectivityStatus): void {
     if (next === this.status) return;
@@ -91,12 +91,16 @@ class ConnectivityStore {
   }
 
   private clearTimers(): void {
-    for (const t of [this.bannerTimer, this.offlineTimer, this.probeTimer]) if (t) clearTimeout(t);
+    for (const t of [this.bannerTimer, this.offlineTimer, this.probeTimer])
+      if (t) clearTimeout(t);
     this.bannerTimer = this.offlineTimer = this.probeTimer = null;
   }
 
   private scheduleProbe(): void {
-    const delay = PROBE_BACKOFF_MS[Math.min(this.probeAttempt, PROBE_BACKOFF_MS.length - 1)];
+    const delay =
+      PROBE_BACKOFF_MS[
+        Math.min(this.probeAttempt, PROBE_BACKOFF_MS.length - 1)
+      ];
     this.probeTimer = setTimeout(() => void this.probe(), delay);
   }
 
@@ -109,7 +113,7 @@ class ConnectivityStore {
   };
 
   private onVisibility = (): void => {
-    if (typeof document !== 'undefined' && !document.hidden) this.kickProbe();
+    if (typeof document !== "undefined" && !document.hidden) this.kickProbe();
   };
 
   /**
@@ -121,8 +125,8 @@ class ConnectivityStore {
     if (this.degradedSince === null) return; // recovered out from under this scheduled tick
     try {
       await fetch(`${env.NEXT_PUBLIC_HTTP_URL}/web/ping`, {
-        credentials: 'include',
-        cache: 'no-store',
+        credentials: "include",
+        cache: "no-store",
       });
       void auth.recheck();
       this.reportReachable();

@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import type { ReactNode } from 'react';
-import { ReconnectingBanner } from '@/components/error/reconnecting-banner';
-import { ServerUnreachable } from '@/components/error/server-unreachable';
-import { useConnectivity } from '@/lib/api/connectivity';
+import type { ReactNode } from "react";
+import { ReconnectingBanner } from "@/components/error/reconnecting-banner";
+import { ServerUnreachable } from "@/components/error/server-unreachable";
+import { useConnectivity } from "@/lib/api/connectivity";
 
 /**
  * Surfaces global backend-connectivity loss while the operator is mid-session. Mounted inside
@@ -17,11 +17,11 @@ import { useConnectivity } from '@/lib/api/connectivity';
  */
 export function ConnectivityGate({ children }: { children: ReactNode }) {
   const status = useConnectivity();
-  if (status === 'offline') return <ServerUnreachable />;
+  if (status === "offline") return <ServerUnreachable />;
   return (
     <>
       {children}
-      {status === 'reconnecting' ? <ReconnectingBanner /> : null}
+      {status === "reconnecting" ? <ReconnectingBanner /> : null}
     </>
   );
 }

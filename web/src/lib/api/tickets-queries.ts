@@ -1,17 +1,17 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo } from "react";
 import {
   useMutation,
   useQueries,
   useQuery,
   useQueryClient,
-} from '@tanstack/react-query';
-import { env } from '@/lib/env';
-import { qk } from './query-keys';
-import { subscribeSse } from './sse-manager';
-import { useOrgs } from './me';
-import { fetchOrgRepos, type RepoView } from './job-api';
+} from "@tanstack/react-query";
+import { env } from "@/lib/env";
+import { qk } from "./query-keys";
+import { subscribeSse } from "./sse-manager";
+import { useOrgs } from "./me";
+import { fetchOrgRepos, type RepoView } from "./job-api";
 import {
   addTicketDependency,
   createTicket,
@@ -24,7 +24,7 @@ import {
   type CreateTicketBody,
   type TicketRef,
   type UpdateTicketBody,
-} from './tickets-api';
+} from "./tickets-api";
 
 /** A repo in the flat tickets picker — its org context + the connected-repo view. */
 export interface RepoChoice {
@@ -71,10 +71,14 @@ export function useTickets(orgId: string, repoId: string) {
   });
 }
 
-export function useTicket(orgId: string, repoId: string, ticketId: string | null) {
+export function useTicket(
+  orgId: string,
+  repoId: string,
+  ticketId: string | null,
+) {
   const ref: TicketRef = { orgId, repoId };
   return useQuery({
-    queryKey: qk.ticketDetail(orgId, repoId, ticketId ?? ''),
+    queryKey: qk.ticketDetail(orgId, repoId, ticketId ?? ""),
     queryFn: () => fetchTicket(ref, ticketId as string),
     enabled: !!orgId && !!repoId && !!ticketId,
     staleTime: 5_000,
@@ -85,14 +89,15 @@ function useTicketInvalidate(orgId: string, repoId: string) {
   const qc = useQueryClient();
   return () => {
     void qc.invalidateQueries({ queryKey: qk.ticketsList(orgId, repoId) });
-    void qc.invalidateQueries({ queryKey: ['ticket-detail', orgId, repoId] });
+    void qc.invalidateQueries({ queryKey: ["ticket-detail", orgId, repoId] });
   };
 }
 
 export function useCreateTicket(orgId: string, repoId: string) {
   const invalidate = useTicketInvalidate(orgId, repoId);
   return useMutation({
-    mutationFn: (body: CreateTicketBody) => createTicket({ orgId, repoId }, body),
+    mutationFn: (body: CreateTicketBody) =>
+      createTicket({ orgId, repoId }, body),
     onSuccess: invalidate,
   });
 }
@@ -100,8 +105,13 @@ export function useCreateTicket(orgId: string, repoId: string) {
 export function useUpdateTicket(orgId: string, repoId: string) {
   const invalidate = useTicketInvalidate(orgId, repoId);
   return useMutation({
-    mutationFn: ({ ticketId, body }: { ticketId: string; body: UpdateTicketBody }) =>
-      updateTicket({ orgId, repoId }, ticketId, body),
+    mutationFn: ({
+      ticketId,
+      body,
+    }: {
+      ticketId: string;
+      body: UpdateTicketBody;
+    }) => updateTicket({ orgId, repoId }, ticketId, body),
     onSuccess: invalidate,
   });
 }
@@ -118,7 +128,8 @@ export function usePromoteTicket(orgId: string, repoId: string) {
   const invalidate = useTicketInvalidate(orgId, repoId);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (ticketId: string) => promoteTicket({ orgId, repoId }, ticketId),
+    mutationFn: (ticketId: string) =>
+      promoteTicket({ orgId, repoId }, ticketId),
     onSuccess: () => {
       invalidate();
       // A new thread may have been spun up — refresh the cross-org inbox so the sidebar shows it.
@@ -130,8 +141,13 @@ export function usePromoteTicket(orgId: string, repoId: string) {
 export function useAddTicketDependency(orgId: string, repoId: string) {
   const invalidate = useTicketInvalidate(orgId, repoId);
   return useMutation({
-    mutationFn: ({ ticketId, dependsOnTicketId }: { ticketId: string; dependsOnTicketId: string }) =>
-      addTicketDependency({ orgId, repoId }, ticketId, dependsOnTicketId),
+    mutationFn: ({
+      ticketId,
+      dependsOnTicketId,
+    }: {
+      ticketId: string;
+      dependsOnTicketId: string;
+    }) => addTicketDependency({ orgId, repoId }, ticketId, dependsOnTicketId),
     onSuccess: invalidate,
   });
 }
@@ -161,7 +177,9 @@ export function useRepoTicketEvents(orgId: string, repoId: string): void {
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
         void qc.invalidateQueries({ queryKey: qk.ticketsList(orgId, repoId) });
-        void qc.invalidateQueries({ queryKey: ['ticket-detail', orgId, repoId] });
+        void qc.invalidateQueries({
+          queryKey: ["ticket-detail", orgId, repoId],
+        });
       }, 200);
     };
 
@@ -172,7 +190,7 @@ export function useRepoTicketEvents(orgId: string, repoId: string): void {
       } catch {
         return;
       }
-      if (frame?.type === 'ticket_event') refetch();
+      if (frame?.type === "ticket_event") refetch();
     };
 
     // Shares the ONE repo-events connection with `useJobEvents` (same URL) via the SSE manager.

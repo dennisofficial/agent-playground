@@ -6,22 +6,22 @@
  * feed); cross-line constructs like block comments degrade to plain text, which is acceptable here.
  */
 
-import hljs from 'highlight.js/lib/core';
-import typescript from 'highlight.js/lib/languages/typescript';
-import javascript from 'highlight.js/lib/languages/javascript';
-import json from 'highlight.js/lib/languages/json';
-import bash from 'highlight.js/lib/languages/bash';
-import css from 'highlight.js/lib/languages/css';
-import xml from 'highlight.js/lib/languages/xml';
-import markdown from 'highlight.js/lib/languages/markdown';
-import python from 'highlight.js/lib/languages/python';
-import yaml from 'highlight.js/lib/languages/yaml';
-import sql from 'highlight.js/lib/languages/sql';
-import go from 'highlight.js/lib/languages/go';
-import rust from 'highlight.js/lib/languages/rust';
-import dockerfile from 'highlight.js/lib/languages/dockerfile';
-import ini from 'highlight.js/lib/languages/ini';
-import type { HLJSApi, Language } from 'highlight.js';
+import hljs from "highlight.js/lib/core";
+import typescript from "highlight.js/lib/languages/typescript";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import bash from "highlight.js/lib/languages/bash";
+import css from "highlight.js/lib/languages/css";
+import xml from "highlight.js/lib/languages/xml";
+import markdown from "highlight.js/lib/languages/markdown";
+import python from "highlight.js/lib/languages/python";
+import yaml from "highlight.js/lib/languages/yaml";
+import sql from "highlight.js/lib/languages/sql";
+import go from "highlight.js/lib/languages/go";
+import rust from "highlight.js/lib/languages/rust";
+import dockerfile from "highlight.js/lib/languages/dockerfile";
+import ini from "highlight.js/lib/languages/ini";
+import type { HLJSApi, Language } from "highlight.js";
 
 /**
  * Minimal Terraform/HCL grammar — highlight.js core ships no HCL, but infra threads read `.tf` files
@@ -30,24 +30,25 @@ import type { HLJSApi, Language } from 'highlight.js';
  */
 function terraform(hljs: HLJSApi): Language {
   return {
-    name: 'Terraform',
-    aliases: ['tf', 'hcl'],
+    name: "Terraform",
+    aliases: ["tf", "hcl"],
     keywords: {
-      keyword: 'resource variable module data output provider locals terraform for for_each count depends_on dynamic if else',
-      literal: 'true false null',
+      keyword:
+        "resource variable module data output provider locals terraform for for_each count depends_on dynamic if else",
+      literal: "true false null",
     },
     contains: [
       hljs.HASH_COMMENT_MODE,
-      hljs.COMMENT('//', '$'),
-      hljs.COMMENT('/\\*', '\\*/'),
+      hljs.COMMENT("//", "$"),
+      hljs.COMMENT("/\\*", "\\*/"),
       {
-        className: 'string',
+        className: "string",
         begin: '"',
         end: '"',
-        contains: [{ className: 'subst', begin: /\$\{/, end: /\}/ }],
+        contains: [{ className: "subst", begin: /\$\{/, end: /\}/ }],
       },
       hljs.NUMBER_MODE,
-      { className: 'attr', begin: /[\w-]+(?=\s*=[^=])/ },
+      { className: "attr", begin: /[\w-]+(?=\s*=[^=])/ },
     ],
   };
 }
@@ -55,53 +56,74 @@ function terraform(hljs: HLJSApi): Language {
 let registered = false;
 function ensureRegistered() {
   if (registered) return;
-  hljs.registerLanguage('typescript', typescript);
-  hljs.registerLanguage('javascript', javascript);
-  hljs.registerLanguage('json', json);
-  hljs.registerLanguage('bash', bash);
-  hljs.registerLanguage('css', css);
-  hljs.registerLanguage('xml', xml);
-  hljs.registerLanguage('markdown', markdown);
-  hljs.registerLanguage('python', python);
-  hljs.registerLanguage('yaml', yaml);
-  hljs.registerLanguage('sql', sql);
-  hljs.registerLanguage('go', go);
-  hljs.registerLanguage('rust', rust);
-  hljs.registerLanguage('dockerfile', dockerfile);
-  hljs.registerLanguage('ini', ini);
-  hljs.registerLanguage('terraform', terraform);
+  hljs.registerLanguage("typescript", typescript);
+  hljs.registerLanguage("javascript", javascript);
+  hljs.registerLanguage("json", json);
+  hljs.registerLanguage("bash", bash);
+  hljs.registerLanguage("css", css);
+  hljs.registerLanguage("xml", xml);
+  hljs.registerLanguage("markdown", markdown);
+  hljs.registerLanguage("python", python);
+  hljs.registerLanguage("yaml", yaml);
+  hljs.registerLanguage("sql", sql);
+  hljs.registerLanguage("go", go);
+  hljs.registerLanguage("rust", rust);
+  hljs.registerLanguage("dockerfile", dockerfile);
+  hljs.registerLanguage("ini", ini);
+  hljs.registerLanguage("terraform", terraform);
   registered = true;
 }
 
 /** Map a file extension (or basename, for e.g. Dockerfile) to a registered highlight.js language id. */
 const EXT_LANG: Record<string, string> = {
-  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
-  js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
-  json: 'json', jsonc: 'json',
-  sh: 'bash', bash: 'bash', zsh: 'bash',
-  css: 'css', scss: 'css', less: 'css',
-  html: 'xml', xml: 'xml', svg: 'xml', vue: 'xml',
-  md: 'markdown', mdx: 'markdown', markdown: 'markdown',
-  py: 'python',
-  yml: 'yaml', yaml: 'yaml',
-  sql: 'sql',
-  go: 'go',
-  rs: 'rust',
-  toml: 'ini', ini: 'ini', env: 'ini',
-  tf: 'terraform', tfvars: 'terraform', hcl: 'terraform',
+  ts: "typescript",
+  tsx: "typescript",
+  mts: "typescript",
+  cts: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  json: "json",
+  jsonc: "json",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  css: "css",
+  scss: "css",
+  less: "css",
+  html: "xml",
+  xml: "xml",
+  svg: "xml",
+  vue: "xml",
+  md: "markdown",
+  mdx: "markdown",
+  markdown: "markdown",
+  py: "python",
+  yml: "yaml",
+  yaml: "yaml",
+  sql: "sql",
+  go: "go",
+  rs: "rust",
+  toml: "ini",
+  ini: "ini",
+  env: "ini",
+  tf: "terraform",
+  tfvars: "terraform",
+  hcl: "terraform",
 };
 
 /** The highlight.js language for a path, or `null` when unknown (caller renders plain escaped text). */
 export function langFromPath(path: string): string | null {
   if (!path) return null;
-  const base = path.split('/').pop() ?? path;
-  if (/^dockerfile/i.test(base)) return 'dockerfile';
-  const ext = base.includes('.') ? base.split('.').pop()!.toLowerCase() : '';
+  const base = path.split("/").pop() ?? path;
+  if (/^dockerfile/i.test(base)) return "dockerfile";
+  const ext = base.includes(".") ? base.split(".").pop()!.toLowerCase() : "";
   return EXT_LANG[ext] ?? null;
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /**
@@ -110,7 +132,7 @@ function escapeHtml(s: string): string {
  * the row keeps its height.
  */
 export function highlightLine(code: string, lang: string | null): string {
-  if (!code) return '&nbsp;';
+  if (!code) return "&nbsp;";
   ensureRegistered();
   if (!lang || !hljs.getLanguage(lang)) return escapeHtml(code);
   try {

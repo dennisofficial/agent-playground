@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * Root-level error boundary — catches errors in the root layout itself (rare, but required).

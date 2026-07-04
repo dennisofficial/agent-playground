@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { env } from '@/lib/env';
-import { fetchWithRefresh } from './refresh';
-import { qk } from './query-keys';
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { env } from "@/lib/env";
+import { fetchWithRefresh } from "./refresh";
+import { qk } from "./query-keys";
 
 /** An org the operator belongs to, as carried on the session (`GET /auth/session`). */
 export interface OrgSummary {
@@ -29,14 +29,17 @@ async function fetchCurrentUser(): Promise<CurrentUser> {
   // Direct, credentialed call to the Atlas app (the session cookie authorizes it). `fetchWithRefresh`
   // re-ups the access cookie + retries once if it expired mid-session. The session carries the caller's
   // orgs so the shell can render the org rail / settings without a second round-trip.
-  const res = await fetchWithRefresh(`${env.NEXT_PUBLIC_HTTP_URL}/auth/session`, {
-    headers: { accept: 'application/json' },
-  });
+  const res = await fetchWithRefresh(
+    `${env.NEXT_PUBLIC_HTTP_URL}/auth/session`,
+    {
+      headers: { accept: "application/json" },
+    },
+  );
   if (!res.ok) throw new Error(`session ${res.status}`);
   const body = (await res.json()) as Partial<CurrentUser>;
   return {
-    id: body.id ?? '',
-    email: body.email ?? '',
+    id: body.id ?? "",
+    email: body.email ?? "",
     name: body.name ?? null,
     orgs: Array.isArray(body.orgs) ? body.orgs : [],
   };
@@ -60,8 +63,8 @@ export function useCurrentUser() {
 export function useOrgs() {
   const { data, isLoading, isError } = useCurrentUser();
   const orgs = useMemo(() => data?.orgs ?? [], [data]);
-  const owned = useMemo(() => orgs.filter((o) => o.role === 'owner'), [orgs]);
-  const joined = useMemo(() => orgs.filter((o) => o.role !== 'owner'), [orgs]);
+  const owned = useMemo(() => orgs.filter((o) => o.role === "owner"), [orgs]);
+  const joined = useMemo(() => orgs.filter((o) => o.role !== "owner"), [orgs]);
   return { orgs, owned, joined, isLoading, isError };
 }
 

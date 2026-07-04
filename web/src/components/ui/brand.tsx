@@ -1,31 +1,31 @@
-import { cn } from '@/lib/cn';
+import { cn } from "@/lib/cn";
 
 /**
  * The ATLAS lockup — pure CSS/markup, no asset (handoff §10). A gradient rounded-square mark holding a
  * rotated bordered diamond, plus the "ATLAS" wordmark (Space Grotesk) and an optional mono caption.
  */
 export function BrandLockup({
-  size = 'md',
+  size = "md",
   showCaption = false,
   className,
 }: {
-  size?: 'sm' | 'md' | 'lg';
+  size?: "sm" | "md" | "lg";
   showCaption?: boolean;
   className?: string;
 }) {
-  const mark = size === 'lg' ? 40 : size === 'md' ? 34 : 26;
+  const mark = size === "lg" ? 40 : size === "md" ? 34 : 26;
   const diamond = Math.round(mark * 0.42);
-  const word = size === 'lg' ? 22 : size === 'md' ? 21 : 15;
+  const word = size === "lg" ? 22 : size === "md" ? 21 : 15;
 
   return (
-    <div className={cn('flex items-center gap-3', className)}>
+    <div className={cn("flex items-center gap-3", className)}>
       <span
         className="relative flex shrink-0 items-center justify-center rounded-[9px]"
         style={{
           width: mark,
           height: mark,
-          background: 'linear-gradient(145deg, var(--accent), var(--accent-2))',
-          boxShadow: '0 4px 14px var(--accent-soft)',
+          background: "linear-gradient(145deg, var(--accent), var(--accent-2))",
+          boxShadow: "0 4px 14px var(--accent-soft)",
         }}
         aria-hidden
       >
@@ -34,8 +34,8 @@ export function BrandLockup({
           style={{
             width: diamond,
             height: diamond,
-            transform: 'rotate(45deg)',
-            border: '1.6px solid rgba(255,255,255,0.92)',
+            transform: "rotate(45deg)",
+            border: "1.6px solid rgba(255,255,255,0.92)",
             borderRadius: 2,
           }}
         />
@@ -43,7 +43,7 @@ export function BrandLockup({
       <div className="flex flex-col leading-none">
         <span
           className="font-disp font-bold text-text"
-          style={{ fontSize: word, letterSpacing: '0.16em' }}
+          style={{ fontSize: word, letterSpacing: "0.16em" }}
         >
           ATLAS
         </span>

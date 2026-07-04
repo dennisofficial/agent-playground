@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import type { ComponentType } from "react";
 
 /**
  * Tool-call rendering — shared types for the pluggable renderer registry.
@@ -13,7 +13,13 @@ import type { ComponentType } from 'react';
  * REAL 1-based file offsets + sign-prefixed lines (`' '` context / `'+'` add / `'-'` del). Lets the diff
  * gutter show true file line numbers instead of restarting at 1.
  */
-export type DiffHunk = { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] };
+export type DiffHunk = {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+};
 
 /** One tool call, as captured by the brain's turn streamer (`meta: { name, input, result, isError }`). */
 export interface ToolItem {
@@ -27,13 +33,23 @@ export interface ToolItem {
   structuredPatch?: DiffHunk[];
 }
 
-export type IconKind = 'bash' | 'read' | 'edit' | 'write' | 'grep' | 'mcp' | 'todo' | 'web' | 'task' | 'plan';
+export type IconKind =
+  | "bash"
+  | "read"
+  | "edit"
+  | "write"
+  | "grep"
+  | "mcp"
+  | "todo"
+  | "web"
+  | "task"
+  | "plan";
 
 /** Right-aligned badge on a tool row. */
 export type ToolBadge =
-  | { kind: 'diffstat'; added: number; removed: number | null }
-  | { kind: 'lines'; n: number }
-  | { kind: 'error' }
+  | { kind: "diffstat"; added: number; removed: number | null }
+  | { kind: "lines"; n: number }
+  | { kind: "error" }
   | null;
 
 /** The collapsed one-line treatment for a tool row + its group-preview token. */

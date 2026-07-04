@@ -1,34 +1,31 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
-import { cn } from '@/lib/cn';
-import type {
-  TicketKind,
-  TicketPriority,
-} from '@/lib/api/tickets-api';
-import { kindColor, priorityColor } from './ticket-helpers';
+import { useEffect, useState } from "react";
+import { X } from "lucide-react";
+import { cn } from "@/lib/cn";
+import type { TicketKind, TicketPriority } from "@/lib/api/tickets-api";
+import { kindColor, priorityColor } from "./ticket-helpers";
 
 export interface TicketFormValue {
   title: string;
   body: string;
-  priority: TicketPriority | '';
-  kind: TicketKind | '';
+  priority: TicketPriority | "";
+  kind: TicketKind | "";
 }
 
-const PRIORITIES: Array<{ v: TicketPriority | ''; label: string }> = [
-  { v: '', label: 'None' },
-  { v: 'low', label: 'Low' },
-  { v: 'medium', label: 'Medium' },
-  { v: 'high', label: 'High' },
-  { v: 'urgent', label: 'Urgent' },
+const PRIORITIES: Array<{ v: TicketPriority | ""; label: string }> = [
+  { v: "", label: "None" },
+  { v: "low", label: "Low" },
+  { v: "medium", label: "Medium" },
+  { v: "high", label: "High" },
+  { v: "urgent", label: "Urgent" },
 ];
 
-const KINDS: Array<{ v: TicketKind | ''; label: string }> = [
-  { v: '', label: 'None' },
-  { v: 'feature', label: 'FEATURE' },
-  { v: 'bug', label: 'BUG' },
-  { v: 'chore', label: 'CHORE' },
+const KINDS: Array<{ v: TicketKind | ""; label: string }> = [
+  { v: "", label: "None" },
+  { v: "feature", label: "FEATURE" },
+  { v: "bug", label: "BUG" },
+  { v: "chore", label: "CHORE" },
 ];
 
 /**
@@ -44,7 +41,7 @@ export function TicketFormModal({
   onSubmit,
   onClose,
 }: {
-  mode: 'create' | 'edit';
+  mode: "create" | "edit";
   number?: number;
   nextNumber?: number;
   initial?: Partial<TicketFormValue>;
@@ -52,17 +49,19 @@ export function TicketFormModal({
   onSubmit: (value: TicketFormValue) => void;
   onClose: () => void;
 }) {
-  const [title, setTitle] = useState(initial?.title ?? '');
-  const [body, setBody] = useState(initial?.body ?? '');
-  const [priority, setPriority] = useState<TicketPriority | ''>(initial?.priority ?? '');
-  const [kind, setKind] = useState<TicketKind | ''>(initial?.kind ?? '');
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [body, setBody] = useState(initial?.body ?? "");
+  const [priority, setPriority] = useState<TicketPriority | "">(
+    initial?.priority ?? "",
+  );
+  const [kind, setKind] = useState<TicketKind | "">(initial?.kind ?? "");
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === "Escape") onClose();
     }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   const canSubmit = title.trim().length > 0 && !busy;
@@ -75,14 +74,17 @@ export function TicketFormModal({
     <Overlay onClose={onClose}>
       <div
         className="anim-pop w-[540px] max-w-[92vw] overflow-hidden rounded-lg border border-border"
-        style={{ background: 'var(--panel)', boxShadow: 'var(--shadow-palette)' }}
+        style={{
+          background: "var(--panel)",
+          boxShadow: "var(--shadow-palette)",
+        }}
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal
       >
         <div className="flex items-center gap-2 px-[22px] pt-[18px]">
           <div className="font-disp text-[16px] font-semibold text-text">
-            {mode === 'edit' ? `Edit ticket #${number}` : 'New ticket'}
+            {mode === "edit" ? `Edit ticket #${number}` : "New ticket"}
           </div>
           <div className="flex-1" />
           <button
@@ -102,7 +104,7 @@ export function TicketFormModal({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') submit();
+                if (e.key === "Enter") submit();
               }}
               placeholder="What needs doing?"
               className="h-[38px] w-full rounded-md border border-border bg-surface px-3 text-[13px] text-text outline-none transition focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
@@ -124,10 +126,10 @@ export function TicketFormModal({
               <div className="flex flex-wrap gap-1.5">
                 {PRIORITIES.map((p) => (
                   <ChipToggle
-                    key={p.v || 'none'}
+                    key={p.v || "none"}
                     label={p.label}
                     on={priority === p.v}
-                    color={p.v ? priorityColor(p.v) : 'var(--dim)'}
+                    color={p.v ? priorityColor(p.v) : "var(--dim)"}
                     onClick={() => setPriority(p.v)}
                   />
                 ))}
@@ -138,10 +140,10 @@ export function TicketFormModal({
               <div className="flex flex-wrap gap-1.5">
                 {KINDS.map((k) => (
                   <ChipToggle
-                    key={k.v || 'none'}
+                    key={k.v || "none"}
                     label={k.label}
                     on={kind === k.v}
-                    color={k.v ? kindColor(k.v) : 'var(--dim)'}
+                    color={k.v ? kindColor(k.v) : "var(--dim)"}
                     onClick={() => setKind(k.v)}
                   />
                 ))}
@@ -150,11 +152,14 @@ export function TicketFormModal({
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 border-t border-border px-[22px] py-3.5" style={{ background: 'var(--surface-2)' }}>
+        <div
+          className="flex items-center gap-2.5 border-t border-border px-[22px] py-3.5"
+          style={{ background: "var(--surface-2)" }}
+        >
           <div className="font-mono text-[9.5px] text-faint">
-            {mode === 'create'
-              ? `Lands in the backlog · #${nextNumber ?? '—'} · captured by you`
-              : 'Editing metadata · status is driven by Atlas & jobs'}
+            {mode === "create"
+              ? `Lands in the backlog · #${nextNumber ?? "—"} · captured by you`
+              : "Editing metadata · status is driven by Atlas & jobs"}
           </div>
           <div className="flex-1" />
           <button
@@ -171,11 +176,18 @@ export function TicketFormModal({
             className="grid h-[34px] place-items-center rounded-md px-[18px] text-[12px] font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed"
             style={
               canSubmit
-                ? { background: 'linear-gradient(145deg, var(--accent), var(--accent-2))' }
-                : { background: 'var(--surface-3)', color: 'var(--faint)', opacity: 0.7 }
+                ? {
+                    background:
+                      "linear-gradient(145deg, var(--accent), var(--accent-2))",
+                  }
+                : {
+                    background: "var(--surface-3)",
+                    color: "var(--faint)",
+                    opacity: 0.7,
+                  }
             }
           >
-            {mode === 'edit' ? 'Save changes' : 'Create ticket'}
+            {mode === "edit" ? "Save changes" : "Create ticket"}
           </button>
         </div>
       </div>
@@ -183,11 +195,17 @@ export function TicketFormModal({
   );
 }
 
-export function Overlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+export function Overlay({
+  children,
+  onClose,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
   return (
     <div
       className="absolute inset-0 z-[60] grid place-items-center p-8"
-      style={{ background: 'rgba(0,0,0,0.34)' }}
+      style={{ background: "rgba(0,0,0,0.34)" }}
       onMouseDown={onClose}
     >
       {children}
@@ -219,7 +237,11 @@ function Labeled({
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <div className="mb-[7px] text-[11px] font-semibold text-dim">{children}</div>;
+  return (
+    <div className="mb-[7px] text-[11px] font-semibold text-dim">
+      {children}
+    </div>
+  );
 }
 
 function ChipToggle({
@@ -237,11 +259,13 @@ function ChipToggle({
     <button
       type="button"
       onClick={onClick}
-      className={cn('select-none rounded-md border px-[9px] py-1 font-mono text-[9.5px] font-semibold transition')}
+      className={cn(
+        "select-none rounded-md border px-[9px] py-1 font-mono text-[9.5px] font-semibold transition",
+      )}
       style={
         on
-          ? { background: color, borderColor: color, color: '#fff' }
-          : { background: 'transparent', borderColor: 'var(--border-2)', color }
+          ? { background: color, borderColor: color, color: "#fff" }
+          : { background: "transparent", borderColor: "var(--border-2)", color }
       }
     >
       {label}

@@ -1,5 +1,5 @@
-import { diffLines } from 'diff';
-import { asRecord, str } from './util';
+import { diffLines } from "diff";
+import { asRecord, str } from "./util";
 
 /**
  * Added/removed line counts for a file-edit tool call.
@@ -12,15 +12,17 @@ export interface DiffStat {
   removed: number | null;
 }
 
-const isEditName = (n: string) => ['edit', 'multiedit'].includes(n.toLowerCase());
-const isWriteName = (n: string) => ['write', 'notebookedit'].includes(n.toLowerCase());
+const isEditName = (n: string) =>
+  ["edit", "multiedit"].includes(n.toLowerCase());
+const isWriteName = (n: string) =>
+  ["write", "notebookedit"].includes(n.toLowerCase());
 
 /** Sum added/removed lines of a single `old → new` line diff. */
 function diffPair(oldStr: string, newStr: string): DiffStat {
   let added = 0;
   let removed = 0;
   for (const part of diffLines(oldStr, newStr)) {
-    const n = part.count ?? part.value.split('\n').length;
+    const n = part.count ?? part.value.split("\n").length;
     if (part.added) added += n;
     else if (part.removed) removed += n;
   }
@@ -35,27 +37,29 @@ function statFromResult(result: unknown): DiffStat | null {
   const rec = asRecord(result);
 
   // structuredPatch: { hunks: [{ lines: ['+a', '-b', ' c'] }] }
-  const hunks = (rec.structuredPatch as { hunks?: Array<{ lines?: string[] }> } | undefined)?.hunks ?? rec.hunks;
+  const hunks =
+    (rec.structuredPatch as { hunks?: Array<{ lines?: string[] }> } | undefined)
+      ?.hunks ?? rec.hunks;
   if (Array.isArray(hunks)) {
     let added = 0;
     let removed = 0;
     for (const h of hunks as Array<{ lines?: string[] }>) {
       for (const line of h.lines ?? []) {
-        if (line.startsWith('+')) added += 1;
-        else if (line.startsWith('-')) removed += 1;
+        if (line.startsWith("+")) added += 1;
+        else if (line.startsWith("-")) removed += 1;
       }
     }
     return { added, removed };
   }
 
   // gitDiff: a unified-diff string.
-  const gitDiff = typeof rec.gitDiff === 'string' ? rec.gitDiff : null;
+  const gitDiff = typeof rec.gitDiff === "string" ? rec.gitDiff : null;
   if (gitDiff) {
     let added = 0;
     let removed = 0;
-    for (const line of gitDiff.split('\n')) {
-      if (line.startsWith('+') && !line.startsWith('+++')) added += 1;
-      else if (line.startsWith('-') && !line.startsWith('---')) removed += 1;
+    for (const line of gitDiff.split("\n")) {
+      if (line.startsWith("+") && !line.startsWith("+++")) added += 1;
+      else if (line.startsWith("-") && !line.startsWith("---")) removed += 1;
     }
     return { added, removed };
   }
@@ -68,7 +72,11 @@ function statFromResult(result: unknown): DiffStat | null {
  * otherwise diffs the input (`old_string`→`new_string`, summed across MultiEdit `edits`). Returns
  * `null` for non-edit tools.
  */
-export function editDiffstat(name: string, input: unknown, result?: unknown): DiffStat | null {
+export function editDiffstat(
+  name: string,
+  input: unknown,
+  result?: unknown,
+): DiffStat | null {
   if (!isEditName(name) && !isWriteName(name)) return null;
 
   const fromResult = statFromResult(result);
@@ -80,7 +88,10 @@ export function editDiffstat(name: string, input: unknown, result?: unknown): Di
     // We have the new content but not the prior file — count added lines, leave removed unknown.
     const content = str(inp.content ?? inp.new_string);
     if (!content) return null;
-    return { added: content.replace(/\n$/, '').split('\n').length, removed: null };
+    return {
+      added: content.replace(/\n$/, "").split("\n").length,
+      removed: null,
+    };
   }
 
   // MultiEdit: sum over each edit. Edit: a single old → new pair.

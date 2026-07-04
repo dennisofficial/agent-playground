@@ -1,12 +1,12 @@
-'use client';
+"use client";
 
-import { useRef, useState } from 'react';
-import { CheckCircle2, FileUp } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Markdown } from './markdown';
-import { useProvideFile } from '@/lib/api/job-queries';
-import type { JobRef } from '@/lib/api/job-api';
-import type { WebFileRequestCard } from '@/lib/api/types';
+import { useRef, useState } from "react";
+import { CheckCircle2, FileUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Markdown } from "./markdown";
+import { useProvideFile } from "@/lib/api/job-queries";
+import type { JobRef } from "@/lib/api/job-api";
+import type { WebFileRequestCard } from "@/lib/api/types";
 
 /** Max upload size, kept in lockstep with the backend `MAX_FILE_UPLOAD_BYTES`. */
 const MAX_FILE_BYTES = 512 * 1024;
@@ -17,10 +17,16 @@ const MAX_FILE_BYTES = 512 * 1024;
  * contents encrypted + grants them. The contents are never echoed back or kept in the card. Once
  * `provided_at` is set, renders the compact "uploaded" state.
  */
-export function FileCardView({ card, jobRef }: { card: WebFileRequestCard; jobRef: JobRef }) {
+export function FileCardView({
+  card,
+  jobRef,
+}: {
+  card: WebFileRequestCard;
+  jobRef: JobRef;
+}) {
   const provide = useProvideFile(jobRef);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [filename, setFilename] = useState('');
+  const [filename, setFilename] = useState("");
   const [content, setContent] = useState<string | null>(null);
   const [tooBig, setTooBig] = useState(false);
   const pending = provide.isPending;
@@ -31,13 +37,14 @@ export function FileCardView({ card, jobRef }: { card: WebFileRequestCard; jobRe
     if (file.size > MAX_FILE_BYTES) {
       setTooBig(true);
       setContent(null);
-      setFilename('');
+      setFilename("");
       return;
     }
     setTooBig(false);
     setFilename(file.name);
     const reader = new FileReader();
-    reader.onload = () => setContent(typeof reader.result === 'string' ? reader.result : '');
+    reader.onload = () =>
+      setContent(typeof reader.result === "string" ? reader.result : "");
     reader.readAsText(file);
   }
 
@@ -45,21 +52,27 @@ export function FileCardView({ card, jobRef }: { card: WebFileRequestCard; jobRe
     if (content == null || !filename) return;
     provide.mutate({ requestId: card.requestId, filename, content });
     setContent(null); // never keep file contents in component state after sending
-    setFilename('');
-    if (inputRef.current) inputRef.current.value = '';
+    setFilename("");
+    if (inputRef.current) inputRef.current.value = "";
   }
 
   if (card.provided_at != null) {
     return (
       <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center gap-2.5 px-4 py-3">
-          <CheckCircle2 size={15} style={{ color: 'var(--green)' }} />
+          <CheckCircle2 size={15} style={{ color: "var(--green)" }} />
           <div className="min-w-0">
             <p className="text-[13px] font-medium text-text">
               <span className="font-mono">{card.path}</span> uploaded
             </p>
             <p className="truncate text-[12.5px] text-dim">
-              stored encrypted · granted{card.filename ? <> · <span className="font-mono">{card.filename}</span></> : null}
+              stored encrypted · granted
+              {card.filename ? (
+                <>
+                  {" "}
+                  · <span className="font-mono">{card.filename}</span>
+                </>
+              ) : null}
             </p>
           </div>
         </div>
@@ -81,7 +94,8 @@ export function FileCardView({ card, jobRef }: { card: WebFileRequestCard; jobRe
       <div className="px-4 py-3">
         <Markdown>{card.description}</Markdown>
         <p className="mt-1.5 text-[11.5px] leading-snug text-dim">
-          Sent once, encrypted at rest — the contents never appear in the conversation or are shown back to Atlas.
+          Sent once, encrypted at rest — the contents never appear in the
+          conversation or are shown back to Atlas.
         </p>
       </div>
 
@@ -94,7 +108,8 @@ export function FileCardView({ card, jobRef }: { card: WebFileRequestCard; jobRe
         />
         {tooBig ? (
           <span className="text-[11.5px] text-red">
-            File is larger than {Math.floor(MAX_FILE_BYTES / 1024)} KB — pick a smaller config/key file.
+            File is larger than {Math.floor(MAX_FILE_BYTES / 1024)} KB — pick a
+            smaller config/key file.
           </span>
         ) : null}
         <div className="flex flex-wrap items-center gap-2">
@@ -108,7 +123,9 @@ export function FileCardView({ card, jobRef }: { card: WebFileRequestCard; jobRe
             Upload securely
           </Button>
           {provide.isError ? (
-            <span className="text-[11.5px] text-red">Could not upload the file. Try again.</span>
+            <span className="text-[11.5px] text-red">
+              Could not upload the file. Try again.
+            </span>
           ) : null}
         </div>
       </div>

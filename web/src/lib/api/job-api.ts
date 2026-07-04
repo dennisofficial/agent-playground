@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { env } from '@/lib/env';
-import { fetchWithRefresh } from './refresh';
+import { env } from "@/lib/env";
+import { fetchWithRefresh } from "./refresh";
 import type {
   ApprovalActionId,
   ContextFileContent,
@@ -10,7 +10,7 @@ import type {
   JobContext,
   ServiceInfo,
   WebCard,
-} from './types';
+} from "./types";
 
 /**
  * The org → repo → thread web API (`/web/orgs/:orgId/repos/:repoId/threads/:jobId/...`). Every call
@@ -34,14 +34,18 @@ export class ThreadApiError extends Error {
     message: string,
   ) {
     super(message);
-    this.name = 'ThreadApiError';
+    this.name = "ThreadApiError";
   }
 }
 
 async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetchWithRefresh(`${BASE}${path}`, {
     ...init,
-    headers: { accept: 'application/json', 'content-type': 'application/json', ...init?.headers },
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      ...init?.headers,
+    },
   });
   if (!res.ok) {
     let detail = res.statusText;
@@ -57,7 +61,7 @@ async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-function threadPath(ref: JobRef, suffix = ''): string {
+function threadPath(ref: JobRef, suffix = ""): string {
   return `/orgs/${ref.orgId}/repos/${ref.repoId}/jobs/${ref.jobId}${suffix}`;
 }
 
@@ -78,7 +82,12 @@ export interface RawThreadMessage {
    * and never sees it). `'system_shared'` = system→operator AND Atlas (e.g. Codex plan-review findings).
    * `'system_event'` = an automated notification that opened this thread (Atlas got a harness delivery).
    */
-  source: 'operator' | 'atlas' | 'system_operator' | 'system_shared' | 'system_event';
+  source:
+    | "operator"
+    | "atlas"
+    | "system_operator"
+    | "system_shared"
+    | "system_event";
   card?: WebCard | null;
   meta?: Record<string, unknown> | null;
   postedAt: string;
@@ -89,7 +98,7 @@ export interface JobMessage {
   /** Stable key (synthetic monotonic ts; a local optimistic post gets a `local-*` key). */
   ts: string;
   /** `atlas` (the agent) or `user` (a human — the operator). Drives bubble alignment. */
-  author: 'atlas' | 'user';
+  author: "atlas" | "user";
   authorId: string;
   authorName: string;
   text: string;
@@ -101,7 +110,12 @@ export interface JobMessage {
    * `'system_shared'`   = system→operator AND Atlas (e.g. Codex plan-review findings);
    * `'system_event'`    = an automated notification that opened this thread (a harness delivery to Atlas).
    */
-  source: 'operator' | 'atlas' | 'system_operator' | 'system_shared' | 'system_event';
+  source:
+    | "operator"
+    | "atlas"
+    | "system_operator"
+    | "system_shared"
+    | "system_event";
   card?: WebCard;
   meta?: Record<string, unknown>;
   postedAt: string;
@@ -112,10 +126,10 @@ export interface JobMessage {
 export function normalizeMessage(r: RawThreadMessage): JobMessage {
   return {
     ts: r.ts ?? r.id ?? `srv-${r.postedAt}`,
-    author: r.isAtlas ? 'atlas' : 'user',
+    author: r.isAtlas ? "atlas" : "user",
     authorId: r.authorId,
     authorName: r.author,
-    text: r.text ?? '',
+    text: r.text ?? "",
     kind: r.kind,
     source: r.source,
     card: r.card ?? undefined,
@@ -125,13 +139,16 @@ export function normalizeMessage(r: RawThreadMessage): JobMessage {
 }
 
 export function fetchMessages(ref: JobRef): Promise<JobMessage[]> {
-  return webJson<RawThreadMessage[]>(threadPath(ref, '/messages')).then((rows) =>
-    rows.map(normalizeMessage),
+  return webJson<RawThreadMessage[]>(threadPath(ref, "/messages")).then(
+    (rows) => rows.map(normalizeMessage),
   );
 }
 
 export function sayMessage(ref: JobRef, text: string): Promise<{ ts: string }> {
-  return webJson(threadPath(ref, '/say'), { method: 'POST', body: JSON.stringify({ text }) });
+  return webJson(threadPath(ref, "/say"), {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
 }
 
 /**
@@ -140,7 +157,7 @@ export function sayMessage(ref: JobRef, text: string): Promise<{ ts: string }> {
  * frame), so the live indicator clears through the usual reconcile path.
  */
 export function stopJob(ref: JobRef): Promise<{ stopped: boolean }> {
-  return webJson(threadPath(ref, '/stop'), { method: 'POST' });
+  return webJson(threadPath(ref, "/stop"), { method: "POST" });
 }
 
 /** One inline highlight-and-comment item, as sent to `…/jobs/:jobId/review-comments`. */
@@ -158,7 +175,10 @@ export function postReviewComments(
   ref: JobRef,
   body: { items: ReviewCommentItemBody[]; message?: string },
 ): Promise<{ ts: string }> {
-  return webJson(threadPath(ref, '/review-comments'), { method: 'POST', body: JSON.stringify(body) });
+  return webJson(threadPath(ref, "/review-comments"), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 // ── Approvals ──────────────────────────────────────────────────────────────────────────────────
@@ -175,7 +195,10 @@ export function approveThread(
   ref: JobRef,
   body: ApproveBody,
 ): Promise<{ ok: boolean; jobId?: string }> {
-  return webJson(threadPath(ref, '/approve'), { method: 'POST', body: JSON.stringify(body) });
+  return webJson(threadPath(ref, "/approve"), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 // ── Formal questions ─────────────────────────────────────────────────────────────────────────────
@@ -191,7 +214,10 @@ export function answerQuestion(
   ref: JobRef,
   body: AnswerQuestionBody,
 ): Promise<{ ok: boolean; ts: string }> {
-  return webJson(threadPath(ref, '/answer-question'), { method: 'POST', body: JSON.stringify(body) });
+  return webJson(threadPath(ref, "/answer-question"), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 // ── Secure secret intake (repo onboarding) ─────────────────────────────────────────────────────────
@@ -206,7 +232,10 @@ export function provideSecret(
   ref: JobRef,
   body: ProvideSecretBody,
 ): Promise<{ ok: boolean; ts: string }> {
-  return webJson(threadPath(ref, '/provide-secret'), { method: 'POST', body: JSON.stringify(body) });
+  return webJson(threadPath(ref, "/provide-secret"), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 // ── Secure file upload (repo onboarding) ─────────────────────────────────────────────────────────
@@ -223,12 +252,17 @@ export function provideFile(
   ref: JobRef,
   body: ProvideFileBody,
 ): Promise<{ ok: boolean; ts: string }> {
-  return webJson(threadPath(ref, '/provide-file'), { method: 'POST', body: JSON.stringify(body) });
+  return webJson(threadPath(ref, "/provide-file"), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 /** Re-drive a halted (failed/paused) build — the navigator "Retry" button. No-op if not retryable. */
-export function retryJob(ref: JobRef): Promise<{ ok: boolean; status: string }> {
-  return webJson(threadPath(ref, '/retry'), { method: 'POST' });
+export function retryJob(
+  ref: JobRef,
+): Promise<{ ok: boolean; status: string }> {
+  return webJson(threadPath(ref, "/retry"), { method: "POST" });
 }
 
 /**
@@ -237,17 +271,19 @@ export function retryJob(ref: JobRef): Promise<{ ok: boolean; status: string }> 
  * message, rather than re-driving a halted BUILD track.
  */
 export function retryTurn(ref: JobRef): Promise<{ ok: boolean }> {
-  return webJson(threadPath(ref, '/retry-turn'), { method: 'POST' });
+  return webJson(threadPath(ref, "/retry-turn"), { method: "POST" });
 }
 
 // ── Pipeline ───────────────────────────────────────────────────────────────────────────────────
 export function fetchPipeline(ref: JobRef): Promise<PipelineState> {
-  return webJson<PipelineState>(threadPath(ref, '/pipeline'));
+  return webJson<PipelineState>(threadPath(ref, "/pipeline"));
 }
 
 // ── Supervised services (atlas-svc) ───────────────────────────────────────────────────────────
-export function fetchServices(ref: JobRef): Promise<{ services: ServiceInfo[] }> {
-  return webJson<{ services: ServiceInfo[] }>(threadPath(ref, '/services'));
+export function fetchServices(
+  ref: JobRef,
+): Promise<{ services: ServiceInfo[] }> {
+  return webJson<{ services: ServiceInfo[] }>(threadPath(ref, "/services"));
 }
 
 /** The last-N-lines tail of one supervised process's log — the same content the SSE `snapshot` frame carries. */
@@ -260,34 +296,44 @@ export function fetchServiceLogTail(
   );
 }
 
-
 /** Narrow a pipeline read to its job, or `null` before a plan is approved (`{ status: 'no_job' }`). */
-export function pipelineJob(state: PipelineState | undefined): PipelineJob | null {
-  if (!state || state.status === 'no_job') return null;
+export function pipelineJob(
+  state: PipelineState | undefined,
+): PipelineJob | null {
+  if (!state || state.status === "no_job") return null;
   return state;
 }
 
 // ── Context (specs + artifacts files) ────────────────────────────────────────────────────────────
 /** List the thread's `/context` files, grouped into `specs` (plan) + `artifacts` (outputs). */
 export function fetchThreadContext(ref: JobRef): Promise<JobContext> {
-  return webJson<JobContext>(threadPath(ref, '/context'));
+  return webJson<JobContext>(threadPath(ref, "/context"));
 }
 
 /** Read one `/context` file's content (`path` is bucket-relative, e.g. `specs/plan.md`). */
-export function fetchContextFile(ref: JobRef, path: string): Promise<ContextFileContent> {
+export function fetchContextFile(
+  ref: JobRef,
+  path: string,
+): Promise<ContextFileContent> {
   return webJson<ContextFileContent>(
     threadPath(ref, `/context/file?path=${encodeURIComponent(path)}`),
   );
 }
 
 // ── Rename (the only thread Update op) ───────────────────────────────────────────────────────────
-export function renameJob(ref: JobRef, title: string): Promise<{ ok: boolean; title: string }> {
-  return webJson(threadPath(ref), { method: 'PATCH', body: JSON.stringify({ title }) });
+export function renameJob(
+  ref: JobRef,
+  title: string,
+): Promise<{ ok: boolean; title: string }> {
+  return webJson(threadPath(ref), {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
 }
 
 // ── Delete ─────────────────────────────────────────────────────────────────────────────────────
 export function deleteThread(ref: JobRef): Promise<{ ok: boolean }> {
-  return webJson(threadPath(ref), { method: 'DELETE' });
+  return webJson(threadPath(ref), { method: "DELETE" });
 }
 
 // ── Repos (create-job picker + the settings Repos tab) ────────────────────────────────────────
@@ -318,7 +364,10 @@ export interface RepoBranches {
 }
 
 /** A repo's branches (default first) for the create-job base-branch picker. */
-export function fetchRepoBranches(orgId: string, repoId: string): Promise<RepoBranches> {
+export function fetchRepoBranches(
+  orgId: string,
+  repoId: string,
+): Promise<RepoBranches> {
   return webJson<RepoBranches>(`/orgs/${orgId}/repos/${repoId}/branches`);
 }
 
@@ -334,7 +383,7 @@ export function createJob(
   body: CreateThreadBody,
 ): Promise<{ jobId: string }> {
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
-    method: 'POST',
+    method: "POST",
     body: JSON.stringify(body),
   });
 }

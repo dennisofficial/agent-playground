@@ -1,12 +1,12 @@
-'use client';
+"use client";
 
-import { useState, type ReactNode } from 'react';
-import type { ToolItem } from './types';
-import { resolveHandler } from './registry';
-import type { ToolBadge } from './types';
-import { Badge, Chevron, NewPill, StructuredPanel, ToolIcon } from './ui';
-import { formatPayload } from './util';
-import { isFileEditTool } from './handlers/native-file';
+import { useState, type ReactNode } from "react";
+import type { ToolItem } from "./types";
+import { resolveHandler } from "./registry";
+import type { ToolBadge } from "./types";
+import { Badge, Chevron, NewPill, StructuredPanel, ToolIcon } from "./ui";
+import { formatPayload } from "./util";
+import { isFileEditTool } from "./handlers/native-file";
 
 /**
  * Split a run of consecutive tool calls into maximal segments of file-edits vs. other tools, preserving
@@ -17,7 +17,8 @@ export function segmentToolRun(tools: ToolItem[]): ToolItem[][] {
   const segments: ToolItem[][] = [];
   for (const tool of tools) {
     const last = segments[segments.length - 1];
-    if (last && isFileEditTool(last[0].name) === isFileEditTool(tool.name)) last.push(tool);
+    if (last && isFileEditTool(last[0].name) === isFileEditTool(tool.name))
+      last.push(tool);
     else segments.push([tool]);
   }
   return segments;
@@ -31,7 +32,7 @@ function aggregateDiffstat(tools: ToolItem[]): ToolBadge {
   let sawRemoved = false;
   for (const t of tools) {
     const badge = resolveHandler(t.name, t.input).describe(t).badge;
-    if (badge?.kind !== 'diffstat') continue;
+    if (badge?.kind !== "diffstat") continue;
     sawDiffstat = true;
     added += badge.added;
     if (badge.removed != null) {
@@ -39,7 +40,9 @@ function aggregateDiffstat(tools: ToolItem[]): ToolBadge {
       sawRemoved = true;
     }
   }
-  return sawDiffstat ? { kind: 'diffstat', added, removed: sawRemoved ? removed : null } : null;
+  return sawDiffstat
+    ? { kind: "diffstat", added, removed: sawRemoved ? removed : null }
+    : null;
 }
 
 /** Sum the line counts across a group's tool calls (Read) into one badge — null if none. */
@@ -48,14 +51,14 @@ function aggregateLines(tools: ToolItem[]): ToolBadge {
   let saw = false;
   for (const t of tools) {
     const badge = resolveHandler(t.name, t.input).describe(t).badge;
-    if (badge?.kind !== 'lines') continue;
+    if (badge?.kind !== "lines") continue;
     saw = true;
     n += badge.n;
   }
-  return saw ? { kind: 'lines', n } : null;
+  return saw ? { kind: "lines", n } : null;
 }
 
-export type { ToolItem } from './types';
+export type { ToolItem } from "./types";
 
 /**
  * Tool-call rendering for the conversation.
@@ -68,9 +71,12 @@ export type { ToolItem } from './types';
 
 /** The inline arg slot. For a file path, dims the directory prefix and keeps the filename normal. */
 function PathArg({ arg, pathArg }: { arg: string; pathArg?: boolean }) {
-  if (!pathArg) return <span className="flex-1 truncate font-mono text-[11.5px]">{arg}</span>;
-  const cut = arg.lastIndexOf('/');
-  const dir = cut >= 0 ? arg.slice(0, cut + 1) : '';
+  if (!pathArg)
+    return (
+      <span className="flex-1 truncate font-mono text-[11.5px]">{arg}</span>
+    );
+  const cut = arg.lastIndexOf("/");
+  const dir = cut >= 0 ? arg.slice(0, cut + 1) : "";
   const base = cut >= 0 ? arg.slice(cut + 1) : arg;
   return (
     <span className="flex-1 truncate font-mono text-[11.5px]">
@@ -103,10 +109,13 @@ function DisclosureRow({
       onClick={onToggle}
       className="group flex w-full items-center gap-2 rounded-md py-[5px] pl-0.5 pr-2 text-left text-[12.5px] text-dim transition hover:bg-surface-3"
     >
-      <Chevron size={12} className={`text-faint ${open ? 'rotate-90' : ''}`} />
+      <Chevron size={12} className={`text-faint ${open ? "rotate-90" : ""}`} />
       {children}
       {running ? (
-        <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
+        <span
+          className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{ background: "var(--accent)" }}
+        />
       ) : null}
     </button>
   );
@@ -120,10 +129,17 @@ function ToolRow({ tool }: { tool: ToolItem }) {
 
   return (
     <div>
-      <DisclosureRow open={open} onToggle={() => setOpen((o) => !o)} running={tool.running}>
+      <DisclosureRow
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+        running={tool.running}
+      >
         <ToolIcon kind={d.icon} color={d.color} />
         {d.isMcp ? (
-          <span className="flex-1 truncate font-mono text-[11.5px]" style={{ color: 'var(--blue)' }}>
+          <span
+            className="flex-1 truncate font-mono text-[11.5px]"
+            style={{ color: "var(--blue)" }}
+          >
             <span className="text-faint">mcp · </span>
             {d.arg}
           </span>
@@ -174,17 +190,21 @@ export function ToolGroup({ tools }: { tools: ToolItem[] }) {
   const preview = tools
     .map((t) => resolveHandler(t.name, t.input).describe(t).preview)
     .filter(Boolean)
-    .join(' · ');
+    .join(" · ");
   const count = tools.length;
   const totalStat = aggregateDiffstat(tools);
   const totalLines = aggregateLines(tools);
   const allFiles = tools.every((t) => isFileEditTool(t.name));
   // How many of the grouped files are newly created (their row carries a "NEW" pill) — rolled up onto
   // the collapsed header alongside the diffstat, mirroring the per-row tags.
-  const newCount = tools.reduce((n, t) => (resolveHandler(t.name, t.input).describe(t).pill === 'NEW' ? n + 1 : n), 0);
+  const newCount = tools.reduce(
+    (n, t) =>
+      resolveHandler(t.name, t.input).describe(t).pill === "NEW" ? n + 1 : n,
+    0,
+  );
   const label = allFiles
-    ? `${count} ${count === 1 ? 'file' : 'files'} changed`
-    : `${count} ${count === 1 ? 'tool' : 'tools'} called`;
+    ? `${count} ${count === 1 ? "file" : "files"} changed`
+    : `${count} ${count === 1 ? "tool" : "tools"} called`;
   // Rollups show ONLY while collapsed (open, each row carries its own tags, so they'd be redundant).
   const showStat = totalStat && (!allFiles || !open);
   const showNew = allFiles && !open && newCount > 0;
@@ -192,17 +212,30 @@ export function ToolGroup({ tools }: { tools: ToolItem[] }) {
 
   return (
     <div className="anim-fadeUp my-px">
-      <DisclosureRow open={open} onToggle={() => setOpen((o) => !o)} running={anyRunning}>
-        <span className="shrink-0 font-semibold text-dim transition group-hover:text-text">{label}</span>
-        <span className="flex-1 truncate font-mono text-[11px] text-faint">{preview}</span>
-        {showNew ? <NewPill text={newCount === count ? 'NEW' : `${newCount} NEW`} size="group" /> : null}
+      <DisclosureRow
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+        running={anyRunning}
+      >
+        <span className="shrink-0 font-semibold text-dim transition group-hover:text-text">
+          {label}
+        </span>
+        <span className="flex-1 truncate font-mono text-[11px] text-faint">
+          {preview}
+        </span>
+        {showNew ? (
+          <NewPill
+            text={newCount === count ? "NEW" : `${newCount} NEW`}
+            size="group"
+          />
+        ) : null}
         {showStat ? <Badge badge={totalStat} size="group" /> : null}
         {showLines ? <Badge badge={totalLines} /> : null}
       </DisclosureRow>
       {open ? (
         <div
           className="ml-[5px] flex flex-col gap-px pl-[13px]"
-          style={{ borderLeft: '1.5px solid var(--border)' }}
+          style={{ borderLeft: "1.5px solid var(--border)" }}
         >
           {tools.map((t) => (
             <ToolRow key={t.key} tool={t} />

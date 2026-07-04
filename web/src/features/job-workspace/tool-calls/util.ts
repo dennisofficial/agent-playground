@@ -1,24 +1,24 @@
 /** Shared, presentation-free helpers for the tool-call renderers. */
 
-import { BRIDGE_SERVER_NAME } from './constants';
+import { BRIDGE_SERVER_NAME } from "./constants";
 
 export function asRecord(v: unknown): Record<string, unknown> {
-  return v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 }
 
 export function str(v: unknown): string {
-  return typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v);
+  return typeof v === "string" ? v : v == null ? "" : JSON.stringify(v);
 }
 
 export function basename(path: string): string {
-  const clean = path.split('?')[0].replace(/\/+$/, '');
-  const parts = clean.split('/');
+  const clean = path.split("?")[0].replace(/\/+$/, "");
+  const parts = clean.split("/");
   return parts[parts.length - 1] || clean;
 }
 
 /** Pretty MCP name: `mcp__server__do_thing` / `do_thing` → `do_thing`. */
 export function mcpName(name: string): string {
-  const segs = name.split('__').filter(Boolean);
+  const segs = name.split("__").filter(Boolean);
   return segs[segs.length - 1] || name;
 }
 
@@ -29,7 +29,7 @@ export function mcpName(name: string): string {
  */
 export function argsOf(input: unknown): Record<string, unknown> {
   const rec = asRecord(input);
-  return asRecord('args' in rec ? rec.args : rec);
+  return asRecord("args" in rec ? rec.args : rec);
 }
 
 /** True for an Atlas host-bridge tool (`mcp__atlas-host-bridge__*`). */
@@ -39,9 +39,9 @@ export function isBridgeTool(name: string): boolean {
 
 /** Format a tool input/result for display (object → pretty JSON, string → as-is), truncated. */
 export function formatPayload(value: unknown): string {
-  if (value == null) return '';
+  if (value == null) return "";
   let out: string;
-  if (typeof value === 'string') out = value;
+  if (typeof value === "string") out = value;
   else {
     try {
       out = JSON.stringify(value, null, 2);
@@ -54,8 +54,8 @@ export function formatPayload(value: unknown): string {
 
 /** Line count of a result string, for the "N ln" badge — 0 when empty/single-line. */
 export function resultLineCount(result: unknown): number {
-  const s = typeof result === 'string' ? result : '';
+  const s = typeof result === "string" ? result : "";
   if (!s.trim()) return 0;
-  const n = s.replace(/\n$/, '').split('\n').length;
+  const n = s.replace(/\n$/, "").split("\n").length;
   return n > 1 ? n : 0;
 }

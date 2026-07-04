@@ -1,16 +1,16 @@
-import { createEnv } from '@t3-oss/env-nextjs';
-import { z } from 'zod';
+import { createEnv } from "@t3-oss/env-nextjs";
+import { z } from "zod";
 
 export enum ENodeEnv {
-  DEV = 'development',
-  PROD = 'production',
-  TEST = 'test',
+  DEV = "development",
+  PROD = "production",
+  TEST = "test",
 }
 
 export enum EAppEnv {
-  LOCAL = 'local',
-  STAGING = 'staging',
-  PROD = 'production',
+  LOCAL = "local",
+  STAGING = "staging",
+  PROD = "production",
 }
 
 /**
@@ -29,12 +29,12 @@ export const env = createEnv({
     NODE_ENV: z.enum(ENodeEnv).default(ENodeEnv.DEV),
   },
   server: {
-    BUILD_ID: z.string().default('dev'),
+    BUILD_ID: z.string().default("dev"),
   },
   client: {
     NEXT_PUBLIC_APP_ENV: z.enum(EAppEnv).default(EAppEnv.LOCAL),
     // Where the Atlas standalone HTTP app (ATLAS_SURFACE=web) listens — the browser hits it directly.
-    NEXT_PUBLIC_HTTP_URL: z.url().default('http://localhost:4002'),
+    NEXT_PUBLIC_HTTP_URL: z.url().default("http://localhost:4002"),
   },
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,

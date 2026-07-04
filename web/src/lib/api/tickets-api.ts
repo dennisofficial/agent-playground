@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { env } from '@/lib/env';
-import { fetchWithRefresh } from './refresh';
+import { env } from "@/lib/env";
+import { fetchWithRefresh } from "./refresh";
 
 /**
  * The per-repo board/backlog web API (`/web/orgs/:orgId/repos/:repoId/tickets/...`). Credentialed via the
@@ -12,9 +12,15 @@ import { fetchWithRefresh } from './refresh';
 
 const BASE = `${env.NEXT_PUBLIC_HTTP_URL}/web`;
 
-export type TicketStatus = 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'done' | 'cancelled';
-export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
-export type TicketKind = 'feature' | 'bug' | 'chore';
+export type TicketStatus =
+  | "backlog"
+  | "todo"
+  | "in_progress"
+  | "in_review"
+  | "done"
+  | "cancelled";
+export type TicketPriority = "low" | "medium" | "high" | "urgent";
+export type TicketKind = "feature" | "bug" | "chore";
 
 /** Immutable provenance snapshot stamped at capture time (survives source deletion). */
 export interface TicketOrigin {
@@ -82,14 +88,18 @@ export class TicketApiError extends Error {
     message: string,
   ) {
     super(message);
-    this.name = 'TicketApiError';
+    this.name = "TicketApiError";
   }
 }
 
 async function ticketJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetchWithRefresh(`${BASE}${path}`, {
     ...init,
-    headers: { accept: 'application/json', 'content-type': 'application/json', ...init?.headers },
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      ...init?.headers,
+    },
   });
   if (!res.ok) {
     let detail = res.statusText;
@@ -105,7 +115,7 @@ async function ticketJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-function ticketsPath(ref: TicketRef, suffix = ''): string {
+function ticketsPath(ref: TicketRef, suffix = ""): string {
   return `/orgs/${ref.orgId}/repos/${ref.repoId}/tickets${suffix}`;
 }
 
@@ -113,7 +123,10 @@ export function fetchTickets(ref: TicketRef): Promise<TicketListRow[]> {
   return ticketJson<TicketListRow[]>(ticketsPath(ref));
 }
 
-export function fetchTicket(ref: TicketRef, ticketId: string): Promise<TicketDetail> {
+export function fetchTicket(
+  ref: TicketRef,
+  ticketId: string,
+): Promise<TicketDetail> {
   return ticketJson<TicketDetail>(ticketsPath(ref, `/${ticketId}`));
 }
 
@@ -126,8 +139,14 @@ export interface CreateTicketBody {
   dependsOn?: string[];
 }
 
-export function createTicket(ref: TicketRef, body: CreateTicketBody): Promise<TicketListRow> {
-  return ticketJson(ticketsPath(ref), { method: 'POST', body: JSON.stringify(body) });
+export function createTicket(
+  ref: TicketRef,
+  body: CreateTicketBody,
+): Promise<TicketListRow> {
+  return ticketJson(ticketsPath(ref), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export interface UpdateTicketBody {
@@ -144,18 +163,26 @@ export function updateTicket(
   ticketId: string,
   body: UpdateTicketBody,
 ): Promise<TicketListRow> {
-  return ticketJson(ticketsPath(ref, `/${ticketId}`), { method: 'PATCH', body: JSON.stringify(body) });
+  return ticketJson(ticketsPath(ref, `/${ticketId}`), {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 }
 
-export function deleteTicket(ref: TicketRef, ticketId: string): Promise<{ ok: boolean }> {
-  return ticketJson(ticketsPath(ref, `/${ticketId}`), { method: 'DELETE' });
+export function deleteTicket(
+  ref: TicketRef,
+  ticketId: string,
+): Promise<{ ok: boolean }> {
+  return ticketJson(ticketsPath(ref, `/${ticketId}`), { method: "DELETE" });
 }
 
 export function promoteTicket(
   ref: TicketRef,
   ticketId: string,
 ): Promise<{ jobId: string; created: boolean }> {
-  return ticketJson(ticketsPath(ref, `/${ticketId}/promote`), { method: 'POST' });
+  return ticketJson(ticketsPath(ref, `/${ticketId}/promote`), {
+    method: "POST",
+  });
 }
 
 export function addTicketDependency(
@@ -164,7 +191,7 @@ export function addTicketDependency(
   dependsOnTicketId: string,
 ): Promise<{ ok: boolean }> {
   return ticketJson(ticketsPath(ref, `/${ticketId}/dependencies`), {
-    method: 'POST',
+    method: "POST",
     body: JSON.stringify({ dependsOnTicketId }),
   });
 }
@@ -174,5 +201,7 @@ export function removeTicketDependency(
   ticketId: string,
   depId: string,
 ): Promise<{ ok: boolean }> {
-  return ticketJson(ticketsPath(ref, `/${ticketId}/dependencies/${depId}`), { method: 'DELETE' });
+  return ticketJson(ticketsPath(ref, `/${ticketId}/dependencies/${depId}`), {
+    method: "DELETE",
+  });
 }

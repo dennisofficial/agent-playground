@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { qk } from './query-keys';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { qk } from "./query-keys";
 import {
   answerQuestion,
   provideSecret,
@@ -30,8 +30,8 @@ import {
   type JobMessage,
   type JobRef,
   type ReviewCommentItemBody,
-} from './job-api';
-import type { WebReviewCommentsCard } from './types';
+} from "./job-api";
+import type { WebReviewCommentsCard } from "./types";
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
@@ -70,7 +70,7 @@ export function useJobContext(ref: JobRef) {
 /** One `/context` file's content (`path` bucket-relative, e.g. `specs/plan.md`). Lazy — only when opened. */
 export function useContextFile(ref: JobRef, path: string | null) {
   return useQuery({
-    queryKey: qk.threadContextFile(ref, path ?? ''),
+    queryKey: qk.threadContextFile(ref, path ?? ""),
     queryFn: () => fetchContextFile(ref, path!),
     enabled: hasRef(ref) && Boolean(path),
     staleTime: 5_000,
@@ -135,12 +135,12 @@ export function useSay(ref: JobRef) {
       const prev = qc.getQueryData<JobMessage[]>(key);
       const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
-        author: 'user',
-        authorId: 'me',
-        authorName: 'You',
+        author: "user",
+        authorId: "me",
+        authorName: "You",
         text,
-        kind: 'chat',
-        source: 'operator',
+        kind: "chat",
+        source: "operator",
         postedAt: new Date().toISOString(),
         local: true,
       };
@@ -183,25 +183,30 @@ interface ReviewCommentsSendInput {
  */
 export function useSendReviewComments(ref: JobRef) {
   const qc = useQueryClient();
-  return useMutation<{ ts: string }, Error, ReviewCommentsSendInput, SayContext>({
+  return useMutation<
+    { ts: string },
+    Error,
+    ReviewCommentsSendInput,
+    SayContext
+  >({
     mutationFn: (input) => postReviewComments(ref, input),
     onMutate: async (input) => {
       const key = qk.threadMessages(ref);
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<JobMessage[]>(key);
       const card: WebReviewCommentsCard = {
-        type: 'review_comments_card',
+        type: "review_comments_card",
         items: input.items,
         ...(input.message ? { message: input.message } : {}),
       };
       const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
-        author: 'user',
-        authorId: 'me',
-        authorName: 'You',
-        text: input.message ?? '',
-        kind: 'chat',
-        source: 'operator',
+        author: "user",
+        authorId: "me",
+        authorName: "You",
+        text: input.message ?? "",
+        kind: "chat",
+        source: "operator",
         card,
         postedAt: new Date().toISOString(),
         local: true,

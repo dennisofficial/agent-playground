@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { connectivity } from './connectivity';
-import { refreshSession } from './refresh';
+import { connectivity } from "./connectivity";
+import { refreshSession } from "./refresh";
 
 /**
  * Shared, ref-counted EventSource registry — ONE browser connection per URL, no matter how many hooks
@@ -41,7 +41,7 @@ export interface SseSubscriber {
    * to an already-open stream — nothing is replayed, so reconnect-only reconciliation (like sweeping
    * live turns the snapshots didn't re-confirm) must not run on it.
    */
-  onOpen?(handle: SseHandle, kind: 'connect' | 'late-join'): void;
+  onOpen?(handle: SseHandle, kind: "connect" | "late-join"): void;
 }
 
 /**
@@ -86,9 +86,11 @@ class SharedConnection implements SseHandle {
       this.lingerTimer = null;
     }
     this.subs.add(sub);
-    if (this.retryTimer) this.kick(); // mid-backoff — a fresh subscriber wants the stream NOW
+    if (this.retryTimer)
+      this.kick(); // mid-backoff — a fresh subscriber wants the stream NOW
     else if (!this.es && !this.sealed) this.connect();
-    else if (this.es?.readyState === EventSource.OPEN) sub.onOpen?.(this, 'late-join'); // already open → catch-up now
+    else if (this.es?.readyState === EventSource.OPEN)
+      sub.onOpen?.(this, "late-join"); // already open → catch-up now
     return () => this.remove(sub);
   }
 
@@ -133,7 +135,7 @@ class SharedConnection implements SseHandle {
     es.onopen = () => {
       this.retryAttempt = 0;
       connectivity.reportReachable();
-      this.subs.forEach((s) => s.onOpen?.(this, 'connect'));
+      this.subs.forEach((s) => s.onOpen?.(this, "connect"));
     };
     es.onmessage = (e: MessageEvent) => {
       connectivity.reportReachable();
@@ -145,7 +147,8 @@ class SharedConnection implements SseHandle {
       // Let EventSource self-heal transient drops (readyState CONNECTING). Only act on a FATAL close —
       // an HTTP error (e.g. 401 after the access cookie expired) or a refused connection (backend
       // restart gap). The `this.es !== es` guard ignores a stale closure after we've already moved on.
-      if (this.es !== es || es.readyState !== EventSource.CLOSED || this.sealed) return;
+      if (this.es !== es || es.readyState !== EventSource.CLOSED || this.sealed)
+        return;
       this.es = null;
       es.close();
       this.scheduleRetry();
@@ -154,7 +157,10 @@ class SharedConnection implements SseHandle {
 
   private scheduleRetry(): void {
     if (this.sealed || this.retryTimer || this.subs.size === 0) return;
-    const delay = RECONNECT_BACKOFF_MS[Math.min(this.retryAttempt, RECONNECT_BACKOFF_MS.length - 1)];
+    const delay =
+      RECONNECT_BACKOFF_MS[
+        Math.min(this.retryAttempt, RECONNECT_BACKOFF_MS.length - 1)
+      ];
     this.retryAttempt += 1;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
@@ -189,7 +195,8 @@ function installConnectivityKick(): void {
   if (connectivityKickInstalled) return;
   connectivityKickInstalled = true;
   connectivity.subscribe(() => {
-    if (connectivity.getSnapshot() === 'online') registry.forEach((c) => c.kick());
+    if (connectivity.getSnapshot() === "online")
+      registry.forEach((c) => c.kick());
   });
 }
 

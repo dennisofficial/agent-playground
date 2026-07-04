@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { useMemo, useRef, useState } from 'react';
-import { HelpCircle } from 'lucide-react';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { classifyMessage } from './classify';
-import { JumpToLatestButton, useTailFollow } from './tail-follow';
+import { useMemo, useRef, useState } from "react";
+import { HelpCircle } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { classifyMessage } from "./classify";
+import { JumpToLatestButton, useTailFollow } from "./tail-follow";
 import {
   ClaudeBubble,
   CompactionSummaryPill,
@@ -17,22 +17,31 @@ import {
   ThinkingBlock,
   TurnMetaDivider,
   UserBubble,
-} from './bubbles';
-import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
-import { ApprovalCardView, VerdictCardView } from './approval-card';
-import { QuestionCardView } from './question-card';
-import { SecretCardView } from './secret-card';
-import { FileCardView } from './file-card';
-import { ReviewCommentsCardView } from './review-comments-card';
-import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
-import { AgentPromptBlock, BuildInstruction, BuildStepCard, indexPhaseBlocks } from './phases';
-import { CodexReviewCard, codexReviewNode, indexCodexReviewBlocks } from './codex-review';
-import { indexAutofixBlocks } from './review-lane';
-import { Composer } from './composer';
-import { DetailTopBar } from './detail-top-bar';
-import type { JobMessage, JobRef } from '@/lib/api/job-api';
-import { MAIN_LANE, useLiveTurn } from '@/lib/api/job-stream';
-import { useAllJobs } from '@/lib/api/inbox';
+} from "./bubbles";
+import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
+import { ApprovalCardView, VerdictCardView } from "./approval-card";
+import { QuestionCardView } from "./question-card";
+import { SecretCardView } from "./secret-card";
+import { FileCardView } from "./file-card";
+import { ReviewCommentsCardView } from "./review-comments-card";
+import { SubagentCard, indexDurableSubagents, subagentNode } from "./subagents";
+import {
+  AgentPromptBlock,
+  BuildInstruction,
+  BuildStepCard,
+  indexPhaseBlocks,
+} from "./phases";
+import {
+  CodexReviewCard,
+  codexReviewNode,
+  indexCodexReviewBlocks,
+} from "./codex-review";
+import { indexAutofixBlocks } from "./review-lane";
+import { Composer } from "./composer";
+import { DetailTopBar } from "./detail-top-bar";
+import type { JobMessage, JobRef } from "@/lib/api/job-api";
+import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
+import { useAllJobs } from "@/lib/api/inbox";
 
 /**
  * Conversation mode — the Main lane (the thread's brain). Just the shared {@link TranscriptView} with the
@@ -131,7 +140,7 @@ export function TranscriptView({
   // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
   // block boundaries.
   const liveStreamSig = (liveTurn?.blocks ?? []).reduce(
-    (n, b) => n + (b.kind === 'tool' ? 1 : b.text.length),
+    (n, b) => n + (b.kind === "tool" ? 1 : b.text.length),
     0,
   );
 
@@ -141,12 +150,16 @@ export function TranscriptView({
 
   // The context-window ring reads the MOST RECENT `turn_meta` block (the brain appends one per turn with
   // the last request's occupancy + the model's window). Only the composer shows the ring.
-  const contextMeta = useMemo(() => (composer ? latestContextMeta(messages) : null), [messages, composer]);
+  const contextMeta = useMemo(
+    () => (composer ? latestContextMeta(messages) : null),
+    [messages, composer],
+  );
 
   // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent/phase
   // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
   const items = useMemo(
-    () => buildLogItems(log, jobRef, { lane, phaseIds, onOpenPlan, onSelectNode }),
+    () =>
+      buildLogItems(log, jobRef, { lane, phaseIds, onOpenPlan, onSelectNode }),
     [log, jobRef, lane, phaseIds, onOpenPlan, onSelectNode],
   );
 
@@ -156,7 +169,7 @@ export function TranscriptView({
     if (!composer) return [] as JobMessage[];
     return messages.filter((m) => {
       const c = m.card;
-      return c?.type === 'question_card' && !c.answer && !c.withdrawnAt;
+      return c?.type === "question_card" && !c.answer && !c.withdrawnAt;
     });
   }, [messages, composer]);
 
@@ -165,7 +178,14 @@ export function TranscriptView({
   // (which itself depends on the scrollRef useTailFollow returns — the ref breaks that render-order cycle).
   const pinRef = useRef<() => void>(() => {});
   const { scrollRef, endRef, showJump, jumpToLatest, onScroll } = useTailFollow(
-    [messages.length, live, liveBlockCount, liveStreamSig, turnActive, composerHeight],
+    [
+      messages.length,
+      live,
+      liveBlockCount,
+      liveStreamSig,
+      turnActive,
+      composerHeight,
+    ],
     () => pinRef.current(),
   );
 
@@ -181,7 +201,8 @@ export function TranscriptView({
     const el = scrollRef.current;
     if (!el) return;
     // Land near the last durable row using the virtualizer (accounts for estimated off-screen heights)…
-    if (items.length > 0) virtualizer.scrollToIndex(items.length - 1, { align: 'end' });
+    if (items.length > 0)
+      virtualizer.scrollToIndex(items.length - 1, { align: "end" });
     // …then, once layout settles, pin to the true bottom so the trailing live turn / composer spacer are
     // included (they render in normal flow AFTER the windowed list, so `scrollHeight` is exact).
     requestAnimationFrame(() => {
@@ -199,7 +220,7 @@ export function TranscriptView({
     cycleRef.current = i + 1;
     const ts = openQuestions[i].ts;
     const idx = items.findIndex((it) => it.key === ts);
-    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: 'center' });
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "center" });
     setFlashKey(ts);
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlashKey(null), 2200);
@@ -207,19 +228,28 @@ export function TranscriptView({
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-7 pt-5">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="h-full overflow-y-auto px-7 pt-5"
+      >
         <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
           {isLoading && messages.length === 0 ? (
-            <p className="py-10 text-center text-[13px] text-faint">Loading conversation…</p>
+            <p className="py-10 text-center text-[13px] text-faint">
+              Loading conversation…
+            </p>
           ) : messages.length === 0 && liveBlockCount === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">
-              {emptyText ?? 'No messages yet — say something to Atlas below.'}
+              {emptyText ?? "No messages yet — say something to Atlas below."}
             </p>
           ) : (
             // Windowed durable log: a single spacer sized to the full transcript, with only the on-screen
             // rows rendered and absolutely positioned. `measureElement` re-measures async height changes
             // (mermaid diagrams, code highlighting) so rows never overlap once they finish rendering.
-            <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+            <div
+              className="relative w-full"
+              style={{ height: virtualizer.getTotalSize() }}
+            >
               {virtualItems.map((vi) => (
                 <div
                   key={vi.key}
@@ -227,10 +257,13 @@ export function TranscriptView({
                   ref={virtualizer.measureElement}
                   className={`absolute left-0 top-0 w-full${
                     items[vi.index].key === flashKey
-                      ? ' rounded-lg ring-2 ring-accent ring-offset-2 ring-offset-surface transition'
-                      : ''
+                      ? " rounded-lg ring-2 ring-accent ring-offset-2 ring-offset-surface transition"
+                      : ""
                   }`}
-                  style={{ transform: `translateY(${vi.start}px)`, paddingBottom: 9 }}
+                  style={{
+                    transform: `translateY(${vi.start}px)`,
+                    paddingBottom: 9,
+                  }}
                 >
                   {items[vi.index].node}
                 </div>
@@ -238,15 +271,26 @@ export function TranscriptView({
             </div>
           )}
           {liveTurn && liveBlockCount > 0 ? (
-            <LiveTurnView turn={liveTurn} lane={lane} onSelectNode={onSelectNode} />
+            <LiveTurnView
+              turn={liveTurn}
+              lane={lane}
+              onSelectNode={onSelectNode}
+            />
           ) : null}
-          {live || turnActive ? <LiveIndicator turn={turnActive ? liveTurn : undefined} /> : null}
+          {live || turnActive ? (
+            <LiveIndicator turn={turnActive ? liveTurn : undefined} />
+          ) : null}
           {/* Spacer so the last line clears the floating composer (or just breathes on read-only lanes). */}
           <div className="shrink-0" style={{ height: bottomPad }} aria-hidden />
           <div ref={endRef} />
         </div>
       </div>
-      {showJump ? <JumpToLatestButton onClick={jumpToLatest} style={{ bottom: bottomPad + 8 }} /> : null}
+      {showJump ? (
+        <JumpToLatestButton
+          onClick={jumpToLatest}
+          style={{ bottom: bottomPad + 8 }}
+        />
+      ) : null}
       {openQuestions.length > 0 ? (
         <OpenQuestionsChip
           count={openQuestions.length}
@@ -254,7 +298,13 @@ export function TranscriptView({
           style={{ bottom: bottomPad + 8 }}
         />
       ) : null}
-      {composer ? <Composer jobRef={jobRef} onHeightChange={setComposerHeight} context={contextMeta} /> : null}
+      {composer ? (
+        <Composer
+          jobRef={jobRef}
+          onHeightChange={setComposerHeight}
+          context={contextMeta}
+        />
+      ) : null}
     </div>
   );
 }
@@ -278,13 +328,26 @@ function OpenQuestionsChip({
     <button
       type="button"
       onClick={onClick}
-      title={count > 1 ? `Jump to the next of ${count} unanswered questions` : 'Jump to the unanswered question'}
+      title={
+        count > 1
+          ? `Jump to the next of ${count} unanswered questions`
+          : "Jump to the unanswered question"
+      }
       style={style}
       className="absolute left-4 z-10 flex items-center gap-1.5 rounded-full border border-accent bg-surface-2 py-1.5 pl-2.5 pr-3.5 text-[12px] font-medium text-accent shadow-md transition hover:bg-surface"
     >
       <HelpCircle size={14} />
-      {count > 1 ? `${count} awaiting you` : 'Awaiting you'}
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {count > 1 ? `${count} awaiting you` : "Awaiting you"}
+      <svg
+        width="13"
+        height="13"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M12 19V5" />
         <path d="M5 12l7-7 7 7" />
       </svg>
@@ -331,21 +394,23 @@ function buildLogItems(
   const autofix = indexAutofixBlocks(log);
 
   const isMain = lane === MAIN_LANE;
-  const isCodexLane = lane.startsWith('codex-review:');
+  const isCodexLane = lane.startsWith("codex-review:");
   // A build thread/step lane streams on the STABLE `thread:<id>` lane and always passes `phaseIds` (the step
   // anchors to render); the legacy `phase:<id>` derivation is a fallback for any old lane string.
-  const phaseAnchor = lane.startsWith('phase:') ? lane.slice('phase:'.length) : null;
+  const phaseAnchor = lane.startsWith("phase:")
+    ? lane.slice("phase:".length)
+    : null;
   const phaseSet: Set<string> | null =
     opts.phaseIds ?? (phaseAnchor ? new Set([phaseAnchor]) : null);
   // An auto-fix sub-page lane: `autofix:<autofixId>:<lensId>` (a review lens) OR `autofix:<autofixId>:fix`
   // (the post-review fix turn) — see `review-lane.ts`. The two are tagged differently: a lens block carries
   // `meta.lensId`, the fix turn carries `meta.fixTurn: true` (NO lensId), so the fix lane must match on the
   // latter or its transcript renders permanently empty.
-  const isAutofixLane = lane.startsWith('autofix:');
-  const autofixParts = isAutofixLane ? lane.split(':') : null; // ['autofix', autofixId, lensId|'fix']
+  const isAutofixLane = lane.startsWith("autofix:");
+  const autofixParts = isAutofixLane ? lane.split(":") : null; // ['autofix', autofixId, lensId|'fix']
   const reviewAutofixId = autofixParts?.[1] ?? null;
   const reviewLensId = autofixParts?.[2] ?? null;
-  const isFixLane = reviewLensId === 'fix';
+  const isFixLane = reviewLensId === "fix";
 
   const flush = () => {
     if (pending.length === 0) return;
@@ -381,25 +446,33 @@ function buildLogItems(
     // rounds; the gate shares the build lane across iterations — so each round/iteration opens with its own
     // prompt, never hoisted). Handled here, before `classifyMessage`, else an atlas-authored row falls
     // through as a normal bubble. A prompt that doesn't belong to THIS lane is simply skipped.
-    if (message.kind === 'agent_prompt') {
+    if (message.kind === "agent_prompt") {
       const m = message.meta ?? {};
-      const cid = typeof m.codexReviewId === 'string' ? m.codexReviewId : null;
-      const pid = typeof m.phaseId === 'string' ? m.phaseId : null;
-      const aid = typeof m.autofixId === 'string' ? m.autofixId : null;
+      const cid = typeof m.codexReviewId === "string" ? m.codexReviewId : null;
+      const pid = typeof m.phaseId === "string" ? m.phaseId : null;
+      const aid = typeof m.autofixId === "string" ? m.autofixId : null;
       let show = false;
-      if (isMain) show = !cid && !pid && !aid; // the brain's own turn — no sub-lane key
+      if (isMain)
+        show = !cid && !pid && !aid; // the brain's own turn — no sub-lane key
       else if (isCodexLane) show = cid != null;
       else if (phaseSet) show = pid != null && phaseSet.has(pid);
       else if (isAutofixLane)
         show =
-          aid === reviewAutofixId && (isFixLane ? m.fixTurn === true : m.lensId === reviewLensId);
+          aid === reviewAutofixId &&
+          (isFixLane ? m.fixTurn === true : m.lensId === reviewLensId);
       if (show) {
         flush();
         nodes.push({
           key: message.ts,
           // Collapsed on Main (the operator's message bubble already shows the gist; the disclosure reveals
           // the folded context); expanded on the agent sub-lanes (seeing the prompt is the whole point).
-          node: <AgentPromptBlock key={message.ts} text={message.text} defaultOpen={!isMain} />,
+          node: (
+            <AgentPromptBlock
+              key={message.ts}
+              text={message.text}
+              defaultOpen={!isMain}
+            />
+          ),
         });
       }
       continue;
@@ -433,7 +506,8 @@ function buildLogItems(
       }
       if (phase.anchorKeys.has(message.ts)) {
         flush();
-        const phaseId = typeof message.meta?.phaseId === 'string' ? message.meta.phaseId : '';
+        const phaseId =
+          typeof message.meta?.phaseId === "string" ? message.meta.phaseId : "";
         const anchor = phase.anchorByPhase.get(phaseId);
         if (anchor)
           nodes.push({
@@ -443,7 +517,11 @@ function buildLogItems(
                 key={message.ts}
                 jobId={jobRef.jobId}
                 anchor={anchor}
-                durableToolCount={(phase.blocksByPhase.get(phaseId) ?? []).filter((m) => m.kind === 'tool').length}
+                durableToolCount={
+                  (phase.blocksByPhase.get(phaseId) ?? []).filter(
+                    (m) => m.kind === "tool",
+                  ).length
+                }
                 onOpen={() => onSelectNode?.(phaseId)}
               />
             ),
@@ -460,7 +538,8 @@ function buildLogItems(
     } else if (phaseSet) {
       // A build lane shows its phase(s)' blocks; a subagent spawned within it peels to its own sub-page.
       if (sub.childKeys.has(message.ts)) continue;
-      const pid = typeof message.meta?.phaseId === 'string' ? message.meta.phaseId : '';
+      const pid =
+        typeof message.meta?.phaseId === "string" ? message.meta.phaseId : "";
       // The synthetic build_anchor row → the phase's INPUT bubble (the instruction the engine received),
       // rendered exactly like an operator prompt so every lane opens with "what was asked".
       if (phase.anchorKeys.has(message.ts)) {
@@ -500,60 +579,93 @@ function buildLogItems(
     // A per-turn accounting block (token usage + context occupancy) — rendered as a turn-end divider.
     // Handled raw, BEFORE classifyMessage (which would otherwise fall this unknown kind through to a
     // plain Claude bubble). Flush any open tool run first so the divider lands after the turn's tools.
-    if (message.kind === 'turn_meta') {
+    if (message.kind === "turn_meta") {
       flush();
-      nodes.push({ key: message.ts, node: <TurnMetaDivider key={message.ts} message={message} /> });
+      nodes.push({
+        key: message.ts,
+        node: <TurnMetaDivider key={message.ts} message={message} />,
+      });
       continue;
     }
 
     const c = classifyMessage(message);
-    if (c.kind === 'tool') {
+    if (c.kind === "tool") {
       const m = message.meta ?? {};
       pending.push({
         key: message.ts,
         tool: {
           key: message.ts,
-          name: String(m.name ?? 'tool'),
+          name: String(m.name ?? "tool"),
           input: m.input,
           result: m.result,
           isError: Boolean(m.isError),
-          structuredPatch: m.structuredPatch as ToolItem['structuredPatch'],
+          structuredPatch: m.structuredPatch as ToolItem["structuredPatch"],
         },
       });
       continue;
     }
     flush();
 
-    const push = (node: React.ReactNode) => nodes.push({ key: message.ts, node });
+    const push = (node: React.ReactNode) =>
+      nodes.push({ key: message.ts, node });
     switch (c.kind) {
-      case 'user':
-        push(<UserBubble key={message.ts} text={message.text} time={message.postedAt} />);
+      case "user":
+        push(
+          <UserBubble
+            key={message.ts}
+            text={message.text}
+            time={message.postedAt}
+          />,
+        );
         break;
-      case 'thinking':
-        push(<ThinkingBlock key={message.ts} text={message.text} time={message.postedAt} />);
+      case "thinking":
+        push(
+          <ThinkingBlock
+            key={message.ts}
+            text={message.text}
+            time={message.postedAt}
+          />,
+        );
         break;
-      case 'approval':
-        push(<ApprovalCardView key={message.ts} card={c.card} jobRef={jobRef} onOpenPlan={onOpenPlan} />);
+      case "approval":
+        push(
+          <ApprovalCardView
+            key={message.ts}
+            card={c.card}
+            jobRef={jobRef}
+            onOpenPlan={onOpenPlan}
+          />,
+        );
         break;
-      case 'verdict':
+      case "verdict":
         push(<VerdictCardView key={message.ts} card={c.card} />);
         break;
-      case 'question':
-        push(<QuestionCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+      case "question":
+        push(
+          <QuestionCardView key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
-      case 'secret':
+      case "secret":
         push(<SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
-      case 'file':
+      case "file":
         push(<FileCardView key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
-      case 'review_comments':
-        push(<ReviewCommentsCardView key={message.ts} card={c.card} time={message.postedAt} />);
+      case "review_comments":
+        push(
+          <ReviewCommentsCardView
+            key={message.ts}
+            card={c.card}
+            time={message.postedAt}
+          />,
+        );
         break;
-      case 'event':
-        push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);
+      case "event":
+        push(
+          <SystemEventPill key={message.ts} message={message} tone={c.tone} />,
+        );
         break;
-      case 'compaction':
+      case "compaction":
         push(
           <CompactionSummaryPill
             key={message.ts}
@@ -563,16 +675,22 @@ function buildLogItems(
           />,
         );
         break;
-      case 'system_shared':
+      case "system_shared":
         push(<HarnessBubble key={message.ts} message={message} />);
         break;
-      case 'system_event':
+      case "system_event":
         push(<EventBubble key={message.ts} message={message} />);
         break;
-      case 'system_operator':
-        push(<SystemOperatorNotice key={message.ts} message={message} jobRef={jobRef} />);
+      case "system_operator":
+        push(
+          <SystemOperatorNotice
+            key={message.ts}
+            message={message}
+            jobRef={jobRef}
+          />,
+        );
         break;
-      case 'claude':
+      case "claude":
       default:
         push(<ClaudeBubble key={message.ts} message={message} />);
         break;
@@ -608,10 +726,12 @@ function useRealtimeIdle(jobId: string | null): boolean {
  *    turn that DID report. Tradeoff: right after a compaction+reseed the pre-compaction value can linger for
  *    a single turn until the fresh session reports — matches "last reported occupancy" (Claude-Code style).
  */
-function latestContextMeta(messages: JobMessage[]): { tokens: number; limit: number; model?: string } | null {
+function latestContextMeta(
+  messages: JobMessage[],
+): { tokens: number; limit: number; model?: string } | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.kind !== 'turn_meta') continue;
+    if (m.kind !== "turn_meta") continue;
     const meta = (m.meta ?? {}) as {
       contextTokens?: number | null;
       contextLimit?: number | null;
@@ -619,8 +739,16 @@ function latestContextMeta(messages: JobMessage[]): { tokens: number; limit: num
       usage?: { model?: string };
     };
     if (meta.phaseId != null) continue; // build/Codex-lane turn_meta — not the brain's occupancy.
-    if (typeof meta.contextTokens === 'number' && typeof meta.contextLimit === 'number' && meta.contextLimit > 0) {
-      return { tokens: meta.contextTokens, limit: meta.contextLimit, model: meta.usage?.model };
+    if (
+      typeof meta.contextTokens === "number" &&
+      typeof meta.contextLimit === "number" &&
+      meta.contextLimit > 0
+    ) {
+      return {
+        tokens: meta.contextTokens,
+        limit: meta.contextLimit,
+        model: meta.usage?.model,
+      };
     }
     // This brain turn_meta lacked usable numbers — keep scanning older turns for the last reported occupancy.
   }

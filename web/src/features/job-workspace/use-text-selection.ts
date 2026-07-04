@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { useReviewComments } from './review-comments';
+import { useEffect, useRef } from "react";
+import { useReviewComments } from "./review-comments";
 
 /**
  * Detect a completed text selection inside `containerRef` and hand it off to `onSelect`. Used only on the
@@ -24,8 +24,9 @@ export function useTextSelection({
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
       const range = sel.getRangeAt(0);
-      if (!container || !container.contains(range.commonAncestorContainer)) return;
-      const quote = sel.toString().replace(/\s+/g, ' ').trim();
+      if (!container || !container.contains(range.commonAncestorContainer))
+        return;
+      const quote = sel.toString().replace(/\s+/g, " ").trim();
       if (quote.length < 2) return;
       const rect = range.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) return;
@@ -35,8 +36,8 @@ export function useTextSelection({
     // `mouseup` covers drag-to-select; `selectionchange` also fires for keyboard-driven selection
     // (Shift+Arrow) but far more often (every caret move), so it's deliberately NOT wired here — the
     // mockup's interaction is mouse-drag select, and mouseup alone keeps this cheap and predictable.
-    document.addEventListener('mouseup', onMouseUp);
-    return () => document.removeEventListener('mouseup', onMouseUp);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => document.removeEventListener("mouseup", onMouseUp);
   }, [active, containerRef, onSelect]);
 }
 
@@ -46,7 +47,9 @@ export function useTextSelection({
  * `PhaseView` to hook once) + the selection listener that begins a pending comment on the shared context.
  * Non-commentable views (ports, subagents, transcripts) simply never call this.
  */
-export function useCommentableRef<T extends HTMLElement>(): React.RefObject<T | null> {
+export function useCommentableRef<
+  T extends HTMLElement,
+>(): React.RefObject<T | null> {
   const ref = useRef<T>(null);
   const { beginPending } = useReviewComments();
   useTextSelection({ containerRef: ref, active: true, onSelect: beginPending });

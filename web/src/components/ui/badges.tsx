@@ -1,7 +1,7 @@
-import { GitMerge, GitPullRequest, GitPullRequestClosed } from 'lucide-react';
-import { cn } from '@/lib/cn';
-import { KIND_META, STATUS_META } from '@/lib/api/status';
-import type { InboxPr, JobKind, JobStatus } from '@/lib/api/types';
+import { GitMerge, GitPullRequest, GitPullRequestClosed } from "lucide-react";
+import { cn } from "@/lib/cn";
+import { KIND_META, STATUS_META } from "@/lib/api/status";
+import type { InboxPr, JobKind, JobStatus } from "@/lib/api/types";
 
 /** A status dot — colored by status, optionally pulsing (running/triaging) with a soft glow. */
 export function StatusDot({
@@ -16,12 +16,18 @@ export function StatusDot({
   const meta = STATUS_META[status];
   return (
     <span
-      className={cn('inline-block shrink-0 rounded-full', meta.pulse && 'pulse-dot', className)}
+      className={cn(
+        "inline-block shrink-0 rounded-full",
+        meta.pulse && "pulse-dot",
+        className,
+      )}
       style={{
         width: size,
         height: size,
         background: meta.color,
-        boxShadow: meta.pulse ? `0 0 0 3px color-mix(in srgb, ${meta.color} 18%, transparent)` : undefined,
+        boxShadow: meta.pulse
+          ? `0 0 0 3px color-mix(in srgb, ${meta.color} 18%, transparent)`
+          : undefined,
       }}
       aria-hidden
     />
@@ -42,7 +48,11 @@ export function Dot({
 }) {
   return (
     <span
-      className={cn('inline-block shrink-0 rounded-full', pulse && 'pulse-dot', className)}
+      className={cn(
+        "inline-block shrink-0 rounded-full",
+        pulse && "pulse-dot",
+        className,
+      )}
       style={{ width: size, height: size, background: color }}
       aria-hidden
     />
@@ -50,12 +60,18 @@ export function Dot({
 }
 
 /** FEAT / FIX / EVENT mono badge — NEUTRAL grey + hairline border (handoff: no per-kind color). */
-export function KindBadge({ kind, className }: { kind: JobKind; className?: string }) {
+export function KindBadge({
+  kind,
+  className,
+}: {
+  kind: JobKind;
+  className?: string;
+}) {
   const meta = KIND_META[kind];
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-[3px] border border-border-2 px-[5px] py-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.06em] text-dim',
+        "inline-flex items-center rounded-[3px] border border-border-2 px-[5px] py-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.06em] text-dim",
         className,
       )}
     >
@@ -81,42 +97,63 @@ export function KindBadge({ kind, className }: { kind: JobKind; className?: stri
  * spinner. `status` undefined → a neutral hollow ring (the cross-org inbox carries no status for
  * most rows yet — see `inbox.ts`).
  */
-const STATUS_SHAPE: Record<JobStatus, 'forming' | 'reviewing' | 'working' | 'waiting' | 'paused' | 'failed' | 'done'> = {
-  planning: 'forming',
-  triaging: 'forming',
-  plan_review: 'reviewing',
-  running: 'working',
-  awaiting_approval: 'waiting',
-  paused: 'paused',
-  failed: 'failed',
-  done: 'done',
+const STATUS_SHAPE: Record<
+  JobStatus,
+  "forming" | "reviewing" | "working" | "waiting" | "paused" | "failed" | "done"
+> = {
+  planning: "forming",
+  triaging: "forming",
+  plan_review: "reviewing",
+  running: "working",
+  awaiting_approval: "waiting",
+  paused: "paused",
+  failed: "failed",
+  done: "done",
   // Winding down — a muted static ring; the faint color (STATUS_META) carries the "Deleting…" meaning.
-  deleting: 'paused',
+  deleting: "paused",
 };
 
-export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: number }) {
+export function StatusPie({
+  status,
+  size = 14,
+}: {
+  status?: JobStatus;
+  size?: number;
+}) {
   const shape = status ? STATUS_SHAPE[status] : null;
-  const color = status ? STATUS_META[status].color : 'var(--border-2)';
+  const color = status ? STATUS_META[status].color : "var(--border-2)";
   const r = 7.5;
   const circ = 2 * Math.PI * r;
   const ring = (stroke: string, extra?: React.SVGProps<SVGCircleElement>) => (
-    <circle cx={10} cy={10} r={r} fill="none" stroke={stroke} strokeWidth={2} {...extra} />
+    <circle
+      cx={10}
+      cy={10}
+      r={r}
+      fill="none"
+      stroke={stroke}
+      strokeWidth={2}
+      {...extra}
+    />
   );
 
   let kids: React.ReactNode;
-  if (shape === 'forming') {
+  if (shape === "forming") {
     // Dashed ring — pre-approval "forming". Planning is static, waiting on you to talk; triaging
     // breathes (the model is actively triaging an untrusted event).
     kids = ring(color, {
-      strokeDasharray: '2 2.8',
-      strokeLinecap: 'round',
-      className: status === 'triaging' ? 'status-breathe' : undefined,
+      strokeDasharray: "2 2.8",
+      strokeLinecap: "round",
+      className: status === "triaging" ? "status-breathe" : undefined,
     });
-  } else if (shape === 'reviewing') {
+  } else if (shape === "reviewing") {
     // Faint dashed base (still "forming") + a solid arc scanning around it — Codex reviewing the plan.
     kids = (
       <>
-        {ring(color, { strokeDasharray: '2 2.8', strokeLinecap: 'round', opacity: 0.4 })}
+        {ring(color, {
+          strokeDasharray: "2 2.8",
+          strokeLinecap: "round",
+          opacity: 0.4,
+        })}
         <g className="status-spin">
           <circle
             cx={10}
@@ -131,11 +168,11 @@ export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: nu
         </g>
       </>
     );
-  } else if (shape === 'working') {
+  } else if (shape === "working") {
     // Faint thread + a rotating accent arc — a true spinner for "AI is working".
     kids = (
       <>
-        {ring('var(--border-2)', { opacity: 0.5 })}
+        {ring("var(--border-2)", { opacity: 0.5 })}
         <g className="status-spin">
           <circle
             cx={10}
@@ -150,7 +187,7 @@ export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: nu
         </g>
       </>
     );
-  } else if (shape === 'waiting') {
+  } else if (shape === "waiting") {
     // Bullseye — solid ring with a filled center: parked, waiting on you.
     kids = (
       <>
@@ -158,7 +195,7 @@ export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: nu
         <circle cx={10} cy={10} r={2.7} fill={color} />
       </>
     );
-  } else if (shape === 'paused') {
+  } else if (shape === "paused") {
     kids = (
       <>
         {ring(color)}
@@ -166,7 +203,7 @@ export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: nu
         <rect x={10.5} y={7} width={1.4} height={6} rx={0.6} fill={color} />
       </>
     );
-  } else if (shape === 'failed') {
+  } else if (shape === "failed") {
     kids = (
       <>
         {ring(color)}
@@ -178,7 +215,7 @@ export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: nu
         />
       </>
     );
-  } else if (shape === 'done') {
+  } else if (shape === "done") {
     // Filled disc + a checkmark knocked out in the panel color.
     kids = (
       <>
@@ -194,10 +231,16 @@ export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: nu
       </>
     );
   } else {
-    kids = ring('var(--border-2)');
+    kids = ring("var(--border-2)");
   }
   return (
-    <svg width={size} height={size} viewBox="0 0 20 20" className="block shrink-0" aria-hidden>
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 20 20"
+      className="block shrink-0"
+      aria-hidden
+    >
       {kids}
     </svg>
   );
@@ -211,10 +254,22 @@ export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: nu
  *   merged → purple git-merge     · closed (unmerged) → red pull-request-closed
  * The job row itself never disappears on merge (the sandbox is torn down but the job stays "truly done").
  */
-export function PrStatusIcon({ pr, size = 14 }: { pr: InboxPr; size?: number }) {
+export function PrStatusIcon({
+  pr,
+  size = 14,
+}: {
+  pr: InboxPr;
+  size?: number;
+}) {
   const { Icon, color, title } = prGlyph(pr);
   return (
-    <Icon size={size} strokeWidth={2} style={{ color }} className="block shrink-0" aria-label={title}>
+    <Icon
+      size={size}
+      strokeWidth={2}
+      style={{ color }}
+      className="block shrink-0"
+      aria-label={title}
+    >
       <title>{title}</title>
     </Icon>
   );
@@ -225,22 +280,38 @@ function prGlyph(pr: InboxPr): {
   color: string;
   title: string;
 } {
-  if (pr.state === 'merged') return { Icon: GitMerge, color: 'var(--purple)', title: 'PR merged' };
-  if (pr.state === 'closed') return { Icon: GitPullRequestClosed, color: 'var(--red)', title: 'PR closed' };
+  if (pr.state === "merged")
+    return { Icon: GitMerge, color: "var(--purple)", title: "PR merged" };
+  if (pr.state === "closed")
+    return {
+      Icon: GitPullRequestClosed,
+      color: "var(--red)",
+      title: "PR closed",
+    };
   // open — conflict refines the ready state.
-  if (pr.mergeable === 'dirty') {
-    return { Icon: GitPullRequest, color: 'var(--amber)', title: 'PR has a merge conflict' };
+  if (pr.mergeable === "dirty") {
+    return {
+      Icon: GitPullRequest,
+      color: "var(--amber)",
+      title: "PR has a merge conflict",
+    };
   }
-  return { Icon: GitPullRequest, color: 'var(--green)', title: 'PR open' };
+  return { Icon: GitPullRequest, color: "var(--green)", title: "PR open" };
 }
 
 /** Status pill: a dot + label, tinted by status. */
-export function StatusPill({ status, className }: { status: JobStatus; className?: string }) {
+export function StatusPill({
+  status,
+  className,
+}: {
+  status: JobStatus;
+  className?: string;
+}) {
   const meta = STATUS_META[status];
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium',
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium",
         className,
       )}
       style={{

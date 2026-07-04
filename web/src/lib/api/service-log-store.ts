@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import { useCallback, useSyncExternalStore } from 'react';
-import { env } from '@/lib/env';
-import { IDLE_LINGER_MS, subscribeSse } from './sse-manager';
-import { fetchServiceLogTail, type JobRef } from './job-api';
+import { useCallback, useSyncExternalStore } from "react";
+import { env } from "@/lib/env";
+import { IDLE_LINGER_MS, subscribeSse } from "./sse-manager";
+import { fetchServiceLogTail, type JobRef } from "./job-api";
 
 /**
  * LIVE service-log store — the SSE-tailed content of one `atlas-svc`-supervised process's log.
@@ -44,13 +44,14 @@ interface Entry {
 }
 
 interface LogFrame {
-  type?: 'snapshot' | 'append';
+  type?: "snapshot" | "append";
   content?: string;
   truncated?: boolean;
   chunk?: string;
 }
 
-const key = (ref: JobRef, id: string): string => `${ref.orgId}:${ref.repoId}:${ref.jobId}:${id}`;
+const key = (ref: JobRef, id: string): string =>
+  `${ref.orgId}:${ref.repoId}:${ref.jobId}:${id}`;
 const url = (ref: JobRef, id: string): string =>
   `${env.NEXT_PUBLIC_HTTP_URL}/web/orgs/${ref.orgId}/repos/${ref.repoId}/jobs/${ref.jobId}/services/${encodeURIComponent(id)}/log-events`;
 
@@ -67,12 +68,16 @@ const MAX_CLIENT_LINES = 5_000;
  * soon as it's found the cut point, so this is O(maxLines), not O(content.length) — it never re-walks the
  * (already-capped) history that's about to be discarded anyway.
  */
-function capLines(content: string, maxLines: number): { content: string; trimmed: boolean } {
+function capLines(
+  content: string,
+  maxLines: number,
+): { content: string; trimmed: boolean } {
   let newlines = 0;
   for (let i = content.length - 1; i >= 0; i--) {
     if (content.charCodeAt(i) !== 10 /* \n */) continue;
     newlines++;
-    if (newlines > maxLines) return { content: content.slice(i + 1), trimmed: true };
+    if (newlines > maxLines)
+      return { content: content.slice(i + 1), trimmed: true };
   }
   return { content, trimmed: false };
 }
@@ -93,12 +98,21 @@ class ServiceLogStore {
     }
     const entry = this.entries.get(k);
     if (!entry) return;
-    if (frame.type === 'snapshot') {
+    if (frame.type === "snapshot") {
       entry.sawSnapshot = true;
-      entry.state = { content: frame.content ?? '', truncated: Boolean(frame.truncated) };
-    } else if (frame.type === 'append' && frame.chunk) {
-      const capped = capLines(entry.state.content + frame.chunk, MAX_CLIENT_LINES);
-      entry.state = { content: capped.content, truncated: entry.state.truncated || capped.trimmed };
+      entry.state = {
+        content: frame.content ?? "",
+        truncated: Boolean(frame.truncated),
+      };
+    } else if (frame.type === "append" && frame.chunk) {
+      const capped = capLines(
+        entry.state.content + frame.chunk,
+        MAX_CLIENT_LINES,
+      );
+      entry.state = {
+        content: capped.content,
+        truncated: entry.state.truncated || capped.trimmed,
+      };
     } else {
       return;
     }
@@ -116,11 +130,11 @@ class ServiceLogStore {
         // socket is still in the sse-manager's own linger) will never receive a `snapshot` frame — the
         // stacked-grace-window hole described above. Recover the tail over REST.
         onOpen: (_h, kind) => {
-          if (kind === 'late-join') void this.restCatchUp(k, ref, id);
+          if (kind === "late-join") void this.restCatchUp(k, ref, id);
         },
       });
       entry = {
-        state: { content: '', truncated: false },
+        state: { content: "", truncated: false },
         unsub,
         listeners: new Set(),
         releaseTimer: null,
@@ -178,8 +192,17 @@ class ServiceLogStore {
 const store = new ServiceLogStore();
 
 /** Subscribe to one supervised process's live-tailed log. */
-export function useServiceLogStream(ref: JobRef, id: string): ServiceLogState | undefined {
-  const subscribe = useCallback((cb: () => void) => store.subscribe(ref, id, cb), [ref.orgId, ref.repoId, ref.jobId, id]);
-  const getSnapshot = useCallback(() => store.getState(ref, id), [ref.orgId, ref.repoId, ref.jobId, id]);
+export function useServiceLogStream(
+  ref: JobRef,
+  id: string,
+): ServiceLogState | undefined {
+  const subscribe = useCallback(
+    (cb: () => void) => store.subscribe(ref, id, cb),
+    [ref.orgId, ref.repoId, ref.jobId, id],
+  );
+  const getSnapshot = useCallback(
+    () => store.getState(ref, id),
+    [ref.orgId, ref.repoId, ref.jobId, id],
+  );
   return useSyncExternalStore(subscribe, getSnapshot, () => undefined);
 }

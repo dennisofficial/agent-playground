@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { RepoSidebar } from '@/features/tickets/repo-sidebar';
+import type { ReactNode } from "react";
+import { RepoSidebar } from "@/features/tickets/repo-sidebar";
 
 /**
  * The tickets shell (under the app-wide top bar). Its own repo-picker sidebar + the board/backlog content;

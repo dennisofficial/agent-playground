@@ -1,10 +1,10 @@
-import type { ToolHandler } from './types';
-import { nativeFileHandler } from './handlers/native-file';
-import { nativeShellHandler } from './handlers/native-shell';
-import { nativeSearchHandler } from './handlers/native-search';
-import { nativeMiscHandler } from './handlers/native-misc';
-import { mcpBridgeHandler } from './handlers/mcp-bridge';
-import { genericHandler } from './handlers/generic';
+import type { ToolHandler } from "./types";
+import { nativeFileHandler } from "./handlers/native-file";
+import { nativeShellHandler } from "./handlers/native-shell";
+import { nativeSearchHandler } from "./handlers/native-search";
+import { nativeMiscHandler } from "./handlers/native-misc";
+import { mcpBridgeHandler } from "./handlers/mcp-bridge";
+import { genericHandler } from "./handlers/generic";
 
 /**
  * The tool-renderer registry. Ordered most-specific → least: exact native tool names, then the Atlas

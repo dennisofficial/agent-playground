@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { Check, MessageSquarePlus, X } from 'lucide-react';
-import { useReviewComments } from './review-comments';
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Check, MessageSquarePlus, X } from "lucide-react";
+import { useReviewComments } from "./review-comments";
 
 const MARGIN = 8;
 
@@ -15,12 +15,12 @@ const MARGIN = 8;
  */
 export function SelectionCommentPopover() {
   const { pending, addComment, cancelPending } = useReviewComments();
-  const [note, setNote] = useState('');
+  const [note, setNote] = useState("");
   const popRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    setNote('');
+    setNote("");
   }, [pending]);
 
   useEffect(() => {
@@ -28,32 +28,36 @@ export function SelectionCommentPopover() {
     textareaRef.current?.focus();
 
     function onPointerDown(e: PointerEvent) {
-      if (popRef.current && !popRef.current.contains(e.target as Node)) cancelPending();
+      if (popRef.current && !popRef.current.contains(e.target as Node))
+        cancelPending();
     }
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') cancelPending();
+      if (e.key === "Escape") cancelPending();
     }
     // Capture phase: the selection rect was measured at mouseup, so ANY scroll (including inside the
     // spec/plan scroller) or viewport resize invalidates it — dismiss rather than show a stale popover.
     function onStale() {
       cancelPending();
     }
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    window.addEventListener('scroll', onStale, true);
-    window.addEventListener('resize', onStale);
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", onStale, true);
+    window.addEventListener("resize", onStale);
     return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('scroll', onStale, true);
-      window.removeEventListener('resize', onStale);
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", onStale, true);
+      window.removeEventListener("resize", onStale);
     };
   }, [pending, cancelPending]);
 
-  if (!pending || typeof document === 'undefined') return null;
+  if (!pending || typeof document === "undefined") return null;
 
   const width = 290;
-  const left = Math.min(Math.max(width / 2 + MARGIN, pending.rect.left + pending.rect.width / 2), window.innerWidth - width / 2 - MARGIN);
+  const left = Math.min(
+    Math.max(width / 2 + MARGIN, pending.rect.left + pending.rect.width / 2),
+    window.innerWidth - width / 2 - MARGIN,
+  );
   const top = Math.max(MARGIN, pending.rect.top);
 
   function submit() {
@@ -64,7 +68,12 @@ export function SelectionCommentPopover() {
     <div
       ref={popRef}
       className="fixed z-[90] w-[290px] rounded-xl border border-border-2 bg-panel p-3 pb-3.5"
-      style={{ left, top, transform: 'translate(-50%, calc(-100% - 12px))', boxShadow: 'var(--shadow-menu)' }}
+      style={{
+        left,
+        top,
+        transform: "translate(-50%, calc(-100% - 12px))",
+        boxShadow: "var(--shadow-menu)",
+      }}
     >
       <div className="mb-2 flex items-center gap-1.5">
         <MessageSquarePlus size={11} className="text-accent" strokeWidth={2} />
@@ -89,7 +98,7 @@ export function SelectionCommentPopover() {
         value={note}
         onChange={(e) => setNote(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
+          if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             submit();
           }

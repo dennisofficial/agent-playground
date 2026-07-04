@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { useMemo } from 'react';
-import { Check } from 'lucide-react';
-import { useOrgs } from '@/lib/api/me';
-import { useAllJobs } from '@/lib/api/inbox';
-import { NeedsYouBand } from '@/features/inbox/components/needs-you-band';
+import { useMemo } from "react";
+import { Check } from "lucide-react";
+import { useOrgs } from "@/lib/api/me";
+import { useAllJobs } from "@/lib/api/inbox";
+import { NeedsYouBand } from "@/features/inbox/components/needs-you-band";
 
 /**
  * Dashboard — the cross-org coordinator. The org-grouped board is gone (the sidebar is now the home for
@@ -20,10 +20,12 @@ export default function CoordinatorPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl px-9 py-8">
-        <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">All organizations</h1>
+        <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">
+          All organizations
+        </h1>
         <p className="mt-1.5 max-w-2xl text-[13px] leading-relaxed text-dim">
-          Everything that needs you, across every organization. Browse all projects in the sidebar; jump
-          into any thread to steer it.
+          Everything that needs you, across every organization. Browse all
+          projects in the sidebar; jump into any thread to steer it.
         </p>
 
         {orgsLoading || isLoading ? (
@@ -55,17 +57,25 @@ function AllCaughtUp() {
   return (
     <div
       className="mt-7 flex flex-col items-center rounded-lg border px-6 py-16 text-center"
-      style={{ borderColor: 'var(--green-soft)', background: 'var(--green-soft)' }}
+      style={{
+        borderColor: "var(--green-soft)",
+        background: "var(--green-soft)",
+      }}
     >
       <span
         className="flex h-10 w-10 items-center justify-center rounded-full text-green"
-        style={{ background: 'color-mix(in srgb, var(--green) 14%, transparent)' }}
+        style={{
+          background: "color-mix(in srgb, var(--green) 14%, transparent)",
+        }}
       >
         <Check size={20} />
       </span>
-      <h2 className="mt-3 text-[15px] font-semibold text-text">You&apos;re all caught up</h2>
+      <h2 className="mt-3 text-[15px] font-semibold text-text">
+        You&apos;re all caught up
+      </h2>
       <p className="mt-1.5 max-w-md text-[13px] text-dim">
-        Nothing needs your attention right now. Browse your projects in the sidebar, or start something new.
+        Nothing needs your attention right now. Browse your projects in the
+        sidebar, or start something new.
       </p>
     </div>
   );

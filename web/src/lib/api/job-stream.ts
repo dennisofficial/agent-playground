@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 /**
  * LIVE engine-stream store — the in-flight turn of a thread's in-sandbox Claude Code session, made
@@ -25,10 +25,22 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 export type LiveBlock =
   // `parentToolUseId` (set only for SUBAGENT blocks) lets the live view peel a subagent's activity out of
   // the main turn into its own card / sub-page — mirrors the durable `meta.parentToolUseId`.
-  | { kind: 'text'; key: string; text: string; done: boolean; parentToolUseId?: string }
-  | { kind: 'thinking'; key: string; text: string; done: boolean; parentToolUseId?: string }
   | {
-      kind: 'tool';
+      kind: "text";
+      key: string;
+      text: string;
+      done: boolean;
+      parentToolUseId?: string;
+    }
+  | {
+      kind: "thinking";
+      key: string;
+      text: string;
+      done: boolean;
+      parentToolUseId?: string;
+    }
+  | {
+      kind: "tool";
       key: string;
       toolId?: string;
       name: string;
@@ -76,7 +88,7 @@ type StreamPayload = {
 let blockSeq = 0;
 
 /** The default lane — the thread brain's conversational turn (vs `phase:<stepId>` for a build turn). */
-export const MAIN_LANE = 'main';
+export const MAIN_LANE = "main";
 /** The store keys an in-flight turn by thread AND lane, so a brain turn and a build turn coexist. */
 const laneKey = (jobId: string, lane: string): string => `${jobId}::${lane}`;
 
@@ -102,7 +114,12 @@ class ThreadStreamStore {
   private readonly keyListeners = new Map<string, Set<() => void>>();
 
   /** Apply a `{type:'stream'}` frame's event (snapshot or delta) for a turn lane, deduped by `seq`. */
-  apply(jobId: string, lane: string, seq: number, ev: StreamPayload | null | undefined): void {
+  apply(
+    jobId: string,
+    lane: string,
+    seq: number,
+    ev: StreamPayload | null | undefined,
+  ): void {
     if (!jobId || !ev?.kind) return;
     const key = laneKey(jobId, lane);
     // Any frame for this key proves the server still knows the turn — re-confirms it for the sweep.
@@ -112,7 +129,7 @@ class ThreadStreamStore {
     // `turn_start` — the FIRST frame of a turn. Mark the lane active + record the authoritative start time
     // so the working indicator can flip ON immediately and tick an elapsed timer. Preserve any blocks a
     // (rare) out-of-order earlier frame already produced; just stamp active + startedAt.
-    if (ev.kind === 'turn_start') {
+    if (ev.kind === "turn_start") {
       if (cur && seq <= cur.lastSeq) return;
       this.map.set(key, {
         blocks: cur?.blocks ?? [],
@@ -125,7 +142,7 @@ class ThreadStreamStore {
     }
 
     // Snapshot: the authoritative full state at `seq`. Replace, unless we already have newer deltas.
-    if (ev.kind === 'snapshot') {
+    if (ev.kind === "snapshot") {
       if (cur && seq < cur.lastSeq) return;
       this.map.set(key, {
         blocks: (ev.blocks ?? []).map((b) => ({ ...b })),
@@ -144,16 +161,17 @@ class ThreadStreamStore {
 
     const blocks = cur ? [...cur.blocks] : [];
     const last = blocks[blocks.length - 1];
-    const text = typeof ev.text === 'string' ? ev.text : '';
+    const text = typeof ev.text === "string" ? ev.text : "";
     // Only merge into the open block when it belongs to the SAME author (brain vs a given subagent), so a
     // subagent's forwarded text never appends onto the brain's open text block (or another subagent's).
     const pid = ev.parentToolUseId;
-    const sameAuthor = (b: LiveBlock | undefined): boolean => !!b && b.parentToolUseId === pid;
+    const sameAuthor = (b: LiveBlock | undefined): boolean =>
+      !!b && b.parentToolUseId === pid;
     // Finalize the most-recent still-open block of this kind+author. Interleaved thinking (auto-enabled by
     // adaptive thinking) means a turn can have TWO open delta blocks at once — an open `thinking` and an open
     // `text` — so the authoritative block we're closing is NOT necessarily `last`. Checking only `last` here
     // pushed a duplicate instead of merging (the "double stream" bug). Scan back for the matching open block.
-    const finalizeOpen = (kind: 'text' | 'thinking'): boolean => {
+    const finalizeOpen = (kind: "text" | "thinking"): boolean => {
       for (let i = blocks.length - 1; i >= 0; i--) {
         const b = blocks[i];
         if (b.kind === kind && !b.done && b.parentToolUseId === pid) {
@@ -165,45 +183,73 @@ class ThreadStreamStore {
     };
 
     switch (ev.kind) {
-      case 'text_delta':
-        if (last && last.kind === 'text' && !last.done && sameAuthor(last))
+      case "text_delta":
+        if (last && last.kind === "text" && !last.done && sameAuthor(last))
           blocks[blocks.length - 1] = { ...last, text: last.text + text };
-        else blocks.push({ kind: 'text', key: `c${blockSeq++}`, text, done: false, parentToolUseId: pid });
+        else
+          blocks.push({
+            kind: "text",
+            key: `c${blockSeq++}`,
+            text,
+            done: false,
+            parentToolUseId: pid,
+          });
         break;
-      case 'text':
-        if (!finalizeOpen('text'))
-          blocks.push({ kind: 'text', key: `c${blockSeq++}`, text, done: true, parentToolUseId: pid });
+      case "text":
+        if (!finalizeOpen("text"))
+          blocks.push({
+            kind: "text",
+            key: `c${blockSeq++}`,
+            text,
+            done: true,
+            parentToolUseId: pid,
+          });
         break;
-      case 'thinking_delta':
-        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last))
+      case "thinking_delta":
+        if (last && last.kind === "thinking" && !last.done && sameAuthor(last))
           blocks[blocks.length - 1] = { ...last, text: last.text + text };
-        else blocks.push({ kind: 'thinking', key: `c${blockSeq++}`, text, done: false, parentToolUseId: pid });
+        else
+          blocks.push({
+            kind: "thinking",
+            key: `c${blockSeq++}`,
+            text,
+            done: false,
+            parentToolUseId: pid,
+          });
         break;
-      case 'thinking':
-        if (!finalizeOpen('thinking'))
-          blocks.push({ kind: 'thinking', key: `c${blockSeq++}`, text, done: true, parentToolUseId: pid });
+      case "thinking":
+        if (!finalizeOpen("thinking"))
+          blocks.push({
+            kind: "thinking",
+            key: `c${blockSeq++}`,
+            text,
+            done: true,
+            parentToolUseId: pid,
+          });
         break;
-      case 'tool_use':
+      case "tool_use":
         blocks.push({
-          kind: 'tool',
+          kind: "tool",
           key: `c${blockSeq++}`,
-          toolId: typeof ev.id === 'string' ? ev.id : '',
-          name: typeof ev.name === 'string' ? ev.name : 'tool',
+          toolId: typeof ev.id === "string" ? ev.id : "",
+          name: typeof ev.name === "string" ? ev.name : "tool",
           input: ev.input,
           done: false,
           parentToolUseId: pid,
         });
         break;
-      case 'tool_result': {
-        const id = typeof ev.id === 'string' ? ev.id : '';
+      case "tool_result": {
+        const id = typeof ev.id === "string" ? ev.id : "";
         for (let i = blocks.length - 1; i >= 0; i--) {
           const b = blocks[i];
-          if (b.kind === 'tool' && !b.done && (b.toolId === id || id === '')) {
+          if (b.kind === "tool" && !b.done && (b.toolId === id || id === "")) {
             blocks[i] = {
               ...b,
               result: ev.result,
               isError: Boolean(ev.isError),
-              ...(ev.structuredPatch !== undefined ? { structuredPatch: ev.structuredPatch } : {}),
+              ...(ev.structuredPatch !== undefined
+                ? { structuredPatch: ev.structuredPatch }
+                : {}),
               done: true,
             };
             break;
@@ -213,12 +259,22 @@ class ThreadStreamStore {
       }
       default:
         // session / result — advance seq but don't change rendered blocks.
-        this.map.set(key, { blocks, active: true, lastSeq: seq, startedAt: cur?.startedAt });
+        this.map.set(key, {
+          blocks,
+          active: true,
+          lastSeq: seq,
+          startedAt: cur?.startedAt,
+        });
         this.notify(key);
         return;
     }
 
-    this.map.set(key, { blocks, active: true, lastSeq: seq, startedAt: cur?.startedAt });
+    this.map.set(key, {
+      blocks,
+      active: true,
+      lastSeq: seq,
+      startedAt: cur?.startedAt,
+    });
     this.notify(key);
   }
 
@@ -286,7 +342,12 @@ class ThreadStreamStore {
 const store = new ThreadStreamStore();
 
 /** Feed one `{type:'stream'}` frame (snapshot or delta) into a thread's live turn lane. */
-export function applyStreamFrame(jobId: string, lane: string, seq: number, event: unknown): void {
+export function applyStreamFrame(
+  jobId: string,
+  lane: string,
+  seq: number,
+  event: unknown,
+): void {
   store.apply(jobId, lane, seq, event as StreamPayload);
 }
 
@@ -308,15 +369,21 @@ export function sweepLiveTurnsAfterReconnect(): void {
  * Subscribe to one thread's in-flight live turn for a lane (default the brain's `main` turn). The
  * conversation reads `main`; a step sub-page reads its `phase:<stepId>` lane.
  */
-export function useLiveTurn(jobId: string, lane: string = MAIN_LANE): LiveTurn | undefined {
+export function useLiveTurn(
+  jobId: string,
+  lane: string = MAIN_LANE,
+): LiveTurn | undefined {
   const key = laneKey(jobId, lane);
-  const subscribe = useCallback((cb: () => void) => store.subscribeKey(key, cb), [key]);
+  const subscribe = useCallback(
+    (cb: () => void) => store.subscribeKey(key, cb),
+    [key],
+  );
   const getByKey = useCallback(() => store.getByKey(key), [key]);
   return useSyncExternalStore(subscribe, getByKey, () => undefined);
 }
 
 /** The short status word for the working indicator, derived from the LAST live block's kind. */
-export type LiveStatusWord = 'still thinking' | 'using tools' | 'responding';
+export type LiveStatusWord = "still thinking" | "using tools" | "responding";
 
 /**
  * A compact summary of a live turn for the "Atlas is working…" indicator (Claude-Code style):
@@ -332,10 +399,14 @@ export function summarizeLiveTurn(turn: LiveTurn | undefined): {
 } {
   const blocks = turn?.blocks ?? [];
   let openTools = 0;
-  for (const b of blocks) if (b.kind === 'tool' && !b.done) openTools += 1;
+  for (const b of blocks) if (b.kind === "tool" && !b.done) openTools += 1;
   const last = blocks[blocks.length - 1];
   const statusWord: LiveStatusWord =
-    last?.kind === 'thinking' ? 'still thinking' : last?.kind === 'tool' ? 'using tools' : 'responding';
+    last?.kind === "thinking"
+      ? "still thinking"
+      : last?.kind === "tool"
+        ? "using tools"
+        : "responding";
   return { openTools, statusWord };
 }
 
@@ -366,7 +437,8 @@ export function formatElapsed(totalSeconds: number): string {
   const hours = Math.floor(s / 3_600);
   const minutes = Math.floor((s % 3_600) / 60);
   const seconds = s % 60;
-  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
-  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  if (hours > 0)
+    return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
   return `${seconds}s`;
 }

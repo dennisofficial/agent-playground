@@ -1,13 +1,13 @@
-'use client';
+"use client";
 
-import { useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
-import { env } from '@/lib/env';
-import { qk } from './query-keys';
-import { subscribeSse, type SseHandle } from './sse-manager';
-import { uiStatus, type InboxThread } from './inbox';
-import { toJobKind } from './status';
-import type { WireJobKind, PrState } from './types';
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { env } from "@/lib/env";
+import { qk } from "./query-keys";
+import { subscribeSse, type SseHandle } from "./sse-manager";
+import { uiStatus, type InboxThread } from "./inbox";
+import { toJobKind } from "./status";
+import type { WireJobKind, PrState } from "./types";
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
@@ -34,12 +34,12 @@ interface RealtimeRow {
 
 /** A pg-realtime delta (mirrors the backend `RowDelta`), plus the `disabled` control frame. */
 type RowDelta =
-  | { kind: 'data'; rows: Array<{ pk: string; row: RealtimeRow }> }
-  | { kind: 'add'; pk: string; row: RealtimeRow }
-  | { kind: 'update'; pk: string; row: RealtimeRow }
-  | { kind: 'remove'; pk: string }
+  | { kind: "data"; rows: Array<{ pk: string; row: RealtimeRow }> }
+  | { kind: "add"; pk: string; row: RealtimeRow }
+  | { kind: "update"; pk: string; row: RealtimeRow }
+  | { kind: "remove"; pk: string }
   // Sent by the backend when realtime is unavailable — we close and rely on polling (no reconnect storm).
-  | { kind: 'disabled' };
+  | { kind: "disabled" };
 
 /**
  * ONE cross-org realtime subscription for the whole shell — mounted once (in `AppChrome`), not per open
@@ -55,7 +55,8 @@ export function useAllJobsRealtime(): void {
   const qc = useQueryClient();
 
   useEffect(() => {
-    const invalidate = () => void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    const invalidate = () =>
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
 
     const patchUpdate = (row: RealtimeRow) => {
       let found = false;
@@ -77,7 +78,11 @@ export function useAllJobsRealtime(): void {
           // The flat WAL row carries no PR url — preserve the enriched one from the fetched row so a
           // live conflict→ready→merged transition re-glyphs without dropping the click-through link.
           pr: row.prState
-            ? { state: row.prState as PrState, mergeable: row.prMergeable ?? null, url: next[idx].pr?.url ?? null }
+            ? {
+                state: row.prState as PrState,
+                mergeable: row.prMergeable ?? null,
+                url: next[idx].pr?.url ?? null,
+              }
             : null,
         };
         return next;
@@ -106,16 +111,18 @@ export function useAllJobsRealtime(): void {
         return;
       }
       if (!delta) return;
-      if (delta.kind === 'disabled') {
+      if (delta.kind === "disabled") {
         // Realtime is off on the server — stop this stream for good (no reconnect storm) and let the
         // query's normal polling keep the dots fresh.
         handle.closePermanently();
         return;
       }
-      if (delta.kind === 'update') patchUpdate(delta.row);
+      if (delta.kind === "update") patchUpdate(delta.row);
       else invalidate(); // snapshot / add / remove → refetch the enriched list
     };
 
-    return subscribeSse(`${env.NEXT_PUBLIC_HTTP_URL}/web/jobs/realtime`, { onFrame });
+    return subscribeSse(`${env.NEXT_PUBLIC_HTTP_URL}/web/jobs/realtime`, {
+      onFrame,
+    });
   }, [qc]);
 }

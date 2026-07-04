@@ -7,7 +7,7 @@
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
-import type { JobStatus as WireJobStatus } from '@workspace/shared';
+import type { JobStatus as WireJobStatus } from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
@@ -16,36 +16,36 @@ import type { JobStatus as WireJobStatus } from '@workspace/shared';
  */
 export type { WireJobStatus };
 
-export type WireJobKind = 'feature' | 'bugfix' | 'onboarding' | 'event';
+export type WireJobKind = "feature" | "bugfix" | "onboarding" | "event";
 
 /** The lane (Thread) status — one build lane within a Job. */
 export type ThreadStatus =
-  | 'pending'
-  | 'planning'
-  | 'reviewing'
-  | 'awaiting_approval'
-  | 'executing'
-  | 'awaiting_input'
-  | 'auto_fixing'
-  | 'skipped' // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
-  | 'done'
-  | 'incomplete'
-  | 'failed';
+  | "pending"
+  | "planning"
+  | "reviewing"
+  | "awaiting_approval"
+  | "executing"
+  | "awaiting_input"
+  | "auto_fixing"
+  | "skipped" // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
+  | "done"
+  | "incomplete"
+  | "failed";
 
 /** Per-step status (the execute folder's leaves). Mirrors backend `StepStatus` in `domain/thread.ts`. */
 export type StepStatus =
-  | 'pending'
-  | 'building'
-  | 'reviewing'
-  | 'done'
-  | 'failed'
-  | 'skipped';
+  | "pending"
+  | "building"
+  | "reviewing"
+  | "done"
+  | "failed"
+  | "skipped";
 
 // ── Approval / verdict cards ───────────────────────────────────────────────────────────────────
-export const APPROVE_ACTION_ID = 'atlas_approval:approve';
-export const REQUEST_CHANGES_ACTION_ID = 'atlas_approval:request_changes';
-export const DENY_ACTION_ID = 'atlas_approval:deny';
-export const VIEW_PLAN_ACTION_ID = 'atlas_approval:view_plan';
+export const APPROVE_ACTION_ID = "atlas_approval:approve";
+export const REQUEST_CHANGES_ACTION_ID = "atlas_approval:request_changes";
+export const DENY_ACTION_ID = "atlas_approval:deny";
+export const VIEW_PLAN_ACTION_ID = "atlas_approval:view_plan";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
@@ -63,7 +63,7 @@ export interface ApprovalDecision {
 export interface WebCardAction {
   actionId: string;
   label: string;
-  style: 'primary' | 'danger' | 'default';
+  style: "primary" | "danger" | "default";
   /** Link buttons (e.g. "View full plan") carry a URL; otherwise the click POSTs a verdict. */
   url?: string;
   /** Serialized `ApprovalActionMeta` (jobId + decisionRecordId) — sent back verbatim on /web/approve. */
@@ -71,11 +71,11 @@ export interface WebCardAction {
 }
 
 export interface WebApprovalCard {
-  type: 'approval_card';
+  type: "approval_card";
   jobId: string;
   decisionRecordId?: string;
   /** `plan` (full ceremony) or `direct` (fast path) — labels the list "Sections" vs "Changes". */
-  kind?: 'plan' | 'direct';
+  kind?: "plan" | "direct";
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -85,7 +85,7 @@ export interface WebApprovalCard {
 }
 
 export interface WebVerdictCard {
-  type: 'verdict_card';
+  type: "verdict_card";
   jobId: string;
   title: string;
   verdict: string;
@@ -105,7 +105,7 @@ export interface WebQuestionOption {
  * When `answer` is set the card renders the compact answered state. Mirrors the backend `WebQuestionCard`.
  */
 export interface WebQuestionCard {
-  type: 'question_card';
+  type: "question_card";
   jobId: string;
   questionId: string;
   header?: string;
@@ -129,7 +129,7 @@ export interface WebQuestionCard {
  * state. Mirrors the backend `WebSecretInputCard` (deliberately value-free).
  */
 export interface WebSecretInputCard {
-  type: 'secret_input_card';
+  type: "secret_input_card";
   jobId: string;
   requestId: string;
   /** Secret name, or a display LABEL only when {@link ephemeral}. */
@@ -154,7 +154,7 @@ export interface WebSecretInputCard {
  * renders a compact "uploaded" state. Mirrors the backend `WebFileRequestCard` (deliberately value-free).
  */
 export interface WebFileRequestCard {
-  type: 'file_request_card';
+  type: "file_request_card";
   jobId: string;
   requestId: string;
   path: string;
@@ -179,7 +179,7 @@ export interface WebReviewCommentItem {
  * operator's typed prose, rendered as a normal bubble underneath. Mirrors the backend `review_comments_card`.
  */
 export interface WebReviewCommentsCard {
-  type: 'review_comments_card';
+  type: "review_comments_card";
   items: WebReviewCommentItem[];
   message?: string;
 }
@@ -222,7 +222,7 @@ export interface PipelineStep {
  */
 export interface PipelineReviewChild {
   id: string;
-  kind: 'review_lens' | 'post_review';
+  kind: "review_lens" | "post_review";
   brief: string;
   status: ThreadStatus;
   /** The lens id (`best_practices`/…) for a `review_lens` child; absent for `post_review`. */
@@ -241,7 +241,7 @@ export interface PipelineReviewChild {
 export interface TaskItem {
   id: string;
   subject: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'dropped';
+  status: "pending" | "in_progress" | "completed" | "dropped";
   /** The SDK task's longer description — shown under an in_progress task + as the row tooltip. */
   description?: string;
   /** Present-continuous label ("Resolving the router chain") shown while in_progress; falls back to subject. */
@@ -310,12 +310,16 @@ export interface PipelineJob {
  * `no_job` = the job never entered the build lifecycle (still `open`, chatting/planning). It still
  * carries the brain's own `mainTasks` so the navigator's Main row can show the checklist pre-plan.
  */
-export type PipelineState = PipelineJob | { status: 'no_job'; mainTasks?: TaskItem[] };
+export type PipelineState =
+  | PipelineJob
+  | { status: "no_job"; mainTasks?: TaskItem[] };
 
 /** The Main brain session's task list, from either pipeline shape (`no_job` carries it too). */
-export function pipelineMainTasks(pipeline: PipelineState | undefined): TaskItem[] {
+export function pipelineMainTasks(
+  pipeline: PipelineState | undefined,
+): TaskItem[] {
   if (!pipeline) return [];
-  return ('mainTasks' in pipeline ? pipeline.mainTasks : undefined) ?? [];
+  return ("mainTasks" in pipeline ? pipeline.mainTasks : undefined) ?? [];
 }
 
 // ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────
@@ -346,7 +350,7 @@ export interface ContextFileContent {
   size: number;
   mtime: string;
   /** `text` → utf-8 in `content`; `base64` → binary (images) in `content`. */
-  encoding: 'text' | 'base64';
+  encoding: "text" | "base64";
   /** Best-effort mime by extension (e.g. `text/markdown`, `image/png`). */
   mime: string;
   content: string;
@@ -372,29 +376,28 @@ export interface ServiceInfo {
    * present but the process is gone — crash, `atlas-svc stop`, or a previous/absent container),
    * `unknown` (couldn't probe: no running container, null pgid/startedAt, or a transient exec failure).
    */
-  status: 'running' | 'stopped' | 'unknown';
+  status: "running" | "stopped" | "unknown";
 }
-
 
 // ── UI job model ───────────────────────────────────────────────────────────────────────────────
 /** The Job UI-presentation status set from handoff §7 (semantic dot colors). */
 export type JobStatus =
-  | 'running'
-  | 'planning'
-  | 'plan_review'
-  | 'awaiting_approval'
-  | 'done'
-  | 'triaging'
-  | 'paused'
-  | 'failed'
-  | 'deleting';
+  | "running"
+  | "planning"
+  | "plan_review"
+  | "awaiting_approval"
+  | "done"
+  | "triaging"
+  | "paused"
+  | "failed"
+  | "deleting";
 
 /** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job;
  *  `onboard` is the Atlas-run repo-init (onboarding) job. */
-export type JobKind = 'feat' | 'fix' | 'event' | 'onboard';
+export type JobKind = "feat" | "fix" | "event" | "onboard";
 
 /** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
-export type PrState = 'open' | 'merged' | 'closed';
+export type PrState = "open" | "merged" | "closed";
 
 /** The observed PR on a job — drives the sidebar's PR-status glyph (see `PrStatusIcon`). `mergeable` is
  *  GitHub's `mergeable_state` ('dirty' = merge conflict); `url` links to the PR. */

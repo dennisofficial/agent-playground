@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import type { ToolHandler, ToolItem } from '../types';
-import { formatPayload, mcpName } from '../util';
-import { StructuredPanel } from '../ui';
+import type { ToolHandler, ToolItem } from "../types";
+import { formatPayload, mcpName } from "../util";
+import { StructuredPanel } from "../ui";
 
 function GenericBody({ tool }: { tool: ToolItem }) {
   return (
@@ -20,18 +20,18 @@ function GenericBody({ tool }: { tool: ToolItem }) {
  * MUST be registered last.
  */
 export const genericHandler: ToolHandler = {
-  id: 'generic',
+  id: "generic",
   match: () => true,
   describe: (tool: ToolItem) => {
     const n = mcpName(tool.name);
     return {
-      icon: 'mcp',
-      label: '',
+      icon: "mcp",
+      label: "",
       arg: n,
       preview: n,
-      color: 'var(--blue)',
+      color: "var(--blue)",
       isMcp: true,
-      badge: tool.isError ? { kind: 'error' } : null,
+      badge: tool.isError ? { kind: "error" } : null,
     };
   },
   Body: GenericBody,

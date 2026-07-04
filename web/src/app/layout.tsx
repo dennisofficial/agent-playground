@@ -22,7 +22,8 @@ const mono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "Atlas — Operator Console",
-  description: "Operate Atlas: see all threads, talk to a thread's brain, approve plans, watch builds.",
+  description:
+    "Operate Atlas: see all threads, talk to a thread's brain, approve plans, watch builds.",
 };
 
 export default function RootLayout({

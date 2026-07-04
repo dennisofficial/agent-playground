@@ -1,11 +1,17 @@
-'use client';
+"use client";
 
-import { useQuery } from '@tanstack/react-query';
-import { env } from '@/lib/env';
-import { fetchWithRefresh } from './refresh';
-import { qk } from './query-keys';
-import { toJobStatus, toJobKind } from './status';
-import type { WireJobStatus, WireJobKind, JobStatus, JobKind, InboxPr } from './types';
+import { useQuery } from "@tanstack/react-query";
+import { env } from "@/lib/env";
+import { fetchWithRefresh } from "./refresh";
+import { qk } from "./query-keys";
+import { toJobStatus, toJobKind } from "./status";
+import type {
+  WireJobStatus,
+  WireJobKind,
+  JobStatus,
+  JobKind,
+  InboxPr,
+} from "./types";
 
 /**
  * The unified cross-org inbox — every thread across ALL the operator's orgs (`GET /web/jobs`), the
@@ -58,32 +64,36 @@ export interface InboxThread {
  */
 function deriveInboxKind(r: RawInboxThread): JobKind {
   if (r.kind) return toJobKind(r.kind as WireJobKind);
-  return r.origin === 'event' ? 'event' : 'feat';
+  return r.origin === "event" ? "event" : "feat";
 }
 
 /** Backend status (incl. `open`, which `toJobStatus` doesn't cover) → UI status for the pie. */
 export function uiStatus(backend: string, origin: string): JobStatus {
-  if (backend === 'open') return origin === 'event' ? 'triaging' : 'planning';
+  if (backend === "open") return origin === "event" ? "triaging" : "planning";
   return toJobStatus(backend as WireJobStatus);
 }
 
 export function normalize(r: RawInboxThread): InboxThread {
   return {
     id: r.jobId,
-    title: r.title?.trim() || 'Untitled thread',
+    title: r.title?.trim() || "Untitled thread",
     kind: deriveInboxKind(r),
     status: uiStatus(r.status, r.origin),
     needsYou: r.needsYou,
     createdAt: r.createdAt,
     pr: r.pr ?? null,
-    org: { id: r.org.id, slug: r.org.slug ?? r.org.id, name: r.org.name ?? 'Organization' },
+    org: {
+      id: r.org.id,
+      slug: r.org.slug ?? r.org.id,
+      name: r.org.name ?? "Organization",
+    },
     repo: { id: r.repo.id, name: r.repo.name ?? r.repo.id },
   };
 }
 
 async function fetchAllThreads(): Promise<InboxThread[]> {
   const res = await fetchWithRefresh(`${env.NEXT_PUBLIC_HTTP_URL}/web/jobs`, {
-    headers: { accept: 'application/json' },
+    headers: { accept: "application/json" },
   });
   if (!res.ok) throw new Error(`threads ${res.status}`);
   const rows = (await res.json()) as RawInboxThread[];
@@ -147,6 +157,10 @@ export function groupThreadsByOrgAndRepo(
     r.threads.push(t);
   }
   return [...byOrg.values()]
-    .map((o) => ({ orgId: o.orgId, orgName: o.orgName, repos: [...o.repos.values()] }))
+    .map((o) => ({
+      orgId: o.orgId,
+      orgName: o.orgName,
+      repos: [...o.repos.values()],
+    }))
     .filter((o) => o.repos.length > 0);
 }

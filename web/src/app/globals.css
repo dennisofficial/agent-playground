@@ -149,7 +149,10 @@ body {
     linear-gradient(var(--bg-grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
   background-color: var(--bg);
-  background-size: auto, 46px 46px, 46px 46px;
+  background-size:
+    auto,
+    46px 46px,
+    46px 46px;
   color: var(--text);
   font-family: var(--f-ui), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;

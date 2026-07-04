@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Tail-following for a streaming scroll container — the "pin to bottom while reading the tail, but don't
@@ -52,13 +52,13 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
     stuckToBottom.current = true;
     setShowJump(false);
     if (pin) pin();
-    else endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    else endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   };
 
   useEffect(() => {
     if (!stuckToBottom.current) return;
     if (pin) pin();
-    else endRef.current?.scrollIntoView({ block: 'end' });
+    else endRef.current?.scrollIntoView({ block: "end" });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are supplied by the caller (content signal)
   }, deps);
 
@@ -72,7 +72,7 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
 export function JumpToLatestButton({
   onClick,
   style,
-  className = '',
+  className = "",
 }: {
   onClick: () => void;
   style?: React.CSSProperties;
@@ -86,7 +86,16 @@ export function JumpToLatestButton({
       style={style}
       className={`absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface-2 py-1.5 pl-3 pr-3.5 text-[12px] text-dim shadow-md transition hover:text-text ${className}`}
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M12 5v14" />
         <path d="M19 12l-7 7-7-7" />
       </svg>

@@ -1,26 +1,32 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { ChevronRight, RotateCw } from 'lucide-react';
-import type { SystemTone } from './classify';
-import { Markdown } from './markdown';
-import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
-import { SubagentCard, indexLiveSubagents, subagentNode } from './subagents';
-import { Button } from '@/components/ui/button';
-import { useRetryTurn } from '@/lib/api/job-queries';
-import type { JobMessage, JobRef } from '@/lib/api/job-api';
-import { formatElapsed, summarizeLiveTurn, useElapsedSeconds, type LiveBlock, type LiveTurn } from '@/lib/api/job-stream';
-import { formatClockTime, formatTokens } from '@/lib/org-display';
+import { useEffect, useState } from "react";
+import { ChevronRight, RotateCw } from "lucide-react";
+import type { SystemTone } from "./classify";
+import { Markdown } from "./markdown";
+import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
+import { SubagentCard, indexLiveSubagents, subagentNode } from "./subagents";
+import { Button } from "@/components/ui/button";
+import { useRetryTurn } from "@/lib/api/job-queries";
+import type { JobMessage, JobRef } from "@/lib/api/job-api";
+import {
+  formatElapsed,
+  summarizeLiveTurn,
+  useElapsedSeconds,
+  type LiveBlock,
+  type LiveTurn,
+} from "@/lib/api/job-stream";
+import { formatClockTime, formatTokens } from "@/lib/org-display";
 
 /** Per-type tone for {@link MessageTime} — distinct colors so the operator can tell turn boundaries from
  *  in-turn blocks at a glance (the user wants to eyeball density/color before we tune it down). */
-export type TimeTone = 'muted' | 'user' | 'thinking' | 'turn';
+export type TimeTone = "muted" | "user" | "thinking" | "turn";
 
 const TIME_TONE_COLOR: Record<TimeTone, string> = {
-  muted: 'var(--faint)',
-  user: 'var(--accent)',
-  thinking: 'var(--faint)',
-  turn: 'var(--accent-2)',
+  muted: "var(--faint)",
+  user: "var(--accent)",
+  thinking: "var(--faint)",
+  turn: "var(--accent-2)",
 };
 
 /**
@@ -30,13 +36,13 @@ const TIME_TONE_COLOR: Record<TimeTone, string> = {
  */
 export function MessageTime({
   iso,
-  tone = 'muted',
-  align = 'left',
+  tone = "muted",
+  align = "left",
   hoverOnly = false,
 }: {
   iso?: string;
   tone?: TimeTone;
-  align?: 'left' | 'right';
+  align?: "left" | "right";
   hoverOnly?: boolean;
 }) {
   if (!iso) return null;
@@ -44,7 +50,7 @@ export function MessageTime({
   if (!label) return null;
   return (
     <span
-      className={`select-none font-mono text-[9.5px] tabular-nums tracking-[0.04em] ${align === 'right' ? 'self-end pr-0.5' : 'pl-0.5'} ${hoverOnly ? 'opacity-0 transition-opacity group-hover:opacity-100' : 'opacity-70'}`}
+      className={`select-none font-mono text-[9.5px] tabular-nums tracking-[0.04em] ${align === "right" ? "self-end pr-0.5" : "pl-0.5"} ${hoverOnly ? "opacity-0 transition-opacity group-hover:opacity-100" : "opacity-70"}`}
       style={{ color: TIME_TONE_COLOR[tone] }}
       title={new Date(iso).toLocaleString()}
     >
@@ -59,15 +65,19 @@ export function ClaudeAvatar({ size = 24 }: { size?: number }) {
   return (
     <span
       className="flex shrink-0 items-center justify-center rounded-md"
-      style={{ width: size, height: size, background: 'linear-gradient(145deg, var(--accent), var(--accent-2))' }}
+      style={{
+        width: size,
+        height: size,
+        background: "linear-gradient(145deg, var(--accent), var(--accent-2))",
+      }}
       aria-hidden
     >
       <span
         style={{
           width: inner,
           height: inner,
-          transform: 'rotate(45deg)',
-          border: '1.5px solid rgba(255,255,255,0.92)',
+          transform: "rotate(45deg)",
+          border: "1.5px solid rgba(255,255,255,0.92)",
           borderRadius: 2,
         }}
       />
@@ -86,9 +96,9 @@ export function UserBubble({ text, time }: { text: string; time?: string }) {
       <div
         className="max-w-[92%] [overflow-wrap:anywhere] px-[13px] py-2 text-text"
         style={{
-          background: 'var(--accent-soft)',
-          border: '1px solid var(--accent-line)',
-          borderRadius: '13px 13px 4px 13px',
+          background: "var(--accent-soft)",
+          border: "1px solid var(--accent-line)",
+          borderRadius: "13px 13px 4px 13px",
         }}
       >
         <Markdown>{text}</Markdown>
@@ -108,14 +118,20 @@ export function ClaudeBubble({ message }: { message: JobMessage }) {
  * An assistant message — rendered as markdown prose (no avatar, no bubble), per the conversation redesign.
  * `streaming` adds a blinking cursor for the live (token-by-token) turn.
  */
-export function StreamTextBubble({ text, streaming = false }: { text: string; streaming?: boolean }) {
+export function StreamTextBubble({
+  text,
+  streaming = false,
+}: {
+  text: string;
+  streaming?: boolean;
+}) {
   return (
     <div className="anim-fadeUp">
       <Markdown>{text}</Markdown>
       {streaming ? (
         <span
           className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] animate-pulse"
-          style={{ background: 'var(--accent)' }}
+          style={{ background: "var(--accent)" }}
           aria-hidden
         />
       ) : null}
@@ -124,7 +140,15 @@ export function StreamTextBubble({ text, streaming = false }: { text: string; st
 }
 
 /** A collapsible thinking block (the model's reasoning) — dimmed + italic, like Claude Code. */
-export function ThinkingBlock({ text, streaming = false, time }: { text: string; streaming?: boolean; time?: string }) {
+export function ThinkingBlock({
+  text,
+  streaming = false,
+  time,
+}: {
+  text: string;
+  streaming?: boolean;
+  time?: string;
+}) {
   // Auto-expand while the reasoning is streaming (watch it think live), then collapse it once the turn
   // finishes so the transcript stays tidy. Manual toggles between streaming-state changes are preserved —
   // the effect only re-fires when `streaming` itself flips. Persisted blocks render with streaming=false → closed.
@@ -138,15 +162,19 @@ export function ThinkingBlock({ text, streaming = false, time }: { text: string;
           onClick={() => setOpen((o) => !o)}
           className="flex items-center gap-1.5 text-left font-mono text-[11px] italic text-faint hover:text-dim"
         >
-          <ChevronRight size={11} strokeWidth={2.6} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
-          {streaming ? 'thinking…' : 'thought'}
+          <ChevronRight
+            size={11}
+            strokeWidth={2.6}
+            className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+          />
+          {streaming ? "thinking…" : "thought"}
         </button>
         <MessageTime iso={time} tone="thinking" />
       </div>
       {open ? (
         <p
           className="mt-1.5 whitespace-pre-wrap pl-[18px] text-[12.5px] italic leading-relaxed text-dim"
-          style={{ borderLeft: '2px solid var(--border)' }}
+          style={{ borderLeft: "2px solid var(--border)" }}
         >
           {/* trim: summarized thinking arrives with leading/trailing newlines that whitespace-pre-wrap
               would otherwise render as blank-line padding above the text; internal formatting is preserved. */}
@@ -185,27 +213,50 @@ export function LiveTurnView({
 
   for (const b of turn.blocks as LiveBlock[]) {
     if (sub.childKeys.has(b.key)) continue;
-    if (b.kind === 'tool' && b.toolId && sub.anchorKeys.has(b.key)) {
+    if (b.kind === "tool" && b.toolId && sub.anchorKeys.has(b.key)) {
       flush();
       const summary = sub.summaryById.get(b.toolId);
       if (summary) {
         const parentId = summary.parentId;
         items.push({
           key: b.key,
-          node: <SubagentCard summary={summary} onOpen={() => onSelectNode?.(subagentNode(lane, parentId))} />,
+          node: (
+            <SubagentCard
+              summary={summary}
+              onOpen={() => onSelectNode?.(subagentNode(lane, parentId))}
+            />
+          ),
         });
       }
       continue;
     }
-    if (b.kind === 'tool') {
-      pending.push({ key: b.key, name: b.name, input: b.input, result: b.result, isError: b.isError, structuredPatch: b.structuredPatch as ToolItem['structuredPatch'], running: !b.done });
+    if (b.kind === "tool") {
+      pending.push({
+        key: b.key,
+        name: b.name,
+        input: b.input,
+        result: b.result,
+        isError: b.isError,
+        structuredPatch: b.structuredPatch as ToolItem["structuredPatch"],
+        running: !b.done,
+      });
       continue;
     }
     flush();
-    if (b.kind === 'text') {
-      items.push({ key: b.key, node: <StreamTextBubble text={b.text} streaming={!b.done && turn.active} /> });
+    if (b.kind === "text") {
+      items.push({
+        key: b.key,
+        node: (
+          <StreamTextBubble text={b.text} streaming={!b.done && turn.active} />
+        ),
+      });
     } else {
-      items.push({ key: b.key, node: <ThinkingBlock text={b.text} streaming={!b.done && turn.active} /> });
+      items.push({
+        key: b.key,
+        node: (
+          <ThinkingBlock text={b.text} streaming={!b.done && turn.active} />
+        ),
+      });
     }
   }
   flush();
@@ -220,19 +271,31 @@ export function LiveTurnView({
 }
 
 const TONE_COLOR: Record<SystemTone, string> = {
-  ok: 'var(--green)',
-  warn: 'var(--red)',
-  accent: 'var(--accent)',
-  neutral: 'var(--faint)',
+  ok: "var(--green)",
+  warn: "var(--red)",
+  accent: "var(--accent)",
+  neutral: "var(--faint)",
 };
 
-export function SystemEventPill({ message, tone }: { message: JobMessage; tone: SystemTone }) {
+export function SystemEventPill({
+  message,
+  tone,
+}: {
+  message: JobMessage;
+  tone: SystemTone;
+}) {
   return (
     <div
       className="anim-fadeUp flex items-center gap-2.5 self-stretch rounded-md border px-3.5 py-1.5 font-mono text-[10px] text-dim"
-      style={{ borderColor: 'var(--hair)', background: 'color-mix(in srgb, var(--surface-2) 70%, transparent)' }}
+      style={{
+        borderColor: "var(--hair)",
+        background: "color-mix(in srgb, var(--surface-2) 70%, transparent)",
+      }}
     >
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: TONE_COLOR[tone] }} />
+      <span
+        className="h-1.5 w-1.5 shrink-0 rounded-full"
+        style={{ background: TONE_COLOR[tone] }}
+      />
       <span className="truncate">{message.text}</span>
     </div>
   );
@@ -256,7 +319,10 @@ export function CompactionSummaryPill({
   return (
     <div
       className="anim-fadeUp flex flex-col self-stretch rounded-md border"
-      style={{ borderColor: 'var(--hair)', background: 'color-mix(in srgb, var(--surface-2) 70%, transparent)' }}
+      style={{
+        borderColor: "var(--hair)",
+        background: "color-mix(in srgb, var(--surface-2) 70%, transparent)",
+      }}
     >
       <button
         type="button"
@@ -264,13 +330,22 @@ export function CompactionSummaryPill({
         aria-expanded={open}
         className="flex items-center gap-2.5 px-3.5 py-1.5 text-left font-mono text-[10px] text-dim"
       >
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: TONE_COLOR[tone] }} />
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{ background: TONE_COLOR[tone] }}
+        />
         <span className="min-w-0 flex-1 truncate">{message.text}</span>
-        <span className="shrink-0 text-faint">{open ? 'hide' : 'inspect'}</span>
-        <ChevronRight size={11} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+        <span className="shrink-0 text-faint">{open ? "hide" : "inspect"}</span>
+        <ChevronRight
+          size={11}
+          className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+        />
       </button>
       {open ? (
-        <div className="border-t px-3.5 py-2.5 text-[12px]" style={{ borderColor: 'var(--hair)' }}>
+        <div
+          className="border-t px-3.5 py-2.5 text-[12px]"
+          style={{ borderColor: "var(--hair)" }}
+        >
           <Markdown>{summary}</Markdown>
         </div>
       ) : null}
@@ -314,7 +389,9 @@ export function TurnMetaDivider({ message }: { message: JobMessage }) {
     <div className="anim-fadeUp flex items-center gap-1.5 pl-0.5">
       <MessageTime iso={message.postedAt} tone="turn" />
       {parts.length ? (
-        <span className="font-mono text-[9.5px] tabular-nums text-faint">· {parts.join(' · ')}</span>
+        <span className="font-mono text-[9.5px] tabular-nums text-faint">
+          · {parts.join(" · ")}
+        </span>
       ) : null}
     </div>
   );
@@ -325,18 +402,38 @@ export function TurnMetaDivider({ message }: { message: JobMessage }) {
  * turn's input-token count (≈ what's resident in context); `limit` is the model's window. Turns amber/red
  * as it fills. The model/limit come from the latest `turn_meta` block, so it threads whatever model ran.
  */
-export function ContextMeter({ tokens, limit, model }: { tokens: number; limit: number; model?: string }) {
+export function ContextMeter({
+  tokens,
+  limit,
+  model,
+}: {
+  tokens: number;
+  limit: number;
+  model?: string;
+}) {
   const pct = limit > 0 ? Math.min(1, Math.max(0, tokens / limit)) : 0;
   const r = 7;
   const circ = 2 * Math.PI * r;
-  const stroke = pct >= 0.9 ? 'var(--red)' : pct >= 0.7 ? 'var(--accent-2)' : 'var(--accent)';
+  const stroke =
+    pct >= 0.9
+      ? "var(--red)"
+      : pct >= 0.7
+        ? "var(--accent-2)"
+        : "var(--accent)";
   return (
     <div
       className="flex items-center gap-1.5 px-1"
-      title={`Context · ${formatTokens(tokens)} / ${formatTokens(limit)} (${Math.round(pct * 100)}%)${model ? ` · ${model}` : ''}`}
+      title={`Context · ${formatTokens(tokens)} / ${formatTokens(limit)} (${Math.round(pct * 100)}%)${model ? ` · ${model}` : ""}`}
     >
       <svg width="17" height="17" viewBox="0 0 18 18" className="-rotate-90">
-        <circle cx="9" cy="9" r={r} fill="none" stroke="var(--border)" strokeWidth="2.2" />
+        <circle
+          cx="9"
+          cy="9"
+          r={r}
+          fill="none"
+          stroke="var(--border)"
+          strokeWidth="2.2"
+        />
         <circle
           cx="9"
           cy="9"
@@ -348,7 +445,9 @@ export function ContextMeter({ tokens, limit, model }: { tokens: number; limit: 
           strokeDasharray={`${circ * pct} ${circ}`}
         />
       </svg>
-      <span className="font-mono text-[10px] tabular-nums text-dim">{Math.round(pct * 100)}%</span>
+      <span className="font-mono text-[10px] tabular-nums text-dim">
+        {Math.round(pct * 100)}%
+      </span>
     </div>
   );
 }
@@ -364,21 +463,35 @@ export function ContextMeter({ tokens, limit, model }: { tokens: number; limit: 
  *
  * NOTE: token count is intentionally NOT shown — it's a backend fast-follow that isn't wired yet.
  */
-export function LiveIndicator({ turn, text = 'Atlas is working…' }: { turn?: LiveTurn; text?: string }) {
+export function LiveIndicator({
+  turn,
+  text = "Atlas is working…",
+}: {
+  turn?: LiveTurn;
+  text?: string;
+}) {
   const elapsed = useElapsedSeconds(turn?.startedAt);
   const { openTools, statusWord } = summarizeLiveTurn(turn);
   const label = !turn
     ? text
     : [
         formatElapsed(elapsed),
-        openTools > 0 ? `${openTools} running task${openTools === 1 ? '' : 's'}` : null,
+        openTools > 0
+          ? `${openTools} running task${openTools === 1 ? "" : "s"}`
+          : null,
         `${statusWord}…`,
       ]
         .filter(Boolean)
-        .join(' · ');
+        .join(" · ");
   return (
     <div className="anim-fadeUp flex items-center gap-2.5 text-[11.5px] text-accent">
-      <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)', boxShadow: '0 0 9px var(--accent)' }} />
+      <span
+        className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full"
+        style={{
+          background: "var(--accent)",
+          boxShadow: "0 0 9px var(--accent)",
+        }}
+      />
       <span className="tabular-nums">{label}</span>
     </div>
   );
@@ -391,28 +504,37 @@ export function LiveIndicator({ turn, text = 'Atlas is working…' }: { turn?: L
  * When `meta.retryable` is set (a transient engine failure, not a terminal one), a "Resume" button
  * re-pokes the SAME engine session (`POST …/retry-turn`) with no new operator-authored message.
  */
-export function SystemOperatorNotice({ message, jobRef }: { message: JobMessage; jobRef: JobRef }) {
+export function SystemOperatorNotice({
+  message,
+  jobRef,
+}: {
+  message: JobMessage;
+  jobRef: JobRef;
+}) {
   const retryable = message.meta?.retryable === true;
   const retry = useRetryTurn(jobRef);
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
-      style={{ borderColor: 'var(--red-line)', background: 'var(--red-soft)' }}
+      style={{ borderColor: "var(--red-line)", background: "var(--red-soft)" }}
     >
       {/* Header strip */}
       <div
         className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
         style={{
-          borderBottom: '1px solid var(--red-line)',
-          background: 'color-mix(in srgb, var(--red) 10%, transparent)',
+          borderBottom: "1px solid var(--red-line)",
+          background: "color-mix(in srgb, var(--red) 10%, transparent)",
         }}
       >
-        <span aria-hidden style={{ color: 'var(--red)', fontSize: 11, lineHeight: 1 }}>
+        <span
+          aria-hidden
+          style={{ color: "var(--red)", fontSize: 11, lineHeight: 1 }}
+        >
           ⚠
         </span>
         <span
           className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
-          style={{ color: 'var(--red)' }}
+          style={{ color: "var(--red)" }}
         >
           System
         </span>
@@ -424,7 +546,10 @@ export function SystemOperatorNotice({ message, jobRef }: { message: JobMessage;
         <Markdown>{message.text}</Markdown>
       </div>
       {retryable ? (
-        <div className="flex items-center gap-2 border-t px-3.5 py-2.5" style={{ borderColor: 'var(--red-line)' }}>
+        <div
+          className="flex items-center gap-2 border-t px-3.5 py-2.5"
+          style={{ borderColor: "var(--red-line)" }}
+        >
           <Button
             size="sm"
             loading={retry.isPending}
@@ -433,10 +558,12 @@ export function SystemOperatorNotice({ message, jobRef }: { message: JobMessage;
             onClick={() => retry.mutate()}
           >
             <RotateCw size={12} className="mr-1" />
-            {retry.isSuccess ? 'Resumed' : 'Resume'}
+            {retry.isSuccess ? "Resumed" : "Resume"}
           </Button>
           {retry.isError ? (
-            <span className="text-[11.5px] text-red">Couldn&apos;t resume. Try again.</span>
+            <span className="text-[11.5px] text-red">
+              Couldn&apos;t resume. Try again.
+            </span>
           ) : null}
         </div>
       ) : null}
@@ -454,28 +581,31 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
     <div
       className="anim-fadeUp rounded-[9px] border"
       style={{
-        borderColor: 'var(--border-2)',
-        background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)',
+        borderColor: "var(--border-2)",
+        background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
       }}
     >
       {/* Header strip */}
       <div
         className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
-        style={{ borderBottom: '1px solid var(--border)', background: 'color-mix(in srgb, var(--surface-3) 70%, transparent)' }}
+        style={{
+          borderBottom: "1px solid var(--border)",
+          background: "color-mix(in srgb, var(--surface-3) 70%, transparent)",
+        }}
       >
         {/* Small "codex" logo — a diamond/square rotated 45°, echoing the ClaudeAvatar shape */}
         <span
           className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px]"
-          style={{ background: 'var(--dim)' }}
+          style={{ background: "var(--dim)" }}
           aria-hidden
         >
           <span
             style={{
-              display: 'block',
+              display: "block",
               width: 6,
               height: 6,
-              transform: 'rotate(45deg)',
-              border: '1.5px solid rgba(255,255,255,0.85)',
+              transform: "rotate(45deg)",
+              border: "1.5px solid rgba(255,255,255,0.85)",
               borderRadius: 1,
             }}
           />
@@ -484,7 +614,9 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
           Codex review
         </span>
         <span className="flex-1" />
-        <span className="font-mono text-[10px] text-faint">{message.authorName}</span>
+        <span className="font-mono text-[10px] text-faint">
+          {message.authorName}
+        </span>
       </div>
       {/* Markdown body */}
       <div className="px-3.5 py-3">
@@ -502,32 +634,41 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
  */
 export function EventBubble({ message }: { message: JobMessage }) {
   const meta = message.meta ?? {};
-  const source = typeof meta.eventSource === 'string' ? meta.eventSource : 'event';
-  const severity = typeof meta.severity === 'string' ? meta.severity : null;
+  const source =
+    typeof meta.eventSource === "string" ? meta.eventSource : "event";
+  const severity = typeof meta.severity === "string" ? meta.severity : null;
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
-      style={{ borderColor: 'var(--accent-line)', background: 'var(--accent-soft)' }}
+      style={{
+        borderColor: "var(--accent-line)",
+        background: "var(--accent-soft)",
+      }}
     >
       {/* Header strip */}
       <div
         className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
         style={{
-          borderBottom: '1px solid var(--accent-line)',
-          background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+          borderBottom: "1px solid var(--accent-line)",
+          background: "color-mix(in srgb, var(--accent) 10%, transparent)",
         }}
       >
-        <span aria-hidden style={{ color: 'var(--accent)', fontSize: 11, lineHeight: 1 }}>
+        <span
+          aria-hidden
+          style={{ color: "var(--accent)", fontSize: 11, lineHeight: 1 }}
+        >
           ◈
         </span>
         <span
           className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
-          style={{ color: 'var(--accent)' }}
+          style={{ color: "var(--accent)" }}
         >
           Event · {source}
         </span>
         <span className="flex-1" />
-        {severity ? <span className="font-mono text-[10px] text-faint">{severity}</span> : null}
+        {severity ? (
+          <span className="font-mono text-[10px] text-faint">{severity}</span>
+        ) : null}
       </div>
       {/* Markdown body */}
       <div className="px-3.5 py-3">

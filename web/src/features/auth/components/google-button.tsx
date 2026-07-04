@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { GoogleG } from '@/components/ui/brand';
-import { Spinner } from '@/components/ui/spinner';
-import { auth } from '@/lib/auth';
+import { useState } from "react";
+import { GoogleG } from "@/components/ui/brand";
+import { Spinner } from "@/components/ui/spinner";
+import { auth } from "@/lib/auth";
 
 /**
  * Full-width "Continue/Sign up with Google" button. Calls `auth.signInWithGoogle()`; on success the
@@ -20,11 +20,11 @@ export function GoogleButton({
 
   async function handle() {
     setLoading(true);
-    onError?.('');
+    onError?.("");
     try {
       await auth.signInWithGoogle();
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : 'Google sign-in failed.');
+      onError?.(err instanceof Error ? err.message : "Google sign-in failed.");
       setLoading(false);
     }
   }
@@ -35,7 +35,7 @@ export function GoogleButton({
       onClick={handle}
       disabled={loading}
       className="flex h-11 w-full items-center justify-center gap-2.5 rounded-md border bg-surface text-[13px] font-medium text-text transition hover:bg-surface-2 disabled:opacity-60"
-      style={{ borderColor: 'var(--border-2)' }}
+      style={{ borderColor: "var(--border-2)" }}
     >
       {loading ? (
         <>

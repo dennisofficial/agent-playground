@@ -1,6 +1,6 @@
-import type { PipelineJob } from '@/lib/api/types';
-import { threadLane } from './phases';
-import { codexReviewLane } from './codex-review';
+import type { PipelineJob } from "@/lib/api/types";
+import { threadLane } from "./phases";
+import { codexReviewLane } from "./codex-review";
 
 /**
  * THE NODE REGISTRY — the single source of truth for how a navigator `?node=`/`?lane=` token is
@@ -15,7 +15,7 @@ import { codexReviewLane } from './codex-review';
  * `pipeline-tree`).
  */
 
-export type NodeResolution = 'loading' | 'found' | 'not_found';
+export type NodeResolution = "loading" | "found" | "not_found";
 
 // ── node-id builders ─────────────────────────────────────────────────────────────────────────────
 /** Every conversational thread — a build thread/step leaf AND a review CHILD thread (a `review_lens` or the
@@ -27,7 +27,7 @@ export const stepNode = (stepId: string): string => stepId;
 
 // ── placement: which pane a node opens in ───────────────────────────────────────────────────────
 /** Literals that render from card/derived data in the RIGHT detail pane. */
-const DETAIL_LITERALS = new Set(['plan', 'decision', 'diff']);
+const DETAIL_LITERALS = new Set(["plan", "decision", "diff"]);
 /** Prefixed detail-pane nodes (files, ports, services, section plans). Review lenses (`rev:`) and the
  *  post-review fix turn (`fix:`) are THREADS, not detail nodes — they open in the LEFT lane pane like the
  *  build/Codex-review threads (the RIGHT pane is reserved for tool-called sub-agents + outputs/docs). */
@@ -41,7 +41,7 @@ export function isDetailNode(node: string): boolean {
 
 // ── resolution (a stale `?node=`/`?lane=` → not-found) ──────────────────────────────────────────
 /** Literals that render from card / derived data — no live-id dependency, always resolvable. */
-const ID_FREE_NODES = new Set(['plan', 'decision', 'diff']);
+const ID_FREE_NODES = new Set(["plan", "decision", "diff"]);
 
 /**
  * Classify a node token against the live job. Job-derived tokens (`secplan:`/`rev:`/`fix:` carry a thread
@@ -54,24 +54,36 @@ const ID_FREE_NODES = new Set(['plan', 'decision', 'diff']);
  * against it too rather than blanking every node to `not_found` on a transient error. `loading` matters only
  * when there is no cached `job` at all.
  */
-export function resolveNode(node: string, job: PipelineJob | null, loading: boolean): NodeResolution {
-  if (ID_FREE_NODES.has(node)) return 'found';
-  if (node.startsWith('spec:') || node.startsWith('gen:') || node.startsWith('artifact:')) return 'found';
+export function resolveNode(
+  node: string,
+  job: PipelineJob | null,
+  loading: boolean,
+): NodeResolution {
+  if (ID_FREE_NODES.has(node)) return "found";
+  if (
+    node.startsWith("spec:") ||
+    node.startsWith("gen:") ||
+    node.startsWith("artifact:")
+  )
+    return "found";
   // Subagent runs self-handle a missing run inside SubagentView. Always resolvable.
-  if (node.startsWith('subagent:')) return 'found';
+  if (node.startsWith("subagent:")) return "found";
   // The Codex review lane self-handles an empty transcript inside TranscriptView. Always resolvable.
-  if (node.startsWith('codex-review:')) return 'found';
+  if (node.startsWith("codex-review:")) return "found";
   // Sandbox ports are a design-stage mock — always resolvable.
-  if (node.startsWith('port:')) return 'found';
+  if (node.startsWith("port:")) return "found";
   // Supervised services self-handle a missing marker inside ServiceLogView — always resolvable, like ports.
-  if (node.startsWith('service:')) return 'found';
+  if (node.startsWith("service:")) return "found";
 
   // A background refetch can flip React Query to `error` (or briefly `loading`) while it STILL holds the
   // last-good pipeline; resolve against that cached `job` rather than blanking a node that still exists. Only
   // when there is genuinely no job do loading/error decide the fallback (loading → spinner; else not_found).
-  if (!job) return loading ? 'loading' : 'not_found';
+  if (!job) return loading ? "loading" : "not_found";
 
-  if (node.startsWith('secplan:')) return hasThread(job, node.slice('secplan:'.length)) ? 'found' : 'not_found';
+  if (node.startsWith("secplan:"))
+    return hasThread(job, node.slice("secplan:".length))
+      ? "found"
+      : "not_found";
   // Bare token — a thread, a step leaf, or a review CHILD thread (a `review_lens` / `post_review` row). A
   // review child legitimately exists even before its lens has run (an empty transcript is a TranscriptView
   // empty-state, not a not-found).
@@ -81,7 +93,7 @@ export function resolveNode(node: string, job: PipelineJob | null, loading: bool
       s.steps.some((p) => p.id === node) ||
       (s.children ?? []).some((c) => c.id === node),
   );
-  return matches ? 'found' : 'not_found';
+  return matches ? "found" : "not_found";
 }
 
 function hasThread(job: PipelineJob, id: string): boolean {
@@ -95,8 +107,12 @@ function hasThread(job: PipelineJob, id: string): boolean {
  * their own view components. `jobId` is needed for the job-scoped Codex/fix lanes; `job` locates a step's
  * owning thread.
  */
-export function nodeLane(node: string, jobId: string, job: PipelineJob | null): string | null {
-  if (node.startsWith('codex-review:')) return codexReviewLane(jobId);
+export function nodeLane(
+  node: string,
+  jobId: string,
+  job: PipelineJob | null,
+): string | null {
+  if (node.startsWith("codex-review:")) return codexReviewLane(jobId);
   if (!job) return null;
   // A review CHILD thread (review_lens / post_review) → the lane the backend already computed for it
   // (`autofix:<parentId>:<lensId>` / `autofix:<parentId>:fix`), carried on the pipeline data.

@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { ShieldCheck } from 'lucide-react';
-import type { JobMessage } from '@/lib/api/job-api';
-import { useLiveTurn } from '@/lib/api/job-stream';
-import { Markdown } from './markdown';
-import { durableSubBlocks, type SubBlock } from './subagents';
+import { ShieldCheck } from "lucide-react";
+import type { JobMessage } from "@/lib/api/job-api";
+import { useLiveTurn } from "@/lib/api/job-stream";
+import { Markdown } from "./markdown";
+import { durableSubBlocks, type SubBlock } from "./subagents";
 
 /**
  * The Codex PLAN REVIEW is a dialogue that rides the shared transcript spine on a `codex-review:<jobId>`
@@ -18,10 +18,12 @@ import { durableSubBlocks, type SubBlock } from './subagents';
  */
 
 /** The node key that opens the Codex review lane in the detail pane (`?node=`). */
-export const CODEX_REVIEW_PREFIX = 'codex-review:';
-export const codexReviewNode = (jobId: string): string => `${CODEX_REVIEW_PREFIX}${jobId}`;
+export const CODEX_REVIEW_PREFIX = "codex-review:";
+export const codexReviewNode = (jobId: string): string =>
+  `${CODEX_REVIEW_PREFIX}${jobId}`;
 /** The live-stream lane the review dialogue streams on (matches the backend `codexReviewLane`). */
-export const codexReviewLane = (jobId: string): string => `codex-review:${jobId}`;
+export const codexReviewLane = (jobId: string): string =>
+  `codex-review:${jobId}`;
 
 export interface CodexReviewIndex {
   /** `message.ts` of every block produced by the review stream (hide these in the main conversation log). */
@@ -31,11 +33,16 @@ export interface CodexReviewIndex {
 }
 
 /** Peel the Codex review stream out of the main conversation + mark the per-round summary anchors. */
-export function indexCodexReviewBlocks(messages: JobMessage[]): CodexReviewIndex {
+export function indexCodexReviewBlocks(
+  messages: JobMessage[],
+): CodexReviewIndex {
   const childKeys = new Set<string>();
   const anchorKeys = new Set<string>();
   for (const m of messages) {
-    const cid = typeof m.meta?.codexReviewId === 'string' ? (m.meta.codexReviewId as string) : null;
+    const cid =
+      typeof m.meta?.codexReviewId === "string"
+        ? (m.meta.codexReviewId as string)
+        : null;
     if (!cid) continue;
     if (m.meta?.codexReviewAnchor === true) {
       anchorKeys.add(m.ts);
@@ -50,7 +57,9 @@ export function indexCodexReviewBlocks(messages: JobMessage[]): CodexReviewIndex
 export function durableCodexBlocks(messages: JobMessage[]): SubBlock[] {
   return durableSubBlocks(
     messages.filter(
-      (m) => typeof m.meta?.codexReviewId === 'string' && m.meta?.codexReviewAnchor !== true,
+      (m) =>
+        typeof m.meta?.codexReviewId === "string" &&
+        m.meta?.codexReviewAnchor !== true,
     ),
   );
 }
@@ -71,29 +80,40 @@ export function CodexReviewCard({
 }) {
   const live = useLiveTurn(jobId, codexReviewLane(jobId));
   const running = live?.active ?? false;
-  const round = typeof message.meta?.reviewRound === 'number' ? (message.meta.reviewRound as number) : null;
+  const round =
+    typeof message.meta?.reviewRound === "number"
+      ? (message.meta.reviewRound as number)
+      : null;
   const findings =
-    typeof message.meta?.findingsCount === 'number' ? (message.meta.findingsCount as number) : null;
+    typeof message.meta?.findingsCount === "number"
+      ? (message.meta.findingsCount as number)
+      : null;
 
   return (
     <div
       className="anim-fadeUp my-px rounded-[10px] border"
       style={{
-        borderColor: running ? 'var(--accent-line)' : 'var(--border)',
-        background: running ? 'var(--accent-soft)' : 'color-mix(in srgb, var(--surface-2) 55%, transparent)',
+        borderColor: running ? "var(--accent-line)" : "var(--border)",
+        background: running
+          ? "var(--accent-soft)"
+          : "color-mix(in srgb, var(--surface-2) 55%, transparent)",
       }}
     >
       <div className="flex items-start gap-2.5 px-3 py-2.5">
         <span
           className="mt-px flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
-          style={{ background: 'linear-gradient(145deg, var(--slate), var(--slate))' }}
+          style={{
+            background: "linear-gradient(145deg, var(--slate), var(--slate))",
+          }}
           aria-hidden
         >
           <ShieldCheck size={13} color="#fff" />
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-2">
-            <span className="truncate text-[12.5px] font-semibold text-text">Codex review</span>
+            <span className="truncate text-[12.5px] font-semibold text-text">
+              Codex review
+            </span>
             {round != null ? (
               <span className="rounded-sm bg-surface-3 px-1.5 py-px font-mono text-[8.5px] uppercase tracking-[0.1em] text-faint">
                 round {round}
@@ -101,12 +121,17 @@ export function CodexReviewCard({
             ) : null}
             {findings != null ? (
               <span className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-faint">
-                {findings === 0 ? 'no findings' : `${findings} finding${findings === 1 ? '' : 's'}`}
+                {findings === 0
+                  ? "no findings"
+                  : `${findings} finding${findings === 1 ? "" : "s"}`}
               </span>
             ) : null}
             {running ? (
               <span className="flex items-center gap-1 font-mono text-[9.5px] uppercase tracking-[0.1em] text-faint">
-                <span className="pulse-dot h-1.5 w-1.5 rounded-full" style={{ background: 'var(--accent)' }} />
+                <span
+                  className="pulse-dot h-1.5 w-1.5 rounded-full"
+                  style={{ background: "var(--accent)" }}
+                />
                 reviewing
               </span>
             ) : null}
@@ -121,7 +146,10 @@ export function CodexReviewCard({
           type="button"
           onClick={onOpen}
           className="flex shrink-0 items-center gap-1 rounded-md px-2.5 py-1.5 text-[11.5px] font-medium text-accent transition hover:bg-surface-3"
-          style={{ background: 'var(--accent-soft)', border: '1px solid var(--accent-line)' }}
+          style={{
+            background: "var(--accent-soft)",
+            border: "1px solid var(--accent-line)",
+          }}
         >
           Open transcript →
         </button>

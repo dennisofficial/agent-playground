@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
-import { AuthInitializer } from '@/features/auth/components/auth-initializer';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
+import { AuthInitializer } from "@/features/auth/components/auth-initializer";
 
 /**
  * Client provider composition for the whole app:

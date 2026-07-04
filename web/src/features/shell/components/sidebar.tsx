@@ -1,16 +1,16 @@
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useMemo, useState } from 'react';
-import { ChevronRight, LayoutGrid, Plus, Settings } from 'lucide-react';
-import { cn } from '@/lib/cn';
-import { ROUTES, threadHref } from '@/lib/routes';
-import { useOrgs, type OrgSummary } from '@/lib/api/me';
-import { useAllJobs, type InboxThread } from '@/lib/api/inbox';
-import { useAllRepos } from '@/lib/api/tickets-queries';
-import { PrStatusIcon, StatusPie } from '@/components/ui/badges';
-import { AccountMenu } from './account-menu';
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useMemo, useState } from "react";
+import { ChevronRight, LayoutGrid, Plus, Settings } from "lucide-react";
+import { cn } from "@/lib/cn";
+import { ROUTES, threadHref } from "@/lib/routes";
+import { useOrgs, type OrgSummary } from "@/lib/api/me";
+import { useAllJobs, type InboxThread } from "@/lib/api/inbox";
+import { useAllRepos } from "@/lib/api/tickets-queries";
+import { PrStatusIcon, StatusPie } from "@/components/ui/badges";
+import { AccountMenu } from "./account-menu";
 
 /**
  * The workspace sidebar (272px) — a strict three-tier tree: ORGANIZATION (centered uppercase divider) →
@@ -105,14 +105,22 @@ export function Sidebar() {
     return map;
   }, [threads]);
 
-  const [collapsedOrgs, setCollapsedOrgs] = useState<Record<string, boolean>>({});
-  const [collapsedRepos, setCollapsedRepos] = useState<Record<string, boolean>>({});
+  const [collapsedOrgs, setCollapsedOrgs] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [collapsedRepos, setCollapsedRepos] = useState<Record<string, boolean>>(
+    {},
+  );
   // Per-org idle-repos disclosure. Undefined = use the default (expanded only when no active repos).
   const [idleOpen, setIdleOpen] = useState<Record<string, boolean>>({});
 
-  const toggleRepo = (key: string) => setCollapsedRepos((c) => ({ ...c, [key]: !c[key] }));
+  const toggleRepo = (key: string) =>
+    setCollapsedRepos((c) => ({ ...c, [key]: !c[key] }));
 
-  const buildRepoVM = (orgId: string, repo: { id: string; name: string }): RepoVM => {
+  const buildRepoVM = (
+    orgId: string,
+    repo: { id: string; name: string },
+  ): RepoVM => {
     const key = repoKeyOf(orgId, repo.id);
     const repoThreads = threadsByRepo.get(key) ?? [];
     const repoCollapsed = !!collapsedRepos[key];
@@ -163,7 +171,7 @@ export function Sidebar() {
   return (
     <aside
       className="flex w-[272px] shrink-0 flex-col border-r border-border"
-      style={{ background: 'var(--surface-2)' }}
+      style={{ background: "var(--surface-2)" }}
     >
       <div className="flex-none px-3 pb-2.5 pt-3.5">
         <AccountMenu variant="sidebar" />
@@ -174,17 +182,25 @@ export function Sidebar() {
         <Link
           href={ROUTES.workspace()}
           className={cn(
-            'flex items-center gap-2.5 rounded-[7px] px-[9px] py-2 transition',
-            onDashboard ? 'bg-accent-soft' : 'hover:bg-surface-2',
+            "flex items-center gap-2.5 rounded-[7px] px-[9px] py-2 transition",
+            onDashboard ? "bg-accent-soft" : "hover:bg-surface-2",
           )}
         >
-          <LayoutGrid size={14} className={onDashboard ? 'text-accent' : 'text-dim'} />
+          <LayoutGrid
+            size={14}
+            className={onDashboard ? "text-accent" : "text-dim"}
+          />
           <span
-            className={cn('flex-1 text-[12.5px] font-semibold', onDashboard ? 'text-accent' : 'text-text')}
+            className={cn(
+              "flex-1 text-[12.5px] font-semibold",
+              onDashboard ? "text-accent" : "text-text",
+            )}
           >
             Dashboard
           </span>
-          <span className="font-mono text-[9px] text-faint">{threads.length}</span>
+          <span className="font-mono text-[9px] text-faint">
+            {threads.length}
+          </span>
         </Link>
 
         {orgsLoading ? (
@@ -201,9 +217,13 @@ export function Sidebar() {
               pathname={pathname}
               reposLoading={reposLoading}
               threadsLoading={threadsLoading}
-              onToggleOrg={() => setCollapsedOrgs((c) => ({ ...c, [vm.org.id]: !vm.collapsed }))}
+              onToggleOrg={() =>
+                setCollapsedOrgs((c) => ({ ...c, [vm.org.id]: !vm.collapsed }))
+              }
               onToggleRepo={toggleRepo}
-              onToggleIdle={() => setIdleOpen((m) => ({ ...m, [vm.org.id]: !vm.idleExpanded }))}
+              onToggleIdle={() =>
+                setIdleOpen((m) => ({ ...m, [vm.org.id]: !vm.idleExpanded }))
+              }
             />
           ))
         )}
@@ -232,7 +252,8 @@ function OrgSection({
 }) {
   const { org, collapsed } = vm;
   const expanded = !collapsed;
-  const iconBtn = 'grid h-[18px] w-[18px] flex-none place-items-center rounded-[4px] transition';
+  const iconBtn =
+    "grid h-[18px] w-[18px] flex-none place-items-center rounded-[4px] transition";
 
   return (
     // Separation lives in symmetric padding (pt = pb + the parent's gap-0.5), NOT a top margin — so a
@@ -241,7 +262,10 @@ function OrgSection({
       {/* Org header — the whole row toggles collapse; the absolute icon cluster keeps the title centered.
           No hairline under it: dividers separate siblings (repo↔repo, org↔org), never header↔content. */}
       <div
-        className={cn('group/org relative', expanded ? 'mb-[5px] pb-[5px]' : '')}
+        className={cn(
+          "group/org relative",
+          expanded ? "mb-[5px] pb-[5px]" : "",
+        )}
       >
         <button
           type="button"
@@ -258,7 +282,10 @@ function OrgSection({
           <Link
             href={ROUTES.newThread({ orgId: org.id })}
             onClick={(e) => e.stopPropagation()}
-            className={cn(iconBtn, 'text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/org:opacity-[0.85]')}
+            className={cn(
+              iconBtn,
+              "text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/org:opacity-[0.85]",
+            )}
             title="New job in this org"
             aria-label={`New job in ${org.name}`}
           >
@@ -268,7 +295,10 @@ function OrgSection({
           <Link
             href={ROUTES.orgSettings(org.id)}
             onClick={(e) => e.stopPropagation()}
-            className={cn(iconBtn, 'text-faint opacity-0 transition-opacity hover:bg-surface-3 hover:text-text group-hover/org:opacity-90')}
+            className={cn(
+              iconBtn,
+              "text-faint opacity-0 transition-opacity hover:bg-surface-3 hover:text-text group-hover/org:opacity-90",
+            )}
             title="Org settings"
             aria-label={`${org.name} settings`}
           >
@@ -278,7 +308,7 @@ function OrgSection({
           {collapsed && vm.rollupAct ? (
             <span
               className="h-1.5 w-1.5 flex-none rounded-full"
-              style={{ background: 'var(--accent)' }}
+              style={{ background: "var(--accent)" }}
               title="Jobs need your attention"
               aria-hidden
             />
@@ -288,12 +318,12 @@ function OrgSection({
             type="button"
             onClick={onToggleOrg}
             className="flex-none text-faint"
-            aria-label={expanded ? 'Collapse' : 'Expand'}
+            aria-label={expanded ? "Collapse" : "Expand"}
           >
             <ChevronRight
               size={11}
               strokeWidth={2.5}
-              className={cn('transition-transform', expanded && 'rotate-90')}
+              className={cn("transition-transform", expanded && "rotate-90")}
             />
           </button>
         </div>
@@ -303,12 +333,16 @@ function OrgSection({
         <>
           {vm.noRepos ? (
             reposLoading ? (
-              <div className="px-1 py-1 font-mono text-[10px] text-faint">Loading…</div>
+              <div className="px-1 py-1 font-mono text-[10px] text-faint">
+                Loading…
+              </div>
             ) : (
               <div className="flex items-center gap-[7px] px-1 pb-[3px] pt-[5px]">
-                <span className="flex-1 text-[10.5px] italic text-faint">No repositories yet</span>
+                <span className="flex-1 text-[10.5px] italic text-faint">
+                  No repositories yet
+                </span>
                 <Link
-                  href={ROUTES.orgSettings(org.id, 'repos')}
+                  href={ROUTES.orgSettings(org.id, "repos")}
                   className="flex-none font-mono text-[9.5px] font-semibold text-accent"
                 >
                   Connect ↗
@@ -344,10 +378,14 @@ function OrgSection({
                     <ChevronRight
                       size={9}
                       strokeWidth={3}
-                      className={cn('flex-none transition-transform', vm.idleExpanded && 'rotate-90')}
+                      className={cn(
+                        "flex-none transition-transform",
+                        vm.idleExpanded && "rotate-90",
+                      )}
                     />
                     <span>
-                      {vm.idleCount} more {vm.idleCount === 1 ? 'repo' : 'repos'}
+                      {vm.idleCount} more{" "}
+                      {vm.idleCount === 1 ? "repo" : "repos"}
                     </span>
                   </button>
 
@@ -405,9 +443,15 @@ function RepoGroup({
   onToggle: () => void;
   divided: boolean;
 }) {
-  const iconBtn = 'grid h-[18px] w-[18px] flex-none place-items-center rounded-[4px] transition';
+  const iconBtn =
+    "grid h-[18px] w-[18px] flex-none place-items-center rounded-[4px] transition";
   return (
-    <div className={cn('pb-[3px]', divided && 'mt-[3px] border-t border-hair pt-[3px]')}>
+    <div
+      className={cn(
+        "pb-[3px]",
+        divided && "mt-[3px] border-t border-hair pt-[3px]",
+      )}
+    >
       <div className="group/repo flex items-center gap-1 pr-1">
         <button
           type="button"
@@ -421,7 +465,10 @@ function RepoGroup({
 
         <Link
           href={ROUTES.newThread({ orgId, repoId: repo.repoId })}
-          className={cn(iconBtn, 'text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/repo:opacity-90')}
+          className={cn(
+            iconBtn,
+            "text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/repo:opacity-90",
+          )}
           title="New job in this repo"
           aria-label={`New job in ${repo.repoName}`}
         >
@@ -431,17 +478,22 @@ function RepoGroup({
         {repo.rollupAct ? (
           <span
             className="h-1.5 w-1.5 flex-none rounded-full"
-            style={{ background: 'var(--accent)' }}
+            style={{ background: "var(--accent)" }}
             title="Jobs need your attention"
             aria-hidden
           />
         ) : null}
 
-        <button type="button" onClick={onToggle} className="flex-none text-faint" aria-label="Toggle repo">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex-none text-faint"
+          aria-label="Toggle repo"
+        >
           <ChevronRight
             size={10}
             strokeWidth={3}
-            className={cn('transition-transform', repo.expanded && 'rotate-90')}
+            className={cn("transition-transform", repo.expanded && "rotate-90")}
           />
         </button>
       </div>
@@ -449,14 +501,20 @@ function RepoGroup({
       {repo.expanded ? (
         repo.noThreads ? (
           threadsLoading ? (
-            <div className="px-1 py-0.5 font-mono text-[10px] text-faint">Loading…</div>
+            <div className="px-1 py-0.5 font-mono text-[10px] text-faint">
+              Loading…
+            </div>
           ) : (
             <Link
               href={ROUTES.newThread({ orgId, repoId: repo.repoId })}
               className="flex items-center gap-[7px] rounded-[4px] pb-[5px] pl-1 pr-[7px] pt-1 transition hover:bg-surface-2"
             >
-              <span className="flex-1 text-[10.5px] italic text-faint">No jobs yet</span>
-              <span className="flex-none font-mono text-[9.5px] font-semibold text-accent">Start one ＋</span>
+              <span className="flex-1 text-[10.5px] italic text-faint">
+                No jobs yet
+              </span>
+              <span className="flex-none font-mono text-[9.5px] font-semibold text-accent">
+                Start one ＋
+              </span>
             </Link>
           )
         ) : (
@@ -465,7 +523,10 @@ function RepoGroup({
               key={t.id}
               thread={t}
               orgId={orgId}
-              active={pathname === threadHref({ orgId, repoId: repo.repoId, jobId: t.id })}
+              active={
+                pathname ===
+                threadHref({ orgId, repoId: repo.repoId, jobId: t.id })
+              }
             />
           ))
         )
@@ -475,16 +536,31 @@ function RepoGroup({
 }
 
 /** A thread leaf — opens the workspace. Status pie + a 2-line wrapping title + an accent dot when it needs you. */
-function ThreadRow({ thread, orgId, active }: { thread: InboxThread; orgId: string; active: boolean }) {
+function ThreadRow({
+  thread,
+  orgId,
+  active,
+}: {
+  thread: InboxThread;
+  orgId: string;
+  active: boolean;
+}) {
   return (
     <Link
       href={threadHref({ orgId, repoId: thread.repo.id, jobId: thread.id })}
       title={`${thread.org.name} · ${thread.repo.name}`}
       className={cn(
-        'flex items-start gap-1.5 rounded-[7px] pb-[5px] pl-[3px] pr-[7px] pt-[5px] transition',
-        !active && 'hover:bg-surface-2',
+        "flex items-start gap-1.5 rounded-[7px] pb-[5px] pl-[3px] pr-[7px] pt-[5px] transition",
+        !active && "hover:bg-surface-2",
       )}
-      style={active ? { background: 'var(--accent-soft)', border: '1px solid var(--accent-line)' } : undefined}
+      style={
+        active
+          ? {
+              background: "var(--accent-soft)",
+              border: "1px solid var(--accent-line)",
+            }
+          : undefined
+      }
     >
       <span className="mt-px flex-none">
         {/* Once a PR exists the leaf shows its PR status (GitHub color convention); until then, the
@@ -496,12 +572,14 @@ function ThreadRow({ thread, orgId, active }: { thread: InboxThread; orgId: stri
         )}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="line-clamp-2 text-[12px] font-normal leading-[1.32] text-text">{thread.title}</span>
+        <span className="line-clamp-2 text-[12px] font-normal leading-[1.32] text-text">
+          {thread.title}
+        </span>
       </span>
       {thread.needsYou ? (
         <span
           className="mt-1 h-1.5 w-1.5 flex-none rounded-full"
-          style={{ background: 'var(--accent)' }}
+          style={{ background: "var(--accent)" }}
           aria-hidden
         />
       ) : null}

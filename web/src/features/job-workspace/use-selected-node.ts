@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { useCallback } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { isDetailNode } from './node-registry';
+import { useCallback } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { isDetailNode } from "./node-registry";
 
 /**
  * The workspace has TWO panes, each with its own selection, plus a stacked sub-agent layer on the right
@@ -22,12 +22,12 @@ import { isDetailNode } from './node-registry';
  * on the same `[jobKey]` route, so `JobWorkspace` stays mounted and its live SSE connection
  * (`useJobEvents`) is NOT torn down — only a real thread switch (different `[jobKey]`) reconnects.
  */
-const LANE_PARAM = 'lane';
-const NODE_PARAM = 'node';
-const SUB_PARAM = 'sub';
+const LANE_PARAM = "lane";
+const NODE_PARAM = "node";
+const SUB_PARAM = "sub";
 
 // `isDetailNode` (which pane a node opens in) now lives in the node registry — the single source of truth.
-export { isDetailNode } from './node-registry';
+export { isDetailNode } from "./node-registry";
 
 export interface SelectedNode {
   /** The LEFT pane's open lane (`?lane=`) — a thread/step id, or `null` for the Main conversation. */
@@ -64,18 +64,23 @@ export function useSelectedNode(): SelectedNode {
   const detailNode = params.get(NODE_PARAM);
   const subParam = params.get(SUB_PARAM);
   // `subagentNode` encodes `<lane>::<parentId>`; tolerate a bare id (no `::`) for old links/bookmarks.
-  const subSep = subParam?.indexOf('::') ?? -1;
+  const subSep = subParam?.indexOf("::") ?? -1;
   const subLane = subParam && subSep >= 0 ? subParam.slice(0, subSep) : null;
-  const subNode = subParam == null ? null : subSep >= 0 ? subParam.slice(subSep + 2) : subParam;
+  const subNode =
+    subParam == null
+      ? null
+      : subSep >= 0
+        ? subParam.slice(subSep + 2)
+        : subParam;
 
   const selectNode = useCallback(
     (node: string, opts?: { push?: boolean }) => {
       const qs = new URLSearchParams(params.toString());
       let key: string;
-      if (node.startsWith('subagent:')) {
+      if (node.startsWith("subagent:")) {
         // Stack the sub-agent on top of the right pane — the base `?node=` (and its nav highlight) stays.
         key = SUB_PARAM;
-        qs.set(SUB_PARAM, node.slice('subagent:'.length));
+        qs.set(SUB_PARAM, node.slice("subagent:".length));
       } else if (isDetailNode(node)) {
         key = NODE_PARAM;
         qs.set(NODE_PARAM, node);
@@ -114,9 +119,25 @@ export function useSelectedNode(): SelectedNode {
     [params, pathname, router],
   );
 
-  const openConversation = useCallback(() => dropParams([LANE_PARAM]), [dropParams]);
-  const closeDetail = useCallback(() => dropParams([NODE_PARAM, SUB_PARAM]), [dropParams]);
+  const openConversation = useCallback(
+    () => dropParams([LANE_PARAM]),
+    [dropParams],
+  );
+  const closeDetail = useCallback(
+    () => dropParams([NODE_PARAM, SUB_PARAM]),
+    [dropParams],
+  );
   const closeSub = useCallback(() => dropParams([SUB_PARAM]), [dropParams]);
 
-  return { laneNode, detailNode, subNode, subLane, selectNode, replaceLane, openConversation, closeDetail, closeSub };
+  return {
+    laneNode,
+    detailNode,
+    subNode,
+    subLane,
+    selectNode,
+    replaceLane,
+    openConversation,
+    closeDetail,
+    closeSub,
+  };
 }

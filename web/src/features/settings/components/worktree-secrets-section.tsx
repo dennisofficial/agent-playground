@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { FileKey, Plus, Shield, Trash2 } from 'lucide-react';
+import { useState } from "react";
+import { FileKey, Plus, Shield, Trash2 } from "lucide-react";
 import {
   useDeleteWorktreeSecret,
   useGrantWorktreeSecret,
@@ -9,8 +9,8 @@ import {
   useSaveWorktreeSecret,
   useWorktreeSecrets,
   type WorktreeSecretGrant,
-} from '@/lib/api/orgs';
-import { useOrgRepos } from '@/lib/api/job-queries';
+} from "@/lib/api/orgs";
+import { useOrgRepos } from "@/lib/api/job-queries";
 
 /**
  * Worktree secrets — named, encrypted secret files (`.env`, `.env.keys`, a service-account JSON, …) the
@@ -20,21 +20,35 @@ import { useOrgRepos } from '@/lib/api/job-queries';
  * see docs/adr/0003-worktree-config-db-not-git.md). Grants are created here, or during repo onboarding by
  * the secure secret prompt. Owner-only writes (the server enforces it; members get a read-only view).
  */
-export function WorktreeSecretsSection({ orgId, role }: { orgId: string; role: string }) {
+export function WorktreeSecretsSection({
+  orgId,
+  role,
+}: {
+  orgId: string;
+  role: string;
+}) {
   const { data, isLoading, isError } = useWorktreeSecrets(orgId);
-  const isOwner = role === 'owner';
+  const isOwner = role === "owner";
 
-  if (isLoading) return <p className="text-[13px] text-faint">Loading worktree secrets…</p>;
-  if (isError || !data) return <p className="text-[13px] text-red">Couldn’t load worktree secrets.</p>;
+  if (isLoading)
+    return <p className="text-[13px] text-faint">Loading worktree secrets…</p>;
+  if (isError || !data)
+    return (
+      <p className="text-[13px] text-red">Couldn’t load worktree secrets.</p>
+    );
 
   return (
     <>
-      <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">Worktree secrets</h1>
+      <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">
+        Worktree secrets
+      </h1>
       <p className="mb-7 mt-1.5 text-[13px] leading-relaxed text-dim">
-        Named secret files the build renders into a thread’s sandbox (e.g. <code className="font-mono text-[12px]">.env.keys</code>).
-        Encrypted at rest — values are never shown. A secret only takes effect once you <strong>grant</strong> it
-        to a repo and path — the grant is what renders it (separate, DB-backed worktree config carries mounts
-        only, never secrets). Atlas also creates grants for you during repo onboarding.
+        Named secret files the build renders into a thread’s sandbox (e.g.{" "}
+        <code className="font-mono text-[12px]">.env.keys</code>). Encrypted at
+        rest — values are never shown. A secret only takes effect once you{" "}
+        <strong>grant</strong> it to a repo and path — the grant is what renders
+        it (separate, DB-backed worktree config carries mounts only, never
+        secrets). Atlas also creates grants for you during repo onboarding.
       </p>
 
       {!isOwner ? (
@@ -44,32 +58,45 @@ export function WorktreeSecretsSection({ orgId, role }: { orgId: string; role: s
       ) : null}
 
       <SecretsCard orgId={orgId} names={data.names} canManage={isOwner} />
-      <GrantsCard orgId={orgId} names={data.names} grants={data.grants} canManage={isOwner} />
+      <GrantsCard
+        orgId={orgId}
+        names={data.names}
+        grants={data.grants}
+        canManage={isOwner}
+      />
     </>
   );
 }
 
 // ── Secrets ───────────────────────────────────────────────────────────────────────────────────────
-function SecretsCard({ orgId, names, canManage }: { orgId: string; names: string[]; canManage: boolean }) {
+function SecretsCard({
+  orgId,
+  names,
+  canManage,
+}: {
+  orgId: string;
+  names: string[];
+  canManage: boolean;
+}) {
   const save = useSaveWorktreeSecret(orgId);
   const del = useDeleteWorktreeSecret(orgId);
   const [adding, setAdding] = useState(false);
-  const [name, setName] = useState('');
-  const [value, setValue] = useState('');
-  const [error, setError] = useState('');
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const [error, setError] = useState("");
 
   async function submit() {
     const n = name.trim();
-    if (!n) return setError('Enter a secret name.');
-    if (!value) return setError('Enter a value.');
-    setError('');
+    if (!n) return setError("Enter a secret name.");
+    if (!value) return setError("Enter a value.");
+    setError("");
     try {
       await save.mutateAsync({ name: n, value });
       setAdding(false);
-      setName('');
-      setValue('');
+      setName("");
+      setValue("");
     } catch (e) {
-      setError((e as Error)?.message || 'Could not save.');
+      setError((e as Error)?.message || "Could not save.");
     }
   }
 
@@ -80,8 +107,12 @@ function SecretsCard({ orgId, names, canManage }: { orgId: string; names: string
           <FileKey size={16} />
         </span>
         <div className="flex-1">
-          <div className="text-[13.5px] font-semibold text-text">Secret values</div>
-          <div className="mt-0.5 text-[11px] text-faint">Named, encrypted — rendered to a repo + path by a grant</div>
+          <div className="text-[13.5px] font-semibold text-text">
+            Secret values
+          </div>
+          <div className="mt-0.5 text-[11px] text-faint">
+            Named, encrypted — rendered to a repo + path by a grant
+          </div>
         </div>
         {canManage && !adding ? (
           <button
@@ -95,7 +126,9 @@ function SecretsCard({ orgId, names, canManage }: { orgId: string; names: string
       </div>
 
       {names.length === 0 && !adding ? (
-        <p className="mt-3.5 font-mono text-[12px] text-faint">No worktree secrets yet.</p>
+        <p className="mt-3.5 font-mono text-[12px] text-faint">
+          No worktree secrets yet.
+        </p>
       ) : (
         <ul className="mt-3.5 flex flex-col gap-2">
           {names.map((n) => (
@@ -103,8 +136,12 @@ function SecretsCard({ orgId, names, canManage }: { orgId: string; names: string
               key={n}
               className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-2.5"
             >
-              <span className="flex-1 font-mono text-[12.5px] text-text">{n}</span>
-              <span className="font-mono text-[12px] text-faint">{'•'.repeat(12)}</span>
+              <span className="flex-1 font-mono text-[12.5px] text-text">
+                {n}
+              </span>
+              <span className="font-mono text-[12px] text-faint">
+                {"•".repeat(12)}
+              </span>
               {canManage ? (
                 <button
                   type="button"
@@ -142,17 +179,17 @@ function SecretsCard({ orgId, names, canManage }: { orgId: string; names: string
               onClick={submit}
               disabled={save.isPending}
               className="rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
-              style={{ background: 'var(--accent)' }}
+              style={{ background: "var(--accent)" }}
             >
-              {save.isPending ? 'Saving…' : 'Save secret'}
+              {save.isPending ? "Saving…" : "Save secret"}
             </button>
             <button
               type="button"
               onClick={() => {
                 setAdding(false);
-                setName('');
-                setValue('');
-                setError('');
+                setName("");
+                setValue("");
+                setError("");
               }}
               className="rounded-md border border-border-2 px-3.5 py-2 text-[12px] font-medium text-dim transition hover:bg-surface-2"
             >
@@ -180,21 +217,22 @@ function GrantsCard({
   const { data: repos } = useOrgRepos(orgId);
   const grant = useGrantWorktreeSecret(orgId);
   const revoke = useRevokeWorktreeSecret(orgId);
-  const [name, setName] = useState('');
-  const [repoId, setRepoId] = useState('');
-  const [path, setPath] = useState('');
-  const [error, setError] = useState('');
+  const [name, setName] = useState("");
+  const [repoId, setRepoId] = useState("");
+  const [path, setPath] = useState("");
+  const [error, setError] = useState("");
 
   const repoName = (id: string) => repos?.find((r) => r.id === id)?.name ?? id;
 
   async function add() {
-    if (!name || !repoId || !path.trim()) return setError('Pick a secret, a repo, and a path.');
-    setError('');
+    if (!name || !repoId || !path.trim())
+      return setError("Pick a secret, a repo, and a path.");
+    setError("");
     try {
       await grant.mutateAsync({ name, repoId, path: path.trim() });
-      setPath('');
+      setPath("");
     } catch (e) {
-      setError((e as Error)?.message || 'Could not grant.');
+      setError((e as Error)?.message || "Could not grant.");
     }
   }
 
@@ -206,12 +244,16 @@ function GrantsCard({
         </span>
         <div className="flex-1">
           <div className="text-[13.5px] font-semibold text-text">Grants</div>
-          <div className="mt-0.5 text-[11px] text-faint">Authorize a secret → repo → destination path</div>
+          <div className="mt-0.5 text-[11px] text-faint">
+            Authorize a secret → repo → destination path
+          </div>
         </div>
       </div>
 
       {grants.length === 0 ? (
-        <p className="mt-3.5 font-mono text-[12px] text-faint">No grants — secrets won’t hydrate anywhere yet.</p>
+        <p className="mt-3.5 font-mono text-[12px] text-faint">
+          No grants — secrets won’t hydrate anywhere yet.
+        </p>
       ) : (
         <ul className="mt-3.5 flex flex-col gap-2">
           {grants.map((g) => (
@@ -280,9 +322,9 @@ function GrantsCard({
               onClick={add}
               disabled={grant.isPending}
               className="rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
-              style={{ background: 'var(--accent)' }}
+              style={{ background: "var(--accent)" }}
             >
-              {grant.isPending ? 'Granting…' : 'Add grant'}
+              {grant.isPending ? "Granting…" : "Add grant"}
             </button>
           </div>
         </div>
