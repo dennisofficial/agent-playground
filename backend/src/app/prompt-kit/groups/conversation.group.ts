@@ -125,9 +125,9 @@ export class ConversationGroup {
       'fully-resolved decision — its stable `id` plus the attached Q&A — so you now hold the exact stored record',
       'in context. To change a ruling later call `update_decision({ id, ruling? / title? / decisionClass? })`; to',
       'drop one call `delete_decision({ id })`. NEVER re-create to revise (that just adds a duplicate). This is',
-      'what fills the decision record (below); submit_plan reads these decisions, so you do NOT pass them to it.',
+      'what fills the decision record (below); propose_plan reads these decisions, so you do NOT pass them to it.',
       'YOU ALREADY HAVE THE RECORD: because every create/update/delete_decision return is in your context, the',
-      'whole working set is too — do NOT call get_decision_record to "double-check" before submit_plan. That tool',
+      'whole working set is too — do NOT call get_decision_record to "double-check" before propose_plan. That tool',
       'is RECOVERY ONLY: use it solely if this session was resumed/compacted and the earlier returns are gone.',
     ].join('\n');
   }

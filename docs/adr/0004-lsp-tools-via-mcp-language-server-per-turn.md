@@ -162,6 +162,43 @@ Wired via `buildLspBridgeOptions` (command → the launcher), the Dockerfile (CO
 validated end-to-end**: a real brain job on `cubix-infra` installed deps, called `mcp__atlas-lsp-ts__rename_symbol`,
 and renamed cross-file (7 files) in one call with no timeout — the launcher re-rooted repo-root → package.
 
+## Addendum — 2026-07-03 (later): direct LSP client, `mcp-language-server` dropped
+
+The launcher fixed rename, but `references`/`definition` stayed unreliable — and a clean-room re-test
+pinned why: `mcp-language-server` (v0.1.1 **and** `main`) resolves those two tools **by name**, via LSP
+`workspace/symbol` (a fuzzy nav-to search) + exact-match. `workspace/symbol` is flaky in TS monorepos;
+`references` for `StatusReporter` (12 real usages) returned **0** across every root/deps/settle
+combination tried. No version or config fixes it — there is no position-based `references` anywhere in
+`mcp-language-server`. `rename_symbol` worked only because it is already **position-based**
+(`textDocument/rename` at a file+line+col), which the model always has from a Read/grep.
+
+**Decision: replace `mcp-language-server` with our own direct LSP-client MCP server**
+(`backend/sandbox/atlas-lsp-server.mjs`). It speaks MCP (newline-delimited JSON-RPC) to the SDK and LSP
+(`Content-Length`-framed JSON-RPC) directly to `typescript-language-server`, and makes **all five tools
+position-based**: `references`/`definition`/`hover`/`rename_symbol` take `filePath`+`line`+`column`
+(1-indexed → 0-indexed for LSP), `diagnostics` takes a `filePath`. The flaky `workspace/symbol` path is
+gone entirely. It keeps the launcher's re-rooting (spawn the language server at the target file's
+nearest `tsconfig.json`) and relative→absolute path normalization, and — because it no longer needs a
+workspace symbol index — **skips `mcp-language-server`'s eager "open all files", opening only the target
+file** (tsserver lazily loads just that project), so startup/memory drop further. `rename` applies the
+`WorkspaceEdit` to disk itself (bottom-up per file); `diagnostics` opens the file and collects
+tsserver's async `publishDiagnostics`.
+
+This resurrects this ADR's original **"build a small wrapper"** alternative — but as a per-turn client
+(the child still dies with the turn, so the memory-bounded property holds), not the rejected warm
+daemon. The Go build stage + `mcp-language-server` are removed from the Dockerfile;
+`typescript-language-server` (the actual language server) is retained.
+
+**Cost:** we now own an LSP client (protocol framing, `didOpen` lifecycle, WorkspaceEdit application,
+async diagnostics). Adding a language later is still a `--lsp` flag, but each server has quirks.
+**Validated:** all five tools on a multi-file TS project — `references` returned all 6 cross-file
+usages (the exact failure case, now correct), `definition`/`hover`/`diagnostics` accurate, `rename`
+rewrote 3 files on disk.
+
+**Residual limitation (unchanged):** re-rooting scopes `references`/`rename` to the target file's
+package; a sibling package's usages need that package loaded. Reliable *within* the package; grep/tsc
+remain the cross-package backstop.
+
 ## Status & rollout
 
 Implemented: `backend/sandbox/Dockerfile` (multi-stage Go build of `mcp-language-server` + global

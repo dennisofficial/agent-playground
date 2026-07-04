@@ -334,12 +334,7 @@ export class E2eHarness {
     // Build the tool impls (the full host-side dispatch table for this stimulus's thread).
     const tools = this.sessionManager.buildTools(stimulus);
 
-    // Arm the card wait BEFORE calling submit_plan (it fires async via requestApprovalAndAct).
-    const cardWait = this.agent.waitForApprovalCard(15_000);
-
-    // Call submit_plan directly — goes through persistPlan → planReview (skipped: no sandbox) →
-    // requestApprovalAndAct → approval card posted.
-    const result = await tools.submit_plan({
+    const planArgs = {
       goal: 'Add an "About" thread to the README',
       overview: 'Add a short note to the README describing what this project does and how to run it.',
       decisions: [
@@ -362,9 +357,17 @@ export class E2eHarness {
           ],
         },
       ],
-    });
+    };
 
-    this.logger.debug(`submit_plan direct result: ${JSON.stringify(result)}`);
+    // review_plan first (mandatory-run gate). OFFLINE: no sandbox → the review records a `failed` row with
+    // a null spec_hash, which still satisfies the gate (a review that ran, even erroring, counts; and the
+    // null hash matches the offline no-specs hash). Then propose_plan posts the approval card.
+    await tools.review_plan(planArgs);
+
+    // Arm the card wait BEFORE calling propose_plan (it fires the card async via requestApprovalAndAct).
+    const cardWait = this.agent.waitForApprovalCard(15_000);
+    const result = await tools.propose_plan(planArgs);
+    this.logger.debug(`propose_plan direct result: ${JSON.stringify(result)}`);
 
     return cardWait.catch(() => undefined);
   }

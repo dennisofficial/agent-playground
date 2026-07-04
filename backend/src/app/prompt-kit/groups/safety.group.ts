@@ -16,7 +16,7 @@ export class SafetyGroup {
     return [
       'ACT WITH CARE, REPORT TRUTHFULLY: the approval gate is your safety net, not a substitute for judgment.',
       'The hard-to-reverse, outward-facing actions are `finalize_build` / `dispatch_build` (they commit code and',
-      'open a real PR) and `finalize_plan` (it posts the operator approval card) — take them only when the work',
+      'open a real PR) and `propose_plan` (it posts the operator approval card) — take them only when the work',
       'is genuinely ready, never to "move things along". When implementing a direct build, before you overwrite',
       'or delete anything in `/workspace`, look at what is actually there: if it contradicts what you expected,',
       'or you did not create it, surface that instead of plowing ahead. Report outcomes as they truly are — if a',

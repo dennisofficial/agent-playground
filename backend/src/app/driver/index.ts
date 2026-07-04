@@ -26,3 +26,10 @@ export {
   type ResolvedRepo,
 } from './repo-resolver';
 export { renderPlan, type PlannedStep } from './render-plan';
+export {
+  LIVE_VERIFICATION_JUDGE,
+  AnthropicLiveVerificationJudge,
+  JudgeLiveVerificationChain,
+  type LiveVerificationJudge,
+  type LiveVerificationVerdict,
+} from './live-verification-judge';

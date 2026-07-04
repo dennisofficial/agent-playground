@@ -45,6 +45,9 @@ export interface SelectedNode {
    *  else the left lane (`?lane=`). The other panes' selections are preserved. `{ push: true }` forces a
    *  history entry (e.g. following a link inside a doc). */
   selectNode: (node: string, opts?: { push?: boolean }) => void;
+  /** Set the LEFT pane's lane (`?lane=`) via `router.replace` — a NON-navigation default-select (no history
+   *  entry, so Back doesn't bounce). Used to auto-open the running build lane when a job is first opened. */
+  replaceLane: (node: string) => void;
   /** Return the LEFT pane to the Main conversation (drop `?lane=`); the right detail + sub stay open. */
   openConversation: () => void;
   /** Close the RIGHT detail pane (drop `?node=` AND any stacked `?sub=`); the left lane stays open. */
@@ -91,6 +94,15 @@ export function useSelectedNode(): SelectedNode {
     [params, pathname, router],
   );
 
+  const replaceLane = useCallback(
+    (node: string) => {
+      const qs = new URLSearchParams(params.toString());
+      qs.set(LANE_PARAM, node);
+      router.replace(`${pathname}?${qs.toString()}`);
+    },
+    [params, pathname, router],
+  );
+
   const dropParams = useCallback(
     (keys: string[]) => {
       if (!keys.some((k) => params.get(k))) return;
@@ -106,5 +118,5 @@ export function useSelectedNode(): SelectedNode {
   const closeDetail = useCallback(() => dropParams([NODE_PARAM, SUB_PARAM]), [dropParams]);
   const closeSub = useCallback(() => dropParams([SUB_PARAM]), [dropParams]);
 
-  return { laneNode, detailNode, subNode, subLane, selectNode, openConversation, closeDetail, closeSub };
+  return { laneNode, detailNode, subNode, subLane, selectNode, replaceLane, openConversation, closeDetail, closeSub };
 }

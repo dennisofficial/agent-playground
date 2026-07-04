@@ -8,7 +8,6 @@ import type { JobRef } from '@/lib/api/job-api';
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
-  REQUEST_CHANGES_ACTION_ID,
   type ApprovalActionId,
   type WebApprovalCard,
   type WebVerdictCard,
@@ -17,15 +16,15 @@ import {
 const RULED_BY = 'U-OPERATOR';
 
 const NOTE_PROMPT: Partial<Record<ApprovalActionId, string>> = {
-  [REQUEST_CHANGES_ACTION_ID]: 'What should change? (optional)',
   [DENY_ACTION_ID]: 'Why deny this? (optional)',
 };
 
 /**
- * The inline plan / approval card — the gate. Approve / Request changes / Deny POST the verdict to
+ * The inline plan / approval card — the gate. Approve / Deny POST the verdict to
  * `…/threads/:jobId/approve` with the card action's verbatim `value`; the backend re-emits the card
  * as a verdict over SSE, which the refetch repaints in place. "Open full plan" switches the work column
- * to the plan doc (in-page, matching the comp — no separate route).
+ * to the plan doc (in-page, matching the comp — no separate route). To request changes, the operator
+ * just messages the brain — there is no request-changes verdict button.
  */
 export function ApprovalCardView({
   card,
@@ -101,7 +100,7 @@ export function ApprovalCardView({
   );
 }
 
-/** The three plan-verdict buttons. Negative verdicts reveal an optional `note` before submitting. */
+/** The plan-verdict buttons (Approve / Deny). Deny reveals an optional `note` before submitting. */
 export function VerdictButtons({
   jobRef,
   value,
@@ -134,7 +133,6 @@ export function VerdictButtons({
   }
 
   if (drafting) {
-    const denying = drafting === DENY_ACTION_ID;
     return (
       <div className="flex flex-col gap-2">
         <textarea
@@ -148,7 +146,7 @@ export function VerdictButtons({
         <div className="flex flex-wrap gap-2">
           <Button
             size={size}
-            variant={denying ? 'danger' : 'primary'}
+            variant="danger"
             loading={pending}
             loadingText="Submitting…"
             onClick={() => {
@@ -156,7 +154,7 @@ export function VerdictButtons({
               setDrafting(null);
             }}
           >
-            {denying ? 'Deny' : 'Request changes'}
+            Deny
           </Button>
           <Button size={size} variant="ghost" disabled={pending} onClick={() => setDrafting(null)}>
             Cancel
@@ -172,9 +170,6 @@ export function VerdictButtons({
       <div className="flex flex-wrap gap-2">
         <Button size={size} loading={pending} loadingText="Submitting…" onClick={() => onVerdict(APPROVE_ACTION_ID)}>
           {approveLabel}
-        </Button>
-        <Button size={size} variant="ghost" disabled={pending} onClick={() => onVerdict(REQUEST_CHANGES_ACTION_ID)}>
-          Request changes
         </Button>
         <Button size={size} variant="danger" disabled={pending} onClick={() => onVerdict(DENY_ACTION_ID)}>
           Deny

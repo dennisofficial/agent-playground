@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { In, IsNull, QueryFailedError, Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import type {
   ChatStimulus,
   EventStimulus,
@@ -57,6 +57,8 @@ export class StimulusStoreService {
     private readonly messages: Repository<MessageEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimuli: Repository<StimulusEntity>,
+    @InjectDataSource(DB_CONNECTION)
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -266,33 +268,40 @@ export class StimulusStoreService {
     /** Optional render-only card payload (e.g. a review-comments batch) carried on the persisted row. */
     card?: Record<string, unknown>;
   }): Promise<ChatStimulus> {
-    await this.messages.save(
-      this.messages.create({
-        job_id: input.jobId,
-        author: input.author.displayName,
-        author_id: input.author.id,
-        author_bot_id: null,
-        text: input.body,
-        card: input.card ?? null,
-      }),
-    );
+    // ATOMIC: the operator-visible `messages` bubble and the `stimuli` row that DRIVES the brain turn
+    // must commit together. Two separate saves let a crash between them (e.g. a mid-turn process
+    // restart) leave a transcript bubble with no stimulus behind it — the message renders but no turn
+    // ever runs and the durable delivery pump can't recover a row that was never written. One
+    // transaction makes it both-or-neither.
+    const row = await this.dataSource.transaction(async (m) => {
+      await m.save(
+        m.create(MessageEntity, {
+          job_id: input.jobId,
+          author: input.author.displayName,
+          author_id: input.author.id,
+          author_bot_id: null,
+          text: input.body,
+          card: input.card ?? null,
+        }),
+      );
 
-    const row = await this.stimuli.save(
-      this.stimuli.create({
-        org_id: input.orgId,
-        repo_id: input.repoId,
-        kind: 'chat',
-        trust: 'trusted',
-        body: input.body,
-        job_id: input.jobId,
-        author_id: input.author.id,
-        author_name: input.author.displayName,
-        reply_route: input.replyRoute,
-        source: null,
-        dedupe_key: null,
-        severity: null,
-      }),
-    );
+      return m.save(
+        m.create(StimulusEntity, {
+          org_id: input.orgId,
+          repo_id: input.repoId,
+          kind: 'chat',
+          trust: 'trusted',
+          body: input.body,
+          job_id: input.jobId,
+          author_id: input.author.id,
+          author_name: input.author.displayName,
+          reply_route: input.replyRoute,
+          source: null,
+          dedupe_key: null,
+          severity: null,
+        }),
+      );
+    });
 
     return {
       id: row.id,

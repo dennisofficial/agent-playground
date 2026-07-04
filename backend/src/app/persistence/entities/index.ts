@@ -10,7 +10,7 @@ export * from './org-invite.entity';
 export * from './repo.entity';
 export * from './job.entity';
 export * from './message.entity';
-export * from './plan-review.entity';
+export * from './codex-review.entity';
 export * from './active-turn.entity';
 export * from './tool-execution.entity';
 export * from './stimulus.entity';
@@ -35,7 +35,7 @@ import { OrgInviteEntity } from './org-invite.entity';
 import { RepoEntity } from './repo.entity';
 import { JobEntity } from './job.entity';
 import { MessageEntity } from './message.entity';
-import { PlanReviewEntity } from './plan-review.entity';
+import { CodexReviewEntity } from './codex-review.entity';
 import { ActiveTurnEntity } from './active-turn.entity';
 import { ToolExecutionEntity } from './tool-execution.entity';
 import { StimulusEntity } from './stimulus.entity';
@@ -62,7 +62,7 @@ export const ENTITIES = [
   RepoEntity,
   JobEntity,
   MessageEntity,
-  PlanReviewEntity,
+  CodexReviewEntity,
   ActiveTurnEntity,
   ToolExecutionEntity,
   StimulusEntity,

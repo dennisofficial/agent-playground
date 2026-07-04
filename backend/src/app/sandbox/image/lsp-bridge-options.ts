@@ -3,9 +3,10 @@
  * the options handed to the SDK lives here, unit-testable without spawning the bundled entrypoint.
  *
  * Unlike the host bridge (an in-process `createSdkMcpServer` proxying tool calls to the host over
- * Redis), `atlas-lsp-ts` is an EXTERNAL stdio MCP server — the SDK spawns `mcp-language-server` itself
- * (baked into the sandbox image), which in turn drives `typescript-language-server` against the turn's
- * own worktree. No host round-trip; the language server's warm program lives and dies with the turn.
+ * Redis), `atlas-lsp-ts` is an EXTERNAL stdio MCP server — the SDK spawns `atlas-lsp-server.mjs` (our
+ * own direct LSP-client MCP server, baked into the sandbox image), which drives
+ * `typescript-language-server` over LSP against the turn's own worktree, re-rooted per target file. No
+ * host round-trip; the language server's warm program lives and dies with the turn.
  *
  * Registered ONLY for execute-mode turns (`mode: 'execute'`) — this covers BOTH the brain/chat turn
  * (`agent-session-manager.service.ts`) and the build orchestrator/writer turns (`thread-driver.service.ts`),
@@ -41,14 +42,15 @@ export function buildLspBridgeOptions(
     extraClaudeOptions: {
       mcpServers: {
         [LSP_SERVER_NAME]: {
-          // Spawn the re-rooting proxy (baked into the image), NOT mcp-language-server directly: on a
-          // monorepo the turn's cwd is the repo root, and a single fixed --workspace there makes rename
-          // crawl every package and time out. The shim re-roots the underlying server at the nearest
-          // tsconfig.json of each tool call's target file. Absolute node + script path avoid PATH/ESM
-          // ambiguity (fnm rewrites PATH for agent shells). See ADR 0004 + atlas-lsp-launcher.mjs.
+          // Spawn our direct LSP-client MCP server (baked into the image). It speaks MCP to the SDK
+          // and LSP to typescript-language-server, and re-roots the language server at the nearest
+          // tsconfig.json of each tool call's target file (so a monorepo turn only loads the relevant
+          // package). Absolute node + script path avoid PATH/ESM ambiguity (fnm rewrites PATH for agent
+          // shells). The `--lsp … -- …` tail is the language-server command (swappable per language).
+          // See ADR 0004 + atlas-lsp-server.mjs.
           command: '/usr/local/bin/node',
           args: [
-            '/usr/local/lib/atlas/atlas-lsp-launcher.mjs',
+            '/usr/local/lib/atlas/atlas-lsp-server.mjs',
             '--workspace',
             workspaceDir,
             '--lsp',

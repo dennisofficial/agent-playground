@@ -7,6 +7,7 @@ import { classifyMessage } from './classify';
 import { JumpToLatestButton, useTailFollow } from './tail-follow';
 import {
   ClaudeBubble,
+  CompactionSummaryPill,
   EventBubble,
   HarnessBubble,
   LiveIndicator,
@@ -522,6 +523,16 @@ function buildLogItems(
         break;
       case 'event':
         push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);
+        break;
+      case 'compaction':
+        push(
+          <CompactionSummaryPill
+            key={message.ts}
+            message={message}
+            tone={c.tone}
+            summary={c.summary}
+          />,
+        );
         break;
       case 'system_shared':
         push(<HarnessBubble key={message.ts} message={message} />);

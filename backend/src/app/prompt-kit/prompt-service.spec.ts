@@ -38,10 +38,10 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
 
     // feature-only (normal-brain) content
     expect(feature).toContain('WHY YOU GRILL');
-    expect(feature).toContain('FULL PATH — submit_plan');
+    expect(feature).toContain('FULL PATH — review_plan then propose_plan');
     expect(feature).toContain('JOB KIND — FEATURE');
     expect(onboarding).not.toContain('WHY YOU GRILL');
-    expect(onboarding).not.toContain('FULL PATH — submit_plan');
+    expect(onboarding).not.toContain('FULL PATH — review_plan then propose_plan');
     expect(onboarding).not.toContain('JOB KIND —');
 
     // onboarding-only content

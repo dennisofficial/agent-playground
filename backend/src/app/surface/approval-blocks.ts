@@ -108,12 +108,6 @@ export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record
     },
     {
       type: 'button',
-      action_id: REQUEST_CHANGES_ACTION_ID,
-      value,
-      text: { type: 'plain_text', text: '✏️ Request changes', emoji: true },
-    },
-    {
-      type: 'button',
       style: 'danger',
       action_id: DENY_ACTION_ID,
       value,

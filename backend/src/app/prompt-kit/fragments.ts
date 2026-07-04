@@ -147,13 +147,16 @@ export const VERIFY_NOTE =
  * (Agent.FAN_OUT).
  */
 export const LSP_TOOLS_NOTE =
-  'LSP TOOLS: for renaming a symbol or finding its usages, prefer the `atlas-lsp-ts` tools ' +
-  '(`rename_symbol`/`references`/`definition`/`hover`/`diagnostics`) over grep-and-rewrite — they are ' +
-  'type-accurate, and `rename_symbol` APPLIES the edit itself and returns only a summary of files ' +
-  'changed, so do NOT re-read or re-write the affected files afterward. It is reliable within one ' +
-  'project but may miss a sibling package that was never opened in this turn, and it never touches ' +
-  'string/comment occurrences — after a cross-package rename, spot-check with `references` or a Grep; ' +
-  'when you specifically need to also change strings, use a codemod (`ast-grep`) instead.';
+  'LSP TOOLS (position-based): to rename a symbol, find its usages, or jump to its definition, prefer ' +
+  'the `atlas-lsp-ts` tools (`rename_symbol`/`references`/`definition`/`hover`/`diagnostics`) over ' +
+  'grep-and-rewrite — they are type-accurate. All take a POSITION you already have from a Read/grep: ' +
+  '`filePath` + the 1-indexed `line` and `column` of the symbol (plus `newName` for `rename_symbol`); ' +
+  '`diagnostics` takes just a `filePath`. `rename_symbol` APPLIES the edit itself and returns only a ' +
+  'changed-files summary — do NOT re-read or re-write the affected files afterward. `references` ' +
+  'reliably returns every real usage (not text matches). The tools are scoped to the target file\'s ' +
+  'package, so a rename/references may not reach a sibling package that imports the symbol, and rename ' +
+  'never touches string/comment occurrences — after a cross-package rename, spot-check with `references` ' +
+  'or a Grep, and use a codemod (`ast-grep`) when strings must change too.';
 
 /**
  * LSP TOOLS (navigation-only) — for the read-only investigators (`explore`/`review`/`debug`; see
@@ -161,9 +164,10 @@ export const LSP_TOOLS_NOTE =
  * edit.
  */
 export const LSP_NAV_NOTE =
-  'For finding a definition or every usage of a symbol, prefer the `atlas-lsp-ts` tools ' +
-  '(`references`/`definition`/`hover`) over grep-and-read — type-accurate and scoped to the real symbol, ' +
-  'not every text match of its name.';
+  'To find every usage of a symbol or jump to its definition, prefer the `atlas-lsp-ts` tools ' +
+  '(`references`/`definition`/`hover`) over grep-and-read. They are POSITION-based: pass the `filePath` ' +
+  'and the 1-indexed `line`/`column` where you saw the symbol (from a Read/grep). Type-accurate — the ' +
+  'real symbol, not every text match of its name (scoped to that file\'s package).';
 
 /**
  * DEVIATION flagging — off-spec work is never silent. Shared by the worker execute prompts + the `implement`

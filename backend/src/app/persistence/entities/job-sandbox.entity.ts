@@ -71,6 +71,18 @@ export class JobSandboxEntity extends TimestampedEntity {
   session_id!: string | null;
 
   /**
+   * COMPACTION SEED — a durable, one-shot handoff summary stashed when the brain session is compacted
+   * (e.g. on `dispatch_build`, once the plan is durable). Compaction summarizes the fat session, then
+   * NULLs `session_id` (abandoning the heavy transcript) and stores the lean summary here. The next brain
+   * turn folds this into its prompt and starts a FRESH session with it (see the fold in `runChatTurnInner`),
+   * then clears it the instant that fresh session is born. Best-effort: if lost to a crash, the fresh
+   * session re-orients from durable state (`/context`, `.atlas/decisions`) on its own. Null when there's
+   * no pending compaction.
+   */
+  @Column({ type: 'text', nullable: true })
+  pending_compaction_seed!: string | null;
+
+  /**
    * Last time a turn ran for this thread (bumped at turn start). Drives the idle reaper + LRU eviction:
    * an `attached` row idle past `SANDBOX_IDLE_TTL_MS` is reaped to `detached`. Null until the first turn.
    */

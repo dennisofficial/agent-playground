@@ -262,6 +262,25 @@ export class LocalGitService {
     return out ? out.split('\n').filter(Boolean) : [];
   }
 
+  /** Files this thread has touched so far relative to `baseSha` (its start-of-thread HEAD) — tracked
+   *  changes (staged/unstaged/already committed within this thread) PLUS brand-new untracked files, since
+   *  this runs mid-turn before `commitAll` (ADR 0005's judge needs the CURRENT thread's changes, not the
+   *  whole job's). Best-effort; never blocks the gate on a git error. */
+  async changedFileNames(worktreePath: string, baseSha: string): Promise<string[]> {
+    try {
+      const [diffOut, untrackedOut] = await Promise.all([
+        this.git(['diff', '--name-only', baseSha], { cwd: worktreePath }),
+        this.git(['ls-files', '--others', '--exclude-standard'], { cwd: worktreePath }),
+      ]);
+      const names = new Set(
+        [...diffOut.split('\n'), ...untrackedOut.split('\n')].map((s) => s.trim()).filter(Boolean),
+      );
+      return [...names];
+    } catch {
+      return [];
+    }
+  }
+
   /** Serialize mutating ops against one repo path so concurrent worktree/index ops don't race. */
   private withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(key) ?? Promise.resolve();

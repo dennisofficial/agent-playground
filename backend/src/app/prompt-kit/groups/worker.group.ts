@@ -34,8 +34,15 @@ const COMPLETE_THREAD_NOTE =
   'ONLY way the driver knows you succeeded. Ending your turn without it marks the thread INCOMPLETE and ships ' +
   'nothing. Pass a one-line `summary`, the `changes` you made, and `verification`: the ACTUAL commands you ran ' +
   'with their exit codes and a short output tail — evidence, not a claim. Do NOT call `complete_thread` if you ' +
-  'have not genuinely verified the work, or if it is not actually finished. If a decision the plan does not ' +
-  'cover blocks you, call `request_operator_input` (do not just stop).';
+  'have not genuinely verified the work, or if it is not actually finished. If something blocks you, choose ' +
+  'the right tool instead of stopping silently (a silent stop marks the thread INCOMPLETE and ships nothing): ' +
+  'call `request_operator_input` when a single human answer would unblock you RIGHT NOW and you can wait for ' +
+  'it inline (the turn pauses and resumes with the answer); call `block_thread({reason, detail})` when you ' +
+  'genuinely cannot make progress this turn and there is nothing to poll for — `reason:"needs_env"` (a ' +
+  'missing secret/service/credential the sandbox lacks), `reason:"decision"` (a substantive product or ' +
+  'architecture decision that needs deliberation), or `reason:"question"` (information you need that is not ' +
+  'answerable inline) — which hands the thread to Atlas to diagnose and either fix or escalate. In short: ' +
+  '`request_operator_input` keeps the turn alive for a quick answer; `block_thread` gives up the turn.';
 
 // Orchestrator note — the WRITER subagents (`implement`/`implement-deep`) alongside the read-only set.
 const ORCHESTRATOR_SUBAGENTS_NOTE =

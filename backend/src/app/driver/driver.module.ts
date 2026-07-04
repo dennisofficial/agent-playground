@@ -16,7 +16,6 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  PlanReviewEntity,
   StepEntity,
   RepoEntity,
   ThreadEntity,
@@ -35,6 +34,8 @@ import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
 import { JobLifecycleService } from './job-lifecycle.service';
+import { CredentialResolver } from '../onboarding';
+import { LIVE_VERIFICATION_JUDGE, AnthropicLiveVerificationJudge } from './live-verification-judge';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -72,7 +73,6 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
         RepoEntity,
         JobSandboxEntity,
         MessageEntity,
-        PlanReviewEntity,
         StimulusEntity,
       ],
       DB_CONNECTION,
@@ -83,6 +83,12 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     PipelineAwarenessStore,
     BuildShipService,
     { provide: DRIVER_REPO, useClass: GitDriverRepoResolver },
+    {
+      provide: LIVE_VERIFICATION_JUDGE,
+      inject: [CredentialResolver],
+      useFactory: (creds: CredentialResolver) =>
+        new AnthropicLiveVerificationJudge((orgId) => creds.anthropicKey(orgId)),
+    },
     ThreadDriver,
     JobLifecycleService,
     GitStateReconciler,

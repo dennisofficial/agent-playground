@@ -76,6 +76,23 @@ export interface ChatStimulus extends BaseStimulus {
    */
   seedResetVerify?: boolean;
   /**
+   * HALT-WAKE SEED (ADR 0004 Phase 3): a synthetic wake delivering a halted build thread's terminal record to
+   * the brain to triage. Carries the halted `threadId` + the `gen` (`halt_fix_attempts`) captured when the
+   * wake fired. Stamped `halt_waked_at` on the turn's SUCCESS TAIL (generation-keyed CAS) — so a swallowed
+   * engine error / guard-hit / detach leaves the halt un-waked, letting the periodic + boot sweeps retry it
+   * (at-least-once, matching `seedQuestionId`'s delivered-on-success semantics). In-memory only.
+   */
+  seedHaltWake?: { threadId: string; gen: number };
+  /**
+   * COMPACTION turn: a synthetic, Atlas-authored turn (enqueued e.g. by `dispatch_build`) whose ONLY job is
+   * to compact the brain session — summarize the current (fat) session into a lean handoff, then null the
+   * session id + stash the summary as the next turn's seed. It runs a summarization engine turn, NOT a
+   * normal conversational turn: `runChatTurnInner` branches to the compaction path and returns early. Runs
+   * on the serialized turn queue (so nothing interleaves) and, being Atlas-authored, skips the passive-
+   * awareness drain. In-memory only — never persisted.
+   */
+  compact?: boolean;
+  /**
    * Optional structured card payload persisted alongside `body` on the `messages` row (render-only — the
    * brain still triages `body`, never `card`). E.g. a batch of review comments renders as a styled card
    * in the web client while `body` carries the formatted markdown Atlas reads.

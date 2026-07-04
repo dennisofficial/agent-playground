@@ -5,14 +5,6 @@
 # agent's builds + native modules behave like deployment. The engine CLIs + the compiled atlas engine
 # entrypoint are layered on in D1 (kept last so app changes don't bust the heavy system layers).
 
-# mcp-language-server (the in-sandbox LSP bridge — rename_symbol/references/definition/hover/diagnostics)
-# ships no prebuilt release binaries (unlike ast-grep/delta/etc below), so it's built from source in a
-# throwaway stage to keep the Go toolchain out of the runtime image. Builds natively for whatever arch
-# this image is built on, same as the rest of this file (no cross-compilation / --platform).
-FROM golang:1.24-bookworm AS lspbuild
-ARG MCP_LANGUAGE_SERVER_VERSION=v0.1.1
-RUN go install "github.com/isaacphi/mcp-language-server@${MCP_LANGUAGE_SERVER_VERSION}"
-
 FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -160,26 +152,22 @@ RUN set -eu; \
   shfmt --version >/dev/null; ast-grep --version >/dev/null
 
 # LSP toolchain: the in-sandbox `atlas-lsp-ts` MCP server (registered per-turn by the engine entrypoint)
-# drives mcp-language-server (built above in `lspbuild`) against typescript-language-server, giving the
-# agent semantic rename_symbol/references/definition/hover/diagnostics instead of grep-and-rewrite.
+# is atlas-lsp-server.mjs — our OWN MCP server that drives typescript-language-server DIRECTLY over LSP,
+# giving the agent POSITION-based rename_symbol/references/definition/hover/diagnostics (see ADR 0004).
 # typescript-language-server prefers a repo's OWN `typescript` (resolved from its node_modules) when
 # present; the global `typescript` here is only the fallback for a repo that doesn't declare one — same
 # "repo owns its own version, image just provides a floor" pattern as fnm/corepack above.
-COPY --from=lspbuild /go/bin/mcp-language-server /usr/local/bin/mcp-language-server
 ARG TYPESCRIPT_VERSION=6.0.3
 ARG TS_LANGUAGE_SERVER_VERSION=5.3.0
 RUN npm install -g "typescript@${TYPESCRIPT_VERSION}" "typescript-language-server@${TS_LANGUAGE_SERVER_VERSION}" \
-  # smoke-test: -h forces flag.Parse()'s usage output without needing a real workspace/LSP command yet
-  && mcp-language-server -h 2>&1 | grep -qi workspace \
   && typescript-language-server --version >/dev/null
 
-# atlas-lsp-launcher — a re-rooting MCP proxy the engine spawns (via node) IN PLACE OF mcp-language-server
-# for the `atlas-lsp-ts` server (see ADR 0004 + the shim's own header). mcp-language-server takes ONE fixed
-# --workspace and eagerly opens every file under it; pointed at a monorepo root a rename crawls all packages
-# and times out. The shim proxies the MCP session and re-roots the underlying server at the nearest
-# tsconfig.json of the file each tool call targets — the project tsserver itself would pick.
-COPY atlas-lsp-launcher.mjs /usr/local/lib/atlas/atlas-lsp-launcher.mjs
-RUN node --check /usr/local/lib/atlas/atlas-lsp-launcher.mjs
+# atlas-lsp-server — our direct LSP-client MCP server (spawned via node by the engine for `atlas-lsp-ts`).
+# It speaks MCP to the SDK and LSP to typescript-language-server, re-rooting the server at the nearest
+# tsconfig.json of each tool call's target file. Replaced mcp-language-server (whose name-based
+# references/definition were unreliable) — see ADR 0004 addendum + the script's own header.
+COPY atlas-lsp-server.mjs /usr/local/lib/atlas/atlas-lsp-server.mjs
+RUN node --check /usr/local/lib/atlas/atlas-lsp-server.mjs
 
 # Engine runtime: the two SDKs (each ships its native CLI via a per-platform package) + the bundled
 # atlas engine entrypoint. Pinned to match the host so a turn behaves identically (keep in sync; D5

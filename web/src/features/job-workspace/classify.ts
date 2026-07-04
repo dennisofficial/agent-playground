@@ -30,6 +30,8 @@ export type ClassifiedMessage =
   /** A sent inline-highlight review-comment batch — rendered as a distinct card, prose (if any) underneath. */
   | { kind: 'review_comments'; message: JobMessage; card: WebReviewCommentsCard }
   | { kind: 'event'; message: JobMessage; tone: SystemTone }
+  /** A session-compaction pill that also carries the full handoff summary (expandable to inspect it). */
+  | { kind: 'compaction'; message: JobMessage; tone: SystemTone; summary: string }
   /** System→operator+Atlas review block (e.g. Codex plan-review findings). Rendered as a distinct panel. */
   | { kind: 'system_shared'; message: JobMessage }
   /** An automated notification that opened this thread (a harness delivery to Atlas). Its own panel. */
@@ -91,8 +93,14 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
     return { kind: 'file', message, card: message.card };
   }
 
-  // The driver's build relays are a real backend kind (`build_event`) — the only system-pill source.
+  // The driver's build relays are a real backend kind (`build_event`) — the only system-pill source. A
+  // compaction pill is a build_event that ALSO carries the full handoff summary in `meta.compactionSummary`;
+  // it renders as the same pill but is expandable so the operator can inspect what context was kept.
   if (message.kind === 'build_event') {
+    const summary = message.meta?.compactionSummary;
+    if (typeof summary === 'string' && summary.length > 0) {
+      return { kind: 'compaction', message, tone: toneOf(message.text ?? ''), summary };
+    }
     return { kind: 'event', message, tone: toneOf(message.text ?? '') };
   }
 

@@ -38,6 +38,26 @@ export interface JobDispatcher {
    * the job isn't in a retryable state. Returns promptly (async drive).
    */
   retry(jobId: string): Promise<void>;
+  /**
+   * Phase 3 (ADR 0004 rider 4) — the brain's autonomous re-drive of a HALTED thread (`blocked`/`incomplete`/
+   * `failed`), distinct from `retry` (which no-ops on a `blocked` job that stays `running`). Clears the
+   * thread's terminal record + halt signal, injects the brain's fix `guidance` into the thread's orientation
+   * cheat-sheet, and re-enters the resumable drive (fast-forwarding done batches, re-running the un-committed
+   * halted one). Budget-gated by the caller (`retry_thread` claims `halt_fix_attempts` first). Returns promptly.
+   */
+  redriveThread(
+    jobId: string,
+    threadId: string,
+    guidance?: string,
+    cap?: number,
+  ): Promise<{ ok: boolean; attempt?: number; reason?: string }>;
+  /**
+   * Deliver any OWED thread-halt brain wakes (ADR 0004 rider 4) — fired from `drive()` once the job leaves the
+   * active window (so a re-drive can re-enter cleanly) and from the leader boot sweep (crash recovery). For
+   * each owed thread it wakes the job brain to triage the halt, then stamps the dedup marker. Scoped to one
+   * job when `jobId` is given, else all jobs. Idempotent (generation-keyed stamp). Returns promptly.
+   */
+  deliverOwedHaltWakes(jobId?: string): Promise<void>;
 }
 
 /**
@@ -60,6 +80,24 @@ export class LoggingJobDispatcher implements JobDispatcher {
   async retry(jobId: string): Promise<void> {
     this.logger.log(
       `[no-op retry] THREAD ${jobId} — W4 ThreadDriver will re-drive this`,
+    );
+  }
+
+  async redriveThread(
+    jobId: string,
+    threadId: string,
+    _guidance?: string,
+    _cap?: number,
+  ): Promise<{ ok: boolean; attempt?: number; reason?: string }> {
+    this.logger.log(
+      `[no-op redriveThread] THREAD ${jobId} thread=${threadId} — W4 ThreadDriver will re-drive this`,
+    );
+    return { ok: true, attempt: 0 };
+  }
+
+  async deliverOwedHaltWakes(jobId?: string): Promise<void> {
+    this.logger.log(
+      `[no-op deliverOwedHaltWakes] ${jobId ?? '(all)'} — W4 ThreadDriver will wake the brain`,
     );
   }
 }

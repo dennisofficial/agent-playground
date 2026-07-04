@@ -297,4 +297,81 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     // `no_job` still carries the brain's own task list — the navigator's Main row shows it pre-plan.
     expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({ status: 'no_job', mainTasks: [] });
   });
+
+  // ── ADR 0004 Phase 3 — halt-wake + bounded-fix store methods (live CAS correctness) ──────────────
+
+  async function seedJobThread(): Promise<{ jobId: string; threadId: string }> {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'halt',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const thread = await threads.save(
+      threads.create({
+        job_id: job.id,
+        org_id: ORG_ID,
+        ordinal: 10,
+        brief: 'Backend — halt',
+        status: 'executing',
+      }),
+    );
+    return { jobId: job.id, threadId: thread.id };
+  }
+
+  it('setHaltOwed → threadsAwaitingHaltWake selects it; markHaltWaked (matching gen) dedups it', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    // A fresh thread is not owed a wake.
+    expect(await store.threadsAwaitingHaltWake(jobId)).toEqual([]);
+
+    await store.setHaltOwed(threadId, 'blocked');
+    const owed = await store.threadsAwaitingHaltWake(jobId);
+    expect(owed).toEqual([{ jobId, threadId, gen: 0, outcome: 'blocked' }]);
+
+    // Stamp with the correct generation → deduped (no longer owed).
+    await store.markHaltWaked(threadId, 0);
+    expect(await store.threadsAwaitingHaltWake(jobId)).toEqual([]);
+  });
+
+  it('markHaltWaked with a STALE gen no-ops (a re-drive that bumped halt_fix_attempts wins the race)', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    await store.setHaltOwed(threadId, 'blocked');
+    // Simulate a re-drive claiming a fix attempt DURING the wake (gen 0 → 1) then re-arming the halt.
+    const claim = await store.claimHaltFixAttempt(threadId, 2);
+    expect(claim).toEqual({ ok: true, used: 1 });
+    await store.clearHalt(threadId); // re-drive clears the halt…
+    await store.setHaltOwed(threadId, 'blocked'); // …and it re-blocks, re-arming a fresh wake
+
+    // The OLD wake (captured gen 0) now completes and stamps — must NO-OP (gen is 1 now), so the fresh
+    // halt stays owed and its own wake will still fire.
+    await store.markHaltWaked(threadId, 0);
+    const owed = await store.threadsAwaitingHaltWake(jobId);
+    expect(owed).toEqual([{ jobId, threadId, gen: 1, outcome: 'blocked' }]);
+  });
+
+  it('claimHaltFixAttempt is a CAS bounded by the cap (increments up to cap, then refuses)', async () => {
+    const { threadId } = await seedJobThread();
+    expect(await store.claimHaltFixAttempt(threadId, 2)).toEqual({ ok: true, used: 1 });
+    expect(await store.claimHaltFixAttempt(threadId, 2)).toEqual({ ok: true, used: 2 });
+    // At the cap → refused, budget unchanged.
+    expect(await store.claimHaltFixAttempt(threadId, 2)).toEqual({ ok: false, used: 2 });
+  });
+
+  it('two concurrent claims at the cap boundary — exactly one succeeds (row-level CAS)', async () => {
+    const { threadId } = await seedJobThread();
+    await store.claimHaltFixAttempt(threadId, 2); // used → 1
+    // Two racing claims with cap 2: only one may take the last slot (used 1 → 2).
+    const [a, b] = await Promise.all([
+      store.claimHaltFixAttempt(threadId, 2),
+      store.claimHaltFixAttempt(threadId, 2),
+    ]);
+    const oks = [a, b].filter((r) => r.ok);
+    expect(oks).toHaveLength(1);
+    expect(oks[0]).toEqual({ ok: true, used: 2 });
+  });
 });

@@ -33,6 +33,8 @@ export enum Agent {
   META_PLAN_REVIEW = 'meta_plan_review',
   META_CLASSIFIER = 'meta_classifier',
   META_TITLER = 'meta_titler',
+  /** The live-verification judge (ADR 0005) — adjudicates a thread's `complete_thread` claim. */
+  META_LIVE_VERIFICATION_JUDGE = 'meta_live_verification_judge',
 }
 
 /** Every agent — for a fragment that belongs in every assembled prompt. */

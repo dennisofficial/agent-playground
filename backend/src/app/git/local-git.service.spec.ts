@@ -104,4 +104,43 @@ describe('LocalGitService (host git, daemon-free)', () => {
   it('reposRoot prefers REPOS_ROOT', () => {
     expect(svc.reposRoot()).toContain('repos');
   });
+
+  // ── changedFileNames (ADR 0005 §2c) — the per-thread diff signal `complete_thread` reads BEFORE commit:
+  // tracked changes since a base sha (two-dot, not `...HEAD`) PLUS untracked files. ─────────────────────
+  describe('changedFileNames', () => {
+    it('reports tracked changes since a base sha', async () => {
+      const r = await repo();
+      const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
+      const base = await svc.headSha(sandbox.worktreePath);
+      writeFileSync(join(sandbox.worktreePath, 'README.md'), '# origin\nedited\n');
+      await svc.commitAll(sandbox.worktreePath, 'edit readme');
+
+      expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual(['README.md']);
+    });
+
+    it('includes an UNTRACKED new file — the case a plain `git diff` would silently miss', async () => {
+      const r = await repo();
+      const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
+      const base = await svc.headSha(sandbox.worktreePath);
+      // Never staged, never committed — exactly the shape `complete_thread` sees mid-turn, before commit.
+      writeFileSync(join(sandbox.worktreePath, 'NEW_ROUTE.ts'), 'export const x = 1;\n');
+
+      expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual(['NEW_ROUTE.ts']);
+    });
+
+    it('no changes → empty list', async () => {
+      const r = await repo();
+      const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
+      const base = await svc.headSha(sandbox.worktreePath);
+
+      expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual([]);
+    });
+
+    it('an invalid base sha is caught, never thrown — empty list', async () => {
+      const r = await repo();
+      const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
+
+      expect(await svc.changedFileNames(sandbox.worktreePath, 'not-a-real-sha')).toEqual([]);
+    });
+  });
 });

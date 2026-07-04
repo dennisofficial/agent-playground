@@ -264,22 +264,6 @@ export interface PipelineThread {
   steps: PipelineStep[];
 }
 
-/**
- * The job's Codex plan-review dialogue, summarized for the navigator's "Codex review" row. Null when the
- * plan was never submitted for review. The full round-by-round transcript streams on `lane`.
- */
-export interface CodexReviewSummary {
-  /** The transcript lane the full review stream rides (`codex-review:<jobId>`). */
-  lane: string;
-  /** How many rounds (submit_plan re-reviews + respond_to_review replies) have run. */
-  rounds: number;
-  latestRound: number;
-  /** The latest round's state. */
-  status: 'running' | 'complete' | 'failed';
-  /** Findings in the latest round (0 = clean / a concede). */
-  findingsCount: number;
-}
-
 export interface PipelineJob {
   /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
   jobId: string;
@@ -287,8 +271,6 @@ export interface PipelineJob {
   kind: WireJobKind;
   status: WireJobStatus;
   decisionRecordId: string | null;
-  /** The Codex plan-review dialogue summary (a lane under Main), or null if never reviewed. */
-  codexReview?: CodexReviewSummary | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
    * navigator's Main row renders it. (The old job-level PR-review `reviewAgents`/`tasks`/`prReviewStatus`
@@ -298,6 +280,10 @@ export interface PipelineJob {
   /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
   prUrl: string | null;
   prNumber: number | null;
+  /** Observed PR lifecycle (`jobs.pr_state`) — same source as the sidebar glyph; null until a PR exists. */
+  prState: PrState | null;
+  /** GitHub `mergeable_state` (`'dirty'` = merge conflict), or null. Refines the `open` state's coloring. */
+  prMergeable: string | null;
   /** The feature branch all threads stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   baseBranch: string | null;

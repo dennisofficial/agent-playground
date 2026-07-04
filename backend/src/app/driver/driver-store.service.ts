@@ -16,7 +16,6 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  PlanReviewEntity,
   StepEntity,
   ThreadEntity,
   JobEntity,
@@ -67,8 +66,6 @@ export class DriverStoreService {
     private readonly steps: Repository<StepEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
-    @InjectRepository(PlanReviewEntity, DB_CONNECTION)
-    private readonly reviews: Repository<PlanReviewEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
     @InjectDataSource(DB_CONNECTION)
@@ -337,6 +334,101 @@ export class DriverStoreService {
     return row?.terminal_record ?? null;
   }
 
+  // ── Phase 3 halt-wake + bounded autonomous fix (ADR 0004 rider 4) ──────────────────────────────
+
+  /** The owning job id of a thread (or null if the thread is gone) — the redrive seam validates that a
+   *  model-supplied `threadId` actually belongs to the current job before mutating it (never clear another
+   *  job's thread on a hallucinated/stale id). */
+  async threadJobId(threadId: string): Promise<string | null> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, job_id: true },
+    });
+    return row?.job_id ?? null;
+  }
+
+  /** Mark a halted thread as OWED a brain wake (set by `haltJob` the moment a thread halts non-`done`).
+   *  `outcome` is the resolved `ThreadOutcome`. Leaves `halt_waked_at` null so the wake is owed. */
+  async setHaltOwed(
+    threadId: string,
+    outcome: 'blocked' | 'incomplete' | 'failed',
+  ): Promise<void> {
+    await this.threads.update(
+      { id: threadId },
+      { halt_outcome: outcome, halt_waked_at: null },
+    );
+  }
+
+  /** Threads whose halt is owed a brain wake (`halt_outcome` set, not yet waked). Optionally scoped to one
+   *  job. Returns the minimal shape the wake path needs: ids + the generation token (`halt_fix_attempts`)
+   *  the wake-stamp CAS keys on. */
+  async threadsAwaitingHaltWake(jobId?: string): Promise<
+    {
+      jobId: string;
+      threadId: string;
+      gen: number;
+      outcome: 'blocked' | 'incomplete' | 'failed';
+    }[]
+  > {
+    const qb = this.threads
+      .createQueryBuilder('t')
+      .select(['t.id', 't.job_id', 't.halt_fix_attempts', 't.halt_outcome'])
+      .where('t.halt_outcome IS NOT NULL')
+      .andWhere('t.halt_waked_at IS NULL');
+    if (jobId) qb.andWhere('t.job_id = :jobId', { jobId });
+    const rows = await qb.getMany();
+    return rows.map((r) => ({
+      jobId: r.job_id,
+      threadId: r.id,
+      gen: r.halt_fix_attempts,
+      outcome: r.halt_outcome as 'blocked' | 'incomplete' | 'failed',
+    }));
+  }
+
+  /** Stamp the wake delivered — a GENERATION-KEYED CAS (ADR 0004 Phase 3): stamp only if `halt_fix_attempts`
+   *  still equals the `gen` captured when the wake fired (no re-drive happened mid-wake) and the halt is still
+   *  owed + un-waked. A stale wake completing after a re-drive matches zero rows, so it can never clobber the
+   *  re-drive's re-armed (null) marker and silence a fresh halt's wake. */
+  async markHaltWaked(threadId: string, gen: number): Promise<void> {
+    await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ halt_waked_at: () => 'now()' })
+      .where('id = :threadId', { threadId })
+      .andWhere('halt_fix_attempts = :gen', { gen })
+      .andWhere('halt_waked_at IS NULL')
+      .andWhere('halt_outcome IS NOT NULL')
+      .execute();
+  }
+
+  /** Clear the halt signal on a re-drive so a FRESH block re-arms a fresh wake (both the owed flag and the
+   *  dedup marker). The `halt_fix_attempts` budget is intentionally NOT cleared (it's a lifetime counter). */
+  async clearHalt(threadId: string): Promise<void> {
+    await this.threads.update(
+      { id: threadId },
+      { halt_outcome: null, halt_waked_at: null },
+    );
+  }
+
+  /** CAS-claim one autonomous re-drive attempt: atomically increment `halt_fix_attempts` iff still below
+   *  `cap`. Returns `{ ok:true, used }` when a slot was claimed, else `{ ok:false, used:cap }` (exhausted).
+   *  The compare-and-swap makes a double-fired wake safe — two concurrent claims can't both pass the cap. */
+  async claimHaltFixAttempt(
+    threadId: string,
+    cap: number,
+  ): Promise<{ ok: boolean; used: number }> {
+    const res = await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ halt_fix_attempts: () => 'halt_fix_attempts + 1' })
+      .where('id = :threadId', { threadId })
+      .andWhere('halt_fix_attempts < :cap', { cap })
+      .returning('halt_fix_attempts')
+      .execute();
+    const used = res.raw?.[0]?.halt_fix_attempts as number | undefined;
+    return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
   // ── review agents (post-build review fan-out, per-agent status) ────────────────────────────────
 
   /** Seed the thread's review agents at `pending` from the selected lens set — call before the auto-fix
@@ -484,25 +576,9 @@ export class DriverStoreService {
       list.push(p);
       stepsByThread.set(p.thread_id, list);
     }
-    // The Codex plan-review dialogue (a lane under Main): summarize its rounds so the navigator can render
-    // the "Codex review" row + status/finding badge. Null when the plan was never submitted for review.
-    const reviewRows = await this.reviews.find({
-      where: { job_id: thread.id },
-      order: { round: 'ASC' },
-    });
-    const latestReview = reviewRows[reviewRows.length - 1];
-    const codexReview = latestReview
-      ? {
-          lane: `codex-review:${thread.id}`,
-          rounds: reviewRows.length,
-          latestRound: latestReview.round,
-          // 'running' | 'complete' | 'failed'
-          status: latestReview.status,
-          findingsCount: latestReview.findings
-            ? latestReview.findings.split('\n').filter((l) => l.trim()).length
-            : 0,
-        }
-      : null;
+    // NOTE: Codex review is no longer a pipeline node with rounds — it's a synchronous `review_plan` tool
+    // whose turn streams on the `codex-review:<jobId>` lane; the web renders it inline from those lane
+    // blocks. So `getPipelineState` no longer surfaces a `codexReview` summary.
     return {
       jobId: thread.id,
       title: thread.title,
@@ -511,9 +587,13 @@ export class DriverStoreService {
       decisionRecordId: thread.decision_record_id,
       prUrl: thread.pr_url,
       prNumber: thread.pr_number,
+      // Observed PR lifecycle (`open | merged | closed`) + merge-conflict signal — the SAME reconciler-owned
+      // columns the sidebar's PR glyph reads. Surfaced here so the navigator's PR row mirrors the sidebar
+      // instead of hardcoding "open" (it would otherwise show a stale green "open" after a merge/close).
+      prState: thread.pr_state,
+      prMergeable: thread.pr_mergeable,
       featureBranch: thread.feature_branch,
       baseBranch: thread.base_branch,
-      codexReview,
       // The Main brain session's own task list (folded from its `main`-lane task-tool calls) — the
       // navigator's Main row renders it. No fallback default (tasks are pure LLM output — there's no
       // fixed/expected set the way there is for review agents). The old job-level PR-review fields

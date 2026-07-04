@@ -28,10 +28,12 @@ export class TaskListGroup {
   taskListOnboarding(): string {
     return [
       TASK_LIST_NOTE,
-      'Here the list IS the ceremony made visible: seed it from the fleet inventory as soon as step 1 produces',
-      'one, and let the operator watch each service go pending → in_progress → completed as it boots and',
-      'validates. If discovery reshapes the fleet (a service turns out to be two, one is not locally runnable),',
-      'reshape the list to match.',
+      'Here the list IS the ceremony made visible: once the operator green-lights the bring-up (see the',
+      'GROUNDING GATE) and step 1 firms up the fleet inventory, seed the list from it and let the operator',
+      'watch each service go pending → in_progress → completed as it boots and validates. Do NOT stand up the',
+      'task list during the read-only grounding pass — that pass ends by presenting the inventory and stopping.',
+      'If discovery reshapes the fleet (a service turns out to be two, one is not locally runnable), reshape',
+      'the list to match.',
     ].join('\n');
   }
 }

@@ -159,11 +159,12 @@ describe('WebSurface — approval card conversion', () => {
     expect(card.threads[0]).toContain('Backend');
     expect(card.threads[1]).toContain('Frontend');
 
-    // All three verdict actions are present.
+    // Approve and Deny are emitted; there is no request-changes button (operators request
+    // changes by just messaging the brain).
     const actionIds = card.actions.map((a) => a.actionId);
     expect(actionIds).toContain(APPROVE_ACTION_ID);
     expect(actionIds).toContain(DENY_ACTION_ID);
-    expect(actionIds).toContain(REQUEST_CHANGES_ACTION_ID);
+    expect(actionIds).not.toContain(REQUEST_CHANGES_ACTION_ID);
 
     // The value round-trips through JSON correctly.
     const approveAction = card.actions.find((a) => a.actionId === APPROVE_ACTION_ID)!;
@@ -240,7 +241,7 @@ describe('WebSurface — approval click via approval$', () => {
     const click = firstValueFrom(surface.approval$.pipe(take(1)));
 
     const value = JSON.stringify({ jobId: 'job-abc' });
-    surface.receiveApprovalClick(REQUEST_CHANGES_ACTION_ID, value, 'U-dennis', 'use Stripe, not Braintree');
+    surface.receiveApprovalClick(DENY_ACTION_ID, value, 'U-dennis', 'use Stripe, not Braintree');
 
     const event = await click;
     expect(event.note).toBe('use Stripe, not Braintree');
@@ -345,7 +346,7 @@ describe('webApprovalCard (pure builder)', () => {
     for (const action of card.actions) styles[action.actionId] = action.style;
     expect(styles[APPROVE_ACTION_ID]).toBe('primary');
     expect(styles[DENY_ACTION_ID]).toBe('danger');
-    expect(styles[REQUEST_CHANGES_ACTION_ID]).toBe('default');
+    expect(styles[REQUEST_CHANGES_ACTION_ID]).toBeUndefined();
   });
 });
 

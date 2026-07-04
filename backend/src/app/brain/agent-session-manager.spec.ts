@@ -109,6 +109,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockDriverStore = {
     getPipelineState: vi.fn(),
     getDecisionRecord: vi.fn(),
+    // ADR 0004 Phase 3 — halt wake + bounded fix
+    loadJob: vi.fn(),
+    getTerminalRecord: vi.fn(),
+    claimHaltFixAttempt: vi.fn(),
+    markHaltWaked: vi.fn(),
   } as unknown as DriverStoreService;
 
   const mockMemory = {
@@ -164,24 +169,22 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   } as unknown as PipelineAwarenessStore;
 
   /**
-   * R4: mock async PlanReviewService. `start` opens a round; `load` returns null by default so the
-   * fire-and-forget `runAndDeliverReview` no-ops cleanly in these submit_plan unit tests (the full
-   * run→deliver flow is exercised in the integration spec). `maxReviewRounds` is a plain property.
+   * The synchronous PlanReviewService. `review` returns a clean outcome by default; `reviewForCurrentSpecs`
+   * is the propose_plan mandatory-run gate — default returns a terminal row (a review has run), so
+   * propose_plan is allowed. `findRunningReviews` backs the work-owed backstop.
    */
   const mockPlanReview = {
-    start: vi.fn().mockResolvedValue({ reviewId: 'rev-r3gate-001', round: 1 }),
-    runReview: vi.fn().mockResolvedValue({ status: 'complete', findings: '' }),
-    load: vi.fn().mockResolvedValue(null),
-    markDelivered: vi.fn().mockResolvedValue(undefined),
-    findIncompleteReviews: vi.fn().mockResolvedValue([]),
-    findUndeliveredReviews: vi.fn().mockResolvedValue([]),
-    // The finalize_plan gate: default = no round running (the review finished), so finalize is allowed.
-    runningReview: vi.fn().mockResolvedValue(null),
-    maxReviewRounds: 3,
+    review: vi.fn().mockResolvedValue({ status: 'complete', findings: [], specHash: null }),
+    reviewForCurrentSpecs: vi
+      .fn()
+      .mockResolvedValue({ row: { status: 'complete', findings: null, error: null }, specHash: null }),
+    findRunningReviews: vi.fn().mockResolvedValue([]),
+    reviewCeiling: 8,
   } as unknown as PlanReviewService;
 
   const mockDispatcher = {
     dispatch: vi.fn(),
+    redriveThread: vi.fn(), // ADR 0004 Phase 3 — the brain's autonomous re-drive (retry_thread → this)
   } as unknown as JobDispatcher;
 
   const mockSurface = {
@@ -248,6 +251,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // By default: no existing open job on the thread → openJob creates a fresh one.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
+    // Default loadJob: no prior job state (propose_plan's idempotency guard proceeds; other tests override).
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     // Working-set decisions default to empty; card lookups default to none (reset wiped inline defaults).
     (mockStore.pendingDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -265,19 +270,22 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockLifecycle.contextDirHost as ReturnType<typeof vi.fn>).mockReturnValue('/tmp/atlas-test-ctx');
     (mockLifecycle.markRepoOnboarded as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
-    // R4 plan-review defaults (resetAllMocks wiped resolved values). appendSystemEvent MUST resolve a
-    // promise — submit_plan chains `.catch` on it.
+    // Plan-review defaults (resetAllMocks wiped resolved values). appendSystemEvent MUST resolve a promise
+    // — propose_plan chains `.catch` on it. review() defaults clean; the propose_plan gate defaults to "a
+    // review has run for the current specs" (a terminal row) so propose is allowed unless a test overrides.
     (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (mockStore.markAwaitingApproval as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (mockStore.appendReviewFindingsMessage as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     (mockStore.threadTicketId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 'complete',
+      findings: [],
+      specHash: null,
+    });
+    (mockPlanReview.reviewForCurrentSpecs as ReturnType<typeof vi.fn>).mockResolvedValue({
+      row: { status: 'complete', findings: null, error: null },
+      specHash: null,
+    });
+    (mockPlanReview.findRunningReviews as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockStore.markLedgerPromoted as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (mockPlanReview.start as ReturnType<typeof vi.fn>).mockResolvedValue({ reviewId: 'rev-r3gate-001', round: 1 });
-    (mockPlanReview.runReview as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'complete', findings: '' });
-    (mockPlanReview.load as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    (mockPlanReview.markDelivered as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (mockPlanReview.findIncompleteReviews as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (mockPlanReview.findUndeliveredReviews as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     // persistPlan returns the canonical shape BrainStoreService returns.
     (mockStore.persistPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -359,7 +367,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
   });
 
-  it('(a) submit_plan: persists overview + decisions + structured threads-with-steps + goal as title', async () => {
+  it('(a) propose_plan: persists (awaiting_approval) + posts the approval card, gated on a run review', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
     const goal = 'Add rate limiting to the public API';
@@ -370,129 +378,141 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         title: 'Rate-limit backend',
         ruling: 'Use a Redis token bucket (per-IP, 100 req/min) via the existing RedisService.',
       },
-      {
-        decisionClass: 'api_contract',
-        title: '429 response shape',
-        ruling: "Return { error: 'rate_limited', retryAfterSeconds: N } with a Retry-After header.",
-      },
     ];
-    // Each thread carries its authored steps (title + keystroke-level brief).
     const threads = [
       {
         title: 'RateLimiter guard',
-        steps: [
-          { title: 'Add the guard', brief: 'Create RateLimiterGuard in src/guards/rate-limiter.guard.ts:1 …' },
-          { title: 'Wire it in', brief: 'Register the guard in app.module.ts:42 …' },
-        ],
+        steps: [{ title: 'Add the guard', brief: 'Create RateLimiterGuard in src/guards/rate-limiter.guard.ts:1 …' }],
       },
-      {
-        title: 'Integration tests',
-        steps: [{ title: 'Cover 429s', brief: 'Add rate-limit.int.test.ts asserting the 429 shape …' }],
-      },
+      { title: 'Integration tests', steps: [{ title: 'Cover 429s', brief: 'Add rate-limit.int.test.ts …' }] },
     ];
-
-    const result = await tools['submit_plan']({ goal, overview, decisions, threads });
-
-    // 1. persistPlan gets the thread titles AND the per-thread authored steps + title=goal, and persists
-    //    as `plan_review` (NOT awaiting_approval — submit_plan requests a review, it does not post a card).
-    expect(mockStore.persistPlan).toHaveBeenCalledOnce();
-    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(persistArgs.overview).toBe(overview);
-    expect(persistArgs.decisions).toHaveLength(2);
-    expect(persistArgs.title).toBe(goal);
-    expect(persistArgs.threadTitles).toEqual(['RateLimiter guard', 'Integration tests']);
-    expect(persistArgs.stepsByThread).toHaveLength(2);
-    expect(persistArgs.stepsByThread[0]).toHaveLength(2);
-    expect(persistArgs.stepsByThread[0][0]).toMatchObject({ title: 'Add the guard' });
-    expect(persistArgs.stepsByThread[1]).toHaveLength(1);
-    expect(persistArgs.orgId).toBe(TEAM_ID);
-    expect(persistArgs.repoId).toBe(PROJECT_ID);
-    expect(persistArgs.status).toBe('plan_review');
-
-    // 2. The tool returns ok=true + the ids + the review round; an async Codex review was kicked.
-    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID, reviewRound: 1 });
-    expect(mockPlanReview.start).toHaveBeenCalledOnce();
-    const reviewArgs = (mockPlanReview.start as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(reviewArgs.jobId).toBe(FAKE_JOB_ID);
-    expect(reviewArgs.threadTitles).toEqual(['RateLimiter guard', 'Integration tests']);
-
-    // 3. submit_plan does NOT post the approval card (that is finalize_plan's job). It repaints the
-    //    title and drops a "reviewing" system-event pill.
-    const persistedTitle = 'Add rate limiting to the API'; // what the persistPlan mock returns as job.title
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockApprovals.request).not.toHaveBeenCalled();
-    expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
-    expect(mockSurface.emitThreadMeta).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID, persistedTitle);
-  });
-
-  it('finalize_plan: posts the approval card from the persisted (plan_review) plan', async () => {
-    const tools = manager.buildTools(fakeStimulus);
-
-    // The thread is in plan_review with a locked decision record (submit_plan ran earlier).
-    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
-      id: FAKE_JOB_ID,
-      status: 'plan_review',
-      title: 'Add rate limiting to the API',
-      decisionRecordId: FAKE_RECORD_ID,
-      repoId: PROJECT_ID,
-      orgId: TEAM_ID,
-    });
     (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
       overview: 'Add token-bucket rate limiting.',
       decisions: [{ decisionClass: 'infrastructure', title: 'Backend', ruling: 'Redis bucket' }],
       threadTitles: ['RateLimiter guard', 'Integration tests'],
     });
 
-    const result = await tools['finalize_plan']({});
+    const result = await tools['propose_plan']({ goal, overview, decisions, threads });
 
-    // Flips to the operator gate, then posts the approval card async with the persisted title + threads.
-    expect(mockStore.markAwaitingApproval).toHaveBeenCalledWith(FAKE_JOB_ID);
-    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
+    // 1. The mandatory-run gate was checked (a review must have run for the current specs).
+    expect(mockPlanReview.reviewForCurrentSpecs).toHaveBeenCalledWith(FAKE_JOB_ID, TEAM_ID);
+    // 2. persistPlan persists straight to `awaiting_approval` (no plan_review), with the threads + title.
+    expect(mockStore.persistPlan).toHaveBeenCalledOnce();
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(persistArgs.title).toBe(goal);
+    expect(persistArgs.threadTitles).toEqual(['RateLimiter guard', 'Integration tests']);
+    expect(persistArgs.status).toBe('awaiting_approval');
+    // 3. The approval card is posted async, and the review disposition lands as a system event.
+    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID });
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).toHaveBeenCalledOnce();
-    const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(approvalArgs.title).toBe('Add rate limiting to the API');
-    expect(approvalArgs.threads).toEqual(['RateLimiter guard', 'Integration tests']);
-    expect(approvalArgs.summary).toBe('Add token-bucket rate limiting.');
+    expect(mockStore.appendSystemEvent).toHaveBeenCalled();
   });
 
-  it('finalize_plan: refuses when there is no submitted plan', async () => {
+  it('propose_plan: REFUSES (no persist, no card) when no review has run for the current specs', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
-      id: FAKE_JOB_ID,
-      status: 'planning',
-      decisionRecordId: null,
+    (mockPlanReview.reviewForCurrentSpecs as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'o',
+      threads: [{ title: 'S', type: 'backend' }],
     });
-    const result = await tools['finalize_plan']({});
+
     expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('review_plan');
+    expect(mockStore.persistPlan).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
 
-  it('finalize_plan: refuses (no card) while a Codex review round is still running', async () => {
+  it('propose_plan: a FAILED (errored) review still satisfies the gate (infra outage never blocks)', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    // The thread is in plan_review with a locked record, but the background Codex review has not finished.
+    (mockPlanReview.reviewForCurrentSpecs as ReturnType<typeof vi.fn>).mockResolvedValue({
+      row: { status: 'failed', findings: null, error: 'Codex Exec exited 1' },
+      specHash: null,
+    });
+    (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'o',
+      decisions: [],
+      threadTitles: ['S'],
+    });
+
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'o',
+      threads: [{ title: 'S', type: 'backend' }],
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(mockStore.persistPlan).toHaveBeenCalledOnce();
+  });
+
+  it('propose_plan: idempotent — already awaiting_approval short-circuits (no second persist/card)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: FAKE_JOB_ID,
-      status: 'plan_review',
-      title: 'Add rate limiting to the API',
+      status: 'awaiting_approval',
       decisionRecordId: FAKE_RECORD_ID,
-      repoId: PROJECT_ID,
-      orgId: TEAM_ID,
     });
-    (mockPlanReview.runningReview as ReturnType<typeof vi.fn>).mockResolvedValue({ round: 2 });
 
-    const result = await tools['finalize_plan']({});
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'o',
+      threads: [{ title: 'S', type: 'backend' }],
+    });
 
-    expect(result).toMatchObject({ ok: false });
-    expect((result as { reason: string }).reason).toContain('still running');
-    // The gate fires BEFORE the approval card is posted (the review must finish first).
-    expect(mockStore.markAwaitingApproval).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, decisionRecordId: FAKE_RECORD_ID });
+    expect(mockStore.persistPlan).not.toHaveBeenCalled();
+    expect(mockPlanReview.reviewForCurrentSpecs).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
 
-  it('(a) submit_plan: returns error (no persist) if goal is missing', async () => {
+  it('review_plan: runs the synchronous review and returns severity-tagged findings in the result', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    const result = await tools['submit_plan']({
+    (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 'complete',
+      findings: [
+        { severity: 'BLOCKING', text: 'schema gap' },
+        { severity: 'ADVISORY', text: 'rename it' },
+      ],
+      specHash: 'h',
+    });
+
+    const result = await tools['review_plan']({
+      goal: 'g',
+      overview: 'o',
+      threads: [{ title: 'S', type: 'backend' }],
+    });
+
+    expect(mockPlanReview.review).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ ok: true, reviewStatus: 'findings', blocking: 1, advisory: 1 });
+    expect((result as { message: string }).message).toContain('BLOCKING');
+    // review_plan NEVER posts the approval card.
+    expect(mockApprovals.request).not.toHaveBeenCalled();
+  });
+
+  it('review_plan: a failed review surfaces the failure (not a clean pass)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 'failed',
+      findings: [],
+      specHash: null,
+      error: 'Codex Exec exited 1',
+    });
+    const result = await tools['review_plan']({
+      goal: 'g',
+      overview: 'o',
+      threads: [{ title: 'S', type: 'backend' }],
+    });
+    expect(result).toMatchObject({ ok: true, reviewStatus: 'failed' });
+    expect((result as { message: string }).message).toContain('INFRASTRUCTURE');
+  });
+
+  it('(a) propose_plan: returns error (no persist) if goal is missing', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['propose_plan']({
       overview: 'some overview',
       threads: [{ title: 'S', steps: [{ title: 'p', brief: 'b' }] }],
     });
@@ -500,9 +520,14 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
   });
 
-  it('(a) submit_plan: step-free threads persist (steps optional → driver JIT-plans)', async () => {
+  it('(a) propose_plan: step-free threads persist (steps optional → driver JIT-plans)', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    const result = await tools['submit_plan']({
+    (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'o',
+      decisions: [],
+      threadTitles: ['S'],
+    });
+    const result = await tools['propose_plan']({
       goal: 'g',
       overview: 'some overview',
       threads: [{ title: 'S', type: 'backend' }],
@@ -512,13 +537,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistArgs.threadTitles).toEqual(['S']);
     expect(persistArgs.threadTypes).toEqual(['backend']);
-    // No authored steps → `stepsByThread` omitted so persistPlan leaves the driver to JIT-plan the thread.
     expect(persistArgs.stepsByThread).toBeUndefined();
   });
 
-  it('(a) submit_plan: returns error if overview is missing', async () => {
+  it('(a) propose_plan: returns error if overview is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    const result = await tools['submit_plan']({
+    const result = await tools['propose_plan']({
       goal: 'g',
       threads: [{ title: 'S', steps: [{ title: 'p', brief: 'b' }] }],
     });
@@ -526,9 +550,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
   });
 
-  it('(a) submit_plan: returns error if threads are missing', async () => {
+  it('(a) propose_plan: returns error if threads are missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    const result = await tools['submit_plan']({
+    const result = await tools['propose_plan']({
       goal: 'g',
       overview: 'some overview',
       decisions: [],
@@ -605,6 +629,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       number: 1,
     });
 
+    // ADR 0004 rider 3 — finalize_build refuses to ship until the turn has self-reported a clean verification.
+    await tools['report_verification']({ passed: true });
     const result = await tools['finalize_build']({});
 
     expect(mockShip.ship).toHaveBeenCalledOnce();
@@ -638,6 +664,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
     (mockShip.ship as ReturnType<typeof vi.fn>).mockResolvedValue({ opened: true, prConfirmed: false });
 
+    await tools['report_verification']({ passed: true });
     const result = await tools['finalize_build']({});
 
     expect(mockShip.ship).toHaveBeenCalledOnce();
@@ -1269,6 +1296,85 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.approve).not.toHaveBeenCalled();
     expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
   });
+
+  // ── ADR 0004 Phase 3 — retry_thread tool + notifyThreadHalted wake ───────────────────────────────
+  describe('ADR 0004 Phase 3 — halt wake + bounded fix', () => {
+    const fn = (m: unknown) => m as ReturnType<typeof vi.fn>;
+
+    it('retry_thread delegates to redriveThread (which owns budget+validation) with the cap + guidance', async () => {
+      fn(mockDispatcher.redriveThread).mockResolvedValue({ ok: true, attempt: 1 });
+      const tools = manager.buildTools(fakeStimulus);
+      const r = (await tools['retry_thread']({ threadId: 'th-x', guidance: 'return JSON' })) as {
+        ok?: boolean;
+        attempt?: number;
+      };
+      // The cap (HALT_FIX_ATTEMPT_CAP=2) is passed so the DRIVER claims budget only when it will re-drive.
+      expect(mockDispatcher.redriveThread).toHaveBeenCalledWith(THREAD_ID, 'th-x', 'return JSON', 2);
+      expect(r.ok).toBe(true);
+      expect(r.attempt).toBe(1);
+    });
+
+    it('retry_thread escalates when redriveThread refuses (budget exhausted / active / wrong job)', async () => {
+      fn(mockDispatcher.redriveThread).mockResolvedValue({
+        ok: false,
+        reason: 're-drive budget exhausted (2/2)',
+      });
+      const tools = manager.buildTools(fakeStimulus);
+      const r = (await tools['retry_thread']({ threadId: 'th-x', guidance: 'again' })) as {
+        ok?: boolean;
+        reason?: string;
+      };
+      expect(r.ok).toBe(false);
+      expect(r.reason).toMatch(/budget exhausted|escalate/i);
+    });
+
+    it('retry_thread requires a threadId (never touches the driver)', async () => {
+      const tools = manager.buildTools(fakeStimulus);
+      const r = (await tools['retry_thread']({ guidance: 'x' })) as { ok?: boolean };
+      expect(r.ok).toBe(false);
+      expect(mockDispatcher.redriveThread).not.toHaveBeenCalled();
+    });
+
+    it('notifyThreadHalted wakes the brain with a TRUSTED seed carrying seedHaltWake + the fenced record', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
+        status: 'blocked',
+        summary: 'response format undecided',
+        blocked: { reason: 'decision', detail: 'JSON vs plain text' },
+      });
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 3);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      const stim = spy.mock.calls[0][0] as ChatStimulus;
+      expect(stim.trust).toBe('trusted'); // NOT the untrusted event lane
+      expect(stim.seed).toBe(true);
+      expect(stim.seedHaltWake).toEqual({ threadId: 'th-x', gen: 3 });
+      // Trusted framing OUTSIDE the fence, the model-authored record fenced INSIDE:
+      expect(stim.body).toContain('build thread'); // framing
+      expect(stim.body).toContain('retry_thread'); // the fix instruction
+      expect(stim.body).toContain('JSON vs plain text'); // the record detail…
+      expect(stim.body).toContain('UNTRUSTED_EVENT_DATA'); // …fenced as data
+      spy.mockRestore();
+    });
+
+    it('notifyThreadHalted is a no-op when the thread already shipped (record already done)', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'o', repoId: 'r' });
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({ status: 'done', summary: 'shipped' });
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 0);
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it('notifyThreadHalted is a no-op when the job is gone', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue(null);
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadHalted('gone', 'th-x', 'blocked', 0);
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+  });
 });
 
 describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/persistence', () => {
@@ -1866,7 +1972,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const names = Object.keys(opts.toolBridge.tools);
     expect(names).toContain('finish_onboarding');
     expect(names).toContain('write_worktree_config');
-    expect(names).not.toContain('submit_plan');
+    expect(names).not.toContain('propose_plan');
   });
 
   it('boot re-attach of a NORMAL turn rebuilds the full build toolset (no onboarding curation)', async () => {
@@ -1886,7 +1992,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     const opts = reattach.mock.calls[0][2] as { toolBridge: { tools: Record<string, unknown> } };
     const names = Object.keys(opts.toolBridge.tools);
-    expect(names).toContain('submit_plan');
+    expect(names).toContain('propose_plan');
+    expect(names).toContain('review_plan');
     expect(names).not.toContain('finish_onboarding');
   });
 
@@ -2441,34 +2548,32 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     });
   });
 
-  describe('reconcileWedgedPlanReviews (the leader plan_review wedge re-drive)', () => {
-    const REVIEW = {
+  describe('reconcileWorkOwedReviews (the leader work-owed review re-drive)', () => {
+    /** A stranded running review row — old enough (updated_at past the grace) to count as work-owed. */
+    const STALE_RUNNING = {
       id: 'rev-1',
       job_id: JOB_ID,
       org_id: ORG_ID,
-      round: 3,
-      status: 'failed' as const,
-      error: 'Codex Exec exited 1: missing field `id_token`',
-      findings: null,
+      status: 'running' as const,
+      updated_at: new Date(Date.now() - 5 * 60_000),
     };
 
-    /** A manager wired with the deps the wedge reconciler touches; everything else inert. */
-    function makeWedgeManager(opts: {
-      stalled?: unknown[];
+    /** A manager wired with the deps the work-owed backstop touches; everything else inert. */
+    function makeWorkOwedManager(opts: {
+      running?: unknown[];
       job?: { status: string; repoId: string } | null;
       liveTurn?: { turn_id: string } | null;
       pendingChat?: ChatStimulus[];
       leader?: boolean;
     } = {}) {
       const planReview = {
-        findFinalizeStalledReviews: vi.fn().mockResolvedValue(opts.stalled ?? []),
-        markFinalizeNudged: vi.fn().mockResolvedValue(undefined),
+        findRunningReviews: vi.fn().mockResolvedValue(opts.running ?? []),
       };
       const store = {
         loadJob: vi
           .fn()
           .mockResolvedValue(
-            opts.job === undefined ? { status: 'plan_review', repoId: REPO_ID } : opts.job,
+            opts.job === undefined ? { status: 'planning', repoId: REPO_ID } : opts.job,
           ),
       };
       const runningBrainTurn = vi.fn().mockResolvedValue(opts.liveTurn ?? null);
@@ -2498,19 +2603,19 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         .spyOn(manager, 'handleChatTurn')
         .mockResolvedValue(undefined);
       const run = () =>
-        (manager as never as { reconcileWedgedPlanReviews: () => Promise<void> }).reconcileWedgedPlanReviews();
+        (manager as never as { reconcileWorkOwedReviews: () => Promise<void> }).reconcileWorkOwedReviews();
       return { manager, run, planReview, store, runningBrainTurn, stimulusStore, handleChatTurn, getState };
     }
 
     it('NON-LEADER: does nothing (no query, no nudge)', async () => {
-      const { run, planReview, handleChatTurn } = makeWedgeManager({ stalled: [REVIEW], leader: false });
+      const { run, planReview, handleChatTurn } = makeWorkOwedManager({ running: [STALE_RUNNING], leader: false });
       await run();
-      expect(planReview.findFinalizeStalledReviews).not.toHaveBeenCalled();
+      expect(planReview.findRunningReviews).not.toHaveBeenCalled();
       expect(handleChatTurn).not.toHaveBeenCalled();
     });
 
-    it('a wedged job (settled+delivered review, no live turn, no pending chat): nudges then stamps', async () => {
-      const { run, handleChatTurn, planReview } = makeWedgeManager({ stalled: [REVIEW] });
+    it('a stranded running review (no live turn, no pending chat): re-drives the brain', async () => {
+      const { run, handleChatTurn } = makeWorkOwedManager({ running: [STALE_RUNNING] });
       await run();
       await new Promise((r) => setTimeout(r, 0)); // let the fire-and-forget per-candidate promise settle
 
@@ -2518,47 +2623,46 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       const stim = handleChatTurn.mock.calls[0][0] as ChatStimulus;
       expect(stim.jobId).toBe(JOB_ID);
       expect(stim.seed).toBe(true); // invisible system seed, not an operator bubble
-      expect(stim.body).toMatch(/finalize_plan/);
-      expect(stim.body).toMatch(/id_token/); // the failed-review outcome is recapped
-      // Stamped ONLY after the nudge turn completed (at-least-once loop guard).
-      expect(planReview.markFinalizeNudged).toHaveBeenCalledWith('rev-1');
+      expect(stim.body).toMatch(/review_plan/); // the nudge tells Atlas to resume review_plan
     });
 
-    it('a LIVE brain turn is already driving the job: skips (no nudge, no stamp)', async () => {
-      const { run, handleChatTurn, planReview } = makeWedgeManager({
-        stalled: [REVIEW],
+    it('a review that is still in flight (updated recently) is NOT treated as stranded', async () => {
+      const { run, handleChatTurn } = makeWorkOwedManager({
+        running: [{ ...STALE_RUNNING, updated_at: new Date() }],
+      });
+      await run();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(handleChatTurn).not.toHaveBeenCalled();
+    });
+
+    it('a LIVE brain turn already owns the review: skips', async () => {
+      const { run, handleChatTurn } = makeWorkOwedManager({
+        running: [STALE_RUNNING],
         liveTurn: { turn_id: 'turn-live' },
       });
       await run();
       await new Promise((r) => setTimeout(r, 0));
-
       expect(handleChatTurn).not.toHaveBeenCalled();
-      expect(planReview.markFinalizeNudged).not.toHaveBeenCalled();
     });
 
-    it('the job already left plan_review (finalized since the query): skips without stamping', async () => {
-      const { run, handleChatTurn, planReview } = makeWedgeManager({
-        stalled: [REVIEW],
+    it('a job already awaiting_approval / running no longer owes a review: skips', async () => {
+      const { run, handleChatTurn } = makeWorkOwedManager({
+        running: [STALE_RUNNING],
         job: { status: 'awaiting_approval', repoId: REPO_ID },
       });
       await run();
       await new Promise((r) => setTimeout(r, 0));
-
       expect(handleChatTurn).not.toHaveBeenCalled();
-      // NOT stamped — the row stays eligible in case the job wedges again on a later round.
-      expect(planReview.markFinalizeNudged).not.toHaveBeenCalled();
     });
 
     it('an operator/system chat is still pending: defers to the chat sweep (no nudge)', async () => {
-      const { run, handleChatTurn, planReview } = makeWedgeManager({
-        stalled: [REVIEW],
+      const { run, handleChatTurn } = makeWorkOwedManager({
+        running: [STALE_RUNNING],
         pendingChat: [pendingRow('s1', 'hold on', new Date())],
       });
       await run();
       await new Promise((r) => setTimeout(r, 0));
-
       expect(handleChatTurn).not.toHaveBeenCalled();
-      expect(planReview.markFinalizeNudged).not.toHaveBeenCalled();
     });
   });
 

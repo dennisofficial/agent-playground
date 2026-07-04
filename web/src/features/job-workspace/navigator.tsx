@@ -6,7 +6,9 @@ import {
   ArrowUpRight,
   FileText,
   GitBranch,
+  GitMerge,
   GitPullRequest,
+  GitPullRequestClosed,
   Globe,
   Image as ImageIcon,
   Lock,
@@ -26,12 +28,26 @@ import { pipelineJob } from '@/lib/api/job-api';
 import { useRetryJob, useServices } from '@/lib/api/job-queries';
 import { Divider, PipelineTree, TasksBody, haltThreadIdx } from './pipeline-tree';
 import { NavigatorApproveButton } from './spec-approval';
-import { codexReviewNode } from './codex-review';
 import { pipelineMainTasks } from '@/lib/api/types';
 import { useLiveTurn } from '@/lib/api/job-stream';
 import { overlayLiveTasks } from './live-tasks';
-import type { CodexReviewSummary, ContextFile, PipelineJob, PipelineState, JobContext, JobKind, JobStatus, TaskItem } from '@/lib/api/types';
+import type { ContextFile, PipelineJob, PipelineState, JobContext, JobKind, JobStatus, TaskItem } from '@/lib/api/types';
 import type { JobRef } from '@/lib/api/job-api';
+
+/**
+ * PR-row glyph for the navigator header — mirrors the sidebar's `prGlyph` (GitHub color convention) so the
+ * two never disagree: merged → purple, closed → red, open+conflict → amber, open → green. Reads the same
+ * `pr_state` / `pr_mergeable` columns the sidebar does. `label` is the short word after `PR #NN · `.
+ */
+function prNavGlyph(
+  state: PipelineJob['prState'],
+  mergeable: PipelineJob['prMergeable'],
+): { Icon: typeof GitPullRequest; color: string; label: string } {
+  if (state === 'merged') return { Icon: GitMerge, color: 'var(--purple)', label: 'merged' };
+  if (state === 'closed') return { Icon: GitPullRequestClosed, color: 'var(--red)', label: 'closed' };
+  if (mergeable === 'dirty') return { Icon: GitPullRequest, color: 'var(--amber)', label: 'conflict' };
+  return { Icon: GitPullRequest, color: 'var(--green)', label: 'open' };
+}
 
 export interface JobMeta {
   title: string;
@@ -93,7 +109,10 @@ export function Navigator({
 }) {
   const job = pipelineJob(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
-  const hasPr = Boolean(job?.prUrl);
+  // "Has a PR" mirrors the sidebar's signal — the observed PR lifecycle (`prState`), NOT `prUrl`. A closed
+  // PR (or a partially-recorded row) can carry `prState`/`prNumber` with a null `prUrl`; gating on `prUrl`
+  // would then say "No PR yet" while the sidebar shows the closed glyph. The URL only gates the link-out.
+  const hasPr = Boolean(job?.prState);
   // We can't read a real +/− line stat (no diff endpoint), but a job that hasn't built anything yet
   // (planning / awaiting / triaging) plainly has no changes — show a muted "—" on the Changes row then.
   const noChanges =
@@ -171,18 +190,32 @@ export function Navigator({
         {/* PR — links out once opened, muted resting state until then. */}
         <div className="mt-1 flex items-center gap-1.5 px-1">
           {hasPr ? (
-            <a
-              href={job!.prUrl!}
-              target="_blank"
-              rel="noreferrer"
-              className="flex flex-1 items-center gap-1.5 rounded py-0.5 hover:bg-surface-2"
-            >
-              <GitPullRequest size={11} className="shrink-0 text-green" />
-              <span className="flex-1 font-mono text-[9.5px] font-semibold text-green">
-                {job!.prNumber != null ? `PR #${job!.prNumber}` : 'pull request'} · open
-              </span>
-              <ArrowUpRight size={11} className="text-faint" />
-            </a>
+            (() => {
+              const { Icon, color, label } = prNavGlyph(job!.prState, job!.prMergeable);
+              const text = `${job!.prNumber != null ? `PR #${job!.prNumber}` : 'pull request'} · ${label}`;
+              // Link out only when we actually have the PR url; otherwise show the same status inline.
+              return job!.prUrl ? (
+                <a
+                  href={job!.prUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex flex-1 items-center gap-1.5 rounded py-0.5 hover:bg-surface-2"
+                >
+                  <Icon size={11} strokeWidth={2} style={{ color }} className="shrink-0" />
+                  <span className="flex-1 font-mono text-[9.5px] font-semibold" style={{ color }}>
+                    {text}
+                  </span>
+                  <ArrowUpRight size={11} className="text-faint" />
+                </a>
+              ) : (
+                <div className="flex flex-1 items-center gap-1.5 py-0.5">
+                  <Icon size={11} strokeWidth={2} style={{ color }} className="shrink-0" />
+                  <span className="flex-1 font-mono text-[9.5px] font-semibold" style={{ color }}>
+                    {text}
+                  </span>
+                </div>
+              );
+            })()
           ) : (
             <div className="flex flex-1 items-center gap-1.5 py-0.5">
               <GitPullRequest size={11} className="shrink-0 text-faint" />
@@ -227,15 +260,8 @@ export function Navigator({
           durableTasks={pipelineMainTasks(pipeline)}
           onClick={onConversation}
         />
-        {/* Codex review — a lane directly under Main, shown once the plan has been submitted for review.
-            Opens the full round-by-round review dialogue in the LEFT pane (orange-highlighted, a thread). */}
-        {job?.codexReview ? (
-          <CodexReviewRow
-            review={job.codexReview}
-            active={laneNode === codexReviewNode(jobRef.jobId)}
-            onOpen={() => onSelectNode(codexReviewNode(jobRef.jobId))}
-          />
-        ) : null}
+        {/* Codex review is now a synchronous `review_plan` tool call — it renders inline in the Main
+            conversation (via the generic tool-call renderer), not as a dedicated navigator row. */}
         <ThreadRows
           status={st}
           job={job}
@@ -316,44 +342,6 @@ function MainLaneRow({
       </button>
       {active && tasks.length > 0 ? <TasksBody tasks={tasks} done={done} total={tasks.length} /> : null}
     </div>
-  );
-}
-
-/** The Codex review lane — a lane like Main/build threads (LEFT pane), opening the full plan-review dialogue
- *  in the same transcript renderer. Highlighted ORANGE (`nav-selected`), pulses while a round is running. */
-function CodexReviewRow({
-  review,
-  active,
-  onOpen,
-}: {
-  review: CodexReviewSummary;
-  active: boolean;
-  onOpen: () => void;
-}) {
-  const running = review.status === 'running';
-  const note = running
-    ? 'reviewing'
-    : review.status === 'failed'
-      ? 'error'
-      : review.findingsCount === 0
-        ? 'clean'
-        : `${review.findingsCount} finding${review.findingsCount === 1 ? '' : 's'}`;
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className={cn(
-        'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2',
-        active && 'nav-selected',
-      )}
-    >
-      <Dot color="var(--slate)" pulse={running} size={9} />
-      <span className="flex-1 truncate text-[12px] font-semibold text-text">Codex review</span>
-      {review.rounds > 1 ? (
-        <span className="font-mono text-[8px] text-faint">·{review.rounds}</span>
-      ) : null}
-      <span className="font-mono text-[8px] text-faint">{note}</span>
-    </button>
   );
 }
 

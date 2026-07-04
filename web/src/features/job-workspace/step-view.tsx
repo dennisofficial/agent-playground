@@ -175,12 +175,9 @@ export function PhaseView({
       : parentId;
     body = <SubagentView messages={messages} liveTurn={liveTurn ?? null} parentId={parentId} />;
   } else if (selectedNode.startsWith('codex-review:')) {
-    const review = job?.codexReview ?? null;
     title = 'Codex review';
-    subtitle = review
-      ? [`${review.rounds} round${review.rounds === 1 ? '' : 's'}`, review.status].filter(Boolean).join(' · ')
-      : 'the plan-review dialogue';
-    // The SAME transcript renderer as Main — just no composer (Atlas replies to Codex via respond_to_review).
+    subtitle = 'the plan-review dialogue';
+    // The SAME transcript renderer as Main — the synchronous `review_plan` turn streams on this lane.
     body = (
       <TranscriptView
         jobRef={jobRef}

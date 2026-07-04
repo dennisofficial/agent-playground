@@ -8,7 +8,7 @@ import {
   DecisionRecordEntity,
   RepoDecisionEntity,
   MessageEntity,
-  PlanReviewEntity,
+  CodexReviewEntity,
   StepEntity,
   RepoEntity,
   ThreadEntity,
@@ -59,7 +59,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
       [
         JobEntity,
         MessageEntity,
-        PlanReviewEntity,
+        CodexReviewEntity,
         DecisionRecordEntity,
         RepoDecisionEntity,
         ThreadEntity,

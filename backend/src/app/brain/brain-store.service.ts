@@ -111,8 +111,7 @@ export class BrainStoreService {
    * neither authored it nor sees it; it's never seeded into Atlas's session). e.g. "this thread can't be
    * resumed — start a new one". Distinct provenance: a non-Atlas author (`author_bot_id=null`) +
    * `meta.source='system_operator'`, the seam the web keys its dedicated system-notice box off. Contrast
-   * `meta.source='system_shared'` ({@link appendReviewFindingsMessage}), which BOTH the operator and (via a
-   * separate seed) Atlas see.
+   * `meta.source='system_shared'`, which BOTH the operator and (via a separate seed) Atlas see.
    */
   async appendSystemOperatorMessage(
     jobId: string,
@@ -207,49 +206,55 @@ export class BrainStoreService {
   }
 
   /**
-   * Append the HARNESS-SEEDED Codex plan-review findings as a durable, operator-visible message —
-   * IDEMPOTENT on `ts = review-<reviewId>` (a deterministic key) so a boot re-delivery can't duplicate
-   * the visible findings. Distinct provenance: `author='Codex'`, `author_bot_id=null` (NOT Atlas), and
-   * `meta.source='system_shared'` (the seam the web keys its "Codex review" rendering off — shown, never
-   * hidden, unlike the seeded `ask_question` answer). `system_shared` because BOTH the operator (this
-   * message) and Atlas (a separate `<system_notification>` seed) see it — contrast `system_operator`
-   * ({@link appendSystemOperatorMessage}), which only the operator sees. Returns false if it already existed.
+   * Append a COMPACTION-SUMMARY pill (kind='build_event', like {@link appendSystemEvent}) that ALSO carries
+   * the full handoff summary in `meta.compactionSummary`. Renders as the same calm pill, but the web makes it
+   * EXPANDABLE so the operator can inspect exactly what context was kept when the session was compacted. The
+   * summary lives on this durable `messages` row (never cleared, unlike `job_sandboxes.pending_compaction_seed`
+   * which is consumed by the next fresh turn), so it stays auditable for the life of the job.
    */
-  async appendReviewFindingsMessage(
+  async appendCompactionSummary(
     jobId: string,
-    reviewId: string,
     text: string,
-    anchor?: { round?: number; findingsCount?: number },
-  ): Promise<boolean> {
-    const ts = `review-${reviewId}`;
-    const existing = await this.messages.findOne({
-      where: { job_id: jobId, ts },
-    });
-    if (existing) return false;
+    summary: string,
+  ): Promise<void> {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
-        author: 'Codex',
-        author_id: 'codex',
-        author_bot_id: null,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
         text,
-        kind: 'chat',
-        ts,
-        meta: {
-          source: 'system_shared',
-          // ANCHOR: the web renders this summary as a compact, clickable card that OPENS the job's Codex
-          // review lane (the full reasoning/tool stream lives there, peeled out of Main). `codexReviewId`
-          // = jobId matches the lane key `codex-review:<jobId>`.
-          codexReviewAnchor: true,
-          codexReviewId: jobId,
-          ...(anchor?.round != null ? { reviewRound: anchor.round } : {}),
-          ...(anchor?.findingsCount != null
-            ? { findingsCount: anchor.findingsCount }
-            : {}),
-        },
+        kind: 'build_event',
+        meta: { compactionSummary: summary },
       }),
     );
-    return true;
+  }
+
+  /**
+   * The BRAIN's most-recent context-window occupancy, read from the latest `turn_meta` block. Build turns
+   * also emit `turn_meta`, but tagged with `meta.phaseId` (the brain's `main`-lane turn_meta carries no
+   * metaTag), so `phaseId IS NULL` isolates the brain's own occupancy. Used to gate compaction — skip the
+   * summary turn when the session is still lean. Null when no brain turn has recorded usage yet (or the SDK
+   * didn't surface per-call usage), in which case the caller compacts rather than risk leaving a fat session.
+   */
+  async latestBrainOccupancy(
+    jobId: string,
+  ): Promise<{ contextTokens: number | null; contextLimit: number | null } | null> {
+    const rows: Array<{
+      meta: { contextTokens?: number | null; contextLimit?: number | null } | null;
+    }> = await this.dataSource.query(
+      `SELECT meta FROM messages
+         WHERE job_id = $1 AND kind = 'turn_meta' AND meta->>'phaseId' IS NULL
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      [jobId],
+    );
+    const meta = rows[0]?.meta;
+    if (!meta) return null;
+    return {
+      contextTokens: meta.contextTokens ?? null,
+      contextLimit: meta.contextLimit ?? null,
+    };
   }
 
   // ── card messages (durable; the surface `post` path does NOT write `messages.card`) ────────────────
@@ -1092,17 +1097,6 @@ export class BrainStoreService {
 
     const thread = await this.loadJob(input.jobId);
     return { thread, decisionRecordId };
-  }
-
-  /**
-   * Flip a reviewed plan to `awaiting_approval` — the operator gate. Called by `finalize_plan` once
-   * Atlas has addressed the Codex review (the plan was persisted as `plan_review` by `submit_plan`).
-   */
-  async markAwaitingApproval(jobId: string): Promise<void> {
-    await this.jobs.update(
-      { id: jobId },
-      { status: 'awaiting_approval' },
-    );
   }
 
   /** Load a draft/approved decision record (overview + decisions + thread titles) for the approval card. */

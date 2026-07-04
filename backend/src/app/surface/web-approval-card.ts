@@ -9,12 +9,7 @@
  */
 
 import type { DecisionApprovalCard, ApprovalDecision } from './approval-blocks';
-import {
-  APPROVE_ACTION_ID,
-  REQUEST_CHANGES_ACTION_ID,
-  DENY_ACTION_ID,
-  VIEW_PLAN_ACTION_ID,
-} from './approval-blocks';
+import { APPROVE_ACTION_ID, DENY_ACTION_ID, VIEW_PLAN_ACTION_ID } from './approval-blocks';
 
 /** A single action button in the web card. */
 export interface WebCardAction {
@@ -80,12 +75,6 @@ export function webApprovalCard(card: DecisionApprovalCard): WebApprovalCard {
       actionId: APPROVE_ACTION_ID,
       label: 'Approve',
       style: 'primary',
-      value,
-    },
-    {
-      actionId: REQUEST_CHANGES_ACTION_ID,
-      label: 'Request changes',
-      style: 'default',
       value,
     },
     {

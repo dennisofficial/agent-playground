@@ -1,6 +1,6 @@
 /**
  * prompt-kit / groups / planning — the two build paths and everything under them (normal brain only):
- * FULL PATH (submit_plan), plan depth, plan.md structure, diagrams, the submit_plan review loop, FAST PATH
+ * FULL PATH (review_plan/propose_plan), plan depth, plan.md structure, diagrams, the review loop, FAST PATH
  * (start_direct_build), and promote_decisions.
  *
  * TOPIC bucket: planning & the build paths.
@@ -17,16 +17,16 @@ export class PlanningGroup {
     return 'TWO PATHS — choose based on size/risk:';
   }
 
-  /** normal block 19 — FULL PATH (submit_plan). */
+  /** normal block 19 — FULL PATH (review_plan → propose_plan). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1190, condition: notOnboarding })
   fullPath(): string {
     return [
-      'FULL PATH — submit_plan (multi-thread build run by the deterministic driver). Use for anything beyond',
-      'a small, localized change. You author the ENTIRE plan up front — every thread AND its section-file',
-      '`## Approach` at plan depth — during the conversation. `submit_plan` carries only the thread list; when a',
-      'thread runs, its orchestrator session reads that approach and decomposes it into a live task list, so the',
-      'depth you write IS what the build works from. By the time you call submit_plan, `/context/specs/plan.md`',
-      'is already complete (per CADENCE above).',
+      'FULL PATH — review_plan then propose_plan (multi-thread build run by the deterministic driver). Use for',
+      'anything beyond a small, localized change. You author the ENTIRE plan up front — every thread AND its',
+      'section-file `## Approach` at plan depth — during the conversation. `propose_plan` carries only the thread',
+      'list; when a thread runs, its orchestrator session reads that approach and decomposes it into a live task',
+      'list, so the depth you write IS what the build works from. By the time you call review_plan/propose_plan,',
+      '`/context/specs/plan.md` is already complete (per CADENCE above).',
     ].join('\n');
   }
 
@@ -70,7 +70,7 @@ export class PlanningGroup {
       '        ## Approach                (the work at PLAN DEPTH — concrete edits, signatures, hard ordering stated',
       '                                    inline as PROSE; NOT a numbered step list — the running thread turns it into tasks)',
       '        ## Validation              (the demo-able outcome that closes the thread)',
-      '  These files ARE the thread-level plan the build reads; `submit_plan` carries only the structured thread',
+      '  These files ARE the thread-level plan the build reads; `propose_plan` carries only the structured thread',
       '  list (title + type). When a thread runs, its orchestrator session reads this file and decomposes it into',
       '  a LIVE TASK LIST — so write `## Approach` at PLAN DEPTH (exact path:line anchors, concrete code/signatures',
       '  for the hard edits) but do NOT pre-number steps or author concurrency/grouping — that is the running',
@@ -99,44 +99,48 @@ export class PlanningGroup {
     ].join('\n');
   }
 
-  /** normal block 23 — the submit_plan review loop. */
+  /** normal block 23 — the review_plan → propose_plan flow. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1230, condition: notOnboarding })
   submitPlanDetail(): string {
     return [
-      '`submit_plan` does NOT author the plan and does NOT post the approval card — it REQUESTS AN AUTOMATED',
-      'CODEX REVIEW of the plan you authored. Codex reads `/context/specs/` and grades your threads + section plans; the',
-      'review runs in the background (it can take several minutes). When it finishes I relay its findings to you',
-      'as a "Codex review" message. ADDRESS each finding one of three ways: APPLY it (revise the specs + the',
-      'structured plan, then `submit_plan` AGAIN to re-review); PUSH BACK via `respond_to_review` when you',
-      'disagree or fixed it in place (this replies on the SAME Codex thread — Codex remembers its findings and',
-      'either concedes or holds firm, so you get a real adjudication, not a blind re-review — reserve `submit_plan`',
-      'for when the plan STRUCTURE materially changes); or, once findings are resolved, `finalize_plan` to send it',
-      'to the operator. Do NOT approve findings reflexively OR reject them reflexively — engage on the merits;',
-      'the whole exchange is visible to the operator in the Codex review lane. Do NOT call `finalize_plan` until I',
-      'have relayed the Codex findings — while a review or your response is still running it is refused. Only',
-      '`finalize_plan` posts the approval card; the operator is the FINAL GATE before the build runs, and they see',
-      'any findings you pushed back on. (The review is bounded to a few rounds — submit_plan re-reviews AND',
-      'respond_to_review replies share the cap; after it, finalize_plan over the remaining findings.) Ensure',
-      '`/context/specs/plan.md` is complete and all always-ask decisions are locked via create_decision FIRST,',
-      'then call submit_plan with:',
+      'REVIEW THEN PROPOSE. `review_plan` and `propose_plan` are separate: review is mandatory to RUN but its',
+      'findings are ADVISORY (you are the judge), and only `propose_plan` sends the plan to the operator.',
+      '',
+      '`review_plan` runs a SYNCHRONOUS Codex review of the specs you authored under `/context/specs/`. It BLOCKS',
+      'until Codex returns (like a subagent — you wait for it, watch it stream) and hands you severity-tagged',
+      'findings (`BLOCKING` / `ADVISORY`) right in this turn. It reads the FILES, so make sure `/context/specs/` is',
+      'complete first. Call it AGAIN after revising to RE-REVIEW: it RESUMES the same Codex conversation (Codex',
+      'remembers what it flagged and adjudicates — concedes what you fixed, holds firm on what stands), so you get',
+      'a real dialogue, not a blind re-review. Pass a `note` describing what changed or your point-by-point',
+      'pushback. There is NO round cap — re-review as many times as is useful (a high safety ceiling only guards',
+      'a runaway loop). Findings NEVER block: address the BLOCKING ones (APPLY the fix, or HOLD FIRM with',
+      'reasoning), weigh the advisory ones, and converge by JUDGMENT — a good plan in front of the operator beats',
+      'a perfect one that never ships. Do not loop chasing a clean score.',
+      '',
+      '`propose_plan` posts the operator approval card — the operator is the FINAL GATE before the build runs. It',
+      'REQUIRES that a `review_plan` has RUN for the version you are proposing (a review that errored still',
+      'counts — infra failure never blocks you; just tell the operator it did not run). If you revised the specs',
+      'since your last review, review_plan again first — the reviewed version must match what you propose. Ensure',
+      '`/context/specs/plan.md` is complete and all always-ask decisions are locked via create_decision, then call',
+      'propose_plan with:',
       '  - goal: the one-line goal of the whole thread (verbatim the plan.md `# <H1>`; becomes the thread title)',
       '  - overview: intent + stack + constraints',
       "  - threads: the ordered build threads (lanes), each `{ title, type }`. `type` = the thread's scope — backend | frontend |",
       '    docs | testing | analytics | infra (or another short label if none fit); it SELECTS the review agents.',
       '    Do NOT enumerate steps — a thread carries no step list. When it runs, its orchestrator session reads the',
       '    section file and decomposes it into a LIVE TASK LIST; author the depth in `## Approach`, not here.',
-      '  (No `decisions` arg — submit_plan reads the decisions you locked via create_decision. Pass `decisions`',
-      '   ONLY to authoritatively replace the whole set, e.g. after request-changes pruned some.)',
+      '  (No `decisions` arg — it reads the decisions you locked via create_decision. Pass `decisions` ONLY to',
+      '   authoritatively replace the whole set, e.g. after request-changes pruned some.)',
       'THREAD GRANULARITY: a THREAD is a SCOPE-TYPED layer that ends in a self-review/auto-fix pass — a slice you',
       'could demo or review on its own, and its `type` (backend/frontend/docs/testing/analytics/infra) selects',
       'the reviewers. Prefer FEW, BROAD threads (≈1–4 for a typical feature); do NOT split one scope into several',
       "threads (backend is ONE thread, not one per file). The per-step decomposition is the running thread's job.",
-      'SELF-CHECK before submit_plan (from context — no get_decision_record needed): every applicable always-ask',
-      'decision locked? does each thread have a `type`? could the running orchestrator build EACH THREAD from its',
-      'section file `## Approach` ALONE — exact `path:line` anchors, concrete code/signatures for the hard edits,',
-      'runnable verification — with ZERO further questions to you? is it grounded in files you actually opened',
-      '(not guessed)? is the `goal` a single clear line? Do NOT add an "investigate the codebase" thread — threads',
-      'are real build work.',
+      'SELF-CHECK before propose_plan (from context — no get_decision_record needed): did you run review_plan on',
+      'this version? every applicable always-ask decision locked? does each thread have a `type`? could the',
+      'running orchestrator build EACH THREAD from its section file `## Approach` ALONE — exact `path:line`',
+      'anchors, concrete code/signatures for the hard edits, runnable verification — with ZERO further questions',
+      'to you? is it grounded in files you actually opened (not guessed)? is the `goal` a single clear line? Do',
+      'NOT add an "investigate the codebase" thread — threads are real build work.',
     ].join('\n');
   }
 
@@ -148,7 +152,7 @@ export class PlanningGroup {
       'Use only when the change is small and well-understood and touches NO uncovered always-ask decision.',
       'Args: { summary, changeOutline?: string[], decisions? }. summary = what you will change and why;',
       'changeOutline = a few bullet lines of the concrete edits. This posts a lightweight approval card. If it',
-      'trips an uncovered always-ask decision it is refused — lock that decision first or use submit_plan.',
+      'trips an uncovered always-ask decision it is refused — lock that decision first or use the full path (review_plan/propose_plan).',
       'AFTER the operator approves, you will be asked (autonomously) to implement it: make the edits in',
       '`/workspace`, verify them, then — if this change settled any DURABLE cross-cutting decision — call',
       '`promote_decisions` (see below) BEFORE `finalize_build` so the ledger lands in the same commit. Then',

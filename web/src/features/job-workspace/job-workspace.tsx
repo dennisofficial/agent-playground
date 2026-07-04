@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-resizable-panels';
 import { useAllJobs } from '@/lib/api/inbox';
@@ -11,7 +11,14 @@ import { toJobStatus } from '@/lib/api/status';
 import { orgSwatch } from '@/lib/org-display';
 import { ROUTES } from '@/lib/routes';
 import { pipelineJob, type JobRef } from '@/lib/api/job-api';
-import { APPROVE_ACTION_ID, type JobKind, type JobStatus, type WebApprovalCard } from '@/lib/api/types';
+import {
+  APPROVE_ACTION_ID,
+  type JobKind,
+  type JobStatus,
+  type PipelineJob,
+  type ThreadStatus,
+  type WebApprovalCard,
+} from '@/lib/api/types';
 import { Navigator, type JobMeta } from './navigator';
 import { Conversation } from './conversation';
 import { MarkdownActionsProvider } from './markdown';
@@ -47,7 +54,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   // Two independent selections: `laneNode` (?lane=) drives the LEFT pane (a THREADS lane — Main or a build
   // thread/step); `detailNode` (?node=) drives the RIGHT pane (an OUTPUT / port / subagent / doc). A thread
   // switch navigates to a fresh clean URL with no query, so both reset — no reset effect needed.
-  const { laneNode, detailNode, subNode, subLane, selectNode, openConversation, closeDetail, closeSub } =
+  const { laneNode, detailNode, subNode, subLane, selectNode, replaceLane, openConversation, closeDetail, closeSub } =
     useSelectedNode();
 
   // Persist the conversation/detail split ratio across reloads (per-browser). `panelIds` lets the
@@ -61,6 +68,21 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   const inboxThread = useMemo(() => inbox?.find((t) => t.id === jobId), [inbox, jobId]);
   const job = pipelineJob(pipeline);
+
+  // Opening a job lands on the build lane that's currently running (the "builder thread") rather than always
+  // on Main — you click a job to watch what it's doing. Decided ONCE per job open, the first time the
+  // pipeline resolves: if a lane is already selected (deep link / in-place return) we respect it, and if
+  // nothing is actively building we stay on Main. Marking `handled` on the first pipeline response (even the
+  // pre-build `no_job` one) means a later plan-approval→build transition never yanks you off Main mid-read.
+  const autoSelectedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (autoSelectedFor.current === jobId) return;
+    if (!pipeline) return; // wait for the first pipeline response before deciding
+    autoSelectedFor.current = jobId;
+    if (laneNode) return; // an explicit / deep-linked lane wins
+    const running = job ? runningLane(job) : null;
+    if (running) replaceLane(running);
+  }, [pipeline, job, jobId, laneNode, replaceLane]);
 
   const kind: JobKind = inboxThread?.kind ?? 'feat';
   const status: JobStatus = job
@@ -224,6 +246,30 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     </ReviewCommentsProvider>
     </MarkdownActionsProvider>
   );
+}
+
+/** Thread statuses that count as "currently running" for the open-a-job default — a lane doing active work
+ *  (executing / auto-fixing / reviewing / generating its just-in-time plan) or one blocked waiting on you.
+ *  `pending` (queued, not started) and `awaiting_approval` (the plan gate — that flow lives on Main) are
+ *  deliberately excluded, as are the terminal `done`/`incomplete`/`failed`. */
+const RUNNING_THREAD_STATUSES: ReadonlySet<ThreadStatus> = new Set<ThreadStatus>([
+  'planning',
+  'reviewing',
+  'executing',
+  'auto_fixing',
+  'awaiting_input',
+]);
+
+/** The `?lane=` id of the build lane to open when a job is first opened, or `null` to stay on Main. Picks the
+ *  highest-ordinal running thread (the current build frontier in a sequential run); the id IS the lane token
+ *  (a build thread is a bare-id node — see `node-registry.threadNode`). */
+function runningLane(job: PipelineJob): string | null {
+  let pick: PipelineJob['threads'][number] | null = null;
+  for (const t of job.threads) {
+    if (!RUNNING_THREAD_STATUSES.has(t.status)) continue;
+    if (!pick || t.ordinal > pick.ordinal) pick = t;
+  }
+  return pick?.id ?? null;
 }
 
 /** Short label for the base detail node, shown in a stacked sub-agent's breadcrumb (`‹ 02-webhooks.md ▸ …`).

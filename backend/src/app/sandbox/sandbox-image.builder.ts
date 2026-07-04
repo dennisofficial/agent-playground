@@ -20,7 +20,7 @@ const CONTEXT_FILES = [
   'sandbox-init.sh',
   'shell-init.sh',
   'atlas-svc',
-  'atlas-lsp-launcher.mjs',
+  'atlas-lsp-server.mjs',
 ] as const;
 
 /**

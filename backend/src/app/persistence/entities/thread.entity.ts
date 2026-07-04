@@ -112,6 +112,32 @@ export class ThreadEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   terminal_record!: ThreadTerminalRecord | null;
+
+  /**
+   * Phase 3 (ADR 0004 rider 4) — the "a halt is OWED a brain wake" signal. Set by the driver's `haltJob`
+   * to the non-`done` outcome (`blocked`/`incomplete`/`failed`) the moment a thread halts; the driver then
+   * wakes the job brain to triage it. Distinct from `terminal_record` (which is null for `incomplete`) and
+   * from a `request_operator_input` `awaiting_input` pause (which never sets this), so the owed-wake sweep
+   * keys on it unambiguously. Cleared on a re-drive so a fresh halt re-arms the wake. Null = no owed halt.
+   */
+  @Column({ type: 'text', nullable: true })
+  halt_outcome!: string | null;
+
+  /**
+   * Phase 3 halt-wake DEDUP marker. Stamped (generation-checked against `halt_fix_attempts`) only AFTER the
+   * brain wake turn is delivered; NULL while a wake is owed, so a crash before the stamp lets the boot sweep
+   * re-fire (at-least-once, matching the event/chat delivery sweeps). Cleared on a re-drive.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  halt_waked_at!: Date | null;
+
+  /**
+   * Phase 3 LIFETIME autonomous re-drive budget AND the generation token for the wake-stamp CAS. CAS-
+   * incremented by the brain's `retry_thread` tool before each re-drive; over the cap the tool refuses and
+   * the brain must escalate. The increment also invalidates a stale wake's late stamp. Never resets.
+   */
+  @Column({ type: 'int', default: 0 })
+  halt_fix_attempts!: number;
 }
 
 /**
@@ -130,8 +156,8 @@ export interface ThreadTerminalRecord {
   deviations?: string[];
   /** Honest known gaps / things to know — routed to the brain + next-thread orientation. */
   gaps?: string[];
-  /** Set when status='blocked' (Phase 3 `block_thread`). */
-  blocked?: { reason: 'question' | 'needs_env' | 'decision'; detail: string };
+  /** Set when status='blocked' (Phase 3 `block_thread`, or the ADR-0005 live-verification judge downgrade). */
+  blocked?: { reason: 'question' | 'needs_env' | 'decision' | 'unverified'; detail: string };
   /** Set when status='failed' — the structured failure the driver relays. */
   failure?: {
     kind: 'build' | 'verification';
@@ -139,6 +165,16 @@ export interface ThreadTerminalRecord {
     command?: string;
     exitCode?: number;
     stderrTail?: string;
+  };
+  /** The ADR-0005 live-verification judge's verdict on this claim, when the gate ran. The basis for the
+   *  `blocked`/`unverified` downgrade above (also recorded when the claim passed, for observability). */
+  liveVerification?: {
+    verdict: {
+      runtimeSurfaceTouched: boolean;
+      liveVerificationAdequate: boolean;
+      reason: string;
+      missingChecks?: string;
+    };
   };
 }
 

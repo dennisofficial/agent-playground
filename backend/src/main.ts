@@ -2,6 +2,7 @@ import '@core/tracing'; // MUST be first: starts the Langfuse OTEL SDK before an
 
 import { EnvService } from '@core/config/env/env.service';
 import { ENodeEnv } from '@core/config/env/validation';
+import { checkRestartLoop, renderRestartStormWarning } from '@core/dev-restart-guard';
 import { setupLogger } from '@core/setup-logger';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -29,6 +30,16 @@ import { AppModule } from './app/app.module';
 async function bootstrap() {
   const logger = setupLogger();
   const log = new Logger('Bootstrap');
+
+  // DEV-ONLY: `nest start --watch` restarts on every recompile; a genuine restart STORM (two `pnpm dev`
+  // instances racing a port, or a boot-time crash loop) is otherwise invisible until something breaks —
+  // see `dev-restart-guard.ts`. No-op in prod (no watch, no restart cadence to monitor).
+  if (process.env.NODE_ENV !== ENodeEnv.PROD) {
+    const restartCheck = checkRestartLoop();
+    if (restartCheck.looksLikeAStorm) {
+      log.warn(renderRestartStormWarning(restartCheck));
+    }
+  }
 
   // One HTTP app — hosts the ingress controllers. rawBody for GitHub HMAC signature verification.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -77,9 +88,24 @@ process.on('unhandledRejection', (reason) => {
 });
 
 bootstrap().catch((err: unknown) => {
+  const log = new Logger('Bootstrap');
+  // EADDRINUSE gets its own unmistakable message: in a workflow where multiple agents/terminals may each
+  // try to run the dev server, this is the single most common (and most confusing) boot failure — it
+  // otherwise reads as a generic stack dump easy to miss in scrollback, and a `nest --watch` supervisor
+  // will keep respawning the crashing child on every recompile, producing exactly the kind of restart
+  // storm `dev-restart-guard.ts` warns about (two instances racing the same port).
+  if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+    log.error(
+      `Fatal: port already in use — another process (likely a second \`pnpm dev\`) is already bound to ` +
+        `it. Stop that instance before starting this one; running two dev servers against the same port ` +
+        `causes a restart storm as they race on every file change. (${err.message})`,
+    );
+    process.exit(1);
+    return;
+  }
   // Boot itself failed (DB unreachable, a lifecycle hook threw, …) — fail CLEANLY with a readable
   // reason and a non-zero exit instead of an unhandled-rejection stack dump that exits anyway.
-  new Logger('Bootstrap').error(
+  log.error(
     `Fatal: Atlas v2 failed to boot — ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
   );
   process.exit(1);
