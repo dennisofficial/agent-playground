@@ -7,11 +7,10 @@ import { threadTitle } from '@/lib/thread-title';
 import { useLiveTurn } from '@/lib/api/job-stream';
 import { threadLane } from './phases';
 import { overlayLiveTasks } from './live-tasks';
-import { revNode, fixNode } from './node-registry';
 import type {
   PipelineJob,
   PipelineThread,
-  ReviewAgent,
+  PipelineReviewChild,
   TaskItem,
   JobStatus,
   ThreadStatus,
@@ -169,8 +168,6 @@ export interface TreeProps {
    *  its PARENT thread's fold and highlights that child row. */
   laneNode: string | null;
   onSelectNode: (node: string) => void;
-  /** Collapse back to Main — clicking the already-selected thread header (accordion toggle). */
-  onConversation: () => void;
 }
 
 /**
@@ -179,7 +176,7 @@ export interface TreeProps {
  * child threads → `rev:` detail nodes) with the derived Post-review fixes row. Draft threads (pre-approval
  * or not yet reached) fold to the drafting empty state.
  */
-export function PipelineTree({ job, status, jobId, laneNode, onSelectNode, onConversation }: TreeProps) {
+export function PipelineTree({ job, status, jobId, laneNode, onSelectNode }: TreeProps) {
   const threads = job.threads;
   // Pre-approval every thread is a draft (dashed dot, no tasks — the plan shows only the threads).
   const drafted = status === 'planning' || status === 'plan_review' || status === 'awaiting_approval';
@@ -199,27 +196,20 @@ export function PipelineTree({ job, status, jobId, laneNode, onSelectNode, onCon
           isHalt={i === haltIdx}
           notReached={haltIdx !== -1 && i > haltIdx}
           selected={laneNode === s.id}
-          openAgentId={agentIdIfSelected(laneNode, s.id)}
-          fixSelected={laneNode === fixNode(s.id)}
+          laneNode={laneNode}
           onSelectNode={onSelectNode}
-          onConversation={onConversation}
         />
       ))}
     </>
   );
 }
 
-/** The `rev:<threadId>:<agentId>` lane's agent id, when it belongs to this thread (else null). */
-function agentIdIfSelected(laneNode: string | null, threadId: string): string | null {
-  const prefix = `rev:${threadId}:`;
-  return laneNode?.startsWith(prefix) ? laneNode.slice(prefix.length) : null;
-}
-
 /**
  * One accordion fold — the clickable thread header (status glyph · label · count chip) over the open
- * body (TASKS → REVIEW AGENTS → Post-review fixes, or the draft empty state). A thread is OPEN when it is
- * the selected lane OR one of its review agents / its post-review fixes is the open lane (they're child
- * threads that ride the same LEFT pane); clicking the selected header again collapses back to Main.
+ * body (TASKS → REVIEW children → Post-review fixes, or the draft empty state). A thread is OPEN when it is
+ * the selected lane OR one of its review CHILD threads (a review lens / the post-review fix) is the open
+ * lane — they ride the same LEFT pane as bare child-thread nodes. Clicking the selected header again is a
+ * no-op (stays put) — navigate back to Main by clicking the Main row itself.
  */
 function ThreadFold({
   thread: s,
@@ -229,10 +219,8 @@ function ThreadFold({
   isHalt,
   notReached,
   selected,
-  openAgentId,
-  fixSelected,
+  laneNode,
   onSelectNode,
-  onConversation,
 }: {
   thread: PipelineThread;
   index: number;
@@ -241,21 +229,22 @@ function ThreadFold({
   isHalt: boolean;
   notReached: boolean;
   selected: boolean;
-  /** The thread's review agent open in the LEFT lane pane (keeps the fold open), or null. */
-  openAgentId: string | null;
-  /** Whether this thread's "Post-review fixes" thread (`fix:<threadId>`) is the open LEFT-pane lane. */
-  fixSelected: boolean;
+  /** The open LEFT-pane lane node (`?lane=`) — a bare thread/child id, or null for Main. */
+  laneNode: string | null;
   onSelectNode: (node: string) => void;
-  onConversation: () => void;
 }) {
   const state = laneState(s.status, drafted);
-  const open = selected || openAgentId !== null || fixSelected;
+  const children = s.children ?? [];
+  const reviewLenses = children.filter((c) => c.kind === 'review_lens');
+  const postReview = children.find((c) => c.kind === 'post_review') ?? null;
+  // The fold stays open while any of its review children is the selected LEFT-pane lane.
+  const childOpen = laneNode != null && children.some((c) => c.id === laneNode);
+  const open = selected || childOpen;
   // REALTIME: fold the thread's live lane over the durable list, so mid-turn task calls tick instantly
   // (the pipeline query only refetches at turn end). Idle lanes read a dead key — cheap store lookup.
   const liveTurn = useLiveTurn(jobId, threadLane(s.id));
   const tasks = overlayLiveTasks(s.tasks ?? [], liveTurn);
   const done = tasks.filter((t) => t.status === 'completed').length;
-  const agents = s.reviewAgents ?? [];
   const isDraft = state === 'draft';
   const count = isDraft ? 'draft' : tasks.length > 0 ? `[${done}/${tasks.length}]` : '';
 
@@ -263,7 +252,7 @@ function ThreadFold({
     <div className="border-l-[3px]" style={railStyle(state, open)}>
       <button
         type="button"
-        onClick={() => (selected ? onConversation() : onSelectNode(s.id))}
+        onClick={() => onSelectNode(s.id)}
         className={cn(
           'flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2',
           notReached && 'opacity-60',
@@ -289,12 +278,11 @@ function ThreadFold({
         ) : (
           <>
             <TasksBody tasks={tasks} done={done} total={tasks.length} />
-            {agents.length > 0 ? (
+            {reviewLenses.length > 0 ? (
               <ReviewAgentsBody
-                thread={s}
-                agents={agents}
-                openAgentId={openAgentId}
-                fixSelected={fixSelected}
+                lenses={reviewLenses}
+                postReview={postReview}
+                laneNode={laneNode}
                 onSelectNode={onSelectNode}
               />
             ) : null}
@@ -469,74 +457,73 @@ function BlockedRing({ size = 13 }: { size?: number }) {
   );
 }
 
-// ── REVIEW AGENTS — read-only child threads + the derived Post-review fixes row ───────────────────
+// ── REVIEW children — each review lens + the post-review fix are first-class child threads ─────────
 
-/** The design's three agent states — the wire `ReviewAgent` statuses fold onto these (agents are
- *  read-only text reviewers: no verdicts/findings surfaced, per the handoff). */
+/** The design's four agent states — a review child's wire `ThreadStatus` folds onto these. */
 type AgentDisplay = 'pending' | 'in_progress' | 'done' | 'skipped';
 
-function agentDisplay(status: ReviewAgent['status']): AgentDisplay {
-  if (status === 'running') return 'in_progress';
-  if (status === 'passed' || status === 'failed') return 'done';
+/** Map a review CHILD thread's `ThreadStatus` to its navigator display state. */
+function childDisplay(status: ThreadStatus): AgentDisplay {
+  if (status === 'done' || status === 'failed') return 'done'; // terminal — the lens ran
   if (status === 'skipped') return 'skipped';
-  return 'pending';
+  if (status === 'pending') return 'pending';
+  return 'in_progress'; // planning / reviewing / executing / auto_fixing / awaiting_*
 }
 
 function ReviewAgentsBody({
-  thread,
-  agents,
-  openAgentId,
-  fixSelected,
+  lenses,
+  postReview,
+  laneNode,
   onSelectNode,
 }: {
-  thread: PipelineThread;
-  agents: ReviewAgent[];
-  openAgentId: string | null;
-  fixSelected: boolean;
+  lenses: PipelineReviewChild[];
+  postReview: PipelineReviewChild | null;
+  laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  // Post-review fixes — the single consolidation agent that runs after ALL review agents complete
-  // (fix · apply · verify). Derived, not stored: queued until every agent is terminal, running while the
-  // thread is still `auto_fixing` past that point, done once the thread moves on.
-  const allTerminal = agents.every((a) => a.status !== 'pending' && a.status !== 'running');
-  const fix: 'queued' | 'running' | 'done' = !allTerminal
-    ? 'queued'
-    : thread.status === 'auto_fixing'
-      ? 'running'
-      : 'done';
-
   return (
     <div className="nav-expand mb-2 ml-[9px] flex flex-col gap-[2px]">
-      <BodyHeader label="REVIEW AGENTS" right={String(agents.length)} />
-      {agents.map((a) => (
+      <BodyHeader label="REVIEW AGENTS" right={String(lenses.length)} />
+      {lenses.map((c) => (
         <AgentRow
-          key={a.id}
-          agent={a}
-          selected={openAgentId === a.id}
-          onOpen={() => onSelectNode(revNode(thread.id, a.id))}
+          key={c.id}
+          child={c}
+          selected={laneNode === c.id}
+          onOpen={() => onSelectNode(c.id)}
         />
       ))}
-      <PostReviewFixesRow
-        state={fix}
-        selected={fixSelected}
-        onOpen={() => onSelectNode(fixNode(thread.id))}
-      />
+      {postReview ? (
+        <PostReviewFixesRow
+          state={postReviewState(postReview.status)}
+          selected={laneNode === postReview.id}
+          onOpen={() => onSelectNode(postReview.id)}
+        />
+      ) : null}
     </div>
   );
 }
 
-/** One review agent — a single-line navigable child thread: status tile · name · status word · chevron.
- *  Clicking opens the agent's own transcript in the LEFT pane (`rev:` lane); the parent fold stays open. */
+/** The post-review fix child's `ThreadStatus` → its row's three display states. */
+function postReviewState(status: ThreadStatus): 'queued' | 'running' | 'done' {
+  if (status === 'pending') return 'queued';
+  if (status === 'executing' || status === 'auto_fixing' || status === 'planning' || status === 'reviewing')
+    return 'running';
+  return 'done';
+}
+
+/** One review lens — a single-line navigable child thread: status tile · name · status word · chevron.
+ *  Clicking opens the lens's own transcript in the LEFT pane (its `autofix:…:<lensId>` lane); the parent
+ *  fold stays open. Its id is the child THREAD's real id (no synthetic `rev:` prefix). */
 function AgentRow({
-  agent,
+  child: c,
   selected,
   onOpen,
 }: {
-  agent: ReviewAgent;
+  child: PipelineReviewChild;
   selected: boolean;
   onOpen: () => void;
 }) {
-  const d = agentDisplay(agent.status);
+  const d = childDisplay(c.status);
   const word = d === 'done' ? 'done' : d === 'in_progress' ? 'reviewing' : d === 'skipped' ? 'skipped' : 'pending';
   const wordColor = d === 'done' ? 'var(--green)' : d === 'in_progress' ? 'var(--blue)' : 'var(--faint)';
   return (
@@ -555,7 +542,7 @@ function AgentRow({
           d === 'pending' || d === 'skipped' ? 'text-dim' : 'text-text',
         )}
       >
-        {agent.label}
+        {c.brief}
       </span>
       <span className="shrink-0 font-mono text-[8px]" style={{ color: wordColor }}>
         {word}

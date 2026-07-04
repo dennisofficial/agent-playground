@@ -26,7 +26,6 @@ import {
 import { useLiveTurn, type LiveTurn } from '@/lib/api/job-stream';
 import { threadLane } from './phases';
 import { codexReviewLane } from './codex-review';
-import { autofixLensLane, autofixFixLane } from './review-lane';
 import { resolveNode } from './node-resolution';
 import { TranscriptView } from './conversation';
 import { DetailTopBar } from './detail-top-bar';
@@ -87,6 +86,12 @@ export function PhaseView({
   const liveTurn = useLiveTurn(jobRef.jobId);
   const job = pipelineJob(pipeline);
   const thread = job?.threads.find((s) => s.id === selectedNode) ?? null;
+  // A review CHILD thread (a `review_lens` / `post_review` row) — matched by its own bare id (no `rev:`/
+  // `fix:` prefix). Carries the transcript lane the backend computed for it.
+  const reviewChild =
+    job?.threads
+      .flatMap((s) => s.children ?? [])
+      .find((c) => c.id === selectedNode) ?? null;
   // A step leaf (execute folder) — find which thread owns it + its 1-based index, for the label.
   const owningSection = job?.threads.find((s) => s.steps.some((p) => p.id === selectedNode)) ?? null;
   const phaseIndex = owningSection ? owningSection.steps.findIndex((p) => p.id === selectedNode) : -1;
@@ -187,21 +192,28 @@ export function PhaseView({
         onSelectNode={onSelectNode}
       />
     );
-  } else if (selectedNode.startsWith('fix:')) {
-    // POST-REVIEW FIXES — the auto-fix stage's fix turn (fix · apply · verify) over a thread's diff, on the
-    // `autofix:<threadId>:fix` lane. SAME transcript renderer as a review lens. The fix turn is SKIPPED when
-    // the diff was clean or no finding hit the fix threshold, so an empty transcript is a legitimate state,
-    // handled by TranscriptView's emptyText (not a not-found).
-    const fixKey = selectedNode.slice('fix:'.length);
-    const fixThread = job?.threads.find((s) => s.id === fixKey) ?? null;
-    title = 'Post-review fixes';
-    subtitle = fixThread?.status === 'auto_fixing' ? 'applying fixes · verify' : 'fix · apply · verify';
+  } else if (reviewChild) {
+    // A REVIEW CHILD thread — a review lens or the post-review fix (fix · apply · verify), each on its own
+    // `autofix:<parentId>:<lensId>` / `autofix:<parentId>:fix` lane (carried on the child's pipeline data).
+    // SAME transcript renderer as Main/Codex review. An empty transcript is legitimate (a lens/fix that
+    // hasn't run / found nothing) — handled by TranscriptView's emptyText, not a not-found.
+    const isFix = reviewChild.kind === 'post_review';
+    title = isFix ? 'Post-review fixes' : reviewChild.brief;
+    subtitle = isFix
+      ? reviewChild.status === 'executing' || reviewChild.status === 'auto_fixing'
+        ? 'applying fixes · verify'
+        : 'fix · apply · verify'
+      : `review agent · ${reviewChild.status}`;
     body = (
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
-        lane={autofixFixLane(fixKey)}
-        emptyText="No fixes were needed — the review found nothing to change."
+        lane={reviewChild.lane}
+        emptyText={
+          isFix
+            ? 'No fixes were needed — the review found nothing to change.'
+            : 'No review activity yet — this lens hasn’t run.'
+        }
         onSelectNode={onSelectNode}
       />
     );
@@ -215,23 +227,6 @@ export function PhaseView({
     title = sec ? threadTitle(sec.brief) : 'Thread plan';
     subtitle = 'thread plan';
     body = <SectionPlanDoc />;
-  } else if (selectedNode.startsWith('rev:')) {
-    const [, threadKey, lensId = 'review'] = selectedNode.split(':');
-    const revThread = job?.threads.find((s) => s.id === threadKey) ?? null;
-    const agent = revThread?.reviewAgents?.find((a) => a.id === lensId) ?? null;
-    title = agent?.label ?? lensId;
-    subtitle = agent ? `review agent · ${agent.status}` : 'review agent · over the thread diff';
-    // The SAME transcript renderer as Main/Codex review — the lens's own thinking/tool/text blocks, tagged
-    // `meta.autofixId`+`meta.lensId` on its own `autofix:<autofixId>:<lensId>` lane.
-    body = (
-      <TranscriptView
-        jobRef={jobRef}
-        messages={messages}
-        lane={autofixLensLane(threadKey, lensId)}
-        emptyText="No review activity yet — this lens hasn’t run."
-        onSelectNode={onSelectNode}
-      />
-    );
   } else if (step) {
     title = `step ${phaseIndex + 1}${step.title ? ` · ${step.title}` : ''}`;
     subtitle = 'Claude · execute';

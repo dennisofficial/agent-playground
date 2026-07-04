@@ -4,7 +4,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   ArrowUpRight,
+  ChevronRight,
   FileText,
+  Folder,
   GitBranch,
   GitMerge,
   GitPullRequest,
@@ -262,14 +264,7 @@ export function Navigator({
         />
         {/* Codex review is now a synchronous `review_plan` tool call — it renders inline in the Main
             conversation (via the generic tool-call renderer), not as a dedicated navigator row. */}
-        <ThreadRows
-          status={st}
-          job={job}
-          jobId={jobRef.jobId}
-          laneNode={laneNode}
-          onSelectNode={onSelectNode}
-          onConversation={onConversation}
-        />
+        <ThreadRows status={st} job={job} jobId={jobRef.jobId} laneNode={laneNode} onSelectNode={onSelectNode} />
 
         {/* The whole-diff master review is now just another thread in the THREADS list above (rendered
             "Master review", no pinned region) — see the master-review-as-thread change. */}
@@ -355,14 +350,12 @@ function ThreadRows({
   jobId,
   laneNode,
   onSelectNode,
-  onConversation,
 }: {
   status: JobStatus;
   job: PipelineJob | null;
   jobId: string;
   laneNode: string | null;
   onSelectNode: (node: string) => void;
-  onConversation: () => void;
 }) {
   // Triaging — the autonomous lane: triage findings, not a build tree.
   if (status === 'triaging') {
@@ -386,14 +379,7 @@ function ThreadRows({
     return <BuildLanesEmpty />;
   }
   return (
-    <PipelineTree
-      job={job}
-      status={status}
-      jobId={jobId}
-      laneNode={laneNode}
-      onSelectNode={onSelectNode}
-      onConversation={onConversation}
-    />
+    <PipelineTree job={job} status={status} jobId={jobId} laneNode={laneNode} onSelectNode={onSelectNode} />
   );
 }
 
@@ -512,21 +498,39 @@ function OutputGroup({
   onSelectNode: (node: string) => void;
   children?: ReactNode;
 }) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const seededRef = useRef(false);
+  useEffect(() => {
+    // Files arrive async (empty on first render, populated once `/context` resolves) — seed the
+    // "all folders collapsed" default the first time we actually have files, not before.
+    if (!seededRef.current && files.length > 0) {
+      seededRef.current = true;
+      setCollapsed(allFolderPaths(buildFileTree(files)));
+    }
+  }, [files]);
+  const toggleFolder = (path: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
   return (
     <>
       <Divider label={label} count={files.length > 0 ? files.length : <ZeroCount />} />
       {children}
       {files.length > 0 ? (
-        files.map((f) => (
-          <FileRow
-            key={f.name}
-            icon={generated ? <Lock size={12} className="shrink-0" style={{ color: 'var(--slate)' }} /> : fileIcon(f.name)}
-            name={f.name}
-            active={detailNode === `${prefix}:${f.name}`}
-            onClick={() => onSelectNode(`${prefix}:${f.name}`)}
-            note={{ text: formatBytes(f.size) }}
-          />
-        ))
+        renderFileTree({
+          node: buildFileTree(files),
+          path: '',
+          depth: 0,
+          prefix,
+          generated,
+          detailNode,
+          onSelectNode,
+          collapsed,
+          toggleFolder,
+        })
       ) : loading ? (
         <LoadingRow label="Loading…" />
       ) : children ? null : (
@@ -845,6 +849,7 @@ function FileRow({
   active,
   onClick,
   note,
+  indent = 0,
 }: {
   icon: ReactNode;
   name: string;
@@ -852,6 +857,7 @@ function FileRow({
   active?: boolean;
   onClick?: () => void;
   note?: { text: string; pulse?: boolean };
+  indent?: number;
 }) {
   const body = (
     <>
@@ -862,18 +868,38 @@ function FileRow({
       ) : null}
     </>
   );
+  const style = indent > 0 ? { paddingLeft: 8 + indent * 14 } : undefined;
   return onClick ? (
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-2.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2 ${
+      style={style}
+      className={`flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2 ${
         active ? 'nav-selected-blue' : ''
       }`}
     >
       {body}
     </button>
   ) : (
-    <div className="flex items-center gap-2.5 px-2 py-1.5">{body}</div>
+    <div className="flex items-center gap-1.5 px-2 py-1.5" style={style}>
+      {body}
+    </div>
+  );
+}
+
+/** One folder header row inside a SPECS/GENERATED/ARTIFACTS tree — click toggles its subtree. */
+function FolderRow({ name, indent, open, onClick }: { name: string; indent: number; open: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{ paddingLeft: 8 + indent * 14 }}
+      className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left hover:bg-surface-2"
+    >
+      <Folder size={12} className="shrink-0 text-faint" />
+      <span className="flex-1 truncate font-mono text-[10.5px] text-text">{name}</span>
+      <ChevronRight size={11} className={`shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`} />
+    </button>
   );
 }
 
@@ -881,6 +907,122 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|avif)$/i;
 /** Pick a file-row icon from the extension (images get the image glyph; everything else a doc). */
 function fileIcon(name: string): ReactNode {
   return IMAGE_EXT.test(name) ? <ImageIcon size={12} /> : <FileText size={12} />;
+}
+
+function fileBaseName(path: string): string {
+  const idx = path.lastIndexOf('/');
+  return idx === -1 ? path : path.slice(idx + 1);
+}
+
+interface FileTreeNode {
+  folders: Map<string, FileTreeNode>;
+  files: ContextFile[];
+}
+
+/** Groups a flat list of (possibly slash-nested) `ContextFile.name` paths into a folder tree. */
+function buildFileTree(files: ContextFile[]): FileTreeNode {
+  const root: FileTreeNode = { folders: new Map(), files: [] };
+  for (const f of files) {
+    const parts = f.name.split('/');
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i];
+      let next = node.folders.get(seg);
+      if (!next) {
+        next = { folders: new Map(), files: [] };
+        node.folders.set(seg, next);
+      }
+      node = next;
+    }
+    node.files.push(f);
+  }
+  return root;
+}
+
+/** Every folder path in a tree, at any depth — used to seed a group's initial "all collapsed" state. */
+function allFolderPaths(node: FileTreeNode, path = ''): Set<string> {
+  const paths = new Set<string>();
+  for (const [folderName, child] of node.folders) {
+    const folderPath = path ? `${path}/${folderName}` : folderName;
+    paths.add(folderPath);
+    for (const p of allFolderPaths(child, folderPath)) paths.add(p);
+  }
+  return paths;
+}
+
+/** Renders a `FileTreeNode` as folder rows then file rows, each level sorted folder (a-z) then files (a-z). */
+function renderFileTree({
+  node,
+  path,
+  depth,
+  prefix,
+  generated,
+  detailNode,
+  onSelectNode,
+  collapsed,
+  toggleFolder,
+}: {
+  node: FileTreeNode;
+  path: string;
+  depth: number;
+  prefix: 'spec' | 'artifact' | 'gen';
+  generated?: boolean;
+  detailNode: string | null;
+  onSelectNode: (node: string) => void;
+  collapsed: Set<string>;
+  toggleFolder: (path: string) => void;
+}): ReactNode[] {
+  const rows: ReactNode[] = [];
+  const folderNames = [...node.folders.keys()].sort((a, b) => a.localeCompare(b));
+  for (const folderName of folderNames) {
+    const folderPath = path ? `${path}/${folderName}` : folderName;
+    const isOpen = !collapsed.has(folderPath);
+    rows.push(
+      <FolderRow
+        key={`folder:${folderPath}`}
+        name={folderName}
+        indent={depth}
+        open={isOpen}
+        onClick={() => toggleFolder(folderPath)}
+      />,
+    );
+    if (isOpen) {
+      const childRows = renderFileTree({
+        node: node.folders.get(folderName)!,
+        path: folderPath,
+        depth: depth + 1,
+        prefix,
+        generated,
+        detailNode,
+        onSelectNode,
+        collapsed,
+        toggleFolder,
+      });
+      rows.push(
+        <div key={`children:${folderPath}`} className="relative">
+          {/* Indent guide — a vertical line under this folder's icon, spanning its expanded contents, so
+              nested files/folders are easy to trace back to the folder they belong to. */}
+          <div className="absolute bottom-0 top-0 w-px" style={{ left: 14 + depth * 14, background: 'var(--border)' }} />
+          {childRows}
+        </div>,
+      );
+    }
+  }
+  const sortedFiles = [...node.files].sort((a, b) => fileBaseName(a.name).localeCompare(fileBaseName(b.name)));
+  for (const f of sortedFiles) {
+    rows.push(
+      <FileRow
+        key={f.name}
+        icon={generated ? <Lock size={12} className="shrink-0" style={{ color: 'var(--slate)' }} /> : fileIcon(f.name)}
+        name={fileBaseName(f.name)}
+        indent={depth}
+        active={detailNode === `${prefix}:${f.name}`}
+        onClick={() => onSelectNode(`${prefix}:${f.name}`)}
+        note={{ text: formatBytes(f.size) }}
+      />,
+    );
+  }
+  return rows;
 }
 
 /** A muted "loading" placeholder row for a region whose files are still being fetched. */

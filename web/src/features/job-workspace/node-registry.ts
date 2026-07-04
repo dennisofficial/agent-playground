@@ -1,7 +1,6 @@
 import type { PipelineJob } from '@/lib/api/types';
 import { threadLane } from './phases';
 import { codexReviewLane } from './codex-review';
-import { autofixLensLane, autofixFixLane } from './review-lane';
 
 /**
  * THE NODE REGISTRY — the single source of truth for how a navigator `?node=`/`?lane=` token is
@@ -18,16 +17,13 @@ import { autofixLensLane, autofixFixLane } from './review-lane';
 
 export type NodeResolution = 'loading' | 'found' | 'not_found';
 
-// ── node-id builders (use these instead of inlining `rev:${…}` etc.) ─────────────────────────────
-/** A build thread / step leaf — a BARE id (no prefix); opens in the LEFT lane pane. */
+// ── node-id builders ─────────────────────────────────────────────────────────────────────────────
+/** Every conversational thread — a build thread/step leaf AND a review CHILD thread (a `review_lens` or the
+ *  `post_review` fix turn) — is a BARE id (no prefix); it opens in the LEFT lane pane. The old
+ *  `rev:<tid>:<agent>` / `fix:<tid>` synthetic ids are gone: review children are real thread rows, so they
+ *  are addressed by their own id and their lane comes from the pipeline data (`PipelineReviewChild.lane`). */
 export const threadNode = (threadId: string): string => threadId;
 export const stepNode = (stepId: string): string => stepId;
-/** A review-agent lens thread — `rev:<threadId>:<agentId>`; a read-only child thread, so it opens in the
- *  LEFT lane pane like the build thread it hangs off of (NOT the right subagent/detail pane). */
-export const revNode = (threadId: string, agentId: string): string => `rev:${threadId}:${agentId}`;
-/** The post-review fix turn (fix · apply · verify) — `fix:<threadId>`; a thread, so it opens in the LEFT
- *  lane pane like the review agents above it. */
-export const fixNode = (threadId: string): string => `fix:${threadId}`;
 
 // ── placement: which pane a node opens in ───────────────────────────────────────────────────────
 /** Literals that render from card/derived data in the RIGHT detail pane. */
@@ -76,23 +72,15 @@ export function resolveNode(node: string, job: PipelineJob | null, loading: bool
   if (!job) return loading ? 'loading' : 'not_found';
 
   if (node.startsWith('secplan:')) return hasThread(job, node.slice('secplan:'.length)) ? 'found' : 'not_found';
-  // `fix:<threadId>` — the post-review fix turn slot; resolvable whenever its owning thread still exists.
-  // Whether a fix turn actually RAN is a TranscriptView empty-state concern, not a not-found one (the slot
-  // legitimately exists even when the review found nothing to change).
-  if (node.startsWith('fix:')) {
-    return hasThread(job, node.slice('fix:'.length)) ? 'found' : 'not_found';
-  }
-  // `rev:<threadId>:<agentId>` — found only when the thread still exists AND still selects that review agent
-  // (the agent list is dynamic). A stale agent id must not render a plausible-but-wrong page.
-  if (node.startsWith('rev:')) {
-    const [, threadId, lensId] = node.split(':');
-    const revThread = threadId ? job.threads.find((s) => s.id === threadId) : undefined;
-    return revThread && lensId && (revThread.reviewAgents ?? []).some((a) => a.id === lensId)
-      ? 'found'
-      : 'not_found';
-  }
-  // Bare token — a thread or a step leaf.
-  const matches = job.threads.some((s) => s.id === node || s.steps.some((p) => p.id === node));
+  // Bare token — a thread, a step leaf, or a review CHILD thread (a `review_lens` / `post_review` row). A
+  // review child legitimately exists even before its lens has run (an empty transcript is a TranscriptView
+  // empty-state, not a not-found).
+  const matches = job.threads.some(
+    (s) =>
+      s.id === node ||
+      s.steps.some((p) => p.id === node) ||
+      (s.children ?? []).some((c) => c.id === node),
+  );
   return matches ? 'found' : 'not_found';
 }
 
@@ -109,14 +97,13 @@ function hasThread(job: PipelineJob, id: string): boolean {
  */
 export function nodeLane(node: string, jobId: string, job: PipelineJob | null): string | null {
   if (node.startsWith('codex-review:')) return codexReviewLane(jobId);
-  if (node.startsWith('rev:')) {
-    const [, threadKey, lensId = 'review'] = node.split(':');
-    return autofixLensLane(threadKey, lensId);
-  }
-  if (node.startsWith('fix:')) {
-    return autofixFixLane(node.slice('fix:'.length));
-  }
   if (!job) return null;
+  // A review CHILD thread (review_lens / post_review) → the lane the backend already computed for it
+  // (`autofix:<parentId>:<lensId>` / `autofix:<parentId>:fix`), carried on the pipeline data.
+  for (const s of job.threads) {
+    const child = (s.children ?? []).find((c) => c.id === node);
+    if (child) return child.lane;
+  }
   // A bare thread id → its stable thread lane.
   const thread = job.threads.find((s) => s.id === node);
   if (thread) return threadLane(thread.id);

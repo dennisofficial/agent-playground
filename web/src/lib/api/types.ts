@@ -27,6 +27,7 @@ export type ThreadStatus =
   | 'executing'
   | 'awaiting_input'
   | 'auto_fixing'
+  | 'skipped' // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
   | 'done'
   | 'incomplete'
   | 'failed';
@@ -213,20 +214,29 @@ export interface PipelineStep {
   batchStepIds: string[];
 }
 
-/** One post-build review agent over a thread's diff: id + human label + its per-agent status. `pending`
- *  before the thread is reviewed, transitioned by the auto-fix stage, `skipped` when the diff was empty. */
-export interface ReviewAgent {
+/**
+ * One review CHILD thread of a builder — a `review_lens` (one self-review pass) or the single `post_review`
+ * (fix · apply · verify). A first-class thread row: its own status + streaming `lane` + (for a lens) the
+ * `lensId` and finding count. The navigator renders these directly as bare child-thread nodes (no synthetic
+ * `rev:`/`fix:` ids); `lane` is the `autofix:<parentId>:<lensId>` / `autofix:<parentId>:fix` transcript lane.
+ */
+export interface PipelineReviewChild {
   id: string;
-  label: string;
-  status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
-  /** Findings the agent surfaced (set once it has run). */
-  findings?: number;
+  kind: 'review_lens' | 'post_review';
+  brief: string;
+  status: ThreadStatus;
+  /** The lens id (`best_practices`/…) for a `review_lens` child; absent for `post_review`. */
+  lensId?: string;
+  /** Findings this lens surfaced, or null until it has run (`post_review` is always null). */
+  findings: number | null;
+  /** The transcript lane the child streams on (the SAME lane the backend turn writes). */
+  lane: string;
 }
 
 /**
  * One task in an orchestrating session's LIVE, LLM-authored checklist — folded server-side from its
- * `TaskCreate`/`TaskUpdate` tool calls (no fixed/expected set, unlike {@link ReviewAgent}: `[]` just means
- * the session hasn't created any tasks yet, not "not started"). `dropped` is the SDK's `deleted` status.
+ * `TaskCreate`/`TaskUpdate` tool calls (no fixed/expected set: `[]` just means the session hasn't created
+ * any tasks yet, not "not started"). `dropped` is the SDK's `deleted` status.
  */
 export interface TaskItem {
   id: string;
@@ -245,17 +255,20 @@ export interface PipelineThread {
   id: string;
   ordinal: number;
   brief: string;
-  /** The thread's scope type (backend/frontend/docs/…) — selects the review agents. */
+  /** The thread's scope type (backend/frontend/docs/…). */
   type: string;
   status: ThreadStatus;
-  /** The pre-configured Codex master-review thread (whole-diff review & fix) — rendered "Master review"
-   *  with no review-agents fold. */
+  /** The thread KIND (`builder` | `master_review`) — the single differentiator. */
+  kind?: string;
+  /** True for the whole-diff Codex master-review thread (derived from `kind`) — rendered "Master review"
+   *  with no review children. */
   isMasterReview?: boolean;
   /**
-   * The review agents selected to run over this thread's diff (a fixed set today; backend-selected).
-   * The navigator's review folder renders one leaf per agent — never hard-code this list.
+   * This builder's review CHILD threads (review_lens × N + post_review) — each a first-class row the
+   * navigator renders directly. `[]` until the builder finishes executing and its review is materialized;
+   * always `[]` for a master-review thread (it IS the review).
    */
-  reviewAgents: ReviewAgent[];
+  children: PipelineReviewChild[];
   /** The thread's own live task list — see {@link TaskItem}. `[]` until its session creates a task. */
   tasks: TaskItem[];
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */

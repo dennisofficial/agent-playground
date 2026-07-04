@@ -144,7 +144,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         id: string;
         hasPlan: boolean;
         status: string;
-        reviewAgents: Array<{ id: string; label: string; status: string; findings?: number }>;
+        children: Array<{ id: string; kind: string; status: string; lensId?: string; lane: string }>;
         steps: Array<{ ordinal: number; title: string | null; stage: string; status: string }>;
       }>;
     };
@@ -158,10 +158,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.threads).toHaveLength(1);
     const [sec] = state.threads;
     expect(sec.hasPlan).toBe(true);
-    // The review-agent run list is exposed per thread (fixed set today; navigator renders it dynamically).
-    // An un-reviewed thread (empty `review_agents`) falls back to the default lens set at `pending`.
-    expect(sec.reviewAgents.map((a) => a.id)).toEqual(['best_practices', 'correctness', 'consistency']);
-    expect(sec.reviewAgents.every((a) => a.status === 'pending')).toBe(true);
+    // Review children are data-driven — an un-reviewed builder has none yet (they're materialized after it
+    // finishes executing). No more synthetic "3 pending review agents" fallback.
+    expect(sec.children).toEqual([]);
     expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
     expect(sec.steps[0].status).toBe('building');
     expect(sec.steps[1].status).toBe('pending');
@@ -234,14 +233,30 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     await store.setThreadStatus(lenses[2].id, 'executing'); // third still running
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
-      threads: Array<{ reviewAgents: Array<{ id: string; status: string; findings?: number }> }>;
+      threads: Array<{
+        children: Array<{
+          id: string;
+          kind: string;
+          status: string;
+          lensId?: string;
+          findings: number | null;
+          lane: string;
+        }>;
+      }>;
     };
-    // The child rows are NOT top-level threads (they nest under their builder).
+    // The child rows are NOT top-level threads (they nest under their builder as `children`).
     expect(state.threads).toHaveLength(1);
-    const byId = new Map(state.threads[0].reviewAgents.map((a) => [a.id, a]));
-    expect(byId.get('best_practices')).toMatchObject({ status: 'passed', findings: 1 });
-    expect(byId.get('correctness')).toMatchObject({ status: 'passed', findings: 2 });
-    expect(byId.get('consistency')?.status).toBe('running');
+    const lensRows = state.threads[0].children.filter((c) => c.kind === 'review_lens');
+    const byLens = new Map(lensRows.map((c) => [c.lensId, c]));
+    // Each lens landed its own status + findings on its own row (no shared array → no lost update).
+    expect(byLens.get('best_practices')).toMatchObject({ status: 'done', findings: 1 });
+    expect(byLens.get('correctness')).toMatchObject({ status: 'done', findings: 2 });
+    expect(byLens.get('consistency')?.status).toBe('executing');
+    // Each lens carries its own streaming lane; the post_review child rides the fix lane.
+    expect(byLens.get('best_practices')?.lane).toBe(`autofix:${thread.id}:best_practices`);
+    expect(state.threads[0].children.find((c) => c.kind === 'post_review')?.lane).toBe(
+      `autofix:${thread.id}:fix`,
+    );
 
     // reviewChildren reads the full findings back off each lens row (post_review's source of truth).
     const fresh = await store.reviewChildren(thread.id);

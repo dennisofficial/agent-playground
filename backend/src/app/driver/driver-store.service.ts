@@ -20,10 +20,10 @@ import {
   ThreadEntity,
   JobEntity,
 } from '../persistence/entities';
-import type { ReviewAgentState, ThreadTerminalRecord } from '../persistence/entities';
-import { reviewAgentsForThread } from '../autofix/autofix-lenses';
+import type { ThreadTerminalRecord } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
 import { isDriverExecutableKind } from '../thread-kind';
+import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import type { PlannedStep } from './render-plan';
 
@@ -658,19 +658,16 @@ export class DriverStoreService {
         brief: s.brief,
         type: s.type,
         status: s.status,
-        // Derived from `kind` (the `is_master_review` column is gone) — the web still keys "Master review"
-        // rendering off this field until the tree becomes fully `(kind, parent_id)`-driven.
+        // Derived from `kind` (the `is_master_review` column is gone) — the web keys "Master review"
+        // rendering off this field. `kind` is also surfaced directly for the data-driven tree.
+        kind: s.kind,
         isMasterReview: s.kind === 'master_review',
         hasPlan: s.plan != null,
-        // The review agents that run over this thread's diff, with per-agent status — DERIVED from the
-        // thread's `review_lens` child rows (each carries its own status + full findings). Before the
-        // children are materialized, fall back to the selected lens set at `pending` so the folder still
-        // lists them. The MASTER-REVIEW thread runs no review agents (it IS the review), so it resolves to
-        // `[]` — the navigator renders it with no review-agents folder and no "Post-review fixes" row.
-        reviewAgents:
-          s.kind === 'master_review'
-            ? []
-            : deriveReviewAgents(childrenByParent.get(s.id) ?? [], s),
+        // The builder's review CHILD threads (review_lens × N + post_review) — each a first-class row with
+        // its own status + findings + streaming lane. The web renders the review sub-tree directly from
+        // these (bare child-thread nodes), no derived `reviewAgents` array + synthetic `rev:`/`fix:` ids.
+        // A master-review thread has no children (it IS the review), so it resolves to `[]`.
+        children: (childrenByParent.get(s.id) ?? []).map((c) => toPipelineChild(c, s.id)),
         // The thread's own LLM-authored task list — no fallback default, same rationale as the job-level
         // field above.
         tasks: Array.isArray(s.tasks) ? s.tasks : [],
@@ -806,47 +803,33 @@ function toReviewChild(row: ThreadEntity): ReviewChildThread {
 }
 
 /**
- * Derive a builder's per-agent review state (the `/pipeline` `reviewAgents` shape) from its `review_lens`
- * child rows — each row's own status + full findings. Falls back to the selected lens set at `pending`
- * when the children aren't materialized yet (mirrors the pre-child fallback so the folder still lists them).
+ * Map a builder's review CHILD row (`review_lens` / `post_review`) to the `/pipeline` wire shape: its id +
+ * kind + status + (for a lens) its `lensId`/finding count, plus the streaming lane the web renders it on —
+ * `autofix:<parentId>:<lensId>` for a lens, `autofix:<parentId>:fix` for the fix pass (the SAME lanes the
+ * turns stream on). The web uses these as bare child-thread nodes (no synthetic `rev:`/`fix:` ids).
  */
-function deriveReviewAgents(
-  children: ThreadEntity[],
-  parent: ThreadEntity,
-): ReviewAgentState[] {
-  const lenses = children.filter((c) => c.kind === 'review_lens');
-  if (lenses.length === 0) {
-    return reviewAgentsForThread(parent).map((a) => ({ ...a, status: 'pending' as const }));
-  }
-  return lenses.map((c) => {
-    const lensId = (c.config as { lensId?: string })?.lensId ?? c.id;
-    const findings = Array.isArray(c.review_findings) ? c.review_findings.length : undefined;
-    return {
-      id: lensId,
-      label: c.brief,
-      status: mapChildStatusToAgent(c.status),
-      ...(findings != null ? { findings } : {}),
-    };
-  });
-}
-
-/** Map a review-child thread `status` to the web's `ReviewAgentState.status` vocabulary. */
-function mapChildStatusToAgent(status: string): ReviewAgentState['status'] {
-  switch (status) {
-    case 'done':
-      return 'passed';
-    case 'failed':
-      return 'failed';
-    case 'skipped':
-      return 'skipped';
-    case 'executing':
-    case 'auto_fixing':
-    case 'planning':
-    case 'reviewing':
-      return 'running';
-    default:
-      return 'pending';
-  }
+function toPipelineChild(c: ThreadEntity, parentId: string): {
+  id: string;
+  kind: string;
+  brief: string;
+  status: string;
+  lensId?: string;
+  findings: number | null;
+  lane: string;
+} {
+  const lensId = (c.config as { lensId?: string })?.lensId;
+  return {
+    id: c.id,
+    kind: c.kind,
+    brief: c.brief,
+    status: c.status,
+    ...(lensId ? { lensId } : {}),
+    findings: Array.isArray(c.review_findings) ? c.review_findings.length : null,
+    lane:
+      c.kind === 'review_lens'
+        ? laneFor('autofix-lens', parentId, lensId ?? 'review')
+        : laneFor('autofix-fix', parentId),
+  };
 }
 
 function toStep(row: StepEntity): Step {
