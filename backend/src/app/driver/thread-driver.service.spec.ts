@@ -660,7 +660,6 @@ function thread(
     status,
     kind: isMasterReview ? 'master_review' : 'builder',
     parentThreadId: null,
-    isMasterReview,
   };
 }
 

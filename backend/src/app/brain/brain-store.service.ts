@@ -1053,7 +1053,6 @@ export class BrainStoreService {
             brief: 'Master review — whole-diff review & fix',
             type: 'general',
             kind: 'master_review',
-            is_master_review: true,
             plan: null,
             handoff_in: null,
             handoff_out: null,

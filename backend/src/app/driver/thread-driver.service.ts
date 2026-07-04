@@ -772,7 +772,7 @@ export class ThreadDriver implements JobDispatcher {
     // brain triaged the same halt). Re-halt instead, which re-establishes the owed wake. Only `redriveThread`
     // re-runs a blocked thread, and it CLEARS the record first, so this short-circuit is skipped after a
     // genuine brain-authorized retry.
-    if (!thread.isMasterReview) {
+    if (thread.kind !== 'master_review') {
       const prior = await this.store.getTerminalRecord(thread.id).catch(() => null);
       if (prior?.status === 'blocked') {
         this.logger.log(
@@ -1262,7 +1262,7 @@ export class ThreadDriver implements JobDispatcher {
     sectionStartSha: string | undefined,
     candidate: ThreadTerminalRecord,
   ): Promise<{ record: ThreadTerminalRecord; warning?: string }> {
-    if (thread.isMasterReview || !sectionStartSha) {
+    if (thread.kind === 'master_review' || !sectionStartSha) {
       return { record: candidate };
     }
 
@@ -1463,7 +1463,7 @@ export class ThreadDriver implements JobDispatcher {
     // The instruction the engine receives — the build turn's "first message". Computed once here so it
     // can both kick off the turn AND be persisted on the anchor row (the web renders it like a subagent's
     // Task prompt, so the step transcript shows what was asked, not just the engine's reply).
-    const task = thread.isMasterReview
+    const task = thread.kind === 'master_review'
       ? renderMasterReviewTask(record, repo)
       : renderBatchTask(record, thread, steps);
 
@@ -1476,7 +1476,7 @@ export class ThreadDriver implements JobDispatcher {
     // So: if a `done` terminal record already exists for the terminal batch, skip the kick/reattach dance
     // entirely and fall straight through to the gate below with the EXISTING assertion.
     const priorTerm =
-      isLastBatch && !thread.isMasterReview
+      isLastBatch && thread.kind !== 'master_review'
         ? await this.store.getTerminalRecord(thread.id)
         : null;
 
@@ -1512,7 +1512,7 @@ export class ThreadDriver implements JobDispatcher {
         // Fresh start of the TERMINAL batch: clear any stale terminal record from a prior failed attempt so
         // the assertion we read after this turn can only be THIS turn's (staleness guard — ADR 0004). A
         // resume/reattach deliberately does NOT clear, preserving a pre-crash assertion.
-        if (isLastBatch && !thread.isMasterReview) {
+        if (isLastBatch && thread.kind !== 'master_review') {
           await this.store.clearTerminalRecord(thread.id).catch(() => undefined);
         }
         await this.post(route, `:gear: ${thread.brief} — building: ${label}`);
@@ -1563,7 +1563,7 @@ export class ThreadDriver implements JobDispatcher {
       // no host tool bridge, so it can't call `complete_thread`), keeps exception-shape semantics: the turn
       // returned → done. The terminal Claude batch READS the assertion the orchestrator wrote instead of
       // inferring done-ness. No assertion after a clean turn ⇒ `incomplete` (NEVER silently done).
-      if (isLastBatch && !thread.isMasterReview) {
+      if (isLastBatch && thread.kind !== 'master_review') {
         const term = await this.store.getTerminalRecord(thread.id);
         outcome = term?.status ?? 'incomplete';
         if (outcome === 'incomplete') {
@@ -1586,7 +1586,7 @@ export class ThreadDriver implements JobDispatcher {
     // before the driver trusts the claim enough to commit. Claude worker batches ONLY — master-review is
     // Codex, which has no host tool bridge (`report_verification` would be uncallable there), and it already
     // carries its own typecheck/verify mandate in `renderMasterReviewTask`.
-    if (!thread.isMasterReview) {
+    if (thread.kind !== 'master_review') {
       const gate = await this.runVerificationGate(
         job, thread, sandbox, anchor, lane, channel, repo, sectionStartSha,
       );

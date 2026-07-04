@@ -63,7 +63,6 @@ describe('renderBatchTask orientation injection', () => {
     status: 'executing',
     kind: 'builder',
     parentThreadId: null,
-    isMasterReview: false,
   };
 
   it('includes the orientation cheat-sheet, framed as subordinate to code + specs, when set', () => {

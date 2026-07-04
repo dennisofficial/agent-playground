@@ -525,7 +525,7 @@ async function threadTitles(ds: DataSource, jobId: string): Promise<string[]> {
 /** The count of appended master-review threads for a job (should be exactly 1 after a full plan). */
 async function masterReviewCount(ds: DataSource, jobId: string): Promise<number> {
   const rows: Array<{ n: string }> = await ds.query(
-    `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND is_master_review = true`,
+    `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND kind = 'master_review'`,
     [jobId],
   );
   return Number(rows[0]?.n ?? '0');

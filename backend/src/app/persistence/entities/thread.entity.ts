@@ -93,16 +93,6 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'general' })
   type!: string;
 
-  /**
-   * TRUE for the single pre-configured master-review thread appended to a full thread-driven build — a Codex
-   * `execute` thread that reviews the whole merged diff AND applies fixes, running LAST (before ship/PR).
-   * Distinguishes it from an ordinary builder without overloading `type`: the driver flips engine/persona/task
-   * on it and SKIPS the per-thread auto-fix stage (the review thread IS the review); the navigator renders it
-   * as "Master review" with no review-agents folder. Default false. See the driver's `kickBatchTurn` branch.
-   */
-  @Column({ type: 'boolean', default: false })
-  is_master_review!: boolean;
-
   /** The detailed plan once authored/generated; null while pending. Steps LOCK once planned. */
   @Column({ type: 'text', nullable: true })
   plan!: string | null;
@@ -128,22 +118,12 @@ export class ThreadEntity extends TimestampedEntity {
   status!: string;
 
   /**
-   * The post-build review agents (lenses) and their per-agent status — seeded when the thread enters
-   * `auto_fixing`, transitioned by the auto-fix stage, surfaced by `getPipelineState` so the navigator's
-   * review folder can show each agent's state. `[]` until the thread is reviewed (getPipelineState falls
-   * back to the default lens set for an empty array). LITERAL default — a `() => '[]'::jsonb` function
-   * default makes `migration:generate` loop forever (see the jsonb-default-loop memory).
-   */
-  @Column({ type: 'jsonb', default: [] })
-  review_agents!: ReviewAgentState[];
-
-  /**
    * The thread's LLM-authored task list — folded incrementally from the orchestrating session's
    * `TaskCreate`/`TaskUpdate` tool calls at the shared transcript harness (see `TurnHarnessFactory`), so
    * the navigator's TASKS section renders durable state instead of the client refolding the transcript.
-   * `[]` until the session creates its first task — there is no fixed/expected set (unlike
-   * `review_agents`), so `getPipelineState` does NOT fall back to a computed default here. LITERAL
-   * default — see the `review_agents` doc above for why a function default breaks `migration:generate`.
+   * `[]` until the session creates its first task — there is no fixed/expected set, so `getPipelineState`
+   * does NOT fall back to a computed default here. LITERAL default — a `() => '[]'::jsonb` function default
+   * makes `migration:generate` loop forever (see the jsonb-default-loop memory).
    */
   @Column({ type: 'jsonb', default: [] })
   tasks!: TaskItem[];
@@ -223,7 +203,8 @@ export interface ThreadTerminalRecord {
   };
 }
 
-/** One post-build review agent's persisted state on a thread. */
+/** One post-build review agent as the `/pipeline` read-model surfaces it — DERIVED at read time from a
+ *  builder's `review_lens` child rows (each row's status + findings), no longer a persisted column. */
 export interface ReviewAgentState {
   id: string;
   label: string;

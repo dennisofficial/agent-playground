@@ -658,16 +658,19 @@ export class DriverStoreService {
         brief: s.brief,
         type: s.type,
         status: s.status,
-        isMasterReview: s.is_master_review ?? false,
+        // Derived from `kind` (the `is_master_review` column is gone) — the web still keys "Master review"
+        // rendering off this field until the tree becomes fully `(kind, parent_id)`-driven.
+        isMasterReview: s.kind === 'master_review',
         hasPlan: s.plan != null,
         // The review agents that run over this thread's diff, with per-agent status — DERIVED from the
         // thread's `review_lens` child rows (each carries its own status + full findings). Before the
         // children are materialized, fall back to the selected lens set at `pending` so the folder still
         // lists them. The MASTER-REVIEW thread runs no review agents (it IS the review), so it resolves to
         // `[]` — the navigator renders it with no review-agents folder and no "Post-review fixes" row.
-        reviewAgents: s.is_master_review
-          ? []
-          : deriveReviewAgents(childrenByParent.get(s.id) ?? [], s),
+        reviewAgents:
+          s.kind === 'master_review'
+            ? []
+            : deriveReviewAgents(childrenByParent.get(s.id) ?? [], s),
         // The thread's own LLM-authored task list — no fallback default, same rationale as the job-level
         // field above.
         tasks: Array.isArray(s.tasks) ? s.tasks : [],
@@ -787,7 +790,6 @@ function toThread(row: ThreadEntity): DriverThread {
     status: row.status as ThreadStatus,
     kind: row.kind,
     parentThreadId: row.parent_thread_id ?? null,
-    isMasterReview: row.is_master_review ?? false,
   };
 }
 

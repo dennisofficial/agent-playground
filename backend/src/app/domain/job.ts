@@ -155,15 +155,12 @@ export interface Thread {
   handoffOut: string | null;
   status: ThreadStatus;
   /** The thread KIND — `main | builder | master_review | review_lens | post_review | plan_review`. The
-   *  single differentiator across all thread-like concepts. See {@link ThreadEntity.kind}. */
+   *  single differentiator across all thread-like concepts (a `master_review` is the whole-diff Codex
+   *  review-&-fix appended last). See {@link ThreadEntity.kind}. */
   kind: string;
   /** The parent thread in the tree (a builder is the parent of its review-lens/post-review children);
    *  null for root/job-level rows. See {@link ThreadEntity.parent_thread_id}. */
   parentThreadId: string | null;
-  /** The pre-configured Codex master-review thread (whole-diff review & fix), appended last to a full
-   *  thread-driven build. See {@link ThreadEntity.is_master_review}. Superseded by `kind==='master_review'`
-   *  (removed in the cleanup step); kept as a shim while both coexist. */
-  isMasterReview: boolean;
 }
 
 /** A step's lifecycle — explicit, resumable; the driver re-enters at the correct step on restart. */
