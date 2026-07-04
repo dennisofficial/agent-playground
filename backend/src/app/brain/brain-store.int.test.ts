@@ -512,10 +512,11 @@ async function messageTexts(ds: DataSource, jobId: string): Promise<string[]> {
   return rows.map((r) => r.text);
 }
 
-/** The FEATURE thread briefs (excludes the auto-appended master-review thread — asserted separately). */
+/** The FEATURE (builder) thread briefs — excludes the appended master-review thread AND the render-only
+ *  `main` row (both asserted / created separately). */
 async function threadTitles(ds: DataSource, jobId: string): Promise<string[]> {
   const rows: Array<{ brief: string }> = await ds.query(
-    `SELECT brief FROM threads WHERE job_id = $1 AND is_master_review = false ORDER BY ordinal ASC`,
+    `SELECT brief FROM threads WHERE job_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
     [jobId],
   );
   return rows.map((r) => r.brief);
@@ -542,10 +543,10 @@ async function phasesFor(
   );
 }
 
-/** FEATURE thread plans (excludes the auto-appended master-review thread, whose plan is null). */
+/** FEATURE (builder) thread plans — excludes the master-review thread (plan null) and the `main` row. */
 async function sectionPlans(ds: DataSource, jobId: string): Promise<Array<string | null>> {
   const rows: Array<{ plan: string | null }> = await ds.query(
-    `SELECT plan FROM threads WHERE job_id = $1 AND is_master_review = false ORDER BY ordinal ASC`,
+    `SELECT plan FROM threads WHERE job_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
     [jobId],
   );
   return rows.map((r) => r.plan);

@@ -1062,6 +1062,28 @@ export class BrainStoreService {
         );
       }
 
+      // The MAIN root thread — a first-class, render/identity-only row for the job's brain session (the
+      // operator conversation). The driver never executes it (its `main` kind is render-only); it just gives
+      // the brain session a place in the thread tree. Appended LAST (after the master review) with ordinal 0
+      // so it never disturbs the `savedSections[i]` ↔ `threadTitles[i]` step-locking alignment below
+      // (indices ≥ threadTitles.length have no authored steps). Recreated on each re-propose (the prior draft
+      // threads were deleted above), which is fine — it carries no durable state (its live state is the
+      // AgentSessionManager session + the job's `main_tasks`).
+      featureThreads.push(
+        threads.create({
+          job_id: input.jobId,
+          org_id: input.orgId,
+          ordinal: 0,
+          brief: 'Main',
+          type: 'general',
+          kind: 'main',
+          plan: null,
+          handoff_in: null,
+          handoff_out: null,
+          status: 'pending',
+        }),
+      );
+
       const savedSections = await threads.save(featureThreads);
 
       // Lock the authored steps as `steps` rows — same gap-numbered convention as

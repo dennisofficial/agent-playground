@@ -23,6 +23,7 @@ import {
 import type { ReviewAgentState, ThreadTerminalRecord } from '../persistence/entities';
 import { reviewAgentsForThread } from '../autofix/autofix-lenses';
 import type { ReviewFinding } from '../autofix';
+import { isDriverExecutableKind } from '../thread-kind';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import type { PlannedStep } from './render-plan';
 
@@ -610,7 +611,13 @@ export class DriverStoreService {
         childrenByParent.set(t.parent_thread_id, list);
       }
     }
-    const threads = allThreads.filter((t) => t.parent_thread_id == null);
+    // The top-level `threads` array is the driver-EXECUTABLE roots (builder + master_review). The render-only
+    // `main`/`plan_review` rows are first-class rows in the tree but the web renders them from their own
+    // sources today (main_tasks / codex_reviews), so they're excluded here until step 5 makes the web render
+    // the full `(kind, parent_id)` tree.
+    const threads = allThreads.filter(
+      (t) => t.parent_thread_id == null && isDriverExecutableKind(t.kind),
+    );
     // All the thread's steps in one query (avoid N+1), grouped by thread for the nav folder tree.
     const steps = await this.steps.find({
       where: { job_id: thread.id },

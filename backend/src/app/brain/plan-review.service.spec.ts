@@ -11,7 +11,7 @@ import type { EngineRunnerPort, EngineRunResult } from '../engine/engine.types';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
-import type { CodexReviewEntity, JobEntity } from '../persistence/entities';
+import type { CodexReviewEntity, JobEntity, ThreadEntity } from '../persistence/entities';
 import type { BlockSink, TurnHarnessFactory } from '../surface';
 
 /** Creds stub: no per-org secret → the engine uses its env fallback (these tests stub the engine). */
@@ -158,6 +158,12 @@ function makeService(opts: {
   const jobs = {
     findOne: async () => ({ id: 'job-1', repo_id: 'repo-1' }),
   } as unknown as Repository<JobEntity>;
+  // The render-only `plan_review` thread row is best-effort — a no-op stub is enough for these tests.
+  const threads = {
+    findOne: async () => null,
+    create: (x: unknown) => x,
+    save: vi.fn(async () => undefined),
+  } as unknown as Repository<ThreadEntity>;
   const harness = {
     create: () => ({
       onEvent: () => undefined,
@@ -175,6 +181,7 @@ function makeService(opts: {
     lifecycle,
     opts.reviews as unknown as Repository<CodexReviewEntity>,
     jobs,
+    threads,
     harness,
     fakeElection,
     blockSink,

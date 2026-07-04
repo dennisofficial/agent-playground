@@ -12,7 +12,7 @@ import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { CodexReviewEntity, JobEntity } from '../persistence/entities';
+import { CodexReviewEntity, JobEntity, ThreadEntity } from '../persistence/entities';
 import { TurnHarnessFactory, laneFor, BLOCK_SINK, type BlockSink } from '../surface';
 import { Agent, renderAgentPrompt } from '../prompt-kit';
 import {
@@ -188,6 +188,8 @@ export class PlanReviewService {
     private readonly reviews: Repository<CodexReviewEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
+    @InjectRepository(ThreadEntity, DB_CONNECTION)
+    private readonly threads: Repository<ThreadEntity>,
     private readonly turnHarness: TurnHarnessFactory,
     private readonly election: LeaderElectionService,
     @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
@@ -238,6 +240,11 @@ export class PlanReviewService {
     const isResume = Boolean(row?.codex_session_id);
 
     row = await this.persistRow(row, input, specHash, 'running', null, null);
+    // Give the plan review a first-class, render/identity-only `plan_review` thread row so it has a place in
+    // the thread tree. Its RUNTIME stays here (this synchronous `review_plan` turn + the `codex_reviews` row,
+    // which remains the authoritative work-owed/recovery source) — the driver never executes the row.
+    // Idempotent + best-effort (a persistPlan re-propose deletes it; the next review re-creates it).
+    await this.ensurePlanReviewThread(input.jobId, input.orgId);
 
     // STABLE per JOB (not per review): the Codex SDK stores its transcript under CODEX_HOME keyed by this
     // sandboxKey, so resuming a prior session only finds it when every review of a job shares ONE home.
@@ -405,6 +412,33 @@ export class PlanReviewService {
    */
   async findRunningReviews(): Promise<CodexReviewEntity[]> {
     return this.reviews.find({ where: { status: 'running' } });
+  }
+
+  /** Ensure a render/identity-only `plan_review` thread row exists for the job (idempotent, best-effort).
+   *  Root row (parent null), ordinal 5 — before the builders (10, 20, …) and after the `main` row (0). The
+   *  driver never executes it (its kind is render-only); it just gives the plan review a node in the tree. */
+  private async ensurePlanReviewThread(jobId: string, orgId: string): Promise<void> {
+    try {
+      const existing = await this.threads.findOne({
+        where: { job_id: jobId, kind: 'plan_review' },
+        select: { id: true },
+      });
+      if (existing) return;
+      await this.threads.save(
+        this.threads.create({
+          job_id: jobId,
+          org_id: orgId,
+          kind: 'plan_review',
+          parent_thread_id: null,
+          ordinal: 5,
+          brief: 'Plan review',
+          type: 'general',
+          status: 'reviewing',
+        }),
+      );
+    } catch (err) {
+      this.logger.warn(`could not ensure plan_review thread row for job=${jobId}: ${err}`);
+    }
   }
 
   /** Upsert the job's single review row into a new state. Returns the persisted row. */
