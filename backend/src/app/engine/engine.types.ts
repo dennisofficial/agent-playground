@@ -89,6 +89,20 @@ export type EngineEvent =
       structuredPatch?: StructuredPatchHunk[];
     };
 
+/**
+ * One model's slice of a turn's usage — the SDK's per-model breakdown (Claude only; absent for Codex).
+ * All counts/cost are SDK-computed. Keyed by model id inside {@link EngineUsage.modelUsage}.
+ */
+export interface ModelUsageBreakdown {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** SDK-computed cost for THIS model's share of the turn. */
+  costUsd: number;
+  webSearchRequests?: number;
+}
+
 /** Vendor-neutral token-usage counts (all optional — engines populate what their SDK reports). */
 export interface EngineUsage {
   /**
@@ -121,6 +135,12 @@ export interface EngineUsage {
    * when no per-call model was seen.
    */
   contextModel?: string;
+  /**
+   * Per-model usage breakdown for the WHOLE turn (orchestrator + any subagents), keyed by model id —
+   * the SDK's `result.modelUsage` map carried verbatim (Claude only; absent for Codex). The
+   * authoritative source for per-model token/cost analytics; the flat fields above collapse it to one.
+   */
+  modelUsage?: Record<string, ModelUsageBreakdown>;
 }
 
 /**
@@ -378,7 +398,7 @@ export interface TurnMeta {
   channel: string;
   /** Transcript lane: 'main' (brain) | 'thread:<threadId>' (a build thread) | 'codex-review:<jobId>'. */
   lane: string;
-  kind: 'brain' | 'step' | 'review' | 'gate' | 'autofix';
+  kind: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction';
   /** Per-kind params needed to rebuild the turn on re-attach (author, prompt, route, timeouts, …). */
   ctx?: Record<string, unknown>;
 }

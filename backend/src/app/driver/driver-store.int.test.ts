@@ -208,6 +208,51 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(byId.get('consistency')?.status).toBe('skipped');
   });
 
+  it('claimThreadAutofix runs the review pass exactly once — a claim on a `done` thread no-ops (guards the torn-review-agents bug)', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'claim autofix',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const thread = await threads.save(
+      threads.create({
+        job_id: job.id,
+        org_id: ORG_ID,
+        ordinal: 10,
+        brief: 'Backend — claim autofix',
+        status: 'executing',
+      }),
+    );
+    const seed = [
+      { id: 'best_practices', label: 'BP', status: 'pending' as const },
+      { id: 'correctness', label: 'C', status: 'pending' as const },
+      { id: 'consistency', label: 'Cs', status: 'pending' as const },
+    ];
+
+    // First drive claims the pass: executing → auto_fixing, agents seeded.
+    expect(await store.claimThreadAutofix(thread.id, seed)).toBe(true);
+    expect((await store.getThread(thread.id))?.status).toBe('auto_fixing');
+
+    // The pass finishes and marks the thread done.
+    await store.finalizeReviewAgents(thread.id, ['best_practices', 'correctness', 'consistency']);
+    await store.setThreadStatus(thread.id, 'done');
+
+    // A duplicate/stale drive tries to re-claim the SAME thread → refused; the row is untouched (still done,
+    // finalized agents preserved — NOT reset to pending).
+    expect(await store.claimThreadAutofix(thread.id, seed)).toBe(false);
+    expect((await store.getThread(thread.id))?.status).toBe('done');
+    const state = (await store.getPipelineState(job.id, ORG_ID)) as {
+      threads: Array<{ reviewAgents: Array<{ id: string; status: string }> }>;
+    };
+    expect(state.threads[0].reviewAgents.every((a) => a.status !== 'pending')).toBe(true);
+  });
+
   it('surfaces the per-thread LLM-authored task list, with NO fallback default (unlike review agents)', async () => {
     const job = await jobs.save(
       jobs.create({

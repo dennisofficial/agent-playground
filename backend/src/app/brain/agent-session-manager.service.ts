@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
@@ -34,12 +35,14 @@ import {
   webSecretInputCard,
   wrapSystemNotification,
 } from '../surface';
+import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ActiveTurnEntity,
   StimulusEntity,
   JobSandboxEntity,
   CodexReviewEntity,
+  MessageEntity,
 } from '../persistence/entities';
 import type { ThreadTerminalRecord } from '../persistence/entities';
 import {
@@ -112,6 +115,7 @@ import type {
   EngineRunnerPort,
   ToolImpl,
   RunEngineArgs,
+  EngineRunResult,
 } from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
@@ -248,6 +252,9 @@ export class AgentSessionManager
     // The shared send seam — the brain registers its `main`-lane transport (the durable steer/fresh-turn
     // pump) so a generic caller can `postToThread(laneFor('main', jobId), …)` without knowing it's the brain.
     private readonly threadInput: ThreadInputService,
+    // Durable per-model usage/cost analytics (best-effort) for brain + compaction turns. @Optional so
+    // unit tests can construct the manager without wiring analytics; DI (@Global) supplies it live.
+    @Optional() private readonly usageProjector?: TurnUsageProjector,
   ) {}
 
   /**
@@ -369,13 +376,24 @@ export class AgentSessionManager
       this.logger.warn(`turn_active reconciliation failed: ${err}`);
     }
 
-    // 2) RE-ATTACH interrupted brain turns. Redis is the only transport: the engine kept running detached
-    //    and is still writing to its durable streams, so a fresh backend resumes tailing + the tool bridge
-    //    and persists on completion — live, lossless restart-survival. See ADR 0001.
+    // 2) RE-ATTACH every interrupted turn this service owns (brain + compaction — same discipline as the
+    //    driver's build turns). Redis is the only transport: each engine kept running detached and is still
+    //    writing its durable streams, so a fresh backend resumes tailing and completes it per kind (brain →
+    //    persist transcript; compaction → reseed). Live, lossless restart-survival. See ADR 0001.
     try {
-      await this.reattachInFlightTurns();
+      await this.reattachOwnedTurns();
     } catch (err) {
       this.logger.warn(`redis turn re-attach failed: ${err}`);
+    }
+
+    // 2b) Re-drive any compaction STRANDED between its (now-finished) exec and the reseed commit — the
+    //     post-conclusion window re-attach can't cover (no `active_turns` row left). Guarded on "no live
+    //     turn" so the exec is provably dead and a fresh run cannot race it. Runs AFTER `reattachOwnedTurns`
+    //     (which awaits compaction reseeds), so a just-reattached job is no longer stranded here.
+    try {
+      await this.reconcileStrandedCompactions();
+    } catch (err) {
+      this.logger.warn(`compaction reconcile failed: ${err}`);
     }
 
     // 2) Re-deliver any question the operator ANSWERED (durably stamped) but whose delivery turn a host
@@ -668,10 +686,12 @@ export class AgentSessionManager
       sandbox,
       commitMessage: LEDGER_COMMIT_MESSAGE,
     });
-    // Stamp complete ONLY when the PR is confirmed shipped (its `pr_url` latched). Otherwise leave the
-    // spine for the next backstop pass — never mark a ledger complete for a job whose PR we couldn't
-    // confirm (that would drop the retry that finishes the ledger onto the real PR).
-    if (outcome.opened && outcome.prConfirmed) {
+    // Stamp complete once the ship turn actually ran (`opened`) — the ledger commit + branch push happen
+    // unconditionally inside `ship()` before it even checks for an open PR (see `BuildShipService.ship`), so
+    // the files are on the remote regardless of `prConfirmed`, which only reflects a GitHub API lookup that
+    // can lag right after `gh pr create`. Gating on `prConfirmed` here just re-selects this row (and re-runs
+    // the promote turn on an empty delta) on every boot until GitHub's list endpoint catches up.
+    if (outcome.opened) {
       await this.store.markLedgerPromoted(thread.id);
     }
   }
@@ -702,6 +722,7 @@ export class AgentSessionManager
     // single-brain-turn guard (`register` → `BrainTurnAlreadyRunningError`) backstops the check→queue race.
     if (
       !stimulus.seedResetVerify &&
+      !stimulus.compact &&
       (await this.steerIntoLiveBrainTurn(stimulus).catch((err) => {
         this.logger.warn(`steer-into-live pre-check failed for job=${stimulus.jobId}: ${err}`);
         return false;
@@ -1039,13 +1060,36 @@ export class AgentSessionManager
   }
 
   /**
-   * BOOT RE-ATTACH (redis transport): for every brain turn still in-flight (`active_turns` running), the
-   * engine kept running detached and is still writing to its Redis streams. Reconstruct the turn's harness
-   * (live frames + durable blocks) + tool closure from the registry row, then RE-ATTACH the engine runner
-   * to resume tailing + serving the tool bridge and persist on completion. Lossless restart-survival —
-   * the durable Redis log is replayed from the start to rebuild the transcript. Fire-and-forget per turn.
+   * The boot RE-ATTACH handlers for the turn kinds THIS service owns, keyed by `active_turns.kind`. Each
+   * resumes an in-flight detached exec and COMPLETES it the way that kind requires. `awaitCompletion` gates
+   * whether {@link reattachOwnedTurns} blocks on it: a `brain` turn can run for minutes so it's
+   * fire-and-forget, while a `compaction` turn is short AND `reconcileStrandedCompactions` depends on its
+   * reseed having landed, so it's awaited before the sweep returns. The driver owns 'step'/'gate'/'review'/
+   * 'autofix' and re-attaches those itself — they are intentionally absent here. Add an owned kind by
+   * registering one entry (no new sweep method / boot wiring).
    */
-  private async reattachInFlightTurns(): Promise<void> {
+  private reattachHandlers(): Record<
+    string,
+    { run: (row: ActiveTurnEntity) => Promise<void>; awaitCompletion: boolean }
+  > {
+    return {
+      brain: { run: (row) => this.reattachOne(row), awaitCompletion: false },
+      compaction: {
+        run: (row) => this.reattachCompactionOne(row),
+        awaitCompletion: true,
+      },
+    };
+  }
+
+  /**
+   * BOOT RE-ATTACH (redis transport) for every in-flight turn this service owns. Each detached engine kept
+   * running across the restart and is still writing to its Redis streams; we list `active_turns` ONCE and
+   * dispatch each row to its {@link reattachHandlers} entry — brain rebuilds the harness + tool closure and
+   * persists the transcript on completion; compaction completes the reseed. Lossless restart-survival (the
+   * durable Redis log is replayed from the start). Long-running kinds run fire-and-forget; only kinds whose
+   * completion a later boot step depends on are awaited (see `awaitCompletion`). See ADR 0001.
+   */
+  private async reattachOwnedTurns(): Promise<void> {
     if (!this.engineRunner.reattach) {
       this.logger.warn(
         'redis re-attach: the bound ENGINE_RUNNER has no reattach() — skipping',
@@ -1059,16 +1103,26 @@ export class AgentSessionManager
       this.logger.warn(`redis re-attach: listRunning failed: ${err}`);
       return;
     }
-    const brain = rows.filter((r) => r.kind === 'brain');
-    if (brain.length === 0) return;
+    const handlers = this.reattachHandlers();
+    const owned = rows.filter((r) => handlers[r.kind]);
+    if (owned.length === 0) return;
     this.logger.log(
-      `Leader: re-attaching ${brain.length} in-flight brain turn(s) over Redis`,
+      `Leader: re-attaching ${owned.length} in-flight turn(s) over Redis`,
     );
-    for (const row of brain) {
-      void this.reattachOne(row).catch((err) =>
-        this.logger.warn(`re-attach turn ${row.turn_id} failed: ${err}`),
+    const blocking: Promise<void>[] = [];
+    for (const row of owned) {
+      const { run, awaitCompletion } = handlers[row.kind];
+      const p = run(row).catch((err) =>
+        this.logger.warn(
+          `re-attach turn ${row.turn_id} (${row.kind}) failed: ${err}`,
+        ),
       );
+      if (awaitCompletion) blocking.push(p);
+      else void p;
     }
+    // Block ONLY on ordering-sensitive kinds (compaction → its reseed must land before
+    // `reconcileStrandedCompactions` queries); long brain turns keep streaming in the background.
+    await Promise.all(blocking);
   }
 
   /** Re-attach one in-flight brain turn: rebuild stimulus → tools → harness, resume the engine, persist. */
@@ -1166,6 +1220,17 @@ export class AgentSessionManager
               ),
             }
           : undefined,
+      );
+      void this.usageProjector?.record(
+        {
+          jobId: row.job_id,
+          orgId: row.org_id,
+          lane: row.lane,
+          kind: row.kind,
+          engine: 'claude',
+          turnId: row.turn_id,
+        },
+        result.usage,
       );
       this.logger.log(`re-attached turn ${row.turn_id} completed + persisted`);
     } catch (err) {
@@ -1455,6 +1520,12 @@ export class AgentSessionManager
       jobId: stimulus.jobId,
       channel,
     });
+    // One-shot guard so THIS turn's fully-assembled prompt (the operator body PLUS the invisible folded
+    // prefixes: compaction seed / reset notice / awareness / open-questions) is surfaced exactly once, on
+    // the engine's turn-START `session` event — which fires ONLY for a turn that actually kicked, so the
+    // single-brain-turn steer-away (BrainTurnAlreadyRunningError) and the detached-mid-flight early-return
+    // never record a prompt for a turn that didn't run. Idempotent by stimulus id across re-drive/reattach.
+    let promptEmitted = false;
 
     const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.jobId}`;
     // Per-org Claude subscription secret (deployed); undefined locally → the in-container engine falls
@@ -1503,7 +1574,7 @@ export class AgentSessionManager
         channel,
         lane: 'main',
         kind: 'brain',
-        // Enough to rebuild the ChatStimulus + buildTools closure on a boot re-attach (see reattachInFlightTurns).
+        // Enough to rebuild the ChatStimulus + buildTools closure on a boot re-attach (see reattachOne).
         // `seed`/`seedQuestionId` are persisted so a re-attached DELIVERY turn can still stamp its card
         // `deliveredAt` on success — otherwise the boot sweep would re-seed that card on every restart forever.
         ctx: {
@@ -1521,6 +1592,13 @@ export class AgentSessionManager
       },
       ...(opts?.onRegistered ? { onTurnRegistered: opts.onRegistered } : {}),
       onEvent: (e) => {
+        // Surface THIS turn's fully-assembled prompt on the `main` lane, once, on the turn-START `session`
+        // event (see `promptEmitted` above for why this is the right hook). Fire-and-forget; insert-once by
+        // stimulus id, so a re-drive/reattach of the same message never duplicates it.
+        if (e.kind === 'session' && !promptEmitted) {
+          promptEmitted = true;
+          void streamer.emitPrompt(task, `brain:${stimulus.id}`);
+        }
         // EAGER session-id persist: the engine emits `{kind:'session'}` at turn START (before any work), so
         // a turn interrupted on its FIRST exchange — which never reaches the post-run persist below — still
         // leaves a resolvable session id on the row (helps resume AND crash recovery locate the transcript).
@@ -1533,9 +1611,14 @@ export class AgentSessionManager
         ) {
           const sid = e.sessionId;
           sandboxRow.session_id = sid;
-          // If this turn folded a compaction seed, the fresh session now exists — clear the seed in the
-          // SAME write so it's consumed exactly once (a crash before this point re-folds it next turn).
-          if (hadCompactionSeed) sandboxRow.pending_compaction_seed = null;
+          // If this turn folded a compaction seed, the fresh session now exists — clear the seed AND the
+          // abandon marker in the SAME write: the compacted session is fully retired, so recovery may resume
+          // normal skips for this job. A crash before this point re-folds the seed + keeps the marker (both
+          // safe — recovery keeps skipping the abandoned session until the fresh one is truly born).
+          if (hadCompactionSeed) {
+            sandboxRow.pending_compaction_seed = null;
+            sandboxRow.compacting_session_id = null;
+          }
           try {
             void Promise.resolve(
               this.sandboxRows.update(
@@ -1543,7 +1626,7 @@ export class AgentSessionManager
                 {
                   session_id: sid,
                   ...(hadCompactionSeed
-                    ? { pending_compaction_seed: null }
+                    ? { pending_compaction_seed: null, compacting_session_id: null }
                     : {}),
                 },
               ),
@@ -1649,6 +1732,10 @@ export class AgentSessionManager
             ),
           }
         : undefined,
+    );
+    void this.usageProjector?.record(
+      { jobId: stimulus.jobId, orgId: stimulus.orgId, lane: 'main', kind: 'brain', engine: 'claude' },
+      result.usage,
     );
 
     // SUCCESS TAIL ONLY: the brain consumed this seed's answer this turn, so stamp the card `deliveredAt`
@@ -3601,6 +3688,21 @@ export class AgentSessionManager
     const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.jobId}`;
     const auth = await this.creds.engineAuth(stimulus.orgId, 'claude');
 
+    // Durably mark the session being ABANDONED before the summary turn runs. Two duties: (1) recovery-skip —
+    // `TurnRecoveryService` must not surface this session's transcript, whose tail becomes the internal
+    // summary; (2) resume signal — if `session_id` still equals this after a restart, the reseed never
+    // committed and the boot reconciler completes it. Cleared on a non-crash failure below, and when the
+    // fresh session is born (the eager session-id persist).
+    await this.sandboxRows
+      .update(
+        { job_id: stimulus.jobId, org_id: stimulus.orgId },
+        { compacting_session_id: sessionId },
+      )
+      .catch((err) =>
+        this.logger.warn(`compaction: marker set failed for job=${stimulus.jobId}: ${err}`),
+      );
+
+    const channel = stimulus.replyRoute?.jobRef ?? stimulus.jobId;
     let summary = '';
     try {
       const runArgs: RunEngineArgs = {
@@ -3615,6 +3717,17 @@ export class AgentSessionManager
         mode: 'review',
         model: AgentSessionManager.BRAIN_MODEL,
         sessionId,
+        // Track this detached exec like every other turn: an `active_turns` row (kind:'compaction') lets a
+        // restart mid-summary RE-ATTACH the SAME exec (see `reattachOwnedTurns`) instead of orphaning it and
+        // double-running. The compaction handler (`reattachCompactionOne`) reseeds — never persists as chat.
+        turnMeta: {
+          jobId: stimulus.jobId,
+          orgId: stimulus.orgId,
+          channel,
+          lane: 'main',
+          kind: 'compaction',
+          ctx: { repoId: stimulus.repoId, sessionId },
+        },
         ...(sandbox.containerId
           ? {
               target: {
@@ -3625,11 +3738,18 @@ export class AgentSessionManager
           : {}),
       };
       const result = await this.engineRunner.run(runArgs);
+      void this.usageProjector?.record(
+        { jobId: stimulus.jobId, orgId: stimulus.orgId, lane: 'main', kind: 'compaction', engine: 'claude' },
+        result.usage,
+      );
       summary = (result.result ?? '').trim();
     } catch (err) {
+      // A non-clean summary turn never reaches `end_turn`, so recovery would not surface it — safe to clear
+      // the marker (no leak) and give up this cycle (best-effort; no boot retry-loop).
       this.logger.error(
         `compaction: summary turn failed for job=${stimulus.jobId} — leaving session intact: ${err}`,
       );
+      await this.clearCompactionMarker(stimulus.jobId, stimulus.orgId);
       return;
     }
 
@@ -3637,41 +3757,180 @@ export class AgentSessionManager
       this.logger.warn(
         `compaction: empty summary for job=${stimulus.jobId} — leaving session intact`,
       );
+      await this.clearCompactionMarker(stimulus.jobId, stimulus.orgId);
       return;
     }
 
-    // Reseed: null the session id (the fat transcript is abandoned) and stash the lean handoff. The next
-    // brain turn folds this seed into a FRESH session (see the fold in `runChatTurnInner`).
-    const seed = `${CONTINUATION_PREAMBLE}\n\n${summary}`;
     try {
-      await this.sandboxRows.update(
-        { job_id: stimulus.jobId, org_id: stimulus.orgId },
-        { session_id: null, pending_compaction_seed: seed },
-      );
-      // Keep the in-memory row coherent for the rest of this call.
-      sandboxRow.session_id = null;
+      await this.completeCompaction(stimulus.jobId, stimulus.orgId, summary);
     } catch (err) {
+      // The summary is durable in the SDK JSONL and `compacting_session_id` still points at this session, so
+      // the boot reconciler re-drives it (by then the exec is done → safe). Leave the marker set; keep the
+      // in-memory row coherent (session NOT abandoned yet).
       this.logger.error(
-        `compaction: reseed persist failed for job=${stimulus.jobId}: ${err}`,
+        `compaction: completion failed for job=${stimulus.jobId} (will re-drive on boot): ${err}`,
       );
       return;
     }
-
-    // Operator-visible pill that ALSO carries the full handoff summary (expandable in the web) so the
-    // operator can inspect exactly what context was kept. The summary lives on this durable message row —
-    // unlike `pending_compaction_seed`, which the next fresh turn consumes and clears.
-    await this.store
-      .appendCompactionSummary(
-        stimulus.jobId,
-        '🗜️ Compacted the planning conversation into a lean handoff — the build is running and future turns start fresh.',
-        summary,
-      )
-      .catch((err) =>
-        this.logger.debug(`appendCompactionSummary failed: ${err}`),
-      );
+    // Keep the in-memory row coherent for the rest of this call.
+    sandboxRow.session_id = null;
     this.logger.log(
       `compaction: job=${stimulus.jobId} compacted (${summary.length} chars) — session reseeded`,
     );
+  }
+
+  /** Clear the {@link JobSandboxEntity.compacting_session_id} marker (best-effort). */
+  private async clearCompactionMarker(jobId: string, orgId: string): Promise<void> {
+    await this.sandboxRows
+      .update({ job_id: jobId, org_id: orgId }, { compacting_session_id: null })
+      .catch((err) =>
+        this.logger.warn(`compaction: marker clear failed for job=${jobId}: ${err}`),
+      );
+  }
+
+  /**
+   * ATOMIC compaction completion — the reseed (null `session_id`, stash the lean seed) and the inspectable
+   * `build_event` pill land in ONE transaction, so a crash can never leave the session abandoned without its
+   * audit pill (Codex review). `compacting_session_id` is deliberately KEPT (recovery keeps skipping the
+   * abandoned session until the fresh one is born). Bounded in-process retry rides out a transient DB blip;
+   * on exhaustion it throws and the caller leaves the marker set for the boot reconciler. Shared by the
+   * fresh run and {@link reattachCompactionOne}.
+   */
+  private async completeCompaction(
+    jobId: string,
+    orgId: string,
+    summary: string,
+  ): Promise<void> {
+    const seed = `${CONTINUATION_PREAMBLE}\n\n${summary}`;
+    const pillText =
+      '🗜️ Compacted the planning conversation into a lean handoff — the build is running and future turns start fresh.';
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await this.sandboxRows.manager.transaction(async (mgr) => {
+          await mgr.update(
+            JobSandboxEntity,
+            { job_id: jobId, org_id: orgId },
+            { session_id: null, pending_compaction_seed: seed },
+          );
+          await mgr.insert(MessageEntity, {
+            job_id: jobId,
+            author: 'Atlas',
+            author_id: 'atlas',
+            author_bot_id: 'atlas',
+            text: pillText,
+            kind: 'build_event',
+            meta: { compactionSummary: summary },
+          });
+        });
+        return;
+      } catch (err) {
+        lastErr = err;
+        this.logger.warn(
+          `compaction: completion txn attempt ${attempt}/3 failed for job=${jobId}: ${err}`,
+        );
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
+   * Re-attach ONE in-flight compaction turn → complete the reseed, or drop the marker if it yielded nothing.
+   * The compaction handler for {@link reattachOwnedTurns} (registered with `awaitCompletion:true`, so its
+   * reseed lands before `reconcileStrandedCompactions` runs — closing the "reattach finalized the turn row
+   * but the reseed hasn't committed" race). The detached summary exec survives a restart; re-attaching the
+   * SAME exec (replaying its durable Redis log to the final frame) and completing via {@link completeCompaction}
+   * never kicks a second exec against the live session.
+   */
+  private async reattachCompactionOne(row: ActiveTurnEntity): Promise<void> {
+    if (this.engineRunner.isAttached?.(row.turn_id)) return;
+    if (!row.container_id) {
+      // Can't re-tail without a container — leave the row for the watchdog to finalize; once it's gone and
+      // the exec is confirmed dead, `reconcileStrandedCompactions` re-drives a fresh compaction.
+      this.logger.warn(
+        `compaction re-attach ${row.turn_id}: no container — deferring to reconciler`,
+      );
+      return;
+    }
+    let result: EngineRunResult;
+    try {
+      result = await this.engineRunner.reattach!(row.turn_id, row.container_id, {
+        onEvent: () => {
+          /* internal turn — not surfaced in the operator transcript */
+        },
+      });
+    } catch (err) {
+      // Lost the tail (detached again) — the row survives; the next boot re-attempts. Best-effort.
+      this.logger.warn(
+        `compaction re-attach ${row.turn_id}: reattach failed: ${err}`,
+      );
+      return;
+    }
+    const summary = (result.result ?? '').trim();
+    if (!summary) {
+      // The exec concluded with no usable summary — drop the abandon marker and leave the session intact
+      // (a fresh compaction can be re-driven later). The turn row was finalized by reattach's own path.
+      await this.clearCompactionMarker(row.job_id, row.org_id);
+      return;
+    }
+    await this.completeCompaction(row.job_id, row.org_id, summary);
+    this.logger.log(
+      `Leader: completed re-attached compaction for job=${row.job_id}`,
+    );
+  }
+
+  /**
+   * Re-drive a compaction STRANDED between its finished exec and the reseed commit (leader-only) — the
+   * observed failure class (crash after the summary turn concluded, before the reseed landed). `session_id`
+   * still equals `compacting_session_id`, but no `active_turns` compaction row remains (the exec finished),
+   * so the exec is provably dead and a fresh run cannot race it. The `hasRunningForThread` guard defers to
+   * {@link reattachOwnedTurns} whenever a turn IS still live (never double-run).
+   */
+  private async reconcileStrandedCompactions(): Promise<void> {
+    let stranded: JobSandboxEntity[];
+    try {
+      stranded = await this.sandboxRows
+        .createQueryBuilder('s')
+        .where('s.compacting_session_id IS NOT NULL')
+        .andWhere('s.session_id IS NOT NULL')
+        .andWhere("s.lifecycle <> 'closed'")
+        .getMany();
+    } catch (err) {
+      this.logger.warn(`compaction reconcile: query failed: ${err}`);
+      return;
+    }
+    for (const row of stranded) {
+      const live = await this.turnRegistry
+        .hasRunningForThread(row.job_id)
+        .catch(() => false);
+      if (live) continue; // a turn is live — reattach (or the queue) owns it; don't race a second run.
+      this.logger.log(
+        `Leader: re-driving stranded compaction for job=${row.job_id}`,
+      );
+      void this.enqueueCompaction(
+        this.compactionStimulus(row.job_id, row.org_id, row.repo_id),
+      );
+    }
+  }
+
+  /** Minimal synthetic stimulus for a server-driven compaction re-drive (body unused — `compact` short-circuits). */
+  private compactionStimulus(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+  ): ChatStimulus {
+    return {
+      id: randomUUID(),
+      kind: 'chat',
+      trust: 'trusted',
+      orgId,
+      repoId,
+      jobId,
+      body: '',
+      author: { id: 'atlas', displayName: 'Atlas' },
+      replyRoute: { surfaceId: 'web', jobRef: jobId },
+      receivedAt: new Date(),
+    };
   }
 
   /**

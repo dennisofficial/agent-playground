@@ -448,7 +448,9 @@ function PlanDoc({
     <div className="h-full overflow-y-auto px-8 py-7">
       <div ref={contentRef} className="max-w-[720px]">
         {card?.summary ? (
-          <p className="mb-6 whitespace-pre-wrap text-[14px] leading-relaxed text-text">{card.summary}</p>
+          <div className="mb-6">
+            <Markdown>{card.summary}</Markdown>
+          </div>
         ) : null}
 
         <DocLabel>LOCKED DECISIONS</DocLabel>

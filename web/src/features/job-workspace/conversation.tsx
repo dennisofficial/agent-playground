@@ -25,7 +25,7 @@ import { SecretCardView } from './secret-card';
 import { FileCardView } from './file-card';
 import { ReviewCommentsCardView } from './review-comments-card';
 import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
-import { BuildInstruction, BuildStepCard, indexPhaseBlocks } from './phases';
+import { AgentPromptBlock, BuildInstruction, BuildStepCard, indexPhaseBlocks } from './phases';
 import { CodexReviewCard, codexReviewNode, indexCodexReviewBlocks } from './codex-review';
 import { indexAutofixBlocks } from './review-lane';
 import { Composer } from './composer';
@@ -375,6 +375,35 @@ function buildLogItems(
   };
 
   for (const message of log) {
+    // ── the initial-prompt block: THIS turn's "first message" (the exact task the engine received) ──
+    // It's tagged with its lane's peel key (codexReviewId / phaseId / autofixId), or none for the brain's
+    // `main` turn. Render it INLINE at its chronological position (a Codex review is ONE lane across many
+    // rounds; the gate shares the build lane across iterations — so each round/iteration opens with its own
+    // prompt, never hoisted). Handled here, before `classifyMessage`, else an atlas-authored row falls
+    // through as a normal bubble. A prompt that doesn't belong to THIS lane is simply skipped.
+    if (message.kind === 'agent_prompt') {
+      const m = message.meta ?? {};
+      const cid = typeof m.codexReviewId === 'string' ? m.codexReviewId : null;
+      const pid = typeof m.phaseId === 'string' ? m.phaseId : null;
+      const aid = typeof m.autofixId === 'string' ? m.autofixId : null;
+      let show = false;
+      if (isMain) show = !cid && !pid && !aid; // the brain's own turn — no sub-lane key
+      else if (isCodexLane) show = cid != null;
+      else if (phaseSet) show = pid != null && phaseSet.has(pid);
+      else if (isAutofixLane)
+        show =
+          aid === reviewAutofixId && (isFixLane ? m.fixTurn === true : m.lensId === reviewLensId);
+      if (show) {
+        flush();
+        nodes.push({
+          key: message.ts,
+          // Collapsed on Main (the operator's message bubble already shows the gist; the disclosure reveals
+          // the folded context); expanded on the agent sub-lanes (seeing the prompt is the whole point).
+          node: <AgentPromptBlock key={message.ts} text={message.text} defaultOpen={!isMain} />,
+        });
+      }
+      continue;
+    }
     // ── lane membership: which blocks THIS lane renders + which anchors become cards ──
     if (isMain) {
       // Deeper lanes' blocks are peeled out; their anchors render as cards.
@@ -567,7 +596,18 @@ function useRealtimeIdle(jobId: string | null): boolean {
   return threads?.find((t) => t.id === jobId)?.needsYou ?? false;
 }
 
-/** The most recent `turn_meta` block's context occupancy (null until a turn has reported usage). */
+/**
+ * The last REPORTED context occupancy of the BRAIN session — the most recent brain-lane `turn_meta` block
+ * that actually carries usable numbers. Two filters:
+ *  - Brain lane only: build/Codex-lane turns also emit `turn_meta`, tagged with `meta.phaseId`; the composer
+ *    gets the FULL unscoped message list, so we skip any `phaseId`-tagged block (mirrors the backend's
+ *    `latestBrainOccupancy` `phaseId IS NULL` filter) — else the ring would show a build lane's occupancy.
+ *  - Last reported: not every brain turn reports usage — a recovered turn (restart JSONL backstop), an
+ *    internal review/compaction turn, or one whose result lacked a usage block leaves `contextTokens` null.
+ *    Rather than blanking on those (which made the ring flicker out mid-thread), scan back to the last brain
+ *    turn that DID report. Tradeoff: right after a compaction+reseed the pre-compaction value can linger for
+ *    a single turn until the fresh session reports — matches "last reported occupancy" (Claude-Code style).
+ */
 function latestContextMeta(messages: JobMessage[]): { tokens: number; limit: number; model?: string } | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
@@ -575,12 +615,14 @@ function latestContextMeta(messages: JobMessage[]): { tokens: number; limit: num
     const meta = (m.meta ?? {}) as {
       contextTokens?: number | null;
       contextLimit?: number | null;
+      phaseId?: string | null;
       usage?: { model?: string };
     };
+    if (meta.phaseId != null) continue; // build/Codex-lane turn_meta — not the brain's occupancy.
     if (typeof meta.contextTokens === 'number' && typeof meta.contextLimit === 'number' && meta.contextLimit > 0) {
       return { tokens: meta.contextTokens, limit: meta.contextLimit, model: meta.usage?.model };
     }
-    return null; // latest turn_meta lacked usable numbers — don't keep scanning older turns
+    // This brain turn_meta lacked usable numbers — keep scanning older turns for the last reported occupancy.
   }
   return null;
 }

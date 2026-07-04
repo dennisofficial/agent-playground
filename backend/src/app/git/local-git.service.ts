@@ -11,6 +11,12 @@ import { readForbiddenPaths } from './hydration-sidecar';
 
 const execFileAsync = promisify(execFile);
 
+/** Matches git's `index.lock: File exists` / "Another git process seems to be running" error — a stray or
+ *  concurrent external git process (e.g. the sandbox's own engine turn running `git commit`) holding the OS-
+ *  level index lock. The in-process `withLock` mutex can't see this: it only serializes calls made by THIS
+ *  Node process. A short retry is the standard remedy — the lock is almost always released within seconds. */
+const INDEX_LOCK_RE = /index\.lock['"]?:?\s*file exists|another git process seems to be running/i;
+
 /** A located project repo on disk + the auth context for its remote. */
 export interface ProjectRepo {
   /** Stable id used for the on-disk clone dir + the worktree sandbox key. */
@@ -109,12 +115,25 @@ export class LocalGitService {
       '-c', 'filter.lfs.process=',
       '-c', 'filter.lfs.required=false',
     ];
-    const { stdout } = await execFileAsync('git', [...safetyFlags, ...args], {
-      cwd: opts.cwd,
-      env,
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return stdout.trim();
+    const maxAttempts = 5;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const { stdout } = await execFileAsync('git', [...safetyFlags, ...args], {
+          cwd: opts.cwd,
+          env,
+          maxBuffer: 64 * 1024 * 1024,
+        });
+        return stdout.trim();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt >= maxAttempts || !INDEX_LOCK_RE.test(msg)) throw err;
+        this.logger.warn(
+          `git ${args[0]} in ${opts.cwd ?? '(no cwd)'}: index.lock held by another process ` +
+            `(attempt ${attempt}/${maxAttempts}) — retrying`,
+        );
+        await new Promise((r) => setTimeout(r, 300 * attempt));
+      }
+    }
   }
 
   /**

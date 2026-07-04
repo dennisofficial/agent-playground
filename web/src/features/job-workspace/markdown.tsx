@@ -16,6 +16,7 @@ import { Check, Copy, Maximize2, RotateCcw, Send, X, ZoomIn, ZoomOut } from 'luc
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { CopyButton, TerminalChromeBar, WrapButton, useCopied } from './terminal-chrome';
 
 /**
  * Markdown renderer for assistant prose in the conversation — ported from the "Atlas Conversation View"
@@ -35,24 +36,22 @@ const MarkdownActionsContext = createContext<MarkdownActions | null>(null);
 export const MarkdownActionsProvider = MarkdownActionsContext.Provider;
 
 function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
+  const [wrapped, setWrapped] = useState(false);
   return (
     <div className="my-3 overflow-hidden rounded-[9px] border border-border" style={{ background: 'var(--term)' }}>
-      <div
-        className="flex items-center gap-2 px-3 py-[7px]"
-        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-      >
-        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: '#ff5f57' }} />
-        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: '#febc2e' }} />
-        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: '#28c840' }} />
-        <span className="flex-1" />
-        {lang ? (
-          <span className="font-mono text-[10px] lowercase" style={{ color: 'var(--term-dim)' }}>
-            {lang}
-          </span>
-        ) : null}
-      </div>
+      <TerminalChromeBar
+        label={lang}
+        actions={
+          <>
+            <WrapButton wrapped={wrapped} onToggle={() => setWrapped((w) => !w)} />
+            <CopyButton text={nodeText(children).replace(/\n$/, '')} />
+          </>
+        }
+      />
       <pre
-        className="m-0 overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7]"
+        className={`m-0 px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] ${
+          wrapped ? 'whitespace-pre-wrap break-words' : 'overflow-x-auto'
+        }`}
         style={{ color: 'var(--term-fg)' }}
       >
         {children}
@@ -168,7 +167,7 @@ function Mermaid({ chart }: { chart: string }) {
   const [error, setError] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [sent, setSent] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, copy] = useCopied();
   const actions = useContext(MarkdownActionsContext);
 
   useEffect(() => {
@@ -195,14 +194,7 @@ function Mermaid({ chart }: { chart: string }) {
   }, [chart, renderId]);
 
   const copyButton = (
-    <FrameBtn
-      title="Copy mermaid source"
-      onClick={() => {
-        void navigator.clipboard?.writeText(chart);
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1500);
-      }}
-    >
+    <FrameBtn title="Copy mermaid source" onClick={() => copy(chart)}>
       {copied ? <Check size={10} /> : <Copy size={10} />}
       {copied ? 'copied' : 'copy'}
     </FrameBtn>

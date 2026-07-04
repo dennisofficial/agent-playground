@@ -84,14 +84,14 @@ export function UserBubble({ text, time }: { text: string; time?: string }) {
   return (
     <div className="group anim-fadeUp flex flex-col items-end gap-1">
       <div
-        className="max-w-[72%] whitespace-pre-wrap [overflow-wrap:anywhere] px-[13px] py-2 text-[13.5px] leading-relaxed text-text"
+        className="max-w-[92%] [overflow-wrap:anywhere] px-[13px] py-2 text-text"
         style={{
           background: 'var(--accent-soft)',
           border: '1px solid var(--accent-line)',
           borderRadius: '13px 13px 4px 13px',
         }}
       >
-        {text}
+        <Markdown>{text}</Markdown>
       </div>
       <MessageTime iso={time} tone="user" align="right" />
     </div>

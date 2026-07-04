@@ -64,8 +64,12 @@ function makeMessages(seed: Row[]) {
   return { repo, saved };
 }
 
-/** sandboxRows mock: candidateThreadIds returns the given thread ids. */
-function makeSandboxRows(threadIds: string[]) {
+/** sandboxRows mock: `candidateThreadIds` returns the given thread ids; `findOne` answers the compaction
+ *  recovery-skip check in `recoverThread` (a job's `compacting_session_id`, default null = not compacting). */
+function makeSandboxRows(
+  threadIds: string[],
+  compactingById: Record<string, string | null> = {},
+) {
   return {
     createQueryBuilder: () => {
       const qb: Record<string, unknown> = {};
@@ -73,6 +77,9 @@ function makeSandboxRows(threadIds: string[]) {
       qb.getRawMany = async () => threadIds.map((jobId) => ({ jobId }));
       return qb;
     },
+    findOne: async ({ where }: { where: { job_id: string } }) => ({
+      compacting_session_id: compactingById[where.job_id] ?? null,
+    }),
   } as unknown as Repository<JobSandboxEntity>;
 }
 
@@ -112,6 +119,34 @@ describe('TurnRecoveryService', () => {
     expect(inserted.every((r) => r.author_id === 'atlas')).toBe(true);
     const times = inserted.map((r) => (r.created_at as Date).getTime());
     expect(times.every((t, i) => i === 0 || t > times[i - 1])).toBe(true);
+  });
+
+  it('SKIPS a thread whose transcript is the session compaction is abandoning (no summary leak)', async () => {
+    const projects = seedTranscript(); // transcript sessionId = 's1'
+    const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
+    // compacting_session_id === 's1' → the tail is the internal compaction summary; recovery must not surface it.
+    const svc = new TurnRecoveryService(
+      repo,
+      makeSandboxRows([THREAD_ID], { [THREAD_ID]: 's1' }),
+      makeProvider(projects),
+      makeRegistry(),
+    );
+
+    expect(await svc.recoverInterruptedTurns()).toBe(0);
+    expect(saved.length).toBe(INTERRUPTED_FIRST_TURN.length); // nothing back-filled
+  });
+
+  it('still recovers when compacting_session_id is a DIFFERENT (older) session than the transcript', async () => {
+    const projects = seedTranscript(); // transcript sessionId = 's1'
+    const { repo } = makeMessages(INTERRUPTED_FIRST_TURN);
+    const svc = new TurnRecoveryService(
+      repo,
+      makeSandboxRows([THREAD_ID], { [THREAD_ID]: 's-old' }),
+      makeProvider(projects),
+      makeRegistry(),
+    );
+
+    expect(await svc.recoverInterruptedTurns()).toBe(1); // 's1' ≠ 's-old' → not skipped
   });
 
   it('is idempotent — a second run sees the final reply persisted and inserts nothing', async () => {

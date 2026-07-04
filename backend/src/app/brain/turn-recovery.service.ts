@@ -24,7 +24,7 @@ type RecoverStatus =
 /**
  * The GROUND-TRUTH JSONL fallback backstop for brain turns lost from `messages`. The primary durability path
  * is now the Redis-streams transport (ADR 0001): a turn's live log is a durable Redis stream, and on boot the
- * leader re-attaches in-flight turns (`reattachInFlightTurns`) and persists them. But a turn can still slip
+ * leader re-attaches in-flight turns (`reattachOwnedTurns`) and persists them. But a turn can still slip
  * through — e.g. the watchdog finalizes a turn whose heartbeat went stale across a restart, deleting its
  * stream before re-attach runs; or a mid-turn interrupt is superseded by a new operator prompt (the SDK
  * session resumes fresh) — leaving the turn ONLY in the engine's SDK session JSONL (a HOST-mounted bind).
@@ -173,6 +173,26 @@ export class TurnRecoveryService implements OnModuleDestroy {
 
     const transcript = this.latestTranscript(projectsDir);
     if (!transcript || transcript.turns.length === 0) return 'absent';
+
+    // COMPACTION skip: if this transcript is the session compaction is ABANDONING, its tail is the internal
+    // summary turn — never back-fill it into the operator log (the leak this closes). Covers the post-reseed,
+    // pre-fresh-session window; layered with `candidateThreadIds`' live-turn filter (which excludes a job
+    // while its compaction turn is in flight). Both the boot pass and the `finishAndRecover` watcher funnel
+    // here, so this one check defends every recovery path.
+    if (transcript.sessionId) {
+      let row: JobSandboxEntity | null;
+      try {
+        row = await this.sandboxRows.findOne({ where: { job_id: jobId } });
+      } catch (err) {
+        // Can't confirm this isn't the session compaction is abandoning — fail SAFE (skip) rather than risk
+        // back-filling the internal summary turn into the operator log. Recovery retries on the next pass.
+        this.logger.warn(
+          `turn recovery: compaction-skip lookup failed for thread=${jobId} — skipping to be safe: ${err}`,
+        );
+        return 'absent';
+      }
+      if (row?.compacting_session_id === transcript.sessionId) return 'absent';
+    }
 
     // A non-last turn is always superseded (a later prompt exists) ⇒ complete-or-abandoned, safe to
     // back-fill. The LAST turn is included only when it ended clean (else it may still be generating).

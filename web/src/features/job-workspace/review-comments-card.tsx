@@ -2,6 +2,7 @@
 
 import { Pencil } from 'lucide-react';
 import { MessageTime, UserBubble } from './bubbles';
+import { Markdown } from './markdown';
 import type { WebReviewCommentsCard } from '@/lib/api/types';
 
 /**
@@ -38,7 +39,11 @@ export function ReviewCommentsCardView({ card, time }: { card: WebReviewComments
               {items.map((it, i) => (
                 <div key={i} className="border-l-2 pl-[9px]" style={{ borderColor: 'var(--accent-line)' }}>
                   <div className="font-mono text-[10px] leading-relaxed text-accent-2">&ldquo;{it.quote}&rdquo;</div>
-                  {it.note ? <div className="mt-0.5 text-[12px] leading-relaxed text-text">{it.note}</div> : null}
+                  {it.note ? (
+                    <div className="mt-0.5 text-[12px] leading-relaxed text-text [&_p]:my-0 [&_p]:text-[12px] [&_p]:leading-relaxed">
+                      <Markdown>{it.note}</Markdown>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>

@@ -1,8 +1,9 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
-import { claudeSessionExists, EngineCore } from './engine-core';
+import { claudeSessionExists, EngineCore, extractClaudeUsage } from './engine-core';
 import { atlasEngineHomeDir } from './engine-home';
 import { isUnresumableSessionMessage, UNRESUMABLE_SESSION_MARKER } from './engine.types';
 import type { EngineEvent } from './engine.types';
@@ -646,6 +647,66 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
     });
     expect(threadCalls[0].sandboxMode).toBe('read-only');
   });
+
+  it('richStream: a file_change item derives a real structuredPatch from the git worktree (Codex reports no diff content itself)', async () => {
+    const wt = join(tmpdir(), `atlas-engine-core-codex-diff-${process.pid}`);
+    rmSync(wt, { recursive: true, force: true });
+    mkdirSync(wt, { recursive: true });
+    const git = (...cmdArgs: string[]) => execFileSync('git', cmdArgs, { cwd: wt });
+    git('init', '-q');
+    git('config', 'user.email', 'a@b.c');
+    git('config', 'user.name', 'a');
+    writeFileSync(join(wt, 'x.md'), 'line1\nline2\nline3\n');
+    git('add', 'x.md');
+    git('commit', '-q', '-m', 'init');
+    // Codex has already applied the edit to disk by the time `file_change` is reported.
+    writeFileSync(join(wt, 'x.md'), 'line1\nCHANGED\nline3\n');
+
+    class FakeCodex {
+      constructor() {}
+      startThread() {
+        return {
+          id: 'thread-1',
+          runStreamed: async () => ({
+            events: (async function* () {
+              yield { type: 'thread.started', job_id: 'thread-1' };
+              yield {
+                type: 'item.completed',
+                item: { id: 'fc1', type: 'file_change', status: 'completed', changes: [{ path: 'x.md', kind: 'update' }] },
+              };
+              yield { type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } };
+            })(),
+          }),
+        };
+      }
+    }
+    const sdk = { Codex: FakeCodex } as unknown as typeof import('@openai/codex-sdk');
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const events: EngineEvent[] = [];
+    try {
+      await core.run({
+        engine: 'codex',
+        task: 'edit it',
+        cwd: wt,
+        systemPrompt: 'persona',
+        sandboxKey: 'acme--feat',
+        mode: 'execute',
+        richStream: true,
+        auth: { secret: VALID_CODEX_AUTH },
+        onEvent: (e) => events.push(e),
+      });
+
+      const toolUse = events.find((e) => e.kind === 'tool_use') as Extract<EngineEvent, { kind: 'tool_use' }>;
+      expect(toolUse.input).toEqual({ file_path: 'x.md', kind: 'update' });
+      const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<EngineEvent, { kind: 'tool_result' }>;
+      expect(toolResult.structuredPatch?.length).toBeGreaterThan(0);
+      const lines = toolResult.structuredPatch!.flatMap((h) => h.lines);
+      expect(lines).toContain('-line2');
+      expect(lines).toContain('+CHANGED');
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('EngineCore — Codex auth-refresh readback', () => {
@@ -742,5 +803,51 @@ describe('EngineCore — unresumable session detection', () => {
       sessionId: 'live-session',
     });
     expect(captured.options!.resume).toBe('live-session');
+  });
+});
+
+describe('extractClaudeUsage — per-model breakdown', () => {
+  it('preserves the FULL modelUsage map (all models), normalizing SDK field names', () => {
+    const usage = extractClaudeUsage(
+      {
+        usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 900, cache_creation_input_tokens: 50 },
+        total_cost_usd: 1.5,
+        modelUsage: {
+          'claude-opus-4-8': {
+            inputTokens: 10,
+            outputTokens: 15,
+            cacheReadInputTokens: 800,
+            cacheCreationInputTokens: 50,
+            costUSD: 1.2,
+          },
+          'claude-sonnet-5': {
+            inputTokens: 5,
+            outputTokens: 5,
+            cacheReadInputTokens: 100,
+            cacheCreationInputTokens: 0,
+            costUSD: 0.3,
+            webSearchRequests: 3,
+          },
+        },
+      },
+      'claude-opus-4-8',
+    );
+    expect(usage?.costUsd).toBe(1.5);
+    // Both models survive (the old code kept only Object.keys(modelUsage)[0]).
+    expect(Object.keys(usage?.modelUsage ?? {})).toEqual(['claude-opus-4-8', 'claude-sonnet-5']);
+    expect(usage?.modelUsage?.['claude-sonnet-5']).toEqual({
+      inputTokens: 5,
+      outputTokens: 5,
+      cacheReadTokens: 100,
+      cacheWriteTokens: 0,
+      costUsd: 0.3,
+      webSearchRequests: 3,
+    });
+    expect(usage?.modelUsage?.['claude-opus-4-8'].costUsd).toBe(1.2);
+  });
+
+  it('omits modelUsage when the SDK reported none', () => {
+    const usage = extractClaudeUsage({ usage: { input_tokens: 10, output_tokens: 2 } }, 'claude-opus-4-8');
+    expect(usage?.modelUsage).toBeUndefined();
   });
 });

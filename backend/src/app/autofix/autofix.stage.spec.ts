@@ -18,7 +18,7 @@ function mockHarness(): {
 } {
   const finish = vi.fn(async () => {});
   const abort = vi.fn(async () => {});
-  const harness = { onEvent: vi.fn(), finish, abort };
+  const harness = { onEvent: vi.fn(), finish, abort, emitPrompt: vi.fn(async () => {}) };
   const create = vi.fn(() => harness);
   return { factory: { create } as unknown as TurnHarnessFactory, create, finish, abort };
 }

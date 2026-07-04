@@ -18,6 +18,17 @@ export interface BlockSink {
     jobId: string,
     block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
   ): Promise<void>;
+  /**
+   * Insert-once by a durable idempotency key: append the block ONLY if no `agent_prompt` row for this
+   * job already carries `meta.promptKey === promptKey`. This is what makes the per-turn prompt block
+   * safe to (re)emit across restart / re-kick / re-drive / plan-review resume-retry — the durable row is
+   * the dedup, not a fragile "kick vs reattach" branch in the caller. Best-effort; never throws.
+   */
+  appendBlockOnce(
+    jobId: string,
+    promptKey: string,
+    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
+  ): Promise<void>;
 }
 
 /** DI token for {@link BlockSink}. */
@@ -51,6 +62,26 @@ export class MessageBlockSink implements BlockSink {
         ...(block.createdAt ? { created_at: block.createdAt } : {}),
       }),
     );
+  }
+
+  async appendBlockOnce(
+    jobId: string,
+    promptKey: string,
+    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
+  ): Promise<void> {
+    // A job accumulates only a handful of `agent_prompt` rows (one per brain turn / review round / gate
+    // iteration / lens), so loading them and filtering by `meta.promptKey` in JS is cheap and avoids
+    // jsonb-containment SQL. If one already carries this key the emission is a no-op.
+    const existing = await this.messages.find({
+      where: { job_id: jobId, kind: 'agent_prompt' },
+      select: { id: true, meta: true },
+    });
+    if (existing.some((m) => (m.meta as { promptKey?: string } | null)?.promptKey === promptKey)) {
+      return;
+    }
+    // Stamp the key into meta so the dedup read above finds it on the NEXT call — the single source of
+    // truth, whether the caller went through the harness's `emitPrompt` or wrote the block directly.
+    await this.appendBlock(jobId, { ...block, meta: { ...(block.meta ?? {}), promptKey } });
   }
 }
 
@@ -148,6 +179,13 @@ export interface TurnEndMeta {
 export interface TurnHarness {
   /** Feed one engine event: fans it live (LiveTurnStore) AND accumulates the authoritative durable block. */
   onEvent(e: EngineEvent): void;
+  /**
+   * Surface THIS turn's initial task (its "first message" — the prompt the engine actually received) as a
+   * durable `agent_prompt` block on this harness's lane, so the operator can see exactly what the agent was
+   * asked (the `task` is a plain engine param, never an event, so nothing else persists it). Insert-once by
+   * `promptKey` (survives restart/re-kick/re-drive). Best-effort — never throws into the turn.
+   */
+  emitPrompt(task: string, promptKey: string, extraMeta?: Record<string, unknown>): Promise<void>;
   /**
    * Persist the accumulated transcript (+ a text fallback if none emitted), append a `turn_meta` block when
    * `turnMeta.usage` is present, then end the live lane.
@@ -249,6 +287,21 @@ export class TurnHarnessFactory {
     };
 
     return {
+      emitPrompt: async (task: string, promptKey: string, extraMeta?: Record<string, unknown>) => {
+        if (!task.trim()) return;
+        await this.sink
+          .appendBlockOnce(jobId, promptKey, {
+            kind: 'agent_prompt',
+            text: task,
+            // `metaTag` (the lane's peel keys — codexReviewId / phaseId / autofixId) FIRST so the web routes
+            // this block into the right sub-lane; `agentPrompt` + `promptKey` mark it + dedup it.
+            meta: { ...(metaTag ?? {}), ...(extraMeta ?? {}), agentPrompt: true, promptKey },
+          })
+          .catch((err) =>
+            this.logger.warn(`emitPrompt failed for thread=${jobId} lane=${lane}: ${err}`),
+          );
+      },
+
       onEvent: (e: EngineEvent) => {
         if (closed) return;
         // LIVE + RESUMABLE: the store fans the frame AND holds the cumulative turn for snapshot-on-connect.

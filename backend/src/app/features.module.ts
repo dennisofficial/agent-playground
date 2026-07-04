@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { RedisModule } from '../_lib/redis/redis.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { AuthModule } from './auth';
 import { ClusterModule } from './cluster';
 import { AutoFixModule } from './autofix';
@@ -49,6 +50,7 @@ import { PromptKitModule } from './prompt-kit';
     RedisModule,
     ClusterModule,
     PromptKitModule,
+    AnalyticsModule,
     AuthModule,
     OnboardingModule,
     OrgModule,

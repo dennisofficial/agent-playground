@@ -19,6 +19,17 @@ function setup() {
     appendBlock: vi.fn(async (jobId, block) => {
       persisted.push({ jobId, block });
     }),
+    appendBlockOnce: vi.fn(async (jobId, promptKey, block) => {
+      // Mirror MessageBlockSink: skip if an agent_prompt row already carries this key; else stamp it in.
+      if (
+        persisted.some(
+          (p) => p.block.kind === 'agent_prompt' && (p.block.meta as { promptKey?: string } | null)?.promptKey === promptKey,
+        )
+      ) {
+        return;
+      }
+      persisted.push({ jobId, block: { ...block, meta: { ...(block.meta ?? {}), promptKey } } });
+    }),
   };
   const taskSink: TaskEventSink = { applyTaskEvent: vi.fn(async () => undefined) };
   return { live, persisted, taskSink, factory: new TurnHarnessFactory(live, sink, taskSink) };
@@ -45,6 +56,31 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(tool.block.meta).toMatchObject({ name: 'Edit', result: 'ok', phaseId: 's1' });
     // Lane ended (the durable rows now take over).
     expect(live.snapshot('R', 'T', 'phase:s1')).toBeNull();
+  });
+
+  it('emitPrompt: persists an agent_prompt block tagged with the lane metaTag + promptKey, and dedups by key', async () => {
+    const { persisted, factory } = setup();
+    const h = factory.create({ jobId: 'T', channel: 'R', lane: 'codex-review:T', metaTag: { codexReviewId: 'T' } });
+    await h.emitPrompt('review THIS plan', 'codex:T:0', { reviewRound: 0 });
+    // A second emit with the SAME key is a no-op (survives restart/re-kick/re-drive).
+    await h.emitPrompt('review THIS plan', 'codex:T:0', { reviewRound: 0 });
+
+    const prompts = persisted.filter((p) => p.block.kind === 'agent_prompt');
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0].block.text).toBe('review THIS plan');
+    expect(prompts[0].block.meta).toMatchObject({
+      codexReviewId: 'T',
+      agentPrompt: true,
+      reviewRound: 0,
+      promptKey: 'codex:T:0',
+    });
+  });
+
+  it('emitPrompt: an empty/whitespace task writes nothing', async () => {
+    const { persisted, factory } = setup();
+    const h = factory.create({ jobId: 'T', channel: 'R' });
+    await h.emitPrompt('   ', 'brain:s1');
+    expect(persisted).toHaveLength(0);
   });
 
   it('abort: persists partials, ends the lane, is idempotent, and drops late events', async () => {

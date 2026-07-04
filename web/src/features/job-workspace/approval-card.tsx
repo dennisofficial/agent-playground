@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Markdown } from './markdown';
 import { useApprove } from '@/lib/api/job-queries';
 import type { JobRef } from '@/lib/api/job-api';
 import {
@@ -57,7 +58,9 @@ export function ApprovalCardView({
       <div className="px-4 py-3">
         <h3 className="text-[14px] font-semibold text-text">{card.title}</h3>
         {card.summary ? (
-          <p className="mt-1.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-dim">{card.summary}</p>
+          <div className="mt-1.5">
+            <Markdown>{card.summary}</Markdown>
+          </div>
         ) : null}
       </div>
 

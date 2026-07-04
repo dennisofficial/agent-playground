@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react';
 import { CheckCircle2, FileUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Markdown } from './markdown';
 import { useProvideFile } from '@/lib/api/job-queries';
 import type { JobRef } from '@/lib/api/job-api';
 import type { WebFileRequestCard } from '@/lib/api/types';
@@ -78,7 +79,7 @@ export function FileCardView({ card, jobRef }: { card: WebFileRequestCard; jobRe
       </div>
 
       <div className="px-4 py-3">
-        <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-text">{card.description}</p>
+        <Markdown>{card.description}</Markdown>
         <p className="mt-1.5 text-[11.5px] leading-snug text-dim">
           Sent once, encrypted at rest — the contents never appear in the conversation or are shown back to Atlas.
         </p>

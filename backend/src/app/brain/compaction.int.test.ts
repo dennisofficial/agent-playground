@@ -136,14 +136,19 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       'fat-session-abc',
     );
 
-    // 1. Reseed: the fat session is abandoned and a lean seed is stashed durably.
-    const [row]: Array<{ session_id: string | null; pending_compaction_seed: string | null }> =
-      await dataSource.query(
-        `SELECT session_id, pending_compaction_seed FROM job_sandboxes WHERE job_id = $1`,
-        [jobId],
-      );
+    // 1. Reseed: the fat session is abandoned and a lean seed is stashed durably; the abandon marker is
+    //    KEPT (recovery keeps skipping the old session until the fresh one is born).
+    const [row]: Array<{
+      session_id: string | null;
+      pending_compaction_seed: string | null;
+      compacting_session_id: string | null;
+    }> = await dataSource.query(
+      `SELECT session_id, pending_compaction_seed, compacting_session_id FROM job_sandboxes WHERE job_id = $1`,
+      [jobId],
+    );
     expect(row.session_id).toBeNull();
     expect(row.pending_compaction_seed).toBeTruthy();
+    expect(row.compacting_session_id).toBe('fat-session-abc');
     // The seed carries the continuation preamble + the (stubbed) summary text.
     expect(row.pending_compaction_seed).toContain('<session_compacted>');
     expect(row.pending_compaction_seed).toContain('(e2e fake) review turn');
@@ -160,6 +165,78 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     expect(msg.text).toContain('Compacted the planning conversation');
     expect(msg.meta?.compactionSummary).toContain('(e2e fake) review turn');
   }, 45_000);
+
+  it('clears the abandon marker + leaves the session intact when the summary turn yields nothing', async () => {
+    const { jobId, repoId } = await seedJobWithSession('fat-empty-xyz');
+    const runner = mgr as unknown as { engineRunner: { run: unknown } };
+    const orig = runner.engineRunner.run;
+    runner.engineRunner.run = async () => ({ result: '', sessionId: 'x' }); // force a non-clean/empty summary
+    try {
+      await (
+        mgr as unknown as {
+          runCompaction: (
+            s: ChatStimulus,
+            sandbox: { worktreePath: string; containerId?: string | null },
+            row: { session_id: string | null } | null,
+            sessionId: string | undefined,
+          ) => Promise<void>;
+        }
+      ).runCompaction(
+        stim(jobId, repoId),
+        { worktreePath: '/tmp/compaction-it-worktree', containerId: null },
+        { session_id: 'fat-empty-xyz' },
+        'fat-empty-xyz',
+      );
+    } finally {
+      runner.engineRunner.run = orig;
+    }
+
+    const [row]: Array<{ session_id: string | null; compacting_session_id: string | null }> =
+      await dataSource.query(
+        `SELECT session_id, compacting_session_id FROM job_sandboxes WHERE job_id = $1`,
+        [jobId],
+      );
+    // Session NOT abandoned; marker cleared → recovery is never suppressed for a still-live session.
+    expect(row.session_id).toBe('fat-empty-xyz');
+    expect(row.compacting_session_id).toBeNull();
+    const [{ n }]: Array<{ n: string }> = await dataSource.query(
+      `SELECT count(*)::text AS n FROM messages WHERE job_id = $1 AND meta ? 'compactionSummary'`,
+      [jobId],
+    );
+    expect(n).toBe('0'); // no pill for a no-op compaction
+  }, 30_000);
+
+  it('completeCompaction reseeds + writes exactly one inspectable pill, keeping the marker', async () => {
+    const { jobId } = await seedJobWithSession('fat-complete-1');
+    await dataSource.query(
+      `UPDATE job_sandboxes SET compacting_session_id = 'fat-complete-1' WHERE job_id = $1`,
+      [jobId],
+    );
+    await (
+      mgr as unknown as {
+        completeCompaction: (j: string, o: string, s: string) => Promise<void>;
+      }
+    ).completeCompaction(jobId, TEAM_ID, 'lean handoff summary');
+
+    const [row]: Array<{
+      session_id: string | null;
+      pending_compaction_seed: string | null;
+      compacting_session_id: string | null;
+    }> = await dataSource.query(
+      `SELECT session_id, pending_compaction_seed, compacting_session_id FROM job_sandboxes WHERE job_id = $1`,
+      [jobId],
+    );
+    expect(row.session_id).toBeNull();
+    expect(row.pending_compaction_seed).toContain('lean handoff summary');
+    expect(row.compacting_session_id).toBe('fat-complete-1'); // kept until the fresh session is born
+
+    const pills: Array<{ meta: { compactionSummary?: string } }> = await dataSource.query(
+      `SELECT meta FROM messages WHERE job_id = $1 AND kind = 'build_event' AND meta ? 'compactionSummary'`,
+      [jobId],
+    );
+    expect(pills).toHaveLength(1);
+    expect(pills[0].meta.compactionSummary).toBe('lean handoff summary');
+  }, 30_000);
 
   describe('compaction floor (shouldSkipCompaction)', () => {
     const skip = (jobId: string) =>

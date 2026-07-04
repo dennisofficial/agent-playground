@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CheckCircle2, ExternalLink, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Markdown } from './markdown';
 import { useProvideSecret } from '@/lib/api/job-queries';
 import type { JobRef } from '@/lib/api/job-api';
 import type { WebSecretInputCard } from '@/lib/api/types';
@@ -61,7 +62,7 @@ export function SecretCardView({ card, jobRef }: { card: WebSecretInputCard; job
       </div>
 
       <div className="px-4 py-3">
-        <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-text">{card.description}</p>
+        <Markdown>{card.description}</Markdown>
         {card.url ? (
           <a
             href={card.url}

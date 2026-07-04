@@ -12,7 +12,7 @@ import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
 import type { CodexReviewEntity, JobEntity } from '../persistence/entities';
-import type { TurnHarnessFactory } from '../surface';
+import type { BlockSink, TurnHarnessFactory } from '../surface';
 
 /** Creds stub: no per-org secret → the engine uses its env fallback (these tests stub the engine). */
 const fakeCreds = {
@@ -165,6 +165,10 @@ function makeService(opts: {
       abort: async () => undefined,
     }),
   } as unknown as TurnHarnessFactory;
+  const blockSink = {
+    appendBlock: vi.fn(async () => undefined),
+    appendBlockOnce: vi.fn(async () => undefined),
+  } as unknown as BlockSink;
   return new PlanReviewService(
     engine,
     fakeCreds,
@@ -173,6 +177,7 @@ function makeService(opts: {
     jobs,
     harness,
     fakeElection,
+    blockSink,
   );
 }
 

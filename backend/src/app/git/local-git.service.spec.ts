@@ -105,6 +105,26 @@ describe('LocalGitService (host git, daemon-free)', () => {
     expect(svc.reposRoot()).toContain('repos');
   });
 
+  // Regression: a stray/concurrent external git process (e.g. the sandbox's own engine turn) can hold the
+  // worktree's OS-level index.lock. The in-process mutex can't see it — `git()` must retry past it instead
+  // of failing the whole build (this is the "index.lock: File exists" error surfaced to the operator).
+  it('retries past a transient index.lock held by another process', async () => {
+    const r = await repo();
+    const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
+    writeFileSync(join(sandbox.worktreePath, 'GATE.md'), 'gate\n');
+
+    const lockPath = execFileSync(
+      'git',
+      ['-C', sandbox.worktreePath, 'rev-parse', '--git-path', 'index.lock'],
+      { encoding: 'utf8' },
+    ).trim();
+    writeFileSync(lockPath, ''); // simulate another process mid-write
+    setTimeout(() => rmSync(lockPath, { force: true }), 400); // released before retries exhaust
+
+    const sha = await svc.commitAll(sandbox.worktreePath, 'feat: gate');
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
   // ── changedFileNames (ADR 0005 §2c) — the per-thread diff signal `complete_thread` reads BEFORE commit:
   // tracked changes since a base sha (two-dot, not `...HEAD`) PLUS untracked files. ─────────────────────
   describe('changedFileNames', () => {

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CheckCircle2, HelpCircle, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Markdown } from './markdown';
 import { useAnswerQuestion } from '@/lib/api/job-queries';
 import type { JobRef } from '@/lib/api/job-api';
 import type { WebQuestionCard } from '@/lib/api/types';
@@ -71,7 +72,7 @@ export function QuestionCardView({ card, jobRef }: { card: WebQuestionCard; jobR
       </div>
 
       <div className="px-4 py-3">
-        <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-text">{card.question}</p>
+        <Markdown>{card.question}</Markdown>
       </div>
 
       <div className="flex flex-col gap-1.5 border-t border-border bg-surface-2 px-4 py-3">

@@ -3,6 +3,7 @@
 import { ShieldCheck } from 'lucide-react';
 import type { JobMessage } from '@/lib/api/job-api';
 import { useLiveTurn } from '@/lib/api/job-stream';
+import { Markdown } from './markdown';
 import { durableSubBlocks, type SubBlock } from './subagents';
 
 /**
@@ -111,7 +112,9 @@ export function CodexReviewCard({
             ) : null}
           </div>
           {message.text ? (
-            <p className="mt-1 whitespace-pre-wrap text-[12px] leading-relaxed text-dim">{message.text}</p>
+            <div className="mt-1 text-[12px] leading-relaxed text-dim [&_p]:my-0 [&_p]:text-[12px] [&_p]:leading-relaxed [&_p]:text-dim">
+              <Markdown>{message.text}</Markdown>
+            </div>
           ) : null}
         </div>
         <button

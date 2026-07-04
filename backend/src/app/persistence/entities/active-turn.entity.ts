@@ -61,9 +61,11 @@ export class ActiveTurnEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'main' })
   lane!: string;
 
-  /** Which caller owns the turn — selects how a re-attach rebuilds the harness + tool context. */
+  /** Which caller owns the turn — selects how a re-attach rebuilds the harness + tool context. A
+   *  'compaction' turn is the brain's session-summarization turn; it re-attaches to `completeCompaction`
+   *  (reseed + pill), NOT the transcript-persist path — `reattachOwnedTurns` dispatches it by kind. */
   @Column({ type: 'text' })
-  kind!: 'brain' | 'step' | 'review' | 'gate' | 'autofix';
+  kind!: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction';
 
   /** The sandbox container running the ephemeral engine process (for liveness/teardown). */
   @Column({ type: 'text', nullable: true })

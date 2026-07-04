@@ -110,7 +110,7 @@ function isTransientDriveError(err: unknown): boolean {
 
 /** Infra-blip signatures a bounded silent retry papers over (see {@link isTransientDriveError}). */
 const TRANSIENT_ERROR_RE =
-  /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable/;
+  /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
 
 /** The narrow brain surface the driver needs (ship-time ledger promotion + Phase-3 halt wake) — resolved
  *  lazily to avoid the brain⇄driver module cycle. */
@@ -336,6 +336,16 @@ export class ThreadDriver implements JobDispatcher {
         `redriveThread job=${jobId}: thread ${threadId} belongs to ${ownerJobId ?? '(gone)'} — refusing`,
       );
       return { ok: false, reason: `thread ${threadId} is not part of this job` };
+    }
+    // Refuse to redrive a thread that already finished. A stale `retry_thread` (the brain acting on an old view)
+    // must not clear the terminal record + flip the thread back to `executing` — that would erase the very
+    // `done` evidence the drive short-circuits on and re-run a completed thread. Bail BEFORE consuming budget.
+    const current = await this.store.getThread(threadId).catch(() => null);
+    if (current?.status === 'done') {
+      this.logger.warn(
+        `redriveThread job=${jobId}: thread ${threadId} already done — refusing (won't resurrect a completed thread)`,
+      );
+      return { ok: false, reason: `thread ${threadId} is already complete` };
     }
     let attempt = 0;
     if (cap != null) {
@@ -592,6 +602,19 @@ export class ThreadDriver implements JobDispatcher {
         handoff = thread.handoffOut ?? handoff;
         continue;
       }
+      // LEADERSHIP FENCE: drives are fire-and-forget and NOT gated on leadership mid-flight (see
+      // LeaderElectionService), so a leader demoted mid-build (connection blip → a standby promotes and
+      // re-drives this same `running` job) would keep driving it — two processes on one worktree/branch.
+      // Re-check the ONE shared master lease at each thread boundary and yield if we're no longer leader:
+      // a bare `return` leaves the job `running` (NO status write, mirrors the halt-path return below), and
+      // the current leader re-drives it (promote-time `resume()` + the reap-tick backstop). Yielding is a
+      // cooperative stop, NOT an error — never throw here (a throw on a follower would mark the job failed).
+      if (!this.election.isLeader()) {
+        this.logger.warn(
+          `job=${job.id} lost leadership mid-drive — yielding (a leader will re-drive; job left running)`,
+        );
+        return;
+      }
       const res = await this.runThread(
         job,
         record,
@@ -611,6 +634,15 @@ export class ThreadDriver implements JobDispatcher {
       handoff = res.handoff;
     }
 
+    // LEADERSHIP FENCE (ship): never open/publish the PR from a process that has lost leadership. finalizeBuild
+    // is idempotent (latches by branch / finds the existing PR), so the current leader's re-drive fast-forwards
+    // the done threads and ships. Yield without a status write — the job stays `running`.
+    if (!this.election.isLeader()) {
+      this.logger.warn(
+        `job=${job.id} lost leadership before ship — yielding (a leader will re-drive; job left running)`,
+      );
+      return;
+    }
     await this.finalizeBuild(job, record, route, repo, sandbox);
   }
 
@@ -736,6 +768,20 @@ export class ThreadDriver implements JobDispatcher {
           .catch(() => undefined);
         return { outcome: 'blocked', handoff: null };
       }
+
+      // A thread already `done` must NOT be re-run. The runJob loop skips `done` threads from its start-of-run
+      // snapshot, but that snapshot goes stale: a duplicate/overlapping drive (e.g. a restart-spawned leader
+      // re-driving a still-`running` job) can hold a pre-completion view and re-enter this thread. Re-running
+      // it re-executes the (already-committed) step AND re-seeds its finalized review agents back to `pending`
+      // — observed live freezing a done thread half-reviewed. Re-read the LIVE status and fast-forward if done,
+      // carrying the persisted handoff exactly like the loop's skip (`handoffOut ?? handoff`).
+      const live = await this.store.getThread(thread.id).catch(() => null);
+      if (live?.status === 'done') {
+        this.logger.warn(
+          `thread ${thread.ordinal} "${thread.brief}" — already done (stale/overlapping drive); fast-forwarding`,
+        );
+        return { outcome: 'done', handoff: live.handoffOut ?? handoffIn };
+      }
     }
     this.logger.log(`thread ${thread.ordinal} "${thread.brief}" — planning`);
     await this.post(
@@ -786,7 +832,6 @@ export class ThreadDriver implements JobDispatcher {
     // f. AUTO-FIX — fan-out review → fix over this thread's diff. SKIPPED for the master-review thread: it
     // IS the review (a whole-diff Codex review-and-fix), so a per-thread auto-fix pass over it is redundant.
     if (!thread.isMasterReview) {
-    await this.store.setThreadStatus(thread.id, 'auto_fixing');
     // Seed the review agents at `pending` so the navigator shows them queued; the stage's onLensStatus hook
     // transitions each as it runs, and the `finally` resolves any left pending/running (empty diff / throw).
     // `reviewAgentsForThread` selects by thread type; the domain `DriverThread` doesn't carry it, and the
@@ -795,7 +840,20 @@ export class ThreadDriver implements JobDispatcher {
       ...a,
       status: 'pending' as const,
     }));
-    await this.store.seedReviewAgents(thread.id, reviewAgents);
+    // CLAIM the auto-fix pass atomically: flip `executing`→`auto_fixing` AND seed the pending agents in ONE
+    // guarded write that no-ops if the thread is already `done`. This is the run-exactly-once choke point —
+    // it stops a duplicate/stale drive from resurrecting a done thread or re-seeding its finalized agents
+    // (guarding the seed alone wouldn't: the old unconditional `setThreadStatus('auto_fixing')` would already
+    // have flipped a done thread back). If we DON'T claim it, another drive finished this thread while we were
+    // mid-execute — fast-forward with its persisted handoff rather than re-writing handoff/`done` on top.
+    const claimed = await this.store.claimThreadAutofix(thread.id, reviewAgents);
+    if (!claimed) {
+      this.logger.warn(
+        `thread ${thread.ordinal} "${thread.brief}" — auto-fix already claimed by another drive; skipping duplicate`,
+      );
+      const done = await this.store.getThread(thread.id).catch(() => null);
+      return { outcome: 'done', handoff: done?.handoffOut ?? handoffIn };
+    }
     // ANCHOR — emit the stage's `autofix_anchor` row PAIRED with a change-signal post (mirrors `build_anchor`:
     // a bare `appendBlock` only writes a DB row; the `post` is what wakes the web at stage start). The future
     // review card latches onto `meta.autofixAnchor`; the stage streams each lens/fix turn on `autofix:*` lanes.
@@ -1795,6 +1853,11 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const metaTag = { phaseId: anchor.id, gateIteration: iteration };
     const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    // Surface this gate iteration's directive (the verify/fix task the orchestrator resumes with) on the
+    // build lane, inline before its activity — the gate resumes the build session with no anchor of its own,
+    // so without this the operator sees the fix work but never what was asked. Keyed per (step, iteration)
+    // so a re-kick after a restart never duplicates it. The reattach path deliberately does NOT emit.
+    await harness.emitPrompt(task, `gate:${anchor.id}:${iteration}`);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
     try {
       result = await this.runTurnBounded(
@@ -1866,17 +1929,20 @@ export class ThreadDriver implements JobDispatcher {
       commitMessage: LEDGER_COMMIT_MESSAGE,
       notify: (m) => this.post(route, m),
     });
-    // Finalize the ledger spine off BOTH signals — did THIS call actually run the promote turn, and did the
-    // PR confirm — never leaving the row stuck `running`:
-    //  • promoted here AND PR confirmed ⇒ COMPLETE (the ledger files were written + shipped on the PR).
-    //  • promoted here but PR not confirmed ⇒ FAILED, so the claim is re-winnable next drive (ship left the
-    //    job `running`, so boot-recovery re-runs the idempotent tail).
+    // Finalize the ledger spine off what THIS call actually did, never leaving the row stuck `running`:
+    //  • promoted here AND ship at least ran the sandbox ship turn (`opened`) ⇒ COMPLETE. The ledger commit
+    //    happens unconditionally inside `ship()` BEFORE it even attempts the PR (see `BuildShipService.ship`),
+    //    and the branch push is part of that same sandbox turn — so the ledger files are on the remote branch
+    //    regardless of `prConfirmed`. `prConfirmed` only reflects a GitHub API lookup that can lag right after
+    //    `gh pr create` (or a turn interrupted before `report_pr_opened`) — gating on it here just re-fires
+    //    the promote turn on an empty ledger delta once GitHub catches up, which is the endless-loop failure
+    //    mode this spine exists to prevent.
+    //  • promoted here but ship never ran (`!opened`, e.g. missing token) ⇒ FAILED, so the claim is
+    //    re-winnable next drive (nothing was shipped at all).
     //  • NOT promoted here ⇒ the claim was already `complete` (nothing to do), OR a crashed `running` from a
-    //    prior attempt whose promote turn may not have written the files. We must NOT mark complete on
-    //    confirmation alone — that would stamp the ledger done with no files. The boot backstop
+    //    prior attempt whose promote turn may not have written the files. The boot backstop
     //    (`reconcileLedgerPromotion`) re-promotes the now-`done`, pr_url-set row onto its open PR instead.
-    // Never blocks the PR on the ledger.
-    if (promoted && outcome.opened && outcome.prConfirmed) {
+    if (promoted && outcome.opened) {
       await this.store.markLedgerPromoted(job.id);
     } else if (promoted) {
       await this.store

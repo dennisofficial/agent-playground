@@ -143,10 +143,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     if (this.env.get('DISABLE_RESUME')) return;
 
     this.promoteSub = this.election.onPromote(async () => {
-      // Crash-recovery sweep runs ONCE per process (the first time this instance wins leadership, by
-      // the drain-then-release invariant any predecessor has already drained). A mid-life RE-promote
-      // (lost+regained the lock on a connection blip) must NOT re-run it: reconcileOnBoot nulls
-      // container_id and resume re-drives jobs — destructive while turns are still executing here.
+      // reconcileOnBoot nulls container_id, so it runs ONCE per process (the first time this instance wins
+      // leadership; by the drain-then-release invariant any predecessor has already drained). A mid-life
+      // RE-promote (lost+regained the lock on a connection blip) must NOT re-run that reconcile.
       if (!this.bootReconciled) {
         this.bootReconciled = true;
         // Mark per-thread sandboxes detached (next turn re-attaches) BEFORE resuming jobs — resumed
@@ -154,8 +153,13 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
         await this.lifecycle.reconcileOnBoot();
         // Finish any job stranded in `deleting` (crash between the delete claim and teardown completing).
         await this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
-        await this.driver.resume();
       }
+      // Re-drive `running` jobs on EVERY promotion — including a mid-life re-promote. Leadership-fenced
+      // drives (see ThreadDriver.runJob) YIELD on demotion, so a re-promote must re-pick-up the yielded job or
+      // it strands `running` with no driver. Safe + idempotent: resume()→drive() and drive()'s in-process
+      // `active` guard skips any job whose drive is still in flight (a fast demote→repromote blip that beat
+      // the drive's yield checkpoint); yielded jobs are re-driven and runJob fast-forwards completed work.
+      await this.driver.resume();
       this.startReapTimer(); // transient: stopped on demote, restarted on every promote
     });
     this.demoteSub = this.election.onDemote(() => this.stopReapTimer());
@@ -169,6 +173,11 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     if (this.reapTimer) return;
     const everyMs = Number(this.env.get('SANDBOX_REAP_INTERVAL_MS')) || 30 * 60 * 1000;
     this.reapTimer = setInterval(() => {
+      // At-least-once re-drive backstop: leadership-fenced drives yield on demotion, and the promote-time
+      // resume() covers the normal re-promote — but a demote landing DURING a drive's yield (before drive()
+      // clears its `active` guard) can race the re-promote resume() and strand the job `running`. This
+      // idempotent sweep re-drives any such stranded job within one interval (skips in-flight via `active`).
+      void this.driver.resume().catch(() => undefined);
       void this.lifecycle.reapIdle().catch(() => undefined);
       void this.lifecycle.pollPrClosures().catch(() => undefined);
       // Observe GitHub for every open PR: refresh CI/mergeable UI columns + route merge conflicts back

@@ -13,7 +13,7 @@ import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { CodexReviewEntity, JobEntity } from '../persistence/entities';
-import { TurnHarnessFactory, laneFor } from '../surface';
+import { TurnHarnessFactory, laneFor, BLOCK_SINK, type BlockSink } from '../surface';
 import { Agent, renderAgentPrompt } from '../prompt-kit';
 import {
   type ReviewFinding,
@@ -190,6 +190,7 @@ export class PlanReviewService {
     private readonly jobs: Repository<JobEntity>,
     private readonly turnHarness: TurnHarnessFactory,
     private readonly election: LeaderElectionService,
+    @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
   ) {}
 
   get reviewCeiling(): number {
@@ -323,6 +324,20 @@ export class PlanReviewService {
         if (timer) clearTimeout(timer);
       }
     };
+
+    // Surface THIS round's review task (the intent + authored-plan index Codex actually reads) on the
+    // codex-review lane, so the operator can see what the reviewer was asked — not just its reply. Tagged
+    // `codexReviewId` so the web routes it into the review sub-page; keyed per round so a resume-retry (two
+    // `attempt()` calls) or a restart never duplicates it. Best-effort.
+    await this.blockSink
+      .appendBlockOnce(input.jobId, `codex:${input.jobId}:${row.resume_count}`, {
+        kind: 'agent_prompt',
+        text: task,
+        meta: { codexReviewId: input.jobId, agentPrompt: true, reviewRound: row.resume_count },
+      })
+      .catch((err) =>
+        this.logger.warn(`plan-review: emitPrompt failed for job=${input.jobId}: ${err}`),
+      );
 
     let res = await attempt(priorSessionId);
     // RESUME-FAILURE FALLBACK: a stale/unresumable session degrades to a fresh review instead of failing.

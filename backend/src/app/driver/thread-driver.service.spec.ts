@@ -95,9 +95,21 @@ function makeStore(state: StoreState): {
     markLedgerPromoted: vi.fn(async () => undefined),
     decisionRecord: vi.fn(async () => state.record),
     threadsForJob: vi.fn(async () => state.threads.map((s) => ({ ...s }))),
+    getThread: vi.fn(async (id: string) => {
+      const s = state.threads.find((x) => x.id === id);
+      return s ? { ...s } : null;
+    }),
     setThreadStatus: vi.fn(async (id: string, status: ThreadStatus) => {
       const s = state.threads.find((x) => x.id === id);
       if (s) s.status = status;
+    }),
+    // Atomically claim the auto-fix pass: no-op (returns false) once the thread is `done`, else flip to
+    // `auto_fixing` and report the claim. Mirrors DriverStoreService.claimThreadAutofix.
+    claimThreadAutofix: vi.fn(async (id: string) => {
+      const s = state.threads.find((x) => x.id === id);
+      if (!s || s.status === 'done') return false;
+      s.status = 'auto_fixing';
+      return true;
     }),
     setThreadPlan: vi.fn(
       async (id: string, plan: string, handoffIn: string | null) => {
@@ -641,6 +653,18 @@ function assemble(
         sunk.push({ jobId, block });
       },
     ),
+    appendBlockOnce: vi.fn(
+      async (
+        jobId: string,
+        promptKey: string,
+        block: { kind: string; text?: string; meta?: Record<string, unknown> | null },
+      ) => {
+        if (sunk.some((s) => s.block.kind === 'agent_prompt' && (s.block.meta as { promptKey?: string } | null)?.promptKey === promptKey)) {
+          return;
+        }
+        sunk.push({ jobId, block: { ...block, meta: { ...(block.meta ?? {}), promptKey } } });
+      },
+    ),
   } as unknown as BlockSink;
   // Task-event capture isn't under test here (see turn-harness.service.spec.ts) — a no-op fake.
   const taskSink = { applyTaskEvent: vi.fn(async () => undefined) } as unknown as TaskEventSink;
@@ -655,8 +679,9 @@ function assemble(
       return { result: 'PR Review: no findings.', usage: undefined };
     }),
   } as unknown as EngineRunnerPort;
-  // LeaderElectionService stub: `draining` is flippable so the shutdown-guard test can simulate SIGTERM.
-  const electionState = { draining: false };
+  // LeaderElectionService stub: `draining`/`leader` are flippable so tests can simulate SIGTERM (drain) and a
+  // mid-drive leadership loss (demotion). Mirrors production: `isLeader()` is false while draining.
+  const electionState = { draining: false, leader: true };
   const judge = opts.judge ?? defaultTestJudge();
   // Captures the driver's Phase-3 brain wakes (`notifyThreadHalted`) fired via the lazy ModuleRef brain.
   const wakes: Array<{
@@ -721,6 +746,9 @@ function assemble(
     // assert that a drain-induced abort leaves the job `running` instead of `failed`.
     {
       isDraining: () => electionState.draining,
+      // Production `isLeader()` is false while draining (state='draining') — mirror that so a drain also
+      // trips the drive's leadership fence, not just the terminal-error `isDraining()` check.
+      isLeader: () => electionState.leader && !electionState.draining,
     } as unknown as LeaderElectionService,
     turnHarness,
     blockSink,
@@ -815,6 +843,46 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     ).toBeGreaterThanOrEqual(1);
     expect(state.job.status).toBe('done');
     expect(h.posts.some((p) => p.includes('opening the PR'))).toBe(true);
+  });
+
+  it('fast-forwards a thread a concurrent/stale drive already finished — no re-execute, no re-seed of review agents', async () => {
+    // Models the torn-review-agents incident: the run-start snapshot showed the 2nd thread not-done, but a
+    // parallel/restart-spawned drive marked it `done` (and finalized its review agents) before this drive
+    // reached it. The live re-read must catch that and fast-forward — NOT re-run the orchestrator (which would
+    // re-execute the committed step) or re-claim/re-seed the review agents.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    // The 2nd thread reads back `done` live (with a persisted handoff) even though the snapshot said pending.
+    const staleId = state.threads[1].id;
+    (h.store.getThread as ReturnType<typeof vi.fn>).mockImplementation(
+      async (id: string) => {
+        const s = state.threads.find((x) => x.id === id);
+        if (!s) return null;
+        return id === staleId
+          ? { ...s, status: 'done', handoffOut: 'HO-from-other-drive' }
+          : { ...s };
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // Only the FIRST thread executed + auto-fixed; the already-done 2nd thread was fast-forwarded.
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(1);
+    expect(h.autofix.autofixThread).toHaveBeenCalledTimes(1);
+    // It never re-claimed the finished thread's auto-fix pass (no re-seed of its review agents).
+    const claimed = (h.store.claimThreadAutofix as ReturnType<typeof vi.fn>).mock
+      .calls;
+    expect(claimed.some((c) => c[0] === staleId)).toBe(false);
+    // The build still completes to a PR.
+    expect(state.job.status).toBe('done');
   });
 
   it('runs the master-review thread as a CODEX execute turn (xhigh) and SKIPS per-thread auto-fix for it', async () => {
@@ -1315,12 +1383,13 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       operatorInputCards: [],
     };
     const h = assemble(state);
-    // The process is shutting down: the in-flight turn's host-side await is cut off → it throws like a
-    // generic abort. Without the guard this would flip the job `failed` and boot-resume would never
+    // Start as leader so the drive's leadership fence lets the turn RUN; SIGTERM then arrives mid-turn (the
+    // mock flips `draining` before throwing), so the in-flight turn's host-side await is cut off → it throws
+    // like a generic abort. Without the guard this would flip the job `failed` and boot-resume would never
     // re-drive it (`runningJobs()` only re-drives `status:'running'`).
-    h.electionState.draining = true;
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
       async () => {
+        h.electionState.draining = true; // SIGTERM lands while the turn is in flight
         throw new Error('aborted: backend draining');
       },
     );
@@ -1339,6 +1408,45 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       ),
     ).toBe(false); // never stamped failed
     expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no failure relay on shutdown
+  });
+
+  it('leadership fence: a drive demoted mid-build YIELDS at the next thread boundary — no further thread, no ship, job left running', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: makeSections(), // 2 threads
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    // Lose leadership the moment thread 1 finishes (a connection blip demoted us; a standby now owns the job).
+    // The fence at the top of the next loop iteration must yield BEFORE running thread 2.
+    (h.store.setThreadStatus as ReturnType<typeof vi.fn>).mockImplementation(
+      async (id: string, status: ThreadStatus) => {
+        const s = state.threads.find((x) => x.id === id);
+        if (s) s.status = status;
+        if (id === state.threads[0].id && status === 'done') {
+          h.electionState.leader = false;
+        }
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    // Thread 1 completes, then the drive should yield. Wait for thread 1 done, then settle.
+    await flushUntil(() => state.threads[0].status === 'done');
+    await flushUntil(() => false, 30);
+
+    // Thread 2 never ran; nothing shipped; the job is LEFT running (no status write) for a leader to re-drive.
+    expect(state.threads[1].status).not.toBe('done');
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(1);
+    expect(h.opened).toHaveLength(0);
+    expect(state.job.status).toBe('running');
+    expect(
+      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c) => c[1] === 'failed',
+      ),
+    ).toBe(false); // a cooperative yield is NOT a failure
   });
 
   it('aborts + relays a step that exceeds PHASE_TIMEOUT_MS (issue #3 circuit breaker)', async () => {
@@ -2278,6 +2386,29 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     // The thread was NOT mutated (orientation untouched) and NO budget was spent:
     expect(state.threads[0].orientation).toBeNull();
     expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(0);
+  });
+
+  it('redriveThread REFUSES an already-done thread — no budget, no mutation, no drive (won\'t resurrect a completed thread)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend', 'done')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as unknown as HaltFields).halt_fix_attempts = 0;
+    const h = assemble(state);
+    // A stale `retry_thread` (the brain acting on an old view) must not clear the record + flip the finished
+    // thread back to `executing` — that would erase the `done` evidence and re-run a completed thread.
+    const r = await h.driver.redriveThread(state.job.id, 'sec-be', 'stale retry', 2);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/already complete/i);
+    // Untouched: status still done, no terminal-record clear, no `executing` flip, no budget spent, no drive.
+    expect(state.threads[0].status).toBe('done');
+    expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(0);
+    expect(state.threads[0].orientation).toBeNull();
+    expect(h.store.clearTerminalRecord).not.toHaveBeenCalled();
   });
 
   it('redriveThread refuses (no budget spent) once the re-drive cap is hit (Codex High-2)', async () => {

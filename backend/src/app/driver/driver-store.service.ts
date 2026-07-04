@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Not, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import type {
   Decision,
@@ -283,6 +283,13 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { status });
   }
 
+  /** Live single-thread read (not the run-start snapshot). Used to detect a thread a concurrent/stale drive
+   *  has already finished, so we don't re-execute or re-review it. */
+  async getThread(threadId: string): Promise<DriverThread | null> {
+    const row = await this.threads.findOne({ where: { id: threadId } });
+    return row ? toThread(row) : null;
+  }
+
   /** Persist the just-in-time plan prose + the prior thread's handoff onto the thread. */
   async setThreadPlan(
     threadId: string,
@@ -438,6 +445,23 @@ export class DriverStoreService {
     agents: ReviewAgentState[],
   ): Promise<void> {
     await this.threads.update({ id: threadId }, { review_agents: agents });
+  }
+
+  /** Atomically CLAIM the per-thread auto-fix pass: flip the thread into `auto_fixing` AND seed its review
+   *  agents at `pending` in ONE guarded write, but ONLY while the thread is not already `done`. Returns
+   *  `true` if this drive claimed the pass, `false` if the thread was already `done` (a prior/overlapping
+   *  drive finished it). This is the single choke point that makes the review pass run-exactly-once: without
+   *  it, a duplicate/stale-snapshot drive would resurrect a done thread (`done`→`auto_fixing`) and re-seed its
+   *  finalized agents back to `pending`, freezing the thread half-reviewed (the torn-`review_agents` bug). */
+  async claimThreadAutofix(
+    threadId: string,
+    agents: ReviewAgentState[],
+  ): Promise<boolean> {
+    const res = await this.threads.update(
+      { id: threadId, status: Not('done') },
+      { status: 'auto_fixing', review_agents: agents },
+    );
+    return (res.affected ?? 0) > 0;
   }
 
   /** Transition ONE review agent's status (read-modify-write the jsonb array). A no-op if the thread or the

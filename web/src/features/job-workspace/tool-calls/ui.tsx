@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { diffLines } from 'diff';
 import type { DiffHunk, IconKind, ToolBadge } from './types';
 import { highlightLine } from './highlight';
+import { CopyButton, TerminalChromeBar, WrapButton } from '../terminal-chrome';
 
 /** Shared presentational primitives for the tool-call renderers. */
 
@@ -218,24 +220,23 @@ export function TerminalBlock({
   label?: string;
   command?: string;
 }) {
+  const [wrapped, setWrapped] = useState(false);
   return (
     <div className="my-[3px] overflow-hidden rounded-[7px]" style={{ background: 'var(--term)', border: '1px solid var(--term-border)' }}>
       {chrome ? (
-        <div className="flex items-center gap-[6px] px-[11px] py-[6px]" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: '#ff5f57' }} />
-          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: '#febc2e' }} />
-          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: '#28c840' }} />
-          <span className="flex-1" />
-          {label ? (
-            <span className="font-mono text-[10px] lowercase" style={{ color: 'var(--term-dim)' }}>
-              {label}
-            </span>
-          ) : null}
-        </div>
+        <TerminalChromeBar
+          label={label}
+          actions={
+            <>
+              <WrapButton wrapped={wrapped} onToggle={() => setWrapped((w) => !w)} />
+              <CopyButton text={body} />
+            </>
+          }
+        />
       ) : null}
       <div className="overflow-auto px-[11px] py-[9px] font-mono text-[10.5px] leading-[1.8]" style={{ maxHeight: CODE_MAX_HEIGHT }}>
         {command ? <CommandPrompt command={command} /> : null}
-        <pre className="m-0 whitespace-pre" style={{ color: 'var(--term-dim)' }}>
+        <pre className={`m-0 ${wrapped ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`} style={{ color: 'var(--term-dim)' }}>
           {body}
         </pre>
       </div>

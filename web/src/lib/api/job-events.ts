@@ -133,6 +133,13 @@ export function useJobEvents(ref: JobRef): void {
         } else {
           // Snapshot (catch-up on connect) or a live delta — both deduped by seq in the store, per lane.
           applyStreamFrame(fThread, lane, frame.seq ?? 0, frame.event);
+          // A turn just STARTED: its kickoff-written durable rows (the `agent_prompt` prompt bubble that
+          // opens each lane, a build phase's `build_anchor`) land via a plain DB insert — no `message`
+          // frame — so without this they'd only surface on the `turn_end` reconcile, mid-turn invisible.
+          // Refetch the open thread's messages now so the prompt shows while the agent is still working.
+          if (frame.event?.kind === 'turn_start' && fThread === openThreadRef.current) {
+            refetch();
+          }
           // In-turn freshness for the OPEN thread only: the brain just wrote a `/context` file via Write/Edit
           // → refresh the SPECS/GENERATED/ARTIFACTS listing now, instead of waiting for the durable reconcile.
           const ev = frame.event;

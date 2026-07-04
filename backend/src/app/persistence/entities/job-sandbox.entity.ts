@@ -83,6 +83,18 @@ export class JobSandboxEntity extends TimestampedEntity {
   pending_compaction_seed!: string | null;
 
   /**
+   * The SDK session id compaction is ABANDONING (set at the start of the summary turn, before the engine
+   * runs). While set, `TurnRecoveryService` must NOT surface that session's transcript — its tail is the
+   * internal compaction summary, which would otherwise leak into the operator log as a `chat` message. Held
+   * through a successful reseed (which nulls `session_id` but keeps this) until the FRESH session is born
+   * (the eager session-id persist clears it alongside `pending_compaction_seed`). If `session_id` still
+   * points at this value after a restart, the reseed never committed — the boot reconciler completes it.
+   * Null when no compaction is in flight.
+   */
+  @Column({ type: 'text', nullable: true })
+  compacting_session_id!: string | null;
+
+  /**
    * Last time a turn ran for this thread (bumped at turn start). Drives the idle reaper + LRU eviction:
    * an `attached` row idle past `SANDBOX_IDLE_TTL_MS` is reaped to `detached`. Null until the first turn.
    */

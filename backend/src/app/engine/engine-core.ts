@@ -1,8 +1,9 @@
 import type { CanUseTool, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { Codex, ThreadOptions } from '@openai/codex-sdk';
+import type { Codex, FileChangeItem, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
+import { structuredPatch as diffStructuredPatch } from 'diff';
 import { applyClaudeAuth } from './claude-auth';
 import { atlasEngineHomeDir } from './engine-home';
 import { assertValidCodexAuthJson, ensureCodexAuthHome, readCodexAuthHome } from './codex-auth-home';
@@ -20,6 +21,7 @@ import {
   type EngineAuth,
   type EngineRunResult,
   type EngineUsage,
+  type ModelUsageBreakdown,
   type RunEngineArgs,
   type StructuredPatchHunk,
 } from './engine.types';
@@ -47,6 +49,36 @@ function extractStructuredPatch(toolUseResult: unknown): StructuredPatchHunk[] |
     });
   }
   return hunks.length ? hunks : undefined;
+}
+
+/**
+ * Codex's `file_change` item reports only `{ path, kind }` — never the before/after content the SDK
+ * would need to hand us a diff (unlike Claude's Edit tool, which carries `old_string`/`new_string` and a
+ * `structuredPatch` on its own tool result). Reconstruct one here: the last committed blob (`git show
+ * HEAD:path`) stands in for "before" and the current on-disk file for "after". This is a `HEAD`-relative
+ * diff, not a per-edit one — fine as long as the worktree isn't committed mid-turn (it isn't).
+ */
+function computeCodexStructuredPatch(cwd: string, path: string, kind: FileChangeItem['changes'][number]['kind']): StructuredPatchHunk[] | undefined {
+  let oldContent = '';
+  if (kind !== 'add') {
+    try {
+      oldContent = execFileSync('git', ['show', `HEAD:${path}`], { cwd, encoding: 'utf8' });
+    } catch {
+      oldContent = '';
+    }
+  }
+  let newContent = '';
+  if (kind !== 'delete') {
+    try {
+      const abs = resolvePath(cwd, path);
+      newContent = existsSync(abs) ? readFileSync(abs, 'utf8') : '';
+    } catch {
+      newContent = '';
+    }
+  }
+  if (!oldContent && !newContent) return undefined;
+  const patch = diffStructuredPatch(path, path, oldContent, newContent, undefined, undefined, { context: 3 });
+  return patch.hunks.length ? patch.hunks : undefined;
 }
 
 /** A user message the SDK's streaming input accepts (mid-turn steering uses `priority:'now'`). */
@@ -782,13 +814,26 @@ export class EngineCore {
               break;
             case 'file_change':
               if (richStream) {
-                onEvent?.({ kind: 'tool_use', id: item.id, name: 'edit', input: { changes: item.changes } });
-                onEvent?.({
-                  kind: 'tool_result',
-                  id: item.id,
-                  result: item.status,
-                  isError: item.status === 'failed',
-                });
+                // Codex bundles every file a patch touched into ONE item — split it into one
+                // tool_use/tool_result pair per file (mirroring Claude's one-file-per-Edit shape) so each
+                // gets its own diff card instead of a single card with no renderable content.
+                const multi = item.changes.length > 1;
+                for (const [idx, change] of item.changes.entries()) {
+                  const id = multi ? `${item.id}:${idx}` : item.id;
+                  onEvent?.({
+                    kind: 'tool_use',
+                    id,
+                    name: 'edit',
+                    input: { file_path: change.path, kind: change.kind },
+                  });
+                  onEvent?.({
+                    kind: 'tool_result',
+                    id,
+                    result: item.status,
+                    isError: item.status === 'failed',
+                    structuredPatch: computeCodexStructuredPatch(cwd, change.path, change.kind),
+                  });
+                }
               } else {
                 onEvent?.({
                   kind: 'tool',
@@ -930,7 +975,37 @@ export function extractClaudeUsage(
     | undefined;
   if (!u) return undefined;
   const costUsd = message.total_cost_usd as number | undefined;
-  const modelUsage = message.modelUsage as Record<string, unknown> | undefined;
+  // The SDK's per-model breakdown for the WHOLE turn (orchestrator + subagents), keyed by model id.
+  // Formerly collapsed to `Object.keys(...)[0]` (dropping every model but the first); now carried in
+  // full onto `usage.modelUsage` as the authoritative source for per-model token/cost analytics.
+  const rawModelUsage = message.modelUsage as
+    | Record<
+        string,
+        {
+          inputTokens?: number;
+          outputTokens?: number;
+          cacheReadInputTokens?: number;
+          cacheCreationInputTokens?: number;
+          costUSD?: number;
+          webSearchRequests?: number;
+        }
+      >
+    | undefined;
+  const modelUsage: Record<string, ModelUsageBreakdown> | undefined = rawModelUsage
+    ? Object.fromEntries(
+        Object.entries(rawModelUsage).map(([m, mu]) => [
+          m,
+          {
+            inputTokens: mu.inputTokens ?? 0,
+            outputTokens: mu.outputTokens ?? 0,
+            cacheReadTokens: mu.cacheReadInputTokens ?? 0,
+            cacheWriteTokens: mu.cacheCreationInputTokens ?? 0,
+            costUsd: mu.costUSD ?? 0,
+            ...(mu.webSearchRequests ? { webSearchRequests: mu.webSearchRequests } : {}),
+          },
+        ]),
+      )
+    : undefined;
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
   const inputTokens = (u.input_tokens ?? 0) + cacheRead + cacheWrite;
@@ -942,5 +1017,6 @@ export function extractClaudeUsage(
     ...(cacheWrite > 0 ? { cacheWriteTokens: cacheWrite } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
     ...(usedModel ? { model: usedModel } : {}),
+    ...(modelUsage ? { modelUsage } : {}),
   };
 }

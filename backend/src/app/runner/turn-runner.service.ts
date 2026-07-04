@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '../domain';
@@ -13,6 +13,7 @@ import type {
   TurnMeta,
 } from '../engine';
 import type { FeatureSandbox } from '../git';
+import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { StepEntity } from '../persistence/entities';
 
@@ -96,6 +97,8 @@ export class TurnRunnerService {
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
     @InjectRepository(StepEntity, DB_CONNECTION)
     private readonly steps: Repository<StepEntity>,
+    // @Optional so unit tests can construct the runner without wiring analytics; DI (@Global) supplies it live.
+    @Optional() private readonly usage?: TurnUsageProjector,
   ) {}
 
   async runTurn(input: RunTurnInput): Promise<RunTurnResult> {
@@ -177,6 +180,20 @@ export class TurnRunnerService {
     if (stepId && result.sessionId) {
       await this.steps.update({ id: stepId }, { session_id: result.sessionId });
     }
+
+    // Durable per-model usage/cost analytics (best-effort; never blocks the turn). Every build/step/
+    // review/gate turn flows through here with its step + turnMeta identity in scope.
+    void this.usage?.record(
+      {
+        jobId,
+        orgId: input.turnMeta?.orgId,
+        lane: input.turnMeta?.lane ?? 'main',
+        kind: input.turnMeta?.kind ?? 'step',
+        engine,
+        ...(stepId ? { metaTag: { phaseId: stepId } } : {}),
+      },
+      result.usage,
+    );
 
     const session: SessionRef = {
       id: result.sessionId ?? priorSessionId ?? '',

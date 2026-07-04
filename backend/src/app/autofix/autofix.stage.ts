@@ -1,6 +1,7 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineEvent, ExecutionTarget } from '../engine';
+import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { LocalGitService } from '../git';
 import { TurnHarnessFactory, type TurnHarness } from '../surface/turn-harness.service';
 import { laneFor } from '../surface/thread-registry';
@@ -79,6 +80,9 @@ export class AutoFixStage {
     // Shared transcript spine (@Global LiveTurnModule) — used ONLY when the context carries a streaming
     // identity (jobId + channel). The same factory the brain, build driver, and Codex review use.
     private readonly turnHarness: TurnHarnessFactory,
+    // Durable per-model usage/cost analytics (best-effort); orgId resolved from jobId (ctx has no org).
+    // @Optional so unit tests construct the stage without wiring analytics; DI (@Global) supplies it live.
+    @Optional() private readonly usage?: TurnUsageProjector,
   ) {}
 
   /** The execution target for a turn — the sandbox container when the driver ran in docker mode. */
@@ -241,11 +245,16 @@ export class AutoFixStage {
     // Stream this lens's reasoning + file reads onto its own sub-lane (when the ctx carries a streaming
     // identity) so it renders like every other agent turn. `undefined` → the pre-streaming direct path.
     const harness = this.harnessFor(ctx, { lensId: lens.id });
+    const task = buildReviewPrompt(lens, ctx);
+    // Surface this lens's review prompt on its sub-lane, inline before its reasoning — so the operator sees
+    // what the reviewer was asked, not just its findings. Keyed per (autofix, lens); no-op on the
+    // pre-streaming direct path (no harness). Best-effort.
+    await harness?.emitPrompt(task, `autofix:${ctx.autofixId}:${lens.id}`);
     try {
       const target = this.targetFor(ctx);
       const res = await this.engine.run({
         engine: engine ?? 'claude',
-        task: buildReviewPrompt(lens, ctx),
+        task,
         cwd: ctx.worktreePath,
         systemPrompt: renderAgentPrompt(Agent.AUTOFIX_REVIEW),
         sandboxKey: `${ctx.sandboxKey}--review-${lens.id}`,
@@ -256,6 +265,18 @@ export class AutoFixStage {
         ...(options.auth ? { auth: options.auth } : {}),
       });
       await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
+      if (ctx.jobId) {
+        void this.usage?.record(
+          {
+            jobId: ctx.jobId,
+            lane: ctx.autofixId ? `autofix:${ctx.autofixId}` : 'autofix',
+            kind: 'autofix',
+            engine: engine ?? 'claude',
+            metaTag: { ...(ctx.autofixId ? { autofixId: ctx.autofixId } : {}), lensId: lens.id },
+          },
+          res.usage,
+        );
+      }
       const found = parseFindings(lens.id, res.result);
       this.logger.debug(`Lens "${lens.id}": ${found.length} finding(s)`);
       this.notifyLensStatus(options, lens.id, 'passed', found.length);
@@ -299,11 +320,15 @@ export class AutoFixStage {
       harness?.onEvent(e);
     };
     const target = this.targetFor(ctx);
+    const task = buildFixPrompt(findings, ctx);
+    // Surface the fix turn's prompt on its `…:fix` sub-lane, inline before the fix work. Keyed per autofix
+    // stage; no-op on the pre-streaming direct path. Best-effort.
+    await harness?.emitPrompt(task, `autofix:${ctx.autofixId}:fix`);
     let res;
     try {
       res = await this.engine.run({
         engine: engine ?? 'claude',
-        task: buildFixPrompt(findings, ctx),
+        task,
         cwd: ctx.worktreePath,
         systemPrompt: renderAgentPrompt(Agent.AUTOFIX_FIX),
         sandboxKey: `${ctx.sandboxKey}--fix`,
@@ -319,6 +344,18 @@ export class AutoFixStage {
       throw err;
     }
     await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
+    if (ctx.jobId) {
+      void this.usage?.record(
+        {
+          jobId: ctx.jobId,
+          lane: ctx.autofixId ? `autofix:${ctx.autofixId}` : 'autofix',
+          kind: 'autofix',
+          engine: engine ?? 'claude',
+          metaTag: { ...(ctx.autofixId ? { autofixId: ctx.autofixId } : {}), fixTurn: true },
+        },
+        res.usage,
+      );
+    }
 
     const fixReport = res.result;
 

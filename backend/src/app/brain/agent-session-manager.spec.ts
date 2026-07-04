@@ -23,6 +23,7 @@ const noopTurnHarness = {
     onEvent: vi.fn(),
     finish: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn().mockResolvedValue(undefined),
+    emitPrompt: vi.fn().mockResolvedValue(undefined),
   }),
 } as unknown as TurnHarnessFactory;
 import type { Repository } from 'typeorm';
@@ -1463,7 +1464,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
     // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
     // end-to-end through the brain (push/end + the durable blocks) exactly as in production.
-    const blockSink = { appendBlock: vi.fn().mockResolvedValue(undefined) } as unknown as BlockSink;
+    const blockSink = {
+      appendBlock: vi.fn().mockResolvedValue(undefined),
+      appendBlockOnce: vi.fn().mockResolvedValue(undefined),
+    } as unknown as BlockSink;
     const taskSink = { applyTaskEvent: vi.fn().mockResolvedValue(undefined) } as unknown as TaskEventSink;
     const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink);
     const driverStore = {

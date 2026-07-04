@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight, Hammer } from 'lucide-react';
+import { ChevronRight, Hammer, MessageSquareText } from 'lucide-react';
 import type { JobMessage } from '@/lib/api/job-api';
 import { useLiveTurn, type LiveBlock } from '@/lib/api/job-stream';
 import { durableSubBlocks, type SubBlock } from './subagents';
@@ -121,6 +121,55 @@ export function BuildInstruction({ text }: { text: string }) {
           Build instruction
         </span>
         <span className="truncate font-mono text-[10px] text-faint">what this thread was asked to do</span>
+      </button>
+      {open ? (
+        <div className="px-3.5 py-3">
+          <Markdown>{text}</Markdown>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The `agent_prompt` block — THIS turn's initial task (its "first message"), the exact prompt the engine
+ * received. Rendered inline at the top of every agent lane (Codex review, the verification gate, autofix,
+ * the brain's main turn) so prompt iteration isn't blind. Collapsible; `defaultOpen` is true on the agent
+ * sub-lanes (the prompt is the whole point there) and false on Main (the operator's own message bubble
+ * already shows the gist — the disclosure reveals the invisible folded context on demand).
+ */
+export function AgentPromptBlock({
+  text,
+  defaultOpen = true,
+}: {
+  text: string;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div
+      className="anim-fadeUp rounded-[9px] border"
+      style={{ borderColor: 'var(--border-2)', background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)' }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 rounded-t-[8px] px-3.5 py-2 text-left"
+        style={{
+          borderBottom: open ? '1px solid var(--border)' : 'none',
+          background: 'color-mix(in srgb, var(--surface-3) 70%, transparent)',
+        }}
+      >
+        <ChevronRight
+          size={11}
+          strokeWidth={2.6}
+          className={`shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`}
+        />
+        <MessageSquareText size={12} className="shrink-0 text-dim" />
+        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-dim">
+          Prompt
+        </span>
+        <span className="truncate font-mono text-[10px] text-faint">what the agent was asked</span>
       </button>
       {open ? (
         <div className="px-3.5 py-3">

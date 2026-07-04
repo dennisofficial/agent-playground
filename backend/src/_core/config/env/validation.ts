@@ -276,13 +276,16 @@ export interface IEnvConfig {
   SCOPING_TIMEOUT_MS?: number;
 
   // ── Atlas v2 dev/test tooling ─────────────────────────────────────────────────────────────────
-  // Both optional, dev/test ONLY — never set in prod:
-  //  - TEST_BRIDGE: when 'on', mounts the in-process HTTP test-bridge (`POST /test/*`) so an
-  //    external driver can have a real conversation with a running Atlas (seed → say → approve →
-  //    inspect job/thread). Any other value (or unset) → the bridge endpoints 404.
+  // Both optional, dev/test ONLY — never live in prod:
+  //  - TEST_BRIDGE: the in-process HTTP test-bridge (`POST /test/*`) so an external driver can have a
+  //    real conversation with a running Atlas (seed → say → approve → inspect job/thread). GATING is
+  //    NODE_ENV-driven, not flag-driven: enabled by default whenever NODE_ENV !== 'production' (dev,
+  //    hot-reload, CI/test — no flag to remember); HARD-disabled in production regardless of this var.
+  //    'off' is the escape hatch for a non-prod environment that must not expose it; 'on' is accepted
+  //    for backward compat but is a no-op outside prod (already on) and inert in prod (the hard floor).
   //  - DISABLE_RESUME: when set (any truthy value), the section driver SKIPS its boot
   //    reconciliation sweep, so a fresh test instance doesn't re-attempt prior runs' stale jobs.
-  TEST_BRIDGE?: 'on';
+  TEST_BRIDGE?: 'on' | 'off';
   DISABLE_RESUME?: string;
 
   // ── Atlas v2 Docker sandbox layer ──────────────────────────────────────────────────────────────
@@ -467,7 +470,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SCOPING_MODE: Joi.string().valid('read_only_tools', 'native_plan').optional(),
   SCOPING_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   // Atlas v2 dev/test tooling (never prod)
-  TEST_BRIDGE: Joi.string().valid('on').optional(),
+  TEST_BRIDGE: Joi.string().valid('on', 'off').optional(),
   DISABLE_RESUME: Joi.string().optional(),
   // Atlas v2 Docker sandbox layer (DOCKER_SOCKET_PATH, REFS_ROOT declared above)
   SANDBOX_IMAGE: Joi.string().optional(),

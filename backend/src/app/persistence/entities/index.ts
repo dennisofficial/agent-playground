@@ -28,6 +28,8 @@ export * from './user.entity';
 export * from './ticket.entity';
 export * from './ticket-dependency.entity';
 export * from './ticket-counter.entity';
+export * from './turn-stats.entity';
+export * from './turn-model-usage.entity';
 
 import { OrganizationEntity } from './organization.entity';
 import { OrganizationMemberEntity } from './organization-member.entity';
@@ -53,6 +55,8 @@ import { UserEntity } from './user.entity';
 import { TicketEntity } from './ticket.entity';
 import { TicketDependencyEntity } from './ticket-dependency.entity';
 import { TicketCounterEntity } from './ticket-counter.entity';
+import { TurnStatsEntity } from './turn-stats.entity';
+import { TurnModelUsageEntity } from './turn-model-usage.entity';
 
 /** Every Atlas v2 entity — passed to the Atlas datasource's `entities` (NOT the shared `ENTITIES`). */
 export const ENTITIES = [
@@ -80,4 +84,6 @@ export const ENTITIES = [
   TicketEntity,
   TicketDependencyEntity,
   TicketCounterEntity,
+  TurnStatsEntity,
+  TurnModelUsageEntity,
 ];

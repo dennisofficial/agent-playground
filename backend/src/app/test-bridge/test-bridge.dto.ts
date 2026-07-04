@@ -1,8 +1,8 @@
 /**
  * Wire shapes for the Atlas v2 HTTP test-bridge (`POST /test/*`). Plain interfaces — the bridge is a
  * dev/test tool driven by curl / an external driver, so it keeps the contract explicit and small. No
- * class-validator (the bridge is never exposed in prod; it 404s unless `TEST_BRIDGE=on`). Zero
- * v1 imports.
+ * class-validator (the bridge 404s in production, hard, regardless of env vars — see
+ * `TestBridgeController.assertEnabled`). Zero v1 imports.
  */
 
 /** `POST /test/seed` body — register a team/project/channel so a conversation routes to a real repo. */

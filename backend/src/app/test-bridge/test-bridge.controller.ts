@@ -1,4 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
+import { ENodeEnv } from '@core/config/env/validation';
 import {
   Body,
   Controller,
@@ -51,9 +52,10 @@ const TESTER_ID = 'tester';
 /**
  * THE HTTP TEST-BRIDGE — a dev/test-only edge that lets an external driver have a REAL conversation with
  * a running Atlas (no Slack): seed a routable team/project/channel, inject a human message and read back
- * Atlas's replies, rule on the plan approval, and inspect the job + thread transcript. Gated behind
- * `TEST_BRIDGE=on` — every handler 404s otherwise (the controller is always registered, the flag
- * is the kill-switch, so it's never live in prod).
+ * Atlas's replies, rule on the plan approval, and inspect the job + thread transcript. This edge is
+ * `@Public()` (bypasses AuthGuard), so gating is a hard floor, not a flag: auto-enabled whenever
+ * NODE_ENV !== 'production' (no flag to remember in dev/CI), and NEVER live when NODE_ENV === 'production'
+ * regardless of any env var — see {@link assertEnabled}.
  *
  * It drives Atlas through the SAME seam W9 scripts: the in-process `AgentChatSurface` (`sendFromHuman` →
  * Atlas's brain → driver → `post()` captured in the outbox) and `DecisionApprovalService.resolve` (the
@@ -80,10 +82,19 @@ export class TestBridgeController {
     private readonly messages: Repository<MessageEntity>,
   ) {}
 
-  /** The kill-switch: 404 every handler unless the dev/test flag is explicitly on. */
+  /**
+   * The kill-switch. This edge is `@Public()` — it bypasses AuthGuard entirely — so the gate has two
+   * layers: a HARD floor (never enabled in production, full stop, regardless of any env var an operator
+   * might leave set) and, below that, an automatic default (on whenever the process isn't running in
+   * production — local dev, hot-reload, CI/test — no flag to remember). `TEST_BRIDGE=off` is still
+   * honored as an explicit escape hatch for a non-prod environment that must not expose it.
+   */
   private assertEnabled(): void {
-    if (this.env.get('TEST_BRIDGE') !== 'on') {
-      throw new NotFoundException('Atlas test-bridge disabled (set TEST_BRIDGE=on).');
+    const nodeEnv = this.env.get('NODE_ENV');
+    const flag = this.env.get('TEST_BRIDGE');
+    const enabled = nodeEnv !== ENodeEnv.PROD && flag !== 'off';
+    if (!enabled) {
+      throw new NotFoundException('Atlas test-bridge disabled (set TEST_BRIDGE=on, or run outside production).');
     }
   }
 
