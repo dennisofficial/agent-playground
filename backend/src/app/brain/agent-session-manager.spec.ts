@@ -114,6 +114,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     getDecisionRecord: vi.fn(),
     // ADR 0004 Phase 3 — halt wake + bounded fix
     loadJob: vi.fn(),
+    getThread: vi.fn(),
     getTerminalRecord: vi.fn(),
     claimHaltFixAttempt: vi.fn(),
     markHaltWaked: vi.fn(),
@@ -1345,6 +1346,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     it('notifyThreadHalted wakes the brain with a TRUSTED seed carrying seedHaltWake + the fenced record', async () => {
       fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'response format' });
       fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
         status: 'blocked',
         summary: 'response format undecided',
@@ -1368,6 +1370,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     it('notifyThreadHalted is a no-op when the thread already shipped (record already done)', async () => {
       fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'o', repoId: 'r' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 20, brief: 'shipped thread' });
       fn(mockDriverStore.getTerminalRecord).mockResolvedValue({ status: 'done', summary: 'shipped' });
       const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
       await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 0);
