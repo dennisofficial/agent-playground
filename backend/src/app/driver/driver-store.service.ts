@@ -19,6 +19,7 @@ import {
   StepEntity,
   ThreadEntity,
   JobEntity,
+  CodexReviewEntity,
 } from '../persistence/entities';
 import type { ThreadTerminalRecord } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
@@ -85,6 +86,8 @@ export class DriverStoreService {
     private readonly records: Repository<DecisionRecordEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(CodexReviewEntity, DB_CONNECTION)
+    private readonly codexReviews: Repository<CodexReviewEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
   ) {}
@@ -611,13 +614,25 @@ export class DriverStoreService {
         childrenByParent.set(t.parent_thread_id, list);
       }
     }
-    // The top-level `threads` array is the driver-EXECUTABLE roots (builder + master_review). The render-only
-    // `main`/`plan_review` rows are first-class rows in the tree but the web renders them from their own
-    // sources today (main_tasks / codex_reviews), so they're excluded here until step 5 makes the web render
-    // the full `(kind, parent_id)` tree.
+    // The top-level `threads` array is the driver-EXECUTABLE roots (builder + master_review). `main` renders
+    // as the navigator's always-first Main row (from `main_tasks`); `plan_review` renders as its own Codex
+    // review row (below) — both from their own sources, so they're excluded from this build-lane list.
     const threads = allThreads.filter(
       (t) => t.parent_thread_id == null && isDriverExecutableKind(t.kind),
     );
+    // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue Main communicates with). It's
+    // its own thread (`kind='plan_review'`), but its runtime + transcript live on the `codex-review:<jobId>`
+    // lane + the `codex_reviews` row (the authoritative status). Surface it when EITHER exists (a new job has
+    // the thread row; a job reviewed before plan_review became a row still has the codex_reviews row). The web
+    // renders a row that opens the `codex-review:<jobId>` lane. Null → no review ran, no row.
+    const planReviewThread = allThreads.find((t) => t.kind === 'plan_review') ?? null;
+    const codexRow = await this.codexReviews
+      .findOne({ where: { job_id: thread.id }, select: { id: true, status: true } })
+      .catch(() => null);
+    const planReview =
+      codexRow || planReviewThread
+        ? { status: codexRow?.status ?? planReviewThread?.status ?? 'reviewing' }
+        : null;
     // All the thread's steps in one query (avoid N+1), grouped by thread for the nav folder tree.
     const steps = await this.steps.find({
       where: { job_id: thread.id },
@@ -629,14 +644,14 @@ export class DriverStoreService {
       list.push(p);
       stepsByThread.set(p.thread_id, list);
     }
-    // NOTE: Codex review is no longer a pipeline node with rounds — it's a synchronous `review_plan` tool
-    // whose turn streams on the `codex-review:<jobId>` lane; the web renders it inline from those lane
-    // blocks. So `getPipelineState` no longer surfaces a `codexReview` summary.
     return {
       jobId: thread.id,
       title: thread.title,
       kind: thread.kind,
       status: thread.status,
+      // The plan-review (Codex) thread's presence + live status — the navigator renders a dedicated row that
+      // opens the `codex-review:<jobId>` lane. Null when no review has run.
+      planReview,
       decisionRecordId: thread.decision_record_id,
       prUrl: thread.pr_url,
       prNumber: thread.pr_number,

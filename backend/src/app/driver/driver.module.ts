@@ -22,6 +22,7 @@ import {
   StimulusEntity,
   JobEntity,
   JobSandboxEntity,
+  CodexReviewEntity,
 } from '../persistence/entities';
 import { RunnerModule } from '../runner';
 import { StimulusModule } from '../stimulus';
@@ -74,6 +75,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
         JobSandboxEntity,
         MessageEntity,
         StimulusEntity,
+        CodexReviewEntity,
       ],
       DB_CONNECTION,
     ),

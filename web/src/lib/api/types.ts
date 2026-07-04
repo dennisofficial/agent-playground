@@ -290,6 +290,9 @@ export interface PipelineJob {
    * are gone — master review is now a normal build thread with its own per-thread fields.)
    */
   mainTasks: TaskItem[];
+  /** The plan-review (Codex) thread — a first-class navigator row that opens the `codex-review:<jobId>`
+   *  lane (the review dialogue Main communicates with). Null when no review has run. */
+  planReview: { status: string } | null;
   /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
   prUrl: string | null;
   prNumber: number | null;
