@@ -222,7 +222,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'lookup), "medium" (moderate exploration), or "very thorough" (sweep multiple locations and ' +
       'naming conventions). For EXTERNAL library/framework/API documentation, use `docs` instead.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
-    model: 'sonnet',
+    model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.EXPLORE),
   },
   docs: {
@@ -232,7 +232,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'synthesized, cited, version-aware answer. Use `explore` for how THIS codebase (and its own docs) ' +
       'work; use `docs` for third-party packages, frameworks, and external APIs.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...CONTEXT7_TOOLS],
-    model: 'sonnet',
+    model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.DOCS),
   },
   review: {
@@ -242,7 +242,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'missing edge cases — grounded in the surrounding code. A cheap second pair of eyes before a step ' +
       'is called done. It reports; it does NOT fix.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
-    model: 'sonnet',
+    model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.REVIEW_AGENT),
   },
   debug: {
@@ -251,7 +251,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'behavior) and it traces the cause through the code and names the exact fix site and smallest fix ' +
       '— it does not run commands or change anything. Use `test` to actually run the verification.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
-    model: 'sonnet',
+    model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.DEBUG),
   },
   test: {
@@ -261,7 +261,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'cause. Keeps thousands of lines of test output out of your context. It can run commands (Bash) ' +
       'but does NOT edit files or change git state.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS],
-    model: 'sonnet',
+    model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.TEST),
   },
 };
@@ -285,7 +285,7 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'at a time. For a genuinely hard, judgment-heavy slice where Sonnet-level coding is not enough, ' +
       'escalate to `implement-deep`.',
     tools: WRITER_TOOLS,
-    model: 'sonnet',
+    model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.FAN_OUT),
   },
   'implement-deep': {

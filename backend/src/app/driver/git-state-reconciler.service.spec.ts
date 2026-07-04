@@ -23,7 +23,7 @@ function make(over: {
     ...over.job,
   } as JobEntity;
   const update = vi.fn(async () => ({}));
-  const intakeEvent = vi.fn(async () => ({ admitted: true, stimulusId: 's', jobId: job.id }));
+  const intakeEvent = vi.fn(async (_e?: unknown) => ({ admitted: true, stimulusId: 's', jobId: job.id }));
   const jobs = { find: vi.fn(async () => [job]), update } as unknown as Repository<JobEntity>;
   const repos = {
     findOne: vi.fn(async () => ({ git_url: 'https://github.com/acme/web.git' })),

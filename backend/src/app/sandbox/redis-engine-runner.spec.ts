@@ -383,7 +383,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       try {
         const redis = new InMemoryRedisStream();
         const inspect = vi.fn(
-          async (): Promise<ContainerInfo> => ({ id: 'c1', name: 'c1', state: 'running', startedAt: null }),
+          async (): Promise<ContainerInfo> => ({ id: 'c1', name: 'c1', state: 'running', labels: {}, startedAt: null }),
         );
         const containers = { execDetached: vi.fn(async () => ({})), inspect } as unknown as ContainerEngine;
         const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
@@ -415,7 +415,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       try {
         const redis = new InMemoryRedisStream();
         const inspect = vi.fn(
-          async (): Promise<ContainerInfo> => ({ id: 'c1', name: 'c1', state: 'running', startedAt: null }),
+          async (): Promise<ContainerInfo> => ({ id: 'c1', name: 'c1', state: 'running', labels: {}, startedAt: null }),
         );
         const containers = { execDetached: vi.fn(async () => ({})), inspect } as unknown as ContainerEngine;
         const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
@@ -449,7 +449,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       try {
         const redis = new InMemoryRedisStream();
         const inspect = vi.fn(
-          async (): Promise<ContainerInfo> => ({ id: 'c1', name: 'c1', state: 'exited', startedAt: null }),
+          async (): Promise<ContainerInfo> => ({ id: 'c1', name: 'c1', state: 'exited', labels: {}, startedAt: null }),
         );
         const containers = { execDetached: vi.fn(async () => ({})), inspect } as unknown as ContainerEngine;
         const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());

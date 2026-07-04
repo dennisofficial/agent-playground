@@ -172,7 +172,7 @@ RUN node --check /usr/local/lib/atlas/atlas-lsp-server.mjs
 # Engine runtime: the two SDKs (each ships its native CLI via a per-platform package) + the bundled
 # atlas engine entrypoint. Pinned to match the host so a turn behaves identically (keep in sync; D5
 # may promote these to build args). The host passes secrets as exec env, never baked here.
-ARG CLAUDE_SDK_VERSION=0.3.168
+ARG CLAUDE_SDK_VERSION=0.3.201
 ARG CODEX_SDK_VERSION=0.137.0
 RUN mkdir -p /usr/local/lib/atlas \
   && cd /usr/local/lib/atlas \

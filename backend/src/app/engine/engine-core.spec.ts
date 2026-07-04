@@ -239,10 +239,10 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     };
 
     const execAgents = await run('execute');
-    // Writers present, Sonnet default + Opus escalation, can Write/Edit/Bash, and have NO Task (no recursive fan-out).
+    // Writers present, Sonnet 5 default + Opus escalation, can Write/Edit/Bash, and have NO Task (no recursive fan-out).
     expect(execAgents.implement).toBeDefined();
     expect(execAgents['implement-deep']).toBeDefined();
-    expect(execAgents.implement.model).toBe('sonnet');
+    expect(execAgents.implement.model).toBe('claude-sonnet-5');
     expect(execAgents['implement-deep'].model).toBe('opus');
     for (const w of [execAgents.implement, execAgents['implement-deep']]) {
       expect(w.tools).toEqual(expect.arrayContaining(['Write', 'Edit', 'Bash']));

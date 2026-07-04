@@ -77,6 +77,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     appendCardMessage: vi.fn(),
     updateCardMessage: vi.fn(),
     latestAnsweredQuestionCard: vi.fn().mockResolvedValue(null),
+    // Milestone-compaction gate reads brain occupancy; a lean session ⇒ skip the compaction turn (no-op here).
+    latestBrainOccupancy: vi.fn().mockResolvedValue({ contextTokens: 0, contextLimit: 1_000_000 }),
     // Durable human-input gate (ask_question lifecycle, per-card — stacking is allowed, no single-slot).
     openQuestion: vi.fn().mockResolvedValue({ ok: true }),
     getQuestionCard: vi.fn().mockResolvedValue(null),
@@ -263,6 +265,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.updateDecision as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.deleteDecision as ReturnType<typeof vi.fn>).mockResolvedValue({ removed: false, all: [] });
     (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    // Milestone-compaction gate reads brain occupancy; a lean session ⇒ skip the fire-and-forget compaction turn.
+    (mockStore.latestBrainOccupancy as ReturnType<typeof vi.fn>).mockResolvedValue({
+      contextTokens: 0,
+      contextLimit: 1_000_000,
+    });
     // Human-input gate defaults: opening succeeds, no question currently open.
     (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
     (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
