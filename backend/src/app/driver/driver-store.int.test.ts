@@ -167,13 +167,13 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(sec.steps[1].status).toBe('pending');
   });
 
-  it('seeds, transitions, and finalizes per-agent review status (surfaced by getPipelineState)', async () => {
+  it('materializes review children (idempotent) and derives per-lens status + findings from their own rows', async () => {
     const job = await jobs.save(
       jobs.create({
         org_id: ORG_ID,
         repo_id: repoId,
         origin: 'control',
-        title: 'review status',
+        title: 'review children',
         kind: 'feature',
         status: 'running',
         base_branch: BASE_BRANCH,
@@ -185,75 +185,69 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,
-        brief: 'Backend — review status',
+        brief: 'Backend — review children',
         status: 'auto_fixing',
       }),
     );
 
-    // Seed at pending → run + pass one lens (with a finding count) → finalize the rest.
-    await store.seedReviewAgents(thread.id, [
-      { id: 'best_practices', label: 'BP', status: 'pending' },
-      { id: 'correctness', label: 'C', status: 'pending' },
-      { id: 'consistency', label: 'Cs', status: 'pending' },
+    const childSpecs = [
+      { kind: 'review_lens', brief: 'BP', config: { lensId: 'best_practices' } },
+      { kind: 'review_lens', brief: 'C', config: { lensId: 'correctness' } },
+      { kind: 'review_lens', brief: 'Cs', config: { lensId: 'consistency' } },
+      { kind: 'post_review', brief: 'Post-review fixes', config: { minSeverity: 'medium' } },
+    ];
+    const children = await store.materializeReviewChildren(
+      { id: thread.id, jobId: job.id, orgId: ORG_ID },
+      childSpecs,
+    );
+    expect(children).toHaveLength(4);
+    // Idempotent: a second materialize (a resume / concurrent drive) returns the SAME rows, no duplicates
+    // (the (job_id, parent_thread_id, ordinal) unique index would reject dups).
+    const again = await store.materializeReviewChildren(
+      { id: thread.id, jobId: job.id, orgId: ORG_ID },
+      childSpecs,
+    );
+    expect(again.map((c) => c.id).sort()).toEqual(children.map((c) => c.id).sort());
+
+    const lenses = children.filter((c) => c.kind === 'review_lens');
+    const finding = (severity: 'low' | 'medium' | 'high') => ({
+      lens: 'x',
+      severity,
+      file: null,
+      title: 't',
+      detail: 'd',
+    });
+
+    // REGRESSION: two lenses complete CONCURRENTLY — each lands its OWN status + findings on its OWN row.
+    // The old shared-jsonb read-modify-write lost one update here (a lens stuck 'reviewing'); with real
+    // rows there is nothing to clobber.
+    await Promise.all([
+      (async () => {
+        await store.setThreadReviewFindings(lenses[0].id, [finding('high')]);
+        await store.setThreadStatus(lenses[0].id, 'done');
+      })(),
+      (async () => {
+        await store.setThreadReviewFindings(lenses[1].id, [finding('low'), finding('medium')]);
+        await store.setThreadStatus(lenses[1].id, 'done');
+      })(),
     ]);
-    await store.setReviewAgentStatus(thread.id, 'best_practices', 'running');
-    await store.setReviewAgentStatus(thread.id, 'best_practices', 'passed', 2);
-    // correctness ran (in lensesRun) but never reached terminal → passed; consistency didn't run → skipped.
-    await store.finalizeReviewAgents(thread.id, ['best_practices', 'correctness']);
+    await store.setThreadStatus(lenses[2].id, 'executing'); // third still running
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
       threads: Array<{ reviewAgents: Array<{ id: string; status: string; findings?: number }> }>;
     };
+    // The child rows are NOT top-level threads (they nest under their builder).
+    expect(state.threads).toHaveLength(1);
     const byId = new Map(state.threads[0].reviewAgents.map((a) => [a.id, a]));
-    expect(byId.get('best_practices')).toMatchObject({ status: 'passed', findings: 2 });
-    expect(byId.get('correctness')?.status).toBe('passed');
-    expect(byId.get('consistency')?.status).toBe('skipped');
-  });
+    expect(byId.get('best_practices')).toMatchObject({ status: 'passed', findings: 1 });
+    expect(byId.get('correctness')).toMatchObject({ status: 'passed', findings: 2 });
+    expect(byId.get('consistency')?.status).toBe('running');
 
-  it('claimThreadAutofix runs the review pass exactly once — a claim on a `done` thread no-ops (guards the torn-review-agents bug)', async () => {
-    const job = await jobs.save(
-      jobs.create({
-        org_id: ORG_ID,
-        repo_id: repoId,
-        origin: 'control',
-        title: 'claim autofix',
-        kind: 'feature',
-        status: 'running',
-        base_branch: BASE_BRANCH,
-      }),
-    );
-    const thread = await threads.save(
-      threads.create({
-        kind: 'builder',
-        job_id: job.id,
-        org_id: ORG_ID,
-        ordinal: 10,
-        brief: 'Backend — claim autofix',
-        status: 'executing',
-      }),
-    );
-    const seed = [
-      { id: 'best_practices', label: 'BP', status: 'pending' as const },
-      { id: 'correctness', label: 'C', status: 'pending' as const },
-      { id: 'consistency', label: 'Cs', status: 'pending' as const },
-    ];
-
-    // First drive claims the pass: executing → auto_fixing, agents seeded.
-    expect(await store.claimThreadAutofix(thread.id, seed)).toBe(true);
-    expect((await store.getThread(thread.id))?.status).toBe('auto_fixing');
-
-    // The pass finishes and marks the thread done.
-    await store.finalizeReviewAgents(thread.id, ['best_practices', 'correctness', 'consistency']);
-    await store.setThreadStatus(thread.id, 'done');
-
-    // A duplicate/stale drive tries to re-claim the SAME thread → refused; the row is untouched (still done,
-    // finalized agents preserved — NOT reset to pending).
-    expect(await store.claimThreadAutofix(thread.id, seed)).toBe(false);
-    expect((await store.getThread(thread.id))?.status).toBe('done');
-    const state = (await store.getPipelineState(job.id, ORG_ID)) as {
-      threads: Array<{ reviewAgents: Array<{ id: string; status: string }> }>;
-    };
-    expect(state.threads[0].reviewAgents.every((a) => a.status !== 'pending')).toBe(true);
+    // reviewChildren reads the full findings back off each lens row (post_review's source of truth).
+    const fresh = await store.reviewChildren(thread.id);
+    const bp = fresh.find((c) => (c.config as { lensId?: string }).lensId === 'best_practices');
+    expect(bp?.reviewFindings).toHaveLength(1);
+    expect(fresh.find((c) => c.kind === 'post_review')).toBeTruthy();
   });
 
   it('surfaces the per-thread LLM-authored task list, with NO fallback default (unlike review agents)', async () => {

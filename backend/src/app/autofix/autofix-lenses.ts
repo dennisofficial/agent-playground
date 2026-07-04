@@ -56,6 +56,11 @@ export interface ReviewAgentInfo {
   label: string;
 }
 
+/** Resolve a lens by its stable id (a `review_lens` thread's `config.lensId` → the lens definition). */
+export function lensById(id: string): ReviewLens | undefined {
+  return DEFAULT_LENSES.find((l) => l.id === id);
+}
+
 /**
  * The review agents SELECTED TO RUN over a thread's diff — the list the navigator renders. Seam-only
  * today: every thread gets the fixed `DEFAULT_LENSES` set (the auto-fix fan-out runs exactly these), so

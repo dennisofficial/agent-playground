@@ -6,7 +6,14 @@ import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PlanVisibilityService } from '../decision-gate';
-import { AutoFixStage, reviewAgentsForThread } from '../autofix';
+import {
+  AutoFixStage,
+  dedupeFindings,
+  meetsSeverity,
+  lensById,
+  type AutoFixContext,
+  type FindingSeverity,
+} from '../autofix';
 import type { DecisionRecord, Step, Job, SessionEngine, ThreadStatus } from '../domain';
 import {
   EngineAuthError,
@@ -44,6 +51,7 @@ import {
   DriverStoreService,
   type DriverThread,
   type JobRoute,
+  type ReviewChildThread,
 } from './driver-store.service';
 import { renderPlan, type PlannedStep } from './render-plan';
 import {
@@ -836,93 +844,13 @@ export class ThreadDriver implements JobDispatcher {
       return { outcome, handoff: null };
     }
 
-    // f. AUTO-FIX — fan-out review → fix over this thread's diff. SKIPPED for the master-review thread: it
-    // IS the review (a whole-diff Codex review-and-fix), so a per-thread auto-fix pass over it is redundant.
-    if (!thread.isMasterReview) {
-    // Seed the review agents at `pending` so the navigator shows them queued; the stage's onLensStatus hook
-    // transitions each as it runs, and the `finally` resolves any left pending/running (empty diff / throw).
-    // `reviewAgentsForThread` selects by thread type; the domain `DriverThread` doesn't carry it, and the
-    // selection is a fixed set today, so call it argless (it ignores the arg).
-    const reviewAgents = reviewAgentsForThread().map((a) => ({
-      ...a,
-      status: 'pending' as const,
-    }));
-    // CLAIM the auto-fix pass atomically: flip `executing`→`auto_fixing` AND seed the pending agents in ONE
-    // guarded write that no-ops if the thread is already `done`. This is the run-exactly-once choke point —
-    // it stops a duplicate/stale drive from resurrecting a done thread or re-seeding its finalized agents
-    // (guarding the seed alone wouldn't: the old unconditional `setThreadStatus('auto_fixing')` would already
-    // have flipped a done thread back). If we DON'T claim it, another drive finished this thread while we were
-    // mid-execute — fast-forward with its persisted handoff rather than re-writing handoff/`done` on top.
-    const claimed = await this.store.claimThreadAutofix(thread.id, reviewAgents);
-    if (!claimed) {
-      this.logger.warn(
-        `thread ${thread.ordinal} "${thread.brief}" — auto-fix already claimed by another drive; skipping duplicate`,
-      );
-      const done = await this.store.getThread(thread.id).catch(() => null);
-      return { outcome: 'done', handoff: done?.handoffOut ?? handoffIn };
-    }
-    // ANCHOR — emit the stage's `autofix_anchor` row PAIRED with a change-signal post (mirrors `build_anchor`:
-    // a bare `appendBlock` only writes a DB row; the `post` is what wakes the web at stage start). The future
-    // review card latches onto `meta.autofixAnchor`; the stage streams each lens/fix turn on `autofix:*` lanes.
-    await this.postAutofixAnchor(job, route, {
-      autofixId: thread.id,
-      scope: 'thread',
-      label: thread.brief,
-      lensIds: reviewAgents.map((a) => a.id),
-    });
-    const channel = route.channel ?? job.repoId;
-    let lensesRun: string[] = [];
-    try {
-      const summary = await this.autofix.autofixThread(
-        {
-          worktreePath: sandbox.worktreePath,
-          sandboxKey: sandboxKey(sandbox),
-          ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
-          intent: `${record?.overview ?? ''}\n\nSection: ${thread.brief}`.trim(),
-          label: thread.brief,
-          // Streaming identity — ride the shared transcript spine on `autofix:<threadId>:*` lanes.
-          jobId: job.id,
-          channel,
-          autofixId: thread.id,
-          scope: 'thread',
-          ...(sandbox.containerId
-            ? {
-                containerId: sandbox.containerId,
-                ...(sandbox.execUser ? { execUser: sandbox.execUser } : {}),
-              }
-            : {}),
-        },
-        {
-          onLensStatus: (lensId, status, findings) => {
-            void this.store
-              .setReviewAgentStatus(thread.id, lensId, status, findings)
-              .catch((err) =>
-                this.logger.warn(
-                  `review-agent status write failed (ignored): ${err}`,
-                ),
-              );
-          },
-        },
-      );
-      lensesRun = summary.lensesRun;
-    } catch (err) {
-      this.logger.warn(`thread auto-fix failed (continuing): ${err}`);
-    } finally {
-      // Resolve any agent still pending/running: passed if its lens ran, else skipped. Never leave a stuck
-      // pending/running agent once the thread leaves auto_fixing.
-      await this.store
-        .finalizeReviewAgents(thread.id, lensesRun)
-        .catch((err) =>
-          this.logger.warn(`review-agent finalize failed (ignored): ${err}`),
-        );
-    }
-    // Passive milestone: auto-fix is a transient stage (thread status is overwritten to `done` next), so
-    // the net-state snapshot can't reconstruct that it ran — record it explicitly for the brain.
-    await this.recordMilestone(
-      job.id,
-      `thread:${thread.id}:autofix`,
-      `Auto-fix pass applied over the diff for thread "${thread.brief}".`,
-    );
+    // f. REVIEW CHILDREN — materialize this builder's review lenses + post-review as real CHILD threads and
+    // drive them (lenses concurrently, then the fix). Each lens is its own row with its own status +
+    // findings — no shared jsonb, so the "stuck at reviewing" lost-update race is gone. SKIPPED for the
+    // master-review thread (it IS the review — a whole-diff Codex review-and-fix — so a per-thread pass over
+    // it is redundant): its spec declares no children, so `runReviewChildren` is a no-op there anyway.
+    if (threadKindSpec(thread.kind).children) {
+      await this.runReviewChildren(job, route, sandbox, thread, record, sectionStartSha);
     }
 
     // e. HANDOFF — summarize what this thread produced for the next.
@@ -937,6 +865,166 @@ export class ThreadDriver implements JobDispatcher {
     );
     await this.post(route, `:white_check_mark: Thread done — *${thread.brief}*`);
     return { outcome: 'done', handoff: handoffOut };
+  }
+
+  /**
+   * Drive a builder's post-build review as CHILD threads (everything is a typed thread). Materialize the
+   * builder's `review_lens` × N + `post_review` child rows (idempotent across resume / a concurrent drive),
+   * run the lenses CONCURRENTLY — each persisting its OWN status + full `review_findings` on its OWN row (no
+   * shared array → no lost-update "stuck at reviewing" race) — then run the `post_review` fix pass over the
+   * deduped, severity-filtered union of the lenses' findings. Best-effort end-to-end: a review/fix failure
+   * marks that child failed but NEVER halts the build (parity with the old swallow-and-continue auto-fix
+   * stage); the builder still advances to `done`. Run-exactly-once no longer needs a claim — the top-of-
+   * `runThread` live-`done` short-circuit stops a done builder being re-entered, and each child fast-forwards
+   * on its own `done` status; the `(job_id, parent_thread_id, ordinal)` unique index rejects duplicate rows.
+   */
+  private async runReviewChildren(
+    job: Job,
+    route: JobRoute,
+    sandbox: FeatureSandbox,
+    thread: DriverThread,
+    record: DecisionRecord | null,
+    sectionStartSha: string | undefined,
+  ): Promise<void> {
+    const spec = threadKindSpec(thread.kind);
+    if (!spec.children) return;
+    // The review window: show the builder `auto_fixing` (the unchanged web affordance) while children run.
+    await this.store.setThreadStatus(thread.id, 'auto_fixing').catch(() => undefined);
+
+    const childSpecs = spec.children({ id: thread.id, config: {} });
+    const children = await this.store
+      .materializeReviewChildren(
+        { id: thread.id, jobId: job.id, orgId: thread.orgId },
+        childSpecs,
+      )
+      .catch((err) => {
+        this.logger.warn(`review-children materialize failed (skipping review): ${err}`);
+        return [] as ReviewChildThread[];
+      });
+    if (children.length === 0) return;
+
+    const lensChildren = children.filter((c) => c.kind === 'review_lens');
+    const postReview = children.find((c) => c.kind === 'post_review');
+    const channel = route.channel ?? job.repoId;
+
+    // The shared review context — derive the diff ONCE and share it across every lens + the fix turn.
+    const baseCtx: AutoFixContext = {
+      worktreePath: sandbox.worktreePath,
+      sandboxKey: sandboxKey(sandbox),
+      ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
+      intent: `${record?.overview ?? ''}\n\nSection: ${thread.brief}`.trim(),
+      label: thread.brief,
+      // Streaming identity — ride the shared transcript spine on `autofix:<threadId>:*` lanes (unchanged).
+      jobId: job.id,
+      channel,
+      autofixId: thread.id,
+      scope: 'thread',
+      ...(sandbox.containerId
+        ? {
+            containerId: sandbox.containerId,
+            ...(sandbox.execUser ? { execUser: sandbox.execUser } : {}),
+          }
+        : {}),
+    };
+    const ctx = await this.autofix.ensureContextDiff(baseCtx).catch(() => baseCtx);
+
+    // ANCHOR — same web contract as before: the `autofix_anchor` row + change-signal post (the review card
+    // latches `meta.autofixAnchor`; each lens/fix turn streams on `autofix:*` lanes).
+    await this.postAutofixAnchor(job, route, {
+      autofixId: thread.id,
+      scope: 'thread',
+      label: thread.brief,
+      lensIds: lensChildren.map((c) => String((c.config as { lensId?: string }).lensId ?? c.id)),
+    });
+
+    // Empty diff → nothing to review: mark every non-done child `done` (idempotent) and skip the turns.
+    if (!ctx.changedFiles?.length) {
+      for (const c of children) {
+        if (c.status === 'done') continue;
+        if (c.kind === 'review_lens') {
+          await this.store.setThreadReviewFindings(c.id, []).catch(() => undefined);
+        }
+        await this.store.setThreadStatus(c.id, 'done').catch(() => undefined);
+      }
+      return;
+    }
+
+    // Drive the LENSES concurrently (capped) — each an independent row (a `done` lens fast-forwards).
+    const concurrency = 3;
+    for (let i = 0; i < lensChildren.length; i += concurrency) {
+      const batch = lensChildren.slice(i, i + concurrency);
+      await Promise.all(batch.map((c) => this.runOneReviewLens(ctx, c)));
+    }
+
+    // Then the POST-REVIEW fix pass over the deduped, severity-filtered union of the lenses' findings.
+    if (postReview && postReview.status !== 'done') {
+      await this.runPostReview(ctx, thread, postReview);
+    }
+
+    // Passive milestone: the review pass is transient (builder flips to `done` next), so record it.
+    await this.recordMilestone(
+      job.id,
+      `thread:${thread.id}:autofix`,
+      `Post-build review + fix pass ran over the diff for thread "${thread.brief}".`,
+    );
+  }
+
+  /**
+   * Run ONE `review_lens` child: mark it running, run the lens's read-only review turn, and persist its full
+   * findings + terminal status on its OWN row. Never throws — a lens failure is isolated to its row (marked
+   * `failed`), never blocking its siblings or the build. A lens already `done` (resume) fast-forwards.
+   */
+  private async runOneReviewLens(ctx: AutoFixContext, child: ReviewChildThread): Promise<void> {
+    if (child.status === 'done') return;
+    const lensId = String((child.config as { lensId?: string }).lensId ?? '');
+    const lens = lensById(lensId);
+    if (!lens) {
+      this.logger.warn(`review-lens child ${child.id} has unknown lensId "${lensId}" — skipping`);
+      await this.store.setThreadStatus(child.id, 'skipped').catch(() => undefined);
+      return;
+    }
+    await this.store.setThreadStatus(child.id, 'executing').catch(() => undefined);
+    try {
+      const findings = await this.autofix.runReviewLens(ctx, lens);
+      await this.store.setThreadReviewFindings(child.id, findings);
+      await this.store.setThreadStatus(child.id, 'done');
+    } catch (err) {
+      this.logger.warn(`review lens "${lensId}" failed (continuing): ${err}`);
+      await this.store.setThreadReviewFindings(child.id, []).catch(() => undefined);
+      await this.store.setThreadStatus(child.id, 'failed').catch(() => undefined);
+    }
+  }
+
+  /**
+   * Run the `post_review` fix child: read the FULL findings off the sibling `review_lens` rows, dedupe +
+   * filter by the child's `minSeverity` (the exact logic AutoFixStage does), run the fix turn, and commit.
+   * Never throws (marks the child `failed` on error). No actionable findings → `done` with no fix turn.
+   */
+  private async runPostReview(
+    ctx: AutoFixContext,
+    thread: DriverThread,
+    child: ReviewChildThread,
+  ): Promise<void> {
+    await this.store.setThreadStatus(child.id, 'executing').catch(() => undefined);
+    try {
+      const siblings = await this.store.reviewChildren(thread.id);
+      const all = siblings
+        .filter((c) => c.kind === 'review_lens')
+        .flatMap((c) => c.reviewFindings ?? []);
+      const minSeverity =
+        (child.config as { minSeverity?: FindingSeverity }).minSeverity ?? 'medium';
+      const deduped = dedupeFindings(all);
+      const actionable = deduped.filter((f) => meetsSeverity(f.severity, minSeverity));
+      if (actionable.length === 0) {
+        await this.store.setThreadStatus(child.id, 'done').catch(() => undefined);
+        return;
+      }
+      await this.autofix.applyReviewFindings(ctx, actionable);
+      await this.store.setThreadStatus(child.id, 'done');
+    } catch (err) {
+      this.logger.warn(`post-review fix failed (continuing): ${err}`);
+      await this.store.setThreadStatus(child.id, 'failed').catch(() => undefined);
+    }
   }
 
   /**

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Not, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import type {
   Decision,
@@ -22,6 +22,7 @@ import {
 } from '../persistence/entities';
 import type { ReviewAgentState, ThreadTerminalRecord } from '../persistence/entities';
 import { reviewAgentsForThread } from '../autofix/autofix-lenses';
+import type { ReviewFinding } from '../autofix';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import type { PlannedStep } from './render-plan';
 
@@ -34,6 +35,21 @@ const ORDINAL_GAP = 10;
  * extra field rather than the driver re-querying the thread for it.
  */
 export type DriverThread = Thread & { orgId: string };
+
+/**
+ * A builder's review CHILD thread (a `review_lens` or `post_review` row) as the driver's child-thread
+ * orchestration works with it — the kind + config + status + the full findings a lens produced. Distinct
+ * from `DriverThread` (a top-level build lane); children carry `config`/`reviewFindings`, not a plan/handoff.
+ */
+export interface ReviewChildThread {
+  id: string;
+  kind: string;
+  brief: string;
+  ordinal: number;
+  config: Record<string, unknown>;
+  status: ThreadStatus;
+  reviewFindings: ReviewFinding[] | null;
+}
 
 /** Where to post a thread's chatter — the repo coordinate + the real thread id. */
 export interface JobRoute {
@@ -436,70 +452,62 @@ export class DriverStoreService {
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
-  // ── review agents (post-build review fan-out, per-agent status) ────────────────────────────────
+  // ── review children (post-build review fan-out as real child threads) ──────────────────────────
+  // A builder's post-build review is N `review_lens` rows + 1 `post_review` row, each a first-class
+  // `threads` child (parent_thread_id = builder). Each lens is its OWN row with its OWN status +
+  // `review_findings` — nothing shared to clobber, so the torn-jsonb "stuck at reviewing" lost-update race
+  // is gone structurally. The `post_review` row reads the full findings off its sibling lens rows.
 
-  /** Seed the thread's review agents at `pending` from the selected lens set — call before the auto-fix
-   *  pass so the navigator can show the agents queued, then transitioned as each lens runs. */
-  async seedReviewAgents(
-    threadId: string,
-    agents: ReviewAgentState[],
-  ): Promise<void> {
-    await this.threads.update({ id: threadId }, { review_agents: agents });
+  /**
+   * Materialize a builder's review children (idempotent). If children already exist (a resume, or a
+   * concurrent drive won the race), returns them untouched; else inserts the given child specs as `pending`
+   * rows, gap-numbered per-parent. On a unique-index conflict (a concurrent drive inserted first — the
+   * `(job_id, parent_thread_id, ordinal)` index rejects the dup) it re-reads rather than throwing.
+   */
+  async materializeReviewChildren(
+    parent: { id: string; jobId: string; orgId: string },
+    childSpecs: Array<{ kind: string; brief: string; config: Record<string, unknown> }>,
+  ): Promise<ReviewChildThread[]> {
+    const existing = await this.reviewChildren(parent.id);
+    if (existing.length > 0) return existing;
+    const rows = childSpecs.map((c, i) =>
+      this.threads.create({
+        job_id: parent.jobId,
+        org_id: parent.orgId,
+        parent_thread_id: parent.id,
+        kind: c.kind,
+        ordinal: (i + 1) * ORDINAL_GAP,
+        brief: c.brief,
+        config: c.config,
+        status: 'pending',
+      }),
+    );
+    try {
+      await this.threads.save(rows);
+    } catch (err) {
+      const reread = await this.reviewChildren(parent.id);
+      if (reread.length > 0) return reread;
+      throw err;
+    }
+    return this.reviewChildren(parent.id);
   }
 
-  /** Atomically CLAIM the per-thread auto-fix pass: flip the thread into `auto_fixing` AND seed its review
-   *  agents at `pending` in ONE guarded write, but ONLY while the thread is not already `done`. Returns
-   *  `true` if this drive claimed the pass, `false` if the thread was already `done` (a prior/overlapping
-   *  drive finished it). This is the single choke point that makes the review pass run-exactly-once: without
-   *  it, a duplicate/stale-snapshot drive would resurrect a done thread (`done`→`auto_fixing`) and re-seed its
-   *  finalized agents back to `pending`, freezing the thread half-reviewed (the torn-`review_agents` bug). */
-  async claimThreadAutofix(
-    threadId: string,
-    agents: ReviewAgentState[],
-  ): Promise<boolean> {
-    const res = await this.threads.update(
-      { id: threadId, status: Not('done') },
-      { status: 'auto_fixing', review_agents: agents },
-    );
-    return (res.affected ?? 0) > 0;
+  /** A parent builder's review children (review_lens rows + the post_review row), in ordinal order. */
+  async reviewChildren(parentId: string): Promise<ReviewChildThread[]> {
+    const rows = await this.threads.find({
+      where: { parent_thread_id: parentId },
+      order: { ordinal: 'ASC' },
+    });
+    return rows.map(toReviewChild);
   }
 
-  /** Transition ONE review agent's status (read-modify-write the jsonb array). A no-op if the thread or the
-   *  lens id isn't found (best-effort display state, never sinks the build). */
-  async setReviewAgentStatus(
+  /** Persist the FULL `ReviewFinding[]` a `review_lens` produced onto its own row — the post_review child
+   *  reads the complete findings off its siblings (dedupe + severity-filter → the fix prompt). */
+  async setThreadReviewFindings(
     threadId: string,
-    lensId: string,
-    status: ReviewAgentState['status'],
-    findings?: number,
+    findings: ReviewFinding[],
   ): Promise<void> {
-    const thread = await this.threads.findOne({ where: { id: threadId } });
-    if (!thread) return;
-    const agents = (thread.review_agents ?? []).map((a) =>
-      a.id === lensId
-        ? { ...a, status, ...(findings != null ? { findings } : {}) }
-        : a,
-    );
-    await this.threads.update({ id: threadId }, { review_agents: agents });
-  }
-
-  /** Resolve any review agent still `pending`/`running` once the pass is over — `passed` if its lens ran,
-   *  else `skipped` (e.g. the pass threw before reaching it, or the diff was empty). Idempotent. */
-  async finalizeReviewAgents(
-    threadId: string,
-    lensesRun: string[],
-  ): Promise<void> {
-    const thread = await this.threads.findOne({ where: { id: threadId } });
-    if (!thread) return;
-    const ran = new Set(lensesRun);
-    const agents = (thread.review_agents ?? []).map((a) =>
-      a.status === 'pending' || a.status === 'running'
-        ? {
-            ...a,
-            status: ran.has(a.id) ? ('passed' as const) : ('skipped' as const),
-          }
-        : a,
-    );
-    await this.threads.update({ id: threadId }, { review_agents: agents });
+    await this.threads.update({ id: threadId }, { review_findings: findings });
   }
 
   // ── steps ───────────────────────────────────────────────────────────────────────────────────
@@ -585,10 +593,24 @@ export class DriverStoreService {
         mainTasks: Array.isArray(thread.main_tasks) ? thread.main_tasks : [],
       };
     }
-    const threads = await this.threads.find({
+    const allThreads = await this.threads.find({
       where: { job_id: thread.id },
       order: { ordinal: 'ASC' },
     });
+    // Split root threads (main/builder/master_review) from a builder's review children (review_lens /
+    // post_review, `parent_thread_id` set). The top-level `threads` array is the ROOT rows; each builder's
+    // `reviewAgents` is DERIVED from its review_lens child rows (each carries its own status + findings) —
+    // no shared jsonb. (Step 5 rewrites the web to render the full tree from `(kind, parent_id)` directly;
+    // this keeps the existing per-thread `reviewAgents` contract working until then.)
+    const childrenByParent = new Map<string, ThreadEntity[]>();
+    for (const t of allThreads) {
+      if (t.parent_thread_id) {
+        const list = childrenByParent.get(t.parent_thread_id) ?? [];
+        list.push(t);
+        childrenByParent.set(t.parent_thread_id, list);
+      }
+    }
+    const threads = allThreads.filter((t) => t.parent_thread_id == null);
     // All the thread's steps in one query (avoid N+1), grouped by thread for the nav folder tree.
     const steps = await this.steps.find({
       where: { job_id: thread.id },
@@ -631,20 +653,14 @@ export class DriverStoreService {
         status: s.status,
         isMasterReview: s.is_master_review ?? false,
         hasPlan: s.plan != null,
-        // The review agents that run over this thread's diff, with per-agent status. Once the thread is
-        // reviewed `review_agents` carries the live state; before that (the `[]` default for an unseeded /
-        // pre-feature thread) fall back to the selected lens set at `pending` so the folder still lists them.
-        // Emptiness check (not nullish) — `[]` is the column default. The MASTER-REVIEW thread runs no
-        // review agents (it IS the review + skips auto-fix), so it always resolves to `[]` — the navigator
-        // then renders it with no review-agents folder and no "Post-review fixes" row.
+        // The review agents that run over this thread's diff, with per-agent status — DERIVED from the
+        // thread's `review_lens` child rows (each carries its own status + full findings). Before the
+        // children are materialized, fall back to the selected lens set at `pending` so the folder still
+        // lists them. The MASTER-REVIEW thread runs no review agents (it IS the review), so it resolves to
+        // `[]` — the navigator renders it with no review-agents folder and no "Post-review fixes" row.
         reviewAgents: s.is_master_review
           ? []
-          : Array.isArray(s.review_agents) && s.review_agents.length > 0
-            ? s.review_agents
-            : reviewAgentsForThread(s).map((a) => ({
-                ...a,
-                status: 'pending' as const,
-              })),
+          : deriveReviewAgents(childrenByParent.get(s.id) ?? [], s),
         // The thread's own LLM-authored task list — no fallback default, same rationale as the job-level
         // field above.
         tasks: Array.isArray(s.tasks) ? s.tasks : [],
@@ -766,6 +782,62 @@ function toThread(row: ThreadEntity): DriverThread {
     parentThreadId: row.parent_thread_id ?? null,
     isMasterReview: row.is_master_review ?? false,
   };
+}
+
+function toReviewChild(row: ThreadEntity): ReviewChildThread {
+  return {
+    id: row.id,
+    kind: row.kind,
+    brief: row.brief,
+    ordinal: row.ordinal,
+    config: (row.config as Record<string, unknown>) ?? {},
+    status: row.status as ThreadStatus,
+    reviewFindings: Array.isArray(row.review_findings) ? row.review_findings : null,
+  };
+}
+
+/**
+ * Derive a builder's per-agent review state (the `/pipeline` `reviewAgents` shape) from its `review_lens`
+ * child rows — each row's own status + full findings. Falls back to the selected lens set at `pending`
+ * when the children aren't materialized yet (mirrors the pre-child fallback so the folder still lists them).
+ */
+function deriveReviewAgents(
+  children: ThreadEntity[],
+  parent: ThreadEntity,
+): ReviewAgentState[] {
+  const lenses = children.filter((c) => c.kind === 'review_lens');
+  if (lenses.length === 0) {
+    return reviewAgentsForThread(parent).map((a) => ({ ...a, status: 'pending' as const }));
+  }
+  return lenses.map((c) => {
+    const lensId = (c.config as { lensId?: string })?.lensId ?? c.id;
+    const findings = Array.isArray(c.review_findings) ? c.review_findings.length : undefined;
+    return {
+      id: lensId,
+      label: c.brief,
+      status: mapChildStatusToAgent(c.status),
+      ...(findings != null ? { findings } : {}),
+    };
+  });
+}
+
+/** Map a review-child thread `status` to the web's `ReviewAgentState.status` vocabulary. */
+function mapChildStatusToAgent(status: string): ReviewAgentState['status'] {
+  switch (status) {
+    case 'done':
+      return 'passed';
+    case 'failed':
+      return 'failed';
+    case 'skipped':
+      return 'skipped';
+    case 'executing':
+    case 'auto_fixing':
+    case 'planning':
+    case 'reviewing':
+      return 'running';
+    default:
+      return 'pending';
+  }
 }
 
 function toStep(row: StepEntity): Step {

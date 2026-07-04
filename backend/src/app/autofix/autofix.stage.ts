@@ -234,7 +234,8 @@ export class AutoFixStage {
     return all;
   }
 
-  /** One read-only review pass for a lens. Failures are logged + swallowed (return []). */
+  /** One read-only review pass for a lens. Failures are logged + swallowed (return []) — the internal
+   *  fan-out (`autofixThread`/`autofixPullRequest`) must not let a single bad lens sink the whole run. */
   private async reviewPass(
     lens: ReviewLens,
     ctx: AutoFixContext,
@@ -242,13 +243,35 @@ export class AutoFixStage {
     options: AutoFixOptions,
   ): Promise<ReviewFinding[]> {
     this.notifyLensStatus(options, lens.id, 'running');
+    try {
+      const found = await this.reviewLensCore(lens, ctx, engine ?? 'claude', options);
+      this.logger.debug(`Lens "${lens.id}": ${found.length} finding(s)`);
+      this.notifyLensStatus(options, lens.id, 'passed', found.length);
+      return found;
+    } catch (err) {
+      this.logger.warn(`Lens "${lens.id}" review pass failed (dropped): ${err}`);
+      this.notifyLensStatus(options, lens.id, 'failed');
+      return [];
+    }
+  }
+
+  /**
+   * The CORE of one read-only review lens turn: stream on its sub-lane, run the engine, record usage, parse
+   * findings. Errors PROPAGATE (after closing the lane) — the swallow lives in `reviewPass` (the fan-out) so
+   * the child-thread path (`runReviewLens`) can record a real per-lens failure instead of a silent `[]`.
+   */
+  private async reviewLensCore(
+    lens: ReviewLens,
+    ctx: AutoFixContext,
+    engine: AutoFixOptions['engine'],
+    options: AutoFixOptions,
+  ): Promise<ReviewFinding[]> {
     // Stream this lens's reasoning + file reads onto its own sub-lane (when the ctx carries a streaming
     // identity) so it renders like every other agent turn. `undefined` → the pre-streaming direct path.
     const harness = this.harnessFor(ctx, { lensId: lens.id });
     const task = buildReviewPrompt(lens, ctx);
     // Surface this lens's review prompt on its sub-lane, inline before its reasoning — so the operator sees
-    // what the reviewer was asked, not just its findings. Keyed per (autofix, lens); no-op on the
-    // pre-streaming direct path (no harness). Best-effort.
+    // what the reviewer was asked, not just its findings. Best-effort; no-op on the direct path (no harness).
     await harness?.emitPrompt(task, `autofix:${ctx.autofixId}:${lens.id}`);
     try {
       const target = this.targetFor(ctx);
@@ -277,17 +300,46 @@ export class AutoFixStage {
           res.usage,
         );
       }
-      const found = parseFindings(lens.id, res.result);
-      this.logger.debug(`Lens "${lens.id}": ${found.length} finding(s)`);
-      this.notifyLensStatus(options, lens.id, 'passed', found.length);
-      return found;
+      return parseFindings(lens.id, res.result);
     } catch (err) {
-      // Persist whatever streamed before the error + close the live lane (idempotent vs finish).
+      // Persist whatever streamed before the error + close the live lane (idempotent vs finish), then rethrow.
       await harness?.abort().catch(() => undefined);
-      this.logger.warn(`Lens "${lens.id}" review pass failed (dropped): ${err}`);
-      this.notifyLensStatus(options, lens.id, 'failed');
-      return [];
+      throw err;
     }
+  }
+
+  // ── child-thread runners (the `review_lens` / `post_review` kinds drive these one row at a time) ──────
+  // The driver materializes a builder's review as real child `threads` rows and drives each as its own turn
+  // (lenses concurrently, then the fix). These expose the exact review/fix turns the fan-out uses, so the
+  // orchestration moves into the driver's child mechanism without duplicating the engine/harness plumbing.
+
+  /** Ensure a context carries its diff + changedFiles — the driver derives the diff ONCE and shares the
+   *  enriched ctx across the per-lens turns + the fix turn (mirrors what `run()` does internally). */
+  async ensureContextDiff(ctx: AutoFixContext): Promise<AutoFixContext> {
+    return this.ensureDiff(ctx);
+  }
+
+  /** Run ONE review lens as its own turn (the `review_lens` child thread's runner), returning its FULL
+   *  findings. Errors PROPAGATE so the driver records the failure on that lens's own row — no shared array
+   *  to silently drop into (the structural fix for the lost-update "stuck at reviewing" bug). */
+  async runReviewLens(
+    ctx: AutoFixContext,
+    lens: ReviewLens,
+    options: AutoFixOptions = {},
+  ): Promise<ReviewFinding[]> {
+    const enriched = await this.ensureDiff(ctx);
+    return this.reviewLensCore(lens, enriched, options.engine ?? 'claude', options);
+  }
+
+  /** Run the single fix turn over the deduped, severity-filtered findings + commit (the `post_review`
+   *  child thread's runner). Reuses the exact apply+commit path the stage uses today. */
+  async applyReviewFindings(
+    ctx: AutoFixContext,
+    findings: ReviewFinding[],
+    options: AutoFixOptions = {},
+  ): Promise<{ fixReport: string; commits: AutoFixCommit[] }> {
+    const enriched = await this.ensureDiff(ctx);
+    return this.applyAndCommit(enriched, findings, 'thread', options.engine ?? 'claude', options);
   }
 
   /** Fire the optional per-lens status hook, swallowing any error (display-only, never sinks a pass). */

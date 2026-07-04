@@ -60,6 +60,17 @@ interface OperatorInputCard {
   delivered: boolean;
 }
 
+interface ReviewChildRow {
+  id: string;
+  parentId: string;
+  kind: string;
+  brief: string;
+  ordinal: number;
+  config: Record<string, unknown>;
+  status: ThreadStatus;
+  reviewFindings: unknown[] | null;
+}
+
 interface StoreState {
   job: Job;
   record: DecisionRecord | null;
@@ -67,6 +78,8 @@ interface StoreState {
   steps: Step[];
   route: JobRoute;
   operatorInputCards: OperatorInputCard[];
+  /** A builder's materialized review children (review_lens + post_review rows). Lazily created. */
+  reviewChildren?: ReviewChildRow[];
 }
 
 function makeStore(state: StoreState): {
@@ -102,14 +115,9 @@ function makeStore(state: StoreState): {
     setThreadStatus: vi.fn(async (id: string, status: ThreadStatus) => {
       const s = state.threads.find((x) => x.id === id);
       if (s) s.status = status;
-    }),
-    // Atomically claim the auto-fix pass: no-op (returns false) once the thread is `done`, else flip to
-    // `auto_fixing` and report the claim. Mirrors DriverStoreService.claimThreadAutofix.
-    claimThreadAutofix: vi.fn(async (id: string) => {
-      const s = state.threads.find((x) => x.id === id);
-      if (!s || s.status === 'done') return false;
-      s.status = 'auto_fixing';
-      return true;
+      // Child rows (review_lens / post_review) share this setter.
+      const c = (state.reviewChildren ?? []).find((x) => x.id === id);
+      if (c) c.status = status;
     }),
     setThreadPlan: vi.fn(
       async (id: string, plan: string, handoffIn: string | null) => {
@@ -128,10 +136,39 @@ function makeStore(state: StoreState): {
       const s = state.threads.find((x) => x.id === id);
       if (s) s.handoffOut = handoffOut;
     }),
-    // Review-agent status writes — no-ops for the driver flow tests (display state only).
-    seedReviewAgents: vi.fn(async () => undefined),
-    setReviewAgentStatus: vi.fn(async () => undefined),
-    finalizeReviewAgents: vi.fn(async () => undefined),
+    // Review CHILD threads (post-build review as real rows). Materialize is idempotent; each lens/post_review
+    // is its own row with its own status + findings.
+    materializeReviewChildren: vi.fn(
+      async (
+        parent: { id: string },
+        childSpecs: Array<{ kind: string; brief: string; config: Record<string, unknown> }>,
+      ) => {
+        const kids = (state.reviewChildren ??= []);
+        const existing = kids.filter((c) => c.parentId === parent.id);
+        if (existing.length) return existing.map((c) => ({ ...c }));
+        const created = childSpecs.map((c, i) => ({
+          id: `${parent.id}-child-${i}`,
+          parentId: parent.id,
+          kind: c.kind,
+          brief: c.brief,
+          ordinal: (i + 1) * 10,
+          config: c.config,
+          status: 'pending' as ThreadStatus,
+          reviewFindings: null as unknown[] | null,
+        }));
+        kids.push(...created);
+        return created.map((c) => ({ ...c }));
+      },
+    ),
+    reviewChildren: vi.fn(async (parentId: string) =>
+      (state.reviewChildren ?? [])
+        .filter((c) => c.parentId === parentId)
+        .map((c) => ({ ...c })),
+    ),
+    setThreadReviewFindings: vi.fn(async (id: string, findings: unknown[]) => {
+      const c = (state.reviewChildren ?? []).find((x) => x.id === id);
+      if (c) c.reviewFindings = findings;
+    }),
     // PR Review lifecycle writes — no-ops for the driver flow tests (display state only).
     startPrReview: vi.fn(async () => undefined),
     setPrReviewStatus: vi.fn(async () => undefined),
@@ -479,14 +516,34 @@ interface AutofixHandle {
   autofix: AutoFixStage;
   autofixThread: ReturnType<typeof vi.fn>;
   autofixPullRequest: ReturnType<typeof vi.fn>;
+  runReviewLens: ReturnType<typeof vi.fn>;
+  applyReviewFindings: ReturnType<typeof vi.fn>;
+  ensureContextDiff: ReturnType<typeof vi.fn>;
 }
 function makeAutofix(): AutofixHandle {
   const autofixThread = vi.fn(async () => cleanSummary('thread'));
   const autofixPullRequest = vi.fn(async () => cleanSummary('pull_request'));
+  // The child-thread review runners. `ensureContextDiff` returns a NON-empty change set so the driver's
+  // per-lens turns actually run (an empty diff would short-circuit the review). Each lens returns no
+  // findings (a clean review) — enough to exercise the flow without a fix turn.
+  const runReviewLens = vi.fn(async () => []);
+  const applyReviewFindings = vi.fn(async () => ({ fixReport: '', commits: [] }));
+  const ensureContextDiff = vi.fn(
+    async (ctx: Record<string, unknown>) => ({ ...ctx, diff: 'x', changedFiles: ['f.ts'] }),
+  );
   return {
-    autofix: { autofixThread, autofixPullRequest } as unknown as AutoFixStage,
+    autofix: {
+      autofixThread,
+      autofixPullRequest,
+      runReviewLens,
+      applyReviewFindings,
+      ensureContextDiff,
+    } as unknown as AutoFixStage,
     autofixThread,
     autofixPullRequest,
+    runReviewLens,
+    applyReviewFindings,
+    ensureContextDiff,
   };
 }
 
@@ -827,9 +884,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(planTurns).toHaveLength(0);
     expect(execTurns).toHaveLength(2); // 2 threads × 1 orchestrator session
 
-    // Per-thread auto-fix ran once per thread; Atlas opens the PR in-sandbox — ONE ship engine turn (master
-    // review no longer runs in ship; it's now a Codex build thread, absent from this mock's thread list).
-    expect(h.autofix.autofixThread).toHaveBeenCalledTimes(2);
+    // Per-thread post-build review ran once per thread (children materialized + lenses run); Atlas opens the
+    // PR in-sandbox — ONE ship engine turn (master review no longer runs in ship; it's now a Codex build
+    // thread, absent from this mock's thread list).
+    expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(2);
+    expect(h.autofix.runReviewLens).toHaveBeenCalled();
     expect(h.engineCalls).toEqual([{ mode: 'execute', engine: 'claude' }]);
 
     // Both threads are done with a handoff; the SECOND thread received the first's handoff.
@@ -847,11 +906,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.posts.some((p) => p.includes('opening the PR'))).toBe(true);
   });
 
-  it('fast-forwards a thread a concurrent/stale drive already finished — no re-execute, no re-seed of review agents', async () => {
+  it('fast-forwards a thread a concurrent/stale drive already finished — no re-execute, no re-materialize of review children', async () => {
     // Models the torn-review-agents incident: the run-start snapshot showed the 2nd thread not-done, but a
-    // parallel/restart-spawned drive marked it `done` (and finalized its review agents) before this drive
-    // reached it. The live re-read must catch that and fast-forward — NOT re-run the orchestrator (which would
-    // re-execute the committed step) or re-claim/re-seed the review agents.
+    // parallel/restart-spawned drive marked it `done` (and reviewed it) before this drive reached it. The live
+    // re-read must catch that and fast-forward — NOT re-run the orchestrator (which would re-execute the
+    // committed step) or re-materialize/re-run its review children.
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -876,13 +935,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // Only the FIRST thread executed + auto-fixed; the already-done 2nd thread was fast-forwarded.
+    // Only the FIRST thread executed + reviewed; the already-done 2nd thread was fast-forwarded.
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(1);
-    expect(h.autofix.autofixThread).toHaveBeenCalledTimes(1);
-    // It never re-claimed the finished thread's auto-fix pass (no re-seed of its review agents).
-    const claimed = (h.store.claimThreadAutofix as ReturnType<typeof vi.fn>).mock
-      .calls;
-    expect(claimed.some((c) => c[0] === staleId)).toBe(false);
+    expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(1);
+    // It never materialized review children for the finished thread (no re-review).
+    const materialized = (
+      h.store.materializeReviewChildren as ReturnType<typeof vi.fn>
+    ).mock.calls;
+    expect(materialized.some((c) => c[0].id === staleId)).toBe(false);
     // The build still completes to a PR.
     expect(state.job.status).toBe('done');
   });
@@ -946,8 +1006,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(execs[1].engine).toBe('codex');
     expect(execs[1].effort).toBe('xhigh');
 
-    // Auto-fix ran for the feature thread ONLY — the master-review thread IS the review, so it's skipped.
-    expect(h.autofix.autofixThread).toHaveBeenCalledTimes(1);
+    // The post-build review ran for the feature thread ONLY — the master-review thread IS the review (its
+    // spec declares no children), so it materializes none.
+    expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(1);
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
   });
 
@@ -1343,7 +1404,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(
       h.posts.some((p) => p.includes('without asserting completion')),
     ).toBe(true); // a durable halt card, never a silent dead-end
-    expect(h.autofix.autofixThread).not.toHaveBeenCalled(); // auto-fix skipped on a halt
+    expect(h.store.materializeReviewChildren).not.toHaveBeenCalled(); // review skipped on a halt
   });
 
   it('SILENTLY RETRIES a transient infra blip and completes — never surfaces a phantom "failed" (ADR 0004)', async () => {

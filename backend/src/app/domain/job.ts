@@ -123,7 +123,8 @@ export type ThreadStatus =
   | 'awaiting_approval' // an always-ask decision parked & asked async
   | 'executing' // the orchestrator turn is running
   | 'awaiting_input' // the orchestrator paused mid-build to ask the operator (request_operator_input)
-  | 'auto_fixing' // per-thread auto-fix stage
+  | 'auto_fixing' // per-thread auto-fix stage (a builder while its review children run)
+  | 'skipped' // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
   | 'done'
   | 'incomplete' // the build turn ended without asserting completion (no `complete_thread`) — surfaced &
   // halted, NEVER treated as done. Distinct from `failed` (nothing threw) and `awaiting_input` (an explicit
