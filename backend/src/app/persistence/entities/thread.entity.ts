@@ -1,28 +1,73 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { JobEntity } from './job.entity';
+import type { ReviewFinding } from '../../autofix/autofix.types';
 
 /**
- * One THREAD of a thread's build — a SCOPE-TYPED slice (backend/frontend/docs/testing/analytics/infra)
- * that becomes a set of steps and is reviewed by agents matched to its `type`. Threads stack on the
- * thread's one feature branch and run sequentially (ORDER BY ordinal). `status` is the explicit,
- * resumable cursor. Gap-numbered ordinals so a re-plan can splice without renumbering.
+ * One THREAD of a job — a first-class, typed lane differentiated only by `kind` (`main | builder |
+ * master_review | review_lens | post_review | plan_review`) and related by `parent_thread_id` (a builder
+ * is the parent of its `review_lens`/`post_review` children). Builders stack on the job's one feature
+ * branch and run sequentially (ORDER BY ordinal); children hang off their builder. `status` is the
+ * explicit, resumable cursor. Gap-numbered ordinals so a re-plan can splice without renumbering.
+ *
+ * Which kinds the driver actually EXECUTES vs merely renders is owned by the `thread-kind` registry
+ * (`ThreadKindSpec`), not this row — the row is just typed state + tree structure.
  */
 @Entity({ name: 'threads' })
 @Index(['job_id'])
-@Unique(['job_id', 'ordinal'])
+@Index(['parent_thread_id'])
 export class ThreadEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  /** The owning thread (FK → threads.id). */
+  /** The owning job (FK → jobs.id). */
   @Column({ type: 'uuid' })
   job_id!: string;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
+
+  /**
+   * The thread KIND — `main | builder | master_review | review_lens | post_review | plan_review`. The
+   * single differentiator across all thread-like concepts (subsumes `is_master_review`). The `thread-kind`
+   * registry binds each kind to a prompt-kit `Agent`, an engine, a driver mode, and its children. Executable
+   * kinds (`builder`, `master_review`) are driven as top-level sections; `review_lens`/`post_review` are
+   * driven as children; `main`/`plan_review` are render/identity-only (their runtime lives elsewhere).
+   * No column default — every write site sets it explicitly (persistPlan / the child-thread materializer).
+   */
+  @Column({ type: 'text' })
+  kind!: string;
+
+  /**
+   * Self-FK (→ threads.id) — the parent thread in the tree. A `builder` is the parent of its `review_lens`
+   * and `post_review` children; `main`/`master_review`/`plan_review` are root/job-level (null). Indexed;
+   * FK cascades with the rest so deleting a builder deletes its review children.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  parent_thread_id!: string | null;
+
+  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'parent_thread_id' })
+  parent?: ThreadEntity | null;
+
+  /**
+   * Kind-specific params: `review_lens → { lensId }`, `post_review → { minSeverity }`, `master_review →
+   * { diffRange }`. PLAIN-LITERAL default (a `() => '{}'::jsonb` function default makes `migration:generate`
+   * loop forever — see the jsonb-default-loop memory).
+   */
+  @Column({ type: 'jsonb', default: {} })
+  config!: Record<string, unknown>;
+
+  /**
+   * The FULL `ReviewFinding[]` a `review_lens` thread produced — the complete findings, not just a count.
+   * `post_review` reads this off its sibling lens rows, dedupes + filters by `minSeverity`, and feeds
+   * `buildFixPrompt`. Null until the lens has reviewed (per-lens display count/verdict derive from this).
+   * Nullable, no default (mirrors `terminal_record`).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  review_findings!: ReviewFinding[] | null;
 
   /** The tenant (org id) — denormalized for org-scoped queries (FK → organizations.id). */
   @Column({ type: 'uuid' })

@@ -1030,6 +1030,9 @@ export class BrainStoreService {
           brief,
           // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
           type: input.threadTypes?.[i] ?? 'general',
+          // Feature threads are `builder` kind; the master-review row below is `master_review`. The `kind`
+          // column is the first-class differentiator (subsumes `is_master_review`).
+          kind: 'builder',
           plan: authored?.length ? renderPlan(authored) : null,
           handoff_in: null,
           handoff_out: null,
@@ -1049,6 +1052,7 @@ export class BrainStoreService {
             ordinal: (input.threadTitles.length + 1) * ORDINAL_GAP,
             brief: 'Master review — whole-diff review & fix',
             type: 'general',
+            kind: 'master_review',
             is_master_review: true,
             plan: null,
             handoff_in: null,

@@ -382,7 +382,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     // of them via the FK ON DELETE CASCADE (RestoreReferentialIntegrity migration) — zero orphans.
     await ds.query(`INSERT INTO messages (job_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [jobId]);
     const [thread] = await ds.query(
-      `INSERT INTO threads (job_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
+      `INSERT INTO threads (job_id, org_id, ordinal, brief, kind) VALUES ($1, $2, 10, 'b', 'builder') RETURNING id`,
       [jobId, FAKE_TEAM_ID],
     );
     await ds.query(

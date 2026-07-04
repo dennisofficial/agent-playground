@@ -601,6 +601,8 @@ function thread(
     handoffIn: null,
     handoffOut: null,
     status,
+    kind: isMasterReview ? 'master_review' : 'builder',
+    parentThreadId: null,
     isMasterReview,
   };
 }

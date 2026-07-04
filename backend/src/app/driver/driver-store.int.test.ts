@@ -102,6 +102,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     const thread = await threads.save(
       threads.create({
+        kind: 'builder',
         job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,
@@ -180,6 +181,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     const thread = await threads.save(
       threads.create({
+        kind: 'builder',
         job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,
@@ -222,6 +224,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     const thread = await threads.save(
       threads.create({
+        kind: 'builder',
         job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,
@@ -267,6 +270,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     const thread = await threads.save(
       threads.create({
+        kind: 'builder',
         job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,
@@ -310,6 +314,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     const thread = await threads.save(
       threads.create({
+        kind: 'builder',
         job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,
@@ -359,6 +364,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     const thread = await threads.save(
       threads.create({
+        kind: 'builder',
         job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,

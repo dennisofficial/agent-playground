@@ -762,6 +762,8 @@ function toThread(row: ThreadEntity): DriverThread {
     handoffIn: row.handoff_in,
     handoffOut: row.handoff_out,
     status: row.status as ThreadStatus,
+    kind: row.kind,
+    parentThreadId: row.parent_thread_id ?? null,
     isMasterReview: row.is_master_review ?? false,
   };
 }

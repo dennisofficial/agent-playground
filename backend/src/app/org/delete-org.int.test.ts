@@ -149,7 +149,7 @@ async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
 async function seedThreadChildren(orgId: string, repoIdArg: string, jobId: string): Promise<void> {
   await ds.query(`INSERT INTO messages (job_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [jobId]);
   const [thread] = await ds.query(
-    `INSERT INTO threads (job_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
+    `INSERT INTO threads (job_id, org_id, ordinal, brief, kind) VALUES ($1, $2, 10, 'b', 'builder') RETURNING id`,
     [jobId, orgId],
   );
   await ds.query(`INSERT INTO steps (thread_id, job_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`, [thread.id, jobId, orgId]);
