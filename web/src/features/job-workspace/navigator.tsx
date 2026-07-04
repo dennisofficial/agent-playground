@@ -874,14 +874,14 @@ function FileRow({
       type="button"
       onClick={onClick}
       style={style}
-      className={`flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2 ${
+      className={`flex w-full items-center gap-1.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2 ${
         active ? 'nav-selected-blue' : ''
       }`}
     >
       {body}
     </button>
   ) : (
-    <div className="flex items-center gap-1.5 px-2 py-1.5" style={style}>
+    <div className="flex w-full items-center gap-1.5 px-2 py-1.5" style={style}>
       {body}
     </div>
   );

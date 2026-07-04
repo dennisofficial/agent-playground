@@ -158,9 +158,20 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.threads).toHaveLength(1);
     const [sec] = state.threads;
     expect(sec.hasPlan).toBe(true);
-    // Review children are data-driven — an un-reviewed builder has none yet (they're materialized after it
-    // finishes executing). No more synthetic "3 pending review agents" fallback.
-    expect(sec.children).toEqual([]);
+    // Review children are data-driven. With no materialized child rows yet (an un-reviewed / executing
+    // builder), getPipelineState SYNTHESIZES the review set from the thread-kind registry so the rows + their
+    // transcript lanes stay visible — the default lenses + the post-review fix, queued at `pending`.
+    expect(sec.children.filter((c) => c.kind === 'review_lens').map((c) => c.lensId)).toEqual([
+      'best_practices',
+      'correctness',
+      'consistency',
+    ]);
+    expect(sec.children.find((c) => c.kind === 'post_review')).toBeTruthy();
+    expect(sec.children.every((c) => c.status === 'pending')).toBe(true);
+    // Each synthesized child carries its real transcript lane (where the historical review turns live).
+    expect(sec.children.find((c) => c.lensId === 'best_practices')?.lane).toBe(
+      `autofix:${sec.id}:best_practices`,
+    );
     expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
     expect(sec.steps[0].status).toBe('building');
     expect(sec.steps[1].status).toBe('pending');

@@ -5,6 +5,7 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { threadDirName } from './thread-dir-name';
 import { PlanVisibilityService } from '../decision-gate';
 import {
   AutoFixStage,
@@ -729,17 +730,18 @@ export class ThreadDriver implements JobDispatcher {
     );
   }
 
-  /** Render + write the durable halt trail to `<worktree>/.atlas/threads/<id>/completion.md` (files-as-store,
-   *  mirroring the decision ledger's plain `mkdir`+`writeFile`). A LIVE worktree artifact the brain/operator
-   *  read on the wake — NOT committed (the halted batch is un-committed + resumable; the DB `terminal_record`
-   *  is the durable source, this is its human-readable projection). Best-effort; never blocks the halt. */
+  /** Render + write the durable halt trail to `<worktree>/.atlas/threads/<ordinal>-<slug>/completion.md`
+   *  (files-as-store, mirroring the decision ledger's plain `mkdir`+`writeFile`). A LIVE worktree artifact
+   *  the brain/operator read on the wake — NOT committed (the halted batch is un-committed + resumable; the
+   *  DB `terminal_record` is the durable source, this is its human-readable projection). Best-effort; never
+   *  blocks the halt. */
   private async writeCompletionMd(
     sandbox: FeatureSandbox,
     thread: DriverThread,
     outcome: 'blocked' | 'incomplete' | 'failed',
     term: ThreadTerminalRecord | null,
   ): Promise<void> {
-    const dir = join(sandbox.worktreePath, '.atlas', 'threads', thread.id);
+    const dir = join(sandbox.worktreePath, '.atlas', 'threads', threadDirName(thread));
     await mkdir(dir, { recursive: true });
     await writeFile(
       join(dir, 'completion.md'),
@@ -2311,9 +2313,9 @@ export function renderBatchTask(
 }
 
 /**
- * Render the durable halt trail for `.atlas/threads/<id>/completion.md` (ADR 0004 Phase 3). Pure — every
- * section is guarded on presence and tails are already length-capped in the record. The brain reads this on
- * its wake turn (alongside the fenced record in the wake body) to triage the halt.
+ * Render the durable halt trail for `.atlas/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
+ * — every section is guarded on presence and tails are already length-capped in the record. The brain reads
+ * this on its wake turn (alongside the fenced record in the wake body) to triage the halt.
  */
 export function renderCompletionMd(
   thread: DriverThread,

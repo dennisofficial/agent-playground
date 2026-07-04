@@ -22,7 +22,7 @@ import {
 } from '../persistence/entities';
 import type { ThreadTerminalRecord } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
-import { isDriverExecutableKind } from '../thread-kind';
+import { isDriverExecutableKind, threadKindSpec } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import type { PlannedStep } from './render-plan';
@@ -665,9 +665,8 @@ export class DriverStoreService {
         hasPlan: s.plan != null,
         // The builder's review CHILD threads (review_lens × N + post_review) — each a first-class row with
         // its own status + findings + streaming lane. The web renders the review sub-tree directly from
-        // these (bare child-thread nodes), no derived `reviewAgents` array + synthetic `rev:`/`fix:` ids.
-        // A master-review thread has no children (it IS the review), so it resolves to `[]`.
-        children: (childrenByParent.get(s.id) ?? []).map((c) => toPipelineChild(c, s.id)),
+        // these (bare child-thread nodes). A master-review thread has no children (it IS the review).
+        children: pipelineReviewChildren(s, childrenByParent.get(s.id) ?? []),
         // The thread's own LLM-authored task list — no fallback default, same rationale as the job-level
         // field above.
         tasks: Array.isArray(s.tasks) ? s.tasks : [],
@@ -802,13 +801,8 @@ function toReviewChild(row: ThreadEntity): ReviewChildThread {
   };
 }
 
-/**
- * Map a builder's review CHILD row (`review_lens` / `post_review`) to the `/pipeline` wire shape: its id +
- * kind + status + (for a lens) its `lensId`/finding count, plus the streaming lane the web renders it on —
- * `autofix:<parentId>:<lensId>` for a lens, `autofix:<parentId>:fix` for the fix pass (the SAME lanes the
- * turns stream on). The web uses these as bare child-thread nodes (no synthetic `rev:`/`fix:` ids).
- */
-function toPipelineChild(c: ThreadEntity, parentId: string): {
+/** The `/pipeline` wire shape of a builder's review child (a `review_lens` / `post_review`). */
+interface PipelineReviewChild {
   id: string;
   kind: string;
   brief: string;
@@ -816,7 +810,55 @@ function toPipelineChild(c: ThreadEntity, parentId: string): {
   lensId?: string;
   findings: number | null;
   lane: string;
-} {
+}
+
+/**
+ * A builder's review children for the `/pipeline` read model. When the child rows are MATERIALIZED (the new
+ * child-thread flow — after the builder finished executing), map them directly (real status + findings). When
+ * they are NOT (a pre-review builder that hasn't reviewed yet, OR a historical job built before review became
+ * child threads), SYNTHESIZE the review set from the thread-kind registry so the rows — and their transcript
+ * lanes (the historical review turns still live in `messages` on `autofix:*`) — stay visible. Master-review
+ * threads have no review children (they ARE the review). This keeps the review sub-tree data-driven (from the
+ * registry, not the dropped `review_agents` jsonb) without the rows vanishing.
+ */
+function pipelineReviewChildren(
+  parent: ThreadEntity,
+  materialized: ThreadEntity[],
+): PipelineReviewChild[] {
+  if (materialized.length > 0) return materialized.map((c) => toPipelineChild(c, parent.id));
+  if (parent.kind !== 'builder') return [];
+  const spec = threadKindSpec('builder');
+  if (!spec.children) return [];
+  // A done builder was reviewed (auto-fix ran before it completed) → show the synthesized rows `done`; an
+  // in-flight/pending builder shows them queued at `pending` (the review preview). The real per-lens
+  // status/findings a historical job once had were in the dropped jsonb, so they degrade to this heuristic —
+  // the navigable transcript on each lane is the durable record.
+  const status = parent.status === 'done' ? 'done' : 'pending';
+  return spec.children({ id: parent.id, config: {} }).map((c) => {
+    const lensId = (c.config as { lensId?: string }).lensId;
+    return {
+      // A deterministic synthetic id (no real row exists) — a bare LEFT-pane node the web can resolve.
+      id: `${parent.id}~${c.kind}${lensId ? `~${lensId}` : ''}`,
+      kind: c.kind,
+      brief: c.brief,
+      status,
+      ...(lensId ? { lensId } : {}),
+      findings: null,
+      lane:
+        c.kind === 'review_lens'
+          ? laneFor('autofix-lens', parent.id, lensId ?? 'review')
+          : laneFor('autofix-fix', parent.id),
+    };
+  });
+}
+
+/**
+ * Map a materialized review CHILD row (`review_lens` / `post_review`) to the `/pipeline` wire shape: its id +
+ * kind + status + (for a lens) its `lensId`/finding count, plus the streaming lane the web renders it on —
+ * `autofix:<parentId>:<lensId>` for a lens, `autofix:<parentId>:fix` for the fix pass (the SAME lanes the
+ * turns stream on). The web uses these as bare child-thread nodes (no synthetic `rev:`/`fix:` ids).
+ */
+function toPipelineChild(c: ThreadEntity, parentId: string): PipelineReviewChild {
   const lensId = (c.config as { lensId?: string })?.lensId;
   return {
     id: c.id,
