@@ -23,13 +23,30 @@
 
 set -euo pipefail
 
-COMPOSE_FILE="$(dirname "$0")/docker-compose.prod.yml"
-STATE_DIR="/srv/atlas/state"
-SECRETS_ENV="/srv/atlas/secrets/atlas.env"
+SRV="/srv/atlas"
+STATE_DIR="$SRV/state"
+SECRETS_ENV="$SRV/secrets/atlas.env"
 GHCR_OWNER="dennisofficial"
 HEALTH_URL="https://api.atlas.dltechnologies.co/health/ready"
 HEALTH_TIMEOUT=120   # seconds to wait for standby to become leader
 POLL_INTERVAL=5      # seconds between health polls
+
+# Sync the deploy-time infra files (this checkout — the workflow sparse-checks-out infra/, or a repo
+# clone on the box) into the DURABLE $SRV so runtime never depends on the runner's ephemeral workspace,
+# then run compose from there. Without this, the workflow runner invokes compose from
+# /opt/actions-runner/_work/... — a DIFFERENT project name than a manual run from $SRV, which collides on
+# the fixed `container_name: atlas-postgres` and finds no $SRV/.env for `${POSTGRES_*}` substitution.
+SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ "$SRC_DIR" != "$SRV" ]]; then
+    cp "$SRC_DIR/docker-compose.prod.yml" "$SRV/docker-compose.prod.yml"
+    cp "$SRC_DIR/Caddyfile" "$SRV/Caddyfile"
+fi
+COMPOSE_FILE="$SRV/docker-compose.prod.yml"
+
+# All compose commands go through this: fixed project name `atlas` (stable regardless of cwd) + the
+# durable env-file for `${POSTGRES_*}` substitution. `./Caddyfile` in the compose file resolves against
+# the project directory ($SRV, the compose file's dir) → $SRV/Caddyfile.
+DC() { docker compose -p atlas --env-file "$SRV/.env" -f "$COMPOSE_FILE" "$@"; }
 
 # ── Parse arguments ─────────────────────────────────────────────────────────────
 ROLLBACK=false
@@ -136,7 +153,7 @@ record_state() {
 rollback_and_exit() {
     local failed_color="$1" restored_color="$2" restored_tag="$3"
     log "ERROR: deploy failed. Attempting rollback to $restored_color ($restored_tag) ..." >&2
-    ATLAS_IMAGE_TAG="$restored_tag" docker compose -f "$COMPOSE_FILE" up -d "backend-${restored_color}" || true
+    ATLAS_IMAGE_TAG="$restored_tag" DC up -d "backend-${restored_color}" || true
     log "Rollback started. Monitor backend-${restored_color} manually." >&2
     exit 1
 }
@@ -157,13 +174,13 @@ if [[ "$ROLLBACK" == "true" ]]; then
     log "=== ROLLBACK to $TAG ==="
     # Best-effort recovery path: warn (don't abort) on each wait so we always reach record_state and
     # leave the state files consistent with what we actually started.
-    ATLAS_IMAGE_TAG="$TAG" docker compose -f "$COMPOSE_FILE" pull "backend-${STANDBY}" || true
-    ATLAS_IMAGE_TAG="$TAG" docker compose -f "$COMPOSE_FILE" up -d "backend-${STANDBY}" || true
+    ATLAS_IMAGE_TAG="$TAG" DC pull "backend-${STANDBY}" || true
+    ATLAS_IMAGE_TAG="$TAG" DC up -d "backend-${STANDBY}" || true
     wait_live "$STANDBY" 90 || log "WARN(rollback): backend-${STANDBY} did not report live"
     # Stop the active FIRST so it releases the advisory lock — the standby can only become leader
     # (pass /health/ready) once the active has let go of the lock.
     log "Stopping active backend-${ACTIVE} (graceful drain) ..."
-    docker compose -f "$COMPOSE_FILE" stop -t 300 "backend-${ACTIVE}" || true
+    DC stop -t 300 "backend-${ACTIVE}" || true
     wait_ready "$STANDBY" "$HEALTH_TIMEOUT" || log "WARN(rollback): backend-${STANDBY} did not acquire leadership"
     wait_health "$HEALTH_URL" 30 "public health endpoint after rollback" || log "WARN(rollback): public endpoint not confirmed"
     record_state "$STANDBY" "$TAG"
@@ -173,7 +190,7 @@ fi
 
 # ── 1. Pull new images ───────────────────────────────────────────────────────────
 log "Pulling images for tag $TAG ..."
-ATLAS_IMAGE_TAG="$TAG" docker compose -f "$COMPOSE_FILE" pull \
+ATLAS_IMAGE_TAG="$TAG" DC pull \
     "backend-${STANDBY}" web
 
 # ── 2. Run migrator (one-shot, on the atlas network) ────────────────────────────
@@ -181,7 +198,7 @@ ATLAS_IMAGE_TAG="$TAG" docker compose -f "$COMPOSE_FILE" pull \
 # fresh box `docker compose up` may never have run, so `docker run --network atlas` would fail.
 # Idempotent: a no-op when they're already running.
 log "Ensuring postgres + redis are up ..."
-ATLAS_IMAGE_TAG="${PREV_TAG}" docker compose -f "$COMPOSE_FILE" up -d postgres redis
+ATLAS_IMAGE_TAG="${PREV_TAG}" DC up -d postgres redis
 
 log "Running database migrations ..."
 # Source the secrets env to get POSTGRES_* for the migrator container.
@@ -208,12 +225,12 @@ export ATLAS_IMAGE_TAG="$TAG"
 # deploy COLD-BOOT the whole stack: without it, the public HEALTH_URL check below can't pass because
 # caddy (TLS + proxy) isn't running. web is recreated on tag change; caddy's config is static.
 log "Ensuring web + caddy are up (tag: ${TAG}) ..."
-docker compose -f "$COMPOSE_FILE" up -d web caddy
+DC up -d web caddy
 
 # ── 3. Start standby ────────────────────────────────────────────────────────────
 log "Starting backend-${STANDBY} (tag: ${TAG}) ..."
 
-docker compose -f "$COMPOSE_FILE" up -d --no-deps \
+DC up -d --no-deps \
     "backend-${STANDBY}" || rollback_and_exit "$STANDBY" "$ACTIVE" "$PREV_TAG"
 
 # Wait for the standby to be listening (/health/live = process is up, not yet leader).
@@ -228,7 +245,7 @@ wait_live "$STANDBY" 90 || rollback_and_exit "$STANDBY" "$ACTIVE" "$PREV_TAG"
 #   3. Releases the advisory lock (or lets it auto-release on process exit).
 # Once the old leader releases the lock, the standby acquires it and becomes leader.
 log "Stopping backend-${ACTIVE} (sending SIGTERM, waiting up to 300s for drain) ..."
-docker compose -f "$COMPOSE_FILE" stop -t 300 "backend-${ACTIVE}" || true
+DC stop -t 300 "backend-${ACTIVE}" || true
 
 # ── 5. Wait for standby to become leader (/health/ready) ────────────────────────
 wait_ready "$STANDBY" "$HEALTH_TIMEOUT" || rollback_and_exit "$STANDBY" "$ACTIVE" "$PREV_TAG"
