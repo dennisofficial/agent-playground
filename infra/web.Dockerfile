@@ -27,28 +27,30 @@ RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 WORKDIR /srv/atlas/web
 
-# ─── deps ────────────────────────────────────────────────────────────────────────
-FROM base AS deps
-
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY web/package.json   ./web/
-COPY shared/package.json ./shared/
-
-# Submodule package.jsons referenced by web workspace packages
-COPY packages/pg-realtime/package.json            ./packages/pg-realtime/
-COPY packages/nestjs-core-essentials/package.json ./packages/nestjs-core-essentials/
-COPY packages/jwt-auth/package.json               ./packages/jwt-auth/
-COPY packages/nestjs-ai-essentials/package.json   ./packages/nestjs-ai-essentials/
-
-RUN --mount=type=cache,id=pnpm-store-web,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
-
 # ─── build ───────────────────────────────────────────────────────────────────────
-FROM deps AS builder
+# Full source (not a manifests-only cache layer) — same rationale as backend.Dockerfile: this pnpm
+# workspace uses `injectWorkspacePackages: true` + `syncInjectedDepsAfterScripts: [build, prepare]`, so
+# `pnpm install` runs each workspace package's build/prepare (e.g. `shared`, the `nestjs-ai-essentials`
+# submodule's `langchain`/`langfuse`) DURING install — which needs real source, not just package.json.
+# A manifests-only enumeration is also fragile: nestjs-ai-essentials has no root package.json (it's a
+# nested mini-monorepo — langchain/ and langfuse/ each have their own), which broke every web build
+# until this was caught.
+FROM base AS builder
+
+# node-gyp toolchain — a root-level `pnpm install` resolves the WHOLE workspace lockfile (backend's
+# native deps included, e.g. better-sqlite3/msgpackr-extract), not just web's, even in this image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 \
+      make \
+      g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 ARG NEXT_PUBLIC_HTTP_URL
 
 COPY . .
+
+RUN --mount=type=cache,id=pnpm-store-web,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 # Build shared first (web imports @workspace/shared types + dist).
 RUN pnpm --filter @workspace/shared run build
