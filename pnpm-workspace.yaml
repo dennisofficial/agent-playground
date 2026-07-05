@@ -32,3 +32,12 @@ allowBuilds:
 overrides:
   '@langchain/core': 1.1.48
   typescript: 6.0.3
+  # packages/ai-testing (submodule) pins react@^18.3.1 + @types/react@^18.3.12; web uses 19.x. A full
+  # workspace install resolves both, giving TypeScript two nominally different ReactNode types and
+  # breaking `next build`'s type-check (e.g. providers.tsx's {children}). Force one instance workspace-
+  # wide, same pattern as @langchain/core above — ai-testing doesn't render a real DOM tree, it's an
+  # eval/test harness, so the react-19 types/runtime are compatible for its actual usage.
+  react: 19.2.7
+  react-dom: 19.2.7
+  '@types/react': ^19
+  '@types/react-dom': ^19
