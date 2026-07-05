@@ -245,7 +245,7 @@ describe('StimulusIntake.intakeChat', () => {
       repoId: 'web',
       kind: 'chat',
       trust: 'trusted',
-      body: '<system_notification>The operator answered your question "X": A</system_notification>',
+      body: '<system_notice>The operator answered your question "X": A</system_notice>',
       jobId: 'thread-9',
       author: { id: 'U-OPERATOR', displayName: 'Operator' },
       replyRoute: { surfaceId: 'web', jobRef: 'thread-9' },

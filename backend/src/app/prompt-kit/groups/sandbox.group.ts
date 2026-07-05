@@ -57,7 +57,7 @@ export class SandboxGroup {
   hostWatchesPr(): string {
     return [
       'THE HOST WATCHES YOUR PR AND TELLS YOU WHAT HAPPENS ON IT: once a PR exists, the host observes GitHub',
-      'and relays state changes back to you as `<system_notification>` messages — a FAILING CI check, a',
+      'and relays state changes back to you as `<untrusted source="github">` messages — a FAILING CI check, a',
       'MERGE CONFLICT against the base branch, or a new REVIEW COMMENT on your PR. When you get one, ACT on',
       'it yourself in the sandbox: for a conflict, `git fetch` + merge/rebase `origin/<base>`, resolve, and',
       'push; for a failing check, reproduce + fix + push; for a review comment, address it + push. These are',

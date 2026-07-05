@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ChevronRight, RotateCw } from "lucide-react";
-import type { SystemTone } from "./classify";
+import { toneOf, type SystemTone } from "./classify";
 import { Markdown } from "./markdown";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
 import { SubagentCard, indexLiveSubagents, subagentNode } from "./subagents";
@@ -347,6 +347,110 @@ export function CompactionSummaryPill({
           style={{ borderColor: "var(--hair)" }}
         >
           <Markdown>{summary}</Markdown>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A harness-injected `system_notice` — a durable state change the brain was told about inline (sandbox
+ * reset, secret/file confirmation). Renders as a collapsed one-line muted row (dot + truncated text);
+ * click to expand the full body (reset notices run several sentences). NOT an operator or Atlas bubble.
+ */
+export function SystemNoticeRow({ message }: { message: JobMessage }) {
+  const [open, setOpen] = useState(false);
+  const tone = toneOf(message.text ?? "");
+  return (
+    <div
+      className="anim-fadeUp flex flex-col self-stretch rounded-md border"
+      style={{
+        borderColor: "var(--hair)",
+        background: "color-mix(in srgb, var(--surface-2) 70%, transparent)",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex items-center gap-2.5 px-3.5 py-1.5 text-left font-mono text-[10px] text-dim"
+      >
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{ background: TONE_COLOR[tone] }}
+        />
+        <span className="shrink-0 uppercase tracking-wide text-faint">
+          system
+        </span>
+        <span className="min-w-0 flex-1 truncate">{message.text}</span>
+        <ChevronRight
+          size={11}
+          className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+        />
+      </button>
+      {open ? (
+        <div
+          className="border-t px-3.5 py-2.5 text-[12px]"
+          style={{ borderColor: "var(--hair)" }}
+        >
+          <Markdown>{message.text}</Markdown>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Human-readable label for a `system_reminder`'s `meta.reminderKind`. */
+function reminderLabel(kind: string | undefined): string {
+  switch (kind) {
+    case "open_questions":
+      return "open questions";
+    case "awareness":
+      return "pipeline update";
+    case "memory":
+      return "memory";
+    default:
+      return "context added";
+  }
+}
+
+/**
+ * A harness-injected `system_reminder` — context that rode ALONGSIDE the turn it precedes (pipeline
+ * awareness, open-questions, a memory hit). Renders as a compact, right-aligned chip (so it associates
+ * with the user bubble that follows it in the transcript); click to expand the exact injected text.
+ */
+export function SystemReminderChip({ message }: { message: JobMessage }) {
+  const [open, setOpen] = useState(false);
+  const label = reminderLabel(
+    message.meta?.reminderKind as string | undefined,
+  );
+  return (
+    <div className="anim-fadeUp flex flex-col items-end gap-1 self-stretch">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-dim"
+        style={{
+          borderColor: "var(--hair)",
+          background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
+        }}
+      >
+        <span
+          className="h-1 w-1 rounded-full"
+          style={{ background: "var(--dim)" }}
+        />
+        harness · {label}
+      </button>
+      {open ? (
+        <div
+          className="max-w-[92%] rounded-md border px-3 py-2 text-[12px] text-dim"
+          style={{
+            borderColor: "var(--hair)",
+            background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
+          }}
+        >
+          <Markdown>{message.text}</Markdown>
         </div>
       ) : null}
     </div>

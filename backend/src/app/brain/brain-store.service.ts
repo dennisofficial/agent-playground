@@ -231,6 +231,49 @@ export class BrainStoreService {
   }
 
   /**
+   * Persist a harness-injected chunk (a `system_notice` or `system_reminder` from the chunk-vocabulary) as a
+   * VISIBLE transcript row — so a sandbox-reset notice, a pipeline-awareness or open-questions reminder, etc.
+   * that the brain reads inline is also legible in the web (the classifier keys on `meta.source`). The row's
+   * `text` is the CLEAN body (no XML tag — the tag is engine-only). System-authored (`author_bot_id: null`,
+   * NOT the operator, NOT Atlas). Insert-once by `meta.chunkKey` so a re-drive/reattach of the same turn
+   * doesn't duplicate it. `createdAt` is backdated by the caller so the row sorts BEFORE the message it rode
+   * with (history orders by `created_at ASC`, and the operator row is already committed at intake time).
+   */
+  async recordSystemChunk(input: {
+    jobId: string;
+    kind: 'system_notice' | 'system_reminder';
+    text: string;
+    chunkKey: string;
+    reminderKind?: string;
+    createdAt?: Date;
+  }): Promise<void> {
+    const dup = await this.messages
+      .createQueryBuilder('m')
+      .where('m.job_id = :jobId', { jobId: input.jobId })
+      .andWhere('m.meta @> :key::jsonb', {
+        key: JSON.stringify({ chunkKey: input.chunkKey }),
+      })
+      .getCount();
+    if (dup > 0) return;
+    await this.messages.save(
+      this.messages.create({
+        job_id: input.jobId,
+        author: 'System',
+        author_id: 'U-SYSTEM',
+        author_bot_id: null,
+        text: input.text,
+        kind: 'chat',
+        meta: {
+          source: input.kind,
+          chunkKey: input.chunkKey,
+          ...(input.reminderKind ? { reminderKind: input.reminderKind } : {}),
+        },
+        ...(input.createdAt ? { created_at: input.createdAt } : {}),
+      }),
+    );
+  }
+
+  /**
    * The BRAIN's most-recent context-window occupancy, read from the latest `turn_meta` block. Build turns
    * also emit `turn_meta`, but tagged with `meta.phaseId` (the brain's `main`-lane turn_meta carries no
    * metaTag), so `phaseId IS NULL` isolates the brain's own occupancy. Used to gate compaction — skip the

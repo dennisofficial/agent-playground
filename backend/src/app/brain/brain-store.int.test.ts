@@ -481,6 +481,71 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     // Scoped to the thread — another thread's identical notice doesn't match.
     expect(await store.hasRecentSystemOperatorNotice(TEAM_ID, err)).toBe(false);
   }, 30_000);
+
+  it('recordSystemChunk persists a source-tagged row, is insert-once by chunkKey, and backdates before the message it rode with', async () => {
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active') ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, 'brainstore-chunk-it', 'Chunk Repo', 'https://github.com/acme/chunk.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+      [TEAM_ID],
+    );
+    const [thread]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
+         VALUES ($1, $2, 'chat', 'chunks') RETURNING id`,
+      [TEAM_ID, repoRow.id],
+    );
+    const jobId = thread.id;
+    const at = new Date(Date.UTC(2026, 5, 24, 0, 0, 5));
+
+    // The operator's message lands at `at`; the reminder rode with it, backdated 2ms earlier.
+    await insertUserMessage(dataSource, jobId, 'check the healthcheck', at);
+    await store.recordSystemChunk({
+      jobId,
+      kind: 'system_reminder',
+      text: 'open questions: q-1 (which region?)',
+      chunkKey: 'brain:s1:system_reminder:0',
+      reminderKind: 'open_questions',
+      createdAt: new Date(at.getTime() - 2),
+    });
+
+    // The row is stored CLEAN (no XML tag), source-tagged so the classifier renders it distinctly.
+    const rows: Array<{ text: string; kind: string; author_bot_id: string | null; meta: Record<string, unknown> }> =
+      await dataSource.query(
+        `SELECT text, kind, author_bot_id, meta FROM messages WHERE job_id = $1 AND meta->>'source' = 'system_reminder'`,
+        [jobId],
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].text).toBe('open questions: q-1 (which region?)');
+    expect(rows[0].kind).toBe('chat');
+    expect(rows[0].author_bot_id).toBeNull();
+    expect(rows[0].meta.reminderKind).toBe('open_questions');
+
+    // Backdated → sorts BEFORE the operator message it rode with (history orders by created_at ASC).
+    expect(await messageTexts(dataSource, jobId)).toEqual([
+      'open questions: q-1 (which region?)',
+      'check the healthcheck',
+    ]);
+
+    // Insert-once: a re-drive of the SAME turn (same chunkKey) does not duplicate the row.
+    await store.recordSystemChunk({
+      jobId,
+      kind: 'system_reminder',
+      text: 'open questions: q-1 (which region?)',
+      chunkKey: 'brain:s1:system_reminder:0',
+      reminderKind: 'open_questions',
+      createdAt: new Date(at.getTime() - 2),
+    });
+    const dupCount: Array<{ n: string }> = await dataSource.query(
+      `SELECT COUNT(*)::text AS n FROM messages WHERE job_id = $1 AND meta->>'source' = 'system_reminder'`,
+      [jobId],
+    );
+    expect(Number(dupCount[0].n)).toBe(1);
+  }, 30_000);
 });
 
 async function openCount(ds: DataSource, jobId: string): Promise<number> {

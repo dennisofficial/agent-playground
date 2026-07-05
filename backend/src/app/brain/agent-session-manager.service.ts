@@ -21,7 +21,12 @@ import type {
   JobKind,
 } from '../domain';
 import { MemoryStore } from '../memory';
-import { StimulusStoreService, wrapUntrusted } from '../stimulus';
+import {
+  StimulusStoreService,
+  wrapUntrusted,
+  renderTurn,
+  type TurnChunk,
+} from '../stimulus';
 import {
   CHAT_SURFACE,
   type ChatSurface,
@@ -36,6 +41,7 @@ import {
   wrapSystemNotification,
 } from '../surface';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
+import { EnvService } from '@core/config/env/env.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ActiveTurnEntity,
@@ -256,6 +262,10 @@ export class AgentSessionManager
     // Durable per-model usage/cost analytics (best-effort) for brain + compaction turns. @Optional so
     // unit tests can construct the manager without wiring analytics; DI (@Global) supplies it live.
     @Optional() private readonly usageProjector?: TurnUsageProjector,
+    // Reads the `HARNESS_CHUNK_ROWS` kill-switch (default ON) — gates whether injected system_notice /
+    // system_reminder chunks also persist as visible transcript rows. @Optional so unit tests can omit it
+    // (undefined → default ON); DI (@Global EnvService) supplies it live.
+    @Optional() private readonly env?: EnvService,
   ) {}
 
   /**
@@ -760,6 +770,54 @@ export class AgentSessionManager
    * card-answer seed also stamps its card `deliveredAt` on success (the XADD is durable → this IS delivery;
    * the answered card then stops re-surfacing in `<open-questions>` and the boot re-seed sweep skips it).
    */
+  /**
+   * The engine-facing string for a stimulus's BODY (no turn-level notice/reminder prefixes — those are
+   * added once, in `runChatTurnInner`). A human (operator) message is wrapped in a `<user name at>` tag
+   * reconstructed from the author fields AT TURN TIME (the persisted body stays clean, so a replayed
+   * stimulus frames identically); a coalesced turn carries one `<user>` chunk per message via `chunks`.
+   * Seeds / synthetic Atlas turns already carry framed bodies (`<system_notice>`, event/halt framing) —
+   * pass through untouched.
+   */
+  private engineBody(stimulus: ChatStimulus): string {
+    if (!isOperatorAuthored(stimulus)) return stimulus.body;
+    if (stimulus.chunks?.length) return renderTurn(stimulus.chunks);
+    return renderTurn([userChunkFor(stimulus)]);
+  }
+
+  /**
+   * Persist THIS turn's injected system_notice / system_reminder chunks as visible transcript rows (behind
+   * the `HARNESS_CHUNK_ROWS` kill-switch, default ON). Each row is backdated to sort just BEFORE the message
+   * it rode with (history orders by `created_at ASC`; the operator row is already committed at ≈ receivedAt),
+   * notices before reminders. Best-effort + insert-once (by `chunkKey`, inside the store) — a failure or a
+   * re-drive never affects the turn. Missing on unit-test store mocks → optional-chained no-op.
+   */
+  private persistChunkRows(
+    stimulus: ChatStimulus,
+    notices: TurnChunk[],
+    reminders: TurnChunk[],
+  ): void {
+    if (this.env?.get('HARNESS_CHUNK_ROWS') === 'off') return;
+    const ordered = [...notices, ...reminders];
+    const anchorMs = stimulus.receivedAt.getTime();
+    ordered.forEach((chunk, i) => {
+      const createdAt = new Date(anchorMs - (ordered.length - i));
+      void this.store
+        .recordSystemChunk?.({
+          jobId: stimulus.jobId,
+          kind: chunk.kind as 'system_notice' | 'system_reminder',
+          text: chunk.body,
+          chunkKey: `brain:${stimulus.id}:${chunk.kind}:${i}`,
+          ...(chunk.attrs?.reminderKind
+            ? { reminderKind: chunk.attrs.reminderKind }
+            : {}),
+          createdAt,
+        })
+        ?.catch((err: unknown) =>
+          this.logger.debug(`recordSystemChunk failed (best-effort): ${err}`),
+        );
+    });
+  }
+
   private async steerIntoLiveBrainTurn(stimulus: ChatStimulus): Promise<boolean> {
     if (typeof this.engineRunner.steer !== 'function') return false;
     const live = await this.turnRegistry
@@ -767,7 +825,7 @@ export class AgentSessionManager
       .catch(() => null);
     if (!live?.turn_id) return false;
     try {
-      await this.engineRunner.steer(live.turn_id, stimulus.id, stimulus.body);
+      await this.engineRunner.steer(live.turn_id, stimulus.id, this.engineBody(stimulus));
     } catch (err) {
       // A live turn exists but the steer XADD failed (transient). Report handled anyway — falling back to a
       // fresh turn would just hit the single-turn guard. A dropped card-answer self-heals: the boot re-seed
@@ -894,6 +952,10 @@ export class AgentSessionManager
     const combined: ChatStimulus = {
       ...pending[0],
       body: pending.map((p) => p.body).join('\n\n'),
+      // Per-message attribution: one `<user name at>` chunk each, so a batch coalesced from several
+      // senders isn't misattributed to the oldest. `engineBody` renders these; the joined `body` above
+      // is the clean fallback (used for logging + when `chunks` is absent on a replay).
+      chunks: pending.map((p) => userChunkFor(p)),
     };
     await this.runChatTurn(combined, {
       // Restart-survivable hand-off: stamp every coalesced message delivered the instant the turn is
@@ -915,7 +977,7 @@ export class AgentSessionManager
     );
     for (const p of pending) {
       await this.engineRunner
-        .steer!(turnId, p.id, p.body)
+        .steer!(turnId, p.id, this.engineBody(p))
         .catch((err) =>
           this.logger.warn(`pump: steer of turn ${turnId} failed (sweep will re-drive): ${err}`),
         );
@@ -1438,28 +1500,24 @@ export class AgentSessionManager
       return;
     }
 
-    // Cold re-attach while resuming a session → the session remembers in-container state that's gone.
-    // Prepend the reset notice so it re-establishes its runtime instead of trusting stale beliefs. When this
-    // cold attach follows a `reset_sandbox` teardown, we owe a VERIFY instruction — fold it into the notice
-    // so it lands on THIS (the first cold) turn, whether that's the synthetic wake or a queued operator turn.
-    let task = stimulus.body;
+    // Assemble THIS turn as an ordered envelope of framed chunks (chunk-vocabulary): system notices and
+    // reminders wrap the body; `renderTurn` orders them canonically (notices → reminders → `<user>` last).
+    // The body is a `<user>` chunk for a human message (reconstructed from author fields at engine time —
+    // the persisted body stays clean) or an already-framed seed passthrough. `notice`/`reminder` chunks
+    // are ALSO the units Phase 2 persists as visible transcript rows.
+    const noticeChunks: TurnChunk[] = [];
+    const reminderChunks: TurnChunk[] = [];
 
-    // COMPACTION seed fold: a prior compaction nulled the session + stashed a lean handoff summary here.
-    // Fold it into THIS turn's prompt so the fresh session (session_id is null → engine starts new) opens
-    // with the distilled context. Cleared the instant the fresh session is born (see the eager session
-    // persist below) — NOT here — so a crash before the new session exists re-folds it next turn rather
-    // than dropping it. Graceful either way: a lean fresh session re-orients from durable state on its own.
-    const hadCompactionSeed = !!sandboxRow?.pending_compaction_seed;
-    if (hadCompactionSeed) {
-      task = `${sandboxRow!.pending_compaction_seed}\n\n---\n\n${task}`;
-    }
-
+    // Cold re-attach while resuming a session → the session remembers in-container state that's gone. Add
+    // the reset notice so it re-establishes its runtime instead of trusting stale beliefs. When this cold
+    // attach follows a `reset_sandbox` teardown, we owe a VERIFY instruction — fold it into the notice so
+    // it lands on THIS (the first cold) turn, whether that's the synthetic wake or a queued operator turn.
     if (ensured.wasReset && sessionId) {
       const owedVerify = this.pendingResetVerify.delete(resetKey);
       const notice = owedVerify
         ? `${SANDBOX_RESET_NOTICE}\n\n${RESET_VERIFY_TEXT}`
         : SANDBOX_RESET_NOTICE;
-      task = `${notice}\n\n${stimulus.body}`;
+      noticeChunks.push({ kind: 'system_notice', body: notice });
       if (owedVerify) {
         this.logger.log(`reset_sandbox: fresh container up for thread=${stimulus.jobId} — this turn verifies the environment`);
         // Operator-visible bookend to the reset pill: makes the reset→recreate→verify cycle legible in the
@@ -1476,7 +1534,7 @@ export class AgentSessionManager
     // PASSIVE pipeline-milestone awareness (buffer-and-flush, NOT a push). On an OPERATOR turn — and only
     // after the provisioning guards above succeeded, so a closed/failed turn never clears the buffer
     // un-injected — atomically drain any milestones buffered while the brain was idle + the net-state
-    // delta, and PREPEND a clearly-passive summary so the brain knows where the build stands. SYNTHETIC
+    // delta into a clearly-passive reminder so the brain knows where the build stands. SYNTHETIC
     // (atlas-authored) turns skip the drain (runDirectBuild / startFollowUpJob must not consume the
     // buffer before the operator sees it). Best-effort: a failure here never blocks the turn.
     if (isOperatorAuthored(stimulus)) {
@@ -1484,18 +1542,47 @@ export class AgentSessionManager
         stimulus.jobId,
         stimulus.orgId,
       );
-      if (awarenessPrefix) task = `${awarenessPrefix}\n\n${task}`;
+      if (awarenessPrefix) {
+        reminderChunks.push({
+          kind: 'system_reminder',
+          body: awarenessPrefix,
+          attrs: { reminderKind: 'awareness' },
+        });
+      }
     }
 
     // Surface the brain's OWN still-open questions back into THIS turn. Question cards live outside the
     // engine session — a fresh turn (a new operator message, an event delivery, or a restart-rebuilt session
     // whose context was compacted) has no in-context memory of what it already asked, so without this the
-    // brain re-asks the same question over and over. Advisory prefix listing each open card's id + gist, so
+    // brain re-asks the same question over and over. Advisory reminder listing each open card's id + gist, so
     // it waits (or `withdraw_question`s) instead of re-posting. Applies to every turn; best-effort.
     const openQuestionsPrefix = await this.buildOpenQuestionsPrefix(
       stimulus.jobId,
     );
-    if (openQuestionsPrefix) task = `${openQuestionsPrefix}\n\n${task}`;
+    if (openQuestionsPrefix) {
+      reminderChunks.push({
+        kind: 'system_reminder',
+        body: openQuestionsPrefix,
+        attrs: { reminderKind: 'open_questions' },
+      });
+    }
+
+    // Render the envelope: notice/reminder chunks first (renderTurn keeps `<user>` last), then the body.
+    // A seed body is already framed XML — append it after the prefixes rather than re-wrapping it.
+    const framedPrefix = renderTurn([...noticeChunks, ...reminderChunks]);
+    const bodyText = this.engineBody(stimulus);
+    let task = framedPrefix ? `${framedPrefix}\n${bodyText}` : bodyText;
+
+    // COMPACTION seed fold: a prior compaction nulled the session + stashed a lean handoff summary here.
+    // Open THIS turn with it as recovered memory so the fresh session (session_id is null → engine starts
+    // new) re-orients. Cleared the instant the fresh session is born (see the eager session persist below)
+    // — NOT here — so a crash before the new session exists re-folds it next turn rather than dropping it.
+    // (Reset and compaction are mutually exclusive: compaction nulls the session id, so `wasReset &&
+    // sessionId` above cannot also be true.)
+    const hadCompactionSeed = !!sandboxRow?.pending_compaction_seed;
+    if (hadCompactionSeed) {
+      task = `${sandboxRow!.pending_compaction_seed}\n\n---\n\n${task}`;
+    }
 
     // Onboarding threads (`kind='onboarding'`) run a different mission prompt + a curated, build-free
     // toolset (the gating is enforced here, not just in prose — omitted tool names aren't registered).
@@ -1601,6 +1688,10 @@ export class AgentSessionManager
         if (e.kind === 'session' && !promptEmitted) {
           promptEmitted = true;
           void streamer.emitPrompt(task, `brain:${stimulus.id}`);
+          // Persist the injected system_notice / system_reminder chunks as visible transcript rows (behind
+          // HARNESS_CHUNK_ROWS). Co-located with emitPrompt's one-shot so it fires exactly once per real
+          // turn kick — insert-once by chunkKey inside the store makes re-drive/reattach idempotent too.
+          this.persistChunkRows(stimulus, noticeChunks, reminderChunks);
         }
         // EAGER session-id persist: the engine emits `{kind:'session'}` at turn START (before any work), so
         // a turn interrupted on its FIRST exchange — which never reaches the post-run persist below — still
@@ -4248,12 +4339,13 @@ export class AgentSessionManager
         return `  • [${c.questionId}] ${gist}`;
       });
       const n = open.length;
+      // Clean text — the `<system_reminder source="open_questions">` chunk this becomes provides the
+      // boundary (no self-wrapping tag, so the persisted transcript row reads cleanly in the web too).
       return (
-        `<open-questions>\n` +
         `You have ${n} question${n === 1 ? '' : 's'} already posted to the operator and still awaiting an ` +
         `answer. Do NOT re-ask ${n === 1 ? 'it' : 'them'} — wait for the answer to arrive on a later turn, or ` +
         `call withdraw_question({ questionId, reason }) to retract one (e.g. to reword it or if it's no longer ` +
-        `needed).\n${lines.join('\n')}\n</open-questions>`
+        `needed).\n${lines.join('\n')}`
       );
     } catch (err) {
       this.logger.debug(`open-questions prefix failed (continuing): ${err}`);
@@ -4412,6 +4504,20 @@ function isOperatorAuthored(stimulus: ChatStimulus): boolean {
     stimulus.author.id !== ATLAS_AUTHOR_ID &&
     stimulus.author.id !== SYSTEM_SEED_AUTHOR.id
   );
+}
+
+/** Build the `<user name at>` chunk for a human message — attribution reconstructed from the stimulus
+ *  author + receipt time at engine-render time (the persisted body stays clean). `role` is provisioned
+ *  for later multi-operator persona context; unset for now. */
+function userChunkFor(stimulus: ChatStimulus): TurnChunk {
+  return {
+    kind: 'user',
+    body: stimulus.body,
+    attrs: {
+      name: stimulus.author.displayName,
+      at: stimulus.receivedAt.toISOString(),
+    },
+  };
 }
 
 /**

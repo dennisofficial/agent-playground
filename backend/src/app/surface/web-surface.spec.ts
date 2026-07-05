@@ -79,7 +79,7 @@ describe('WebSurface — inbound + outbound', () => {
     expect(msg.threadTs).toBeUndefined();
   });
 
-  it('seedSystemNotification emits a System-authored, <system_notification>-wrapped, non-persisted seed', async () => {
+  it('seedSystemNotification emits a System-authored, <system_notice>-wrapped, non-persisted seed', async () => {
     const received = firstValueFrom(surface.inbound$.pipe(take(1)));
     const ts = surface.seedSystemNotification('C-web', 'thread-9', 'Build failed on step 3', {
       orgId: 'T-acme',
@@ -89,7 +89,7 @@ describe('WebSurface — inbound + outbound', () => {
     expect(msg.threadTs).toBe('thread-9'); // lands in the thread
     expect(msg.seed).toBe(true); // NOT persisted as a chat bubble (intake skips recordChatStimulus)
     expect(msg.authorId).toBe('U-SYSTEM'); // System, not the operator (no awareness drain)
-    expect(msg.text).toBe('<system_notification>Build failed on step 3</system_notification>');
+    expect(msg.text).toBe('<system_notice>Build failed on step 3</system_notice>');
     expect(msg.orgId).toBe('T-acme');
   });
 

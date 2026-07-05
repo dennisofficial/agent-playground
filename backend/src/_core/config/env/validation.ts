@@ -287,6 +287,11 @@ export interface IEnvConfig {
   //    reconciliation sweep, so a fresh test instance doesn't re-attempt prior runs' stale jobs.
   TEST_BRIDGE?: 'on' | 'off';
   DISABLE_RESUME?: string;
+  //  - HARNESS_CHUNK_ROWS: whether the harness persists its injected system_notice / system_reminder
+  //    chunks (sandbox-reset notices, pipeline-awareness + open-questions reminders) as VISIBLE transcript
+  //    rows. Default ON. The engine-facing XML tagging always happens; this only gates the extra rows, so
+  //    'off' quiets the transcript without changing what the brain reads.
+  HARNESS_CHUNK_ROWS?: 'on' | 'off';
 
   // ── Atlas v2 Docker sandbox layer ──────────────────────────────────────────────────────────────
   //  Docker is the ONLY execution mode — every engine turn runs inside a per-feature container via
@@ -471,6 +476,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SCOPING_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   // Atlas v2 dev/test tooling (never prod)
   TEST_BRIDGE: Joi.string().valid('on', 'off').optional(),
+  HARNESS_CHUNK_ROWS: Joi.string().valid('on', 'off').optional(),
   DISABLE_RESUME: Joi.string().optional(),
   // Atlas v2 Docker sandbox layer (DOCKER_SOCKET_PATH, REFS_ROOT declared above)
   SANDBOX_IMAGE: Joi.string().optional(),

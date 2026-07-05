@@ -15,6 +15,9 @@
  * `kind` discriminator column + the event-dedup partial index). See `../ARCHITECTURE.md` §7.
  */
 
+// Type-only import of the turn-chunk shape (chunk-vocabulary has no runtime deps, so no import cycle).
+import type { TurnChunk } from '../stimulus/chunk-vocabulary';
+
 /** Trust label. Chat from a known surface is `trusted`; every notification body is `untrusted`. */
 export type StimulusTrust = 'trusted' | 'untrusted';
 
@@ -98,6 +101,14 @@ export interface ChatStimulus extends BaseStimulus {
    * in the web client while `body` carries the formatted markdown Atlas reads.
    */
   card?: Record<string, unknown>;
+  /**
+   * Optional pre-built turn-chunk envelope (chunk-vocabulary). ADVISORY + in-memory only: it drives how
+   * the engine string is framed for THIS turn (e.g. the coalesced fresh-turn path sets one `<user>` chunk
+   * per pending message so each keeps its own attribution). `body` stays the CLEAN/authoritative string;
+   * a replayed stimulus (no `chunks`) reconstructs the `<user>` wrap from the author fields at turn time,
+   * so recovery renders identically. Never persisted.
+   */
+  chunks?: TurnChunk[];
 }
 
 /**

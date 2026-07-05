@@ -46,7 +46,11 @@ export type ClassifiedMessage =
   /** An automated notification that opened this thread (a harness delivery to Atlas). Its own panel. */
   | { kind: "system_event"; message: JobMessage }
   /** System→operator-only notice (e.g. an unresumable-thread error). Its own dedicated box. */
-  | { kind: "system_operator"; message: JobMessage };
+  | { kind: "system_operator"; message: JobMessage }
+  /** A harness-injected state-change chunk (sandbox reset, secret/file confirmation). Collapsed pill row. */
+  | { kind: "system_notice"; message: JobMessage }
+  /** Harness context that rode alongside a turn (pipeline awareness, open-questions). Chip on the next user bubble. */
+  | { kind: "system_reminder"; message: JobMessage };
 
 const WARN_RE = /\b(paused|halt|failed|error|blocked|credential|expired)\b/i;
 const OK_RE = /\b(resumed|done|completed|merged|approved|opened|landed)\b/i;
@@ -70,6 +74,12 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
   }
   if (message.source === "system_event") {
     return { kind: "system_event", message };
+  }
+  if (message.source === "system_notice") {
+    return { kind: "system_notice", message };
+  }
+  if (message.source === "system_reminder") {
+    return { kind: "system_reminder", message };
   }
 
   // A sent review-comment bundle IS operator-authored (`author: 'user'`) but carries a structured card and

@@ -311,7 +311,12 @@ export type WebMessageSource =
   | 'atlas'
   | 'system_operator'
   | 'system_shared'
-  | 'system_event';
+  | 'system_event'
+  // Harness-injected chunk rows (chunk-vocabulary): `system_notice` = a durable state change (sandbox
+  // reset, secret/file confirmation); `system_reminder` = context that rode alongside a turn (pipeline
+  // awareness, open-questions). Rendered distinctly from operator/atlas prose.
+  | 'system_notice'
+  | 'system_reminder';
 
 /** Map a row's stored `meta.source` to the web renderer's audience-explicit source. Only the `system_*`
  *  kinds are stamped on the row; ordinary operator/atlas messages carry no `source` and derive from isAtlas. */
@@ -322,6 +327,8 @@ export function mapMessageSource(
   if (stored === 'system_operator') return 'system_operator';
   if (stored === 'system_shared') return 'system_shared';
   if (stored === 'system_event') return 'system_event';
+  if (stored === 'system_notice') return 'system_notice';
+  if (stored === 'system_reminder') return 'system_reminder';
   return isAtlas ? 'atlas' : 'operator';
 }
 

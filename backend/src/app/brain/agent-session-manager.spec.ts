@@ -33,7 +33,6 @@ import { ProvisioningNotReadyError } from '../driver/job-lifecycle.service';
 import { UNRESUMABLE_SESSION_MARKER } from '../engine/engine.types';
 import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import type { EventStimulus } from '../domain';
-import { UNTRUSTED_OPEN } from '../stimulus';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type { CredentialResolver, WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
@@ -1364,7 +1363,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(stim.body).toContain('build thread'); // framing
       expect(stim.body).toContain('retry_thread'); // the fix instruction
       expect(stim.body).toContain('JSON vs plain text'); // the record detail…
-      expect(stim.body).toContain('UNTRUSTED_EVENT_DATA'); // …fenced as data
+      expect(stim.body).toContain('<untrusted'); // …fenced as data (the <untrusted> tag)
       spy.mockRestore();
     });
 
@@ -1794,7 +1793,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const answerSeed: ChatStimulus = {
       ...stimulus,
       id: 'seed-ans-1',
-      body: '<system_notification>The operator answered your question "toolchain?": napi-rs</system_notification>',
+      body: '<system_notice>The operator answered your question "toolchain?": napi-rs</system_notice>',
       author: { id: 'U-SYSTEM', displayName: 'System' },
       seed: true,
       seedQuestionId: 'q-1',
@@ -2333,7 +2332,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     expect(delivered.seed).toBe(true); // a seed turn → no duplicate operator bubble
     // Trusted framing OUTSIDE the fence, the untrusted event body INSIDE it.
     expect(delivered.body).toMatch(/no human sent it/i);
-    expect(delivered.body).toContain(UNTRUSTED_OPEN);
+    expect(delivered.body).toContain('<untrusted');
     expect(delivered.body).toContain('CI job #42 failed');
     // delivered_at stamped ONLY after the turn completed (at-least-once).
     expect(stimulusRows.update).toHaveBeenCalledWith(
@@ -2382,6 +2381,12 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       replyRoute: { surfaceId: 'web', jobRef: JOB_ID },
       receivedAt: createdAt,
     };
+  }
+
+  // Operator messages reach the engine wrapped in a `<user name at>` tag (chunk-vocabulary) reconstructed
+  // from the author + receipt time; the steered payload / fresh-turn task is that wrap, not the raw body.
+  function userWrap(body: string, at: string): string {
+    return `<user name="Dennis" at="${at}">${body}</user>`;
   }
 
   /** A manager wired with only the deps `pumpThread`/`sweepUndeliveredChat` touch; everything else inert. */
@@ -2434,8 +2439,8 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     // Leased BEFORE steering (so a concurrent sweep can't re-take these rows mid-flight).
     expect(stimulusStore.leaseChatStimuli).toHaveBeenCalledWith(['s1', 's2']);
     expect(steer).toHaveBeenCalledTimes(2);
-    expect(steer).toHaveBeenNthCalledWith(1, 'turn-live', 's1', 'first message');
-    expect(steer).toHaveBeenNthCalledWith(2, 'turn-live', 's2', 'second message');
+    expect(steer).toHaveBeenNthCalledWith(1, 'turn-live', 's1', userWrap('first message', '2026-07-02T12:00:00.000Z'));
+    expect(steer).toHaveBeenNthCalledWith(2, 'turn-live', 's2', userWrap('second message', '2026-07-02T12:00:00.000Z'));
     // The steer path never touches the fresh-turn primitive.
     expect(runChatTurnSpy).not.toHaveBeenCalled();
   });
@@ -2466,6 +2471,12 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     // Coalesced: one turn, oldest-first body join — the operator still sees each as its own chat bubble
     // (persisted separately at intake); the brain reads them together as this turn's task.
     expect(combined.body).toBe('first message\n\nsecond message');
+    // Per-message attribution: one `<user>` chunk each (own name + time), so a batch coalesced from
+    // several senders isn't misattributed to the oldest when `engineBody` renders it.
+    expect(combined.chunks).toEqual([
+      { kind: 'user', body: 'first message', attrs: { name: 'Dennis', at: '2026-07-02T12:00:00.000Z' } },
+      { kind: 'user', body: 'second message', attrs: { name: 'Dennis', at: '2026-07-02T12:00:05.000Z' } },
+    ]);
     expect(combined.jobId).toBe(JOB_ID);
     expect(typeof opts?.onRegistered).toBe('function');
 
@@ -2505,7 +2516,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
 
-    expect(steer).toHaveBeenCalledWith('turn-appeared', 's1', 'racy message');
+    expect(steer).toHaveBeenCalledWith('turn-appeared', 's1', userWrap('racy message', '2026-07-02T12:00:00.000Z'));
     expect(runChatTurnSpy).not.toHaveBeenCalled();
   });
 

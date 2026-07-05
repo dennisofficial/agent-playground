@@ -1,5 +1,7 @@
 import type { Observable } from 'rxjs';
 
+import { renderChunk } from '../stimulus/chunk-vocabulary';
+
 /**
  * DI token a hosting app binds its surface adapter to
  * (`{ provide: CHAT_SURFACE, useExisting: WebSurface }`).
@@ -88,12 +90,13 @@ export interface PostOptions {
 export const SYSTEM_SEED_AUTHOR = { id: 'U-SYSTEM', name: 'System' } as const;
 
 /**
- * Wrap host-originated context in the `<system_notification>` envelope the brain reads. The single place
- * the framing lives — `seedSystemNotification` and the brain's boot-recovery sweep both use it, so the
- * model sees one consistent shape for "this is system context, not a chat message".
+ * Wrap host-originated context in the `<system_notice>` envelope the brain reads. A thin shim over the
+ * chunk-vocabulary (`renderChunk`) so every host-seed path frames system context as one consistent tag —
+ * "this is system context, not a chat message". (Formerly `<system_notification>`; renamed to join the
+ * closed tag vocabulary that the web renderer and the brain's system prompt both speak.)
  */
 export function wrapSystemNotification(body: string): string {
-  return `<system_notification>${body}</system_notification>`;
+  return renderChunk({ kind: 'system_notice', body });
 }
 
 /**

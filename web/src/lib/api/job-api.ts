@@ -87,7 +87,9 @@ export interface RawThreadMessage {
     | "atlas"
     | "system_operator"
     | "system_shared"
-    | "system_event";
+    | "system_event"
+    | "system_notice"
+    | "system_reminder";
   card?: WebCard | null;
   meta?: Record<string, unknown> | null;
   postedAt: string;
@@ -115,7 +117,9 @@ export interface JobMessage {
     | "atlas"
     | "system_operator"
     | "system_shared"
-    | "system_event";
+    | "system_event"
+    | "system_notice"
+    | "system_reminder";
   card?: WebCard;
   meta?: Record<string, unknown>;
   postedAt: string;

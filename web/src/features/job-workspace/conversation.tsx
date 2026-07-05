@@ -13,7 +13,9 @@ import {
   LiveIndicator,
   LiveTurnView,
   SystemEventPill,
+  SystemNoticeRow,
   SystemOperatorNotice,
+  SystemReminderChip,
   ThinkingBlock,
   TurnMetaDivider,
   UserBubble,
@@ -689,6 +691,12 @@ function buildLogItems(
             jobRef={jobRef}
           />,
         );
+        break;
+      case "system_notice":
+        push(<SystemNoticeRow key={message.ts} message={message} />);
+        break;
+      case "system_reminder":
+        push(<SystemReminderChip key={message.ts} message={message} />);
         break;
       case "claude":
       default:

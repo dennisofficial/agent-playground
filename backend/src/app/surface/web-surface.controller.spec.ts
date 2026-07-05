@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatReviewComments } from './web-surface.controller';
+import { formatReviewComments, mapMessageSource } from './web-surface.controller';
 
 /**
  * `formatReviewComments` is what actually drives Atlas's turn (the `review_comments_card` persisted
@@ -56,5 +56,22 @@ describe('formatReviewComments', () => {
   it('singularizes the count line for exactly one comment', () => {
     const text = formatReviewComments([{ file: 'plan.md', quote: 'q' }]);
     expect(text).toContain('1 review comment ');
+  });
+});
+
+describe('mapMessageSource', () => {
+  it('passes the explicit system_* provenance tags through, ignoring isAtlas', () => {
+    expect(mapMessageSource('system_operator', false)).toBe('system_operator');
+    expect(mapMessageSource('system_shared', true)).toBe('system_shared');
+    expect(mapMessageSource('system_event', false)).toBe('system_event');
+    expect(mapMessageSource('system_notice', true)).toBe('system_notice');
+    expect(mapMessageSource('system_reminder', false)).toBe('system_reminder');
+  });
+
+  it('falls back to atlas/operator by isAtlas when no source is stamped (older rows)', () => {
+    expect(mapMessageSource(undefined, true)).toBe('atlas');
+    expect(mapMessageSource(undefined, false)).toBe('operator');
+    expect(mapMessageSource(null, true)).toBe('atlas');
+    expect(mapMessageSource('anything-unknown', false)).toBe('operator');
   });
 });
