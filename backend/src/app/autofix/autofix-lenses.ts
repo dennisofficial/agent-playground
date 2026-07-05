@@ -130,8 +130,12 @@ export function buildFixPrompt(findings: ReviewFinding[], ctx: AutoFixContext): 
     'is wrong or unsafe to apply, SKIP it and note why — never invent work.',
     `\nWhat the change was meant to do (intent):\n${fence('intent', ctx.intent)}`,
     `\nFindings to address:\n${fence('findings', list)}`,
+    '\nCOMMIT YOUR WORK (required — the host does NOT commit for you): if you changed any files, run',
+    '`git add -A` (respect `.gitignore`; if build or cache junk appears in `git status`, add it to',
+    '`.gitignore` instead of committing it), commit with a clear message, and `git push` your branch.',
+    'Leave the working tree CLEAN. If you fixed nothing, leave the tree untouched (no commit).',
     '\nWhen done, end with a short summary of exactly which findings you fixed and which you skipped',
-    '(and why). Do not commit — the harness commits your changes.',
+    '(and why).',
   ].join('\n');
 }
 

@@ -852,7 +852,7 @@ export class ThreadDriver implements JobDispatcher {
     // master-review thread (it IS the review — a whole-diff Codex review-and-fix — so a per-thread pass over
     // it is redundant): its spec declares no children, so `runReviewChildren` is a no-op there anyway.
     if (threadKindSpec(thread.kind).children) {
-      await this.runReviewChildren(job, route, sandbox, thread, record, sectionStartSha);
+      await this.runReviewChildren(job, route, sandbox, thread, record, sectionStartSha, repo);
     }
 
     // e. HANDOFF — summarize what this thread produced for the next.
@@ -887,6 +887,7 @@ export class ThreadDriver implements JobDispatcher {
     thread: DriverThread,
     record: DecisionRecord | null,
     sectionStartSha: string | undefined,
+    repo: ResolvedRepo,
   ): Promise<void> {
     const spec = threadKindSpec(thread.kind);
     if (!spec.children) return;
@@ -921,6 +922,9 @@ export class ThreadDriver implements JobDispatcher {
       channel,
       autofixId: thread.id,
       scope: 'thread',
+      // The fix turn commits + pushes its own work now — give it the authenticated remote (same as the
+      // builder/gate/master-review turns carry).
+      gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
       ...(sandbox.containerId
         ? {
             containerId: sandbox.containerId,

@@ -346,6 +346,7 @@ function makeGit(): {
   git: LocalGitService;
   pushed: string[];
   commits: string[];
+  advanceHead: () => void;
 } {
   const commits: string[] = [];
   const pushed: string[] = [];
@@ -376,8 +377,15 @@ function makeGit(): {
     // live-verification judge is never called for the pre-existing tests below unless a test overrides
     // this to simulate a real runtime-touching diff).
     changedFileNames: vi.fn(async () => [] as string[]),
+    // Pre-ship leak-scan gate (BuildShipService) — clean by default so ship proceeds to open the PR.
+    scanBranchForForbidden: vi.fn(async () => [] as string[]),
   } as unknown as LocalGitService;
-  return { git, pushed, commits };
+  // Simulates the writer's in-sandbox commit advancing HEAD: the host reads the fresh sha (never creates it).
+  // The default build turn calls this after `complete_thread`, so each thread's `sectionStartSha` advances.
+  const advanceHead = () => {
+    sha += 1;
+  };
+  return { git, pushed, commits, advanceHead };
 }
 
 function makePr(): { pr: GithubPrService; opened: Array<{ head: string }> } {
@@ -419,6 +427,9 @@ function makeTurn(
      *  asserting completion — the turn calls `block_thread` with this and returns cleanly. */
     blockThread?: { reason: string; detail: string };
   } = {},
+  /** The writer commits + pushes its own work now; call this after `complete_thread` to advance the fake
+   *  git HEAD (what the host then READS). Wired to `makeGit().advanceHead` for the default turn. */
+  advanceHead?: () => void,
 ): {
   turn: TurnRunnerService;
   calls: Array<{ mode: string; stepId?: string | null }>;
@@ -464,6 +475,9 @@ function makeTurn(
               { kind: 'test', command: 'pnpm test', exitCode: 0, outputTail: 'ok' },
             ],
           });
+          // The writer committed + pushed before asserting completion — its in-sandbox commit advances HEAD,
+          // which the host then reads to stamp `commit_sha`. Advancing here isolates each thread's diff base.
+          advanceHead?.();
         }
         // Simulate a clean diagnostics done-gate iteration (ADR 0004 rider 3): a gate turn's tool bridge
         // exposes ONLY `report_verification` (no `complete_thread`) — a well-behaved orchestrator reports
@@ -679,9 +693,9 @@ function assemble(
 ) {
   const { store } = makeStore(state);
   const repos = makeRepoResolver();
-  const { git, pushed, commits } = makeGit();
+  const { git, pushed, commits, advanceHead } = makeGit();
   const { pr, opened } = makePr();
-  const made = makeTurn();
+  const made = makeTurn({}, advanceHead);
   const turn = opts.turn ?? made.turn;
   const calls = made.calls;
   const visibility = makeVisibility();
@@ -2035,7 +2049,7 @@ describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — 
     const h = assemble(state, { judge });
     // Thread 1 (Backend) is mid-turn at `complete_thread` time — its own new runtime file. Thread 2
     // (Frontend) starts AFTER thread 1 committed, so its `sectionStartSha` (headSha) has advanced — the
-    // fake bumps `sha` on every `commitAll`, so keying off `baseSha` isolates each thread's own diff.
+    // fake writer turn bumps HEAD after `complete_thread`, so keying off `baseSha` isolates each thread's diff.
     stubChangedFileNames(h.git, async (_wt, baseSha) =>
       baseSha === 'sha0' ? ['src/routes/health.ts'] : ['notes/CONTRIBUTING.txt'],
     );

@@ -6,11 +6,11 @@ import { repoStateDir } from '../state-root';
 
 /**
  * The host-only record of which worktree-relative paths were HYDRATED as secrets/seed into a given
- * worktree — the source of truth for `LocalGitService.commitAll`'s leak-scan.
+ * worktree — the source of truth for `LocalGitService.scanBranchForForbidden`'s pre-ship leak-scan.
  *
  * It lives OUTSIDE the worktree (under `$ATLAS_HYDRATION_STATE`, default the repo-relative
  * `.atlas-state/hydration-state`), keyed by `sha256(worktreePath)`, so an in-sandbox agent can neither read nor
- * mutate it. This is deliberately a STANDALONE helper with no Nest/DI surface: `commitAll` consults it
+ * mutate it. This is deliberately a STANDALONE helper with no Nest/DI surface: the pre-ship scan consults it
  * with a pure file read so the git layer takes no dependency on the driver/sandbox layers, and a member
  * who edits the in-worktree `.atlas/worktree.json` (or `git add -f`s a secret) cannot defeat the scan.
  */
@@ -41,7 +41,7 @@ export async function writeForbiddenPaths(
 /**
  * The forbidden paths previously hydrated into a worktree (worktree-relative, normalised). Returns `[]`
  * when there is no sidecar (a non-hydrated worktree) or it is unreadable — a missing record must never
- * block a commit, only a positive match does. Synchronous: called from inside `commitAll`'s lock.
+ * block a ship, only a positive match does. Synchronous: called from the pre-ship branch scan.
  */
 export function readForbiddenPaths(worktreePath: string): string[] {
   const file = hydrationSidecarPath(worktreePath);

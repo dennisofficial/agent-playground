@@ -106,7 +106,7 @@ export interface IEnvConfig {
   // slack-app (the writer) and the Docker daemon (the bind source), exactly like REPO_ROOT in DooD.
   // No code default — unset → the /refs library is disabled. Point at a persistent volume in deployment.
   REFS_ROOT?: string;
-  // Host-only dir for the worktree hydration sidecar (the forbidden-paths record commitAll's leak-scan
+  // Host-only dir for the worktree hydration sidecar (the forbidden-paths record the pre-ship leak-scan
   // reads). Read directly from process.env by git/hydration-sidecar.ts; declared here for completeness.
   // Code default: the repo-relative, gitignored <repoRoot>/.atlas-state/hydration-state. Never under a
   // managed worktree.

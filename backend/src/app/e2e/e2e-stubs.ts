@@ -139,10 +139,6 @@ export class FakeLocalGitService {
   }
 
   /** Provision-path no-ops (real impls touch git/cache/submodules; nothing to do in the fake). */
-  async ensureBuildJunkExcluded(): Promise<void> {
-    // no-op
-  }
-
   async ensureSubmodules(): Promise<void> {
     // no-op
   }
@@ -152,10 +148,21 @@ export class FakeLocalGitService {
     return true;
   }
 
+  /**
+   * Writers own their commits now — a well-behaved writer turn leaves a CLEAN tree, so the fake reports
+   * clean (the driver's `ensureCommitted` nudge would otherwise loop). `headSha` advances each call to model
+   * the writer having committed, so the host stamps a fresh `commit_sha` per thread (HEAD != sectionStartSha).
+   */
   async hasChanges(): Promise<boolean> {
-    return true;
+    return false;
   }
 
+  /** Pre-ship leak-scan — the fake worktree never carries hydrated secrets, so always clean. */
+  async scanBranchForForbidden(): Promise<string[]> {
+    return [];
+  }
+
+  /** Fast-path host commit (direct-build/onboarding/ledger ship) — synthetic sha; advances HEAD too. */
   async commitAll(): Promise<string | null> {
     this.commitSeq += 1;
     return `fakesha${String(this.commitSeq).padStart(8, '0')}`;
@@ -170,6 +177,9 @@ export class FakeLocalGitService {
   }
 
   async headSha(): Promise<string> {
+    // Advance on every read so successive host reads (thread start vs post-writer) see distinct shas —
+    // modelling the in-sandbox writer having committed between them.
+    this.commitSeq += 1;
     return `fakehead${String(this.commitSeq).padStart(7, '0')}`;
   }
 

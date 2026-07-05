@@ -38,7 +38,11 @@ describe('BuildShipService — host no longer pushes/opens the PR', () => {
 
   it('does NOT push or open a PR host-side — Atlas opens it in-sandbox (ship reports opened:true)', async () => {
     const push = vi.fn(async (_sandbox: FeatureSandbox) => undefined);
-    const git = { push, commitAll: vi.fn(async () => 'sha') } as unknown as LocalGitService;
+    const git = {
+      push,
+      commitAll: vi.fn(async () => 'sha'),
+      scanBranchForForbidden: vi.fn(async () => []),
+    } as unknown as LocalGitService;
     const openPullRequest = vi.fn(async () => ({
       url: 'https://github.com/acme/widget/pull/1',
       number: 1,
@@ -83,7 +87,7 @@ describe('BuildShipService — host no longer pushes/opens the PR', () => {
   });
 
   it('targeted PR discovery after open: records pr_url/pr_number via setPrReady the moment Atlas opens it', async () => {
-    const git = { push: vi.fn(), commitAll: vi.fn(async () => 'sha') } as unknown as LocalGitService;
+    const git = { push: vi.fn(), commitAll: vi.fn(async () => 'sha'), scanBranchForForbidden: vi.fn(async () => []) } as unknown as LocalGitService;
     // The host still never OPENS a PR — it only DISCOVERS the one Atlas opened in-sandbox, by head branch.
     const openPullRequest = vi.fn();
     const findOpenPullByHead = vi.fn(async () => ({
@@ -122,7 +126,7 @@ describe('BuildShipService — host no longer pushes/opens the PR', () => {
   });
 
   it('falls back to the report_pr_opened url when the branch lookup misses (GitHub indexing lag)', async () => {
-    const git = { push: vi.fn(), commitAll: vi.fn(async () => 'sha') } as unknown as LocalGitService;
+    const git = { push: vi.fn(), commitAll: vi.fn(async () => 'sha'), scanBranchForForbidden: vi.fn(async () => []) } as unknown as LocalGitService;
     // Branch lookup misses (a just-created PR GitHub hasn't indexed) → the tool's reported url rescues it,
     // but ONLY after getPullDetail confirms the reported PR's head really is this sandbox's branch.
     const findOpenPullByHead = vi.fn(async () => null);
@@ -169,7 +173,7 @@ describe('BuildShipService — host no longer pushes/opens the PR', () => {
   });
 
   it('does NOT latch a reported PR whose head is a different branch (branch-lookup miss + wrong PR)', async () => {
-    const git = { push: vi.fn(), commitAll: vi.fn(async () => 'sha') } as unknown as LocalGitService;
+    const git = { push: vi.fn(), commitAll: vi.fn(async () => 'sha'), scanBranchForForbidden: vi.fn(async () => []) } as unknown as LocalGitService;
     const findOpenPullByHead = vi.fn(async () => null); // branch lookup misses
     // The reported PR is on this repo but its head is a DIFFERENT branch → must be rejected, not latched.
     const getPullDetail = vi.fn(async (_t: string, a: { number: number }) => ({
@@ -205,7 +209,7 @@ describe('BuildShipService — host no longer pushes/opens the PR', () => {
   });
 
   it('report_pr_opened rejects a url that is not a PR on this repo (no false latch)', async () => {
-    const git = { push: vi.fn(), commitAll: vi.fn(async () => 'sha') } as unknown as LocalGitService;
+    const git = { push: vi.fn(), commitAll: vi.fn(async () => 'sha'), scanBranchForForbidden: vi.fn(async () => []) } as unknown as LocalGitService;
     const findOpenPullByHead = vi.fn(async () => null);
     const pr = { openPullRequest: vi.fn(), findOpenPullByHead } as unknown as GithubPrService;
     const harness = { onEvent: vi.fn(), finish: vi.fn(async () => undefined), abort: vi.fn(async () => undefined) };
@@ -231,5 +235,61 @@ describe('BuildShipService — host no longer pushes/opens the PR', () => {
     expect(store.setPrReady).not.toHaveBeenCalled();
     expect(store.setJobStatus).not.toHaveBeenCalled();
     expect(result).toEqual({ opened: true, prConfirmed: false });
+  });
+
+  it('HARD-BLOCKS the PR when the pre-ship leak-scan finds a committed hydrated secret', async () => {
+    // The pre-ship scan (host-side, reads the host-only sidecar) found a forbidden path committed on the
+    // branch → the ship is blocked BEFORE any open-PR turn runs. No engine turn, no push, no PR latched.
+    const scanBranchForForbidden = vi.fn(async () => ['.env.keys']);
+    const git = {
+      push: vi.fn(),
+      commitAll: vi.fn(async () => 'sha'),
+      scanBranchForForbidden,
+    } as unknown as LocalGitService;
+    const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
+    const harness = { onEvent: vi.fn(), finish: vi.fn(async () => undefined), abort: vi.fn(async () => undefined) };
+    const turnHarness = { create: vi.fn(() => harness) } as unknown as TurnHarnessFactory;
+    const store = {
+      setPrReady: vi.fn(async () => undefined),
+      setJobStatus: vi.fn(async () => undefined),
+    } as unknown as DriverStoreService;
+    const engineRun = vi.fn(async () => ({ result: 'should never run' }));
+    const engine = { run: engineRun } as unknown as EngineRunnerPort;
+
+    const svc = new BuildShipService(git, pr, store, turnHarness, engine);
+    const result = await svc.ship({ job, record: null, repo, sandbox });
+
+    expect(scanBranchForForbidden).toHaveBeenCalledWith('/wt/feat', 'origin/main');
+    // Blocked before the open turn — no engine turn, no PR, nothing latched.
+    expect(engineRun).not.toHaveBeenCalled();
+    expect(store.setPrReady).not.toHaveBeenCalled();
+    expect(result).toEqual({ opened: false, reason: 'leak-scan', leaked: ['.env.keys'] });
+  });
+
+  it('FAILS CLOSED — a scan error blocks the ship rather than opening the PR', async () => {
+    const scanBranchForForbidden = vi.fn(async () => {
+      throw new Error('rev-list exploded');
+    });
+    const git = {
+      push: vi.fn(),
+      commitAll: vi.fn(async () => 'sha'),
+      scanBranchForForbidden,
+    } as unknown as LocalGitService;
+    const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
+    const harness = { onEvent: vi.fn(), finish: vi.fn(async () => undefined), abort: vi.fn(async () => undefined) };
+    const turnHarness = { create: vi.fn(() => harness) } as unknown as TurnHarnessFactory;
+    const store = {
+      setPrReady: vi.fn(async () => undefined),
+      setJobStatus: vi.fn(async () => undefined),
+    } as unknown as DriverStoreService;
+    const engineRun = vi.fn(async () => ({ result: 'should never run' }));
+    const engine = { run: engineRun } as unknown as EngineRunnerPort;
+
+    const svc = new BuildShipService(git, pr, store, turnHarness, engine);
+    const result = await svc.ship({ job, record: null, repo, sandbox });
+
+    expect(engineRun).not.toHaveBeenCalled();
+    expect(store.setPrReady).not.toHaveBeenCalled();
+    expect(result).toEqual({ opened: false, reason: 'leak-scan', leaked: [] });
   });
 });

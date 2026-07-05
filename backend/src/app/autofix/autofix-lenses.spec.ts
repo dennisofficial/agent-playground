@@ -124,7 +124,7 @@ describe('prompt builders', () => {
     expect(p).toContain('"findings"');
   });
 
-  it('fix prompt enumerates findings and forbids scope creep / committing', () => {
+  it('fix prompt enumerates findings, forbids scope creep, and REQUIRES the agent commit + push', () => {
     const findings: ReviewFinding[] = [
       { lens: 'a', severity: 'high', file: 'src/x.ts', title: 'guard y', detail: 'add a null check' },
     ];
@@ -132,6 +132,8 @@ describe('prompt builders', () => {
     expect(p).toContain('guard y');
     expect(p).toContain('add a null check');
     expect(p).toContain('SMALLEST');
-    expect(p).toContain('Do not commit');
+    // Writers own their commits now — the fix agent commits + pushes its own work (no host commit).
+    expect(p).toContain('COMMIT YOUR WORK');
+    expect(p).toContain('git push');
   });
 });

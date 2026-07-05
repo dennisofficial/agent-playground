@@ -11,15 +11,21 @@ import { writeForbiddenPaths } from './hydration-sidecar';
 const execFileAsync = promisify(execFile);
 
 /**
- * Real-git verification of the worktree-secret guards in {@link LocalGitService}: `isIgnored` against a
- * real `.gitignore`, and the `commitAll` leak-scan that refuses to commit a hydrated secret even when it
- * was force-staged. Uses a throwaway local repo (no network, no Postgres, no Docker).
+ * Real-git verification of the worktree-secret guards in {@link LocalGitService}: `isIgnored` against a real
+ * `.gitignore`, and the PRE-SHIP {@link LocalGitService.scanBranchForForbidden} branch scan that hard-blocks
+ * a ship when a hydrated secret was committed ANYWHERE on the branch — even if it was added then deleted
+ * before HEAD (the reason it scans every commit, not the net `base..HEAD` diff). The leak-scan used to live
+ * inside `commitAll`; with writers owning their own commits it moved to this host-side pre-ship gate. Uses a
+ * throwaway local repo (no network, no Postgres, no Docker).
  */
-describe('LocalGitService — gitignore + leak-scan (real git)', () => {
+describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => {
   let repo: string;
   let stateDir: string;
+  let baseSha: string;
   const prevState = process.env.ATLAS_HYDRATION_STATE;
   let git: LocalGitService;
+
+  const g = (args: string[]) => execFileAsync('git', args, { cwd: repo });
 
   beforeEach(async () => {
     repo = mkdtempSync(join(tmpdir(), 'atlas-leak-'));
@@ -27,7 +33,6 @@ describe('LocalGitService — gitignore + leak-scan (real git)', () => {
     process.env.ATLAS_HYDRATION_STATE = stateDir;
     git = new LocalGitService({ get: () => undefined } as unknown as EnvService);
 
-    const g = (args: string[]) => execFileAsync('git', args, { cwd: repo });
     await g(['init', '-q']);
     await g(['config', 'user.email', 'test@atlas.dev']);
     await g(['config', 'user.name', 'Test']);
@@ -35,6 +40,7 @@ describe('LocalGitService — gitignore + leak-scan (real git)', () => {
     writeFileSync(join(repo, 'README.md'), '# hi');
     await g(['add', '.gitignore', 'README.md']);
     await g(['commit', '-qm', 'init']);
+    baseSha = (await g(['rev-parse', 'HEAD'])).stdout.trim();
   });
 
   afterEach(() => {
@@ -51,27 +57,55 @@ describe('LocalGitService — gitignore + leak-scan (real git)', () => {
     expect(await git.isIgnored(repo, 'src/app.ts')).toBe(false);
   });
 
-  it('commitAll aborts when a forbidden (hydrated) file is force-staged', async () => {
-    // Hydrate a secret + record it in the sidecar (as the hydrator would).
-    writeFileSync(join(repo, '.env.keys'), 'SECRET=1');
+  it('scanBranchForForbidden flags a forbidden file force-committed on the branch', async () => {
     await writeForbiddenPaths(repo, ['.env.keys']);
-    // A malicious/agent step force-stages the ignored secret.
-    await execFileAsync('git', ['add', '-f', '.env.keys'], { cwd: repo });
+    // A writer force-commits the ignored secret onto the feature branch.
+    writeFileSync(join(repo, '.env.keys'), 'SECRET=1');
+    await g(['add', '-f', '.env.keys']);
+    await g(['commit', '-qm', 'sneak in a secret']);
 
-    await expect(git.commitAll(repo, 'sneak in a secret')).rejects.toThrow(/hydrated secret\/seed/i);
+    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual(['.env.keys']);
   });
 
-  it('commitAll proceeds normally for ordinary changes (forbidden file present but not staged)', async () => {
-    writeFileSync(join(repo, '.env.keys'), 'SECRET=1'); // ignored, never staged
+  it('catches a secret ADDED then DELETED in a later commit (per-commit, not the net diff)', async () => {
     await writeForbiddenPaths(repo, ['.env.keys']);
+    // Commit 1: add the secret. Commit 2: delete it. The NET base..HEAD diff shows nothing — but the
+    // per-commit scan must still catch that it existed on the branch history.
+    writeFileSync(join(repo, '.env.keys'), 'SECRET=1');
+    await g(['add', '-f', '.env.keys']);
+    await g(['commit', '-qm', 'add secret']);
+    rmSync(join(repo, '.env.keys'), { force: true });
+    await g(['rm', '-q', '--cached', '.env.keys']);
+    await g(['commit', '-qm', 'remove secret again']);
+
+    // Sanity: the net diff really does NOT list the file (proving the per-commit scan is load-bearing).
+    const netDiff = await g(['diff', '--name-only', `${baseSha}..HEAD`]);
+    expect(netDiff.stdout).not.toContain('.env.keys');
+
+    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual(['.env.keys']);
+  });
+
+  it('returns [] for ordinary changes (forbidden file present but never committed)', async () => {
+    await writeForbiddenPaths(repo, ['.env.keys']);
+    writeFileSync(join(repo, '.env.keys'), 'SECRET=1'); // ignored, never staged
     mkdirSync(join(repo, 'src'), { recursive: true });
     writeFileSync(join(repo, 'src', 'app.ts'), 'export const x = 1;');
+    await g(['add', 'src/app.ts']);
+    await g(['commit', '-qm', 'add app']);
 
-    const sha = await git.commitAll(repo, 'add app');
-    expect(sha).toMatch(/^[0-9a-f]{40}$/);
-    // The secret must NOT be in the commit.
-    const tracked = await execFileAsync('git', ['ls-files'], { cwd: repo });
+    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual([]);
+    // The secret must NOT be tracked.
+    const tracked = await g(['ls-files']);
     expect(tracked.stdout).not.toContain('.env.keys');
     expect(tracked.stdout).toContain('src/app.ts');
+  });
+
+  it('returns [] when there is no hydration sidecar (nothing forbidden to scan for)', async () => {
+    // No writeForbiddenPaths → an empty forbidden set short-circuits to clean.
+    writeFileSync(join(repo, '.env.keys'), 'SECRET=1');
+    await g(['add', '-f', '.env.keys']);
+    await g(['commit', '-qm', 'commit a would-be secret with no sidecar']);
+
+    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual([]);
   });
 });

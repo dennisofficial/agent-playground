@@ -108,7 +108,6 @@ class FakeGitService {
 
   // Provision-path no-ops (no real git/cache/submodules/index in the fake).
   async ensureSubmodules(): Promise<void> {}
-  async ensureBuildJunkExcluded(): Promise<void> {}
   async isIgnored(): Promise<boolean> {
     return true;
   }

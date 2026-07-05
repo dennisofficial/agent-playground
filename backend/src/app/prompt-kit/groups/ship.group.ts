@@ -49,21 +49,27 @@ export class ShipGroup {
       'its pull request opens. Review the whole merged diff for real, in-scope issues — ' +
       REVIEW_SCOPE_NOTE +
       '. Then FIX what you find: make the smallest safe change per finding, never expand scope, and skip ' +
-      "anything unsafe rather than guessing. Verify by running the repo's own build/typecheck/tests. Do NOT " +
-      'push or open a PR — the host commits your edits and ships. If the review is clean, change nothing. ' +
+      "anything unsafe rather than guessing. Verify by running the repo's own build/typecheck/tests. When " +
+      'your fixes are in and the build is green, COMMIT them and `git push` your branch (you own your commit ' +
+      '— the host no longer commits for you); do NOT open a PR (the ship step does that). If the review is ' +
+      'clean and you changed nothing, commit and push nothing. ' +
       CLOUD_SANDBOX_NOTE
     );
   }
 
-  /** The in-sandbox open-PR turn: push the branch + `gh pr create`, then report the url via the host tool. */
+  /** The in-sandbox open-PR turn: reconcile the base (fetch + drift/conflict), push, `gh pr create`, then
+   *  report the url via the host tool. */
   @Fragment({ usedBy: [Agent.SHIP_OPEN_PR], order: 100 })
   openPr(): string {
     return [
-      'You are Atlas finishing a build inside your own sandbox. Your ONLY task this turn is to publish the',
-      'completed work as a pull request. You have authenticated git and the `gh` CLI. Push the feature',
-      'branch and open the PR exactly as instructed — do NOT make further code changes, and keep the turn to',
-      'the git + gh commands needed to push and open (or find the existing) PR. When the PR is open, call the',
-      '`report_pr_opened` tool with its url — that is how the host learns the PR; a prose mention is not enough.',
+      'You are Atlas finishing a build inside your own sandbox. Your task this turn is to RECONCILE the branch',
+      'against its base and publish the completed work as a pull request. You have authenticated git and the',
+      '`gh` CLI. First reconcile: `git fetch origin`, and if the base branch has moved since the build started,',
+      'integrate it (merge/rebase) and resolve any conflicts PROPERLY — understand both sides, never blindly',
+      'take one. Then push the feature branch and open (or find the existing) PR exactly as instructed. Do NOT',
+      'make unrelated code changes beyond what a clean conflict resolution requires. When the PR is open, call',
+      'the `report_pr_opened` tool with its url — that is how the host learns the PR; a prose mention is not',
+      'enough.',
     ].join('\n');
   }
 }

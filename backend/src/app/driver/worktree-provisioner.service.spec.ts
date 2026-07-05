@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { LocalGitService } from '../git';
 import type { PipelineAwarenessStore } from './pipeline-awareness.store';
 import type { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
@@ -17,12 +16,11 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
       hydrateFiles: vi.fn(async () => ({ forbiddenPaths: [], notices: [] })),
     } as unknown as WorktreeHydrator;
     const awareness = { appendMarker: vi.fn(async () => undefined) } as unknown as PipelineAwarenessStore;
-    const git = { ensureBuildJunkExcluded: vi.fn(async () => undefined) } as unknown as LocalGitService;
     const config = { importLegacyIfEmpty: vi.fn(async () => undefined) } as unknown as import('../onboarding').WorktreeConfigStore;
     const attach = vi.fn(async () => ({ repoId: 'proj', branch: 'main', worktreePath: '/wt', gitUrl: '' }));
     const sandboxProvider = { attach } as unknown as import('../sandbox').SandboxProvider;
 
-    const provisioner = new WorktreeProvisioner(hydrator, awareness, git, config, sandboxProvider);
+    const provisioner = new WorktreeProvisioner(hydrator, awareness, config, sandboxProvider);
     return { provisioner, attach };
   }
 

@@ -146,6 +146,13 @@ export interface AutoFixContext {
    */
   containerId?: string;
   execUser?: string;
+  /**
+   * In-sandbox git auth for the FIX turn — the fix agent commits + pushes its own work now (the host no
+   * longer commits), so its turn needs an authenticated remote (threaded from the driver's `ResolvedRepo`,
+   * the same `{ gitUrl, token }` the builder/gate turns carry). Absent → the fix turn can't push (host-local
+   * / unit-test path).
+   */
+  gitAuth?: { gitUrl: string; token?: string };
 
   // ── streaming identity (optional) ────────────────────────────────────────────────────────────
   // When BOTH `jobId` and `channel` are present, each review lens + the fix turn rides the shared

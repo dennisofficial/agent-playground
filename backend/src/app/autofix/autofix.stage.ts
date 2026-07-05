@@ -52,9 +52,10 @@ export const autofixFixLane = (autofixId: string): string => laneFor('autofix-fi
 /**
  * W7 — the AUTO-FIX STAGE. A fan-out of N parallel read-only review passes (one per lens) over a
  * thread's (or the whole feature's) diff → aggregate + dedupe the findings → ONE execute turn that
- * applies the fixes confined to the worktree → a `LocalGitService` commit. Two entry points share the
- * core: `autofixThread` (after a thread's steps) and `autofixPullRequest` (PR-tail, over the whole
- * accumulated diff before handing the PR to the human).
+ * applies the fixes confined to the worktree AND commits + pushes them itself (the host reads HEAD; it no
+ * longer commits on the agent's behalf). Two entry points share the core: `autofixThread` (after a
+ * thread's steps) and `autofixPullRequest` (PR-tail, over the whole accumulated diff before handing the
+ * PR to the human).
  *
  * Design properties:
  * - **Fan-out is data.** Width = the selected lens list's length (configurable via options); each lens
@@ -62,7 +63,8 @@ export const autofixFixLane = (autofixId: string): string => laneFor('autofix-fi
  * - **Conservative by default.** Fix turn runs only for findings ≥ `fixMinSeverity` (default 'medium')
  *   and only when `applyFixes` (default true) is on. Report-only is a one-flag dry run.
  * - **Idempotent / safe to re-run.** A clean re-run finds nothing, attempts no fix, and produces no
- *   commit (`commitAll` returns null when the tree is clean), so running twice is a no-op the second time.
+ *   commit (the fix AGENT commits its own work; HEAD unchanged from base ⇒ nothing reported), so running
+ *   twice is a no-op the second time.
  *
  * Composes W1's EngineRunner + LocalGitService, plus the @Global {@link TurnHarnessFactory} (the shared
  * transcript spine) so its review lenses + fix turn stream + persist exactly like the brain, a build phase,
@@ -92,6 +94,9 @@ export class AutoFixStage {
       containerId: ctx.containerId,
       worktreeHost: ctx.worktreePath,
       ...(ctx.execUser ? { user: ctx.execUser } : {}),
+      // The fix turn commits + pushes its own work — give it the authenticated remote (parity with the
+      // builder/gate/master-review turns). Absent gitAuth → no push (host-local / unit-test path).
+      ...(ctx.gitAuth ? { gitAuth: ctx.gitAuth } : {}),
     };
   }
 
@@ -331,8 +336,8 @@ export class AutoFixStage {
     return this.reviewLensCore(lens, enriched, options.engine ?? 'claude', options);
   }
 
-  /** Run the single fix turn over the deduped, severity-filtered findings + commit (the `post_review`
-   *  child thread's runner). Reuses the exact apply+commit path the stage uses today. */
+  /** Run the single fix turn over the deduped, severity-filtered findings (the `post_review` child thread's
+   *  runner). The fix AGENT commits + pushes its own work; the host reads the resulting HEAD. */
   async applyReviewFindings(
     ctx: AutoFixContext,
     findings: ReviewFinding[],
@@ -357,7 +362,8 @@ export class AutoFixStage {
     }
   }
 
-  /** Run the single execute fix turn, then commit whatever it changed. */
+  /** Run the single execute fix turn; the fix agent commits + pushes its own work, and the host READS the
+   *  resulting HEAD to report the fix commit (it no longer commits on the agent's behalf). */
   private async applyAndCommit(
     ctx: AutoFixContext,
     findings: ReviewFinding[],
@@ -373,6 +379,9 @@ export class AutoFixStage {
     };
     const target = this.targetFor(ctx);
     const task = buildFixPrompt(findings, ctx);
+    // The base HEAD before the fix turn — used after to tell "the agent committed a fix" (HEAD advanced)
+    // from "nothing to fix / no commit" (HEAD unchanged), now that the AGENT (not the host) commits.
+    const baseSha = await this.git.headSha(ctx.worktreePath).catch(() => null);
     // Surface the fix turn's prompt on its `…:fix` sub-lane, inline before the fix work. Keyed per autofix
     // stage; no-op on the pre-streaming direct path. Best-effort.
     await harness?.emitPrompt(task, `autofix:${ctx.autofixId}:fix`);
@@ -411,9 +420,19 @@ export class AutoFixStage {
 
     const fixReport = res.result;
 
-    // Commit only if the fix turn actually changed the tree — keeps re-runs a no-op + the PR clean.
-    if (!(await this.git.hasChanges(ctx.worktreePath))) {
-      this.logger.log(`Auto-fix (${mode}): fix turn produced no file changes — nothing to commit`);
+    // The FIX AGENT commits + pushes its own work now (its prompt requires a clean tree). The host no longer
+    // commits — it only READS what the agent produced. A still-dirty tree means the model forgot; log it and
+    // leave the tree for the next pass rather than committing on its behalf (autofix is best-effort and never
+    // halts the build). Report the HEAD sha as the fix commit when one landed (HEAD advanced past its base).
+    if (await this.git.hasChanges(ctx.worktreePath)) {
+      this.logger.warn(
+        `Auto-fix (${mode}): fix turn left an uncommitted tree — the agent did not commit its own work`,
+      );
+      return { fixReport, commits: [] };
+    }
+    const head = await this.git.headSha(ctx.worktreePath).catch(() => null);
+    if (!head || head === baseSha) {
+      this.logger.log(`Auto-fix (${mode}): fix turn produced no new commit — nothing to apply`);
       return { fixReport, commits: [] };
     }
     const label = ctx.label ? `: ${ctx.label}` : '';
@@ -421,12 +440,8 @@ export class AutoFixStage {
       mode === 'pull_request'
         ? `chore(autofix): PR-tail review fixes${label}`
         : `chore(autofix): thread review fixes${label}`;
-    const sha = await this.git.commitAll(ctx.worktreePath, message);
-    if (!sha) {
-      return { fixReport, commits: [] };
-    }
-    this.logger.log(`Auto-fix (${mode}): committed fixes ${sha.slice(0, 8)}`);
-    return { fixReport, commits: [{ sha, message }] };
+    this.logger.log(`Auto-fix (${mode}): fix agent committed ${head.slice(0, 8)}`);
+    return { fixReport, commits: [{ sha: head, message }] };
   }
 
   /**

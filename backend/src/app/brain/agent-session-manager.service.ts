@@ -2586,6 +2586,17 @@ export class AgentSessionManager
         }
 
         if (!result.opened) {
+          if (result.reason === 'leak-scan') {
+            // Hard security block — a hydrated secret/seed path was committed on the branch. NOT ok: the
+            // brain must clean the branch history before it can ship.
+            return {
+              ok: false,
+              jobId,
+              reason:
+                `PR blocked by the pre-ship security scan — a managed secret/seed file was committed on ` +
+                `this branch: ${result.leaked.join(', ')}. Remove it from the branch history and retry.`,
+            };
+          }
           return {
             ok: true,
             jobId,
@@ -3390,6 +3401,15 @@ export class AgentSessionManager
             ok: true,
             prOpened: true,
             message: `Opened a PR with the environment-setup changes: ${result.url}. Merge it to land them in the repo.`,
+          };
+        }
+        if (!result.opened && result.reason === 'leak-scan') {
+          // Hard security block — a hydrated secret/seed path was committed on the onboarding branch.
+          return {
+            ok: false,
+            reason:
+              `PR blocked by the pre-ship security scan — a managed secret/seed file was committed: ` +
+              `${result.leaked.join(', ')}. Remove it from the branch history and retry.`,
           };
         }
         return {

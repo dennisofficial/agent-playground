@@ -75,17 +75,31 @@ function mockEngine(opts: {
   return { engine: { run } as unknown as EngineRunnerPort, calls };
 }
 
-/** A mocked LocalGitService — `hasChanges` + `commitAll` are the only surface the stage touches. */
-function mockGit(opts: { hasChanges?: boolean; sha?: string | null }): {
+/**
+ * A mocked LocalGitService for the WRITER-COMMIT model. The fix AGENT commits + pushes its own work now, so
+ * the stage only READS: `hasChanges` (did the agent leave a dirty tree?) and `headSha` (the base HEAD before
+ * the fix turn, then the agent's commit sha after). `didCommit` (default true) makes HEAD advance to `sha`
+ * on the post-turn read (agent committed) vs stay at base (nothing to fix). `commitAll` is kept on the mock
+ * only to assert the host NEVER calls it.
+ */
+function mockGit(opts: { hasChanges?: boolean; didCommit?: boolean; sha?: string } = {}): {
   git: LocalGitService;
   commitAll: ReturnType<typeof vi.fn>;
+  headSha: ReturnType<typeof vi.fn>;
 } {
-  const commitAll = vi.fn(async () => opts.sha ?? 'abc1234def');
+  const base = 'base-sha';
+  const committed = opts.sha ?? 'fix-sha';
+  const didCommit = opts.didCommit ?? true;
+  let call = 0;
+  // First read = pre-fix base; subsequent reads = the agent's commit sha (advanced) or base (no commit).
+  const headSha = vi.fn(async () => (++call === 1 ? base : didCommit ? committed : base));
+  const commitAll = vi.fn(async () => 'HOST-COMMIT-MUST-NOT-HAPPEN');
   const git = {
-    hasChanges: vi.fn(async () => opts.hasChanges ?? true),
+    hasChanges: vi.fn(async () => opts.hasChanges ?? false),
+    headSha,
     commitAll,
   } as unknown as LocalGitService;
-  return { git, commitAll };
+  return { git, commitAll, headSha };
 }
 
 describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
@@ -96,7 +110,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
         l2: reportWith([{ severity: 'medium', file: 'src/y.ts', title: 'finding B' }]),
       },
     });
-    const { git } = mockGit({ hasChanges: true, sha: 'sha-1' });
+    const { git } = mockGit({ sha: 'sha-1' });
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
@@ -115,7 +129,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
         l2: reportWith([{ severity: 'high', file: 'src/x.ts', title: 'missing guard' }]),
       },
     });
-    const { git } = mockGit({ hasChanges: true, sha: 'sha-1' });
+    const { git } = mockGit({ sha: 'sha-1' });
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
@@ -125,7 +139,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     expect(summary.findings[0].lens.split('+').sort()).toEqual(['l1', 'l2']);
   });
 
-  it('applies fixes via an execute turn and commits them', async () => {
+  it('applies fixes via an execute turn — the fix AGENT commits, the host reads HEAD (no host commit)', async () => {
     const { engine, calls } = mockEngine({
       reviewReports: {
         l1: reportWith([{ severity: 'high', file: 'src/x.ts', title: 'finding A', detail: 'fix it' }]),
@@ -133,13 +147,15 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       },
       fixReport: 'I fixed finding A.',
     });
-    const { git, commitAll } = mockGit({ hasChanges: true, sha: 'commitsha1' });
+    // The fix agent committed: clean tree afterwards + HEAD advanced to 'commitsha1'.
+    const { git, commitAll } = mockGit({ sha: 'commitsha1' });
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
     expect(calls.some((c) => c.mode === 'execute')).toBe(true);
-    expect(commitAll).toHaveBeenCalledTimes(1);
+    // The HOST never commits — the fix agent did, the host only read the resulting HEAD.
+    expect(commitAll).not.toHaveBeenCalled();
     expect(summary.fixesAttempted).toBe(true);
     expect(summary.fixReport).toBe('I fixed finding A.');
     expect(summary.commits).toEqual([
@@ -147,20 +163,20 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     ]);
   });
 
-  it('PR-tail mode tags the commit message + summary mode', async () => {
+  it('PR-tail mode tags the commit message + summary mode (from the agent-authored HEAD)', async () => {
     const { engine } = mockEngine({
       reviewReports: { l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]), l2: reportWith([]) },
     });
-    const { git, commitAll } = mockGit({ hasChanges: true, sha: 'prsha' });
+    const { git, commitAll } = mockGit({ sha: 'prsha' });
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixPullRequest(ctx, { lenses: LENSES });
 
     expect(summary.mode).toBe('pull_request');
-    expect(commitAll).toHaveBeenCalledWith(
-      ctx.worktreePath,
-      expect.stringContaining('PR-tail review fixes'),
-    );
+    expect(commitAll).not.toHaveBeenCalled();
+    expect(summary.commits).toEqual([
+      { sha: 'prsha', message: expect.stringContaining('PR-tail review fixes') },
+    ]);
   });
 
   it('does NOT attempt a fix when all findings are below fixMinSeverity', async () => {
@@ -232,17 +248,33 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     expect(commitAll).not.toHaveBeenCalled();
   });
 
-  it('produces no commit when the fix turn changes nothing (git.hasChanges false)', async () => {
+  it('produces no commit when the fix agent changes nothing (HEAD unchanged from base)', async () => {
     const { engine } = mockEngine({
       reviewReports: { l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]), l2: reportWith([]) },
     });
-    const { git, commitAll } = mockGit({ hasChanges: false });
+    // The fix turn ran but the agent found nothing worth changing → clean tree, HEAD still at base.
+    const { git, commitAll } = mockGit({ didCommit: false });
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
     expect(summary.fixesAttempted).toBe(true); // the fix turn ran
-    expect(commitAll).not.toHaveBeenCalled(); // but nothing changed → no commit
+    expect(commitAll).not.toHaveBeenCalled(); // host never commits
+    expect(summary.commits).toEqual([]); // HEAD == base → no fix commit reported
+  });
+
+  it('reports no commit when the fix agent LEFT a dirty tree (forgot to commit its own work)', async () => {
+    const { engine } = mockEngine({
+      reviewReports: { l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]), l2: reportWith([]) },
+    });
+    // The agent wrote changes but did NOT commit — the host must NOT commit on its behalf; report empty.
+    const { git, commitAll } = mockGit({ hasChanges: true });
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
+
+    const summary = await stage.autofixThread(ctx, { lenses: LENSES });
+
+    expect(summary.fixesAttempted).toBe(true);
+    expect(commitAll).not.toHaveBeenCalled();
     expect(summary.commits).toEqual([]);
   });
 
@@ -256,7 +288,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       return { result: reportWith([{ severity: 'high', file: 'a.ts', title: 'survivor' }]) };
     });
     const engine = { run } as unknown as EngineRunnerPort;
-    const { git } = mockGit({ hasChanges: true, sha: 's' });
+    const { git } = mockGit({ sha: 's' });
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(ctx, { lenses: LENSES });
@@ -309,7 +341,7 @@ describe('AutoFixStage — streaming onto the transcript spine', () => {
       },
       fixReport: 'fixed A',
     });
-    const { git } = mockGit({ hasChanges: true, sha: 'sha-1' });
+    const { git } = mockGit({ sha: 'sha-1' });
     const h = mockHarness();
     const stage = new AutoFixStage(engine, git, h.factory);
 
@@ -343,7 +375,7 @@ describe('AutoFixStage — streaming onto the transcript spine', () => {
     const { engine, calls } = mockEngine({
       reviewReports: { l1: reportWith([{ severity: 'high', file: 'a.ts', title: 'A' }]), l2: reportWith([]) },
     });
-    const { git } = mockGit({ hasChanges: true, sha: 's' });
+    const { git } = mockGit({ sha: 's' });
     const h = mockHarness();
     const stage = new AutoFixStage(engine, git, h.factory);
 

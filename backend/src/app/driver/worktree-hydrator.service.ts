@@ -21,9 +21,9 @@ export interface HydrateInput {
  * {@link WorktreeConfigStore}) — never a committed file (see docs/adr/0003: a `write_worktree_config` call
  * from ANY thread propagates to every other in-flight job's next hydration instantly, no PR/merge/rebase
  * lag). It renders each granted secret to its destination and returns the validated cache mounts for the
- * sandbox to bind. Every materialized path is gitignore-guarded (so `commitAll`'s `git add -A` can't sweep
- * it into a PR) and traversal/symlink-guarded; the set is persisted to a host-only sidecar so `commitAll`'s
- * leak-scan can reject them even if config changes mid-turn.
+ * sandbox to bind. Every materialized path is gitignore-guarded (so a writer's `git add -A` can't sweep it
+ * into a PR) and traversal/symlink-guarded; the set is persisted to a host-only sidecar so the pre-ship
+ * branch leak-scan can reject a committed secret even if config changes mid-turn.
  *
  * Stateless and idempotent: callers decide WHEN to (re-)hydrate (thread paths gate on {@link computeSig};
  * gate/legacy paths re-hydrate every attach). This service never touches the container — the
@@ -128,7 +128,7 @@ export class WorktreeHydrator {
     // NOTE: EVERY thread (incl. onboarding) renders real secret values now. The brain has Bash and can
     // read them in-sandbox — that is INTENTIONAL and accepted: this is a private, trusted deployment where
     // Atlas is at least as capable as local Claude Code (which runs with the user's full unisolated creds).
-    // The only guard is "don't COMMIT it": each target must be gitignored (below) + `commitAll`'s leak-scan.
+    // The only guard is "don't COMMIT it": each target must be gitignored (below) + the pre-ship leak-scan.
     if (repoDbId) {
       for (const g of await this.secrets.listGrants(orgId, repoDbId)) {
         let target: string;
@@ -154,7 +154,7 @@ export class WorktreeHydrator {
 
     // ── mounts (category 2) — notice on rejected paths (the attach applies the valid ones) ───────
     // External mounts (absolute container path) render NO files and need NO gitignore check — they live
-    // outside /workspace, so `commitAll`'s `git add -A` can never see them. We only surface a notice for a
+    // outside /workspace, so a writer's `git add -A` can never see them. We only surface a notice for a
     // path the guard rejects (external → reserved-container guard; worktree → traversal/escape guard).
     for (const m of mounts) {
       try {
@@ -165,7 +165,7 @@ export class WorktreeHydrator {
       }
     }
 
-    // Persist the forbidden set OUTSIDE the worktree for commitAll's leak-scan.
+    // Persist the forbidden set OUTSIDE the worktree for the pre-ship branch leak-scan.
     await writeForbiddenPaths(worktreePath, forbidden);
     if (forbidden.length) {
       this.logger.log(`hydrated ${forbidden.length} file(s) into ${worktreePath}`);

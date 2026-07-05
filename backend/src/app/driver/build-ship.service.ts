@@ -18,7 +18,10 @@ import type { ResolvedRepo } from './repo-resolver';
 export type ShipOutcome =
   | { opened: true; prConfirmed: true; url: string; number: number }
   | { opened: true; prConfirmed: false }
-  | { opened: false; reason: 'no-token' };
+  | { opened: false; reason: 'no-token' }
+  // The pre-ship leak-scan found a hydrated-secret path committed on the branch — the PR is HARD-BLOCKED
+  // (never opened). `leaked` is the offending path(s), surfaced loudly to the operator.
+  | { opened: false; reason: 'leak-scan'; leaked: string[] };
 
 /** The slice of the decision record the ship step needs (overview + decisions → the PR body). */
 export type ShipRecord = Pick<DecisionRecord, 'overview' | 'decisions'>;
@@ -94,6 +97,37 @@ export class BuildShipService {
         ':warning: Build complete but no GitHub token is configured — PR not opened.',
       );
       return { opened: false, reason: 'no-token' };
+    }
+
+    // PRE-SHIP LEAK-SCAN — a HARD gate before the PR opens. Writers own their commits now, so the hydrated-
+    // secret check can no longer ride inside a host commit; it runs here instead, scanning EVERY commit on
+    // the branch (`origin/<base>..HEAD`, per-commit — catches a secret added then deleted). The forbidden set
+    // lives in a host-only sidecar the in-sandbox turn can't read, so this MUST be host-side, before the
+    // open-PR turn. Fail CLOSED: a scan error blocks the ship (an unprovable branch is not waved through).
+    let leaked: string[];
+    try {
+      leaked = await this.git.scanBranchForForbidden(
+        sandbox.worktreePath,
+        `origin/${repo.defaultBranch}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `job=${job.id}: pre-ship leak-scan FAILED (blocking ship, fail-closed): ${err}`,
+      );
+      await notify(
+        ':no_entry: Pre-ship security scan could not complete — PR blocked. Check the branch and retry.',
+      );
+      return { opened: false, reason: 'leak-scan', leaked: [] };
+    }
+    if (leaked.length) {
+      this.logger.error(
+        `job=${job.id}: pre-ship leak-scan BLOCKED the PR — hydrated secret path(s) committed: ${leaked.join(', ')}`,
+      );
+      await notify(
+        `:no_entry: PR blocked — a managed secret/seed file was committed on this branch: ` +
+          `\`${leaked.join('`, `')}\`. These must never be committed. Remove them from history and retry.`,
+      );
+      return { opened: false, reason: 'leak-scan', leaked };
     }
 
     // OPEN, THEN REVIEW AS A CHECK. Atlas opens the PR FIRST — a final IN-SANDBOX turn (the host runs no
@@ -191,10 +225,14 @@ export class BuildShipService {
   }
 
   /**
-   * THE SHIP TURN — the build's terminal in-sandbox step: Atlas opens the PR itself with its own git +
-   * `gh` (host touches no GitHub API). Best-effort like PR Review — a failure is logged; the reconciler
-   * re-discovers on the next pass once Atlas retries or the operator nudges. The target carries per-turn
-   * git auth so the push authenticates and `gh` picks up the token from the exec env.
+   * THE SHIP TURN — the build's terminal in-sandbox step: Atlas RECONCILES the branch against its base
+   * (`git fetch origin` + integrate any base drift, resolving conflicts) and then opens the PR itself with
+   * its own git + `gh` (host touches no GitHub API). A long build can leave `origin/<base>` moved on; the
+   * reconcile keeps the PR mergeable. The host-side pre-ship leak-scan gate has already run in `ship()`
+   * (it reads a host-only sidecar the sandbox can't see), so this turn only reconciles + publishes.
+   * Best-effort like PR Review — a failure is logged; the reconciler re-discovers on the next pass once
+   * Atlas retries or the operator nudges. The target carries per-turn git auth so the push authenticates
+   * and `gh` picks up the token from the exec env.
    */
   private async openPrInSandbox(
     job: Job,
@@ -244,13 +282,18 @@ export class BuildShipService {
       const res = await this.engine.run({
         engine: 'claude',
         task:
-          `The build is complete on branch \`${sandbox.branch}\`. Publish it as a pull request against ` +
-          `\`${repo.defaultBranch}\`:\n` +
-          `  1. Commit anything uncommitted, then \`git push -u origin ${sandbox.branch}\`.\n` +
-          `  2. Open the PR: \`gh pr create --base ${repo.defaultBranch} --head ${sandbox.branch} ` +
+          `The build is complete on branch \`${sandbox.branch}\`. RECONCILE against the base, then publish ` +
+          `it as a pull request against \`${repo.defaultBranch}\`:\n` +
+          `  1. RECONCILE THE BASE. Run \`git fetch origin\`. The base may have MOVED while this build ran, ` +
+          `so check for drift: \`git log --oneline HEAD..origin/${repo.defaultBranch}\` (commits on the base ` +
+          `you don't have yet). If there are any, integrate them — \`git merge origin/${repo.defaultBranch}\` ` +
+          `(or rebase). If that produces MERGE CONFLICTS, resolve them properly (understand both sides — do ` +
+          `not blindly take one), then commit the merge. Verify the tree still builds after reconciling.\n` +
+          `  2. Commit anything uncommitted, then \`git push -u origin ${sandbox.branch}\`.\n` +
+          `  3. Open the PR: \`gh pr create --base ${repo.defaultBranch} --head ${sandbox.branch} ` +
           `--title ${JSON.stringify(job.title ?? 'Atlas build')} --body-file -\` (pipe the body below on stdin). ` +
           `If a PR for this branch already exists, use it — don't open a second one.\n` +
-          `  3. Report it: call \`report_pr_opened\` with the PR url (\`gh pr create\` prints it, or run ` +
+          `  4. Report it: call \`report_pr_opened\` with the PR url (\`gh pr create\` prints it, or run ` +
           `\`gh pr view ${sandbox.branch} --json url -q .url\`). This step is REQUIRED — the host records the ` +
           `PR from that call.\n\n` +
           `PR body:\n${shipPrBody(job, record)}`,

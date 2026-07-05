@@ -2,7 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { repoStateDir } from '../state-root';
@@ -153,64 +153,40 @@ export class LocalGitService {
   }
 
   /**
-   * Package-manager / build CACHE dirs that an in-sandbox engine turn may drop at the worktree ROOT
-   * but the connected repo's `.gitignore` does NOT cover. The proven culprit: `pnpm install` once created
-   * a ~1.7 GB `.pnpm-store/` INSIDE the worktree (pnpm's store-dir was left unset, so it fell back to its
-   * own per-disk default — verified this happens even with a durable `HOME`, since `/workspace` is a
-   * separate device from wherever that default points), which then made `commitAll`'s `git add -A` stage
-   * 1.7 GB and throw — failing the build at the commit step with no PR. The pnpm store is now pinned
-   * outside the worktree entirely (`CONTAINER_PNPM_STORE`, under `/.atlas`), so this entry is
-   * defense-in-depth, not load-bearing. These are categorically caches no sane repo commits.
-   */
-  static readonly BUILD_JUNK_PATTERNS = [
-    '.pnpm-store/',
-    '.npm/',
-    '.yarn/cache/',
-    '.yarn/unplugged/',
-    '.turbo/',
-    'node_modules/', // defensive — virtually always already ignored, so this is a no-op there
-  ];
-
-  private static readonly EXCLUDE_HEADER = '# atlas build-junk (managed)';
-
-  /**
-   * Ensure the clone's git ignores Atlas build-junk (see {@link BUILD_JUNK_PATTERNS}) so `commitAll`'s
-   * `git add -A` can never sweep a multi-GB package store into a PR — WITHOUT touching the connected
-   * repo's tracked `.gitignore`. Patterns are appended to the clone's COMMON-dir `info/exclude`
-   * (`<repo>/.git/info/exclude`): git honors ONLY the common-dir exclude, not a per-worktree
-   * `$GIT_DIR/info/exclude` (verified), and it is shared by every linked worktree of the clone — which
-   * is exactly right, since the same junk patterns apply to every thread of a repo.
+   * PRE-SHIP LEAK-SCAN (hard PR gate). Writers own their commits now (the host no longer runs `git add -A`
+   * or commits at all), so the hydrated-secret leak-scan can no longer live inside a host commit. Instead,
+   * right before the PR opens, scan EVERY commit introduced on the feature branch (`baseRef..HEAD`) for any
+   * host-only forbidden (hydrated-secret/seed) path.
    *
-   * Idempotent + locked (concurrent threads of one clone race on this shared file): appends the block
-   * once, keyed off {@link EXCLUDE_HEADER}, and never clobbers existing exclude content. Fail-soft — a
-   * resolution error never blocks provisioning.
+   * Scans per-commit — NOT the net `baseRef..HEAD` tree diff — so a secret ADDED in one commit and DELETED
+   * in a later one (which the net diff would show as gone) is still caught: `git rev-list baseRef..HEAD`
+   * enumerates the branch's commits and `git diff-tree` lists the paths each one touched. The forbidden set
+   * comes from the host-only sidecar (`readForbiddenPaths`), which the in-sandbox turn cannot read, so this
+   * gate MUST run host-side.
+   *
+   * Returns the sorted union of forbidden paths that appeared in ANY commit (empty = clean); the caller
+   * hard-blocks the ship on a non-empty result. FAILS CLOSED: a git error (can't enumerate the branch)
+   * throws rather than returning "clean" — an unprovable branch must not be waved through a security gate.
    */
-  async ensureBuildJunkExcluded(worktreePath: string): Promise<void> {
-    let commonDir: string;
-    try {
-      commonDir = await this.git(['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-        cwd: worktreePath,
-      });
-    } catch (err) {
-      this.logger.debug(`ensureBuildJunkExcluded: could not resolve common dir (skipping): ${err}`);
-      return;
-    }
-    if (!commonDir) return;
-    const excludePath = join(commonDir, 'info', 'exclude');
+  async scanBranchForForbidden(worktreePath: string, baseRef: string): Promise<string[]> {
+    const forbidden = readForbiddenPaths(worktreePath);
+    if (!forbidden.length) return [];
+    const forbiddenSet = new Set(forbidden);
 
-    await this.withLock(commonDir, async () => {
-      let current = '';
-      try {
-        current = await readFile(excludePath, 'utf8');
-      } catch {
-        /* absent — we'll create it */
+    const revs = await this.git(['rev-list', `${baseRef}..HEAD`], { cwd: worktreePath });
+    const shas = revs ? revs.split('\n').map((s) => s.trim()).filter(Boolean) : [];
+
+    const leaked = new Set<string>();
+    for (const sha of shas) {
+      const out = await this.git(
+        ['diff-tree', '--no-commit-id', '--name-only', '-r', sha],
+        { cwd: worktreePath },
+      );
+      for (const name of out.split('\n').map((s) => s.trim()).filter(Boolean)) {
+        if (forbiddenSet.has(name)) leaked.add(name);
       }
-      if (current.includes(LocalGitService.EXCLUDE_HEADER)) return; // already applied
-      const block = [LocalGitService.EXCLUDE_HEADER, ...LocalGitService.BUILD_JUNK_PATTERNS, ''].join('\n');
-      const sep = current && !current.endsWith('\n') ? '\n' : '';
-      await mkdir(join(commonDir, 'info'), { recursive: true });
-      await writeFile(excludePath, `${current}${sep}${block}`, 'utf8');
-    });
+    }
+    return [...leaked].sort();
   }
 
   /**
@@ -283,7 +259,7 @@ export class LocalGitService {
 
   /** Files this thread has touched so far relative to `baseSha` (its start-of-thread HEAD) — tracked
    *  changes (staged/unstaged/already committed within this thread) PLUS brand-new untracked files, since
-   *  this runs mid-turn before `commitAll` (ADR 0005's judge needs the CURRENT thread's changes, not the
+   *  this runs mid-turn before the writer commits (ADR 0005's judge needs the CURRENT thread's changes, not the
    *  whole job's). Best-effort; never blocks the gate on a git error. */
   async changedFileNames(worktreePath: string, baseSha: string): Promise<string[]> {
     try {
@@ -437,6 +413,14 @@ export class LocalGitService {
   /**
    * Stage everything and commit. Identity is set per-invocation via `-c` so the worktree's config
    * stays clean. Returns the new commit sha, or null when there was nothing to commit.
+   *
+   * HOST COMMIT IS NOW A FAST-PATH-ONLY primitive. The multi-thread build pipeline no longer commits on the
+   * writer's behalf — builders / fix-it / master-review each commit + push their own work, and the host only
+   * READS `git rev-parse HEAD`. `commitAll` survives ONLY for the terminal/fast ship paths that write in the
+   * BRAIN's own session and commit at ship time (`BuildShipService` `commitMessage`: direct-build, onboarding
+   * env setup, the decision-ledger commit). The hydrated-secret leak-scan that used to live here has moved to
+   * {@link scanBranchForForbidden}, run once as a HARD pre-ship gate before the PR opens — so no host commit
+   * carries a per-commit secret check anymore.
    */
   async commitAll(
     worktreePath: string,
@@ -445,25 +429,7 @@ export class LocalGitService {
   ): Promise<string | null> {
     return this.withLock(worktreePath, async () => {
       await this.git(['add', '-A'], { cwd: worktreePath });
-      const stagedList = await this.git(['diff', '--cached', '--name-only'], { cwd: worktreePath });
-      const staged = stagedList ? stagedList.split('\n').filter(Boolean) : [];
-      // LEAK-SCAN: never let a hydrated secret/seed file into a commit, even if it was `git add -f`'d
-      // or the in-worktree manifest was edited. The forbidden list comes from the host-only sidecar
-      // (written at hydration time, outside the worktree) — NOT the mutable `.atlas/worktree.json`.
-      const forbidden = readForbiddenPaths(worktreePath);
-      if (forbidden.length) {
-        const leaked = staged.filter((p) => forbidden.includes(p));
-        if (leaked.length) {
-          throw new Error(
-            `Refusing to commit: hydrated secret/seed file(s) are staged — ${leaked.join(', ')}. ` +
-              `These are managed by the worktree hydrator and must never be committed.`,
-          );
-        }
-      }
-      if (!(await this.hasChanges(worktreePath))) {
-        // `add` may have staged nothing (e.g. only ignored files) — check staged too.
-        if (!staged.length) return null;
-      }
+      if (!(await this.hasChanges(worktreePath))) return null;
       await this.git(
         [
           '-c',

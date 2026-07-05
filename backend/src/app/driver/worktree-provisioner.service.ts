@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { LocalGitService, type FeatureSandbox } from '../git';
+import { type FeatureSandbox } from '../git';
 import { WorktreeConfigStore } from '../onboarding';
 import { SANDBOX_PROVIDER, type SandboxMilestoneStage, type SandboxProvider } from '../sandbox';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
@@ -45,7 +45,6 @@ export class WorktreeProvisioner {
   constructor(
     private readonly hydrator: WorktreeHydrator,
     private readonly awareness: PipelineAwarenessStore,
-    private readonly git: LocalGitService,
     private readonly config: WorktreeConfigStore,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
   ) {}
@@ -54,10 +53,10 @@ export class WorktreeProvisioner {
     const { sandbox, orgId, jobId, repoDbId } = input;
     const worktreePath = sandbox.worktreePath;
 
-    // Ignore package-manager / build caches at the clone level so `commitAll`'s `git add -A` can never
-    // sweep a multi-GB package store into a PR (a safety net beneath the relocated shared store).
-    // Idempotent + fail-soft.
-    await this.git.ensureBuildJunkExcluded(worktreePath);
+    // NOTE: build-junk exclusion (a host-managed `info/exclude`) was removed with the writer-owns-commits
+    // change — writers now own `.gitignore` and stage their own work, so the host no longer pre-empts junk
+    // for an automatic `git add -A` it no longer runs. The pnpm store is pinned outside the worktree
+    // (`CONTAINER_PNPM_STORE`), so the original multi-GB footgun is already fixed at its root.
 
     // One-time, best-effort: import an already-onboarded repo's committed legacy manifest into the DB the
     // first time it's seen with zero config rows (see docs/adr/0003) — never blocks provisioning.

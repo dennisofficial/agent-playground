@@ -341,8 +341,9 @@ export class SandboxManager implements SandboxProvider {
     // field (or corepack's own resolution) ends up running — see CONTAINER_PNPM_STORE. A dependency is
     // fetched ONCE globally and copied from the store by every later install (cross-device → copy, not
     // hardlink). Living outside
-    // `/workspace` means it can never land in the worktree at all — the `.pnpm-store/` git-exclude
-    // (`WorktreeProvisioner`/`BUILD_JUNK_PATTERNS`) is now pure defense-in-depth, not load-bearing.
+    // `/workspace` means it can never land in the worktree at all — which is why the host-managed
+    // `.pnpm-store/` git-exclude could be removed with the writer-owns-commits change (writers own their
+    // own `.gitignore` now); the pinned store is the load-bearing fix.
     const pnpmStore = join(this.agentHomeRootHost(), 'pnpm-store');
     this.ensureHostOwnedDir(pnpmStore);
     binds.push(`${pnpmStore}:${CONTAINER_PNPM_STORE}`);
