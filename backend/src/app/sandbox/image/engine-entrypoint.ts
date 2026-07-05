@@ -84,8 +84,12 @@ async function runOverRedis(turnId: string): Promise<void> {
     );
 
     // ── Tool bridge over Redis (additive) ──────────────────────────────────────────────────────
+    // CLAUDE ONLY: builds in-process SDK MCP tools + runs the reply-reader here. A Codex turn instead
+    // spawns the standalone `mcp-bridge-server.mjs` (declared in config.toml by `runCodex`), which runs
+    // its OWN reply-reader — so we must NOT also run one here for Codex (two readers would race for the
+    // same `turn:{T}:replies` stream).
     let bridge: BridgeClaudeOptions | undefined;
-    if (spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
+    if (spec.engine === 'claude' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
       const pending = new Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>();
       // A SEPARATE connection blocks on the replies stream (a blocking read can't share the main client).
       sub = client.duplicate();
@@ -220,10 +224,18 @@ async function runOverRedis(turnId: string): Promise<void> {
       ...(lsp?.lspToolNames ?? []),
       ...(context7?.context7ToolNames ?? []),
     ];
+    // For a Codex execute turn, hand the BARE bridge tool names to `runCodex` — it renders them into the
+    // config.toml `[mcp_servers.atlasbridge]` block (the Codex tool bridge). Claude uses the merged Claude
+    // options above instead; the two engines never both consume the bridge on one turn.
+    const codexBridgeTools =
+      spec.engine === 'codex' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0
+        ? spec.toolBridgeTools
+        : undefined;
     const result = await core.runWithExtras(
       runArgs,
       Object.keys(mergedMcpServers).length > 0 ? { mcpServers: mergedMcpServers } : undefined,
       mergedToolNames.length > 0 ? mergedToolNames : undefined,
+      codexBridgeTools,
     );
     await xadd(eventsKey, { t: 'final', r: result });
   } catch (err) {

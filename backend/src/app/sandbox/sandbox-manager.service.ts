@@ -7,7 +7,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { atlasAgentHomeBase } from '../engine/engine-home';
 import type { FeatureSandbox } from '../git';
-import { engineBundlePath } from './bundle-engine';
+import { engineBundlePath, mcpBridgeBundlePath } from './bundle-engine';
 import {
   CONTAINER_AGENT_HOME,
   CONTAINER_CONTEXT,
@@ -29,6 +29,9 @@ const execFileAsync = promisify(execFile);
 
 /** The in-container path of the engine entrypoint baked by the Dockerfile — bind-mounted live over it. */
 const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
+/** The in-container path of the Codex MCP tool-bridge server (spawned by codex via config.toml). Baked by
+ *  the Dockerfile, bind-mounted live over it — same hot-reload contract as the engine bundle. */
+const CONTAINER_MCP_BRIDGE_BUNDLE = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
 
 /** Hard cap on the liveness probe exec — it's a trivial `kill -0` loop, so anything slower is a wedged
  *  docker exec we'd rather abandon (→ `unknown`) than let pile up behind the ~5s status poll. */
@@ -281,6 +284,10 @@ export class SandboxManager implements SandboxProvider {
     const bundle = engineBundlePath();
     if (existsSync(bundle)) {
       binds.push(`${bundle}:${CONTAINER_ENGINE_BUNDLE}:ro`);
+    }
+    const mcpBridge = mcpBridgeBundlePath();
+    if (existsSync(mcpBridge)) {
+      binds.push(`${mcpBridge}:${CONTAINER_MCP_BRIDGE_BUNDLE}:ro`);
     }
     // The host-maintained, READ-ONLY cross-repo reference library (per-tenant) at /refs.
     const refsDir = this.teamRefsDir(orgId);

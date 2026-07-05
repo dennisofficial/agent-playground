@@ -74,16 +74,39 @@ export function assertValidCodexAuthJson(parsed: unknown): void {
 }
 
 /**
+ * The Codex host tool bridge for an execute turn (e.g. `master_review`). Rendered into the per-sandbox
+ * `config.toml` as an `[mcp_servers.atlasbridge]` block: codex spawns the in-sandbox MCP server, which
+ * does the Redis `tool_request`/reply round-trip to the host (see `mcp-bridge-server.ts`). The `env` map
+ * (TURN_ID/REDIS_URL/BRIDGE_TOOLS) is what the server reads to reach the turn's streams.
+ */
+export interface CodexMcpBridge {
+  /** In-container path of the bundled MCP bridge server (`node <serverPath>`). */
+  serverPath: string;
+  /** Bare host tool names to expose (e.g. `['complete_thread','block_thread']`). */
+  toolNames: string[];
+  /** Env for the spawned server: at least TURN_ID + REDIS_URL. */
+  env: Record<string, string>;
+}
+
+/** Minimal TOML string escaper for the simple values we write (paths, ids, urls, tool-name CSV). */
+function tomlStr(v: string): string {
+  return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/**
  * Materialize a Codex SUBSCRIPTION home — an isolated CODEX_HOME owning its own `auth.json` (the
- * ChatGPT-plan credential), so a subscription run reads it instead of an API key. A clean-room
- * minimal rewrite of v1's `codex-subscription-home.ts`: no team/agent fan-out, no config.toml
- * materializer — just the auth.json the CLI needs. Idempotent (rewritten each turn). NEVER the
- * developer's personal ~/.codex.
+ * ChatGPT-plan credential), so a subscription run reads it instead of an API key. Idempotent (rewritten
+ * each turn). NEVER the developer's personal ~/.codex.
  *
  * `secret` is the raw `auth.json` blob. It is VALIDATED before write so an incomplete blob (the
  * classic: a stale login missing `tokens.id_token`) fails with {@link CodexAuthInvalidError} up front
  * rather than as an opaque Codex-binary serde error mid-turn. Returns the absolute CODEX_HOME path to
  * pass through as the subprocess's CODEX_HOME.
+ *
+ * `mcpBridge` (optional) writes a `config.toml` with an `[mcp_servers.atlasbridge]` block +
+ * `default_tools_approval_mode = "approve"` (spike-proven: auto-approves the MCP tool calls without an
+ * interactive approver, and short-circuits BEFORE the `approval_policy` check so `workspace-write` is
+ * kept — no `danger-full-access`). Omitted → no config.toml (read-only Codex turns need no bridge).
  *
  * NOTE: there is no "bare token" form — a valid Codex subscription credential is ALWAYS the full
  * auth.json object (it needs id_token + access_token + refresh_token together). A single opaque token
@@ -93,6 +116,7 @@ export function ensureCodexAuthHome(
   root: string | undefined,
   sandboxKey: string,
   secret: string,
+  mcpBridge?: CodexMcpBridge,
 ): string {
   let parsed: unknown;
   try {
@@ -104,5 +128,22 @@ export function ensureCodexAuthHome(
 
   const home = codexAuthHomeDir(root, sandboxKey);
   writeFileSync(join(home, 'auth.json'), secret, { mode: 0o600 });
+
+  if (mcpBridge && mcpBridge.toolNames.length > 0) {
+    const env = { ...mcpBridge.env, BRIDGE_TOOLS: mcpBridge.toolNames.join(',') };
+    const lines = [
+      '[mcp_servers.atlasbridge]',
+      `command = "node"`,
+      `args = [${tomlStr(mcpBridge.serverPath)}]`,
+      // Auto-approve this server's tool calls (no interactive approver in SDK mode). Short-circuits the
+      // MCP approval gate before approval_policy, so sandboxMode:'workspace-write' is preserved.
+      `default_tools_approval_mode = "approve"`,
+      '',
+      '[mcp_servers.atlasbridge.env]',
+      ...Object.entries(env).map(([k, v]) => `${k} = ${tomlStr(v)}`),
+      '',
+    ];
+    writeFileSync(join(home, 'config.toml'), lines.join('\n'), { mode: 0o600 });
+  }
   return home;
 }

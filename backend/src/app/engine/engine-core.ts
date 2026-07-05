@@ -6,7 +6,16 @@ import { join, resolve as resolvePath } from 'node:path';
 import { structuredPatch as diffStructuredPatch } from 'diff';
 import { applyClaudeAuth } from './claude-auth';
 import { atlasEngineHomeDir } from './engine-home';
-import { assertValidCodexAuthJson, ensureCodexAuthHome, readCodexAuthHome } from './codex-auth-home';
+import {
+  assertValidCodexAuthJson,
+  type CodexMcpBridge,
+  ensureCodexAuthHome,
+  readCodexAuthHome,
+} from './codex-auth-home';
+
+/** In-container path of the bundled Codex MCP tool-bridge server (baked by the Dockerfile, bind-mounted
+ *  live — see `sandbox/image/mcp-bridge-server.ts`). codex spawns it via the config.toml `command`. */
+const CONTAINER_MCP_BRIDGE_PATH = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
 // Import from the DIRECT (Nest-free) assembly path, not the prompt-kit barrel — this module bundles into the
 // in-container engine, and the barrel re-exports the NestJS PromptService/PromptKitModule.
 import { renderAgentPrompt } from '../prompt-kit/assemble';
@@ -397,15 +406,18 @@ export class EngineCore {
    *
    * `extraClaudeOptions` is spread verbatim into the SDK `Options` — pass `{ mcpServers }`, NOT the
    * raw server map, or the server lands as a stray top-level key and never registers.
-   * `bridgeToolNames` are the qualified `mcp__<server>__<tool>` names to auto-approve.
+   * `bridgeToolNames` are the qualified `mcp__<server>__<tool>` names to auto-approve (Claude only).
+   * `codexBridgeTools` are the BARE host tool names for a Codex execute turn — routed into `runCodex`,
+   * which renders them as an `[mcp_servers.atlasbridge]` config.toml block (the Codex tool bridge).
    */
   async runWithExtras(
     args: RunEngineArgs,
     extraClaudeOptions?: Record<string, unknown>,
     bridgeToolNames?: string[],
+    codexBridgeTools?: string[],
   ): Promise<EngineRunResult> {
     return args.engine === 'codex'
-      ? this.runCodex(args)
+      ? this.runCodex(args, codexBridgeTools)
       : this.runClaude(args, extraClaudeOptions, bridgeToolNames);
   }
 
@@ -706,11 +718,12 @@ export class EngineCore {
 
   // ── Codex ─────────────────────────────────────────────────────────────────────────────────────
 
-  private getCodex(sandboxKey: string, auth: EngineAuth): Codex {
+  private getCodex(sandboxKey: string, auth: EngineAuth, bridge?: CodexMcpBridge): Codex {
     const root = this.homeRoot();
-    // Subscription-only: an overlay home owning its own auth.json (refreshed each turn). The cache key
-    // keeps separate sandboxes apart. NO apiKey is ever passed — the CLI reads auth.json from CODEX_HOME.
-    const codexHome = ensureCodexAuthHome(root, sandboxKey, auth.secret);
+    // Subscription-only: an overlay home owning its own auth.json (refreshed each turn) + — for an execute
+    // turn with a host tool bridge — a config.toml `[mcp_servers.atlasbridge]` block. The cache key keeps
+    // separate sandboxes apart. NO apiKey is ever passed — the CLI reads auth.json from CODEX_HOME.
+    const codexHome = ensureCodexAuthHome(root, sandboxKey, auth.secret, bridge);
     const cacheKey = `sub:${sandboxKey}`;
     let client = this.codexClients.get(cacheKey);
     if (!client) {
@@ -747,7 +760,7 @@ export class EngineCore {
     };
   }
 
-  private async runCodex(args: RunEngineArgs): Promise<EngineRunResult> {
+  private async runCodex(args: RunEngineArgs, bridgeTools?: string[]): Promise<EngineRunResult> {
     const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream } =
       args;
     const auth = this.resolveAuth('codex', args.auth);
@@ -756,7 +769,20 @@ export class EngineCore {
     const model = args.model;
     const readOnly = mode !== 'execute';
 
-    const client = this.getCodex(sandboxKey, auth);
+    // Host tool bridge (execute turns only): render an `[mcp_servers.atlasbridge]` block into config.toml
+    // pointing codex at the in-sandbox MCP server, which does the Redis round-trip to the host. The server
+    // reads the turn's Redis streams from TURN_ID/REDIS_URL (set in the container by RedisEngineRunner).
+    const turnId = process.env.TURN_ID;
+    const bridge: CodexMcpBridge | undefined =
+      bridgeTools && bridgeTools.length > 0 && turnId
+        ? {
+            serverPath: CONTAINER_MCP_BRIDGE_PATH,
+            toolNames: bridgeTools,
+            env: { TURN_ID: turnId, REDIS_URL: process.env.REDIS_URL ?? 'redis://redis:6379' },
+          }
+        : undefined;
+
+    const client = this.getCodex(sandboxKey, auth, bridge);
     const opts = this.codexThreadOptions(cwd, model, readOnly, args.modelReasoningEffort);
     const thread = sessionId ? client.resumeThread(sessionId, opts) : client.startThread(opts);
 

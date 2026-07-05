@@ -1477,10 +1477,7 @@ export class ThreadDriver implements JobDispatcher {
     // bridge — the batch bridge, not the gate's) instead of resuming the gate that's actually in progress.
     // So: if a `done` terminal record already exists for the terminal batch, skip the kick/reattach dance
     // entirely and fall straight through to the gate below with the EXISTING assertion.
-    const priorTerm =
-      isLastBatch && thread.kind !== 'master_review'
-        ? await this.store.getTerminalRecord(thread.id)
-        : null;
+    const priorTerm = isLastBatch ? await this.store.getTerminalRecord(thread.id) : null;
 
     let report: string;
     let outcome: ThreadOutcome = 'done';
@@ -1514,7 +1511,7 @@ export class ThreadDriver implements JobDispatcher {
         // Fresh start of the TERMINAL batch: clear any stale terminal record from a prior failed attempt so
         // the assertion we read after this turn can only be THIS turn's (staleness guard — ADR 0004). A
         // resume/reattach deliberately does NOT clear, preserving a pre-crash assertion.
-        if (isLastBatch && thread.kind !== 'master_review') {
+        if (isLastBatch) {
           await this.store.clearTerminalRecord(thread.id).catch(() => undefined);
         }
         await this.post(route, `:gear: ${thread.brief} — building: ${label}`);
@@ -1561,11 +1558,12 @@ export class ThreadDriver implements JobDispatcher {
       // run the repo's OWN typecheck/build/test (and fix failures) before finishing, and report rather than
       // claim success on a guess. The host does NOT reach into the sandbox to run commands.
 
-      // Resolve the TERMINAL OUTCOME (ADR 0004). A non-terminal batch, or the master-review thread (Codex —
-      // no host tool bridge, so it can't call `complete_thread`), keeps exception-shape semantics: the turn
-      // returned → done. The terminal Claude batch READS the assertion the orchestrator wrote instead of
-      // inferring done-ness. No assertion after a clean turn ⇒ `incomplete` (NEVER silently done).
-      if (isLastBatch && thread.kind !== 'master_review') {
+      // Resolve the TERMINAL OUTCOME (ADR 0004). A non-terminal batch keeps exception-shape semantics: the
+      // turn returned → done. The terminal batch — Claude builders AND the Codex master-review thread (which
+      // now has a host tool bridge via the in-sandbox MCP server) — READS the assertion the orchestrator
+      // wrote via `complete_thread` instead of inferring done-ness. No assertion after a clean turn ⇒
+      // `incomplete` (NEVER silently done).
+      if (isLastBatch) {
         const term = await this.store.getTerminalRecord(thread.id);
         outcome = term?.status ?? 'incomplete';
         if (outcome === 'incomplete') {
@@ -1753,7 +1751,8 @@ export class ThreadDriver implements JobDispatcher {
           mode: 'execute',
           systemPrompt,
           // High reasoning effort for the whole-diff review pass (parity with plan-review), from the spec.
-          // Undefined for Claude builder turns. `toolBridge`/steering are unused by `runCodex` on the master path.
+          // Undefined for Claude builder turns. The `toolBridge` below now reaches Codex too — `runCodex`
+          // renders its tool names into a config.toml `[mcp_servers.atlasbridge]` block (the MCP bridge).
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
           auth: await this.creds.engineAuth(job.orgId, engine),
@@ -2395,6 +2394,11 @@ export function renderMasterReviewTask(record: DecisionRecord | null, repo: Reso
       ` re-verify rather than leaving it red.`,
     `\nDo NOT \`git push\` or open a PR — the host commits your edits and ships. If the review found nothing` +
       ` actionable, change nothing.`,
+    `\n4. FINISH: when you are done and the build is green, you MUST call the \`complete_thread\` host tool` +
+      ` (available via the "atlasbridge" MCP server) with a one-line \`summary\` of what you reviewed/fixed` +
+      ` and the \`verification\` you ran. This is how you signal completion — the review is NOT recorded as` +
+      ` done until you call it. If you genuinely cannot proceed, call \`block_thread\` with a reason and detail` +
+      ` instead.`,
   ].join('\n');
 }
 

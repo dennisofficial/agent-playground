@@ -62,6 +62,9 @@ importers:
       '@langfuse/tracing':
         specifier: ^5.4.1
         version: 5.4.1(@opentelemetry/api@1.9.1)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
       '@nestjs/bullmq':
         specifier: ^11.0.4
         version: 11.0.4(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.26)(bullmq@5.78.0)

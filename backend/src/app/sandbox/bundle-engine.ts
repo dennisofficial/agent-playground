@@ -117,3 +117,49 @@ export async function bundleEngine(): Promise<string> {
   }
   return live;
 }
+
+/** In-context home of the Codex MCP tool-bridge server bundle (COPY'd by the Dockerfile, bind-mounted live,
+ *  and spawned by codex inside the sandbox — see `mcp-bridge-server.ts`). Mirrors {@link imageBundlePath}. */
+function mcpBridgeImageBundlePath(): string {
+  return join(sandboxContextDir(), 'mcp-bridge-server.mjs');
+}
+
+/** The live bind-mount source for the MCP bridge bundle (honors `MCP_BRIDGE_BUNDLE_PATH`, same rationale
+ *  as {@link engineBundlePath}). */
+export function mcpBridgeBundlePath(): string {
+  return process.env.MCP_BRIDGE_BUNDLE_PATH ?? mcpBridgeImageBundlePath();
+}
+
+/**
+ * (Re)bundle the in-sandbox Codex MCP tool-bridge server. Standalone from the engine bundle: it has NO
+ * externals (ioredis + `@modelcontextprotocol/sdk` are bundled in) because codex spawns it as a bare
+ * `node mcp-bridge-server.mjs` subprocess with no access to the engine's node_modules. Same hot-reload
+ * contract as {@link bundleEngine} (in-context copy + optional live-mount mirror). Returns the live path.
+ */
+export async function bundleMcpBridge(): Promise<string> {
+  const dir = entrySourceDir();
+  const tsEntry = join(dir, 'mcp-bridge-server.ts');
+  const jsEntry = join(dir, 'mcp-bridge-server.js');
+  const entry = existsSync(tsEntry) ? tsEntry : jsEntry;
+  if (!existsSync(entry)) {
+    throw new Error(`no mcp-bridge-server source at ${tsEntry} or ${jsEntry}`);
+  }
+  const outfile = mcpBridgeImageBundlePath();
+  mkdirSync(dirname(outfile), { recursive: true });
+  await build({
+    entryPoints: [entry],
+    outfile,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+    logLevel: 'silent',
+  });
+  const live = mcpBridgeBundlePath();
+  if (live !== outfile) {
+    mkdirSync(dirname(live), { recursive: true });
+    copyFileSync(outfile, live);
+  }
+  return live;
+}

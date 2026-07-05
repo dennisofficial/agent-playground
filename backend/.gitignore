@@ -6,6 +6,8 @@
 
 # generated engine bundle (the API rebundles it on boot into dist; the CLI can regenerate it in src)
 engine-entrypoint.mjs
+# generated Codex MCP tool-bridge server bundle (re-bundled on boot alongside the engine bundle)
+mcp-bridge-server.mjs
 
 # logs
 *.log
