@@ -77,6 +77,48 @@ const TOOL_SCHEMAS: Record<string, { description: string; inputSchema: Record<st
       additionalProperties: true,
     },
   },
+  // Live task list (parity with Claude Code's TaskCreate/TaskUpdate) — surfaces this thread's work as a
+  // checklist in the operator console, identical to the build lanes. Create returns an id string ("Task #N
+  // created …"); pass that `taskId` back to task_update to advance its status.
+  task_create: {
+    description:
+      'Add ONE item to your live task list (shown to the operator as a checklist for this thread). Call it ' +
+      'up front for each concrete step you plan to do, and as new work emerges. Returns the created task id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        subject: { type: 'string', description: 'Imperative one-line title, e.g. "Review the merged diff".' },
+        description: { type: 'string', description: 'Optional longer detail about what this step involves.' },
+        activeForm: {
+          type: 'string',
+          description: 'Present-continuous form shown while in progress, e.g. "Reviewing the merged diff".',
+        },
+      },
+      required: ['subject'],
+      additionalProperties: true,
+    },
+  },
+  task_update: {
+    description:
+      'Update one task in your live task list — mark it in_progress when you start it and completed when it ' +
+      'is done (exactly one task should be in_progress at a time). Use status "deleted" to remove a task.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'The id returned by task_create (e.g. "3").' },
+        status: {
+          type: 'string',
+          enum: ['pending', 'in_progress', 'completed', 'deleted'],
+          description: 'The new status.',
+        },
+        subject: { type: 'string', description: 'Optional revised title.' },
+        description: { type: 'string', description: 'Optional revised detail.' },
+        activeForm: { type: 'string', description: 'Optional revised present-continuous form.' },
+      },
+      required: ['taskId'],
+      additionalProperties: true,
+    },
+  },
 };
 
 const PERMISSIVE_SCHEMA = { type: 'object', additionalProperties: true } as const;

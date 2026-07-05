@@ -742,8 +742,27 @@ function assemble(
       },
     ),
   } as unknown as BlockSink;
-  // Task-event capture isn't under test here (see turn-harness.service.spec.ts) — a no-op fake.
-  const taskSink = { applyTaskEvent: vi.fn(async () => undefined) } as unknown as TaskEventSink;
+  // Captures task-event folds — the master-review bridge's `task_create`/`task_update` (parity with the
+  // Claude lanes' SDK task tools) — so the task-bridge tests can assert the checklist writes; also backs the
+  // TurnHarnessFactory below (harness-driven folds aren't asserted here — see turn-harness.service.spec.ts).
+  const taskEvents: Array<{
+    scope: { kind: string; id: string };
+    toolName: string;
+    input: Record<string, unknown>;
+    result: unknown;
+  }> = [];
+  const taskSink = {
+    applyTaskEvent: vi.fn(
+      async (
+        scope: { kind: string; id: string },
+        toolName: string,
+        input: Record<string, unknown>,
+        result: unknown,
+      ) => {
+        taskEvents.push({ scope, toolName, input, result });
+      },
+    ),
+  } as unknown as TaskEventSink;
   const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink);
   // BuildShipService's direct ENGINE_RUNNER dependency (the PR Review orchestrator) — separate from the
   // `turn`/`calls` fake above (TurnRunnerService, used by per-thread build turns) so PR Review's one
@@ -851,12 +870,14 @@ function assemble(
       }),
     } as unknown as ModuleRef,
     judge,
+    taskSink,
   );
   return {
     driver,
     store,
     state,
     git,
+    taskEvents,
     pr,
     turn,
     visibility,
@@ -2448,6 +2469,47 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.job.status).toBe('done');
   });
 
+  it('a plain re-drive of a BLOCKED master_review RE-HALTS too (the stale isMasterReview exemption is gone — job 43705139 runaway)', async () => {
+    // REGRESSION: master_review was once exempt from the blocked short-circuit — harmless until Codex gained
+    // `block_thread` (a2a06b2). After that, a master-review that blocked (e.g. the full test suite is red for a
+    // reason outside its diff, so the green-build completion bar is unreachable) left the job `running`, and
+    // every boot resume re-ran the WHOLE Codex review — an UNBOUNDED loop bypassing the brain's re-drive cap.
+    // Now it re-halts like any other thread; only the brain's bounded `redriveThread` re-runs it.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [
+        thread('sec-be', 10, 'Backend', 'done'),
+        thread('review', 40, 'Master review', 'awaiting_input', /* isMasterReview */ true),
+      ],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[1] as unknown as {
+      terminal_record: ThreadTerminalRecord;
+    }).terminal_record = {
+      status: 'blocked',
+      summary: 'full suite red',
+      blocked: {
+        reason: 'needs_env',
+        detail: 'full `pnpm test` red from an unrelated EPERM in install-script-fetch-hook.spec.ts',
+      },
+    };
+    const { turn, calls } = makeTurn();
+    const h = assemble(state, { turn });
+
+    // Simulate boot resume re-driving the still-`running` job.
+    await h.driver.dispatch(state.job);
+    await sweepDeliversWake(h, state);
+
+    // The Codex review was NOT re-run (no execute turn) — the master_review just re-halted + re-woke the brain:
+    expect(calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
+    expect(state.threads[1].status).toBe('awaiting_input');
+    expect(h.opened).toHaveLength(0); // nothing shipped
+    expect(h.wakes.some((w) => w.threadId === 'review' && w.outcome === 'blocked')).toBe(true);
+  });
+
   it('redriveThread REFUSES a threadId belonging to another job (Codex High-1) — no budget, no mutation, no drive', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -2660,5 +2722,88 @@ describe('shortReason', () => {
 
   it('falls back to String(err) for a non-Error throw', () => {
     expect(shortReason('boom')).toBe('boom');
+  });
+});
+
+// ── Codex master-review live task list (parity with Claude Code's TaskCreate/TaskUpdate) ──────────────
+
+describe('ThreadDriver — master-review bridged task list', () => {
+  function baseState(): StoreState {
+    return {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('mr', 90, 'Master review', 'executing', true)],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+  }
+  // buildTurnBridge is private; reach it directly to assert the exposed tool surface + folds (a full
+  // master-review drive is exercised elsewhere; here we isolate the task-bridge behavior).
+  function bridgeFor(h: ReturnType<typeof assemble>, t: DriverThread) {
+    // The task tools don't touch the deadline; a bare stub satisfies the (private) param type.
+    const deadline = { pause() {}, resume() {}, signal: undefined };
+    const sandbox: FeatureSandbox = {
+      repoId: 'proj',
+      branch: 'b',
+      worktreePath: '/wt/b',
+      gitUrl: REPO.gitUrl,
+    };
+    return (
+      h.driver as unknown as {
+        buildTurnBridge: (
+          job: Job,
+          thread: DriverThread,
+          route: unknown,
+          deadline: unknown,
+          sandbox: FeatureSandbox,
+          record: unknown,
+          sectionStartSha: string | undefined,
+        ) => ToolBridgeOptions;
+      }
+    ).buildTurnBridge(makeJob(), t, { channel: 'C1', threadTs: 't1' }, deadline, sandbox, null, 'sha0');
+  }
+
+  it('exposes task_create/task_update ONLY for the master-review thread', () => {
+    const h = assemble(baseState());
+    const mrTools = bridgeFor(h, thread('mr', 90, 'Master review', 'executing', true)).tools;
+    expect(typeof mrTools.task_create).toBe('function');
+    expect(typeof mrTools.task_update).toBe('function');
+    // A Claude builder keeps its native SDK task tools — the bridge must NOT double them here.
+    const builderTools = bridgeFor(h, thread('be', 10, 'Backend')).tools;
+    expect(builderTools.task_create).toBeUndefined();
+    expect(builderTools.task_update).toBeUndefined();
+  });
+
+  it('folds task_create into the thread scope with sequential ids, and returns the id to the model', async () => {
+    const h = assemble(baseState());
+    const tools = bridgeFor(h, thread('mr', 90, 'Master review', 'executing', true)).tools;
+
+    const r1 = await tools.task_create({ subject: 'Review the merged diff', activeForm: 'Reviewing the merged diff' });
+    const r2 = await tools.task_create({ subject: 'Apply fixes' });
+    await tools.task_update({ taskId: '1', status: 'in_progress' });
+
+    // The create result carries the id (so the model can pass it back to task_update) — matching the
+    // Claude SDK task tools' "Task #N created…" contract that `createdTaskId` parses.
+    expect(r1).toBe('Task #1 created: Review the merged diff');
+    expect(r2).toBe('Task #2 created: Apply fixes');
+
+    // All folds landed on the master-review THREAD scope, via the same sink the Claude lanes use.
+    expect(h.taskEvents.map((e) => [e.toolName, e.scope.kind, e.scope.id])).toEqual([
+      ['taskcreate', 'thread', 'mr'],
+      ['taskcreate', 'thread', 'mr'],
+      ['taskupdate', 'thread', 'mr'],
+    ]);
+    // The create fold gets the id-bearing result string; the update fold carries the model's status change.
+    expect(h.taskEvents[0].result).toBe('Task #1 created');
+    expect(h.taskEvents[2].input).toMatchObject({ taskId: '1', status: 'in_progress' });
+  });
+
+  it('rejects a task_create with no subject and a task_update with no taskId (no fold)', async () => {
+    const h = assemble(baseState());
+    const tools = bridgeFor(h, thread('mr', 90, 'Master review', 'executing', true)).tools;
+    expect(await tools.task_create({})).toMatchObject({ ok: false });
+    expect(await tools.task_update({})).toMatchObject({ ok: false });
+    expect(h.taskEvents).toHaveLength(0);
   });
 });

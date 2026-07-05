@@ -52,7 +52,12 @@ export class ShipGroup {
       "anything unsafe rather than guessing. Verify by running the repo's own build/typecheck/tests. When " +
       'your fixes are in and the build is green, COMMIT them and `git push` your branch (you own your commit ' +
       '— the host no longer commits for you); do NOT open a PR (the ship step does that). If the review is ' +
-      'clean and you changed nothing, commit and push nothing. ' +
+      'clean and you changed nothing, commit and push nothing.\n\n' +
+      'TASK LIST — keep a live checklist via the `task_create` / `task_update` host tools (from the ' +
+      '"atlasbridge" MCP server) so the operator can watch your progress. Up front, `task_create` one task ' +
+      'per phase (e.g. "Review the merged diff", "Apply fixes", "Verify build & tests"); mark exactly one ' +
+      '`task_update({ taskId, status: "in_progress" })` as you work it and `"completed"` when done. ' +
+      '`task_create` returns the task id to pass back to `task_update`. ' +
       CLOUD_SANDBOX_NOTE
     );
   }

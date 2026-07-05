@@ -21,6 +21,7 @@ import {
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
   type ToolBridgeOptions,
+  type ToolImpl,
 } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
@@ -29,6 +30,8 @@ import {
   BLOCK_SINK,
   type BlockSink,
   TurnHarnessFactory,
+  TASK_EVENT_SINK,
+  type TaskEventSink,
   laneFor,
 } from '../surface';
 import { CredentialResolver } from '../onboarding';
@@ -176,6 +179,10 @@ export class ThreadDriver implements JobDispatcher {
     private readonly moduleRef: ModuleRef,
     // The ADR-0005 live-verification judge — gates `complete_thread`'s `done` claim (see `gateLiveVerification`).
     @Inject(LIVE_VERIFICATION_JUDGE) private readonly liveVerificationJudge: LiveVerificationJudge,
+    // Folds a Codex master-review thread's `task_create`/`task_update` bridge calls into its `tasks` column
+    // (the SAME sink the Claude lanes' SDK TaskCreate/TaskUpdate use), so the web renders its checklist
+    // identically. Claude builders keep using their native SDK task tools via the transcript harness.
+    @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
   ) {}
 
   /**
@@ -774,31 +781,39 @@ export class ThreadDriver implements JobDispatcher {
     // brain triaged the same halt). Re-halt instead, which re-establishes the owed wake. Only `redriveThread`
     // re-runs a blocked thread, and it CLEARS the record first, so this short-circuit is skipped after a
     // genuine brain-authorized retry.
-    if (thread.kind !== 'master_review') {
-      const prior = await this.store.getTerminalRecord(thread.id).catch(() => null);
-      if (prior?.status === 'blocked') {
-        this.logger.log(
-          `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)`,
-        );
-        await this.store
-          .setThreadStatus(thread.id, 'awaiting_input')
-          .catch(() => undefined);
-        return { outcome: 'blocked', handoff: null };
-      }
+    //
+    // This applies to EVERY kind, master_review included. It once carried a `!thread.isMasterReview` exemption
+    // — harmless while the Codex master-review turn had no host tool bridge (it COULDN'T write a `blocked`
+    // record). Once Codex gained `block_thread` via the in-sandbox MCP bridge (commit a2a06b2), the exemption
+    // became a live runaway hole: a master-review that voluntarily blocks (e.g. the full test suite is red for
+    // a reason outside its diff, so it can never satisfy the green-build completion bar) leaves the job
+    // `running`, and every boot resume re-ran the WHOLE Codex review — bypassing the brain's bounded re-drive
+    // budget (`HALT_FIX_ATTEMPT_CAP`) entirely — which re-hit the same un-fixable blocker and re-blocked,
+    // forever. Routing it through the same re-halt path caps the retry at the brain's budget like any other
+    // thread. (Live-observed on job 43705139 — the master review "blocked again" hundreds of times.)
+    const prior = await this.store.getTerminalRecord(thread.id).catch(() => null);
+    if (prior?.status === 'blocked') {
+      this.logger.log(
+        `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)`,
+      );
+      await this.store
+        .setThreadStatus(thread.id, 'awaiting_input')
+        .catch(() => undefined);
+      return { outcome: 'blocked', handoff: null };
+    }
 
-      // A thread already `done` must NOT be re-run. The runJob loop skips `done` threads from its start-of-run
-      // snapshot, but that snapshot goes stale: a duplicate/overlapping drive (e.g. a restart-spawned leader
-      // re-driving a still-`running` job) can hold a pre-completion view and re-enter this thread. Re-running
-      // it re-executes the (already-committed) step AND re-seeds its finalized review agents back to `pending`
-      // — observed live freezing a done thread half-reviewed. Re-read the LIVE status and fast-forward if done,
-      // carrying the persisted handoff exactly like the loop's skip (`handoffOut ?? handoff`).
-      const live = await this.store.getThread(thread.id).catch(() => null);
-      if (live?.status === 'done') {
-        this.logger.warn(
-          `thread ${thread.ordinal} "${thread.brief}" — already done (stale/overlapping drive); fast-forwarding`,
-        );
-        return { outcome: 'done', handoff: live.handoffOut ?? handoffIn };
-      }
+    // A thread already `done` must NOT be re-run. The runJob loop skips `done` threads from its start-of-run
+    // snapshot, but that snapshot goes stale: a duplicate/overlapping drive (e.g. a restart-spawned leader
+    // re-driving a still-`running` job) can hold a pre-completion view and re-enter this thread. Re-running
+    // it re-executes the (already-committed) step AND re-seeds its finalized review agents back to `pending`
+    // — observed live freezing a done thread half-reviewed. Re-read the LIVE status and fast-forward if done,
+    // carrying the persisted handoff exactly like the loop's skip (`handoffOut ?? handoff`).
+    const live = await this.store.getThread(thread.id).catch(() => null);
+    if (live?.status === 'done') {
+      this.logger.warn(
+        `thread ${thread.ordinal} "${thread.brief}" — already done (stale/overlapping drive); fast-forwarding`,
+      );
+      return { outcome: 'done', handoff: live.handoffOut ?? handoffIn };
     }
     this.logger.log(`thread ${thread.ordinal} "${thread.brief}" — planning`);
     await this.post(
@@ -1109,9 +1124,7 @@ export class ThreadDriver implements JobDispatcher {
     // downgrades (the ADR-0005 judge + the diagnostics gate) run OUTSIDE this bridge and still intentionally
     // rewrite a `done` record to `blocked` — the latch governs only the in-turn tool calls, not the host.
     let terminated = false;
-    return {
-      jobId: job.id,
-      tools: {
+    const tools: Record<string, ToolImpl> = {
         complete_thread: async (args) => {
           if (terminated) {
             return { ok: false, error: 'this thread already asserted its terminal state this turn' };
@@ -1245,8 +1258,39 @@ export class ThreadDriver implements JobDispatcher {
           await this.store.recordThreadTermination(thread.id, record);
           return { ok: true };
         },
-      },
     };
+
+    // LIVE TASK LIST for the Codex master-review thread (parity with Claude Code's TaskCreate/TaskUpdate).
+    // Codex has no native SDK task tools, so bridge `task_create`/`task_update` into the SAME `tasks` column
+    // the Claude lanes fold into — the web then renders its checklist identically. Scoped to master_review:
+    // Claude builders already carry their in-process SDK task tools, so adding these there would duplicate.
+    if (thread.kind === 'master_review') {
+      const scope = { kind: 'thread' as const, id: thread.id };
+      // Per-turn sequential ids, matching Claude's per-session id space — `task_create` returns the id in a
+      // `"Task #N created"` string so the shared `createdTaskId` parser (task-fold.ts) reads it back, and the
+      // model echoes it into `task_update({ taskId })`. A resumed turn rebuilds its list from #1, exactly as
+      // a fresh Claude session re-derives its todos.
+      let taskSeq = 0;
+      tools.task_create = async (args) => {
+        const subject = String(args['subject'] ?? '').trim();
+        if (!subject) return { ok: false, error: 'subject is required (a one-line task title)' };
+        const id = String(++taskSeq);
+        await this.taskSink
+          .applyTaskEvent(scope, 'taskcreate', args, `Task #${id} created`)
+          .catch((err) => this.logger.debug(`task_create fold failed (display-only): ${shortReason(err)}`));
+        return `Task #${id} created: ${subject}`;
+      };
+      tools.task_update = async (args) => {
+        const taskId = String(args['taskId'] ?? '').trim();
+        if (!taskId) return { ok: false, error: 'taskId is required (the id task_create returned)' };
+        await this.taskSink
+          .applyTaskEvent(scope, 'taskupdate', args, null)
+          .catch((err) => this.logger.debug(`task_update fold failed (display-only): ${shortReason(err)}`));
+        return { ok: true };
+      };
+    }
+
+    return { jobId: job.id, tools };
   }
 
   /**
@@ -2512,6 +2556,10 @@ export function renderMasterReviewTask(record: DecisionRecord | null, repo: Reso
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nThis is the FINAL review-and-fix pass over the whole feature branch before its pull request opens.`,
+    `\nTRACK YOUR WORK: use the \`task_create\` / \`task_update\` host tools (the "atlasbridge" MCP server) to` +
+      ` keep a live checklist the operator can watch — up front, \`task_create\` one task for each step below,` +
+      ` then \`task_update({ taskId, status: "in_progress" })\` as you start each and \`"completed"\` when it's` +
+      ` done (\`task_create\` returns the id to pass back). Keep exactly one task in_progress at a time.`,
     `\n1. Review the whole merged diff: \`git diff origin/${repo.defaultBranch}...HEAD\`. Look for real,` +
       ` in-scope defects — correctness bugs, security issues, and cross-thread integration mistakes (where` +
       ` two threads' changes don't line up). Ignore style nits and anything outside this feature's scope.`,
