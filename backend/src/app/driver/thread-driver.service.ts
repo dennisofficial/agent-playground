@@ -1609,20 +1609,125 @@ export class ThreadDriver implements JobDispatcher {
       }
     }
 
-    // ONE commit for the whole batch onto the shared feature branch.
-    const sha = await this.git.commitAll(
-      sandbox.worktreePath,
-      `${thread.brief} — ${steps.map((p) => p.title ?? `step ${p.ordinal}`).join(' + ')}`,
-    );
-    this.logger.log(`batch committed ${sha ? sha.slice(0, 8) : '(nothing)'}`);
+    // The WRITER committed + pushed its own work (its batch prompt + the gate directive both require a
+    // clean tree). The host no longer creates commits — it only READS what the writer produced. If the tree
+    // is still dirty (the model forgot), nudge the SAME session to commit + push, bounded; if it stays dirty
+    // we block rather than committing on the writer's behalf.
+    const committed = await this.ensureCommitted(job, thread, sandbox, anchor, lane, channel, repo);
+    if (!committed.ok) {
+      this.logger.warn(`thread ${thread.ordinal} — ${committed.detail}`);
+      const prior = await this.store.getTerminalRecord(thread.id).catch(() => null);
+      await this.store.recordThreadTermination(thread.id, {
+        status: 'blocked',
+        summary: prior?.summary ?? 'writer left uncommitted changes',
+        ...(prior?.changes ? { changes: prior.changes } : {}),
+        ...(prior?.verification ? { verification: prior.verification } : {}),
+        blocked: { reason: 'unverified', detail: committed.detail.slice(0, 2000) },
+      });
+      return { outcome: 'blocked', report };
+    }
 
-    // Atomic-resume marker (#6): stamp the commit on the ANCHOR step FIRST, then flip the steps to done.
-    // A crash between the two ⇒ resume sees the commit_sha and fast-forwards (executeSteps) instead of
-    // re-running the whole thread against an already-committed tree. Empty sha (nothing changed) still
-    // marks complete so the batch never re-runs. `NOTHING` is the sentinel for an empty commit.
-    await this.store.setStepCommit(anchor.id, sha || NOTHING_COMMITTED);
+    // Atomic-resume marker (#6): the sha the WRITER committed (READ via `headSha`, never created here). HEAD
+    // unchanged from the thread's base ⇒ nothing was committed (a clean review) ⇒ the `NOTHING` sentinel.
+    // Stamp on the ANCHOR step FIRST, then flip steps to done — a crash between the two fast-forwards on
+    // resume (executeSteps) instead of re-running against an already-committed tree.
+    const head = await this.git.headSha(sandbox.worktreePath).catch(() => null);
+    const sha = head && head !== sectionStartSha ? head : NOTHING_COMMITTED;
+    this.logger.log(`batch commit (writer-authored) ${sha === NOTHING_COMMITTED ? '(nothing)' : sha.slice(0, 8)}`);
+    await this.store.setStepCommit(anchor.id, sha);
     for (const p of steps) await this.store.setStepState(p.id, 'done', 'done');
     return { outcome: 'done', report };
+  }
+
+  /**
+   * Ensure the WRITER left a clean tree (its own commit + push). Writers own their commits now (prompt + gate
+   * directive); this only handles the forgot-to-commit case. Re-checks the tree and, if dirty, resumes the
+   * SAME session (via `stepId`) with a commit + push directive — bounded, same resumed-turn pattern as the
+   * verification gate. Returns `ok:false` if the tree stays dirty (the driver then blocks the thread).
+   */
+  private async ensureCommitted(
+    job: Job,
+    thread: DriverThread,
+    sandbox: FeatureSandbox,
+    anchor: Step,
+    lane: string,
+    channel: string,
+    repo: ResolvedRepo,
+  ): Promise<{ ok: true } | { ok: false; detail: string }> {
+    for (let attempt = 0; attempt <= COMMIT_NUDGE_MAX; attempt++) {
+      if (!(await this.git.hasChanges(sandbox.worktreePath))) return { ok: true };
+      if (attempt === COMMIT_NUDGE_MAX) break;
+      const deadline = new PausableDeadline(this.phaseTimeoutMs, `commit nudge "${thread.brief}"`);
+      try {
+        await this.kickCommitTurn(job, sandbox, thread, anchor, lane, channel, repo, attempt + 1, deadline);
+      } catch (err) {
+        if (isEngineDetachedError(err)) throw err; // leave running for the next boot to re-attach
+        this.logger.warn(`commit nudge ${attempt + 1} for thread ${thread.ordinal} errored: ${shortReason(err)}`);
+      }
+    }
+    return {
+      ok: false,
+      detail: 'working tree still dirty after commit nudges — the writer did not commit its changes',
+    };
+  }
+
+  /** Resume the writer's session (via `stepId`) with a directive to commit + push its uncommitted changes.
+   *  No host tool bridge — committing is plain in-sandbox git (the turn carries `gitAuth` so it can push).
+   *  Engine/persona come from the thread-kind spec (Codex for master-review, Claude for builders). */
+  private async kickCommitTurn(
+    job: Job,
+    sandbox: FeatureSandbox,
+    thread: DriverThread,
+    anchor: Step,
+    lane: string,
+    channel: string,
+    repo: ResolvedRepo,
+    attempt: number,
+    deadline: PausableDeadline,
+  ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
+    const spec = threadKindSpec(thread.kind);
+    const metaTag = { phaseId: anchor.id, commitNudge: attempt };
+    const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    const task =
+      `You have UNCOMMITTED changes in the working tree, but the thread is otherwise finished. Commit them` +
+      ` now: run \`git add -A\` (your \`.gitignore\` governs what's tracked — if build/cache junk appears,` +
+      ` add it to \`.gitignore\` instead of committing it), commit with a clear message, and \`git push\`` +
+      ` your branch. Leave the tree CLEAN, then stop. Do nothing else.`;
+    await harness.emitPrompt(task, `commit:${anchor.id}:${attempt}`);
+    let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
+    try {
+      result = await this.runTurnBounded(
+        {
+          jobId: job.id,
+          stepId: anchor.id, // resumes the writer's persisted session — same conversation as its build turn
+          sandbox,
+          engine: spec.engine,
+          mode: 'execute',
+          systemPrompt: renderAgentPrompt(spec.agent, { jobKind: job.kind }),
+          ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
+          task,
+          auth: await this.creds.engineAuth(job.orgId, spec.engine),
+          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
+          richStream: true,
+          turnMeta: {
+            jobId: job.id,
+            orgId: job.orgId,
+            channel,
+            lane,
+            kind: 'gate', // reuse the gate's reattach path (short resumed turn keyed on the anchor)
+            ctx: { repoId: job.repoId, threadId: thread.id, anchorStepId: anchor.id, commitNudge: attempt },
+          },
+          onEvent: (e) => harness.onEvent(e),
+        },
+        `commit nudge "${thread.brief}" #${attempt}`,
+        deadline,
+      );
+    } catch (err) {
+      await harness.abort();
+      throw err;
+    }
+    await harness.finish(result.report);
+    return result;
   }
 
   /**
@@ -2264,6 +2369,10 @@ export class PausableDeadline {
  *  "done, no diff" from "never committed" (null) so a resume fast-forwards instead of re-running. */
 const NOTHING_COMMITTED = '(nothing)';
 
+/** How many times the host re-nudges a writer that finished with an uncommitted tree (writers own their
+ *  commits now — this is the forgot-to-commit safety net before the thread is blocked). */
+const COMMIT_NUDGE_MAX = 2;
+
 /** A locked step row → the `PlannedStep` view visibility/render read (title null → brief). */
 function asPlannedStep(step: Step): PlannedStep {
   return { title: step.title ?? step.brief, brief: step.brief };
@@ -2308,8 +2417,23 @@ export function renderBatchTask(
       ` unblock you right now, call \`request_operator_input\` and wait; if you genuinely cannot make progress` +
       ` this turn (a missing secret/service, or a substantive decision that needs deliberation), call` +
       ` \`block_thread\` to hand it to Atlas rather than guessing or stopping silently.\n\n${blocks}`,
+    COMMIT_AND_PUSH_INSTRUCTION,
   ].join('\n');
 }
+
+/**
+ * Shared writer instruction — YOU (the writer session) own the commit. The host no longer commits your
+ * work; it only reads what you leave. So before you call `complete_thread`, LEAVE A CLEAN TREE: stage,
+ * commit, and push your own changes. `.gitignore` governs what's tracked — if build/cache junk (a
+ * package store, node_modules, a build dir) shows up in `git status`, add it to `.gitignore` rather than
+ * committing it. Used by every writer prompt (builder batch, verification gate, master-review).
+ */
+export const COMMIT_AND_PUSH_INSTRUCTION =
+  `\nCOMMIT YOUR WORK (required — the host does NOT commit for you): once the work is done and verified,` +
+  ` run \`git add -A\` (your \`.gitignore\` governs what's tracked; if build or cache junk appears in` +
+  ` \`git status\`, add it to \`.gitignore\` instead of committing it), commit with a clear message, and` +
+  ` \`git push\` your branch. Leave the working tree CLEAN. THEN call \`complete_thread\`. If you finish` +
+  ` without committing, your work is treated as unfinished.`;
 
 /**
  * Render the durable halt trail for `.atlas/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
@@ -2392,13 +2516,14 @@ export function renderMasterReviewTask(record: DecisionRecord | null, repo: Reso
     `\n3. VERIFY: run the repo's own typecheck/build/test commands and confirm they pass — do this even if` +
       ` you changed nothing (a clean review still deserves a green build). If verification fails, fix and` +
       ` re-verify rather than leaving it red.`,
-    `\nDo NOT \`git push\` or open a PR — the host commits your edits and ships. If the review found nothing` +
-      ` actionable, change nothing.`,
-    `\n4. FINISH: when you are done and the build is green, you MUST call the \`complete_thread\` host tool` +
-      ` (available via the "atlasbridge" MCP server) with a one-line \`summary\` of what you reviewed/fixed` +
-      ` and the \`verification\` you ran. This is how you signal completion — the review is NOT recorded as` +
-      ` done until you call it. If you genuinely cannot proceed, call \`block_thread\` with a reason and detail` +
-      ` instead.`,
+    `\n4. COMMIT: if you made fixes, \`git add -A\`, commit with a clear message, and \`git push\` — leave a` +
+      ` CLEAN tree. Do NOT open a PR (Atlas does the final ship). If the review found nothing actionable,` +
+      ` change nothing and skip the commit.`,
+    `\n5. FINISH: when done and the build is green (and your fixes, if any, are committed + pushed), you MUST` +
+      ` call the \`complete_thread\` host tool (available via the "atlasbridge" MCP server) with a one-line` +
+      ` \`summary\` of what you reviewed/fixed and the \`verification\` you ran. This is how you signal` +
+      ` completion — the review is NOT recorded as done until you call it. If you genuinely cannot proceed,` +
+      ` call \`block_thread\` with a reason and detail instead.`,
   ].join('\n');
 }
 
@@ -2428,9 +2553,12 @@ export function renderGateTask(
     `\n2. Run the repo's own typecheck command (authoritative, whole-program) — discover it the same way` +
       ` you would for a normal build (package.json scripts / repo conventions).`,
     `\n3. Fix every error you find, in THIS session, then re-run both checks to confirm they're clean.`,
-    `\nWhen both are clean, call \`report_verification\` with \`{ passed: true }\`. If you cannot get them` +
-      ` clean, call \`report_verification\` with \`{ passed: false, remaining: [...] }\`, listing the` +
-      ` specific remaining errors (file:line — message) — never end the turn without calling one or the other.`,
+    `\n4. COMMIT: once both checks are clean, \`git add -A\`, commit any fixes with a clear message, and` +
+      ` \`git push\` — leave a CLEAN working tree (the host does NOT commit for you; it reads what you leave).`,
+    `\nWhen both are clean AND your tree is committed + pushed, call \`report_verification\` with` +
+      ` \`{ passed: true }\`. If you cannot get the checks clean, call \`report_verification\` with` +
+      ` \`{ passed: false, remaining: [...] }\`, listing the specific remaining errors (file:line — message)` +
+      ` — never end the turn without calling one or the other.`,
   ]
     .filter(Boolean)
     .join('\n');

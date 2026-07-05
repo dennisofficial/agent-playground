@@ -361,6 +361,10 @@ function makeGit(): {
       }),
     ),
     headSha: vi.fn(async () => `sha${sha}`),
+    // Writers commit their own work now; the host READS HEAD instead of committing. The fake build turn
+    // (below) advances `sha` to simulate the writer's commit, so `headSha` returns the fresh sha the driver
+    // stamps. `hasChanges` reports a CLEAN tree by default (the writer committed) — no dirty-tree nudge.
+    hasChanges: vi.fn(async () => false),
     commitAll: vi.fn(async (_wt: string, message: string) => {
       commits.push(message);
       return `commit${++sha}`;
