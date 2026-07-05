@@ -83,7 +83,15 @@ const VALID_ACTION_IDS = new Set([
   REQUEST_CHANGES_ACTION_ID,
   DENY_ACTION_ID,
 ]);
-const OPERATOR = { authorId: 'U-OPERATOR', authorName: 'Operator' };
+/** Author fields for an operator-authored web message — the REAL signed-in user (display name falls back
+ *  to email), so the brain's `<user name=…>` attribution names the actual person, not a generic "Operator".
+ *  Multiple people can chat with one job; this is how Atlas knows who it's talking to. */
+function operatorAuthor(user: UserEntity): {
+  authorId: string;
+  authorName: string;
+} {
+  return { authorId: user.id, authorName: user.name?.trim() || user.email };
+}
 
 /** One file in a `/context` bucket (specs or artifacts). */
 export interface ContextFile {
@@ -519,6 +527,7 @@ export class WebSurfaceController {
   @UseGuards(OrgMembershipGuard)
   async createJob(
     @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
     @Param('repoId') repoId: string,
     @Body() body: CreateThreadDto,
   ): Promise<{ jobId: string }> {
@@ -544,7 +553,7 @@ export class WebSurfaceController {
     this.surface.receiveFromClient(repo.id, text, {
       orgId: org.id,
       threadTs: thread.id,
-      ...OPERATOR,
+      ...operatorAuthor(user),
     });
     // Fire-and-forget: generate a concise title from the first message and push it live (see service).
     void this.threadTitle
@@ -599,6 +608,7 @@ export class WebSurfaceController {
   @UseGuards(OrgMembershipGuard)
   async say(
     @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
     @Param('repoId') repoId: string,
     @Param('jobId') jobId: string,
     @Body() body: SayDto,
@@ -616,7 +626,7 @@ export class WebSurfaceController {
     const ts = this.surface.receiveFromClient(thread.repo_id, body.text, {
       orgId: org.id,
       threadTs: jobId,
-      ...OPERATOR,
+      ...operatorAuthor(user),
     });
     return { ts };
   }
@@ -633,6 +643,7 @@ export class WebSurfaceController {
   @UseGuards(OrgMembershipGuard)
   async reviewComments(
     @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
     @Param('jobId') jobId: string,
     @Body() body: ReviewCommentsDto,
   ): Promise<{ ts: string }> {
@@ -655,7 +666,7 @@ export class WebSurfaceController {
     const ts = this.surface.receiveFromClient(thread.repo_id, text, {
       orgId: org.id,
       threadTs: jobId,
-      ...OPERATOR,
+      ...operatorAuthor(user),
       card,
     });
     return { ts };

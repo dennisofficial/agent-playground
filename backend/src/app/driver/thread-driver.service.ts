@@ -16,6 +16,7 @@ import {
   type FindingSeverity,
 } from '../autofix';
 import type { DecisionRecord, Step, Job, SessionEngine, ThreadStatus } from '../domain';
+import { HALT_FIX_ATTEMPT_CAP } from '../domain';
 import {
   EngineAuthError,
   isEngineDetachedError,
@@ -284,6 +285,12 @@ export class ThreadDriver implements JobDispatcher {
     this.logger.log(
       `resumePaused job=${jobId} — re-driving the paused session`,
     );
+    // OPERATOR RE-ARM: a human resume re-grants Atlas's autonomous re-drive budget for any thread it exhausted
+    // (a `blocked` thread `haltJob` rested to `paused`). Boot `resume()` never re-arms — only explicit pings.
+    const rearmed = await this.store.rearmHaltedThreads(jobId).catch(() => 0);
+    if (rearmed) {
+      this.logger.log(`resumePaused job=${jobId} — re-armed ${rearmed} halted thread(s)`);
+    }
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
@@ -316,6 +323,13 @@ export class ThreadDriver implements JobDispatcher {
       return;
     }
     this.logger.log(`retry job=${jobId} — re-driving from ${job.status}`);
+    // OPERATOR RE-ARM: an explicit human retry re-grants Atlas its autonomous re-drive budget for any thread
+    // it exhausted (a `blocked` thread rested by `haltJob`). Only the explicit operator paths re-arm — NOT
+    // boot `resume()` — so the halt loop can't self-perpetuate.
+    const rearmed = await this.store.rearmHaltedThreads(jobId).catch(() => 0);
+    if (rearmed) {
+      this.logger.log(`retry job=${jobId} — re-armed ${rearmed} halted thread(s)`);
+    }
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
@@ -687,6 +701,12 @@ export class ThreadDriver implements JobDispatcher {
     const haltOutcome = outcome as 'blocked' | 'incomplete' | 'failed';
     let text: string;
     let severity: 'warning' | 'error' = 'warning';
+    // A `blocked` thread whose AUTONOMOUS re-drive budget is spent is no longer something Atlas can recover on
+    // its own — it's waiting on the operator. Rest the job instead of leaving it `running`: no owed wake is
+    // recorded (`owedWake=false`), so the periodic/boot sweeps stop re-waking the brain to re-escalate a halt
+    // it has no budget left to fix (the pre-fix behavior — a wasted brain turn on every boot). `paused` also
+    // lights the needs-you dot; `resumePaused`/`retry` re-arm the budget when the operator re-engages.
+    let owedWake = true;
     if (outcome === 'failed') {
       await this.store.setJobStatus(job.id, 'failed').catch(() => undefined);
       const why = term?.failure
@@ -697,8 +717,16 @@ export class ThreadDriver implements JobDispatcher {
       text = `:x: Build failed in *${thread.brief}* — ${why}\n_The job is marked failed; reply in this thread to retry or adjust._`;
       severity = 'error';
     } else if (outcome === 'blocked') {
-      // Job stays `running`; the thread is `awaiting_input` (Phase 3 routes the block to the brain).
-      text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
+      const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
+      if (spent >= HALT_FIX_ATTEMPT_CAP) {
+        // Autonomous budget exhausted → rest the job for the operator (no more brain wakes owed).
+        await this.store.setJobStatus(job.id, 'paused').catch(() => undefined);
+        owedWake = false;
+        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
+      } else {
+        // Budget remains: job stays `running`; the thread is `awaiting_input` (Phase 3 wakes the brain to fix).
+        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
+      }
     } else {
       // incomplete
       await this.store.setJobStatus(job.id, 'paused').catch(() => undefined);
@@ -725,13 +753,17 @@ export class ThreadDriver implements JobDispatcher {
     // NOT swallowed (Codex review Medium-2): this is the load-bearing signal the sweeps key on — a silent
     // failure here would leave a `failed`/`incomplete` halt (job no longer `running`) permanently un-woken.
     // Log loudly so it's diagnosable; the durable card above still gives the operator a visible halt.
-    await this.store
-      .setHaltOwed(thread.id, haltOutcome)
-      .catch((e) =>
-        this.logger.error(
-          `FAILED to record owed halt-wake for thread=${thread.id} (${haltOutcome}) — brain will NOT be woken: ${e}`,
-        ),
-      );
+    // SKIPPED when `owedWake` is false — a `blocked` thread with an exhausted budget is now RESTED (`paused`)
+    // for the operator; owing a wake would just re-wake the brain to re-hit the same refusal every boot.
+    if (owedWake) {
+      await this.store
+        .setHaltOwed(thread.id, haltOutcome)
+        .catch((e) =>
+          this.logger.error(
+            `FAILED to record owed halt-wake for thread=${thread.id} (${haltOutcome}) — brain will NOT be woken: ${e}`,
+          ),
+        );
+    }
     await this.writeCompletionMd(sandbox, thread, haltOutcome, term).catch((e) =>
       this.logger.warn(`could not write completion.md for thread=${thread.id}: ${e}`),
     );
@@ -1120,14 +1152,29 @@ export class ThreadDriver implements JobDispatcher {
   ): ToolBridgeOptions {
     // TERMINAL LATCH (ADR 0004 Phase 3): the bridge has no engine-turn-termination primitive, so the model
     // could call a terminal assertion twice (e.g. `complete_thread` after `block_thread`) and overwrite the
-    // first one. First assertion wins — a second call is rejected without touching the record. Host-side
-    // downgrades (the ADR-0005 judge + the diagnostics gate) run OUTSIDE this bridge and still intentionally
-    // rewrite a `done` record to `blocked` — the latch governs only the in-turn tool calls, not the host.
-    let terminated = false;
+    // first one. First assertion wins — a second call never touches the record. Host-side downgrades (the
+    // ADR-0005 judge + the diagnostics gate) run OUTSIDE this bridge and still intentionally rewrite a `done`
+    // record to `blocked` — the latch governs only the in-turn tool calls, not the host.
+    //
+    // ANTI-SPIN: once latched, the model SHOULD stop — but a model that doesn't will keep calling the terminal
+    // tool, and a bare `{ok:false, error}` reads to it as "that failed, try again" → it spins until
+    // PHASE_TIMEOUT. The bridge can't force the turn to end (aborting the deadline would mark the job `failed`
+    // and discard the recorded outcome). So `afterTerminal` answers a repeat IDEMPOTENTLY and always with an
+    // explicit STOP directive: re-asserting the SAME state succeeds (nothing to retry); a CONFLICTING assertion
+    // is refused but still told to stop, never to retry.
+    let terminated: null | 'done' | 'blocked' = null;
+    const afterTerminal = (attempted: 'done' | 'blocked') => {
+      const stop =
+        `This thread already asserted \`${terminated}\` this turn — it is recorded and final. ` +
+        `Do NOT call any terminal tool again; stop here and end your turn now.`;
+      return attempted === terminated
+        ? { ok: true, alreadyRecorded: true, message: stop }
+        : { ok: false, error: stop };
+    };
     const tools: Record<string, ToolImpl> = {
         complete_thread: async (args) => {
           if (terminated) {
-            return { ok: false, error: 'this thread already asserted its terminal state this turn' };
+            return afterTerminal('done');
           }
           const summary = String(args['summary'] ?? '').trim();
           if (!summary) {
@@ -1179,7 +1226,7 @@ export class ThreadDriver implements JobDispatcher {
           // missing evidence and call `complete_thread` again in the SAME turn (ADR 0005's warning-retry). A
           // premature latch here silently traps a genuinely-done thread as `blocked` (caught in live
           // validation: the model curl'd a real 200, then its second complete_thread was wrongly rejected).
-          if (gated.record.status === 'done') terminated = true;
+          if (gated.record.status === 'done') terminated = 'done';
           await this.store.recordThreadTermination(thread.id, gated.record);
           return gated.warning ? { ok: true, warning: gated.warning } : { ok: true };
         },
@@ -1230,7 +1277,7 @@ export class ThreadDriver implements JobDispatcher {
           // is reserved for the host's own live-verification/diagnostics downgrades (a self-report must not
           // counterfeit a judge verdict).
           if (terminated) {
-            return { ok: false, error: 'this thread already asserted its terminal state this turn' };
+            return afterTerminal('blocked');
           }
           const reason = String(args['reason'] ?? '').trim();
           const detail = String(args['detail'] ?? '').trim();
@@ -1244,7 +1291,7 @@ export class ThreadDriver implements JobDispatcher {
           if (!detail) {
             return { ok: false, error: 'detail is required (specifically what blocks you, and what you need)' };
           }
-          terminated = true;
+          terminated = 'blocked';
           const asStrings = (v: unknown): string[] | undefined =>
             Array.isArray(v) && v.length
               ? v.map((x) => String(x).trim()).filter(Boolean)

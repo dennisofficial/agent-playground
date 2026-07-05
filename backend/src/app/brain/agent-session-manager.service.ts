@@ -93,7 +93,7 @@ import {
   isTicketStatus,
 } from '../domain/ticket';
 import type { Decision } from '../domain';
-import { nextDecisionId, DECISION_CLASS_IDS } from '../domain';
+import { nextDecisionId, DECISION_CLASS_IDS, HALT_FIX_ATTEMPT_CAP } from '../domain';
 import type { DecisionClass } from '../domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
 import {
@@ -4473,10 +4473,6 @@ export class AgentSessionManager
 /** How often the leader re-drives any operator message still undelivered (the at-least-once chat sweep). */
 const CHAT_SWEEP_INTERVAL_MS = 30_000;
 
-/** Phase 3 (ADR 0004 rider 4) — the LIFETIME budget of autonomous brain re-drives of a halted thread before
- *  the brain must escalate to the operator instead of looping. CAS-enforced on `threads.halt_fix_attempts`. */
-const HALT_FIX_ATTEMPT_CAP = 2;
-
 /**
  * How long a `codex_reviews` row must sit `running` before the work-owed backstop treats it as STRANDED
  * (not a review legitimately in flight, and not a reattach still settling right after boot). Comfortably
@@ -4837,10 +4833,14 @@ function frameAnswer(question: string, answer: string): string {
 }
 
 /**
- * Build the synthetic OPERATOR stimulus the boot sweep uses to re-deliver an answered-but-undelivered
- * question straight through `handleChatTurn` (bypassing the surface). Operator-authored (so it is treated
- * as the operator's reply and passive awareness still drains); the framed body restates the Q&A since
- * there is no natural inbound message to carry it.
+ * Build the synthetic SYSTEM-SEED stimulus the boot sweep uses to re-deliver an answered-but-undelivered
+ * question straight through `handleChatTurn` (bypassing the surface). A system seed (SYSTEM_SEED_AUTHOR +
+ * `seed`), the SAME shape as the live `/answer-question` delivery (`seedSystemNotification`) — so recovery
+ * matches steady-state: the framed body is a `<system_notice>` (via `frameAnswer`), NOT a human `<user>`
+ * turn, so `engineBody` passes it through instead of re-wrapping/`stripTags`-mangling it. Being a system
+ * seed it does NOT drain the passive-awareness buffer — that flush is deferred to the next genuine operator
+ * turn (deferred, not lost). The framed body restates the Q&A since there is no natural inbound message to
+ * carry it; `seedQuestionId` ties this turn to stamping exactly THIS card `deliveredAt` on success.
  */
 function bootDeliveryStimulus(q: {
   jobId: string;

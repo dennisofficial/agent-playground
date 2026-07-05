@@ -456,6 +456,31 @@ export class DriverStoreService {
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
+  /** The thread's spent autonomous re-drive budget (0 if unset). Read by `haltJob` to decide whether a
+   *  `blocked` thread still has brain-retry budget (keep the job running + wake) or is spent (rest the job). */
+  async haltFixAttempts(threadId: string): Promise<number> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, halt_fix_attempts: true },
+    });
+    return row?.halt_fix_attempts ?? 0;
+  }
+
+  /** OPERATOR RE-ARM (ADR 0004 rider 4): reset the autonomous re-drive budget for a job's spent threads so a
+   *  human re-engagement (`resumePaused`/`retry`) grants Atlas a fresh set of attempts. The counter is a
+   *  LIFETIME budget for AUTONOMOUS loops — only an explicit operator action re-arms it (never boot-resume),
+   *  so the halt loop can't self-perpetuate. Returns how many threads were re-armed. */
+  async rearmHaltedThreads(jobId: string): Promise<number> {
+    const res = await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ halt_fix_attempts: 0 })
+      .where('job_id = :jobId', { jobId })
+      .andWhere('halt_fix_attempts > 0')
+      .execute();
+    return res.affected ?? 0;
+  }
+
   // ── review children (post-build review fan-out as real child threads) ──────────────────────────
   // A builder's post-build review is N `review_lens` rows + 1 `post_review` row, each a first-class
   // `threads` child (parent_thread_id = builder). Each lens is its OWN row with its OWN status +

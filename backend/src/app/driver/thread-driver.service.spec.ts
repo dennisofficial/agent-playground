@@ -311,6 +311,21 @@ function makeStore(state: StoreState): {
       s.halt_fix_attempts = used + 1;
       return { ok: true, used: used + 1 };
     }),
+    haltFixAttempts: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
+      return s?.halt_fix_attempts ?? 0;
+    }),
+    rearmHaltedThreads: vi.fn(async (jobId: string) => {
+      let n = 0;
+      for (const x of state.threads) {
+        const h = x as HaltFields;
+        if (x.jobId === jobId && (h.halt_fix_attempts ?? 0) > 0) {
+          h.halt_fix_attempts = 0;
+          n += 1;
+        }
+      }
+      return n;
+    }),
   } as unknown as DriverStoreService;
   return { store, state };
 }
@@ -2246,6 +2261,62 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(term?.blocked?.reason).toBe('decision');
   });
 
+  it('terminal latch: a REPEAT block_thread (same assertion) is idempotent (ok:true + stop directive), not a retryable error', async () => {
+    // ANTI-SPIN: a model that re-calls the terminal tool after latching must NOT get a bare error it reads as
+    // "retry" (that spins the turn to PHASE_TIMEOUT). A same-kind repeat succeeds idempotently and is told to
+    // STOP; the FIRST assertion's record is never overwritten.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const turn = {
+      runTurn: vi.fn(
+        async (input: {
+          mode: string;
+          stepId?: string | null;
+          jobId: string;
+          toolBridge?: ToolBridgeOptions;
+        }) => {
+          const tools = input.toolBridge?.tools;
+          if (tools?.['block_thread']) {
+            const first = await tools['block_thread']({ reason: 'decision', detail: 'needs a design call' });
+            const second = await tools['block_thread']({ reason: 'decision', detail: 'needs a design call' });
+            expect((first as { ok?: boolean })?.ok).toBe(true);
+            // Idempotent success, NOT an error — and it tells the model to stop:
+            expect((second as { ok?: boolean; alreadyRecorded?: boolean })?.ok).toBe(true);
+            expect((second as { alreadyRecorded?: boolean })?.alreadyRecorded).toBe(true);
+            expect((second as { message?: string })?.message).toMatch(/stop|end your turn/i);
+          }
+          return {
+            report: 'blocked step',
+            session: {
+              id: 'sess',
+              jobId: input.jobId,
+              stepId: input.stepId ?? null,
+              engine: 'claude' as const,
+              mode: input.mode as 'plan' | 'execute' | 'review',
+              branch: 'b',
+              worktreePath: '/wt/b',
+            },
+          };
+        },
+      ),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+    const h = assemble(state, { turn });
+
+    await h.driver.dispatch(state.job);
+    await sweepDeliversWake(h, state);
+
+    const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }).terminal_record;
+    expect(term?.status).toBe('blocked');
+    expect(term?.blocked?.detail).toBe('needs a design call'); // the first assertion, unmodified
+  });
+
   it('rejects block_thread with an invalid reason (unverified is host-only) or a missing detail', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -2508,6 +2579,73 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.threads[1].status).toBe('awaiting_input');
     expect(h.opened).toHaveLength(0); // nothing shipped
     expect(h.wakes.some((w) => w.threadId === 'review' && w.outcome === 'blocked')).toBe(true);
+  });
+
+  it('a blocked thread whose autonomous budget is EXHAUSTED rests the job (paused, no owed wake) instead of re-waking forever', async () => {
+    // Residual fix: once Atlas has spent its re-drive budget the block is waiting on the OPERATOR — leaving the
+    // job `running` made every boot re-wake the brain to re-hit the same refusal. Now the driver rests it.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend', 'awaiting_input')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record = {
+      status: 'blocked',
+      summary: 'needs env',
+      blocked: { reason: 'needs_env', detail: 'missing KEY' },
+    };
+    (state.threads[0] as unknown as HaltFields).halt_fix_attempts = 2; // budget already spent (cap = 2)
+    const { turn, calls } = makeTurn();
+    const h = assemble(state, { turn });
+
+    // Simulate boot resume re-driving the still-`running` job.
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'paused');
+
+    // No orchestrator re-run, the job is RESTED (`paused`), and NO wake was owed (halt_outcome stays null →
+    // the sweeps have nothing to re-fire), so the brain is not re-woken to re-escalate a halt it can't fix:
+    expect(calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
+    expect(state.job.status).toBe('paused');
+    expect((state.threads[0] as unknown as HaltFields).halt_outcome ?? null).toBeNull();
+    expect(h.wakes).toHaveLength(0);
+  });
+
+  it('operator RETRY re-arms the exhausted budget so Atlas gets fresh autonomous attempts', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend', 'awaiting_input')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record = {
+      status: 'blocked',
+      summary: 'needs env',
+      blocked: { reason: 'needs_env', detail: 'missing KEY' },
+    };
+    (state.threads[0] as unknown as HaltFields).halt_fix_attempts = 2;
+    const { turn } = makeTurn();
+    const h = assemble(state, { turn });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'paused');
+    expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(2);
+
+    // The operator's explicit retry re-grants the budget (boot resume never would). Poll until dispatch's
+    // drive releases the in-flight `active` lock so the retry lands rather than no-opping.
+    for (
+      let i = 0;
+      i < 50 && (state.threads[0] as unknown as HaltFields).halt_fix_attempts !== 0;
+      i++
+    ) {
+      await h.driver.retry(state.job.id);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(0);
   });
 
   it('redriveThread REFUSES a threadId belonging to another job (Codex High-1) — no budget, no mutation, no drive', async () => {

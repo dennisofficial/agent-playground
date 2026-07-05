@@ -64,14 +64,17 @@ export function haltThreadIdx(threads: { status: ThreadStatus }[]): number {
   return -1;
 }
 
-/** The design's four thread states — every wire `ThreadStatus` folds onto one of these. */
-type LaneState = "draft" | "in_progress" | "done" | "failed";
+/** The design's thread states — every wire `ThreadStatus` folds onto one of these. `blocked` is a RESTING
+ *  state (the thread halted awaiting the operator), visually distinct from `in_progress` (actively running)
+ *  so a thread parked on `block_thread`/a question doesn't masquerade as a live turn. */
+type LaneState = "draft" | "in_progress" | "blocked" | "done" | "failed";
 
 function laneState(s: ThreadStatus, drafted: boolean): LaneState {
   if (drafted || s === "pending") return "draft";
   if (s === "done") return "done";
   if (s === "failed" || s === "incomplete") return "failed"; // both are terminal halts (nothing shipped)
-  return "in_progress"; // planning / reviewing / awaiting_approval / executing / awaiting_input / auto_fixing
+  if (s === "awaiting_input") return "blocked"; // halted, waiting on the operator — NOT a running turn
+  return "in_progress"; // planning / reviewing / awaiting_approval / executing / auto_fixing
 }
 
 /** The open accordion's state-colored left rail + soft wash (handoff §State colors). */
@@ -96,6 +99,11 @@ function railStyle(
       return {
         borderLeftColor: "var(--red)",
         background: "color-mix(in srgb, var(--red) 5%, transparent)",
+      };
+    case "blocked":
+      return {
+        borderLeftColor: "var(--slate)",
+        background: "color-mix(in srgb, var(--slate) 6%, transparent)",
       };
     default:
       return {
@@ -221,6 +229,8 @@ function ThreadStatusGlyph({
         />
       ) : state === "done" ? (
         <DoneDisc />
+      ) : state === "blocked" ? (
+        <BlockedRing />
       ) : state === "in_progress" ? (
         <SpinRing />
       ) : (

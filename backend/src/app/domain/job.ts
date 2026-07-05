@@ -115,6 +115,14 @@ export interface Message {
   createdAt: Date;
 }
 
+/**
+ * Phase 3 (ADR 0004 rider 4) — the LIFETIME budget of AUTONOMOUS brain re-drives of a halted thread before
+ * Atlas must stop looping and rest the job for the operator. CAS-enforced on `threads.halt_fix_attempts`.
+ * Shared by the brain (`retry_thread` claims against it) and the driver (`haltJob` rests the job once it is
+ * spent; `resumePaused`/`retry` re-arm it on operator re-engagement) so the two can't drift.
+ */
+export const HALT_FIX_ATTEMPT_CAP = 2;
+
 /** A thread's lifecycle — explicit, resumable. The driver `await`s each transition. */
 export type ThreadStatus =
   | 'pending' // not started
