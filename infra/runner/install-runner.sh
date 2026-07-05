@@ -12,15 +12,13 @@
 # The runner token is a one-time token from:
 #   GitHub repo → Settings → Actions → Runners → New self-hosted runner
 #
-# TODO: pin GHA_RUNNER_VERSION and update GHA_RUNNER_SHA512 after verifying from
-#       https://github.com/actions/runner/releases
-
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────────────
-# TODO: update version and checksum from https://github.com/actions/runner/releases
-GHA_RUNNER_VERSION="2.319.1"
-GHA_RUNNER_SHA512="CHANGEME_VERIFY_FROM_RELEASE_PAGE"  # TODO: fill in SHA-512 checksum
+# Pinned + verified 2026-07-05: downloaded the release asset, confirmed its SHA-256 matched
+# GitHub's published release-notes checksum, then computed this SHA-512 from that same verified file.
+GHA_RUNNER_VERSION="2.335.1"
+GHA_RUNNER_SHA512="6bea31dc8fd555054e1daf356e9a0707e4f1dde5bfac6bbf63e14ed56daa024fae6b8b58bb39dd6c5ff3e82e768004772444a942b44f8a8c9fe9fb893716211e"
 GHA_RUNNER_ARCH="linux-x64"
 GHA_RUNNER_USER="gha-runner"
 GHA_RUNNER_HOME="/opt/actions-runner"

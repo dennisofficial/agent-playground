@@ -14,12 +14,9 @@
 # Redis is the sole engine transport, ADR 0001). `atlas-bus` is `internal: true` (no internet egress),
 # so a sandbox gets redis and nothing else off it. The sandbox manager attaches each container to
 # `atlas-bus` when `SANDBOX_BUS_NETWORK` is set.
-#
-# TODO: replace <owner> with the actual GHCR owner (e.g. dennisofficial).
 
 x-backend-common: &backend-common
-  # TODO: replace <owner> with the actual GHCR owner.
-  image: ghcr.io/<owner>/atlas-backend:${ATLAS_IMAGE_TAG:-latest}
+  image: ghcr.io/dennisofficial/atlas-backend:${ATLAS_IMAGE_TAG:-latest}
   init: true
   stop_grace_period: "300s"   # must exceed DRAIN_GRACE_MS (default 120 s) so Docker
   stop_signal: SIGTERM         # doesn't SIGKILL before the graceful drain finishes
@@ -140,8 +137,7 @@ services:
 
   # ── Web (Next.js standalone) ────────────────────────────────────────────────────
   web:
-    # TODO: replace <owner> with the actual GHCR owner.
-    image: ghcr.io/<owner>/atlas-web:${ATLAS_IMAGE_TAG:-latest}
+    image: ghcr.io/dennisofficial/atlas-web:${ATLAS_IMAGE_TAG:-latest}
     networks:
       - atlas
     restart: unless-stopped
