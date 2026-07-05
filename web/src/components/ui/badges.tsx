@@ -124,7 +124,10 @@ export function StatusPie({
   const color = status ? STATUS_META[status].color : "var(--border-2)";
   const r = 7.5;
   const circ = 2 * Math.PI * r;
-  const ring = (stroke: string, extra?: React.SVGProps<SVGCircleElement>) => (
+  const ring = (
+    stroke: string,
+    extra?: Omit<React.SVGProps<SVGCircleElement>, "ref">,
+  ) => (
     <circle
       cx={10}
       cy={10}
