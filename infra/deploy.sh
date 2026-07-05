@@ -20,16 +20,13 @@
 #     `docker rmi atlas-sandbox:latest` on the box before deploying.
 #   - Idempotent: if the standby is already running (previous partial deploy), it is
 #     recreated. If the state file is absent, blue is assumed active.
-#
-# TODO: replace <owner> with the actual GHCR owner.
 
 set -euo pipefail
 
 COMPOSE_FILE="$(dirname "$0")/docker-compose.prod.yml"
 STATE_DIR="/srv/atlas/state"
 SECRETS_ENV="/srv/atlas/secrets/atlas.env"
-# TODO: replace <owner> with the actual GHCR owner.
-GHCR_OWNER="<owner>"
+GHCR_OWNER="dennisofficial"
 HEALTH_URL="https://api.atlas.dltechnologies.co/health/ready"
 HEALTH_TIMEOUT=120   # seconds to wait for standby to become leader
 POLL_INTERVAL=5      # seconds between health polls
@@ -201,11 +198,20 @@ docker run --rm \
 
 log "Migrations complete."
 
-# ── 3. Start standby ────────────────────────────────────────────────────────────
-log "Starting backend-${STANDBY} (tag: ${TAG}) ..."
-
 # Export ATLAS_IMAGE_TAG for docker compose variable substitution.
 export ATLAS_IMAGE_TAG="$TAG"
+
+# ── 2.5. Ensure web + caddy are up ──────────────────────────────────────────────
+# web + caddy are NOT part of the blue/green backend dance (they're stateless: caddy reverse-proxies
+# whichever backend holds the leader lock, web is stateless SSR). `restart: unless-stopped` keeps them
+# running, but on a fresh box they've never started — so bring them up here (idempotent). This lets a
+# deploy COLD-BOOT the whole stack: without it, the public HEALTH_URL check below can't pass because
+# caddy (TLS + proxy) isn't running. web is recreated on tag change; caddy's config is static.
+log "Ensuring web + caddy are up (tag: ${TAG}) ..."
+docker compose -f "$COMPOSE_FILE" up -d web caddy
+
+# ── 3. Start standby ────────────────────────────────────────────────────────────
+log "Starting backend-${STANDBY} (tag: ${TAG}) ..."
 
 docker compose -f "$COMPOSE_FILE" up -d --no-deps \
     "backend-${STANDBY}" || rollback_and_exit "$STANDBY" "$ACTIVE" "$PREV_TAG"
