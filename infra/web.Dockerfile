@@ -52,8 +52,13 @@ COPY . .
 RUN --mount=type=cache,id=pnpm-store-web,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
-# Build shared first (web imports @workspace/shared types + dist).
+# Build shared + auth first (web imports @workspace/shared and @workspace/auth types + dist).
+# shared's own `prepare` script builds it during `pnpm install` above, but this is kept explicit for the
+# same reason auth needs it: @workspace/auth (packages/jwt-auth) has only a `build` script, no `prepare`
+# hook, so nothing else ever compiles its dist/ — omitting this broke every web build with "Module not
+# found: Can't resolve '@workspace/auth'".
 RUN pnpm --filter @workspace/shared run build
+RUN pnpm --filter @workspace/auth run build
 
 # next build reads NEXT_PUBLIC_* at build time and embeds them in the JS bundle.
 # NODE_ENV=production suppresses dev warnings in the build output.
