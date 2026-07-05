@@ -60,21 +60,34 @@ sudo chmod 700 /srv/atlas/secrets
 
 ### 3. Drop secrets
 
-Copy `infra/.env.prod.example` to `/srv/atlas/secrets/atlas.env`, fill in all
-`CHANGEME` values, then:
+`backend/.env.production.enc` is committed, dotenvx-encrypted ciphertext (see house
+style in `env-conventions`) — safe in git, and baked straight into the backend/migrator
+images by `infra/backend.Dockerfile`. The box itself only needs to hold the one thing
+that lets those images decrypt it: the production private key.
+
+Copy `infra/.env.prod.example` to `/srv/atlas/secrets/atlas.env`, fill in
+`DOTENV_PRIVATE_KEY_PRODUCTION_ENC` (from `backend/.env.keys` — never commit that
+file), then:
 
 ```bash
 sudo chmod 600 /srv/atlas/secrets/atlas.env
 sudo chown atlas:atlas /srv/atlas/secrets/atlas.env
 ```
 
-See the comments in `.env.prod.example` for each variable.
+`backend-entrypoint.sh` decrypts `.env.production.enc` at container start given that
+key (`dotenvx run -f .env.production.enc -- node dist/main`); the migrator image does
+the same before running migrations. Compose-level Postgres bootstrap (the
+`${POSTGRES_USER}`/`${POSTGRES_PASSWORD}`/`${POSTGRES_DB}` substitution in
+`docker-compose.prod.yml`'s `postgres` service) still needs those three values as
+plain values in `/srv/atlas/.env` (docker compose reads that file for variable
+substitution at parse time, before any container — let alone dotenvx — runs) — keep
+them in sync with the encrypted copy.
 
-**Dotenvx note:** the encrypted `.env.*.enc` files committed in the repo are the
-dotenvx-encrypted per-environment configs (see house style in `env-conventions`).
-Their private keys (`DOTENV_PRIVATE_KEY_*`) are listed in `.env.prod.example` as
-optional — they are only needed if you run backend CLI commands (migrations, seeds)
-directly on the box outside of Docker.
+To add/rotate a secret: edit `backend/.env.production.enc` locally with
+`pnpm exec dotenvx set KEY value -f .env.production.enc` (see `env-conventions` for
+the "seed the key manually first" rule on brand-new vars), commit, push — the next
+CI build bakes the new ciphertext in. No box-side secret file changes needed unless
+the private key itself rotates.
 
 ### 4. DNS records
 

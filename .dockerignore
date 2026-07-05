@@ -25,10 +25,13 @@ web/.next
 .worktrees
 **/.worktrees
 
-# Local env + secrets (the container gets its env injected at run time, never baked)
+# Local env + secrets. Encrypted .env.*.enc files are ciphertext (safe to bake into the image — the
+# runtime image only decrypts them given the matching DOTENV_PRIVATE_KEY_*_ENC at container start).
+# Plaintext env files and the private .env.keys store are never baked.
 **/.env
 **/.env.*
 !**/.env.example
+!**/.env.*.enc
 **/.env.keys
 
 # Editor / OS noise

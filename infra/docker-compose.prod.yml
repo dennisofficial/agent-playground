@@ -23,8 +23,13 @@ x-backend-common: &backend-common
   env_file:
     - /srv/atlas/secrets/atlas.env
   environment:
-    # Internal compose network — postgres/redis reachable by service name
+    # Internal compose network — postgres/redis reachable by service name. POSTGRES_USER/DB are naming,
+    # not secrets — POSTGRES_PASSWORD comes from the encrypted backend/.env.production.enc instead (must
+    # match the plain value in /srv/atlas/.env, which docker compose uses to bootstrap the postgres
+    # service itself — see infra/README.md's "Drop secrets" section).
     POSTGRES_HOST: postgres
+    POSTGRES_USER: atlas
+    POSTGRES_DB: atlas_production
     POSTGRES_SSL_MODE: disable
     REDIS_URL: "redis://redis:6379"
     # The in-container engine reaches Redis over the internal `atlas-bus` net (service name `redis`).

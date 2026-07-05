@@ -53,10 +53,12 @@ RUN pnpm --filter backend run build           # `nest build app` → backend/dis
 
 # ─── migrator ──────────────────────────────────────────────────────────────────────
 # One-shot migration runner (typeorm-ts-node-commonjs needs src/ + cli/ + tsconfig.cli.json, all here).
-# Run before each deploy with POSTGRES_* env (POSTGRES_SSL_MODE=disable on the internal network).
+# Run before each deploy with POSTGRES_HOST/POSTGRES_SSL_MODE as plain `-e` flags (not secret) plus
+# DOTENV_PRIVATE_KEY_PRODUCTION_ENC so dotenvx can decrypt .env.production.enc (POSTGRES_PASSWORD etc,
+# baked into the `build` stage via the full repo COPY) into the process env before the migration runs.
 FROM build AS migrator
 WORKDIR /srv/atlas/app/backend
-CMD ["pnpm", "db:migrate:deploy"]
+CMD ["node_modules/.bin/dotenvx", "run", "-f", ".env.production.enc", "--", "pnpm", "db:migrate:deploy"]
 
 # ─── prod-deps ───────────────────────────────────────────────────────────────────
 # Prune to production deps. FROM build so the workspace dists exist — pnpm re-injects the built
@@ -94,6 +96,9 @@ COPY --from=build /srv/atlas/app/backend/migrations  ./backend/migrations
 COPY --from=build /srv/atlas/app/backend/cli         ./backend/cli
 COPY --from=build /srv/atlas/app/backend/tsconfig.cli.json ./backend/tsconfig.cli.json
 COPY --from=build /srv/atlas/app/backend/package.json ./backend/package.json
+# Encrypted prod secrets (ciphertext — decrypted at container start by backend-entrypoint.sh given
+# DOTENV_PRIVATE_KEY_PRODUCTION_ENC, the one secret the box itself needs to hold).
+COPY --from=build /srv/atlas/app/backend/.env.production.enc ./backend/.env.production.enc
 
 # Workspace dists (for any code that resolves them by path; injected copies live under node_modules).
 # `shared` is symlinked from backend/node_modules/@workspace/shared → needs BOTH its dist AND its
