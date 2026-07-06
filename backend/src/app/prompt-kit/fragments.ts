@@ -210,6 +210,32 @@ export const DELETION_SAFETY_NOTE =
   'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead.';
 
+/**
+ * MINIMAL CODE — the "lazy senior engineer" ladder: the best code is the code you never wrote. Shared by every
+ * persona that AUTHORS code (the brain's plans + direct builds, the worker orchestrator, the fan-out writers).
+ * A POSITIVE decision procedure run AFTER you understand the problem, not a licence to cut corners — it climbs
+ * from "does this need to exist" to "minimum viable code", stopping at the lowest rung that works. Deliberately
+ * carries its own SAFETY carve-out so it can never be read as skipping validation/error-handling/security, and
+ * stays OUT of the review/verify lanes (VERIFY_NOTE / VALIDATE_BY_RUNNING_NOTE own that) and the comment lane
+ * (CLARITY_OVER_COMMENTS_NOTE) — this is only about how much to build. The "prefer an already-installed
+ * dependency over a new one" rung reinforces the always-ask gate (a NEW dependency is still an ask).
+ */
+export const MINIMAL_CODE_NOTE =
+  'WRITE THE LEAST CODE THAT SOLVES THE PROBLEM — the best code is the code you never wrote. AFTER you ' +
+  'understand the task and have traced the real code it touches (this ladder runs after comprehension, never ' +
+  'instead of it), climb these rungs IN ORDER and stop at the FIRST that works: (1) does this need to exist ' +
+  'at all? — drop speculative flexibility, options nobody asked for, and abstractions with one caller ' +
+  '(YAGNI); (2) is it ALREADY in this repo? — reuse the existing helper/pattern/component instead of a ' +
+  'parallel one; (3) does the language/standard library already do it? (4) is it a native platform/runtime ' +
+  'feature? (e.g. a native `<input type="date">` before pulling a date-picker library); (5) can an ' +
+  'ALREADY-INSTALLED dependency do it, rather than adding a new one? (adding a new dependency/service is a ' +
+  'separate always-ask decision, not a free move); (6) can it be one line? then (7) only now, the minimum ' +
+  'viable code. Deletion over addition, boring over clever, the fewest files possible — the shortest working ' +
+  'diff wins, but ONLY once you understand the problem. NON-NEGOTIABLE (never "optimized away" by this ' +
+  'ladder): fully understanding the problem, input validation at trust boundaries, error handling that ' +
+  'prevents data loss, security, accessibility, and anything the task explicitly asked for — leanness is ' +
+  'about scope and cleverness, never about dropping a guardrail.';
+
 // ── SUBAGENT POLICY BLOCKS ──────────────────────────────────────────────────────────────────────────
 
 /**

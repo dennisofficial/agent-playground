@@ -165,6 +165,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       'best_practices',
       'correctness',
       'consistency',
+      'minimalism',
     ]);
     expect(sec.children.find((c) => c.kind === 'post_review')).toBeTruthy();
     expect(sec.children.every((c) => c.status === 'pending')).toBe(true);
