@@ -24,9 +24,7 @@ export const AGENT_PROMPTS: AgentPromptInfo[] = [
   { id: 'brain', agent: Agent.ATLAS_MAIN, note: 'job brain turn', ctx: { jobKind: 'feature' } },
   { id: 'brain-onboarding', agent: Agent.ATLAS_MAIN, note: 'job brain — onboarding', ctx: { jobKind: 'onboarding' } },
   { id: 'worker-orchestrate', agent: Agent.WORKER, note: 'build thread orchestrator', ctx: { jobKind: 'feature' } },
-  { id: 'ship-pr-review', agent: Agent.PR_REVIEW, note: 'ship PR-review orchestrator', ctx: { jobKind: 'feature' } },
   { id: 'ship-master-review', agent: Agent.MASTER_REVIEW, note: 'ship Codex master review', ctx: {} },
-  { id: 'ship-open-pr', agent: Agent.SHIP_OPEN_PR, note: 'ship in-sandbox open-PR turn', ctx: {} },
   { id: 'autofix-review', agent: Agent.AUTOFIX_REVIEW, note: 'auto-fix review pass', ctx: {} },
   { id: 'autofix-fix', agent: Agent.AUTOFIX_FIX, note: 'auto-fix fix turn', ctx: {} },
   { id: 'subagent-explore', agent: Agent.EXPLORE, note: 'engine explore subagent', ctx: {} },
@@ -37,8 +35,6 @@ export const AGENT_PROMPTS: AgentPromptInfo[] = [
   { id: 'subagent-validate', agent: Agent.VALIDATE, note: 'engine live-validation + evidence subagent', ctx: {} },
   { id: 'subagent-writer', agent: Agent.FAN_OUT, note: 'engine implement/implement-deep writer', ctx: {} },
   { id: 'meta-plan-review', agent: Agent.META_PLAN_REVIEW, note: 'plan-review Codex chain', ctx: {} },
-  { id: 'meta-decision-classifier', agent: Agent.META_CLASSIFIER, note: 'decision-gate classifier chain', ctx: {} },
-  { id: 'meta-job-titler', agent: Agent.META_TITLER, note: 'job-title chain', ctx: {} },
 ];
 
 /** The previewable prompts (id + agent + note) for `GET /test/prompts`. */

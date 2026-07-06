@@ -1,9 +1,9 @@
 /**
  * prompt-kit / groups / driver-framing — the SHARED framing the legacy composer added to the in-sandbox
- * driver personas (worker + pr-review): the cloud-sandbox note and the job-kind block. ONE fragment each,
- * `usedBy` BOTH agents — this is the composer dedup the whole library exists for.
+ * driver persona (worker): the cloud-sandbox note and the job-kind block. ONE fragment each — kept as a
+ * shared-audience group so re-adding a second driver persona is a one-line `DRIVER` change.
  *
- * Orders sit AFTER each persona's body (100) and BEFORE the worker's behavioral layer (400+), reproducing the
+ * Orders sit AFTER the persona's body (100) and BEFORE the worker's behavioral layer (400+), reproducing the
  * legacy order `body → CLOUD_SANDBOX → jobKind → layer` byte-for-byte.
  */
 import { Agent } from '../agent';
@@ -12,7 +12,7 @@ import { CLOUD_SANDBOX_NOTE, SOLE_AUTHOR_NOTE } from '../fragments';
 import { jobKindFragment } from '../job-kind';
 import type { PromptCtx } from '../prompt-ctx';
 
-const DRIVER = [Agent.WORKER, Agent.PR_REVIEW];
+const DRIVER = [Agent.WORKER];
 
 @FragmentGroup()
 export class DriverFramingGroup {

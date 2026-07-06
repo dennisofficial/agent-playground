@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { DecisionRecord, Job } from '../domain';
 import { ENGINE_RUNNER, type EngineRunnerPort, type ExecutionTarget, type ToolImpl } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
-import { Agent, renderAgentPrompt } from '../prompt-kit';
+import { decisionsBlock, shipOpenPrTurn } from '../prompt-kit';
 import { TurnHarnessFactory } from '../surface/turn-harness.service';
 import { laneFor } from '../surface/thread-registry';
 import { DriverStoreService } from './driver-store.service';
@@ -277,28 +277,19 @@ export class BuildShipService {
       return { ok: true, recorded: reported };
     };
 
+    const turn = shipOpenPrTurn({
+      branch: sandbox.branch,
+      defaultBranch: repo.defaultBranch,
+      title: job.title ?? 'Atlas build',
+      decisionsBlock: decisionsBlock(record?.decisions ?? []),
+    });
     try {
       await notify(':outbox_tray: Build complete — opening the PR.');
       const res = await this.engine.run({
         engine: 'claude',
-        task:
-          `The build is complete on branch \`${sandbox.branch}\`. RECONCILE against the base, then publish ` +
-          `it as a pull request against \`${repo.defaultBranch}\`:\n` +
-          `  1. RECONCILE THE BASE. Run \`git fetch origin\`. The base may have MOVED while this build ran, ` +
-          `so check for drift: \`git log --oneline HEAD..origin/${repo.defaultBranch}\` (commits on the base ` +
-          `you don't have yet). If there are any, integrate them — \`git merge origin/${repo.defaultBranch}\` ` +
-          `(or rebase). If that produces MERGE CONFLICTS, resolve them properly (understand both sides — do ` +
-          `not blindly take one), then commit the merge. Verify the tree still builds after reconciling.\n` +
-          `  2. Commit anything uncommitted, then \`git push -u origin ${sandbox.branch}\`.\n` +
-          `  3. Open the PR: \`gh pr create --base ${repo.defaultBranch} --head ${sandbox.branch} ` +
-          `--title ${JSON.stringify(job.title ?? 'Atlas build')} --body-file -\` (pipe the body below on stdin). ` +
-          `If a PR for this branch already exists, use it — don't open a second one.\n` +
-          `  4. Report it: call \`report_pr_opened\` with the PR url (\`gh pr create\` prints it, or run ` +
-          `\`gh pr view ${sandbox.branch} --json url -q .url\`). This step is REQUIRED — the host records the ` +
-          `PR from that call.\n\n` +
-          `PR body:\n${shipPrBody(job, record)}`,
+        task: turn.task,
         cwd: sandbox.worktreePath,
-        systemPrompt: renderAgentPrompt(Agent.SHIP_OPEN_PR),
+        systemPrompt: turn.system,
         sandboxKey: `${shipSandboxKey(sandbox)}--ship`,
         mode: 'execute',
         richStream: true,
@@ -338,8 +329,6 @@ export class BuildShipService {
   }
 }
 
-/** System prompt for the ship turn — a tight, single-purpose "open the PR" instruction (Atlas in-sandbox). */
-
 /** Parse a GitHub PR url → owner/repo/number (+ the normalized url). Null when it is not a github.com PR url. */
 function parsePrUrl(
   url: string,
@@ -355,18 +344,6 @@ function firstPrUrlIn(
   if (!text) return null;
   const m = /https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/.exec(text);
   return m ? { owner: m[1], repo: m[2], number: Number(m[3]), url: m[0] } : null;
-}
-
-/** The PR body — feature title, decision-record overview, and the locked decisions. */
-function shipPrBody(job: Job, record: ShipRecord | null): string {
-  const lines = [`Automated by Atlas v2 for **${job.title}**.`, ''];
-  if (record?.overview) lines.push(record.overview, '');
-  if (record?.decisions.length) {
-    lines.push('### Decisions');
-    for (const d of record.decisions)
-      lines.push(`- **${d.title}** (${d.decisionClass}): ${d.ruling}`);
-  }
-  return lines.join('\n');
 }
 
 /** The per-feature auto-fix key: stable across a feature's turns (`<repoId>--<branch>`). */

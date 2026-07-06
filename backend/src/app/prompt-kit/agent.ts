@@ -22,21 +22,17 @@ export enum Agent {
   TEST = 'test',
   /** The build-time live-validation + evidence-capture subagent (spawned via Task on execute turns). */
   VALIDATE = 'validate',
-  /** The ship-time PR-review orchestrator (`ship-pr-review`). */
-  PR_REVIEW = 'pr_review',
   /** The ship-time Codex master review (`ship-master-review`). */
   MASTER_REVIEW = 'master_review',
-  /** The in-sandbox open-PR turn (push + `gh pr create`). */
-  SHIP_OPEN_PR = 'ship_open_pr',
-  /** The auto-fix stage's read-only review pass + its fix-apply turn. */
+  /** The auto-fix stage's read-only review pass + its fix-apply turn (each a system prompt; the per-run
+   *  task lives in `autofix/autofix-lenses.ts`). */
   AUTOFIX_REVIEW = 'autofix_review',
   AUTOFIX_FIX = 'autofix_fix',
-  /** Host-side meta LLM chains (not in-sandbox agents). */
+  /** The Codex plan-review turn's system prompt (its per-run task is `plan-review.service.renderPlanForReview`). */
   META_PLAN_REVIEW = 'meta_plan_review',
-  META_CLASSIFIER = 'meta_classifier',
-  META_TITLER = 'meta_titler',
-  /** The live-verification judge (ADR 0005) — adjudicates a thread's `complete_thread` claim. */
-  META_LIVE_VERIFICATION_JUDGE = 'meta_live_verification_judge',
+  // NOTE: the in-sandbox open-PR turn (`ship-open-pr`) + the ledger-promotion turn are NOT agents — they are
+  // `prompt-kit/turns/` messages. The decision-class classifier, thread-titler, and live-verification judge
+  // are host-side LangChain chains — their prompts live WITH those chains, not in prompt-kit at all.
 }
 
 /** Every agent — for a fragment that belongs in every assembled prompt. */
@@ -64,5 +60,5 @@ export const ADVISORY: Agent[] = [
  *  PR/master-review turns, which are full sessions, not Task subagents.) */
 export const ENGINE_SUBAGENTS: Agent[] = [...ADVISORY, Agent.VALIDATE, Agent.FAN_OUT];
 
-/** Every code-review surface (the per-diff `review` subagent + the two ship-time reviews). */
-export const REVIEWERS: Agent[] = [Agent.REVIEW_AGENT, Agent.PR_REVIEW, Agent.MASTER_REVIEW];
+/** Every code-review surface (the per-diff `review` subagent + the ship-time master review). */
+export const REVIEWERS: Agent[] = [Agent.REVIEW_AGENT, Agent.MASTER_REVIEW];

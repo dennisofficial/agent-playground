@@ -25,3 +25,8 @@ export * from './prompt.service';
 export * from './prompt-kit.module';
 // Dev-only preview catalog (`GET /test/prompts`, `dump-prompts`).
 export * from './preview';
+
+// ── The SECOND category: self-contained, host-initiated one-shot turns (NOT assembled, NOT `Agent`s). ──
+export * from './turns/turn';
+export * from './turns/ship-open-pr';
+export * from './turns/ledger-promotion';
