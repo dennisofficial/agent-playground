@@ -400,13 +400,21 @@ export class TurnHarnessFactory {
           // otherwise fall back to the occupancy already living on `usage` (populated by engine-core for
           // every Claude turn), resolving the window with the SAME per-model map the brain + analytics
           // use. This is what lets build/step/autofix (Claude) lanes render a ring without each finish
-          // call site plumbing context. For a Codex lane (plan/master review) the SDK reports no per-call
-          // occupancy field, but its per-turn `inputTokens` IS the context sent (input already includes the
-          // cached portion), so use that as the occupancy and size it against the Codex window — this is
-          // what gives Codex lanes a ring too.
+          // call site plumbing context. For a Codex lane (plan/master review) the SDK surfaces no per-call
+          // occupancy — only a turn-CUMULATIVE `inputTokens` that sums the context re-sent on every internal
+          // round-trip, so it balloons far past the window (a false 100% ring). But OpenAI prompt-caching
+          // re-serves the repeated prior context as `cacheReadTokens` each round, so the uncached remainder
+          // telescopes to ≈ the final round-trip's input = the real end-of-turn occupancy: `inputTokens −
+          // cacheReadTokens`. (Degrades cleanly: a single-round-trip Codex turn has ~0 cache, so this ≈ its
+          // one prompt.) Size it against the Codex window — this is what gives Codex lanes a truthful ring.
           const u = turnMeta.usage;
           const codexOccupancy =
-            u.engine === 'codex' ? (u.contextTokens ?? u.inputTokens ?? null) : null;
+            u.engine === 'codex'
+              ? (u.contextTokens ??
+                  (u.inputTokens != null
+                    ? Math.max(0, u.inputTokens - (u.cacheReadTokens ?? 0))
+                    : null))
+              : null;
           const ctxTokens = turnMeta.contextTokens ?? u.contextTokens ?? codexOccupancy;
           const ctxLimit =
             turnMeta.contextLimit ??
