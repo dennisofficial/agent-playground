@@ -14,6 +14,7 @@ import {
   DEVIATION_NOTE,
   LSP_NAV_NOTE,
   LSP_TOOLS_NOTE,
+  MINIMAL_CODE_NOTE,
   MONOREPO_VERIFY_HINT,
   REPORT_ONLY_NOTE,
   REVIEW_SCOPE_NOTE,
@@ -132,6 +133,8 @@ export class SubagentsGroup {
       SOLE_AUTHOR_NOTE +
       ' ' +
       CLARITY_OVER_COMMENTS_NOTE +
+      ' ' +
+      MINIMAL_CODE_NOTE +
       ' When you finish, return a ' +
       'TIGHT summary — the files you changed and the key choices — NOT a transcript or the full diff. Do ' +
       'NOT commit or otherwise change git state; the orchestrator integrates, verifies, and commits.'
