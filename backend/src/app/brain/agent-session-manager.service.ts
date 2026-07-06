@@ -62,7 +62,7 @@ import { threadDirName } from '../driver/thread-dir-name';
 import { Agent, LEDGER_COMMIT_MESSAGE, PromptService } from '../prompt-kit';
 // The ledger-promotion prompt is delivered as a TASK message (`body:`), not a system prompt; the brain's
 // system prompt is assembled from fragments via `PromptService.generate`.
-import { LEDGER_PROMOTION_TURN } from '../prompt-kit';
+import { LEDGER_PROMOTION_TURN, decisionsBlock, shipOpenPrBody } from '../prompt-kit';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -642,6 +642,44 @@ export class AgentSessionManager
       seedRow: {
         label: 'Distilling this thread’s decisions into the durable ledger.',
         chunkKey: `seed:ledger:${jobId}`,
+      },
+    });
+    await this.handleChatTurn(stimulus);
+  }
+
+  /**
+   * SERVER-INITIATED open-PR turn (the ship step). Seeds the job-brain session with the ship turn-prompt
+   * (reconcile the branch against its base → push → author the PR body → `gh pr create`) exactly like
+   * {@link promoteDurableDecisionsAtShip}. The brain runs it in ITS OWN sandbox on the feature branch with
+   * its already-resolved engine auth + git auth — no separate `engine.run` session — and the HOST records
+   * the opened PR afterward by branch discovery (`BuildShipService.latchPr` / the git-state reconciler), so
+   * this turn needs no `report_pr_opened` tool. Idempotent: a re-seed on an already-open PR just `gh pr edit`s.
+   * MUST only be called when the brain is IDLE (the driver/boot ship paths); a caller already inside a brain
+   * turn (the direct-build `finalize_build` tool) instead returns {@link shipOpenPrBody} as guidance so the
+   * brain opens the PR inline in its current turn — it cannot nest a second brain turn.
+   */
+  async openPrAtShip(input: {
+    jobId: string;
+    orgId: string;
+    repoId: string;
+    branch: string;
+    defaultBranch: string;
+    title: string;
+    decisions: ReadonlyArray<{ title: string; decisionClass: string; ruling: string }>;
+  }): Promise<void> {
+    const stimulus = harnessDeliveryStimulus({
+      jobId: input.jobId,
+      orgId: input.orgId,
+      repoId: input.repoId,
+      body: shipOpenPrBody({
+        branch: input.branch,
+        defaultBranch: input.defaultBranch,
+        title: input.title,
+        decisionsBlock: decisionsBlock(input.decisions),
+      }),
+      seedRow: {
+        label: 'Opening the pull request.',
+        chunkKey: `seed:ship:${input.jobId}`,
       },
     });
     await this.handleChatTurn(stimulus);
@@ -1710,6 +1748,16 @@ export class AgentSessionManager
     // never record a prompt for a turn that didn't run. Idempotent by stimulus id across re-drive/reattach.
     let promptEmitted = false;
 
+    // Live-branch observation: the agent may `git checkout -b …` freely inside the sandbox. We watch its
+    // git activity on the normalized engine event stream (works for BOTH Claude `Bash` and Codex
+    // `command_execution` — they map to the same `tool_use`/`tool_result` pair) and re-read HEAD whenever a
+    // BRANCH-AFFECTING git command settles. `branchCommandById` buffers each git command by its tool id so
+    // we can match it on the paired `tool_result` (post-settle); `lastObservedBranch` de-dupes writes so a
+    // no-op `git checkout <file>` doesn't churn the row (and its realtime WAL delta). Observe only — Atlas
+    // never asserts the branch here; `feature_branch` stays the host-named canonical.
+    const branchCommandById = new Map<string, string>();
+    let lastObservedBranch: string | null = null;
+
     const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.jobId}`;
     // Per-org Claude subscription secret (deployed); undefined locally → the in-container engine falls
     // back to CLAUDE_OAUTH_TOKEN, and throws if neither is set (never an API-key fallback).
@@ -1835,6 +1883,36 @@ export class AgentSessionManager
             );
           }
         }
+        // Live-branch observation (see `branchCommandById` above). Buffer a branch-affecting git command on
+        // its `tool_use`, then re-read HEAD when the paired `tool_result` settles — so a `git checkout -b …`
+        // is reflected in `current_branch` the instant it lands, before the turn even ends. Fully defensive:
+        // a git/DB hiccup must never break the live stream (the per-turn backstop below is the floor).
+        if (e.kind === 'tool_use') {
+          const cmd = (e.input as { command?: unknown } | undefined)?.command;
+          if (
+            typeof cmd === 'string' &&
+            /\bgit\b/.test(cmd) &&
+            /(checkout|switch|\bbranch\b|worktree)/.test(cmd)
+          ) {
+            branchCommandById.set(e.id, cmd);
+          }
+        } else if (e.kind === 'tool_result' && branchCommandById.has(e.id)) {
+          branchCommandById.delete(e.id);
+          void this.git
+            .currentBranch(sandbox.worktreePath)
+            .then((live) => {
+              if (live && live !== lastObservedBranch) {
+                lastObservedBranch = live;
+                return this.driverStore.setCurrentBranch(stimulus.jobId, live);
+              }
+              return undefined;
+            })
+            .catch((err) =>
+              this.logger.warn(
+                `live-branch sample failed for thread=${stimulus.jobId}: ${err}`,
+              ),
+            );
+        }
         // Durable chat delivery: an `input_ack` means the engine PUSHED a steered operator message into the
         // session — stamp that stimulus `delivered_at` (the only place a steer is marked delivered).
         this.stampInputAck(e);
@@ -1927,6 +2005,24 @@ export class AgentSessionManager
     }
     // A turn completed without throwing — clear any benign-abort auto-resume budget for this thread.
     this.benignAbortRedrives.delete(stimulus.jobId);
+
+    // Live-branch backstop (universal floor): re-read HEAD once at the turn boundary in case the per-tool
+    // listener missed a switch (a branch change not made via a matched `git` command, or a dropped event).
+    // Best-effort + null/unchanged-guarded so it never writes over a known branch or churns the row.
+    void this.git
+      .currentBranch(sandbox.worktreePath)
+      .then((live) => {
+        if (live && live !== lastObservedBranch) {
+          lastObservedBranch = live;
+          return this.driverStore.setCurrentBranch(stimulus.jobId, live);
+        }
+        return undefined;
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `live-branch backstop failed for thread=${stimulus.jobId}: ${err}`,
+        ),
+      );
 
     // Persist the session_id for resume.
     if (result.sessionId && sandboxRow) {
@@ -2815,30 +2911,21 @@ export class AgentSessionManager
         } | null;
         const repo = await this.repos.resolve(job);
 
-        const result = await this.ship.ship({
+        // HOST PRE-SHIP GATE only (commit + no-token + leak-scan). We are ALREADY inside this brain turn, so
+        // we cannot seed a nested open-PR turn (that is the driver/boot ship path). Once the branch is clean,
+        // hand `shipOpenPrBody` back as the tool result so the brain — still in THIS turn — reconciles,
+        // pushes, and opens the PR itself. The git-state reconciler then records `pr_url` + flips the job
+        // `done` on discovery (and the ledger boot-backstop reconciles the now-shipped row).
+        const pre = await this.ship.preShip(
           job,
-          record: rec,
           repo,
           sandbox,
-          commitMessage: `Atlas direct build — ${job.title ?? 'change'}`,
-          notify: (m) => this.say(stimulus, m),
-        });
+          `Atlas direct build — ${job.title ?? 'change'}`,
+          (m) => this.say(stimulus, m),
+        );
 
-        // The build (incl. any `.atlas/decisions/` the brain promoted before finalizing) is now committed.
-        // Stamp the ledger complete ONLY when the PR is CONFIRMED shipped (its `pr_url` latched) — so a
-        // ship that couldn't confirm the PR is not marked done, and the boot backstop can retry it.
-        if (result.opened && result.prConfirmed) {
-          await this.store
-            .markLedgerPromoted(jobId)
-            .catch((err) =>
-              this.logger.debug(
-                `markLedgerPromoted failed for ${jobId} (boot backstop will retry): ${err}`,
-              ),
-            );
-        }
-
-        if (!result.opened) {
-          if (result.reason === 'leak-scan') {
+        if (!pre.ok) {
+          if (pre.reason === 'leak-scan') {
             // Hard security block — a hydrated secret/seed path was committed on the branch. NOT ok: the
             // brain must clean the branch history before it can ship.
             return {
@@ -2846,30 +2933,25 @@ export class AgentSessionManager
               jobId,
               reason:
                 `PR blocked by the pre-ship security scan — a managed secret/seed file was committed on ` +
-                `this branch: ${result.leaked.join(', ')}. Remove it from the branch history and retry.`,
+                `this branch: ${pre.leaked.join(', ')}. Remove it from the branch history and retry.`,
             };
           }
           return {
             ok: true,
             jobId,
-            message:
-              'Committed, but no GitHub token is configured — PR not opened.',
+            message: 'Committed, but no GitHub token is configured — PR not opened.',
           };
         }
-        if (!result.prConfirmed) {
-          // The PR was opened in-sandbox but the host couldn't confirm its url this pass (a just-created PR
-          // GitHub hasn't indexed, or the report was missed). Recovery re-runs the idempotent ship tail.
-          return {
-            ok: true,
-            jobId,
-            message:
-              'Committed and pushed — the PR is opening; its link will appear on this job shortly.',
-          };
-        }
+
         return {
           ok: true,
           jobId,
-          message: `Committed and pushed — PR opened: ${result.url}`,
+          message: shipOpenPrBody({
+            branch: sandbox.branch,
+            defaultBranch: repo.defaultBranch,
+            title: job.title ?? 'Atlas build',
+            decisionsBlock: decisionsBlock(rec?.decisions ?? []),
+          }),
         };
       },
 
@@ -3676,14 +3758,16 @@ export class AgentSessionManager
         // pr_url/pr_number on the thread → flips it done).
         const job = await this.store.loadJob(stimulus.jobId);
         const repo = await this.repos.resolve(job);
-        const result = await this.ship.ship({
+        // HOST PRE-SHIP GATE only. `finish_onboarding` runs INSIDE this brain turn, so (like `finalize_build`)
+        // it cannot seed a nested open-PR turn — it commits + leak-scans host-side, then hands `shipOpenPrBody`
+        // back so the brain opens the PR itself in THIS turn. The git-state reconciler records the PR later.
+        const pre = await this.ship.preShip(
           job,
-          record: null,
           repo,
           sandbox,
-          commitMessage: 'Atlas: onboarding — environment setup',
-          notify: (m) => this.store.appendSystemEvent(stimulus.jobId, m),
-        });
+          'Atlas: onboarding — environment setup',
+          (m) => this.store.appendSystemEvent(stimulus.jobId, m),
+        );
         // Onboarding threads never get `promote_decisions` (see `buildTools`) — there is nothing to
         // promote by design. Stamp complete here so the boot backstop's `threadsAwaitingLedgerPromotion`
         // sweep (which only looks at `pr_url`/`ledger_promotion_status`, not thread kind) never picks this
@@ -3695,31 +3779,31 @@ export class AgentSessionManager
               `markLedgerPromoted failed for onboarding thread=${stimulus.jobId} (harmless — boot backstop would just no-op): ${err}`,
             ),
           );
-        // Only claim the PR opened when it was actually CONFIRMED (its url latched). `opened:true` alone is
-        // not enough — the in-sandbox open turn best-effort-catches its own failures, so it can return
-        // `opened:true, prConfirmed:false` with no PR. A no-token ship returns `opened:false`.
-        if (result.opened && result.prConfirmed) {
+        if (!pre.ok) {
+          if (pre.reason === 'leak-scan') {
+            // Hard security block — a hydrated secret/seed path was committed on the onboarding branch.
+            return {
+              ok: false,
+              reason:
+                `PR blocked by the pre-ship security scan — a managed secret/seed file was committed: ` +
+                `${pre.leaked.join(', ')}. Remove it from the branch history and retry.`,
+            };
+          }
           return {
             ok: true,
-            prOpened: true,
-            message: `Opened a PR with the environment-setup changes: ${result.url}. Merge it to land them in the repo.`,
-          };
-        }
-        if (!result.opened && result.reason === 'leak-scan') {
-          // Hard security block — a hydrated secret/seed path was committed on the onboarding branch.
-          return {
-            ok: false,
-            reason:
-              `PR blocked by the pre-ship security scan — a managed secret/seed file was committed: ` +
-              `${result.leaked.join(', ')}. Remove it from the branch history and retry.`,
+            prOpened: false,
+            message: 'Made repo changes but no GitHub token is set — connect one to open the PR.',
           };
         }
         return {
           ok: true,
           prOpened: false,
-          message: !result.opened
-            ? 'Made repo changes but no GitHub token is set — connect one to open the PR.'
-            : 'Made repo changes and pushed, but the PR could not be confirmed yet — it will appear on this job shortly.',
+          message: shipOpenPrBody({
+            branch: sandbox.branch,
+            defaultBranch: repo.defaultBranch,
+            title: 'Atlas: onboarding environment setup',
+            decisionsBlock: '',
+          }),
         };
       } catch (err) {
         this.logger.warn(`finish_onboarding failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);

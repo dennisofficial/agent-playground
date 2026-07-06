@@ -391,6 +391,9 @@ function makeGit(): {
       }),
     ),
     headSha: vi.fn(async () => `sha${sha}`),
+    // The ship step reads the live branch (detached HEAD → null → fall back to the canonical sandbox.branch).
+    // Null keeps the fake shipping on `atlas/feature-job-abcd` (= sandbox.branch), which the tests assert.
+    currentBranch: vi.fn(async () => null),
     // Writers commit their own work now; the host READS HEAD instead of committing. The fake build turn
     // (below) advances `sha` to simulate the writer's commit, so `headSha` returns the fresh sha the driver
     // stamps. `hasChanges` reports a CLEAN tree by default (the writer committed) — no dirty-tree nudge.
@@ -660,6 +663,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     status: 'running',
     decisionRecordId: 'dr-1',
     featureBranch: null,
+    currentBranch: null,
     prUrl: null,
     prNumber: null,
     createdAt: new Date(),
@@ -814,6 +818,30 @@ function assemble(
     threadId: string;
     outcome: 'blocked' | 'incomplete' | 'failed';
   }> = [];
+  // Records each seeded open-PR turn (`BuildShipService` → `brain.openPrAtShip`). Replaces the old proxy of
+  // "an engine execute/claude call happened" now that the ship step is a brain turn, not a separate session.
+  const shipSeeds: Array<{ jobId: string; branch: string }> = [];
+  // ModuleRef: the lazy brain lookup shared by the driver (halt wakes + ledger promotion) AND BuildShipService
+  // (the seeded open-PR turn). A stub brain records `notifyThreadHalted` wakes + `openPrAtShip` seeds (the
+  // seeded turns themselves are exercised in the brain specs — here the host latches by branch discovery).
+  const brainModuleRef = {
+    get: () => ({
+      promoteDurableDecisionsAtShip: async () => undefined,
+      openPrAtShip: async (input: { jobId: string; branch: string }) => {
+        shipSeeds.push({ jobId: input.jobId, branch: input.branch });
+      },
+      notifyThreadHalted: async (
+        jobId: string,
+        threadId: string,
+        outcome: 'blocked' | 'incomplete' | 'failed',
+        gen: number,
+      ) => {
+        wakes.push({ jobId, threadId, outcome });
+        // Simulate the REAL brain: it stamps `halt_waked_at` (gen-keyed) on the wake turn's SUCCESS tail.
+        await store.markHaltWaked(threadId, gen);
+      },
+    }),
+  } as unknown as ModuleRef;
   const driver = new ThreadDriver(
     store,
     repos,
@@ -860,10 +888,10 @@ function assemble(
       findSandbox: async () => null,
       recordPr: async () => undefined,
     } as unknown as import('./job-lifecycle.service').JobLifecycleService,
-    // BuildShipService: the real terminal "ship" over the same git/pr/store fakes, so the push/open/
-    // setPrReady assertions hold exactly as before the extraction. The open-PR turn runs on the same shared
-    // `turnHarness` + the dedicated `engineRunner` fake above.
-    new BuildShipService(git, pr, store, turnHarness, engineRunner),
+    // BuildShipService: the real terminal "ship" over the same git/pr/store fakes, so the leak-scan/latch
+    // assertions hold. The open-PR step is now a SEEDED BRAIN TURN resolved via `brainModuleRef` (no separate
+    // engine session), and the host latches the PR by branch discovery.
+    new BuildShipService(git, pr, store, brainModuleRef),
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     {
       appendMarker: async () => undefined,
@@ -884,23 +912,8 @@ function assemble(
     (opts.turnRegistry ?? {
       listRunning: async () => [],
     }) as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
-    // ModuleRef: the lazy brain lookup → a stub brain that records `notifyThreadHalted` wakes (the ledger +
-    // wake turns themselves are exercised in the brain specs; here we assert the driver FIRES the wake).
-    {
-      get: () => ({
-        promoteDurableDecisionsAtShip: async () => undefined,
-        notifyThreadHalted: async (
-          jobId: string,
-          threadId: string,
-          outcome: 'blocked' | 'incomplete' | 'failed',
-          gen: number,
-        ) => {
-          wakes.push({ jobId, threadId, outcome });
-          // Simulate the REAL brain: it stamps `halt_waked_at` (gen-keyed) on the wake turn's SUCCESS tail.
-          await store.markHaltWaked(threadId, gen);
-        },
-      }),
-    } as unknown as ModuleRef,
+    // ModuleRef: the lazy brain lookup (halt wakes + ledger promotion), shared with BuildShipService above.
+    brainModuleRef,
     judge,
     taskSink,
   );
@@ -920,6 +933,7 @@ function assemble(
     opened,
     calls,
     engineCalls,
+    shipSeeds,
     posts,
     liveTurns,
     blockSink,
@@ -955,11 +969,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(execTurns).toHaveLength(2); // 2 threads × 1 orchestrator session
 
     // Per-thread post-build review ran once per thread (children materialized + lenses run); Atlas opens the
-    // PR in-sandbox — ONE ship engine turn (master review no longer runs in ship; it's now a Codex build
+    // PR via a seeded brain turn — ONE ship seed (master review no longer runs in ship; it's now a Codex build
     // thread, absent from this mock's thread list).
     expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(2);
     expect(h.autofix.runReviewLens).toHaveBeenCalled();
-    expect(h.engineCalls).toEqual([{ mode: 'execute', engine: 'claude' }]);
+    expect(h.shipSeeds).toEqual([{ jobId: state.job.id, branch: 'atlas/feature-job-abcd' }]);
 
     // Both threads are done with a handoff; the SECOND thread received the first's handoff.
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
@@ -969,11 +983,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // in-sandbox as part of the ship turn, which ran).
     expect(state.job.featureBranch).toBe('atlas/feature-job-abcd');
     expect(
-      h.engineCalls.filter((c) => c.mode === 'execute' && c.engine === 'claude')
-        .length,
+      h.shipSeeds.length,
     ).toBeGreaterThanOrEqual(1);
     expect(state.job.status).toBe('done');
-    expect(h.posts.some((p) => p.includes('opening the PR'))).toBe(true);
   });
 
   it('fast-forwards a thread a concurrent/stale drive already finished — no re-execute, no re-materialize of review children', async () => {
@@ -1262,8 +1274,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // The resumed turn's transcript persisted + the batch committed → the run finishes; the ship turn ran
     // (Atlas opens the PR in-sandbox, the host never does).
     expect(
-      h.engineCalls.filter((c) => c.mode === 'execute' && c.engine === 'claude')
-        .length,
+      h.shipSeeds.length,
     ).toBeGreaterThanOrEqual(1);
   });
 
@@ -1354,8 +1365,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(1);
     // The ship turn ran (Atlas opens the PR in-sandbox, the host never does).
     expect(
-      h.engineCalls.filter((c) => c.mode === 'execute' && c.engine === 'claude')
-        .length,
+      h.shipSeeds.length,
     ).toBeGreaterThanOrEqual(1);
     expect(state.job.status).toBe('done');
   });
@@ -1419,7 +1429,8 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.posts.some((p) => p.toLowerCase().includes('building'))).toBe(
       true,
     );
-    expect(h.posts.some((p) => p.includes('opening the PR'))).toBe(true);
+    // The ship step no longer posts an "opening the PR" system message — it seeds a visible brain turn.
+    expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
   });
 
   it('relays a clear "build failed — why" when a step errors, never dead-ends silently (issue #2)', async () => {
@@ -1707,8 +1718,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await flushUntil(() => state.job.status === 'done');
     expect(state.job.status).toBe('done');
     expect(
-      h.engineCalls.filter((c) => c.mode === 'execute' && c.engine === 'claude')
-        .length,
+      h.shipSeeds.length,
     ).toBeGreaterThanOrEqual(1);
   });
 
@@ -2896,8 +2906,7 @@ describe('ThreadDriver — 401 auth recovery', () => {
 
     expect(state.job.status).toBe('done');
     expect(
-      h.engineCalls.filter((c) => c.mode === 'execute' && c.engine === 'claude')
-        .length,
+      h.shipSeeds.length,
     ).toBeGreaterThanOrEqual(1);
   });
 

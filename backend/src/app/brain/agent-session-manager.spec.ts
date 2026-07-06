@@ -150,6 +150,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
   const mockGit = {
     hasChanges: vi.fn().mockResolvedValue(false),
+    // The brain turn observes the live branch (detached HEAD → null); default to null so no live-branch
+    // backstop fires in these streaming/tool tests.
+    currentBranch: vi.fn().mockResolvedValue(null),
   } as unknown as LocalGitService;
 
   const mockDockerRunner = {} as unknown as EngineRunnerPort;
@@ -160,7 +163,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   } as unknown as DecisionClassifier;
 
   const mockShip = {
-    ship: vi.fn().mockResolvedValue({ url: 'https://gh/pr/1', number: 1, existing: false }),
+    // Driver/boot path (brain idle) — seeds the open-PR turn + latches.
+    ship: vi.fn().mockResolvedValue({ opened: true, prConfirmed: true, url: 'https://gh/pr/1', number: 1 }),
+    // Mid-turn callers (finalize_build / finish_onboarding) use the host gate; the brain opens the PR inline.
+    preShip: vi.fn().mockResolvedValue({ ok: true }),
   } as unknown as BuildShipService;
 
   const mockRepos = {
@@ -656,28 +662,25 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       defaultBranch: 'main',
       token: 't',
     });
-    // Atlas opens the PR in-sandbox and reports its url back; ship latches it and returns prConfirmed.
-    (mockShip.ship as ReturnType<typeof vi.fn>).mockResolvedValue({
-      opened: true,
-      prConfirmed: true,
-      url: 'https://github.com/acme/widget/pull/1',
-      number: 1,
-    });
+    // Mid-turn: the host gate passes; finalize_build hands the open-PR instructions back so the brain opens
+    // the PR inline in THIS turn (no separate ship session). The reconciler latches the url + flips done.
+    (mockShip.preShip as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
 
     // ADR 0004 rider 3 — finalize_build refuses to ship until the turn has self-reported a clean verification.
     await tools['report_verification']({ passed: true });
     const result = await tools['finalize_build']({});
 
-    expect(mockShip.ship).toHaveBeenCalledOnce();
+    expect(mockShip.preShip).toHaveBeenCalledOnce();
     // The old planning-only lookup must NOT gate this path anymore.
     expect(mockStore.openJobOnThread).not.toHaveBeenCalled();
-    // PR confirmed ⇒ the ledger is stamped complete and the operator gets the PR link.
-    expect(mockStore.markLedgerPromoted).toHaveBeenCalledWith(FAKE_JOB_ID);
+    // The tool returns the open-PR instructions for the brain to act on in-turn (host no longer opens it).
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
-    expect((result as { message: string }).message).toContain('PR opened');
+    expect((result as { message: string }).message).toContain('gh pr create');
+    // The ledger is stamped later (on PR discovery by the reconciler), NOT synchronously here.
+    expect(mockStore.markLedgerPromoted).not.toHaveBeenCalled();
   });
 
-  it('(c) finalize_build: an UNCONFIRMED PR (ship couldn\'t latch a url) does NOT stamp the ledger complete', async () => {
+  it('(c) finalize_build: a leak-scan block returns a hard failure (brain must clean the branch)', async () => {
     const tools = manager.buildTools(fakeStimulus);
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: FAKE_JOB_ID,
@@ -697,15 +700,19 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       defaultBranch: 'main',
       token: 't',
     });
-    (mockShip.ship as ReturnType<typeof vi.fn>).mockResolvedValue({ opened: true, prConfirmed: false });
+    (mockShip.preShip as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      reason: 'leak-scan',
+      leaked: ['.env.keys'],
+    });
 
     await tools['report_verification']({ passed: true });
     const result = await tools['finalize_build']({});
 
-    expect(mockShip.ship).toHaveBeenCalledOnce();
-    // Not confirmed ⇒ never mark complete (boot-recovery re-runs the idempotent ship tail to latch the url).
+    expect(mockShip.preShip).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
+    expect((result as { reason: string }).reason).toContain('.env.keys');
     expect(mockStore.markLedgerPromoted).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
   });
 
   it('(c) finalize_build: refuses a non-running job (no ship)', async () => {
@@ -721,7 +728,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("'planning'");
-    expect(mockShip.ship).not.toHaveBeenCalled();
+    expect(mockShip.preShip).not.toHaveBeenCalled();
   });
 
   it('write_worktree_config UPSERTS mounts straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
@@ -905,25 +912,29 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     expect(mockGit.hasChanges).toHaveBeenCalledWith('/wt');
     expect(mockLifecycle.markRepoOnboarded).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
-    expect(mockShip.ship).not.toHaveBeenCalled();
+    expect(mockShip.preShip).not.toHaveBeenCalled();
     expect(result).toMatchObject({ ok: true, prOpened: false });
   });
 
-  it('finish_onboarding: a real repo diff → marks onboarded AND ships a PR with the reframed commit message', async () => {
-    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: '/wt' });
+  it('finish_onboarding: a real repo diff → marks onboarded AND hands the brain the open-PR instructions', async () => {
+    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
+      worktreePath: '/wt',
+      branch: 'atlas/onboard-r',
+    });
     (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: FAKE_JOB_ID,
       repoId: PROJECT_ID,
       orgId: TEAM_ID,
     });
-    // Atlas opens the PR in-sandbox and reports its url; ship confirms + latches it.
-    (mockShip.ship as ReturnType<typeof vi.fn>).mockResolvedValue({
-      opened: true,
-      prConfirmed: true,
-      url: 'https://github.com/acme/widget/pull/3',
-      number: 3,
+    (mockRepos.resolve as ReturnType<typeof vi.fn>).mockResolvedValue({
+      owner: 'o',
+      repo: 'r',
+      defaultBranch: 'main',
+      token: 't',
     });
+    // Host gate passes; the brain opens the PR itself in-turn (no separate session). Reconciler latches it.
+    (mockShip.preShip as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
     const tools = manager.buildTools(fakeStimulus, 'onboarding');
 
     const result = await tools['finish_onboarding']({
@@ -932,10 +943,17 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(mockLifecycle.markRepoOnboarded).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
-    expect(mockShip.ship).toHaveBeenCalledWith(
-      expect.objectContaining({ commitMessage: 'Atlas: onboarding — environment setup' }),
+    // preShip is called positionally (job, repo, sandbox, commitMessage, notify) with the reframed message.
+    expect(mockShip.preShip).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      'Atlas: onboarding — environment setup',
+      expect.anything(),
     );
-    expect(result).toMatchObject({ ok: true, prOpened: true });
+    // prOpened is false at return (the PR opens inline afterward), and the message tells the brain to open it.
+    expect(result).toMatchObject({ ok: true, prOpened: false });
+    expect((result as { message: string }).message).toContain('gh pr create');
   });
 
   it('finish_onboarding NEVER throws on a markRepoOnboarded/git failure — warns and returns the real error', async () => {
@@ -949,7 +967,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('db down') });
-    expect(mockShip.ship).not.toHaveBeenCalled();
+    expect(mockShip.preShip).not.toHaveBeenCalled();
   });
 
   it('(e) ask_question opens the durable gate with a normalized question_card', async () => {
@@ -1568,7 +1586,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         listMounts: async () => [],
         upsertMount: async () => undefined,
       } as unknown as WorktreeConfigStore,
-      { hasChanges: async () => false } as unknown as LocalGitService,
+      { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
@@ -2269,7 +2287,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         listMounts: async () => [],
         upsertMount: async () => undefined,
       } as unknown as WorktreeConfigStore,
-      { hasChanges: async () => false } as unknown as LocalGitService,
+      { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
     );

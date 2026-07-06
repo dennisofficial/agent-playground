@@ -1390,6 +1390,7 @@ function toThread(row: JobEntity): Job {
     status: row.status as Job['status'],
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
+    currentBranch: row.current_branch,
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     createdAt: row.created_at,

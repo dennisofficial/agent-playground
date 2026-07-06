@@ -218,6 +218,14 @@ export class DriverStoreService {
     await this.jobs.update({ id: jobId }, { feature_branch: branch });
   }
 
+  /**
+   * Record the OBSERVED live branch the sandbox HEAD is on (sampled from the agent's git activity).
+   * Null = detached/unknown; callers should skip the write on null to preserve the last-known branch.
+   */
+  async setCurrentBranch(jobId: string, branch: string | null): Promise<void> {
+    await this.jobs.update({ id: jobId }, { current_branch: branch });
+  }
+
   /** Record the opened PR (url + number) + flip the thread to its terminal `done`. */
   async setPrReady(
     jobId: string,
@@ -887,6 +895,9 @@ export class DriverStoreService {
       prState: thread.pr_state,
       prMergeable: thread.pr_mergeable,
       featureBranch: thread.feature_branch,
+      // The OBSERVED live branch (what the agent's HEAD is actually on) — drives the navigator drift badge
+      // when it diverges from the host-named featureBranch. Null until first sampled / on detached HEAD.
+      currentBranch: thread.current_branch,
       baseBranch: thread.base_branch,
       // The Main brain session's own task list (folded from its `main`-lane task-tool calls) — the
       // navigator's Main row renders it. No fallback default (tasks are pure LLM output — there's no
@@ -1014,6 +1025,7 @@ function toJob(row: JobEntity): Job {
     status: row.status as JobStatus,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
+    currentBranch: row.current_branch,
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     createdAt: row.created_at,

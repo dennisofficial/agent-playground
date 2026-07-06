@@ -1876,6 +1876,17 @@ export class ThreadDriver implements JobDispatcher {
     this.logger.log(`batch commit (writer-authored) ${sha === NOTHING_COMMITTED ? '(nothing)' : sha.slice(0, 8)}`);
     await this.store.setStepCommit(anchor.id, sha);
     for (const p of steps) await this.store.setStepState(p.id, 'done', 'done');
+    // Live-branch backstop: an autonomous build turn may also switch branches. Sample HEAD once here (the
+    // brain's per-tool listener doesn't observe driver-run build turns). Best-effort + guarded so it never
+    // writes null over a known branch or churns the row when unchanged.
+    void this.git
+      .currentBranch(sandbox.worktreePath)
+      .then((live) =>
+        live && live !== job.currentBranch
+          ? this.store.setCurrentBranch(job.id, live)
+          : undefined,
+      )
+      .catch((err) => this.logger.warn(`live-branch build backstop failed: ${err}`));
     return { outcome: 'done', report };
   }
 

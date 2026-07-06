@@ -92,6 +92,9 @@ export interface Job {
   decisionRecordId: string | null;
   /** The feature branch all threads stack on (null until the branch is cut). */
   featureBranch: string | null;
+  /** The OBSERVED live branch the sandbox HEAD is on (sampled from the agent's git activity); null until
+   *  first sampled / on detached HEAD. Divergence from {@link featureBranch} is DRIFT (surfaced, not blocked). */
+  currentBranch: string | null;
   /** The opened PR url (null until the PR-tail stage opens one). */
   prUrl: string | null;
   /** The opened PR number — what the merge poll queries GitHub with (null until opened). */
