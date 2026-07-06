@@ -49,6 +49,7 @@ export const KIND_META: Record<JobKind, KindMeta> = {
   fix: { label: "FIX", color: "var(--dim)" },
   event: { label: "EVENT", color: "var(--dim)" },
   onboard: { label: "INIT", color: "var(--dim)" },
+  review: { label: "REVIEW", color: "var(--dim)" },
 };
 
 /** Wire JobStatus → UI JobStatus. (`cancelled` reads as paused-terminal in the UI.) */
@@ -85,6 +86,8 @@ export function toJobKind(kind: WireJobKind | null | undefined): JobKind {
       return "onboard";
     case "event":
       return "event";
+    case "pr_review":
+      return "review";
     default:
       return "feat";
   }

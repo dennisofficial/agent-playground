@@ -60,6 +60,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockStore = {
     openJobOnThread: vi.fn(),
     openJob: vi.fn(),
+    // Default: no operator-set kind, so propose_plan/start_direct_build fall back to their requested kind.
+    jobKind: vi.fn().mockResolvedValue(null),
     persistPlan: vi.fn(),
     route: vi.fn(),
     appendAtlasMessage: vi.fn(),

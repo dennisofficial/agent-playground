@@ -27,4 +27,9 @@ export class JobKindGroup {
   event(): string {
     return jobKindFragment('event');
   }
+
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1903, condition: (c: PromptCtx) => c.jobKind === 'pr_review' })
+  prReview(): string {
+    return jobKindFragment('pr_review');
+  }
 }

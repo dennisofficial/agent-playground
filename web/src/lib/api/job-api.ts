@@ -411,10 +411,17 @@ export function fetchRepoBranches(
   return webJson<RepoBranches>(`/orgs/${orgId}/repos/${repoId}/branches`);
 }
 
+/** Operator-selectable job kinds (mirrors the backend allowlist; system kinds event/onboarding excluded). */
+export type OperatorJobKind = "feature" | "bugfix" | "pr_review";
+
 export interface CreateThreadBody {
   firstMessage: string;
   title?: string;
   baseBranch?: string;
+  /** Operator-chosen job kind; omit to let the brain scope it (current default behavior). */
+  kind?: OperatorJobKind;
+  /** For `kind: "pr_review"` — the PR number to review (seeds a <pr-review> block on the brain's first turn). */
+  prNumber?: string;
 }
 
 export function createJob(
@@ -439,6 +446,8 @@ export function createJobWithFiles(
   form.append("firstMessage", body.firstMessage);
   if (body.title) form.append("title", body.title);
   if (body.baseBranch) form.append("baseBranch", body.baseBranch);
+  if (body.kind) form.append("kind", body.kind);
+  if (body.prNumber) form.append("prNumber", body.prNumber);
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",

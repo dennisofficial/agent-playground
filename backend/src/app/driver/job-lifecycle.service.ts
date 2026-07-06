@@ -6,7 +6,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { IsNull, Not, Repository } from 'typeorm';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver, OnboardingService } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, JobEntity, JobSandboxEntity } from '../persistence/entities';
 import {
@@ -244,12 +244,36 @@ export class JobLifecycleService {
       );
     }
     if (!project.access_ok) {
-      throw new ProvisioningNotReadyError(
-        'This repo isn’t fully connected yet — finish connecting it (validate GitHub access) in settings before starting a thread.',
-      );
+      // Auto-heal: `access_ok` is often just stale — a repo connected but never (re)validated. Re-probe
+      // GitHub once with the org token before bouncing the operator to settings; if access is actually
+      // fine this proceeds transparently. Only a genuinely broken/expired PAT still throws.
+      const healed = await this.tryRevalidateAccess(orgId, project.id);
+      if (!healed) {
+        throw new ProvisioningNotReadyError(
+          'This repo isn’t fully connected yet — finish connecting it (validate GitHub access) in settings before starting a thread.',
+        );
+      }
     }
     const baseBranch = thread.base_branch ?? project.default_branch ?? 'main';
     return this.provisionSandbox(thread, project, baseBranch, onMilestone);
+  }
+
+  /**
+   * Re-probe a repo's GitHub access with the org token and persist the fresh `access_ok` (via
+   * OnboardingService.revalidateRepo). Returns whether access is now good. Resolved lazily through
+   * ModuleRef to avoid a constructor cycle with the @Global onboarding module. Best-effort — any
+   * failure (network, resolution) returns false so the caller falls back to the not-ready message.
+   */
+  private async tryRevalidateAccess(orgId: string, repoId: string): Promise<boolean> {
+    try {
+      const onboarding = this.moduleRef.get(OnboardingService, { strict: false });
+      const res = await onboarding.revalidateRepo(orgId, repoId);
+      if (res.accessOk) this.logger.log(`auto-healed repo access for ${repoId} (org ${orgId})`);
+      return res.accessOk;
+    } catch (err) {
+      this.logger.warn(`access revalidation failed for repo ${repoId}: ${err}`);
+      return false;
+    }
   }
 
   /**
@@ -568,7 +592,7 @@ export class JobLifecycleService {
    * re-attaches (cold) with the reset notice. Returns how many were reaped.
    */
   async reapIdle(): Promise<number> {
-    const ttlMs = Number(this.env.get('SANDBOX_IDLE_TTL_MS')) || DEFAULT_IDLE_TTL_MS;
+    const ttlMs = DEFAULT_IDLE_TTL_MS;
     const cutoff = Date.now() - ttlMs;
     const rows = await this.sandboxes.find({ where: { lifecycle: 'attached' } });
     let reaped = 0;

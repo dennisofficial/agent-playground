@@ -1511,6 +1511,12 @@ export class AgentSessionManager
     } catch (err) {
       if (err instanceof ProvisioningNotReadyError) {
         await this.say(stimulus, err.message);
+        // We RESPONDED with an actionable message, so treat this pending chat as DELIVERED — otherwise the
+        // 2-min at-least-once delivery sweep re-drives provisioning and re-posts this identical "not
+        // connected" message every lease cycle (the incident's 3× spam). A permanent precondition failure is
+        // not a transient un-delivery. The operator re-messages once access is fixed (the auto-heal in
+        // ensureProvisioned already handles the common stale-`access_ok` case before we ever get here).
+        opts?.onRegistered?.();
       } else {
         this.logger.error(
           `provisioning failed for thread=${stimulus.jobId}: ${err}`,
@@ -1519,6 +1525,7 @@ export class AgentSessionManager
           stimulus,
           `I couldn't set up a workspace for this thread. (${String(err).slice(0, 200)})`,
         );
+        // Leave undelivered: a transient provisioning failure (e.g. a Docker hiccup) is worth a bounded re-drive.
       }
       return;
     }
@@ -1901,7 +1908,11 @@ export class AgentSessionManager
           this.logger.warn(
             `benign aborted_streaming for thread=${stimulus.jobId} — auto-resuming (attempt ${n}/${AgentSessionManager.MAX_BENIGN_ABORT_REDRIVES}), no operator box: ${err}`,
           );
-          this.surface.seedSystemNotification?.(stimulus.repoId, stimulus.jobId, 'Please continue.', {
+          // Name the task in the nudge — a bare "Please continue." on a cold re-attach is exactly what left
+          // the brain disoriented (posting a needless "what should I continue?" question). The title orients it.
+          const title = await this.store.jobTitle(stimulus.jobId).catch(() => null);
+          const nudge = title ? `Please continue with the current task: "${title}".` : 'Please continue.';
+          this.surface.seedSystemNotification?.(stimulus.repoId, stimulus.jobId, nudge, {
             orgId: stimulus.orgId,
           });
         } else {
@@ -2266,6 +2277,27 @@ export class AgentSessionManager
         };
       },
 
+      // Classify (or re-classify) THIS job's kind — e.g. this is a PR review, not a build. The next turn's
+      // system prompt reflects the new kind automatically (it's read fresh each turn). Operator/system kinds
+      // ('event'/'onboarding') are NOT settable here. Prefer letting propose_plan/start_direct_build carry
+      // feature/bugfix during scoping; use this when the job isn't a build (e.g. 'pr_review').
+      set_job_kind: async (args) => {
+        const raw = String(args['kind'] ?? '').trim();
+        const settable: readonly JobKind[] = ['feature', 'bugfix', 'pr_review'];
+        if (!settable.includes(raw as JobKind)) {
+          return {
+            ok: false,
+            reason: `kind must be one of: ${settable.join(', ')}.`,
+          };
+        }
+        await this.store.setJobKind(stimulus.jobId, raw as JobKind);
+        return {
+          ok: true,
+          kind: raw,
+          message: `Job kind set to '${raw}'. Your orientation for this and the next turns reflects it.`,
+        };
+      },
+
       create_decision: createDecision,
 
       update_decision: async (args) => {
@@ -2493,8 +2525,11 @@ export class AgentSessionManager
         // (durable + live `thread_meta` frame, repainted inside requestApprovalAndAct).
         const goal = String(args['goal'] ?? '').trim();
         // `kind` orients the whole job: `bugfix` lights up the reproduce-the-failure-first framing (job-kind
-        // block + build orientation). Default `feature`; only `bugfix` is a meaningful override here.
-        const kind: JobKind = args['kind'] === 'bugfix' ? 'bugfix' : 'feature';
+        // block + build orientation). Default `feature`; only `bugfix` is a meaningful override here. But an
+        // operator-set kind (picked at job creation) WINS — don't clobber it back to feature/bugfix.
+        const kind: JobKind =
+          (await this.store.jobKind(stimulus.jobId)) ??
+          (args['kind'] === 'bugfix' ? 'bugfix' : 'feature');
         // Decisions are LOCKED incrementally during grilling (create_decision → pending_decisions). Source
         // them from the working set; an explicit `decisions` arg, if given, is an authoritative override.
         const decisions =
@@ -2661,8 +2696,11 @@ export class AgentSessionManager
         const changeOutline = Array.isArray(args['changeOutline'])
           ? args['changeOutline'].map((c) => String(c).trim()).filter(Boolean)
           : [];
-        // `bugfix` orients the direct build to reproduce the failure first; default `feature`.
-        const kind: JobKind = args['kind'] === 'bugfix' ? 'bugfix' : 'feature';
+        // `bugfix` orients the direct build to reproduce the failure first; default `feature`. An
+        // operator-set kind (picked at job creation) WINS — don't clobber it.
+        const kind: JobKind =
+          (await this.store.jobKind(stimulus.jobId)) ??
+          (args['kind'] === 'bugfix' ? 'bugfix' : 'feature');
         // Honor decisions locked during grilling (create_decision → pending_decisions); an explicit arg overrides.
         const decisions =
           args['decisions'] != null

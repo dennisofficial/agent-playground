@@ -77,6 +77,7 @@ import {
   UserEntity,
 } from '../persistence/entities';
 import { deriveNeedsYou } from '../domain/job';
+import type { JobKind } from '../domain/job';
 import {
   RealtimeService,
   realtimeDisabledStream,
@@ -270,6 +271,31 @@ interface CreateThreadDto {
   firstMessage: string;
   title?: string;
   baseBranch?: string;
+  /** Operator-chosen job kind. Only the operator-selectable kinds are honored (see `OPERATOR_JOB_KINDS`). */
+  kind?: string;
+  /** For `kind: 'pr_review'` — the PR number to review; seeds a `<pr-review>` framing block on turn 1. */
+  prNumber?: string | number;
+}
+
+/**
+ * The job kinds an operator may pick at creation. `event`/`onboarding` are system-assigned (stimulus
+ * intake / repo onboarding), never operator-set, so they are deliberately excluded — an unknown or
+ * excluded value is ignored (kind stays null and the brain scopes it as before).
+ */
+const OPERATOR_JOB_KINDS: ReadonlySet<JobKind> = new Set<JobKind>(['feature', 'bugfix', 'pr_review']);
+
+function coerceOperatorKind(raw: string | undefined): JobKind | null {
+  if (raw && OPERATOR_JOB_KINDS.has(raw as JobKind)) return raw as JobKind;
+  return null;
+}
+
+/** The `<pr-review>` block prepended to the first-turn body for a `kind: 'pr_review'` job (brain orientation). */
+function renderPrReviewXml(prNumber: number, repoSlug: string): string {
+  return (
+    `<pr-review pr="${prNumber}" repo="${xmlEscapeAttr(repoSlug)}" ` +
+    `note="Review this EXISTING pull request. Fetch it with \`gh pr view ${prNumber}\` / \`gh pr diff ${prNumber}\`, ` +
+    `review the diff, and post findings grouped by severity. Do not build or open a PR of your own." />`
+  );
 }
 interface SayDto {
   text: string;
@@ -539,7 +565,7 @@ export class WebSurfaceController {
         jobId: t.id,
         title: t.title,
         origin: t.origin,
-        kind: t.kind, // job build kind ('onboarding'/'event'/'feature'/'bugfix'/null) — drives the web badge
+        kind: t.kind, // job kind ('feature'/'bugfix'/'onboarding'/'event'/'pr_review'/null) — drives the web badge
         status: t.status,
         turnActive: t.turn_active,
         needsYou: deriveNeedsYou(
@@ -642,6 +668,9 @@ export class WebSurfaceController {
     // The frontend-derived first line seeds the row as an INSTANT placeholder; the mini-model upgrades it
     // below (compare-and-set keyed off this exact placeholder, so a fast rename is never clobbered).
     const placeholder = body.title ?? null;
+    // Operator-chosen kind is stamped at creation (an unknown/excluded value stays null → brain scopes it,
+    // as before). The brain's system prompt reads `kind` fresh each turn, so a pr_review job orients on turn 1.
+    const kind = coerceOperatorKind(typeof body.kind === 'string' ? body.kind.trim() : undefined);
     const thread = await this.jobs.save(
       this.jobs.create({
         org_id: org.id,
@@ -650,6 +679,7 @@ export class WebSurfaceController {
         surface_thread_ref: null,
         title: placeholder,
         base_branch: body.baseBranch ?? null,
+        ...(kind ? { kind } : {}),
       }),
     );
     const operatorText = text ?? '';
@@ -658,7 +688,14 @@ export class WebSurfaceController {
     const attach = files?.length
       ? await this.ingestAttachments(org.id, thread.id, files)
       : null;
-    const bodyText = attach ? `${attach.xml}\n\n${operatorText}` : operatorText;
+    // For a PR-review job with a PR number, PREPEND a <pr-review> block so the brain knows on turn 1 exactly
+    // which PR to fetch and review — no reverse-engineering from the title.
+    const prNumber = kind === 'pr_review' ? Number(body.prNumber) : NaN;
+    const prXml =
+      kind === 'pr_review' && Number.isInteger(prNumber) && prNumber > 0
+        ? renderPrReviewXml(prNumber, repo.slug)
+        : null;
+    const bodyText = [prXml, attach?.xml, operatorText].filter(Boolean).join('\n\n');
     // Inject the first message — the chat bridge resolves the thread by its real id and triages it.
     this.surface.receiveFromClient(repo.id, bodyText, {
       orgId: org.id,
@@ -1018,7 +1055,12 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
   ): Promise<{ ok: boolean }> {
     const thread = await this.requireThread(jobId, org.id);
-    this.surface.seedSystemNotification(thread.repo_id, jobId, 'Please continue.', {
+    // Name the task in the resume nudge — a bare "Please continue." on a cold re-attach can leave the brain
+    // disoriented (it re-asks what to continue). The title gives the resumed turn its bearings.
+    const resumeNudge = thread.title
+      ? `Please continue with the current task: "${thread.title}".`
+      : 'Please continue.';
+    this.surface.seedSystemNotification(thread.repo_id, jobId, resumeNudge, {
       orgId: org.id,
       seedRow: {
         label: 'Resuming the turn after a transient engine error.',

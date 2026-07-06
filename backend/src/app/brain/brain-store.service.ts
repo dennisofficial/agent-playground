@@ -1031,6 +1031,23 @@ export class BrainStoreService {
     return row?.id ?? null;
   }
 
+  /** The job's current kind (null until scoped, or if the operator picked one at creation). */
+  async jobKind(jobId: string): Promise<JobKind | null> {
+    const row = await this.jobs.findOne({ where: { id: jobId }, select: { id: true, kind: true } });
+    return (row?.kind as JobKind | null | undefined) ?? null;
+  }
+
+  /** The job's short title (used to give a bare "continue" nudge some task context). */
+  async jobTitle(jobId: string): Promise<string | null> {
+    const row = await this.jobs.findOne({ where: { id: jobId }, select: { id: true, title: true } });
+    return row?.title ?? null;
+  }
+
+  /** Set the job's kind (the brain's `set_job_kind` tool). The next brain turn's system prompt reflects it. */
+  async setJobKind(jobId: string, kind: JobKind): Promise<void> {
+    await this.jobs.update({ id: jobId }, { kind });
+  }
+
   /** Anchor the upfront grill: flip the thread into the build lifecycle (`planning`) + set intent/title. */
   async openJob(input: {
     orgId: string;

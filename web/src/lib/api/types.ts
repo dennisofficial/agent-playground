@@ -16,7 +16,12 @@ import type { JobStatus as WireJobStatus } from "@workspace/shared";
  */
 export type { WireJobStatus };
 
-export type WireJobKind = "feature" | "bugfix" | "onboarding" | "event";
+export type WireJobKind =
+  | "feature"
+  | "bugfix"
+  | "onboarding"
+  | "event"
+  | "pr_review";
 
 /** The lane (Thread) status — one build lane within a Job. */
 export type ThreadStatus =
@@ -444,8 +449,8 @@ export type JobStatus =
   | "deleting";
 
 /** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job;
- *  `onboard` is the Atlas-run repo-init (onboarding) job. */
-export type JobKind = "feat" | "fix" | "event" | "onboard";
+ *  `onboard` is the Atlas-run repo-init (onboarding) job; `review` is an external-PR review job. */
+export type JobKind = "feat" | "fix" | "event" | "onboard" | "review";
 
 /** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
 export type PrState = "open" | "merged" | "closed";

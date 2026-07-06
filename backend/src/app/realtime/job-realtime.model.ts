@@ -28,7 +28,7 @@ export interface ThreadRealtimeRow extends Row {
   jobId: string;
   title: string | null;
   origin: string;
-  /** Job build kind ('feature'|'bugfix'|'onboarding'|'event'|null) — small text col, always in SELECT */
+  /** Job kind ('feature'|'bugfix'|'onboarding'|'event'|'pr_review'|null) — small text col, always in SELECT */
   kind: string | null;
   status: string;
   turnActive: boolean;
