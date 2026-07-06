@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronRight, RotateCw } from "lucide-react";
+import { ChevronRight, Loader2, RotateCw } from "lucide-react";
 import { toneOf, type SystemTone } from "./classify";
 import { Markdown } from "./markdown";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
@@ -90,20 +90,38 @@ export function ClaudeAvatar({ size = 24 }: { size?: number }) {
  * stand in for any operator-authored instruction, including a subagent's Task prompt (the "user message"
  * that kicked the run off), rendered identically to the main transcript.
  */
-export function UserBubble({ text, time }: { text: string; time?: string }) {
+export function UserBubble({
+  text,
+  time,
+  pending = false,
+}: {
+  text: string;
+  time?: string;
+  /** True for an optimistic (`local`) message not yet echoed by the server — dims the bubble and shows a
+   *  "sending…" indicator until the durable row lands and replaces it. */
+  pending?: boolean;
+}) {
   return (
     <div className="group anim-fadeUp flex flex-col items-end gap-1">
       <div
-        className="max-w-[92%] [overflow-wrap:anywhere] px-[13px] py-2 text-text"
+        className="max-w-[92%] [overflow-wrap:anywhere] px-[13px] py-2 text-text transition-opacity"
         style={{
           background: "var(--accent-soft)",
           border: "1px solid var(--accent-line)",
           borderRadius: "13px 13px 4px 13px",
+          opacity: pending ? 0.6 : 1,
         }}
       >
         <Markdown>{text}</Markdown>
       </div>
-      <MessageTime iso={time} tone="user" align="right" />
+      {pending ? (
+        <span className="flex select-none items-center gap-1 pr-0.5 font-mono text-[9.5px] text-faint">
+          <Loader2 size={9} className="animate-spin" />
+          sending…
+        </span>
+      ) : (
+        <MessageTime iso={time} tone="user" align="right" />
+      )}
     </div>
   );
 }
@@ -359,8 +377,14 @@ export function CompactionSummaryPill({
  * click to expand the full body (reset notices run several sentences). NOT an operator or Atlas bubble.
  */
 export function SystemNoticeRow({ message }: { message: JobMessage }) {
+  return <SystemNoticeView text={message.text ?? ""} />;
+}
+
+/** Presentational core of {@link SystemNoticeRow} — takes raw `text` so a parsed `<system_notice>` chunk
+ *  (from the prompt block) renders identically to a durable notice message. */
+export function SystemNoticeView({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
-  const tone = toneOf(message.text ?? "");
+  const tone = toneOf(text);
   return (
     <div
       className="anim-fadeUp flex flex-col self-stretch rounded-md border"
@@ -382,7 +406,7 @@ export function SystemNoticeRow({ message }: { message: JobMessage }) {
         <span className="shrink-0 uppercase tracking-wide text-faint">
           system
         </span>
-        <span className="min-w-0 flex-1 truncate">{message.text}</span>
+        <span className="min-w-0 flex-1 truncate">{text}</span>
         <ChevronRight
           size={11}
           className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
@@ -393,7 +417,7 @@ export function SystemNoticeRow({ message }: { message: JobMessage }) {
           className="border-t px-3.5 py-2.5 text-[12px]"
           style={{ borderColor: "var(--hair)" }}
         >
-          <Markdown>{message.text}</Markdown>
+          <Markdown>{text}</Markdown>
         </div>
       ) : null}
     </div>
@@ -420,10 +444,25 @@ function reminderLabel(kind: string | undefined): string {
  * with the user bubble that follows it in the transcript); click to expand the exact injected text.
  */
 export function SystemReminderChip({ message }: { message: JobMessage }) {
-  const [open, setOpen] = useState(false);
-  const label = reminderLabel(
-    message.meta?.reminderKind as string | undefined,
+  return (
+    <SystemReminderView
+      text={message.text ?? ""}
+      reminderKind={message.meta?.reminderKind as string | undefined}
+    />
   );
+}
+
+/** Presentational core of {@link SystemReminderChip} — takes raw `text` + `reminderKind` so a parsed
+ *  `<system_reminder source="…">` chunk (from the prompt block) renders identically to a durable one. */
+export function SystemReminderView({
+  text,
+  reminderKind,
+}: {
+  text: string;
+  reminderKind?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = reminderLabel(reminderKind);
   return (
     <div className="anim-fadeUp flex flex-col items-end gap-1 self-stretch">
       <button
@@ -450,7 +489,65 @@ export function SystemReminderChip({ message }: { message: JobMessage }) {
             background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
           }}
         >
-          <Markdown>{message.text}</Markdown>
+          <Markdown>{text}</Markdown>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A parsed `<untrusted source="…" severity="…">` chunk — external, untrusted data that was folded into a
+ * turn (webhook payloads, fetched content). No durable-message equivalent exists, so this is the prompt
+ * block's own pill: a muted, warning-tinted disclosure labeled `untrusted · {source}`.
+ */
+export function UntrustedBlock({
+  body,
+  source,
+  severity,
+}: {
+  body: string;
+  source?: string;
+  severity?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = source ? `untrusted · ${source}` : "untrusted";
+  return (
+    <div
+      className="anim-fadeUp flex flex-col self-stretch rounded-md border"
+      style={{
+        borderColor: "color-mix(in srgb, var(--amber) 34%, transparent)",
+        background: "color-mix(in srgb, var(--amber) 10%, transparent)",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex items-center gap-2.5 px-3.5 py-1.5 text-left font-mono text-[10px] text-dim"
+      >
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{ background: "var(--amber)" }}
+        />
+        <span className="shrink-0 uppercase tracking-wide text-faint">
+          {label}
+        </span>
+        {severity ? (
+          <span className="shrink-0 text-faint">· {severity}</span>
+        ) : null}
+        <span className="min-w-0 flex-1 truncate">{body}</span>
+        <ChevronRight
+          size={11}
+          className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+        />
+      </button>
+      {open ? (
+        <div
+          className="border-t px-3.5 py-2.5 text-[12px]"
+          style={{ borderColor: "var(--hair)" }}
+        >
+          <Markdown>{body}</Markdown>
         </div>
       ) : null}
     </div>

@@ -813,6 +813,38 @@ export class BrainStoreService {
   }
 
   /**
+   * Withdraw a still-open file-upload request ATOMICALLY and IDEMPOTENTLY — the file-card mirror of
+   * {@link withdrawQuestion}: a conditional update that only fires `WHERE the request is still open` (not
+   * yet uploaded, not already withdrawn), so it can't race the operator's upload — only one of upload /
+   * withdraw wins. The winner stamps `withdrawnAt` (+ optional `withdrawnReason`). Unlike questions there is
+   * NO counter to decrement (file requests are per-card, ungated). Returns `{ withdrawn:true }` for the
+   * winner, `{ withdrawn:false }` when the card is missing, already provided, or already withdrawn.
+   */
+  async withdrawFileRequest(
+    jobId: string,
+    requestId: string,
+    reason?: string,
+  ): Promise<{ withdrawn: boolean }> {
+    const patch = JSON.stringify({
+      withdrawnAt: new Date().toISOString(),
+      ...(reason ? { withdrawnReason: reason } : {}),
+    });
+    const res = await this.messages
+      .createQueryBuilder()
+      .update(MessageEntity)
+      .set({ card: () => 'card || :patch::jsonb' })
+      .where('job_id = :jobId', { jobId })
+      .andWhere('ts = :requestId', { requestId })
+      .andWhere("kind = 'card'")
+      .andWhere("card ->> 'type' = 'file_request_card'")
+      .andWhere("card ->> 'provided_at' IS NULL")
+      .andWhere("card ->> 'withdrawnAt' IS NULL")
+      .setParameter('patch', patch)
+      .execute();
+    return { withdrawn: (res.affected ?? 0) === 1 };
+  }
+
+  /**
    * Boot reconciliation: file cards the operator PROVIDED (contents stored + granted) but whose masked
    * confirmation never reached the brain (`delivered_at` null) because the host died mid-delivery. The
    * startup sweep re-delivers each (at-least-once). Contents are not returned (never stored on the card).

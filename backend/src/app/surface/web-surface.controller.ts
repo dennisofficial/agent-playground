@@ -1059,7 +1059,9 @@ export class WebSurfaceController {
       throw new BadRequestException('no such file request on this thread');
     }
     // Per-card gate (same shape as answer-question): a delivered card is stale; an already-provided card is
-    // an idempotent no-op (double submit — a delivery turn is in flight / queued).
+    // an idempotent no-op (double submit — a delivery turn is in flight / queued); a withdrawn card was
+    // retracted by the brain, so refuse the upload rather than write a secret to a path it abandoned.
+    if (payload.withdrawnAt) return { ok: false, ts: '' };
     if (payload.delivered_at) return { ok: false, ts: '' };
     if (payload.provided_at != null) return { ok: true, ts: '' };
     // Write the contents to the ENCRYPTED store under a repo-scoped key + grant it to the destination path.

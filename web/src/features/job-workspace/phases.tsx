@@ -6,6 +6,13 @@ import type { JobMessage } from "@/lib/api/job-api";
 import { useLiveTurn, type LiveBlock } from "@/lib/api/job-stream";
 import { durableSubBlocks, type SubBlock } from "./subagents";
 import { Markdown } from "./markdown";
+import { parseTurnChunks, type TurnSegment } from "./turn-chunks";
+import {
+  SystemNoticeView,
+  SystemReminderView,
+  UntrustedBlock,
+  UserBubble,
+} from "./bubbles";
 
 /**
  * A build PHASE (a driver batch) rides the shared transcript spine on a `phase:<anchorStepId>` lane and
@@ -161,11 +168,26 @@ export function BuildInstruction({ text }: { text: string }) {
 export function AgentPromptBlock({
   text,
   defaultOpen = true,
+  isMain = false,
 }: {
   text: string;
   defaultOpen?: boolean;
+  /** True on the brain's Main lane, where the operator's own `UserBubble` already renders the `<user>`
+   *  chunk — so we drop it here to avoid showing the same message twice. */
+  isMain?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+
+  // Parse the serialized turn into structured chunks, then drop the `<user>` chunk on Main (the operator
+  // bubble above already shows it). What remains is the "invisible folded context" the disclosure exists
+  // to reveal — plus a raw-markdown fallback for anything we can't parse.
+  const segments = parseTurnChunks(text).filter(
+    (seg) => !(isMain && seg.kind === "user"),
+  );
+
+  // Nothing left to show (the common Main case: a pure `<user>` prompt) — render no empty disclosure.
+  if (segments.length === 0) return null;
+
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
@@ -197,12 +219,39 @@ export function AgentPromptBlock({
         </span>
       </button>
       {open ? (
-        <div className="px-3.5 py-3">
-          <Markdown>{text}</Markdown>
+        <div className="flex flex-col gap-2 px-3.5 py-3">
+          {segments.map((seg, i) => (
+            <PromptSegment key={i} seg={seg} />
+          ))}
         </div>
       ) : null}
     </div>
   );
+}
+
+/** Render one parsed turn chunk with its pretty component; `raw` (and any unrecognized) falls back to
+ *  markdown — we only ever show raw when there's no prettier rendering for that content. */
+function PromptSegment({ seg }: { seg: TurnSegment }) {
+  switch (seg.kind) {
+    case "system_notice":
+      return <SystemNoticeView text={seg.body} />;
+    case "system_reminder":
+      // The reminder sub-kind is carried in the `source` attribute (see the backend `renderAttrs`).
+      return <SystemReminderView text={seg.body} reminderKind={seg.attrs.source} />;
+    case "untrusted":
+      return (
+        <UntrustedBlock
+          body={seg.body}
+          source={seg.attrs.source}
+          severity={seg.attrs.severity}
+        />
+      );
+    case "user":
+      // Only reached on sub-lanes (Main drops it). No operator bubble there, so render the message.
+      return <UserBubble text={seg.body} time={seg.attrs.at} />;
+    default:
+      return <Markdown>{seg.body}</Markdown>;
+  }
 }
 
 /** Durable transcript blocks for one phase (reuses the subagent block mapper — same shape). */

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CheckCircle2, FileUp } from "lucide-react";
+import { CheckCircle2, FileUp, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
 import { useProvideFile } from "@/lib/api/job-queries";
@@ -54,6 +54,25 @@ export function FileCardView({
     setContent(null); // never keep file contents in component state after sending
     setFilename("");
     if (inputRef.current) inputRef.current.value = "";
+  }
+
+  if (card.withdrawnAt != null && card.provided_at == null) {
+    return (
+      <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <XCircle size={15} className="text-faint" />
+          <div className="min-w-0">
+            <p className="truncate font-mono text-[12.5px] text-dim line-through">
+              {card.path}
+            </p>
+            <p className="text-[12px] text-faint">
+              Withdrawn
+              {card.withdrawnReason ? ` — ${card.withdrawnReason}` : ""}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (card.provided_at != null) {

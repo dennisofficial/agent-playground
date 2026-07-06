@@ -473,6 +473,7 @@ function buildLogItems(
               key={message.ts}
               text={message.text}
               defaultOpen={!isMain}
+              isMain={isMain}
             />
           ),
         });
@@ -617,6 +618,7 @@ function buildLogItems(
             key={message.ts}
             text={message.text}
             time={message.postedAt}
+            pending={message.local}
           />,
         );
         break;

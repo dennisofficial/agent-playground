@@ -3037,6 +3037,7 @@ export class AgentSessionManager
     const intake = {
       request_secret: this.buildRequestSecretTool(stimulus),
       request_file: this.buildRequestFileTool(stimulus),
+      withdraw_file_request: this.buildWithdrawFileRequestTool(stimulus),
       write_worktree_config: this.buildWriteWorktreeConfigTool(stimulus),
       derive_secret: this.buildDeriveSecretTool(stimulus),
       reset_sandbox: this.buildResetSandboxTool(stimulus),
@@ -3227,6 +3228,41 @@ export class AgentSessionManager
           `File-upload card posted for "${path}". The operator uploads the file through a secure field; ` +
           'its contents go straight to encrypted storage and you will only see a masked confirmation. ' +
           'Never ask them to paste file contents in chat. Ensure the destination is gitignored.',
+      };
+    };
+  }
+
+  /**
+   * `withdraw_file_request({ requestId, reason? })` — retract a still-open `request_file` card (wrong path,
+   * no longer needed). The file-card mirror of `withdraw_question`: race-safe + idempotent (if the operator
+   * already uploaded, the withdraw is a no-op and you should work from the delivered file, not re-request).
+   * A withdrawn card greys out (no file picker) and a racing upload for it becomes a no-op. org/repo/job
+   * come from the closure (never tool args) — tenant safety.
+   */
+  private buildWithdrawFileRequestTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const requestId = String(args['requestId'] ?? '').trim();
+      if (!requestId) return { ok: false, reason: 'requestId is required' };
+      const reason = String(args['reason'] ?? '').trim();
+      const res = await this.store.withdrawFileRequest(
+        stimulus.jobId,
+        requestId,
+        reason || undefined,
+      );
+      if (!res.withdrawn) {
+        return {
+          ok: false,
+          reason:
+            'That file request could not be withdrawn — it was already uploaded, already withdrawn, or not ' +
+            'found. If the operator already uploaded it, work from that file instead of re-requesting.',
+        };
+      }
+      return {
+        ok: true,
+        requestId,
+        message:
+          'File request withdrawn — the operator no longer sees it as awaiting an upload. Post a corrected ' +
+          'request_file if you still need a file.',
       };
     };
   }

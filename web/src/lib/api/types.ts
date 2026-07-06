@@ -162,6 +162,9 @@ export interface WebFileRequestCard {
   filename?: string;
   provided_at?: string;
   delivered_at?: string;
+  /** Set when the brain retracted the request via `withdraw_file_request` — greys the card, drops the picker. */
+  withdrawnAt?: string;
+  withdrawnReason?: string;
 }
 
 /** One quoted selection + note in a sent review-comment bundle. `file` is the display label (e.g. the

@@ -32,7 +32,7 @@ export interface WebFileRequestCard {
   /**
    * ISO-8601 time the operator uploaded the file (its contents went straight to the encrypted store + a
    * grant). Its presence is the durable "provided" state; the CONTENTS are never stored here. Lifecycle:
-   * `requested → provided (provided_at) → delivered (delivered_at)`.
+   * `requested → (provided (provided_at) → delivered (delivered_at) | withdrawn (withdrawnAt))`.
    */
   provided_at?: string;
   /**
@@ -41,6 +41,15 @@ export interface WebFileRequestCard {
    * (at-least-once); the per-card gate needs no thread pointer.
    */
   delivered_at?: string;
+  /**
+   * ISO-8601 time the brain WITHDREW this request via `withdraw_file_request` (wrong path / no longer
+   * needed). Terminal + mutually exclusive with `provided_at` (the withdraw only fires while the request is
+   * still open — see `BrainStore.withdrawFileRequest`). Its presence greys the card out (no file picker) and
+   * makes a racing upload a no-op. The CONTENTS were never involved.
+   */
+  withdrawnAt?: string;
+  /** The brain's optional one-line rationale for the withdrawal (shown on the greyed card). */
+  withdrawnReason?: string;
 }
 
 /** Build a `WebFileRequestCard` from the brain's `request_file` args. */

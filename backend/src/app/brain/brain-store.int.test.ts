@@ -447,6 +447,62 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await openCount(dataSource, jobId)).toBe(0); // withdrawn q-2 no longer counts as open
   }, 30_000);
 
+  it('the file-request gate: withdrawFileRequest is atomic/idempotent and blocks a provided card', async () => {
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
+         ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, 'brainstore-file-it', 'File Repo', 'https://github.com/acme/file.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+      [TEAM_ID],
+    );
+    const repoId = repoRow.id;
+    const [thread]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
+         VALUES ($1, $2, 'chat', 'file gate') RETURNING id`,
+      [TEAM_ID, repoId],
+    );
+    const jobId = thread.id;
+    const mkFile = (id: string, path: string) => ({
+      requestId: id,
+      card: {
+        type: 'file_request_card' as const,
+        jobId,
+        requestId: id,
+        path,
+        description: `Upload ${path}`,
+      },
+    });
+
+    // open f-1 → card row persists (per-card, no counter).
+    expect(await store.openFileRequest(jobId, mkFile('f-1', '.env.keys'))).toEqual({ ok: true });
+    expect((await store.getFileCard(jobId, 'f-1'))?.path).toBe('.env.keys');
+
+    // WITHDRAW f-1 → terminal; stamps withdrawnAt + reason; drops out of the open pipeline.
+    expect(await store.withdrawFileRequest(jobId, 'f-1', 'wrong path')).toEqual({ withdrawn: true });
+    expect((await store.getFileCard(jobId, 'f-1'))?.withdrawnAt).toBeTruthy();
+    expect((await store.getFileCard(jobId, 'f-1'))?.withdrawnReason).toBe('wrong path');
+
+    // Idempotent: a second withdraw is a no-op.
+    expect(await store.withdrawFileRequest(jobId, 'f-1', 'again')).toEqual({ withdrawn: false });
+
+    // A PROVIDED card cannot be withdrawn (the operator already uploaded → withdraw must not fire).
+    expect(await store.openFileRequest(jobId, mkFile('f-2', 'infra/prod/.env.keys'))).toEqual({ ok: true });
+    await store.markFileProvided(jobId, 'f-2', 'prod.env.keys');
+    expect(await store.withdrawFileRequest(jobId, 'f-2', 'too late')).toEqual({ withdrawn: false });
+    expect((await store.getFileCard(jobId, 'f-2'))?.withdrawnAt).toBeFalsy();
+
+    // A withdrawn (unprovided) card is not a boot-redelivery candidate.
+    expect(
+      (await store.findUndeliveredProvidedFiles()).some((f) => f.requestId === 'f-1'),
+    ).toBe(false);
+  }, 30_000);
+
   it('hasRecentSystemOperatorNotice matches an identical recent notice, and only that (dedup guard)', async () => {
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
