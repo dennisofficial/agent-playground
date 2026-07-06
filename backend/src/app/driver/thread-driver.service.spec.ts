@@ -259,6 +259,11 @@ function makeStore(state: StoreState): {
       const s = state.threads.find((x) => x.id === threadId);
       return (s as { terminal_record?: ThreadTerminalRecord | null })?.terminal_record ?? null;
     }),
+    // ── Leg rotation (context-rot mitigation) — no prior rotation + unknown occupancy in these tests, so the
+    //    driver folds no seed and never rotates. `completeLegRotation` is present for the type only. ──
+    getPendingLegSeed: vi.fn(async (_anchorStepId: string) => null),
+    latestStepOccupancy: vi.fn(async (_stepId: string) => null),
+    completeLegRotation: vi.fn(async () => null),
     threadJobId: vi.fn(async (threadId: string) => {
       const s = state.threads.find((x) => x.id === threadId);
       return s?.jobId ?? null;
@@ -3009,5 +3014,189 @@ describe('ThreadDriver — master-review bridged task list', () => {
     expect(await tools.task_create({})).toMatchObject({ ok: false });
     expect(await tools.task_update({})).toMatchObject({ ok: false });
     expect(h.taskEvents).toHaveLength(0);
+  });
+});
+
+// ── Leg rotation (context-rot mitigation): fat builder session → handoff → fresh Leg continues ──────
+
+describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
+  /** Stateful Leg-rotation store overlay on the default fake: `completeLegRotation` stashes the seed (which
+   *  `getPendingLegSeed` then returns so the fresh Leg's task carries it) and reports the leg transition. */
+  function wireRotationStore(h: ReturnType<typeof assemble>): { rotations: () => number } {
+    let seed: string | null = null;
+    let rotations = 0;
+    (h.store.getPendingLegSeed as ReturnType<typeof vi.fn>).mockImplementation(async () => seed);
+    (h.store.completeLegRotation as ReturnType<typeof vi.fn>).mockImplementation(
+      async (inp: { seed: string }) => {
+        rotations += 1;
+        seed = inp.seed;
+        return { fromLeg: 1, toLeg: 2, abandonedSessionId: 'sess-fat' };
+      },
+    );
+    return { rotations: () => rotations };
+  }
+
+  function mkResult(input: { jobId: string; stepId?: string | null; mode: string }, report: string) {
+    return {
+      report,
+      session: {
+        id: 'sess',
+        jobId: input.jobId,
+        stepId: input.stepId ?? null,
+        engine: 'claude' as const,
+        mode: input.mode as 'plan' | 'execute' | 'review',
+        branch: 'b',
+        worktreePath: '/wt/b',
+      },
+    };
+  }
+
+  it('rotates when the builder SELF-authors a handoff (record_leg_handoff), then the fresh Leg continues from the seed', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')], // ONE builder thread (single batch)
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+
+    const capturedTasks: string[] = [];
+    let buildLeg = 0;
+    const runTurn = vi.fn(
+      async (input: {
+        mode: string;
+        stepId?: string | null;
+        jobId: string;
+        task: string;
+        steerable?: boolean;
+        toolBridge?: ToolBridgeOptions;
+        onEvent?: (e: { kind: string; [k: string]: unknown }) => void;
+      }) => {
+        // Gate turn (diagnostics done-gate) — report clean and return; NOT a build Leg.
+        if (input.toolBridge?.tools?.['report_verification']) {
+          await input.toolBridge.tools['report_verification']({ passed: true });
+          return mkResult(input, 'gate ok');
+        }
+        capturedTasks.push(input.task);
+        buildLeg += 1;
+        if (buildLeg === 1) {
+          // Leg 1: the batch turn IS steerable (armed), and it exposes the handoff tool. Simulate the context
+          // filling past HARD, then the model self-authoring its handoff and YIELDING (no complete_thread).
+          expect(input.steerable).toBe(true);
+          expect(input.toolBridge?.tools?.['record_leg_handoff']).toBeTypeOf('function');
+          input.onEvent?.({ kind: 'usage', contextTokens: 210_000, contextLimit: 1_000_000 });
+          const ack = await input.toolBridge!.tools!['record_leg_handoff']!({
+            handoff:
+              'Scope: edited src/foo.ts (WIP).\nFAILED: `pnpm build` → TS2345 assign string to number.\nNext: finish the return type.',
+          });
+          expect(ack).toMatchObject({ ok: true }); // the tool tells the model to STOP
+          return mkResult(input, 'leg 1 handed off');
+        }
+        // Leg 2 (fresh session, seeded): finish the batch.
+        await input.toolBridge?.tools?.['complete_thread']?.({ summary: 'finished on the fresh Leg' });
+        return mkResult(input, 'leg 2 done');
+      },
+    );
+    const turn = { runTurn, canReattach: () => false, canSteer: () => false } as unknown as TurnRunnerService;
+
+    const h = assemble(state, { turn });
+    const rot = wireRotationStore(h);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // Exactly one rotation happened, and TWO build Legs ran (Leg 1 handed off, Leg 2 finished).
+    expect(rot.rotations()).toBe(1);
+    expect(buildLeg).toBe(2);
+    // The fresh Leg's task carried the rotation seed — the preamble wrapper AND the prior Leg's handoff (with
+    // its verbatim FAILED-attempt error, which must survive the boundary), folded ahead of the base task.
+    const freshTask = capturedTasks[1];
+    expect(freshTask).toContain('<session_rotated>');
+    expect(freshTask).toContain('FAILED: `pnpm build` → TS2345');
+    expect(freshTask).toContain('\n\n---\n\n'); // seed folded ahead of the original batch task
+    // The thread + job finished cleanly on the fresh Leg.
+    expect(state.threads[0].status).toBe('done');
+    expect(state.job.status).toBe('done');
+  });
+
+  it('SAFETY NET: a fat Leg that ignores the nudges (no self-handoff) rotates via the read-only fallback turn', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+
+    const capturedTasks: string[] = [];
+    const modes: string[] = [];
+    let buildLeg = 0;
+    const runTurn = vi.fn(
+      async (input: {
+        mode: string;
+        stepId?: string | null;
+        jobId: string;
+        task: string;
+        toolBridge?: ToolBridgeOptions;
+        onEvent?: (e: { kind: string; [k: string]: unknown }) => void;
+      }) => {
+        modes.push(input.mode);
+        if (input.toolBridge?.tools?.['report_verification']) {
+          await input.toolBridge.tools['report_verification']({ passed: true });
+          return mkResult(input, 'gate ok');
+        }
+        // The read-only FALLBACK handoff turn: mode 'review', NO tool bridge — it just returns the handoff text.
+        if (input.mode === 'review' && !input.toolBridge) {
+          return mkResult(input, 'FALLBACK HANDOFF: src/foo.ts WIP; next: finish it.');
+        }
+        capturedTasks.push(input.task);
+        buildLeg += 1;
+        if (buildLeg === 1) {
+          // Leg 1 runs fat past HARD but NEVER calls record_leg_handoff and NEVER complete_thread → the
+          // post-turn safety net must author the handoff itself and rotate.
+          input.onEvent?.({ kind: 'usage', contextTokens: 205_000, contextLimit: 1_000_000 });
+          return mkResult(input, 'leg 1 ran fat, no handoff');
+        }
+        await input.toolBridge?.tools?.['complete_thread']?.({ summary: 'finished on the fresh Leg' });
+        return mkResult(input, 'leg 2 done');
+      },
+    );
+    const turn = { runTurn, canReattach: () => false, canSteer: () => false } as unknown as TurnRunnerService;
+
+    const h = assemble(state, { turn });
+    const rot = wireRotationStore(h);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // The fallback (mode 'review', no bridge) ran, the rotation completed, and the fresh Leg carried the seed.
+    expect(modes).toContain('review');
+    expect(rot.rotations()).toBe(1);
+    expect(buildLeg).toBe(2);
+    expect(capturedTasks[1]).toContain('<session_rotated>');
+    expect(capturedTasks[1]).toContain('FALLBACK HANDOFF');
+    expect(state.job.status).toBe('done');
+  });
+
+  it('does NOT rotate a normal Leg that never crosses the threshold (single turn, no fallback)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state); // the DEFAULT build turn: asserts complete_thread, emits no usage events
+    const rot = wireRotationStore(h);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(rot.rotations()).toBe(0);
+    expect(h.store.completeLegRotation).not.toHaveBeenCalled();
+    expect(state.job.status).toBe('done');
   });
 });

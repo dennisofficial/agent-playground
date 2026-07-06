@@ -63,9 +63,10 @@ export class ActiveTurnEntity extends TimestampedEntity {
 
   /** Which caller owns the turn — selects how a re-attach rebuilds the harness + tool context. A
    *  'compaction' turn is the brain's session-summarization turn; it re-attaches to `completeCompaction`
-   *  (reseed + pill), NOT the transcript-persist path — `reattachOwnedTurns` dispatches it by kind. */
+   *  (reseed + pill), NOT the transcript-persist path — `reattachOwnedTurns` dispatches it by kind. A
+   *  'rotation' turn is the builder's Leg-rotation fallback handoff turn (the analog of 'compaction'). */
   @Column({ type: 'text' })
-  kind!: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction';
+  kind!: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction' | 'rotation';
 
   /** The sandbox container running the ephemeral engine process (for liveness/teardown). */
   @Column({ type: 'text', nullable: true })

@@ -55,6 +55,13 @@ export interface RunTurnInput {
    * pass this so they ride the shared transcript spine (a full transcript, not coarse text/tool/result).
    */
   richStream?: boolean;
+  /**
+   * Opt into MID-TURN STEERING: the in-container entrypoint runs the SDK in streaming-input mode and
+   * subscribes to `turn:{T}:input`, so the host can inject a message into the RUNNING turn (`priority:'now'`)
+   * via {@link TurnRunnerService.steer}. The brain always sets this; Leg-rotation sets it on Claude builder
+   * batch turns so the SOFT/HARD occupancy nudges land mid-flight (NEVER on Codex turns). Omit elsewhere.
+   */
+  steerable?: boolean;
   /** Progress callback. */
   onEvent?: (e: EngineEvent) => void;
   signal?: AbortSignal;
@@ -188,6 +195,8 @@ export class TurnRunnerService {
         ...(input.model ? { model: input.model } : {}),
         ...(input.modelReasoningEffort ? { modelReasoningEffort: input.modelReasoningEffort } : {}),
         ...(input.richStream ? { richStream: true } : {}),
+        // Mid-turn steering (Leg-rotation nudges / brain operator messages) — streaming-input mode.
+        ...(input.steerable ? { steerable: true } : {}),
         // Host-side tool bridge (e.g. the orchestrate build turn's `request_operator_input`).
         ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
         // Register the turn (Redis transport only) so a fresh backend can RE-ATTACH it after a restart.
@@ -255,6 +264,26 @@ export class TurnRunnerService {
    */
   canReattach(): boolean {
     return typeof this.engine.reattach === 'function';
+  }
+
+  /**
+   * Whether the bound engine runner can STEER a running (`steerable`) turn (Redis transport only). The pipe
+   * runner has no mid-turn steering, so Leg-rotation callers skip the nudge and fall back to the post-turn
+   * safety-net rotation.
+   */
+  canSteer(): boolean {
+    return typeof this.engine.steer === 'function';
+  }
+
+  /**
+   * STEER a running (`steerable`) turn — publish `text` to `turn:{turnId}:input` so the in-container SDK
+   * session injects it mid-flight (`priority:'now'`). Used by Leg-rotation to nudge a fat builder toward
+   * authoring its handoff. `id` correlates the engine's `input_ack`; a fresh uuid is fine for host-originated
+   * nudges (they carry no delivery-tracking obligation). No-op if the bound runner can't steer.
+   */
+  async steer(turnId: string, id: string, text: string): Promise<void> {
+    if (!this.engine.steer) return;
+    await this.engine.steer(turnId, id, text);
   }
 
   /**

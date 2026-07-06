@@ -56,6 +56,25 @@ export interface OccupancyEvent {
 }
 
 /**
+ * The mutable per-Leg run state the driver threads through one build turn: filled DURING the turn by the live
+ * watch (`reached`, `peakTokens`) and the `record_leg_handoff` host tool (`handoff`), then read AFTER the turn
+ * to decide whether — and how — to rotate. One instance per Leg (reset between Legs of the same batch).
+ */
+export interface LegRotationRunState {
+  /** The handoff the builder SELF-authored via `record_leg_handoff`, or null if it never called it. */
+  handoff: string | null;
+  /** The highest occupancy threshold the live watch latched this Leg — drives the post-turn safety-net decision. */
+  reached: LegRotationPhase;
+  /** The peak main-agent context occupancy observed this Leg (persisted as the closing Leg's peak). */
+  peakTokens: number | null;
+}
+
+/** A fresh, empty {@link LegRotationRunState} (no handoff, nothing latched). */
+export function freshLegRotationState(): LegRotationRunState {
+  return { handoff: null, reached: 'none', peakTokens: null };
+}
+
+/**
  * Resolve the rotation thresholds, honouring `ROTATION_SOFT_TOKENS` / `ROTATION_HARD_TOKENS` env overrides
  * (à la `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`). Invalid / non-positive / soft≥hard values fall back to the
  * defaults so a fat-fingered override can never disable the safety net.

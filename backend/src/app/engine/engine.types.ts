@@ -467,7 +467,7 @@ export interface TurnMeta {
   channel: string;
   /** Transcript lane: 'main' (brain) | 'thread:<threadId>' (a build thread) | 'codex-review:<jobId>'. */
   lane: string;
-  kind: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction';
+  kind: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction' | 'rotation';
   /** Per-kind params needed to rebuild the turn on re-attach (author, prompt, route, timeouts, …). */
   ctx?: Record<string, unknown>;
 }
