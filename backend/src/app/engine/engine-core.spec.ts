@@ -711,7 +711,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 });
 
 describe('EngineCore — Codex mode/home/credential wiring', () => {
-  it('execute mode: workspace-write sandbox, subscription auth.json home, NO apiKey on the client', async () => {
+  it('execute mode: danger-full-access sandbox, subscription auth.json home, NO apiKey on the client', async () => {
     const { sdk, ctorCalls, threadCalls } = fakeCodexSdk();
     const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     const res = await core.run({
@@ -728,13 +728,13 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
     const ctorEnv = ctorCalls[0].env as Record<string, string>;
     expect(ctorEnv.CODEX_HOME).toContain(HOME_ROOT);
     expect(ctorEnv.CODEX_HOME).not.toContain('/.codex/');
-    expect(threadCalls[0].sandboxMode).toBe('workspace-write');
+    expect(threadCalls[0].sandboxMode).toBe('danger-full-access');
     expect(res.result).toBe('codex done');
     expect(res.sessionId).toBe('thread-1');
     expect(res.usage).toMatchObject({ inputTokens: 5, outputTokens: 3 });
   });
 
-  it('plan mode: read-only sandbox', async () => {
+  it('plan mode: danger-full-access sandbox (network for doc-checking; no-edit is prompt-enforced)', async () => {
     const { sdk, threadCalls } = fakeCodexSdk();
     const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     await core.run({
@@ -746,7 +746,7 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
       mode: 'plan',
       auth: { secret: VALID_CODEX_AUTH },
     });
-    expect(threadCalls[0].sandboxMode).toBe('read-only');
+    expect(threadCalls[0].sandboxMode).toBe('danger-full-access');
   });
 
   it('richStream: a file_change item derives a real structuredPatch from the git worktree (Codex reports no diff content itself)', async () => {

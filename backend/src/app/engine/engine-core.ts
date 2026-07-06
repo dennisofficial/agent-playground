@@ -380,22 +380,6 @@ function isInsideRoot(path: string, root: string): boolean {
   return p === r || p.startsWith(r.endsWith('/') ? r : `${r}/`);
 }
 
-/** The repo's SHARED git dir for `cwd` — for a linked worktree `.git` lives OUTSIDE cwd, so Codex's
- * workspace-write sandbox must be granted it explicitly or commit/push fail. undefined off-repo. */
-function gitCommonDir(cwd: string): string | undefined {
-  try {
-    return (
-      execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-        cwd,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim() || undefined
-    );
-  } catch {
-    return undefined;
-  }
-}
-
 export class EngineCore {
   // One Codex client per (auth, sandbox) — each funds its own runs from its own home.
   private readonly codexClients = new Map<string, Codex>();
@@ -875,21 +859,22 @@ export class EngineCore {
   private codexThreadOptions(
     cwd: string,
     model: string | undefined,
-    readOnly: boolean,
     reasoningEffort?: CodexReasoningEffort,
   ): ThreadOptions {
-    // Grant write access to the shared git dir (outside cwd in a linked worktree) so an execute turn
-    // can commit/push. Not needed on a read-only turn.
-    const gitDir = readOnly ? undefined : gitCommonDir(cwd);
     return {
       workingDirectory: cwd,
-      // Codex's read-only sandbox is how BOTH read-only modes (plan, review) are enforced; execute
-      // gets workspace-write (writes confined to the worktree).
-      sandboxMode: readOnly ? 'read-only' : 'workspace-write',
+      // ALWAYS `danger-full-access` (NOT the default `workspace-write`, and NOT `read-only` even for the
+      // plan-review turn). This is a disposable per-job sandbox, and every Codex turn needs the network:
+      // execute turns bind a port for the live smoke + reach Postgres + `git push`, and read-only reviews
+      // need to fetch live docs / verify library versions. `workspace-write` and `read-only` both FENCE the
+      // network by default (→ `listen EPERM` / DB `EPERM` / DNS failures). The "don't edit files" contract
+      // for review turns is carried by the PROMPT, not the sandbox — Codex has no `canUseTool` write guard
+      // (unlike the Claude path), so the plan-review persona (`META_PLAN_REVIEW`) states it explicitly. This
+      // matches the Claude builders, which already have full network + boot services + push.
+      sandboxMode: 'danger-full-access',
       approvalPolicy: 'never',
       skipGitRepoCheck: true,
       webSearchMode: 'live',
-      ...(gitDir ? { additionalDirectories: [gitDir] } : {}),
       ...(model ? { model } : {}),
       // Subscription accounts REJECT an explicit `model` but ACCEPT this knob (verified by spike) — the
       // plan-review turn pins `'xhigh'` so the reviewer reasons hard.
@@ -902,13 +887,11 @@ export class EngineCore {
     bridgeTools?: string[],
     extraMcpServers?: CodexExtraMcpServers,
   ): Promise<EngineRunResult> {
-    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream } =
-      args;
+    const { task, cwd, systemPrompt, sandboxKey, sessionId, onEvent, signal, richStream } = args;
     const auth = this.resolveAuth('codex', args.auth);
     // Pass through ONLY an explicit caller override (none today); otherwise leave unset so
     // `codexThreadOptions` omits `model` and the subscription account's default is used (see note above).
     const model = args.model;
-    const readOnly = mode !== 'execute';
 
     // Host tool bridge (execute turns only): render an `[mcp_servers.atlasbridge]` block into config.toml
     // pointing codex at the in-sandbox MCP server, which does the Redis round-trip to the host. The server
@@ -924,7 +907,7 @@ export class EngineCore {
         : undefined;
 
     const client = this.getCodex(sandboxKey, auth, bridge, extraMcpServers);
-    const opts = this.codexThreadOptions(cwd, model, readOnly, args.modelReasoningEffort);
+    const opts = this.codexThreadOptions(cwd, model, args.modelReasoningEffort);
     const thread = sessionId ? client.resumeThread(sessionId, opts) : client.startThread(opts);
 
     // Codex has no systemPrompt option — seed the persona as a first-turn preamble. Resumes already
