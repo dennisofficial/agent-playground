@@ -35,7 +35,7 @@ import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import type { EventStimulus } from '../domain';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
-import type { CredentialResolver, WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
+import type { CredentialResolver, WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
 import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
@@ -136,10 +136,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
   const mockSecretStore = {
     write: vi.fn().mockResolvedValue(undefined),
-    grant: vi.fn().mockResolvedValue(undefined),
-    listGrants: vi.fn().mockResolvedValue([]),
+    list: vi.fn().mockResolvedValue([]),
+    listForRepo: vi.fn().mockResolvedValue([]),
     read: vi.fn().mockResolvedValue(null),
-  } as unknown as WorktreeSecretStore;
+  } as unknown as WorktreeSecretFileStore;
 
   const mockConfigStore = {
     listMounts: vi.fn().mockResolvedValue([]),
@@ -242,8 +242,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     // Secret-store defaults (resetAllMocks wiped the resolved values) — no existing value by default.
     (mockSecretStore.write as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (mockSecretStore.grant as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (mockSecretStore.listGrants as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockSecretStore.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockSecretStore.listForRepo as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockSecretStore.read as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     // Config-store + git defaults (resetAllMocks wiped the resolved values).
@@ -767,7 +767,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.appendSystemEvent).not.toHaveBeenCalled();
   });
 
-  it('derive_secret stores a value Atlas computed itself — no operator wait, straight to the encrypted store + grant', async () => {
+  it('derive_secret stores a value Atlas computed itself — no operator wait, straight to the encrypted store as a repo secret file', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
     const result = await tools['derive_secret']({
@@ -778,12 +778,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(result).toMatchObject({ ok: true, name: 'STRIPE_WEBHOOK_SECRET', overwritten: false });
-    expect(mockSecretStore.write).toHaveBeenCalledWith(TEAM_ID, 'STRIPE_WEBHOOK_SECRET', 'whsec_abc123');
-    expect(mockSecretStore.grant).toHaveBeenCalledWith(
+    // One write IS the value + the authority: (repo, path) identity, name as the display label.
+    expect(mockSecretStore.write).toHaveBeenCalledWith(
       TEAM_ID,
       PROJECT_ID,
-      'STRIPE_WEBHOOK_SECRET',
       'backend/.env.personal',
+      'whsec_abc123',
+      'STRIPE_WEBHOOK_SECRET',
     );
     // Visible to the operator (name/path only) — never the value.
     expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
@@ -806,7 +807,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain('already exists');
     expect(mockSecretStore.write).not.toHaveBeenCalled();
-    expect(mockSecretStore.grant).not.toHaveBeenCalled();
   });
 
   it('derive_secret allows an EXPLICIT overwrite: true to replace an existing value', async () => {
@@ -822,7 +822,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(result).toMatchObject({ ok: true, overwritten: true });
-    expect(mockSecretStore.write).toHaveBeenCalledWith(TEAM_ID, 'STRIPE_WEBHOOK_SECRET', 'whsec_fresh');
+    expect(mockSecretStore.write).toHaveBeenCalledWith(
+      TEAM_ID,
+      PROJECT_ID,
+      'backend/.env.personal',
+      'whsec_fresh',
+      'STRIPE_WEBHOOK_SECRET',
+    );
   });
 
   it('derive_secret validates name/path/value/description before touching the store', async () => {
@@ -1526,10 +1532,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
       {
         write: async () => undefined,
-        grant: async () => undefined,
-        listGrants: async () => [],
+        list: async () => [],
+        listForRepo: async () => [],
         read: async () => null,
-      } as unknown as WorktreeSecretStore,
+      } as unknown as WorktreeSecretFileStore,
       {
         listMounts: async () => [],
         upsertMount: async () => undefined,
@@ -2226,10 +2232,10 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
       {
         write: async () => undefined,
-        grant: async () => undefined,
-        listGrants: async () => [],
+        list: async () => [],
+        listForRepo: async () => [],
         read: async () => null,
-      } as unknown as WorktreeSecretStore,
+      } as unknown as WorktreeSecretFileStore,
       {
         listMounts: async () => [],
         upsertMount: async () => undefined,

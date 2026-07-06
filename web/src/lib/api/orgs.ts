@@ -120,20 +120,19 @@ export function useSaveCredentials(orgId: string) {
   });
 }
 
-// ── Worktree secrets (named secret files rendered into a thread's sandbox) ─────────────────────────
-// GET returns names + grants only (never values). Writes (secret PUT/DELETE, grant PUT/DELETE) are
-// owner-only server-side. A secret is inert until an owner GRANTS it for a specific repo + path — the
-// grant alone is the authority (worktree config — mounts — is a separate DB record and never
-// carries secrets; see docs/adr/0003-worktree-config-db-not-git.md).
+// ── Worktree secret files (per-repo encrypted files rendered into a thread's sandbox) ──────────────
+// GET returns file refs (repo + path + label) only, never values. Writes (PUT/DELETE /files) are
+// owner-only server-side. One row IS the value + the authority + the render instruction: a file renders
+// only when an owner-created (repo, path) row exists (worktree config — mounts — is a separate DB record
+// and never carries secrets; see docs/adr/0003-worktree-config-db-not-git.md).
 
-export interface WorktreeSecretGrant {
+export interface WorktreeSecretFile {
   repoId: string;
-  name: string;
   path: string;
+  label?: string | null;
 }
 export interface WorktreeSecretsView {
-  names: string[];
-  grants: WorktreeSecretGrant[];
+  files: WorktreeSecretFile[];
 }
 
 export function useWorktreeSecrets(orgId: string) {
@@ -146,45 +145,17 @@ export function useWorktreeSecrets(orgId: string) {
   });
 }
 
-/** Owner-only: create/replace a named secret value. */
-export function useSaveWorktreeSecret(orgId: string) {
+/** Owner-only: create/replace a repo's secret file at a destination path. */
+export function useSaveWorktreeSecretFile(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, value }: { name: string; value: string }) =>
-      webJson<{ ok: boolean }>(
-        `/orgs/${orgId}/worktree-secrets/secrets/${encodeURIComponent(name)}`,
-        {
-          method: "PUT",
-          body: JSON.stringify({ value }),
-        },
-      ),
-    onSuccess: () =>
-      void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
-  });
-}
-
-/** Owner-only: delete a named secret (and its grants). */
-export function useDeleteWorktreeSecret(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (name: string) =>
-      webJson<{ ok: boolean }>(
-        `/orgs/${orgId}/worktree-secrets/secrets/${encodeURIComponent(name)}`,
-        {
-          method: "DELETE",
-        },
-      ),
-    onSuccess: () =>
-      void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
-  });
-}
-
-/** Owner-only: grant a secret to a repo + path (the security control). */
-export function useGrantWorktreeSecret(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: WorktreeSecretGrant) =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/grants`, {
+    mutationFn: (body: {
+      repoId: string;
+      path: string;
+      value: string;
+      label?: string;
+    }) =>
+      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/files`, {
         method: "PUT",
         body: JSON.stringify(body),
       }),
@@ -193,12 +164,12 @@ export function useGrantWorktreeSecret(orgId: string) {
   });
 }
 
-/** Owner-only: revoke a grant. */
-export function useRevokeWorktreeSecret(orgId: string) {
+/** Owner-only: delete a repo's secret file. */
+export function useDeleteWorktreeSecretFile(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: WorktreeSecretGrant) =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/grants`, {
+    mutationFn: (body: { repoId: string; path: string }) =>
+      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/files`, {
         method: "DELETE",
         body: JSON.stringify(body),
       }),

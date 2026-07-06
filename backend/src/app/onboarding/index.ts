@@ -21,8 +21,8 @@ export {
   type CredentialPresence,
 } from './tenant-credential.store';
 export {
-  WorktreeSecretStore,
-  type WorktreeSecretGrant,
+  WorktreeSecretFileStore,
+  type WorktreeSecretFileRef,
 } from './worktree-secret.store';
 export { WorktreeConfigStore } from './worktree-config.store';
 export {

@@ -9,7 +9,7 @@ import { RepoEntity } from './repo.entity';
  * (org_id, repo_id, path) makes `write_worktree_config` an idempotent upsert-by-path: recording the same
  * path again just replaces `mode`, it can never duplicate or clobber an unrelated mount.
  *
- * Mirrors {@link OrgWorktreeSecretGrantEntity} exactly — same ownership model (org+repo scoped,
+ * Mirrors {@link OrgWorktreeSecretFileEntity} exactly — same ownership model (org+repo scoped,
  * cascade-deleted with either), same reasoning for why a repo-controlled file plays no part in
  * authority: the DB row IS the mount, not a request for one.
  */

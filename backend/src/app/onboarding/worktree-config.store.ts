@@ -9,7 +9,7 @@ import { loadLegacyManifestFile } from './legacy-worktree-manifest';
 /**
  * The org+repo-scoped store for a repo's worktree config — cache/auth `mounts` — DB-backed so a
  * `write_worktree_config` call from any thread reaches every OTHER in-flight job's very next hydration
- * instantly, no PR/merge/rebase lag (see docs/adr/0003). Mirrors {@link WorktreeSecretStore}'s
+ * instantly, no PR/merge/rebase lag (see docs/adr/0003). Mirrors {@link WorktreeSecretFileStore}'s
  * find-then-save idiom exactly — this codebase has no `.upsert()`/`.exist()` precedent, so this store
  * doesn't introduce either.
  */

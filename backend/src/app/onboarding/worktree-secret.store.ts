@@ -3,37 +3,41 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import {
-  OrgWorktreeSecretEntity,
-  OrgWorktreeSecretGrantEntity,
-} from '../persistence/entities';
+import { OrgWorktreeSecretFileEntity } from '../persistence/entities';
 import { decryptSecret, encryptSecret, loadSecretsKey } from './secret-cipher';
 
-/** A grant the owner created: secret `name` may be rendered to `path` in repo `repoId`. */
-export interface WorktreeSecretGrant {
+/** A secret file's identity + display label (never its value). */
+export interface WorktreeSecretFileRef {
   repoId: string;
-  name: string;
   path: string;
+  label?: string | null;
+}
+
+/** A repo-scoped secret file ref plus its `updated_at` epoch ms — for cheap re-hydration sig. */
+export interface WorktreeSecretFileVersion {
+  path: string;
+  label?: string | null;
+  updatedAt: number;
 }
 
 /**
- * The encrypt-on-write / decrypt-on-read path for per-org NAMED worktree secrets, plus the owner
- * GRANTS that authorise rendering them. Mirrors {@link TenantCredentialStore}: AES-256-GCM via
- * `secret-cipher`, values never logged, `SECRETS_ENCRYPTION_KEY` required to write/read a value.
+ * The encrypt-on-write / decrypt-on-read path for per-repo worktree secret FILES. Mirrors {@link
+ * TenantCredentialStore}: AES-256-GCM via `secret-cipher`, values never logged,
+ * `SECRETS_ENCRYPTION_KEY` required to write/read a value.
  *
- * The security invariant lives in {@link isGranted}: a repo's committed `.atlas/worktree.json` is a
- * request, and a secret is only ever materialised when an owner-created grant matches the exact
- * (name → repoId → path) triple. `list`/`listGrants` expose NAMES only — never values.
+ * A single row IS the value, the authority, AND the render instruction — it replaces the old two-table
+ * split (a named value + a separate grant). The security invariant (ADR-0003: a repo's committed
+ * `.atlas/worktree.json` is a request, never authority) now lives in row EXISTENCE: a file renders only
+ * when an owner-created `(org, repo, path)` row exists. `list`/`listForRepo` expose paths + labels only
+ * — never values.
  */
 @Injectable()
-export class WorktreeSecretStore {
-  private readonly logger = new Logger(WorktreeSecretStore.name);
+export class WorktreeSecretFileStore {
+  private readonly logger = new Logger(WorktreeSecretFileStore.name);
 
   constructor(
-    @InjectRepository(OrgWorktreeSecretEntity, DB_CONNECTION)
-    private readonly secrets: Repository<OrgWorktreeSecretEntity>,
-    @InjectRepository(OrgWorktreeSecretGrantEntity, DB_CONNECTION)
-    private readonly grants: Repository<OrgWorktreeSecretGrantEntity>,
+    @InjectRepository(OrgWorktreeSecretFileEntity, DB_CONNECTION)
+    private readonly files: Repository<OrgWorktreeSecretFileEntity>,
     private readonly env: EnvService,
   ) {}
 
@@ -41,84 +45,62 @@ export class WorktreeSecretStore {
     return loadSecretsKey(this.env.get('SECRETS_ENCRYPTION_KEY'));
   }
 
-  // ── secret values ───────────────────────────────────────────────────────────────────────────
-
-  /** Decrypted value for (orgId, name), or null when no row exists. Not cached (cold provision path). */
-  async read(orgId: string, name: string): Promise<string | null> {
-    const row = await this.secrets.findOne({ where: { org_id: orgId, name } });
-    return row ? decryptSecret(row.value_enc, this.key()) : null;
-  }
-
-  /** Secret NAMES for an org (never values). */
-  async list(orgId: string): Promise<string[]> {
-    const rows = await this.secrets.find({ where: { org_id: orgId }, select: ['name'] });
-    return rows.map((r) => r.name);
+  /** All secret files for an org (paths + labels, never values), optionally scoped to one repo. */
+  async list(orgId: string, repoId?: string): Promise<WorktreeSecretFileRef[]> {
+    const rows = await this.files.find({
+      where: repoId ? { org_id: orgId, repo_id: repoId } : { org_id: orgId },
+      select: ['repo_id', 'path', 'label'],
+    });
+    return rows.map((r) => ({ repoId: r.repo_id, path: r.path, label: r.label ?? null }));
   }
 
   /**
-   * name → last-updated epoch ms, for cheap re-hydration sig computation (NO decryption, no values).
-   * A rotated value bumps `updated_at`, so the hydration sig changes and the next attach re-applies it.
+   * Repo-scoped file refs + their `updated_at` epoch ms (NO decryption, no values), for cheap
+   * re-hydration sig computation. A rotated value bumps `updated_at`, so the sig changes and the next
+   * attach re-renders it; an added/removed row changes the path set.
    */
-  async secretVersions(orgId: string): Promise<Record<string, number>> {
-    const rows = await this.secrets.find({
-      where: { org_id: orgId },
-      select: ['name', 'updated_at'],
+  async listForRepo(orgId: string, repoId: string): Promise<WorktreeSecretFileVersion[]> {
+    const rows = await this.files.find({
+      where: { org_id: orgId, repo_id: repoId },
+      select: ['path', 'label', 'updated_at'],
     });
-    const out: Record<string, number> = {};
-    for (const r of rows) out[r.name] = r.updated_at ? new Date(r.updated_at).getTime() : 0;
-    return out;
+    return rows.map((r) => ({
+      path: r.path,
+      label: r.label ?? null,
+      updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+    }));
   }
 
-  /** Encrypt + upsert a named secret value. Refuses without `SECRETS_ENCRYPTION_KEY`. */
-  async write(orgId: string, name: string, value: string): Promise<void> {
+  /** Decrypted value for (orgId, repoId, path), or null when no row exists. Not cached (cold provision path). */
+  async read(orgId: string, repoId: string, path: string): Promise<string | null> {
+    const row = await this.files.findOne({ where: { org_id: orgId, repo_id: repoId, path } });
+    return row ? decryptSecret(row.value_enc, this.key()) : null;
+  }
+
+  /**
+   * Encrypt + upsert a secret file at (orgId, repoId, path). `label` is an optional human name for
+   * display only (identity is the path). Refuses without `SECRETS_ENCRYPTION_KEY`.
+   */
+  async write(
+    orgId: string,
+    repoId: string,
+    path: string,
+    value: string,
+    label?: string | null,
+  ): Promise<void> {
     const key = this.key();
     const row =
-      (await this.secrets.findOne({ where: { org_id: orgId, name } })) ??
-      this.secrets.create({ org_id: orgId, name });
+      (await this.files.findOne({ where: { org_id: orgId, repo_id: repoId, path } })) ??
+      this.files.create({ org_id: orgId, repo_id: repoId, path });
     row.value_enc = encryptSecret(value, key);
-    await this.secrets.save(row);
-    this.logger.log(`wrote worktree secret org=${orgId} name=${name}`);
+    if (label !== undefined) row.label = label;
+    await this.files.save(row);
+    this.logger.log(`wrote worktree secret file org=${orgId} repo=${repoId} path=${path}`);
   }
 
-  /** Delete a named secret (and any grants that reference it). */
-  async delete(orgId: string, name: string): Promise<void> {
-    await this.secrets.delete({ org_id: orgId, name });
-    await this.grants.delete({ org_id: orgId, name });
-    this.logger.log(`deleted worktree secret org=${orgId} name=${name}`);
-  }
-
-  // ── grants (the authority) ──────────────────────────────────────────────────────────────────
-
-  /** All grants for an org, optionally scoped to one repo. NAMES + paths only — never values. */
-  async listGrants(orgId: string, repoId?: string): Promise<WorktreeSecretGrant[]> {
-    const rows = await this.grants.find({
-      where: repoId ? { org_id: orgId, repo_id: repoId } : { org_id: orgId },
-    });
-    return rows.map((r) => ({ repoId: r.repo_id, name: r.name, path: r.path }));
-  }
-
-  /** Owner authorises `name` → `path` in `repoId`. Idempotent. */
-  async grant(orgId: string, repoId: string, name: string, path: string): Promise<void> {
-    const existing = await this.grants.findOne({
-      where: { org_id: orgId, repo_id: repoId, name, path },
-    });
-    if (!existing) {
-      await this.grants.save(this.grants.create({ org_id: orgId, repo_id: repoId, name, path }));
-    }
-    this.logger.log(`granted worktree secret org=${orgId} repo=${repoId} name=${name} path=${path}`);
-  }
-
-  /** Owner revokes a grant. */
-  async revoke(orgId: string, repoId: string, name: string, path: string): Promise<void> {
-    await this.grants.delete({ org_id: orgId, repo_id: repoId, name, path });
-    this.logger.log(`revoked worktree secret org=${orgId} repo=${repoId} name=${name} path=${path}`);
-  }
-
-  /** THE authorisation check: is rendering `name` to `path` in `repoId` allowed? */
-  async isGranted(orgId: string, repoId: string, name: string, path: string): Promise<boolean> {
-    const row = await this.grants.findOne({
-      where: { org_id: orgId, repo_id: repoId, name, path },
-    });
-    return !!row;
+  /** Delete a secret file at (orgId, repoId, path). */
+  async delete(orgId: string, repoId: string, path: string): Promise<void> {
+    await this.files.delete({ org_id: orgId, repo_id: repoId, path });
+    this.logger.log(`deleted worktree secret file org=${orgId} repo=${repoId} path=${path}`);
   }
 }

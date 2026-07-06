@@ -20,8 +20,7 @@ export * from './decision-record.entity';
 export * from './repo-decision.entity';
 export * from './memory.entity';
 export * from './org-credentials.entity';
-export * from './org-worktree-secret.entity';
-export * from './org-worktree-secret-grant.entity';
+export * from './org-worktree-secret-file.entity';
 export * from './org-worktree-mount.entity';
 export * from './job-sandbox.entity';
 export * from './user.entity';
@@ -47,8 +46,7 @@ import { DecisionRecordEntity } from './decision-record.entity';
 import { RepoDecisionEntity } from './repo-decision.entity';
 import { MemoryEntity } from './memory.entity';
 import { OrgCredentialsEntity } from './org-credentials.entity';
-import { OrgWorktreeSecretEntity } from './org-worktree-secret.entity';
-import { OrgWorktreeSecretGrantEntity } from './org-worktree-secret-grant.entity';
+import { OrgWorktreeSecretFileEntity } from './org-worktree-secret-file.entity';
 import { OrgWorktreeMountEntity } from './org-worktree-mount.entity';
 import { JobSandboxEntity } from './job-sandbox.entity';
 import { UserEntity } from './user.entity';
@@ -76,8 +74,7 @@ export const ENTITIES = [
   RepoDecisionEntity,
   MemoryEntity,
   OrgCredentialsEntity,
-  OrgWorktreeSecretEntity,
-  OrgWorktreeSecretGrantEntity,
+  OrgWorktreeSecretFileEntity,
   OrgWorktreeMountEntity,
   JobSandboxEntity,
   UserEntity,

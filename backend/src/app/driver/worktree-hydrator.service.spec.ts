@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LocalGitService } from '../git';
 import { readForbiddenPaths } from '../git';
-import type { WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
+import type { WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
 import type { MountSpec } from '../sandbox/container-paths';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 
@@ -19,25 +19,23 @@ function fakeGit(ignored: Set<string>): LocalGitService {
 }
 
 interface SecretWorld {
-  values?: Record<string, string>;
-  grants?: Array<{ name: string; path: string; repoId?: string }>;
-  versions?: Record<string, number>;
+  /** Per-repo secret files (repoId defaults to REPO). `value` absent → row exists but read returns null. */
+  files?: Array<{ path: string; value?: string; updatedAt?: number; label?: string | null; repoId?: string }>;
 }
-function fakeSecrets(world: SecretWorld): WorktreeSecretStore {
+function fakeSecrets(world: SecretWorld): WorktreeSecretFileStore {
+  const forRepo = (repoId: string) => (world.files ?? []).filter((f) => (f.repoId ?? REPO) === repoId);
   return {
-    isGranted: async (orgId: string, repoId: string, name: string, path: string) =>
-      orgId === ORG &&
-      (world.grants ?? []).some(
-        (g) => g.name === name && g.path === path && (g.repoId ?? REPO) === repoId,
-      ),
-    read: async (orgId: string, name: string) =>
-      orgId === ORG ? (world.values?.[name] ?? null) : null,
-    secretVersions: async () => world.versions ?? {},
-    listGrants: async (_orgId: string, repoId: string) =>
-      (world.grants ?? [])
-        .filter((g) => (g.repoId ?? REPO) === repoId)
-        .map((g) => ({ repoId: g.repoId ?? REPO, name: g.name, path: g.path })),
-  } as unknown as WorktreeSecretStore;
+    read: async (orgId: string, repoId: string, path: string) =>
+      orgId === ORG ? (forRepo(repoId).find((f) => f.path === path)?.value ?? null) : null,
+    listForRepo: async (_orgId: string, repoId: string) =>
+      forRepo(repoId).map((f) => ({ path: f.path, label: f.label ?? null, updatedAt: f.updatedAt ?? 0 })),
+    list: async (_orgId: string, repoId?: string) =>
+      (repoId ? forRepo(repoId) : (world.files ?? [])).map((f) => ({
+        repoId: f.repoId ?? REPO,
+        path: f.path,
+        label: f.label ?? null,
+      })),
+  } as unknown as WorktreeSecretFileStore;
 }
 
 interface ConfigWorld {
@@ -76,14 +74,11 @@ describe('WorktreeHydrator', () => {
     else process.env.ATLAS_HYDRATION_STATE = prevState;
   });
 
-  it('renders a GRANTED, gitignored secret (NO config needed) atomically at 0600 + sidecar', async () => {
-    // Grant-driven: no mounts config entry — the owner grant alone drives rendering.
+  it('renders a gitignored secret FILE (NO config needed) atomically at 0600 + sidecar', async () => {
+    // A secret-file row alone drives rendering — no mounts config entry needed.
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
-      fakeSecrets({
-        values: { dotenvxPrivateKeys: 'SECRET=1' },
-        grants: [{ name: 'dotenvxPrivateKeys', path: '.env.keys' }],
-      }),
+      fakeSecrets({ files: [{ path: '.env.keys', value: 'SECRET=1' }] }),
       fakeConfig({}),
     );
 
@@ -96,10 +91,10 @@ describe('WorktreeHydrator', () => {
     expect(readForbiddenPaths(wt)).toEqual(['.env.keys']);
   });
 
-  it('renders NOTHING when there are no grants (config carries no secrets, so nothing to fall back on)', async () => {
+  it('renders NOTHING when there are no secret files (config carries no secrets, so nothing to fall back on)', async () => {
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
-      fakeSecrets({ values: { dotenvxPrivateKeys: 'SECRET=1' }, grants: [] }),
+      fakeSecrets({ files: [] }),
       fakeConfig({}),
     );
     const { forbiddenPaths: forbidden } = await h.hydrateFiles({ worktreePath: wt, orgId: ORG, repoDbId: REPO });
@@ -107,12 +102,12 @@ describe('WorktreeHydrator', () => {
     expect(existsSync(join(wt, '.env.keys'))).toBe(false);
   });
 
-  it('renders granted secrets for EVERY thread (no more secret-free onboarding)', async () => {
+  it('renders secret files for EVERY thread (no more secret-free onboarding)', async () => {
     // skipSecrets is gone: onboarding threads now hydrate real secrets too (see the invariant comment
     // in worktree-hydrator.service.ts — intentional, so onboarding can actually boot the app).
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
-      fakeSecrets({ values: { s: 'v' }, grants: [{ name: 's', path: '.env.keys' }] }),
+      fakeSecrets({ files: [{ path: '.env.keys', value: 'v' }] }),
       fakeConfig({}),
     );
     const { forbiddenPaths: forbidden } = await h.hydrateFiles({
@@ -122,10 +117,10 @@ describe('WorktreeHydrator', () => {
     expect(existsSync(join(wt, '.env.keys'))).toBe(true);
   });
 
-  it('refuses a granted secret whose target is NOT gitignored (PR-leak guard)', async () => {
+  it('refuses a secret file whose target is NOT gitignored (PR-leak guard)', async () => {
     const h = new WorktreeHydrator(
       fakeGit(new Set()), // nothing ignored
-      fakeSecrets({ values: { s: 'v' }, grants: [{ name: 's', path: 'config.json' }] }),
+      fakeSecrets({ files: [{ path: 'config.json', value: 'v' }] }),
       fakeConfig({}),
     );
     const { forbiddenPaths: forbidden } = await h.hydrateFiles({ worktreePath: wt, orgId: ORG, repoDbId: REPO });
@@ -133,10 +128,23 @@ describe('WorktreeHydrator', () => {
     expect(existsSync(join(wt, 'config.json'))).toBe(false);
   });
 
+  it('skips a file that vanished before it could be read (concurrent delete) with a notice', async () => {
+    const h = new WorktreeHydrator(
+      fakeGit(new Set(['.env.keys'])),
+      // Row is listed but has no value → read returns null (simulates a delete between list and read).
+      fakeSecrets({ files: [{ path: '.env.keys' }] }),
+      fakeConfig({}),
+    );
+    const { forbiddenPaths, notices } = await h.hydrateFiles({ worktreePath: wt, orgId: ORG, repoDbId: REPO });
+    expect(forbiddenPaths).toEqual([]);
+    expect(existsSync(join(wt, '.env.keys'))).toBe(false);
+    expect(notices.some((n) => n.includes('disappeared'))).toBe(true);
+  });
+
   it('yields no secrets when repoDbId is absent (gate/legacy path)', async () => {
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
-      fakeSecrets({ values: { s: 'v' }, grants: [{ name: 's', path: '.env.keys' }] }),
+      fakeSecrets({ files: [{ path: '.env.keys', value: 'v' }] }),
       fakeConfig({}),
     );
     const { forbiddenPaths: forbidden } = await h.hydrateFiles({ worktreePath: wt, orgId: ORG });
@@ -175,15 +183,15 @@ describe('WorktreeHydrator', () => {
     ]);
   });
 
-  it('computeSig changes when a GRANTED secret version changes (rotation re-triggers hydration)', async () => {
+  it('computeSig changes when a secret file version changes (rotation re-triggers hydration)', async () => {
     const h1 = new WorktreeHydrator(
       fakeGit(new Set()),
-      fakeSecrets({ grants: [{ name: 'k', path: '.env.keys' }], versions: { k: 1 } }),
+      fakeSecrets({ files: [{ path: '.env.keys', updatedAt: 1 }] }),
       fakeConfig({}),
     );
     const h2 = new WorktreeHydrator(
       fakeGit(new Set()),
-      fakeSecrets({ grants: [{ name: 'k', path: '.env.keys' }], versions: { k: 2 } }),
+      fakeSecrets({ files: [{ path: '.env.keys', updatedAt: 2 }] }),
       fakeConfig({}),
     );
     const a = await h1.computeSig(wt, ORG, REPO);
@@ -191,19 +199,19 @@ describe('WorktreeHydrator', () => {
     expect(a).not.toBe(b);
   });
 
-  it('computeSig changes when a grant is added (so granting re-triggers hydration)', async () => {
-    const ungranted = new WorktreeHydrator(
+  it('computeSig changes when a secret file is added (so adding one re-triggers hydration)', async () => {
+    const before = new WorktreeHydrator(
       fakeGit(new Set()),
-      fakeSecrets({ grants: [] }),
+      fakeSecrets({ files: [] }),
       fakeConfig({}),
     );
-    const granted = new WorktreeHydrator(
+    const after = new WorktreeHydrator(
       fakeGit(new Set()),
-      fakeSecrets({ grants: [{ name: 'k', path: '.env.keys' }] }),
+      fakeSecrets({ files: [{ path: '.env.keys', updatedAt: 1 }] }),
       fakeConfig({}),
     );
-    const a = await ungranted.computeSig(wt, ORG, REPO);
-    const b = await granted.computeSig(wt, ORG, REPO);
+    const a = await before.computeSig(wt, ORG, REPO);
+    const b = await after.computeSig(wt, ORG, REPO);
     expect(a).not.toBe(b);
   });
 
@@ -233,7 +241,7 @@ describe('WorktreeHydrator', () => {
     it('hydrateFiles resolves with a notice (not a rejection) when the store is down, and secrets still render', async () => {
       const h = new WorktreeHydrator(
         fakeGit(new Set(['.env.keys'])),
-        fakeSecrets({ values: { s: 'v' }, grants: [{ name: 's', path: '.env.keys' }] }),
+        fakeSecrets({ files: [{ path: '.env.keys', value: 'v' }] }),
         failingConfig('connect ECONNREFUSED'),
       );
       const { forbiddenPaths, notices } = await h.hydrateFiles({

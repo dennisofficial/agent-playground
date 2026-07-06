@@ -62,7 +62,7 @@ import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { OrganizationService } from '../org/organization.service';
-import { WorktreeSecretStore } from '../onboarding';
+import { WorktreeSecretFileStore } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
@@ -406,7 +406,7 @@ export class WebSurfaceController {
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
     // Repo onboarding: the ONLY place a `request_secret` plaintext value lands — straight to the
     // encrypted store + a grant, never the transcript (owner-gated; see `provideSecret`).
-    private readonly secrets: WorktreeSecretStore,
+    private readonly secrets: WorktreeSecretFileStore,
     // The brain's store — used here for the atomic `markQuestionAnswered` gate (resolved ambiently from
     // the @Global BrainModule, same as the approval services this module already depends on).
     private readonly store: BrainStoreService,
@@ -914,8 +914,9 @@ export class WebSurfaceController {
   /**
    * `POST …/threads/:jobId/provide-secret` — provide the value for a brain `request_secret` card during
    * repo onboarding. THE ONLY PLACE A SECRET VALUE LIVES: it goes straight to the encrypted
-   * `WorktreeSecretStore` + an owner grant, and is NEVER written to the card, the transcript, or any brain
-   * tool I/O. OWNER-ONLY (`OrgOwnerGuard`) — writing a secret + grant is an Administer action everywhere
+   * `WorktreeSecretFileStore` as this repo's secret file at (repo, path), and is NEVER written to the
+   * card, the transcript, or any brain tool I/O. OWNER-ONLY (`OrgOwnerGuard`) — writing a secret file is
+   * an Administer action everywhere
    * else. Gated on the thread's durable `awaiting_secret_id`; stamps the card `provided_at` (not the value)
    * and delivers a MASKED confirmation to the brain, whose success tail stamps delivered + clears the gate.
    */
@@ -996,16 +997,11 @@ export class WebSurfaceController {
         'secret request is missing its destination path',
       );
     }
-    // Write the value to the ENCRYPTED store + create the owner grant (name → repo → path). This is the
-    // value's only resting place; everything downstream is masked.
-    await this.secrets.write(org.id, payload.name, value);
-    await this.secrets.grant(
-      org.id,
-      thread.repo_id,
-      payload.name,
-      payload.path,
-    );
-    // Render the newly-granted value into the RUNNING sandbox now, so it is on disk before the brain's
+    // Write the value to the ENCRYPTED store as this repo's secret file at (repo, path); the row IS the
+    // authority. `payload.name` rides along as the display label. This is the value's only resting place;
+    // everything downstream is masked.
+    await this.secrets.write(org.id, thread.repo_id, payload.path, value, payload.name);
+    // Render the newly-written value into the RUNNING sandbox now, so it is on disk before the brain's
     // confirmation turn runs (otherwise it wouldn't appear until the next lazy provision). Best-effort —
     // a failure here still lets the next turn's ensureContainer hydrate it.
     await this.threadLifecycle
@@ -1064,11 +1060,9 @@ export class WebSurfaceController {
     if (payload.withdrawnAt) return { ok: false, ts: '' };
     if (payload.delivered_at) return { ok: false, ts: '' };
     if (payload.provided_at != null) return { ok: true, ts: '' };
-    // Write the contents to the ENCRYPTED store under a repo-scoped key + grant it to the destination path.
-    // This is the contents' only resting place; everything downstream is masked.
-    const storeKey = `file:${thread.repo_id}:${payload.path}`;
-    await this.secrets.write(org.id, storeKey, content);
-    await this.secrets.grant(org.id, thread.repo_id, storeKey, payload.path);
+    // Write the contents to the ENCRYPTED store as this repo's secret file at (repo, path); the row IS the
+    // authority. This is the contents' only resting place; everything downstream is masked.
+    await this.secrets.write(org.id, thread.repo_id, payload.path, content, filename);
     // Render the uploaded file into the RUNNING sandbox now (see provide-secret). Best-effort.
     await this.threadLifecycle
       .rehydrateThread(jobId, org.id)

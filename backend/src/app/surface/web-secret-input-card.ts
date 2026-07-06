@@ -2,7 +2,7 @@
  * Web SECRET-INPUT card payload — the secure request the repo-onboarding brain poses via the
  * `request_secret` tool when it needs an env-file secret value (e.g. `DATABASE_URL`). The web client
  * renders a masked password field + submit; the operator's value is POSTed to
- * `…/threads/:jobId/provide-secret`, which writes it straight to the encrypted `WorktreeSecretStore`
+ * `…/threads/:jobId/provide-secret`, which writes it straight to the encrypted `WorktreeSecretFileStore`
  * and creates the owner grant. The value is therefore NEVER part of this card, the transcript, or any
  * brain tool I/O — the card holds only the request metadata + lifecycle timestamps, and once provided the
  * client renders a compact "✓ NAME provided" state.
@@ -17,7 +17,7 @@ export interface WebSecretInputCard {
   jobId: string;
   /** Stable key for this request (the card row's `ts`); the provide POST echoes it back. */
   requestId: string;
-  /** The secret's name (→ `OrgWorktreeSecretEntity.name`); shown to the operator, never the value. For an
+  /** The secret's name (the secret file's display `label`); shown to the operator, never the value. For an
    *  ephemeral request this is a display LABEL only (e.g. `GCLOUD_AUTH_CODE`) — nothing is keyed by it. */
   name: string;
   /**

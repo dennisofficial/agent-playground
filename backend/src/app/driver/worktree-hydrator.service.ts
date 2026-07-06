@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { LocalGitService, writeForbiddenPaths } from '../git';
-import { WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
+import { WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
 import { isExternalMountPath, type MountSpec } from '../sandbox/container-paths';
 import { resolveExternalMountTarget, resolveSafeTarget } from './worktree-path-guard';
 
@@ -16,8 +16,8 @@ export interface HydrateInput {
 }
 
 /**
- * Hydrates a worktree from two DB-backed sources — owner GRANTS (per-org secrets, see
- * {@link WorktreeSecretStore}) and the org+repo-scoped worktree config (cache/auth mounts, see
+ * Hydrates a worktree from two DB-backed sources — per-repo secret FILES (see
+ * {@link WorktreeSecretFileStore}) and the org+repo-scoped worktree config (cache/auth mounts, see
  * {@link WorktreeConfigStore}) — never a committed file (see docs/adr/0003: a `write_worktree_config` call
  * from ANY thread propagates to every other in-flight job's next hydration instantly, no PR/merge/rebase
  * lag). It renders each granted secret to its destination and returns the validated cache mounts for the
@@ -36,7 +36,7 @@ export class WorktreeHydrator {
 
   constructor(
     private readonly git: LocalGitService,
-    private readonly secrets: WorktreeSecretStore,
+    private readonly secrets: WorktreeSecretFileStore,
     private readonly config: WorktreeConfigStore,
   ) {}
 
@@ -74,24 +74,18 @@ export class WorktreeHydrator {
 
   /**
    * A cheap signature of what hydration WOULD produce — hash of the repo's live mount rows + the
-   * referenced secrets' versions (updated_at, no decryption) + the repo's grant set. Stable unless a
-   * mount row, a referenced secret, OR a grant changes — so a thread sandbox re-hydrates when stale,
-   * INCLUDING when an owner adds or revokes a grant (otherwise a freshly-granted secret wouldn't render
-   * until something else changed). Hashes live content directly (not `updated_at` timestamps) so an
-   * idempotent no-op upsert can never spuriously bump the signature.
+   * repo's secret-file set with each file's version (updated_at, no decryption). Stable unless a mount
+   * row or a secret file changes — so a thread sandbox re-hydrates when stale, INCLUDING when an owner
+   * adds/removes a file or rotates a value (a rotated value bumps `updated_at` → the sig changes → the
+   * next attach re-renders it; a no-op upsert leaves `updated_at` untouched → no spurious bump).
    */
   async computeSig(worktreePath: string, orgId: string, repoDbId?: string): Promise<string> {
     const mounts = repoDbId ? await this.safeListMounts(orgId, repoDbId) : [];
-    const versions = await this.secrets.secretVersions(orgId);
-    const grantList = repoDbId ? await this.secrets.listGrants(orgId, repoDbId) : [];
-    // Rendering is grant-driven, so the sig must thread the GRANTED secrets' versions (a rotated value
-    // bumps `updated_at` → the sig changes → the next attach re-renders it) plus the grant set itself
-    // (name → path).
-    const referenced = grantList.map((g) => `${g.name}:${versions[g.name] ?? 0}`).sort();
-    const grants = grantList.map((g) => `${g.name}:${g.path}`).sort();
+    const secretFiles = repoDbId ? await this.secrets.listForRepo(orgId, repoDbId) : [];
+    const files = secretFiles.map((f) => `${f.path}:${f.updatedAt}`).sort();
     const mountSig = mounts.map((m) => `${m.path}:${m.mode}`).sort();
     return createHash('sha256')
-      .update(JSON.stringify({ mounts: mountSig, referenced, grants }))
+      .update(JSON.stringify({ mounts: mountSig, files }))
       .digest('hex');
   }
 
@@ -122,33 +116,34 @@ export class WorktreeHydrator {
       }
     }
 
-    // ── secrets (category 1) — rendered from owner GRANTS, not worktree config ──────────────────
-    // The grant IS the render instruction AND the authority (owner-authored). Worktree config (mounts)
-    // never carries secrets — so a `write_worktree_config` call can't read an org secret.
+    // ── secrets (category 1) — rendered from per-repo secret FILES, not worktree config ─────────
+    // A secret-file row IS the render instruction AND the authority (owner-authored). Worktree config
+    // (mounts) never carries secrets — so a `write_worktree_config` call can't read an org secret.
     // NOTE: EVERY thread (incl. onboarding) renders real secret values now. The brain has Bash and can
     // read them in-sandbox — that is INTENTIONAL and accepted: this is a private, trusted deployment where
     // Atlas is at least as capable as local Claude Code (which runs with the user's full unisolated creds).
     // The only guard is "don't COMMIT it": each target must be gitignored (below) + the pre-ship leak-scan.
     if (repoDbId) {
-      for (const g of await this.secrets.listGrants(orgId, repoDbId)) {
+      for (const f of await this.secrets.listForRepo(orgId, repoDbId)) {
         let target: string;
         try {
-          target = resolveSafeTarget(worktreePath, g.path);
+          target = resolveSafeTarget(worktreePath, f.path);
         } catch (err) {
-          note(`worktree secret "${g.path}" rejected (unsafe path): ${(err as Error).message}`);
+          note(`worktree secret "${f.path}" rejected (unsafe path): ${(err as Error).message}`);
           continue;
         }
-        const value = await this.secrets.read(orgId, g.name);
+        const value = await this.secrets.read(orgId, repoDbId, f.path);
         if (value == null) {
-          note(`worktree secret "${g.name}" is granted but has no stored value — set it in Settings → Worktree secrets`);
+          // The row vanished between listForRepo and read (concurrent delete) — skip, self-heals next attach.
+          note(`worktree secret "${f.path}" disappeared before it could be rendered (concurrent change) — skipping`);
           continue;
         }
-        if (!(await this.git.isIgnored(worktreePath, g.path))) {
-          note(`worktree secret target "${g.path}" is NOT gitignored — refusing to render (it would leak into the PR); add it to .gitignore`);
+        if (!(await this.git.isIgnored(worktreePath, f.path))) {
+          note(`worktree secret target "${f.path}" is NOT gitignored — refusing to render (it would leak into the PR); add it to .gitignore`);
           continue;
         }
         await this.writeAtomic(target, value, 0o600);
-        forbidden.push(g.path);
+        forbidden.push(f.path);
       }
     }
 

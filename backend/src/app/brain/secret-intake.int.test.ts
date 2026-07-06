@@ -8,7 +8,7 @@ import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
-import { WorktreeSecretStore } from '../onboarding';
+import { WorktreeSecretFileStore } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   FakeClassifierLlm,
@@ -37,7 +37,7 @@ const SECRET_PATH = '.env';
 describe('repo onboarding — secure secret intake (live Postgres, leak assertion)', () => {
   let app: NestExpressApplication;
   let store: BrainStoreService;
-  let secrets: WorktreeSecretStore;
+  let secrets: WorktreeSecretFileStore;
   let ds: DataSource;
   let jobId: string;
   let repoId: string;
@@ -66,7 +66,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     await app.init();
 
     store = app.get(BrainStoreService);
-    secrets = app.get(WorktreeSecretStore);
+    secrets = app.get(WorktreeSecretFileStore);
     ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
     await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]);
@@ -104,9 +104,9 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     expect(opened.ok).toBe(true);
     expect(await store.awaitingSecretId(jobId)).toBe(requestId);
 
-    // (2) The `provide-secret` endpoint's work: value → encrypted store + grant + stamp provided_at.
-    await secrets.write(ORG_ID, SECRET_NAME, SECRET_VALUE);
-    await secrets.grant(ORG_ID, repoId, SECRET_NAME, SECRET_PATH);
+    // (2) The `provide-secret` endpoint's work: value → encrypted secret file at (repo, path) + stamp
+    // provided_at. The name rides along as the display label.
+    await secrets.write(ORG_ID, repoId, SECRET_PATH, SECRET_VALUE, SECRET_NAME);
     await store.markSecretProvided(jobId, requestId);
 
     // (3) THE LEAK ASSERTION — the plaintext value is in NO message row (card text, card jsonb, anything).
@@ -116,13 +116,16 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     );
     expect(rows[0].n).toBe(0);
 
-    // …but the value IS recoverable (encrypted) from the store, and the grant exists.
-    expect(await secrets.read(ORG_ID, SECRET_NAME)).toBe(SECRET_VALUE);
-    const grants = await secrets.listGrants(ORG_ID, repoId);
-    expect(grants).toContainEqual({ repoId, name: SECRET_NAME, path: SECRET_PATH });
+    // …but the value IS recoverable (encrypted) from the store, and the file ref exists.
+    expect(await secrets.read(ORG_ID, repoId, SECRET_PATH)).toBe(SECRET_VALUE);
+    const files = await secrets.list(ORG_ID, repoId);
+    expect(files).toContainEqual({ repoId, path: SECRET_PATH, label: SECRET_NAME });
 
     // The encrypted column never contains the plaintext either.
-    const enc = await ds.query(`SELECT value_enc FROM org_worktree_secrets WHERE org_id = $1 AND name = $2`, [ORG_ID, SECRET_NAME]);
+    const enc = await ds.query(
+      `SELECT value_enc FROM org_worktree_secret_files WHERE org_id = $1 AND repo_id = $2 AND path = $3`,
+      [ORG_ID, repoId, SECRET_PATH],
+    );
     expect(enc[0].value_enc).not.toContain(SECRET_VALUE);
 
     // (4) Crash-safe lifecycle: provided-but-undelivered surfaces for boot re-delivery (name/path only).

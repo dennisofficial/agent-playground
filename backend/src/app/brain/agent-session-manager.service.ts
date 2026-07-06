@@ -72,7 +72,7 @@ import {
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/render-plan';
 import { DecisionClassifier } from '../decision-gate';
-import { CredentialResolver, WorktreeConfigStore, WorktreeSecretStore } from '../onboarding';
+import { CredentialResolver, WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
 import {
   isExternalMountPath,
   isReservedContainerPath,
@@ -250,7 +250,7 @@ export class AgentSessionManager
     // Crash recovery: back-fill brain turns that completed in-container but never reached `finish()`.
     private readonly turnRecovery: TurnRecoveryService,
     // Repo onboarding: the encrypted per-org secret store + grants the secure `request_secret` flow writes.
-    private readonly secretStore: WorktreeSecretStore,
+    private readonly secretStore: WorktreeSecretFileStore,
     // The org+repo-scoped mounts/seed config `write_worktree_config` writes — DB-backed (see docs/adr/0003).
     private readonly configStore: WorktreeConfigStore,
     // Used by `finish_onboarding` to decide whether there's an actual repo diff worth shipping a PR for.
@@ -3343,11 +3343,11 @@ export class AgentSessionManager
    * computed (not operator-provided) — e.g. a webhook signing secret from `stripe listen --print-secret`,
    * derived from an already-granted API key. Unlike `request_secret`, there is NO operator round-trip: you
    * already hold the value (it never came from anywhere an operator needed to gate), so it writes straight
-   * to the SAME encrypted store + grant, then renders on your next hydration and EVERY future job's — no
-   * re-derivation tax. Refuses by default if `name` already has a value (protects an operator-provided
-   * secret from being silently clobbered by a same-named derived one) — pass `overwrite: true` only when
-   * you are deliberately replacing it. Posts a quiet system-event pill for operator visibility (name/path
-   * only, never the value — same rule as every other secret path).
+   * to the SAME encrypted store as this repo's secret file at (repo, path), then renders on your next
+   * hydration and EVERY future job's — no re-derivation tax. Refuses by default if a value already exists
+   * at `path` (protects an operator-provided secret from being silently clobbered) — pass `overwrite: true`
+   * only when you are deliberately replacing it. Posts a quiet system-event pill for operator visibility
+   * (name/path only, never the value — same rule as every other secret path).
    */
   private buildDeriveSecretTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
@@ -3384,17 +3384,18 @@ export class AgentSessionManager
             'description is required (what this value is and how you derived it)',
         };
       }
-      const existing = await this.secretStore.read(stimulus.orgId, name);
+      const existing = await this.secretStore.read(stimulus.orgId, stimulus.repoId, path);
       if (existing != null && !overwrite) {
         return {
           ok: false,
           reason:
-            `a secret named "${name}" already exists (possibly operator-provided) — pass overwrite: true ` +
-            'only if you are deliberately replacing it, or pick a different name',
+            `a secret file already exists at "${path}" (possibly operator-provided) — pass overwrite: true ` +
+            'only if you are deliberately replacing it, or pick a different path',
         };
       }
-      await this.secretStore.write(stimulus.orgId, name, value);
-      await this.secretStore.grant(stimulus.orgId, stimulus.repoId, name, path);
+      // A single write IS the value + the authority: (repo, path) is the file's identity; `name` rides
+      // along as the display label. Renders on your next hydration and every future job's.
+      await this.secretStore.write(stimulus.orgId, stimulus.repoId, path, value, name);
       await this.store.appendSystemEvent(
         stimulus.jobId,
         `🔑 Derived and stored \`${name}\` (${description}) — future jobs on this repo won't need to re-derive it.`,

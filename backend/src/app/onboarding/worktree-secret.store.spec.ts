@@ -2,11 +2,8 @@ import { randomBytes } from 'node:crypto';
 import type { Repository } from 'typeorm';
 import type { EnvService } from '@core/config/env/env.service';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type {
-  OrgWorktreeSecretEntity,
-  OrgWorktreeSecretGrantEntity,
-} from '../persistence/entities';
-import { WorktreeSecretStore } from './worktree-secret.store';
+import type { OrgWorktreeSecretFileEntity } from '../persistence/entities';
+import { WorktreeSecretFileStore } from './worktree-secret.store';
 
 /** A tiny in-memory stand-in for a TypeORM repository (composite-key find/save/delete). */
 function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> {
@@ -33,45 +30,53 @@ function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> {
 const KEY = randomBytes(32).toString('hex');
 const env = { get: (k: string) => (k === 'SECRETS_ENCRYPTION_KEY' ? KEY : undefined) } as unknown as EnvService;
 
-describe('WorktreeSecretStore', () => {
-  let store: WorktreeSecretStore;
+describe('WorktreeSecretFileStore', () => {
+  let store: WorktreeSecretFileStore;
 
   beforeEach(() => {
-    store = new WorktreeSecretStore(
-      memRepo<OrgWorktreeSecretEntity>(['org_id', 'name']),
-      memRepo<OrgWorktreeSecretGrantEntity>(['org_id', 'repo_id', 'name', 'path']),
+    store = new WorktreeSecretFileStore(
+      memRepo<OrgWorktreeSecretFileEntity>(['org_id', 'repo_id', 'path']),
       env,
     );
   });
 
-  it('round-trips an encrypted value (and stores ciphertext, not plaintext)', async () => {
-    await store.write('o1', 'dotenvxPrivateKeys', 'SECRET=1');
-    expect(await store.read('o1', 'dotenvxPrivateKeys')).toBe('SECRET=1');
+  it('round-trips an encrypted value keyed by (org, repo, path)', async () => {
+    await store.write('o1', 'repo-1', '.env.keys', 'SECRET=1', 'dotenvxPrivateKeys');
+    expect(await store.read('o1', 'repo-1', '.env.keys')).toBe('SECRET=1');
+    // Same path in another repo is a distinct row.
+    expect(await store.read('o1', 'repo-2', '.env.keys')).toBeNull();
   });
 
-  it('list returns names only', async () => {
-    await store.write('o1', 'a', 'va');
-    await store.write('o1', 'b', 'vb');
-    expect((await store.list('o1')).sort()).toEqual(['a', 'b']);
+  it('list returns file refs (repo + path + label), never values, optionally scoped to a repo', async () => {
+    await store.write('o1', 'repo-1', '.env.keys', 'va', 'A');
+    await store.write('o1', 'repo-1', 'server/sa.json', 'vb');
+    await store.write('o1', 'repo-2', '.env', 'vc');
+
+    const all = await store.list('o1');
+    expect(all).toHaveLength(3);
+    expect(all.every((f) => !('value' in f) && !('value_enc' in f))).toBe(true);
+
+    const repo1 = await store.list('o1', 'repo-1');
+    expect(repo1.map((f) => f.path).sort()).toEqual(['.env.keys', 'server/sa.json']);
+    expect(repo1.find((f) => f.path === '.env.keys')?.label).toBe('A');
   });
 
-  it('isGranted matches the exact (name, repo, path) triple', async () => {
-    await store.grant('o1', 'repo-1', 'a', '.env.keys');
-    expect(await store.isGranted('o1', 'repo-1', 'a', '.env.keys')).toBe(true);
-    expect(await store.isGranted('o1', 'repo-1', 'a', 'other')).toBe(false);
-    expect(await store.isGranted('o1', 'repo-2', 'a', '.env.keys')).toBe(false);
-    expect(await store.isGranted('o2', 'repo-1', 'a', '.env.keys')).toBe(false);
+  it('listForRepo yields path + version for the hydration sig (no values)', async () => {
+    await store.write('o1', 'repo-1', '.env.keys', 'v');
+    const versions = await store.listForRepo('o1', 'repo-1');
+    expect(versions).toHaveLength(1);
+    expect(versions[0].path).toBe('.env.keys');
+    expect(typeof versions[0].updatedAt).toBe('number');
   });
 
-  it('revoke removes a grant; delete drops the secret and its grants', async () => {
-    await store.write('o1', 'a', 'v');
-    await store.grant('o1', 'repo-1', 'a', '.env.keys');
-    await store.revoke('o1', 'repo-1', 'a', '.env.keys');
-    expect(await store.isGranted('o1', 'repo-1', 'a', '.env.keys')).toBe(false);
+  it('write upserts by (org, repo, path); delete drops just that file', async () => {
+    await store.write('o1', 'repo-1', '.env.keys', 'v1');
+    await store.write('o1', 'repo-1', '.env.keys', 'v2'); // same key → replace
+    expect(await store.read('o1', 'repo-1', '.env.keys')).toBe('v2');
+    expect(await store.list('o1', 'repo-1')).toHaveLength(1);
 
-    await store.grant('o1', 'repo-1', 'a', '.env.keys');
-    await store.delete('o1', 'a');
-    expect(await store.read('o1', 'a')).toBeNull();
-    expect(await store.isGranted('o1', 'repo-1', 'a', '.env.keys')).toBe(false);
+    await store.delete('o1', 'repo-1', '.env.keys');
+    expect(await store.read('o1', 'repo-1', '.env.keys')).toBeNull();
+    expect(await store.list('o1')).toHaveLength(0);
   });
 });

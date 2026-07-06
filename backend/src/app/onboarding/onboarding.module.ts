@@ -7,8 +7,7 @@ import {
   DecisionRecordEntity,
   OrganizationEntity,
   OrgCredentialsEntity,
-  OrgWorktreeSecretEntity,
-  OrgWorktreeSecretGrantEntity,
+  OrgWorktreeSecretFileEntity,
   OrgWorktreeMountEntity,
   RepoEntity,
   StimulusEntity,
@@ -22,7 +21,7 @@ import { OnboardingController } from './onboarding.controller';
 import { OnboardingService } from './onboarding.service';
 import { RepoController } from './repo.controller';
 import { TenantCredentialStore } from './tenant-credential.store';
-import { WorktreeSecretStore } from './worktree-secret.store';
+import { WorktreeSecretFileStore } from './worktree-secret.store';
 import { WorktreeConfigStore } from './worktree-config.store';
 import { WorktreeSecretsController } from './worktree-secrets.controller';
 
@@ -42,8 +41,7 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
     TypeOrmModule.forFeature(
       [
         OrgCredentialsEntity,
-        OrgWorktreeSecretEntity,
-        OrgWorktreeSecretGrantEntity,
+        OrgWorktreeSecretFileEntity,
         OrgWorktreeMountEntity,
         OrganizationEntity,
         RepoEntity,
@@ -63,7 +61,7 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
   ],
   providers: [
     TenantCredentialStore,
-    WorktreeSecretStore,
+    WorktreeSecretFileStore,
     WorktreeConfigStore,
     CredentialResolver,
     OnboardingService,
@@ -72,7 +70,7 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
   ],
   exports: [
     TenantCredentialStore,
-    WorktreeSecretStore,
+    WorktreeSecretFileStore,
     WorktreeConfigStore,
     CredentialResolver,
     OnboardingService,

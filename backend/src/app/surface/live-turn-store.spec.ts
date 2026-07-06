@@ -85,7 +85,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       { available: false } as never, // realtime
       { isLeader: () => true, getState: () => 'leader', isDraining: () => false } as never, // election
       { dispatch: async () => undefined } as never, // dispatcher (JOB_DISPATCHER)
-      { write: async () => undefined, grant: async () => undefined } as never, // secrets (WorktreeSecretStore)
+      { write: async () => undefined, list: async () => [], listForRepo: async () => [], read: async () => null } as never, // secrets (WorktreeSecretFileStore)
       {} as never, // store (BrainStoreService)
       { stopTurn: async () => false } as never, // brain (AgentSessionManager)
     );

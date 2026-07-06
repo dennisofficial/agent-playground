@@ -8,7 +8,7 @@ import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
-import { WorktreeSecretStore } from '../onboarding';
+import { WorktreeSecretFileStore } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { SANDBOX_PROVIDER } from '../sandbox';
 import {
@@ -25,7 +25,7 @@ import { BrainStoreService } from './brain-store.service';
 
 /**
  * The EPHEMERAL secret lane's core invariant: a one-time value (an OAuth code) is delivered STRAIGHT into
- * the running sandbox and NEVER persisted — no `org_worktree_secrets` row, no grant, not in the transcript.
+ * the running sandbox and NEVER persisted — no `org_worktree_secret_files` row, not in the transcript.
  * Drives the real `provide-secret` controller path with a fake SANDBOX_PROVIDER that records the delivered
  * value, against live Postgres. Contrast with `secret-intake.int.test.ts`, which asserts the DURABLE lane
  * DOES write the encrypted store + grant.
@@ -62,7 +62,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
   let app: NestExpressApplication;
   let controller: WebSurfaceController;
   let store: BrainStoreService;
-  let secrets: WorktreeSecretStore;
+  let secrets: WorktreeSecretFileStore;
   let ds: DataSource;
   let provider: FakeSandboxProvider;
   let jobId: string;
@@ -95,7 +95,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
 
     controller = app.get(WebSurfaceController);
     store = app.get(BrainStoreService);
-    secrets = app.get(WorktreeSecretStore);
+    secrets = app.get(WorktreeSecretFileStore);
     ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
     await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]);
@@ -151,11 +151,11 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
     expect(provider.delivered).toHaveLength(1);
     expect(provider.delivered[0]).toMatchObject({ jobId, path: DELIVER_TO, value: `${CODE_VALUE}\n` });
 
-    // NOTHING durable: no encrypted store row, no grant.
-    expect(await secrets.read(ORG_ID, LABEL)).toBeNull();
-    expect(await secrets.listGrants(ORG_ID, repoId)).toHaveLength(0);
+    // NOTHING durable: no encrypted secret-file row at the delivery path, none for the repo at all.
+    expect(await secrets.read(ORG_ID, repoId, DELIVER_TO)).toBeNull();
+    expect(await secrets.list(ORG_ID, repoId)).toHaveLength(0);
     const storeRows = await ds.query(
-      `SELECT count(*)::int AS n FROM org_worktree_secrets WHERE org_id = $1`,
+      `SELECT count(*)::int AS n FROM org_worktree_secret_files WHERE org_id = $1`,
       [ORG_ID],
     );
     expect(storeRows[0].n).toBe(0);
@@ -197,7 +197,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
     expect(res.ok).toBe(false);
     // Gate cleared so the brain can re-run the login; nothing persisted.
     expect(await store.awaitingSecretId(jobId)).toBeNull();
-    expect(await secrets.read(ORG_ID, LABEL)).toBeNull();
+    expect(await secrets.read(ORG_ID, repoId, DELIVER_TO)).toBeNull();
     const rows = await ds.query(
       `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND (text LIKE $2 OR card::text LIKE $2)`,
       [jobId, `%${CODE_VALUE}%`],
