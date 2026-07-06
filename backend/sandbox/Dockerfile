@@ -56,14 +56,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && ln -sf "$(command -v fdfind)" /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
 
-# pnpm via corepack (the agent's typical package manager). `corepack prepare pnpm@10 --activate` seeds a
-# cached version so THIS image build (installing the engine SDKs below) doesn't need network egress — it
-# does NOT force pnpm@10 on agent repos at runtime: like fnm resolves each repo's OWN Node version from
-# .nvmrc with no baked default, corepack resolves each repo's OWN pnpm version from its `packageManager`
-# field, or whatever's current if the repo declares none. A repo that needs a specific pnpm (e.g. because
-# an old Node major it pins can't run a newer pnpm) is responsible for declaring that in its own
-# `packageManager` field, same as it owns its own Node pin.
-RUN corepack enable && corepack prepare pnpm@10 --activate
+# pnpm via a PINNED corepack (the agent's typical package manager). The node:22 base tag floats, and its
+# bundled corepack — and, via fnm, older repo-pinned Nodes' bundled corepack — can be pre-0.31, which
+# FAILS pnpm signature verification (npm rotated the signing keys corepack hardcoded; fixed in 0.31+).
+# So we pin corepack explicitly instead of inheriting whatever the base ships. `--force` is required
+# because corepack ships as a bundled npm dependency and npm won't overwrite its bin shims otherwise.
+#
+# We stamp the PINNED corepack's pnpm/yarn shims into a fixed dir and put that dir FIRST on PATH (ENV
+# below + re-asserted in shell-init.sh AFTER fnm switches Node) so per-repo Node switching can never fall
+# back to an old bundled corepack. NO pnpm version is seeded here: like fnm resolves each repo's OWN Node
+# from .nvmrc with no baked default, corepack resolves each repo's OWN pnpm from its `packageManager`
+# field (or its default when none), cached under the durable HOME's ~/.cache/node/corepack. The engine
+# SDKs below install via plain `npm`, so this build no longer needs an activated pnpm.
+RUN npm install -g corepack@0.34.6 --force \
+  && mkdir -p /opt/corepack-shims \
+  && /usr/local/bin/corepack enable --install-directory /opt/corepack-shims
+
+# Pinned-corepack shims first, so `pnpm`/`yarn` always route through corepack@0.34.6 regardless of which
+# Node fnm activates. Unlike the /home/atlas user-bin APPEND further down, this must PREPEND — it needs to
+# shadow the pnpm/yarn shims fnm-selected Nodes carry. shell-init.sh re-prepends it after `fnm env`, which
+# otherwise pushes the selected Node's bin (and its bundled corepack) ahead of this on every agent shell.
+ENV PATH=/opt/corepack-shims:${PATH}
 
 # Pin pnpm's content-addressable store to the shared system cache (SandboxManager binds a host dir here —
 # see CONTAINER_PNPM_STORE) instead of leaving it unset — regardless of which pnpm version a repo resolves
@@ -180,10 +193,13 @@ RUN git config --system --add safe.directory '*'
 # may promote these to build args). The host passes secrets as exec env, never baked here.
 ARG CLAUDE_SDK_VERSION=0.3.201
 ARG CODEX_SDK_VERSION=0.137.0
+# Installed with plain `npm` (not pnpm): an isolated two-package install into a standalone package.json,
+# consumed only by ESM `import` from the .mjs bundles below — a flat node_modules resolves identically and
+# more forgivingly than pnpm's symlink layout, and it keeps this build free of any activated-pnpm ordering.
 RUN mkdir -p /usr/local/lib/atlas \
   && cd /usr/local/lib/atlas \
   && printf '{"name":"atlas-engine-runtime","private":true}\n' > package.json \
-  && pnpm add "@anthropic-ai/claude-agent-sdk@${CLAUDE_SDK_VERSION}" "@openai/codex-sdk@${CODEX_SDK_VERSION}"
+  && npm install "@anthropic-ai/claude-agent-sdk@${CLAUDE_SDK_VERSION}" "@openai/codex-sdk@${CODEX_SDK_VERSION}"
 COPY engine-entrypoint.mjs /usr/local/lib/atlas/engine-entrypoint.mjs
 # The Codex MCP tool-bridge server (spawned by codex via config.toml). Baked as a fallback; the host
 # bind-mounts the live re-bundled copy over it, same hot-reload contract as engine-entrypoint.mjs.

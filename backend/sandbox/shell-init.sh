@@ -12,8 +12,11 @@
 eval "$(fnm env --use-on-cd --shell bash)" 2>/dev/null || true
 fnm use --install-if-missing 2>/dev/null || true
 
-# Ensure pnpm/yarn shims exist for whatever Node is now active (corepack shims are node-version-agnostic).
-corepack enable 2>/dev/null || true
+# fnm just prepended the repo-selected Node's bin. Re-prepend the image-pinned corepack shims so `pnpm`/
+# `yarn` route through corepack@0.34.6 (modern signing keys), NOT the selected Node's possibly-old bundled
+# corepack (pre-0.31 fails pnpm signature verification). The shims are Node-version-agnostic launchers;
+# corepack still resolves the repo's OWN pnpm version. The guard keeps PATH from growing across nested shells.
+case ":$PATH:" in *":/opt/corepack-shims:"*) ;; *) export PATH="/opt/corepack-shims:$PATH" ;; esac
 
 # direnv: honor the repo's own `.envrc` (e.g. gcloud CLOUDSDK_CONFIG → a persistent .gcloud mount). The
 # SDK Bash tool runs one-shot `bash -c` (non-interactive, no prompt), so the usual prompt hook never fires
