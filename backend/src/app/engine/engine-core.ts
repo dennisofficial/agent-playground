@@ -424,7 +424,26 @@ export class EngineCore {
   }
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
-    return args.engine === 'codex' ? this.runCodex(args) : this.runClaude(args);
+    return this.stampUsageProvenance(
+      await (args.engine === 'codex' ? this.runCodex(args) : this.runClaude(args)),
+      args,
+    );
+  }
+
+  /**
+   * Stamp display-only provenance the engine paths don't carry themselves onto the returned usage: the
+   * `engine` that ran (so a Codex turn with no `model` still labels as "Codex") and the `reasoningEffort`
+   * the run was given (a Codex-only input, never surfaced by the SDK). Applied at BOTH dispatch wrappers
+   * (`run` / `runWithExtras`) so every engine turn — build, Codex review, autofix — is covered without
+   * touching `runClaude`/`runCodex` internals or any transcript `metaTag` call site. `??=` so a path that
+   * ever populates these itself wins. No-op when the run produced no usage.
+   */
+  private stampUsageProvenance(res: EngineRunResult, args: RunEngineArgs): EngineRunResult {
+    if (res.usage) {
+      res.usage.engine ??= args.engine;
+      if (args.modelReasoningEffort) res.usage.reasoningEffort ??= args.modelReasoningEffort;
+    }
+    return res;
   }
 
   /**
@@ -445,9 +464,12 @@ export class EngineCore {
     codexBridgeTools?: string[],
     codexExtraMcpServers?: CodexExtraMcpServers,
   ): Promise<EngineRunResult> {
-    return args.engine === 'codex'
-      ? this.runCodex(args, codexBridgeTools, codexExtraMcpServers)
-      : this.runClaude(args, extraClaudeOptions, bridgeToolNames);
+    return this.stampUsageProvenance(
+      await (args.engine === 'codex'
+        ? this.runCodex(args, codexBridgeTools, codexExtraMcpServers)
+        : this.runClaude(args, extraClaudeOptions, bridgeToolNames)),
+      args,
+    );
   }
 
   // ── Claude ────────────────────────────────────────────────────────────────────────────────────
