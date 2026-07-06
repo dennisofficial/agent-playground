@@ -395,7 +395,7 @@ export class LocalGitService {
     };
   }
 
-  private async refExists(repoPath: string, ref: string): Promise<boolean> {
+  async refExists(repoPath: string, ref: string): Promise<boolean> {
     try {
       await this.git(['show-ref', '--verify', '--quiet', ref], { cwd: repoPath });
       return true;
@@ -538,6 +538,19 @@ export class LocalGitService {
   /** The current HEAD sha of a checkout. */
   async headSha(worktreePath: string): Promise<string> {
     return this.git(['rev-parse', 'HEAD'], { cwd: worktreePath });
+  }
+
+  /**
+   * The branch HEAD is currently on, or null when detached / empty. OBSERVED only — this reads what
+   * the in-sandbox agent did (it may `git checkout -b …` freely); Atlas never asserts the branch here.
+   */
+  async currentBranch(worktreePath: string): Promise<string | null> {
+    try {
+      const out = (await this.git(['branch', '--show-current'], { cwd: worktreePath })).trim();
+      return out.length ? out : null;
+    } catch {
+      return null;
+    }
   }
 
   /** List existing worktree dirs for a repo (for boot recovery / awareness). */

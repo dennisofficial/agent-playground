@@ -68,6 +68,18 @@ describe('LocalGitService (host git, daemon-free)', () => {
     expect(head).toBe('atlas/feature-x');
   });
 
+  it('reads the current branch, and null on a detached HEAD', async () => {
+    const r = await repo();
+    const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
+    expect(await svc.currentBranch(sandbox.worktreePath)).toBe('atlas/feature-x');
+    // A rename (what the in-sandbox agent might do) is observed as the new branch.
+    execFileSync('git', ['-C', sandbox.worktreePath, 'checkout', '-b', 'feat/renamed'], { encoding: 'utf8' });
+    expect(await svc.currentBranch(sandbox.worktreePath)).toBe('feat/renamed');
+    // Detached HEAD → `git branch --show-current` prints empty → null (don't clobber last-known).
+    execFileSync('git', ['-C', sandbox.worktreePath, 'checkout', '--detach', 'HEAD'], { encoding: 'utf8' });
+    expect(await svc.currentBranch(sandbox.worktreePath)).toBeNull();
+  });
+
   it('reuses an existing worktree (idempotent)', async () => {
     const r = await repo();
     const a = await svc.createFeatureSandbox(r, 'atlas/feature-x');

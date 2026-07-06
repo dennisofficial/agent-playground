@@ -19,6 +19,7 @@ import {
 } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { TicketService } from '../tickets';
+import { computeFeatureBranchName } from './branch-naming';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -723,7 +724,9 @@ export class JobLifecycleService {
       // Cut the base-branch worktree, then cut the thread's feature branch IN-PLACE at create — a thread
       // IS a branch from the start (one branch / one PR per thread). The THREAD owns the feature branch
       // (single source of truth the driver builds on).
-      const featureBranch = `atlas/thread-${thread.id.slice(0, 8)}`;
+      // Host-named canonical branch: honors the repo's optional `branch_prefix` (falling back to the
+      // historical `atlas/thread-` default) so a repo can enforce its own convention (e.g. `feat/`).
+      const featureBranch = computeFeatureBranchName(project, thread.id);
       const baseSandboxInput = await this.git.createBaseWorktree(projectRepo, thread.id);
       const branched = await this.git.switchBranch(baseSandboxInput, projectRepo, featureBranch);
 
@@ -795,16 +798,27 @@ export class JobLifecycleService {
   }
 
   /**
-   * Ensure the row's durable worktree exists on disk, recreating it ON THE FEATURE BRANCH (read from the
-   * THREAD) if it has gone (crash / host down / pruned). `createBaseWorktree` lands at the same per-thread
-   * path and is idempotent; the feature branch ref lives in the durable shared `.git`.
+   * Ensure the row's durable worktree exists on disk, recreating it on the OBSERVED branch (or the host-named
+   * feature branch) if it has gone (crash / host down / pruned). `createBaseWorktree` lands at the same
+   * per-thread path and is idempotent; the branch refs live in the durable shared `.git`.
+   *
+   * Prefer `current_branch` (what the agent's HEAD was actually on — it may have `git checkout -b …`) when its
+   * ref still exists, else fall back to `feature_branch`. Restoring blindly to the stale `feature_branch` would
+   * resume the job on a branch MISSING the agent's post-rename commits (those survive in the shared `.git`
+   * under the observed ref, so the recovery must re-checkout that ref, not the canonical name).
    */
   private async ensureWorktree(row: JobSandboxEntity, projectRepo: ProjectRepo): Promise<void> {
     if (row.worktree_path && existsSync(row.worktree_path)) return;
     const thread = await this.jobs.findOne({ where: { id: row.job_id } });
     const base = await this.git.createBaseWorktree(projectRepo, row.job_id);
-    const sb = thread?.feature_branch
-      ? await this.git.switchBranch(base, projectRepo, thread.feature_branch)
+    const desired = thread?.current_branch ?? thread?.feature_branch ?? null;
+    const target =
+      desired &&
+      (await this.git.refExists(projectRepo.repoPath, `refs/heads/${desired}`))
+        ? desired
+        : (thread?.feature_branch ?? null);
+    const sb = target
+      ? await this.git.switchBranch(base, projectRepo, target)
       : base;
     // A restored worktree is freshly cut → re-populate its submodules (no-op without a `.gitmodules`).
     await this.git.ensureSubmodules(sb.worktreePath, projectRepo);

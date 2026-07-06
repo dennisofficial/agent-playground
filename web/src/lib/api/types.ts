@@ -358,6 +358,9 @@ export interface PipelineJob {
   prMergeable: string | null;
   /** The feature branch all threads stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
+  /** The OBSERVED live branch the agent's HEAD is on; differs from featureBranch ⇒ drift (badge). Null
+   *  until first sampled / on detached HEAD. */
+  currentBranch: string | null;
   baseBranch: string | null;
   threads: PipelineThread[];
 }

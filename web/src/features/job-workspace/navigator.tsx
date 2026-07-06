@@ -132,6 +132,12 @@ export function Navigator({
 }) {
   const job = pipelineJob(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
+  // DRIFT: the agent switched the sandbox HEAD to a branch other than the host-named featureBranch. Surfaced
+  // (never blocked) — the live branch is what actually ships. Null when there's no divergence to show.
+  const drift =
+    job?.currentBranch && job.currentBranch !== job.featureBranch
+      ? job.currentBranch
+      : null;
   // "Has a PR" mirrors the sidebar's signal — the observed PR lifecycle (`prState`), NOT `prUrl`. A closed
   // PR (or a partially-recorded row) can carry `prState`/`prNumber` with a null `prUrl`; gating on `prUrl`
   // would then say "No PR yet" while the sidebar shows the closed glyph. The URL only gates the link-out.
@@ -212,9 +218,24 @@ export function Navigator({
         </div>
         {branch ? (
           <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1">
-            <GitBranch size={10} className="shrink-0 text-faint" />
-            <span className="flex-1 truncate font-mono text-[9.5px] text-dim">
-              {branch}
+            <GitBranch
+              size={10}
+              className="shrink-0"
+              style={drift ? { color: "var(--amber)" } : undefined}
+            />
+            <span
+              className="flex-1 truncate font-mono text-[9.5px] text-dim"
+              title={drift ? `drifted from ${branch} → ${drift}` : undefined}
+            >
+              {drift ? (
+                <>
+                  <span className="text-faint line-through">{branch}</span>
+                  <span className="px-1 text-faint">→</span>
+                  <span style={{ color: "var(--amber)" }}>{drift}</span>
+                </>
+              ) : (
+                branch
+              )}
             </span>
             {meta.tracker ? (
               <span className="shrink-0 font-mono text-[9px] text-blue">

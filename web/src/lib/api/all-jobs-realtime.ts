@@ -26,6 +26,9 @@ interface RealtimeRow {
   needsYou: boolean;
   orgId: string;
   repoId: string;
+  /** The OBSERVED live branch — a change (agent `git checkout`) invalidates the open thread's pipeline so
+   *  the navigator drift badge goes live even without a status flip. */
+  currentBranch?: string | null;
   /** Observed PR lifecycle ('open'|'merged'|'closed'|null) — drives the PR-status glyph. */
   prState?: string | null;
   /** GitHub mergeable_state ('dirty' = conflict); refines the open-PR glyph. */
@@ -58,10 +61,18 @@ export function useAllJobsRealtime(): void {
     const invalidate = () =>
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
 
+    // Per-job last-seen observed branch — lets us detect a live `git checkout` (a `current_branch` write
+    // fires a WAL update with no status flip) and refresh the open thread's pipeline for the drift badge.
+    const lastBranchByJob = new Map<string, string | null>();
+
     const patchUpdate = (row: RealtimeRow) => {
       let found = false;
       let statusChanged = false;
       const nextStatus = uiStatus(row.status, row.origin);
+      const nextBranch = row.currentBranch ?? null;
+      const prevBranch = lastBranchByJob.get(row.jobId);
+      const branchChanged = prevBranch !== undefined && prevBranch !== nextBranch;
+      lastBranchByJob.set(row.jobId, nextBranch);
       qc.setQueryData<InboxThread[]>(qk.allJobs(), (prev) => {
         if (!prev) return prev;
         const idx = prev.findIndex((t) => t.id === row.jobId);
@@ -96,10 +107,14 @@ export function useAllJobsRealtime(): void {
       // queries are keyed per-thread and only THIS stream carries the (race-free, commit-driven) signal
       // that they changed. Invalidate them so an open thread's approve bar / phase states go live too;
       // for any non-open thread these are unobserved queries, so this just marks them stale (no fetch).
-      if (statusChanged) {
+      if (statusChanged || branchChanged) {
         const ref = { orgId: row.orgId, repoId: row.repoId, jobId: row.jobId };
+        // The pipeline carries the branch fields the drift badge reads — refresh on either a status flip or
+        // a live branch switch. Messages only change with status, so keep them gated on statusChanged.
         void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-        void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+        if (statusChanged) {
+          void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+        }
       }
     };
 
