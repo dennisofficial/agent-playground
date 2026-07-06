@@ -16,7 +16,7 @@ import type {
 } from './autofix.types';
 
 /**
- * The default fan-out: three complementary read-only lenses. Conservative + non-overlapping focuses so
+ * The default fan-out: four complementary read-only lenses. Conservative + non-overlapping focuses so
  * the deduped union stays signal-rich. Callers override via `AutoFixOptions.lenses`.
  */
 export const DEFAULT_LENSES: ReviewLens[] = [
@@ -47,6 +47,17 @@ export const DEFAULT_LENSES: ReviewLens[] = [
       'Consistency with existing patterns in this repo: does the new code match how the codebase ' +
       'already does logging, DI, types, imports, file placement, and tests? Read neighbouring files ' +
       'to judge the house style; flag deviations the change introduced.',
+  },
+  {
+    id: 'minimalism',
+    label: 'Minimal code / no over-engineering',
+    focus:
+      'Over-engineering introduced by THIS change: a new abstraction, dependency, service, wrapper, or ' +
+      'config where reuse of something already in the repo, the stdlib, a native platform feature, or a ' +
+      'one-liner would do; needless indirection; speculative flexibility or options nobody asked for; ' +
+      'code that builds more than the stated intent needs. Flag the leaner alternative concretely. ' +
+      'NEVER flag input validation, error handling, security, or accessibility as "excess" — those are ' +
+      'required. Do NOT propose broad refactors — only reductions scoped to the change set.',
   },
 ];
 

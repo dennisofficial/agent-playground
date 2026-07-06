@@ -12,6 +12,7 @@ import {
   DEVIATION_NOTE,
   DOCS_BEFORE_GREP,
   LSP_TOOLS_NOTE,
+  MINIMAL_CODE_NOTE,
   MONOREPO_VERIFY_HINT,
   PLAYGROUND_NOTE,
   SPIKE_FIRST_NOTE,
@@ -107,5 +108,10 @@ export class WorkerGroup {
   @Fragment({ usedBy: [Agent.WORKER], order: 415 })
   clarityOverComments(): string {
     return CLARITY_OVER_COMMENTS_NOTE;
+  }
+
+  @Fragment({ usedBy: [Agent.WORKER], order: 420 })
+  minimalCode(): string {
+    return MINIMAL_CODE_NOTE;
   }
 }
