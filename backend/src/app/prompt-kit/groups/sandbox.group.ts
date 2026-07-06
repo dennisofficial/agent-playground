@@ -11,6 +11,33 @@ import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
 import { SOLE_AUTHOR_NOTE } from '../fragments';
 
+/**
+ * The sandbox OS + the toolkit pre-baked into the image, shown to BOTH the normal and onboarding brains so
+ * neither reinstalls something that already ships. Kept BROAD (a grouped inventory, not per-tool recipes) and
+ * framed as a FLOOR — the point is "check before you install," not an exhaustive man page. MIRRORS
+ * `backend/sandbox/Dockerfile`; keep the two in sync when the image's tool set changes.
+ */
+const BUILT_IN_TOOLKIT_NOTE = [
+  'YOUR SANDBOX + WHAT IS ALREADY INSTALLED: the container is Debian 12 (bookworm) Linux, apt-based. A BROAD',
+  'toolkit is pre-baked and on PATH — run `command -v <tool>` before assuming anything is missing. What ships:',
+  '  - Git & GitHub: `git` (authenticated remote) + `gh`.',
+  '  - Containers: `docker` + `docker compose` + `buildx`, backed by a real inner Docker daemon (DinD) — you',
+  '    can `docker compose up` a Postgres / dev stack inside your own sandbox.',
+  "  - Node / JS: Node 22, plus `fnm` (auto-switches to the repo's .nvmrc/.node-version) and `pnpm`/`yarn` via",
+  "    corepack + `npm` (each resolves the repo's OWN version). You do NOT install Node or a package manager —",
+  '    the repo pins are honored automatically.',
+  '  - Python & native: `python3` + `pip` + `venv`; `build-essential` (gcc/g++/make) for node-gyp / C extensions.',
+  '  - Cloud & infra: `gcloud` (+ `gsutil`, `bq`, GKE auth plugin), `aws` (v2), `terraform`, `kubectl`, `helm`,',
+  '    `stripe`. These are BINARIES only — you still authenticate them (see AUTH / CAPABILITY ACCESS).',
+  '  - Databases: `psql` (postgresql-client), `sqlite3`.',
+  '  - Search / code: `rg`, `fd`, `jq`, `yq`, `ast-grep`, `sd`, `shfmt`, `shellcheck`, `actionlint`, `difft`,',
+  '    `delta`, `watchexec`, `hyperfine`, `scc`.',
+  '  - Net / shell: `curl`, `wget`, `dig`, `nc`, `rsync`, `lsof`, `less`, `direnv`, `ssh`.',
+  'These are FLOORS, not straitjackets: if a build needs a tool or version the image lacks, install it into',
+  '`~/.local/bin` (durable, already on PATH) — never into /workspace. A tool needing a system `apt install`',
+  'will NOT survive a sandbox reset, so `remember` it for baking into the image instead of reinstalling per job.',
+].join('\n');
+
 @FragmentGroup()
 export class SandboxGroup {
   /** normal block 01 — where you run (cloud sandbox, long framing). */
@@ -29,6 +56,12 @@ export class SandboxGroup {
       'ask_question for decisions and facts only the operator knows). Your work reaches their world ONLY',
       'through what you ship (the PR) and what you post in chat.',
     ].join('\n');
+  }
+
+  /** normal block 01a — the sandbox OS + the pre-baked toolkit (also shown in onboarding, below). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1012, condition: notOnboarding })
+  builtInToolkit(): string {
+    return BUILT_IN_TOOLKIT_NOTE;
   }
 
   /** normal block 01b — you are the sole author of the checkout (no phantom outside/concurrent editor). */
@@ -114,5 +147,11 @@ export class SandboxGroup {
       '',
       SOLE_AUTHOR_NOTE,
     ].join('\n');
+  }
+
+  /** onboarding block 01a — same OS + pre-baked toolkit note, so onboarding does not reinstall built-ins. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2012, condition: isOnboarding })
+  onboardingBuiltInToolkit(): string {
+    return BUILT_IN_TOOLKIT_NOTE;
   }
 }

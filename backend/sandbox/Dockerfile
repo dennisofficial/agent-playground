@@ -35,10 +35,15 @@ ENV TERM=xterm \
 # `grep`/`find`/`sed` when they're missing; `jq` is their JSON-in-pipeline workhorse. Debian ships fd as
 # `fdfind` (name clash with another package), so we add an `fd` symlink below so the agents find it by the
 # name they actually invoke.
+# postgresql-client (psql), wget, dnsutils (dig/nslookup), netcat-openbsd (nc), rsync, lsof, sqlite3, less:
+# common db/unix utilities repos + agents assume exist but the slim base omits. Google Cloud SDK
+# (gcloud/gsutil/bq + GKE auth plugin) is added from Google's apt repo below, alongside docker/gh — the
+# prompt-kit installs it into ~/.local/bin every onboarding otherwise, so bake it once.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg git iptables openssh-client procps direnv \
       python3 python3-venv python3-pip build-essential unzip xz-utils \
       ripgrep fd-find jq \
+      postgresql-client wget dnsutils netcat-openbsd rsync lsof sqlite3 less \
   && install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
   && chmod a+r /etc/apt/keyrings/docker.asc \
@@ -50,8 +55,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
+  # Google Cloud SDK from Google's official apt repo. Its key is ASCII-armored, so dearmor it to a keyring
+  # (download-then-dearmor — no `curl | gpg` pipe, so a bad fetch fails the build). The repo is multi-arch;
+  # no arch= qualifier needed. `cloud-sdk main` provides gcloud/gsutil/bq + the GKE auth plugin.
+  && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg -o /etc/apt/keyrings/cloud-google.asc \
+  && gpg --dearmor --yes -o /etc/apt/keyrings/cloud-google.gpg /etc/apt/keyrings/cloud-google.asc \
+  && rm /etc/apt/keyrings/cloud-google.asc \
+  && chmod a+r /etc/apt/keyrings/cloud-google.gpg \
+  && echo "deb [signed-by=/etc/apt/keyrings/cloud-google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+      > /etc/apt/sources.list.d/google-cloud-sdk.list \
   && apt-get update && apt-get install -y --no-install-recommends \
       docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin gh \
+      google-cloud-cli google-cloud-cli-gke-gcloud-auth-plugin \
   # Debian's fd-find installs the binary as `fdfind`; expose it under `fd`, the name the agents invoke.
   && ln -sf "$(command -v fdfind)" /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
@@ -96,22 +111,22 @@ RUN mkdir -p /etc/atlas/xdg-config/pnpm \
 
 # fnm — per-repo Node version switching from the repo's own .nvmrc / .node-version. The ENGINE itself
 # stays pinned to this image's Node 22 (see the atlas-engine-turn launcher below, which calls node by
-# absolute path); fnm only switches Node for the AGENT's build shells, activated via BASH_ENV. Install
-# is architecture-aware (the build sets no --platform). NO Node versions are baked: sandboxes have
-# outbound egress, so shell-init.sh downloads the repo's pinned version on first use and caches it in the
-# SHARED fnm store (FNM_DIR below, under /.atlas — engine-internal, like the pnpm store) —
-# download-once-global. A repo with no version file just runs this image's base Node 22.
-ARG FNM_VERSION=v1.38.1
-RUN arch="$(dpkg --print-architecture)" \
-  && case "$arch" in \
-       amd64) fnm_artifact=fnm-linux ;; \
-       arm64) fnm_artifact=fnm-arm64 ;; \
-       *) echo "unsupported arch for fnm: $arch" >&2; exit 1 ;; \
-     esac \
-  && curl -fsSL "https://github.com/Schniz/fnm/releases/download/${FNM_VERSION}/${fnm_artifact}.zip" -o /tmp/fnm.zip \
-  && unzip -q /tmp/fnm.zip -d /usr/local/bin \
-  && chmod +x /usr/local/bin/fnm \
-  && rm /tmp/fnm.zip
+# absolute path); fnm only switches Node for the AGENT's build shells, activated via BASH_ENV. NO Node
+# versions are baked: sandboxes have outbound egress, so shell-init.sh downloads the repo's pinned version
+# on first use and caches it in the SHARED fnm store (FNM_DIR below, under /.atlas — engine-internal, like
+# the pnpm store) — download-once-global. A repo with no version file just runs this image's base Node 22.
+# Installed via fnm's official install script — latest release, arch detected internally. Download the
+# script to a file first (like the toolbelt block below, NOT `curl | bash`: no pipefail here, so a bad URL
+# on the left of a pipe would still succeed). --install-dir puts the binary at /usr/local/bin/fnm;
+# --skip-shell because shell-init.sh activates fnm itself. chmod 0755 so host-uid turns (not just root) can
+# exec it — the official script only chmods u+x. Smoke-test in the same layer so a broken install fails.
+# To re-pull the newest fnm on an already-built image: `docker build --no-cache` or `docker rmi` (per the
+# SandboxImageBuilder note) — an unchanged image's fnm layer is not refreshed automatically.
+RUN curl -fsSL https://fnm.vercel.app/install -o /tmp/fnm-install.sh \
+  && bash /tmp/fnm-install.sh --install-dir /usr/local/bin --skip-shell \
+  && rm /tmp/fnm-install.sh \
+  && chmod 0755 /usr/local/bin/fnm \
+  && fnm --version
 
 # Modern CLI toolbelt the engine agents (Claude Code / Codex) reach for beyond the rg/fd/jq in the apt
 # block above — installed as pinned, arch-aware static binaries into /usr/local/bin (NOT apt: several
@@ -163,6 +178,42 @@ RUN set -eu; \
   actionlint --version >/dev/null; watchexec --version >/dev/null; scc --version >/dev/null; \
   hyperfine --version >/dev/null; delta --version >/dev/null; yq --version >/dev/null; \
   shfmt --version >/dev/null; ast-grep --version >/dev/null
+
+# Cloud & infra CLIs the engine agents reach for during onboarding + builds. gcloud (+ gsutil/bq/GKE auth
+# plugin) is apt-installed in the system-deps block above; the rest are pinned, arch-aware binary downloads
+# (same download-to-file + smoke-test house pattern as the toolbelt). The prompt-kit drives terraform
+# (`init`/`validate`/`plan`) and the Stripe CLI directly; aws v2 + kubectl + helm cover cloud-native repos.
+# These are FLOORS — a repo needing another version installs it into the durable HOME (~/.local/bin) per the
+# onboarding prompt. Bump: terraform via HashiCorp releases, kubectl via dl.k8s.io/release/stable.txt, helm
+# + stripe via their GitHub latest; aws v2 tracks the vendor's latest (unversioned installer URL).
+ARG TERRAFORM_VERSION=1.15.7
+ARG KUBECTL_VERSION=v1.36.2
+ARG HELM_VERSION=v4.2.2
+ARG STRIPE_VERSION=1.43.6
+RUN set -eu; \
+  arch="$(dpkg --print-architecture)"; \
+  case "$arch" in \
+    amd64) stripe_arch=x86_64; aws_arch=x86_64 ;; \
+    arm64) stripe_arch=arm64;  aws_arch=aarch64 ;; \
+    *) echo "unsupported arch for cloud CLIs: $arch" >&2; exit 1 ;; \
+  esac; \
+  # terraform — single binary in a zip (amd64/arm64)
+  d="$(mktemp -d)"; curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${arch}.zip" -o "$d/tf.zip"; \
+    unzip -q "$d/tf.zip" -d "$d"; install -m0755 "$d/terraform" /usr/local/bin/terraform; rm -rf "$d"; \
+  # kubectl — single binary (amd64/arm64)
+  curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl" -o /usr/local/bin/kubectl; chmod 0755 /usr/local/bin/kubectl; \
+  # helm — tarball, binary under linux-<arch>/ (amd64/arm64)
+  d="$(mktemp -d)"; curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${arch}.tar.gz" -o "$d/helm.tgz"; \
+    tar -xzf "$d/helm.tgz" -C "$d"; install -m0755 "$d/linux-${arch}/helm" /usr/local/bin/helm; rm -rf "$d"; \
+  # stripe CLI — tarball (x86_64/arm64 naming), contains `stripe`
+  d="$(mktemp -d)"; curl -fsSL "https://github.com/stripe/stripe-cli/releases/download/v${STRIPE_VERSION}/stripe_${STRIPE_VERSION}_linux_${stripe_arch}.tar.gz" -o "$d/stripe.tgz"; \
+    tar -xzf "$d/stripe.tgz" -C "$d"; install -m0755 "$d/stripe" /usr/local/bin/stripe; rm -rf "$d"; \
+  # aws cli v2 — official zip installer (x86_64/aarch64); installs under /usr/local/aws-cli + /usr/local/bin symlinks
+  d="$(mktemp -d)"; curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_arch}.zip" -o "$d/aws.zip"; \
+    unzip -q "$d/aws.zip" -d "$d"; "$d/aws/install" --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli; rm -rf "$d"; \
+  # smoke-test: every CLI (incl. the apt-installed gcloud) resolves + runs on THIS arch
+  terraform version >/dev/null; kubectl version --client >/dev/null; helm version >/dev/null; \
+  stripe version >/dev/null; aws --version >/dev/null; gcloud --version >/dev/null
 
 # LSP toolchain: the in-sandbox `atlas-lsp-ts` MCP server (registered per-turn by the engine entrypoint)
 # is atlas-lsp-server.mjs — our OWN MCP server that drives typescript-language-server DIRECTLY over LSP,

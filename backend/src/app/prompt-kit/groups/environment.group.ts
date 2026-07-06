@@ -24,8 +24,9 @@ export class EnvironmentGroup {
       'key — nobody typed it, nothing for an operator to gate), call `derive_secret({ name, path, value,',
       'description })` to store it durably with no operator wait — otherwise every future job re-derives it from',
       'scratch, paying the same tax you just paid.',
-      'Persistence, by kind: (a) a CLI you install (gcloud/stripe/a `curl|sh` binary) → drop it in `~/.local/bin`',
-      '(already on PATH, durable) — never re-export PATH or install into /workspace; (b) a tool credential/cache →',
+      'Persistence, by kind: (a) a CLI the image does not already ship (run `command -v` first — the sandbox bakes',
+      'a broad toolkit) → drop it in `~/.local/bin` (already on PATH, durable) — never re-export PATH or install',
+      'into /workspace; (b) a tool credential/cache →',
       'it already persists at its DEFAULT `~/.config`/`~/.cache` path (durable per-repo HOME), no mount or config',
       'override needed; (c) a durable dir a tool insists on writing ELSEWHERE → `write_worktree_config({ mounts })`',
       'with a worktree-relative OR an absolute (external, outside /workspace) path — a DB write, live for every job',
@@ -105,11 +106,13 @@ export class EnvironmentGroup {
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2090, condition: isOnboarding })
   installCli(): string {
     return [
-      'INSTALLING A CLI (gcloud SDK, Stripe CLI, a `curl|sh` binary) — install it into your HOME the normal way',
-      'so it PERSISTS across resets/jobs and is already on PATH: put the binary in `~/.local/bin` (or symlink a',
-      "tarball's bin there, e.g. `ln -s ~/google-cloud-sdk/bin/* ~/.local/bin/`). `~/.local/bin` is on PATH — do",
-      'NOT re-export PATH each turn, and do NOT install into /workspace. A tool needing a system `apt install`',
-      'will NOT survive a reset — `remember` it and tell the operator it needs baking into the sandbox image.',
+      'INSTALLING A CLI — first check whether you even need to: the sandbox already ships a BROAD toolkit (cloud',
+      'CLIs, DB clients, build tools — see YOUR SANDBOX + WHAT IS ALREADY INSTALLED), so run `command -v <tool>`',
+      'and SKIP the install if it is present (you still AUTH it — see AUTH / CAPABILITY ACCESS). For ANY CLI the',
+      'image does not ship, install it into your HOME so it PERSISTS across resets/jobs and is already on PATH:',
+      "put the binary in `~/.local/bin` (or symlink a tarball's bin there). `~/.local/bin` is on PATH — do NOT",
+      're-export PATH each turn, and do NOT install into /workspace. A tool needing a system `apt install` will',
+      'NOT survive a reset — `remember` it and tell the operator it needs baking into the sandbox image.',
     ].join('\n');
   }
 
