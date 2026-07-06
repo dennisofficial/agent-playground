@@ -64,10 +64,10 @@ export function deriveNeedsYou(
  * discovers env/secrets/setup + authors `.atlas/worktree.json`). An onboarding thread never builds/PRs via
  * the driver — its tools are gated and it has its own mission prompt. `'event'` is a job seeded by an
  * external notification/CI signal (see the stimulus firehose) — untrusted intake, not an operator-shaped build.
- * `'pr_review'` reviews an EXISTING external pull request (never builds/PRs of its own) — it fetches the PR
+ * `'review'` reviews an EXISTING external pull request (never builds/PRs of its own) — it fetches the PR
  * diff and posts findings; unlike the build kinds it can be picked by the operator at job creation.
  */
-export type JobKind = 'feature' | 'bugfix' | 'onboarding' | 'event' | 'pr_review';
+export type JobKind = 'feature' | 'bugfix' | 'onboarding' | 'event' | 'review';
 
 /** A conversation + (optionally) the build it drives. One intent, one branch, one PR. */
 export interface Job {

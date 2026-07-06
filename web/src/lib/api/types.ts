@@ -21,7 +21,7 @@ export type WireJobKind =
   | "bugfix"
   | "onboarding"
   | "event"
-  | "pr_review";
+  | "review";
 
 /** The lane (Thread) status — one build lane within a Job. */
 export type ThreadStatus =

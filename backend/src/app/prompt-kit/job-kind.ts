@@ -25,8 +25,8 @@ const FRAGMENTS: Record<JobKind, string> = {
   event:
     'JOB KIND — EVENT. This job was seeded by an EXTERNAL notification/CI signal, not by the operator ' +
     'directly.',
-  pr_review:
-    'JOB KIND — PR REVIEW. This job reviews an EXISTING external pull request. Do NOT build a feature, ' +
+  review:
+    'JOB KIND — REVIEW. This job reviews an EXISTING external pull request. Do NOT build a feature, ' +
     'do NOT open a PR of your own, and do NOT enter the build/plan lifecycle. Fetch the PR with `gh pr ' +
     'view` / `gh pr diff`, review the diff, and post your findings grouped by severity (High/Medium/Low). ' +
     'Then offer concrete next steps — push a fix, post the findings as PR review comments, or run ' +

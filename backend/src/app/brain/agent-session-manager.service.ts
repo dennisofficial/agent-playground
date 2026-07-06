@@ -2280,10 +2280,10 @@ export class AgentSessionManager
       // Classify (or re-classify) THIS job's kind — e.g. this is a PR review, not a build. The next turn's
       // system prompt reflects the new kind automatically (it's read fresh each turn). Operator/system kinds
       // ('event'/'onboarding') are NOT settable here. Prefer letting propose_plan/start_direct_build carry
-      // feature/bugfix during scoping; use this when the job isn't a build (e.g. 'pr_review').
+      // feature/bugfix during scoping; use this when the job isn't a build (e.g. 'review').
       set_job_kind: async (args) => {
         const raw = String(args['kind'] ?? '').trim();
-        const settable: readonly JobKind[] = ['feature', 'bugfix', 'pr_review'];
+        const settable: readonly JobKind[] = ['feature', 'bugfix', 'review'];
         if (!settable.includes(raw as JobKind)) {
           return {
             ok: false,

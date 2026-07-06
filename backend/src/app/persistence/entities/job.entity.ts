@@ -97,7 +97,7 @@ export class JobEntity extends TimestampedEntity {
   // ── build lifecycle (folded in from the former `jobs` table) ───────────────────────────────────────
   /**
    * Build/job intent (see `JobKind`): 'feature' (many threads) | 'bugfix' (one) | 'onboarding' | 'event' |
-   * 'pr_review' (reviews an existing external PR, never builds). Null until scoped — but the operator can
+   * 'review' (reviews an existing external PR, never builds). Null until scoped — but the operator can
    * pick a kind at creation, and system paths (event/onboarding) stamp it at insert.
    */
   @Column({ type: 'text', nullable: true })

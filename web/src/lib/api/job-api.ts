@@ -412,7 +412,7 @@ export function fetchRepoBranches(
 }
 
 /** Operator-selectable job kinds (mirrors the backend allowlist; system kinds event/onboarding excluded). */
-export type OperatorJobKind = "feature" | "bugfix" | "pr_review";
+export type OperatorJobKind = "feature" | "bugfix" | "review";
 
 export interface CreateThreadBody {
   firstMessage: string;
@@ -420,7 +420,7 @@ export interface CreateThreadBody {
   baseBranch?: string;
   /** Operator-chosen job kind; omit to let the brain scope it (current default behavior). */
   kind?: OperatorJobKind;
-  /** For `kind: "pr_review"` — the PR number to review (seeds a <pr-review> block on the brain's first turn). */
+  /** For `kind: "review"` — the PR number to review (seeds a <review> block on the brain's first turn). */
   prNumber?: string;
 }
 

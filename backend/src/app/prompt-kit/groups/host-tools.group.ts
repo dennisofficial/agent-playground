@@ -24,7 +24,7 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_question    — retract a still-unanswered question BY questionId (to reword it or if it's now moot; never re-ask an open one — see the <open-questions> turn header)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__create_decision      — lock an always-ask decision (attaches the answered question — pass questionId to name which one, else the one just answered; set confirmedByOperator when the operator chose it, see GRILLING); returns its stable id`,
       `  - mcp__${BRIDGE_SERVER_NAME}__update_decision      — revise a locked decision BY ID (ruling/title/class)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__set_job_kind         — classify THIS job's kind ('feature'|'bugfix'|'pr_review') when it isn't a build you're scoping — e.g. a PR review. Reflected in your orientation from the next turn. (feature/bugfix are normally carried by propose_plan/start_direct_build; use this for 'pr_review' or to re-classify.)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__set_job_kind         — classify THIS job's kind ('feature'|'bugfix'|'review') when it isn't a build you're scoping — e.g. a PR review. Reflected in your orientation from the next turn. (feature/bugfix are normally carried by propose_plan/start_direct_build; use this for 'review' or to re-classify.)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__delete_decision      — drop a locked decision BY ID`,
       `  - mcp__${BRIDGE_SERVER_NAME}__get_pipeline_state   — read the current job/pipeline state for this thread`,
       `  - mcp__${BRIDGE_SERVER_NAME}__get_decision_record  — read back the locked decisions (RECOVERY ONLY — see below)`,

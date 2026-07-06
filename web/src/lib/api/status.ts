@@ -86,7 +86,7 @@ export function toJobKind(kind: WireJobKind | null | undefined): JobKind {
       return "onboard";
     case "event":
       return "event";
-    case "pr_review":
+    case "review":
       return "review";
     default:
       return "feat";

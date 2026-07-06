@@ -273,7 +273,7 @@ interface CreateThreadDto {
   baseBranch?: string;
   /** Operator-chosen job kind. Only the operator-selectable kinds are honored (see `OPERATOR_JOB_KINDS`). */
   kind?: string;
-  /** For `kind: 'pr_review'` — the PR number to review; seeds a `<pr-review>` framing block on turn 1. */
+  /** For `kind: 'review'` — the PR number to review; seeds a `<review>` framing block on turn 1. */
   prNumber?: string | number;
 }
 
@@ -282,17 +282,17 @@ interface CreateThreadDto {
  * intake / repo onboarding), never operator-set, so they are deliberately excluded — an unknown or
  * excluded value is ignored (kind stays null and the brain scopes it as before).
  */
-const OPERATOR_JOB_KINDS: ReadonlySet<JobKind> = new Set<JobKind>(['feature', 'bugfix', 'pr_review']);
+const OPERATOR_JOB_KINDS: ReadonlySet<JobKind> = new Set<JobKind>(['feature', 'bugfix', 'review']);
 
 function coerceOperatorKind(raw: string | undefined): JobKind | null {
   if (raw && OPERATOR_JOB_KINDS.has(raw as JobKind)) return raw as JobKind;
   return null;
 }
 
-/** The `<pr-review>` block prepended to the first-turn body for a `kind: 'pr_review'` job (brain orientation). */
-function renderPrReviewXml(prNumber: number, repoSlug: string): string {
+/** The `<review>` block prepended to the first-turn body for a `kind: 'review'` job (brain orientation). */
+function renderReviewSeedXml(prNumber: number, repoSlug: string): string {
   return (
-    `<pr-review pr="${prNumber}" repo="${xmlEscapeAttr(repoSlug)}" ` +
+    `<review pr="${prNumber}" repo="${xmlEscapeAttr(repoSlug)}" ` +
     `note="Review this EXISTING pull request. Fetch it with \`gh pr view ${prNumber}\` / \`gh pr diff ${prNumber}\`, ` +
     `review the diff, and post findings grouped by severity. Do not build or open a PR of your own." />`
   );
@@ -565,7 +565,7 @@ export class WebSurfaceController {
         jobId: t.id,
         title: t.title,
         origin: t.origin,
-        kind: t.kind, // job kind ('feature'/'bugfix'/'onboarding'/'event'/'pr_review'/null) — drives the web badge
+        kind: t.kind, // job kind ('feature'/'bugfix'/'onboarding'/'event'/'review'/null) — drives the web badge
         status: t.status,
         turnActive: t.turn_active,
         needsYou: deriveNeedsYou(
@@ -669,7 +669,7 @@ export class WebSurfaceController {
     // below (compare-and-set keyed off this exact placeholder, so a fast rename is never clobbered).
     const placeholder = body.title ?? null;
     // Operator-chosen kind is stamped at creation (an unknown/excluded value stays null → brain scopes it,
-    // as before). The brain's system prompt reads `kind` fresh each turn, so a pr_review job orients on turn 1.
+    // as before). The brain's system prompt reads `kind` fresh each turn, so a review job orients on turn 1.
     const kind = coerceOperatorKind(typeof body.kind === 'string' ? body.kind.trim() : undefined);
     const thread = await this.jobs.save(
       this.jobs.create({
@@ -688,12 +688,12 @@ export class WebSurfaceController {
     const attach = files?.length
       ? await this.ingestAttachments(org.id, thread.id, files)
       : null;
-    // For a PR-review job with a PR number, PREPEND a <pr-review> block so the brain knows on turn 1 exactly
+    // For a review job with a PR number, PREPEND a <review> block so the brain knows on turn 1 exactly
     // which PR to fetch and review — no reverse-engineering from the title.
-    const prNumber = kind === 'pr_review' ? Number(body.prNumber) : NaN;
+    const prNumber = kind === 'review' ? Number(body.prNumber) : NaN;
     const prXml =
-      kind === 'pr_review' && Number.isInteger(prNumber) && prNumber > 0
-        ? renderPrReviewXml(prNumber, repo.slug)
+      kind === 'review' && Number.isInteger(prNumber) && prNumber > 0
+        ? renderReviewSeedXml(prNumber, repo.slug)
         : null;
     const bodyText = [prXml, attach?.xml, operatorText].filter(Boolean).join('\n\n');
     // Inject the first message — the chat bridge resolves the thread by its real id and triages it.
