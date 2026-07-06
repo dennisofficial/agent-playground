@@ -55,6 +55,13 @@ x-backend-common: &backend-common
     # host → sandbox create fails with "OCI runtime create failed ... not a directory". bundleMcpBridge()
     # mirrors the bundle here on boot, same as the engine bundle.
     MCP_BRIDGE_BUNDLE_PATH: /srv/atlas/data/engine/mcp-bridge-server.mjs
+    # Persistent per-sandbox MCP hub bundle — SAME rationale as MCP_BRIDGE_BUNDLE_PATH above: the sandbox
+    # manager bind-mounts this file (host daemon resolves the source), so a containerized backend MUST point
+    # it at a host-resolvable same-path location. Without it, mcpHubBundlePath() falls back to the in-container
+    # build-context path (/srv/atlas/app/backend/sandbox/mcp-hub-server.mjs), which doesn't exist on the host →
+    # sandbox create fails with "OCI runtime create failed ... not a directory". bundleMcpHub() mirrors the
+    # bundle here on boot, same as the engine and bridge bundles.
+    MCP_HUB_BUNDLE_PATH: /srv/atlas/data/engine/mcp-hub-server.mjs
     # CORS origin for the Atlas web console
     FRONTEND_HOST: https://atlas.dltechnologies.co
     # Clustering / rolling-update (Part A env vars added by parallel agent)

@@ -146,11 +146,15 @@ export function submoduleGitlinks(worktreePath: string): string[] {
  * rev 12 = shadow the `.git` pointer of every SUBMODULE checkout too (not just the superproject's), each
  *   rebased onto CONTAINER_GIT_COMMON — so in-container git (`status`/`add -A`/…, which recurse submodules
  *   by default) resolves a submodule-bearing repo instead of erroring `not a git repository: <hostpath>`.
+ * rev 14 = force-recreate sandboxes created during the MCP-hub-bind outage so they pick up the corrected
+ *   MCP_HUB_BUNDLE_PATH bind. The hub bundle bind (rev 13) fell back to an in-container path that isn't
+ *   host-resolvable, leaving `Created` containers pinned to a bad bind; the bundle path isn't part of the
+ *   `atlas.cfg` fingerprint, so a config-only fix wouldn't otherwise invalidate the stale containers.
  *
  * NOTE: the per-repo mount SET is ALSO hashed into the `atlas.cfg` fingerprint below, so a changed
  * manifest mount list recreates the container even without bumping this rev.
  */
-const CONFIG_REV = 13;
+const CONFIG_REV = 14;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
