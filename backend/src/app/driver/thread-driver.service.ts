@@ -42,7 +42,7 @@ import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import type { ActiveTurnEntity, ThreadTerminalRecord } from '../persistence/entities';
+import type { ActiveTurnEntity, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
@@ -276,6 +276,12 @@ export class ThreadDriver implements JobDispatcher {
    * signals — just "read the persisted cursor, continue the function".
    */
   async resume(): Promise<void> {
+    // Complete any Leg-rotation fallback handoff turns caught mid-flight by the restart BEFORE re-driving, so
+    // a job that was mid-handoff rotates from the re-tailed summary instead of resuming its fat session and
+    // re-running the whole batch (Stage 6). Best-effort; a turn it can't re-tail falls through to the re-drive.
+    await this.reattachStrandedRotations().catch((err) =>
+      this.logger.warn(`resume: reattachStrandedRotations failed (continuing to re-drive): ${shortReason(err)}`),
+    );
     const jobs = await this.store.runningJobs();
     if (jobs.length === 0) return;
     this.logger.log(`resume: reconciling ${jobs.length} running job(s)`);
@@ -1770,6 +1776,15 @@ export class ThreadDriver implements JobDispatcher {
       }
       report = result!.report;
 
+      // Record/refresh the current Leg's read-model row (Stage 7 UI): its live session id + peak occupancy.
+      // For a thread that never rotated this creates the implicit Leg-1 row; after a rotation
+      // `completeLegRotation` already opened Leg N+1 and this refreshes its session/peak. Display-only.
+      if (rotationArmed) {
+        await this.store
+          .recordActiveLeg(anchor.id, result!.session?.id ?? null, rotationState.peakTokens)
+          .catch((err) => this.logger.debug(`recordActiveLeg failed (display-only): ${shortReason(err)}`));
+      }
+
       // Surface any off-spec deviations the engine flagged in its report (#7) — never silent.
       const deviations = extractDeviations(report);
       if (deviations.length) {
@@ -2228,7 +2243,9 @@ export class ThreadDriver implements JobDispatcher {
       if (!handoff) return false;
     }
 
-    const seed = `${ROTATION_PREAMBLE}\n\n${handoff}`;
+    // The seed carries the preamble + handoff + the OPEN task list (the SDK's in-memory todo dies with the
+    // session; the durable `threads.tasks` is folded back in so the fresh Leg continues its checklist — B5).
+    const seed = await this.buildLegSeed(thread.id, handoff);
     const res = await this.store
       .completeLegRotation({
         anchorStepId: anchor.id,
@@ -2316,6 +2333,93 @@ export class ThreadDriver implements JobDispatcher {
       return null;
     }
     return handoff;
+  }
+
+  /**
+   * Compose the FRESH Leg's seed: the `ROTATION_PREAMBLE` wrapper + the structured handoff + the thread's OPEN
+   * task list (B5 — cross-Leg task carry). The SDK's in-memory to-do dies with the abandoned session, but the
+   * list is durable on `threads.tasks` (folded from the builder's own TaskCreate/TaskUpdate calls), so we read
+   * it back and render the still-open items into the seed — the fresh Leg continues the checklist instead of
+   * restarting it. The web checklist stays authoritative across Legs regardless (it reads the same column).
+   */
+  private async buildLegSeed(threadId: string, handoff: string): Promise<string> {
+    const tasks = await this.store.getThreadTasks(threadId).catch(() => [] as TaskItem[]);
+    const tasksBlock = renderOpenLegTasks(tasks);
+    return [ROTATION_PREAMBLE, handoff, ...(tasksBlock ? [tasksBlock] : [])].join('\n\n');
+  }
+
+  /**
+   * RESTART SURVIVAL for Leg rotation (Stage 6). Complete any Leg-rotation FALLBACK handoff turns that were
+   * in flight when the backend restarted, BEFORE the job re-drive — so a job caught mid-handoff rotates from
+   * the re-tailed summary instead of resuming its fat session and re-running the whole batch. Run leader-only
+   * from {@link resume} (ordering mirrors the brain: reattach owned turns, THEN re-drive).
+   *
+   * The core rotation is already crash-safe WITHOUT this: `completeLegRotation` is ATOMIC (abandon-marker +
+   * NULL session_id + seed in ONE txn), so a crash either leaves the fat session intact (pre-commit → the
+   * re-drive resumes + re-rotates) or the fresh-Leg state fully set (post-commit → the re-drive re-folds the
+   * seed). This handler is the optimization that avoids re-running a fat batch when the fallback turn itself
+   * was mid-flight; a turn it can't re-tail is left for the watchdog + the re-drive's resume-and-re-rotate.
+   */
+  private async reattachStrandedRotations(): Promise<void> {
+    if (!this.turn.canReattach()) return;
+    let rows: ActiveTurnEntity[];
+    try {
+      rows = await this.turnRegistry.listRunning();
+    } catch (err) {
+      this.logger.warn(`leg-rotation reattach: listRunning failed: ${shortReason(err)}`);
+      return;
+    }
+    const rotations = rows.filter((r) => r.kind === 'rotation');
+    if (!rotations.length) return;
+    this.logger.log(`leg-rotation: re-attaching ${rotations.length} in-flight handoff turn(s) on boot`);
+    for (const row of rotations) {
+      await this.reattachRotationOne(row).catch((err) =>
+        this.logger.warn(`leg-rotation reattach ${row.turn_id} failed: ${shortReason(err)}`),
+      );
+    }
+  }
+
+  /** Re-attach ONE in-flight rotation (fallback handoff) turn → complete the rotation from its summary, or
+   *  leave the fat session intact if it yielded nothing. The analog of the brain's `reattachCompactionOne`. */
+  private async reattachRotationOne(row: ActiveTurnEntity): Promise<void> {
+    const ctx = (row.ctx ?? {}) as { threadId?: string; anchorStepId?: string };
+    if (!row.container_id || !ctx.threadId || !ctx.anchorStepId) {
+      this.logger.warn(
+        `leg-rotation reattach ${row.turn_id}: insufficient ctx/container — leaving for the watchdog + re-drive`,
+      );
+      return;
+    }
+    let result: Awaited<ReturnType<TurnRunnerService['reattach']>>;
+    try {
+      result = await this.turn.reattach({
+        turnId: row.turn_id,
+        containerId: row.container_id,
+        jobId: row.job_id,
+        stepId: ctx.anchorStepId, // the fat session persists back onto the anchor step (a no-op resume)
+      });
+    } catch (err) {
+      // Lost the tail (detached again / container gone) — leave it; the job re-drive resumes the fat session
+      // and re-rotates, and the watchdog reaps the stale row. Best-effort.
+      this.logger.warn(`leg-rotation reattach ${row.turn_id}: re-tail failed — deferring to re-drive: ${shortReason(err)}`);
+      return;
+    }
+    const handoff = (result.report ?? '').trim();
+    if (!handoff) {
+      this.logger.warn(`leg-rotation reattach ${row.turn_id}: empty handoff — leaving the fat session to re-drive`);
+      return;
+    }
+    const seed = await this.buildLegSeed(ctx.threadId, handoff);
+    const res = await this.store
+      .completeLegRotation({ anchorStepId: ctx.anchorStepId, handoff, seed })
+      .catch((err) => {
+        this.logger.error(`leg-rotation reattach ${row.turn_id}: completeLegRotation failed: ${err}`);
+        return null;
+      });
+    if (res) {
+      this.logger.log(
+        `leg-rotation: re-attached handoff completed rotation Leg ${res.fromLeg}→${res.toLeg} for thread=${ctx.threadId}`,
+      );
+    }
   }
 
   /** Host tool bridge for a verification-gate turn — exposes ONLY `report_verification`, the structured
@@ -2793,6 +2897,22 @@ const COMMIT_NUDGE_MAX = 2;
 /** Backstop on Leg rotations within a single batch: a runaway thread that re-crosses the HARD threshold every
  *  Leg can't spin forever. On the cap we kick one final Leg with rotation DISARMED and run it to completion. */
 const MAX_LEGS_PER_BATCH = 8;
+
+/** Render the still-OPEN task-list items into a `<carried_tasks>` block for the fresh Leg's seed (B5). The
+ *  durable `threads.tasks` outlives the abandoned session's in-memory to-do, so the fresh Leg keeps its
+ *  checklist. Returns '' when nothing is open (all done / no list) — the caller then omits the block. */
+function renderOpenLegTasks(tasks: TaskItem[]): string {
+  const open = tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress');
+  if (!open.length) return '';
+  const lines = open.map((t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`);
+  return [
+    '<carried_tasks>',
+    "Your task list carried across the rotation (the previous session's in-memory to-do is gone; this is the",
+    'durable checklist). Continue these — do NOT recreate completed items or restart finished ones:',
+    ...lines,
+    '</carried_tasks>',
+  ].join('\n');
+}
 
 /** A locked step row → the `PlannedStep` view visibility/render read (title null → brief). */
 function asPlannedStep(step: Step): PlannedStep {

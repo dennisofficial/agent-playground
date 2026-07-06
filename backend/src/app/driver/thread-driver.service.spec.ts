@@ -264,6 +264,9 @@ function makeStore(state: StoreState): {
     getPendingLegSeed: vi.fn(async (_anchorStepId: string) => null),
     latestStepOccupancy: vi.fn(async (_stepId: string) => null),
     completeLegRotation: vi.fn(async () => null),
+    getThreadTasks: vi.fn(async (_threadId: string) => []),
+    recordActiveLeg: vi.fn(async () => undefined),
+    getLegsForJob: vi.fn(async (_jobId: string) => []),
     threadJobId: vi.fn(async (threadId: string) => {
       const s = state.threads.find((x) => x.id === threadId);
       return s?.jobId ?? null;

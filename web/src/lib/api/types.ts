@@ -302,6 +302,25 @@ export interface TaskItem {
   blockedBy?: string[];
 }
 
+/**
+ * One BUILD LEG (context-rot rotation): a single engine session in a build thread's life. A thread's build
+ * work spans many sequential Legs, each seeded from the prior one's structured handoff when its context filled.
+ * `handoffMd` is the handoff the Leg authored on rotation (null for the current/live Leg). Backs the per-Leg
+ * navigable rows + the handoff pill between them.
+ */
+export interface PipelineLeg {
+  /** 1..N — the Leg's position in the thread. */
+  ordinal: number;
+  /** `active` (current live Leg) | `rotated` (handed off to the next) | `closed` (thread finished on it). */
+  status: string;
+  /** The peak main-agent context occupancy observed on this Leg (the number that tripped its rotation). */
+  contextTokensPeak: number | null;
+  /** The structured handoff this Leg authored on rotation — the pill shown to the next Leg. Null while live. */
+  handoffMd: string | null;
+  /** When the Leg was rotated/closed (ISO), or null while active. */
+  endedAt: string | null;
+}
+
 export interface PipelineThread {
   id: string;
   ordinal: number;
@@ -322,6 +341,9 @@ export interface PipelineThread {
   children: PipelineReviewChild[];
   /** The thread's own live task list — see {@link TaskItem}. `[]` until its session creates a task. */
   tasks: TaskItem[];
+  /** The thread's build Legs (context-rot rotation) — see {@link PipelineLeg}. `[]` for a thread that never
+   *  rotated (rendered as a single implicit Leg); one row per Leg once it has rotated at least once. */
+  legs?: PipelineLeg[];
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
   hasPlan: boolean;
   /** The thread's steps (execute folder leaves), ordinal-sorted. */

@@ -11,6 +11,7 @@ import type {
   PipelineJob,
   PipelineThread,
   PipelineReviewChild,
+  PipelineLeg,
   TaskItem,
   JobStatus,
   ThreadStatus,
@@ -386,6 +387,7 @@ function ThreadFold({
         ) : (
           <>
             <TasksBody tasks={tasks} done={done} total={tasks.length} />
+            {(s.legs?.length ?? 0) > 1 ? <LegsBody legs={s.legs!} /> : null}
             {reviewLenses.length > 0 ? (
               <ReviewAgentsBody
                 lenses={reviewLenses}
@@ -658,6 +660,75 @@ function ReviewAgentsBody({
           selected={laneNode === postReview.id}
           onOpen={() => onSelectNode(postReview.id)}
         />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The LEGS body (context-rot rotation) — one row per engine session ("Leg") the thread's build spanned, with
+ * the structured handoff each rotated Leg authored shown as an expandable pill. Rendered only once a thread has
+ * rotated at least once (2+ Legs); a never-rotated thread is a single implicit Leg and shows nothing here.
+ */
+function LegsBody({ legs }: { legs: PipelineLeg[] }) {
+  const ordered = [...legs].sort((a, b) => a.ordinal - b.ordinal);
+  return (
+    <div className="nav-expand mb-2 ml-[9px] flex flex-col gap-[2px]">
+      <BodyHeader label="LEGS" right={String(ordered.length)} />
+      {ordered.map((leg) => (
+        <LegRow key={leg.ordinal} leg={leg} />
+      ))}
+    </div>
+  );
+}
+
+/** One Leg — a single-line info row (session dot · "Leg N" · peak-occupancy · status word) with the handoff it
+ *  authored on rotation exposed as an expandable pill. Informational (not navigable — Legs share the thread's
+ *  live lane; per-Leg transcript segmentation is a later increment). */
+function LegRow({ leg }: { leg: PipelineLeg }) {
+  const [open, setOpen] = useState(false);
+  const rotated = leg.status === "rotated";
+  const word = leg.status === "active" ? "live" : leg.status;
+  const wordColor = leg.status === "active" ? "var(--blue)" : "var(--faint)";
+  const peakK =
+    leg.contextTokensPeak != null
+      ? `${Math.round(leg.contextTokensPeak / 1000)}k`
+      : null;
+  return (
+    <div className="flex flex-col">
+      <button
+        type="button"
+        onClick={() => rotated && setOpen((v) => !v)}
+        disabled={!rotated}
+        className={cn(
+          "flex w-full items-center gap-2 px-1.5 py-[3px] text-left transition",
+          rotated ? "hover:bg-surface-2" : "cursor-default",
+        )}
+      >
+        {rotated ? (
+          <ChevronRight
+            className={cn("size-3 shrink-0 text-faint transition-transform", open && "rotate-90")}
+          />
+        ) : (
+          <span
+            className="ml-[3px] size-[6px] shrink-0 rounded-full"
+            style={{ background: wordColor }}
+          />
+        )}
+        <span className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-text">
+          Leg {leg.ordinal}
+        </span>
+        {peakK ? (
+          <span className="shrink-0 font-mono text-[8px] text-border-2">{peakK}</span>
+        ) : null}
+        <span className="shrink-0 text-[10px] font-medium" style={{ color: wordColor }}>
+          {word}
+        </span>
+      </button>
+      {open && leg.handoffMd ? (
+        <pre className="mx-1.5 mb-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-surface-2 px-2 py-1.5 text-[10.5px] leading-snug text-dim">
+          {leg.handoffMd}
+        </pre>
       ) : null}
     </div>
   );

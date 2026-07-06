@@ -22,7 +22,7 @@ import {
   JobEntity,
   CodexReviewEntity,
 } from '../persistence/entities';
-import type { ThreadTerminalRecord } from '../persistence/entities';
+import type { TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
 import { isDriverExecutableKind, laneDefaultFooter, threadKindSpec } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
@@ -473,6 +473,20 @@ export class DriverStoreService {
       .find({ where: { thread_id: threadId }, order: { ordinal: 'ASC' } });
   }
 
+  /** Every Leg of a JOB, oldest first — the batched read `getPipelineState` groups by thread (avoids N+1). */
+  async getLegsForJob(jobId: string): Promise<BuildLegEntity[]> {
+    return this.dataSource
+      .getRepository(BuildLegEntity)
+      .find({ where: { job_id: jobId }, order: { ordinal: 'ASC' } });
+  }
+
+  /** A thread's durable LLM-authored task list (`threads.tasks`) — read when rotating so the fresh Leg's seed
+   *  carries the open/in-progress items (the SDK's in-memory todo dies with the session; this persists). */
+  async getThreadTasks(threadId: string): Promise<TaskItem[]> {
+    const row = await this.threads.findOne({ where: { id: threadId }, select: { id: true, tasks: true } });
+    return Array.isArray(row?.tasks) ? row!.tasks : [];
+  }
+
   /** Live single-thread read (not the run-start snapshot). Used to detect a thread a concurrent/stale drive
    *  has already finished, so we don't re-execute or re-review it. */
   async getThread(threadId: string): Promise<DriverThread | null> {
@@ -846,6 +860,16 @@ export class DriverStoreService {
       list.push(p);
       stepsByThread.set(p.thread_id, list);
     }
+    // The thread's BUILD LEGS (context-rot rotation read model) — one query, grouped by thread. A thread with
+    // no rotation has 0 rows (the UI shows a single implicit Leg); a rotated thread has one row per Leg with
+    // the handoff pill text between them. Fetched all-at-once to avoid an N+1 across threads.
+    const legs = await this.getLegsForJob(thread.id).catch(() => [] as BuildLegEntity[]);
+    const legsByThread = new Map<string, BuildLegEntity[]>();
+    for (const l of legs) {
+      const list = legsByThread.get(l.thread_id) ?? [];
+      list.push(l);
+      legsByThread.set(l.thread_id, list);
+    }
     return {
       jobId: thread.id,
       title: thread.title,
@@ -892,6 +916,9 @@ export class DriverStoreService {
         // The thread's own LLM-authored task list — no fallback default, same rationale as the job-level
         // field above.
         tasks: Array.isArray(s.tasks) ? s.tasks : [],
+        // Build Legs (context-rot rotation): one navigable row per engine session, with the handoff pill each
+        // rotated Leg authored. Empty for a thread that never rotated (the web renders a single implicit Leg).
+        legs: pipelineLegs(legsByThread.get(s.id) ?? []),
         steps: mapBatchedSteps(stepsByThread.get(s.id) ?? []),
       })),
     };
@@ -1037,6 +1064,16 @@ interface PipelineReviewChild {
   defaultFooter: ReturnType<typeof laneDefaultFooter>;
 }
 
+/** One build Leg on the `/pipeline` wire (context-rot rotation read model): a navigable session row under the
+ *  thread fold, plus the structured handoff it authored on rotation (the pill shown to the next Leg). */
+interface PipelineLeg {
+  ordinal: number;
+  status: string;
+  contextTokensPeak: number | null;
+  handoffMd: string | null;
+  endedAt: string | null;
+}
+
 /**
  * A builder's review children for the `/pipeline` read model. When the child rows are MATERIALIZED (the new
  * child-thread flow — after the builder finished executing), map them directly (real status + findings). When
@@ -1076,6 +1113,19 @@ function pipelineReviewChildren(
       defaultFooter: laneDefaultFooter(c.kind),
     };
   });
+}
+
+/** Map a thread's `build_legs` rows to the `/pipeline` wire shape — one navigable row per Leg (engine session),
+ *  carrying the handoff pill each rotated Leg authored + its peak occupancy. `handoffMd` is the structured
+ *  handoff seeded into the NEXT Leg (null for the current/live Leg). Empty in ⇒ empty out (never rotated). */
+function pipelineLegs(list: BuildLegEntity[]): PipelineLeg[] {
+  return list.map((l) => ({
+    ordinal: l.ordinal,
+    status: l.status,
+    contextTokensPeak: l.context_tokens_peak,
+    handoffMd: l.handoff_md,
+    endedAt: l.ended_at ? l.ended_at.toISOString() : null,
+  }));
 }
 
 /**
