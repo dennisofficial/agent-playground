@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import type {
   Decision,
@@ -301,6 +301,18 @@ export class DriverStoreService {
 
   async setThreadStatus(threadId: string, status: ThreadStatus): Promise<void> {
     await this.threads.update({ id: threadId }, { status });
+  }
+
+  /**
+   * SET-ONCE the thread's start HEAD and return the AUTHORITATIVE value. The conditional update (`start_sha
+   * IS NULL`) makes the first writer win, so a concurrent/resumed drive never overwrites the base; the
+   * read-back then returns whatever actually landed so every drive converges on the same `start_sha..HEAD`
+   * review range. Idempotent — a second call with the row already set is a no-op returning the stored sha.
+   */
+  async ensureThreadStartSha(threadId: string, candidate: string): Promise<string> {
+    await this.threads.update({ id: threadId, start_sha: IsNull() }, { start_sha: candidate });
+    const row = await this.threads.findOne({ where: { id: threadId } });
+    return row?.start_sha ?? candidate;
   }
 
   /** Live single-thread read (not the run-start snapshot). Used to detect a thread a concurrent/stale drive
@@ -826,6 +838,7 @@ function toThread(row: ThreadEntity): DriverThread {
     status: row.status as ThreadStatus,
     kind: row.kind,
     parentThreadId: row.parent_thread_id ?? null,
+    startSha: row.start_sha ?? null,
   };
 }
 

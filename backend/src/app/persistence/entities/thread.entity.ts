@@ -163,6 +163,18 @@ export class ThreadEntity extends TimestampedEntity {
    */
   @Column({ type: 'int', default: 0 })
   halt_fix_attempts!: number;
+
+  /**
+   * The thread's START HEAD — the feature-branch sha captured ONCE, the first time the thread begins
+   * executing. The post-build review scopes its diff by `start_sha..HEAD` and commit-recording compares
+   * HEAD against it (thread-driver `:1733`); RE-capturing it on every (re)entry lets a RESUME grab it AFTER
+   * the thread already committed (start === HEAD → an empty range → the review is silently skipped and the
+   * commit mis-recorded as `(nothing)`). Persisted + set-once so a resume reuses the true base. Null until
+   * first execute (or for threads created before this field existed — the range then falls back to a live
+   * capture at run time).
+   */
+  @Column({ type: 'text', nullable: true })
+  start_sha!: string | null;
 }
 
 /**

@@ -875,10 +875,11 @@ export class ThreadDriver implements JobDispatcher {
       decisions: [],
     });
 
-    // e. EXECUTE — run each step as a fresh session on the shared feature branch.
-    const sectionStartSha = await this.git
-      .headSha(sandbox.worktreePath)
-      .catch(() => undefined);
+    // e. EXECUTE — run each step as a fresh session on the shared feature branch. Capture the thread's start
+    //    HEAD ONCE and persist it — the review diff (`sectionStartSha..HEAD`) and commit-recording both scope
+    //    by it, so re-capturing on a RESUME (after the thread already committed) would collapse it to HEAD →
+    //    empty range → the review is silently skipped and the commit mis-recorded as `(nothing)`.
+    const sectionStartSha = await this.resolveThreadStartSha(thread, sandbox);
     await this.store.setThreadStatus(thread.id, 'executing');
     const { outcome, reports } = await this.executeSteps(
       job, route, sandbox, thread, record, repo, sectionStartSha,
@@ -929,6 +930,25 @@ export class ThreadDriver implements JobDispatcher {
    * `runThread` live-`done` short-circuit stops a done builder being re-entered, and each child fast-forwards
    * on its own `done` status; the `(job_id, parent_thread_id, ordinal)` unique index rejects duplicate rows.
    */
+  /**
+   * Resolve the thread's start HEAD, RESUME-SAFE. On the first execute the persisted `start_sha` is null, so
+   * capture live HEAD and set-once persist it; on a resume read the stored value back instead of re-capturing
+   * (a fresh capture after the thread committed would equal HEAD → an empty review range + a `(nothing)`
+   * commit mis-record). Falls back to a live capture if `headSha` fails and nothing was persisted yet
+   * (best-effort, mirroring the prior call site). Keeps the in-memory `thread` snapshot consistent for this run.
+   */
+  private async resolveThreadStartSha(
+    thread: DriverThread,
+    sandbox: FeatureSandbox,
+  ): Promise<string | undefined> {
+    if (thread.startSha) return thread.startSha;
+    const head = await this.git.headSha(sandbox.worktreePath).catch(() => undefined);
+    if (!head) return undefined;
+    const persisted = await this.store.ensureThreadStartSha(thread.id, head).catch(() => head);
+    thread.startSha = persisted;
+    return persisted;
+  }
+
   private async runReviewChildren(
     job: Job,
     route: JobRoute,
@@ -992,10 +1012,18 @@ export class ThreadDriver implements JobDispatcher {
       lensIds: lensChildren.map((c) => String((c.config as { lensId?: string }).lensId ?? c.id)),
     });
 
-    // Empty diff → nothing to review: mark every non-done child `done` (idempotent) and skip the turns.
+    // Empty diff → nothing to review: mark every non-done child `done` (idempotent) and skip the turns. Post
+    // a short notice on each child's lane FIRST, so a skipped review reads as an explicit "nothing to review"
+    // line in its pane rather than a silent blank (the symptom that hid a stale-`start_sha` empty range).
     if (!ctx.changedFiles?.length) {
+      const notice = `No changes to review in this section (empty diff for "${thread.brief}") — this review was skipped.`;
       for (const c of children) {
         if (c.status === 'done') continue;
+        const sub =
+          c.kind === 'review_lens'
+            ? { lensId: String((c.config as { lensId?: string }).lensId ?? c.id) }
+            : { fix: true as const };
+        await this.autofix.emitReviewNotice(ctx, sub, notice).catch(() => undefined);
         if (c.kind === 'review_lens') {
           await this.store.setThreadReviewFindings(c.id, []).catch(() => undefined);
         }

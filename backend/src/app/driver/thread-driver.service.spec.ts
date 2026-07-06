@@ -119,6 +119,12 @@ function makeStore(state: StoreState): {
       const c = (state.reviewChildren ?? []).find((x) => x.id === id);
       if (c) c.status = status;
     }),
+    // Set-once persist of the thread's start HEAD; returns the authoritative (first-written) sha.
+    ensureThreadStartSha: vi.fn(async (id: string, candidate: string) => {
+      const s = state.threads.find((x) => x.id === id);
+      if (s && !s.startSha) s.startSha = candidate;
+      return s?.startSha ?? candidate;
+    }),
     setThreadPlan: vi.fn(
       async (id: string, plan: string, handoffIn: string | null) => {
         const s = state.threads.find((x) => x.id === id);
@@ -693,6 +699,7 @@ function thread(
     status,
     kind: isMasterReview ? 'master_review' : 'builder',
     parentThreadId: null,
+    startSha: null,
   };
 }
 
@@ -2102,6 +2109,63 @@ describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — 
     // thread 2 the union of both threads' changes).
     expect(judge.seenChangedFiles[0]).toEqual(['src/routes/health.ts']);
     expect(judge.seenChangedFiles[1]).toEqual(['notes/CONTRIBUTING.txt']);
+  });
+});
+
+describe('ThreadDriver — start_sha is captured once and RESUME-safe (the per-thread review base)', () => {
+  it('FIRST execute: captures pre-build HEAD and set-once persists it as the thread start_sha', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const judge = fakeJudge({
+      runtimeSurfaceTouched: true,
+      liveVerificationAdequate: true,
+      reason: 'curl evidence present',
+    });
+    const h = assemble(state, { judge });
+    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // The pre-build HEAD ('sha0') was persisted set-once as this thread's review base.
+    const ensure = h.store.ensureThreadStartSha as ReturnType<typeof vi.fn>;
+    expect(ensure).toHaveBeenCalledWith('sec-be', 'sha0');
+    expect(state.threads[0].startSha).toBe('sha0');
+  });
+
+  it('RESUME: a thread that already has start_sha reuses it — never re-captures against an already-advanced HEAD', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      // Simulate a resume: start_sha was persisted on the prior run and HEAD has since advanced past it (the
+      // thread already committed). Re-capturing here would collapse `start..HEAD` to empty — the §1 bug that
+      // silently skipped the review + mis-recorded the commit as `(nothing)`.
+      threads: [{ ...thread('sec-be', 10, 'Backend'), startSha: 'base-sha' }],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const judge = fakeJudge({
+      runtimeSurfaceTouched: true,
+      liveVerificationAdequate: true,
+      reason: 'curl evidence present',
+    });
+    const h = assemble(state, { judge });
+    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // The persisted base is reused verbatim — the set-once persist is never re-invoked, never overwritten.
+    const ensure = h.store.ensureThreadStartSha as ReturnType<typeof vi.fn>;
+    expect(ensure).not.toHaveBeenCalled();
+    expect(state.threads[0].startSha).toBe('base-sha');
   });
 });
 

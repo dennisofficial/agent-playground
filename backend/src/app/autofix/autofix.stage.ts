@@ -313,6 +313,22 @@ export class AutoFixStage {
     }
   }
 
+  /**
+   * Post a short, lane-correct NOTICE on a review child's transcript lane (a `review_lens` by id, or the
+   * `post_review` fix turn) so a review that is SKIPPED — an empty diff, nothing to review — reads as an
+   * explicit line in its pane instead of a silent blank. Reuses the harness's end-of-turn text fallback (one
+   * `chat` block stamped with the lane's `{ autofixId, lensId | fixTurn }` meta), so no engine turn runs.
+   * Best-effort: a no-op when the ctx carries no streaming identity (jobId + channel + autofixId).
+   */
+  async emitReviewNotice(
+    ctx: AutoFixContext,
+    sub: { lensId: string } | { fix: true },
+    message: string,
+  ): Promise<void> {
+    const harness = this.harnessFor(ctx, sub);
+    await harness?.finish(message).catch(() => undefined);
+  }
+
   // ── child-thread runners (the `review_lens` / `post_review` kinds drive these one row at a time) ──────
   // The driver materializes a builder's review as real child `threads` rows and drives each as its own turn
   // (lenses concurrently, then the fix). These expose the exact review/fix turns the fan-out uses, so the

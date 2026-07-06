@@ -171,6 +171,11 @@ export interface Thread {
   /** The parent thread in the tree (a builder is the parent of its review-lens/post-review children);
    *  null for root/job-level rows. See {@link ThreadEntity.parent_thread_id}. */
   parentThreadId: string | null;
+  /** The thread's START HEAD (feature-branch sha) captured once at first execute and persisted, so a resume
+   *  reuses the true base for the review diff (`startSha..HEAD`) + commit-recording instead of re-capturing
+   *  it post-commit (which would collapse the range to empty). Null until first execute. See
+   *  {@link ThreadEntity.start_sha}. */
+  startSha: string | null;
 }
 
 /** A step's lifecycle — explicit, resumable; the driver re-enters at the correct step on restart. */
