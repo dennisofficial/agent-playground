@@ -512,6 +512,14 @@ export class EngineCore {
     };
     applyClaudeAuth(subprocessEnv, auth);
 
+    // Capture the CLI subprocess's stderr (the real API/transport error text) into a bounded ring
+    // buffer so a non-success result can surface it — the SDK otherwise flattens it into `subtype`.
+    const stderrTail: string[] = [];
+    const captureStderr = (data: string) => {
+      stderrTail.push(data);
+      if (stderrTail.length > 40) stderrTail.shift(); // keep the last ~40 chunks
+    };
+
     const options: Options = {
       cwd,
       systemPrompt,
@@ -535,6 +543,9 @@ export class EngineCore {
       settings: { attribution: { commit: '', pr: '' } },
       abortController,
       env: subprocessEnv,
+      // The SDK routes the Claude Code subprocess's stderr here (the real API/transport error the
+      // `error_during_execution` subtype otherwise hides). Unconditional: worker turns fail too.
+      stderr: captureStderr,
       ...(sessionId ? { resume: sessionId } : {}),
       ...(model ? { model } : {}),
       // Rich streaming (the thread brain): partial-message stream → token-level deltas, and extended
@@ -682,7 +693,24 @@ export class EngineCore {
             // message mode ends naturally when the generator closes.
             if (streaming) scheduleEnd();
           } else {
-            throw new Error(`Claude engine ended: ${message.subtype}`);
+            // Surface the SDKResultError detail the SDK otherwise flattens into `subtype`.
+            // Keep the leading `Claude engine ended: <subtype>` intact — isAuthErrorMessage
+            // (below) and downstream matching key off it; only APPEND detail.
+            const r = message as unknown as {
+              subtype: string;
+              errors?: string[];
+              stop_reason?: string | null;
+              terminal_reason?: unknown;
+              num_turns?: number;
+            };
+            const parts = [
+              `Claude engine ended: ${r.subtype}`,
+              r.stop_reason ? `stop_reason=${r.stop_reason}` : '',
+              r.terminal_reason ? `terminal_reason=${JSON.stringify(r.terminal_reason)}` : '',
+              r.errors?.length ? `errors=${r.errors.join(' | ')}` : '',
+              stderrTail.length ? `stderr(tail)=${stderrTail.join('').slice(-2000)}` : '',
+            ].filter(Boolean);
+            throw new Error(parts.join('; '));
           }
         }
       }

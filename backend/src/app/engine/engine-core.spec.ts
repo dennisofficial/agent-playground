@@ -375,6 +375,30 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(toolResult.structuredPatch).toEqual(hunks);
   });
 
+  it('non-success result: throw carries the subtype AND the SDKResultError detail + stderr tail', async () => {
+    const sdk = {
+      query: ({ options }: { prompt: string; options: Record<string, unknown> }) => {
+        // The SDK routes subprocess stderr through options.stderr; the real cause lives here.
+        (options.stderr as (d: string) => void)?.('API Error: 529 overloaded_error\n');
+        return (async function* () {
+          yield { type: 'system', subtype: 'init', session_id: 's' };
+          yield {
+            type: 'result',
+            subtype: 'error_during_execution',
+            session_id: 's',
+            stop_reason: 'refusal',
+            errors: ['boom: upstream failed'],
+            usage: { input_tokens: 1, output_tokens: 0 },
+          };
+        })();
+      },
+    } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+    await expect(
+      core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute' }),
+    ).rejects.toThrow(/Claude engine ended: error_during_execution.*stop_reason=refusal.*errors=boom: upstream failed.*stderr\(tail\)=.*529 overloaded_error/s);
+  });
+
   it('without richStream: no partial stream; tool stays name-only; no thinking/tool_result', async () => {
     const { sdk, captured } = fakeRichClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
