@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { HelpCircle } from "lucide-react";
+import { HelpCircle, Upload } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { classifyMessage } from "./classify";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
@@ -42,6 +42,8 @@ import {
 } from "./codex-review";
 import { indexAutofixBlocks } from "./review-lane";
 import { Composer, type ComposerFooter } from "./composer";
+import { useAttachments } from "./use-attachments";
+import { useFileDrop } from "./use-file-drop";
 import { DetailTopBar } from "./detail-top-bar";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
 import type { LaneDefaultFooter } from "@/lib/api/types";
@@ -136,6 +138,13 @@ export function TranscriptView({
   // the last line never slips under it as the box auto-grows. Read-only lanes just reserve a small pad.
   const [composerHeight, setComposerHeight] = useState(116);
   const bottomPad = composer ? composerHeight : 20;
+
+  // The attachment tray is owned HERE (not inside the composer) so a file dropped anywhere on the pane feeds
+  // the same tray the ＋ button and paste do. Drop is live only on the interactive Main composer — read-only
+  // lanes and lanes without a composer ignore drags entirely.
+  const attach = useAttachments();
+  const acceptsDrop = composer && !readOnly;
+  const { isDragging, dropHandlers } = useFileDrop(attach.add, acceptsDrop);
 
   // A brief ring flash on the question card we just jumped to, so it's easy to spot after the scroll lands.
   const [flashKey, setFlashKey] = useState<string | null>(null);
@@ -267,7 +276,7 @@ export function TranscriptView({
   };
 
   return (
-    <div className="relative min-h-0 flex-1">
+    <div className="relative min-h-0 flex-1" {...dropHandlers}>
       <div
         ref={scrollRef}
         onScroll={onScroll}
@@ -341,10 +350,21 @@ export function TranscriptView({
       {composer ? (
         <Composer
           jobRef={jobRef}
+          attach={attach}
           onHeightChange={setComposerHeight}
           footer={footer}
           readOnly={readOnly}
         />
+      ) : null}
+      {/* Drag-over affordance — covers the whole pane; `pointer-events-none` so the drop still lands on the
+          root's handlers (a capturing overlay would fire dragleave the instant it appeared and flicker). */}
+      {isDragging ? (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-accent/5 backdrop-blur-[1px]">
+          <div className="flex items-center gap-2 rounded-2xl border-2 border-dashed border-accent bg-surface/90 px-6 py-4 text-[13px] font-medium text-accent shadow-lg">
+            <Upload size={16} strokeWidth={2.2} />
+            Drop files to attach
+          </div>
+        </div>
       ) : null}
     </div>
   );

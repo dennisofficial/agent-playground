@@ -112,14 +112,14 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
 
   /** Per-instance replication slot, so leaders never share one during a deploy overlap. */
   private slotName(): string {
-    const prefix = this.env.get('REALTIME_SLOT_PREFIX') ?? 'pg_realtime_slot';
+    const prefix = 'pg_realtime_slot';
     const suffix = this.election.instanceId.replace(/-/g, '').slice(0, 16);
     return `${prefix}_${suffix}`;
   }
 
   /** Drop any INACTIVE `<prefix>_*` slots (orphans from a crashed predecessor) to reclaim WAL. */
   private async dropInactiveSlots(): Promise<void> {
-    const prefix = this.env.get('REALTIME_SLOT_PREFIX') ?? 'pg_realtime_slot';
+    const prefix = 'pg_realtime_slot';
     await this.withClient(async (client) => {
       const res = await client.query<{ slot_name: string }>(
         `SELECT slot_name FROM pg_replication_slots WHERE slot_name LIKE $1 AND active = false`,

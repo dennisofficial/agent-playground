@@ -1,4 +1,3 @@
-import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger, type BeforeApplicationShutdown } from '@nestjs/common';
 import { LeaderElectionService } from '../cluster';
 import { AgentSessionManager } from './agent-session-manager.service';
@@ -6,7 +5,7 @@ import { AgentSessionManager } from './agent-session-manager.service';
 /**
  * GRACEFUL DRAIN on SIGTERM — the "drain-then-release" half of the rolling-update handoff. Lives in
  * `BrainModule` (co-located with `AgentSessionManager`) to avoid a cluster→brain import cycle; it depends
- * only on the @Global `LeaderElectionService` + `EnvService`.
+ * only on the @Global `LeaderElectionService`.
  *
  * Order matters:
  *   1. `election.beginDrain()` — flip to `draining` so `/health/ready` returns 503 (Caddy stops sending
@@ -25,16 +24,13 @@ export class DrainService implements BeforeApplicationShutdown {
   constructor(
     private readonly election: LeaderElectionService,
     private readonly sessions: AgentSessionManager,
-    private readonly env: EnvService,
   ) {}
 
   async beforeApplicationShutdown(signal?: string): Promise<void> {
     if (signal !== 'SIGTERM' && signal !== 'SIGINT') return;
     this.logger.log(`drain start (signal ${signal})`);
     this.election.beginDrain();
-    // `?? `, not `|| ` — DRAIN_GRACE_MS=0 (valid per Joi min(0)) means "cut over immediately"; `||`
-    // would treat the intentional 0 as falsy and wait the full default instead.
-    const graceMs = this.env.get('DRAIN_GRACE_MS') ?? 120_000;
+    const graceMs = 120_000; // SIGTERM drain budget; must stay < the container stop_grace_period.
     const drained = await this.sessions.drainInFlight(graceMs);
     if (drained) {
       this.logger.log('drained cleanly — releasing leadership');

@@ -173,7 +173,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
    */
   private startReapTimer(): void {
     if (this.reapTimer) return;
-    const everyMs = Number(this.env.get('SANDBOX_REAP_INTERVAL_MS')) || 30 * 60 * 1000;
+    const everyMs = 30 * 60 * 1000; // 30m — idle-reap + PR-merge cleanup sweep cadence.
     this.reapTimer = setInterval(() => {
       // At-least-once re-drive backstop: leadership-fenced drives yield on demotion, and the promote-time
       // resume() covers the normal re-promote — but a demote landing DURING a drive's yield (before drive()

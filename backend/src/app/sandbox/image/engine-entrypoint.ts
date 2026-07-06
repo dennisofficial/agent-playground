@@ -76,11 +76,9 @@ async function runOverRedis(turnId: string): Promise<void> {
     const core = new EngineCore(
       claudeSdk,
       codexSdk,
-      {
-        homeRoot: process.env.AGENT_HOME_ROOT,
-        claudeOauthToken: process.env.CLAUDE_OAUTH_TOKEN,
-        codexOauthToken: process.env.CODEX_OAUTH_TOKEN,
-      },
+      // Engine subscription auth arrives per-turn as the spec's explicit `args.auth` (resolved per-org on
+      // the host) — never from ambient env, so no oauth tokens are threaded into the core config here.
+      { homeRoot: process.env.AGENT_HOME_ROOT },
       { warn: (m) => process.stderr.write(`[engine-core] ${m}\n`) },
     );
 

@@ -205,9 +205,10 @@ export class ThreadDriver implements JobDispatcher {
       );
   }
 
-  /** Sanity ceiling on a job's threads — a malformed plan can't drive an unbounded build. */
+  /** Sanity ceiling on a job's threads — a malformed plan can't drive an unbounded build. A code
+   *  constant: the approved thread list is human-gated, so this is belt-and-braces, not a deploy knob. */
   private get maxThreads(): number {
-    return this.env.get('MAX_SECTIONS') ?? 12;
+    return 12;
   }
 
   /** Per-thread wall-clock budget for the orchestrator turn — a single engine turn that runs away is
@@ -1461,7 +1462,7 @@ export class ThreadDriver implements JobDispatcher {
     questionId: string,
     signal: AbortSignal,
   ): Promise<string> {
-    const maxMs = Number(this.env.get('OPERATOR_INPUT_TIMEOUT_MS')) || 6 * 60 * 60_000;
+    const maxMs = 6 * 60 * 60_000; // 6h — the wall-clock budget is suspended while a pause polls.
     const intervalMs = 3_000;
     const deadline = Date.now() + maxMs;
     while (Date.now() < deadline) {

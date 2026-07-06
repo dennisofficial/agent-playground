@@ -15,6 +15,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { CodexReviewEntity, JobEntity, ThreadEntity } from '../persistence/entities';
 import { TurnHarnessFactory, laneFor, BLOCK_SINK, type BlockSink } from '../surface';
 import { Agent, renderAgentPrompt } from '../prompt-kit';
+import { threadKindSpec } from '../thread-kind/registry';
 import {
   type ReviewFinding,
   parsePlanFindings,
@@ -260,6 +261,9 @@ export class PlanReviewService {
       select: { id: true, repo_id: true },
     });
     const channel = job?.repo_id ?? input.jobId;
+    // The reviewer's reasoning effort — sourced from the `plan_review` kind spec so it lives in one place
+    // (and the composer footer's pre-turn default matches what the turn actually runs at).
+    const reviewEffort = threadKindSpec('plan_review').reasoningEffort;
 
     const attempt = async (
       resumeSessionId: string | undefined,
@@ -295,7 +299,7 @@ export class PlanReviewService {
             systemPrompt: renderAgentPrompt(Agent.META_PLAN_REVIEW),
             sandboxKey,
             mode: 'review',
-            modelReasoningEffort: 'xhigh',
+            ...(reviewEffort ? { modelReasoningEffort: reviewEffort } : {}),
             signal: ac.signal,
             ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
             richStream: true,

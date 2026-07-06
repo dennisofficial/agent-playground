@@ -82,8 +82,7 @@ export class TurnStreamReaperService
   }
 
   private get intervalMs(): number {
-    const raw = Number(this.env.get('TURN_STREAM_REAP_INTERVAL_MS'));
-    return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_INTERVAL_MS;
+    return DEFAULT_INTERVAL_MS;
   }
 
   private get idleSeconds(): number {

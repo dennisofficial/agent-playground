@@ -11,7 +11,8 @@ export const DEV_SEED_IDS = {
     hannibal: 'e9af869c-309a-466e-ba1b-51b870106b3f',
     cubix: '6899f4d7-2a30-4def-a170-fb182d1841f7',
   },
-  threads: {
+  // Conversation containers (the `jobs` table; formerly modeled as top-level "threads").
+  jobs: {
     hannibalAuthGuard: '04513c7b-8c22-4b21-9c38-08884f5357dd',
     hannibalCiEvent: '357db7a1-af4f-4031-87ec-9b3352d6fd24',
     cubixAllergen: 'de50edaa-a0d3-479b-be91-5b8b658150c6',

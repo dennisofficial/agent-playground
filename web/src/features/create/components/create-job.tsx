@@ -3,13 +3,15 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, Paperclip, Plug } from "lucide-react";
+import { Check, Paperclip, Plug, Upload } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { BranchPicker, Dropdown } from "@/components/branch-picker";
 import { useOrgs } from "@/lib/api/me";
 import { useOrgRepos, useCreateThread } from "@/lib/api/job-queries";
+import type { OperatorJobKind } from "@/lib/api/job-api";
 import { useAttachments } from "@/features/job-workspace/use-attachments";
+import { useFileDrop } from "@/features/job-workspace/use-file-drop";
 import { AttachmentTray } from "@/features/job-workspace/attachment-tray";
 import { orgSwatch, orgInitials } from "@/lib/org-display";
 import { ROUTES, threadHref } from "@/lib/routes";
@@ -39,6 +41,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   const [repoId, setRepoId] = useState<string>(preselect.repo);
   const [branch, setBranch] = useState("");
   const [message, setMessage] = useState("");
+  // Job kind — "" = auto (brain scopes it, the default). "review" reveals a PR-number field.
+  const [kind, setKind] = useState<OperatorJobKind | "">("");
+  const [prNumber, setPrNumber] = useState("");
   const [error, setError] = useState<string | null>(null);
   const {
     attachments,
@@ -48,6 +53,8 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     addPastedImages,
   } = useAttachments();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Drop files anywhere on the form → the same tray the ＋/paste feed. Always live in the modal.
+  const { isDragging, dropHandlers } = useFileDrop(addFiles);
 
   // Default the org to the operator's first org (owned first, from the session order).
   useEffect(() => {
@@ -91,9 +98,17 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   }
 
   function submit() {
-    const text = message.trim();
+    let text = message.trim();
     if (!orgId) return setError("Pick an organization.");
     if (!repoId) return setError("Pick a repo to start a job.");
+    const isReview = kind === "review";
+    const pr = prNumber.trim();
+    if (isReview && !/^\d+$/.test(pr)) {
+      return setError("Enter the PR number to review.");
+    }
+    // A review job needs no typed message — the <review> block carries the task. Synthesize a natural
+    // first message so the brain has an instruction and the backend's "firstMessage or attachment" gate passes.
+    if (isReview && !text) text = `Review PR #${pr}.`;
     if (!text && attachments.length === 0) {
       return setError("Add a first message or an attachment — it starts the job.");
     }
@@ -106,6 +121,8 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         firstMessage: text,
         title,
         baseBranch: branch.trim() || undefined,
+        ...(kind ? { kind } : {}),
+        ...(isReview ? { prNumber: pr } : {}),
         ...(attachments.length
           ? { files: attachments.map((a) => a.file) }
           : {}),
@@ -126,7 +143,16 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="relative flex flex-col gap-4" {...dropHandlers}>
+      {/* Drag-over affordance — `pointer-events-none` so the drop still lands on the root's handlers. */}
+      {isDragging ? (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center rounded-lg bg-accent/5 backdrop-blur-[1px]">
+          <div className="flex items-center gap-2 rounded-2xl border-2 border-dashed border-accent bg-surface/90 px-6 py-4 text-[13px] font-medium text-accent shadow-lg">
+            <Upload size={16} strokeWidth={2.2} />
+            Drop files to attach
+          </div>
+        </div>
+      ) : null}
       <div>
         <p className="text-[12px] font-medium text-dim">Organization</p>
         <div className="mt-1.5">
@@ -184,8 +210,59 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         </div>
       ) : null}
 
+      {repos.length > 0 ? (
+        <div>
+          <p className="text-[12px] font-medium text-dim">Job type</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {(
+              [
+                ["", "Auto"],
+                ["feature", "Feature"],
+                ["bugfix", "Bugfix"],
+                ["review", "Review"],
+              ] as [OperatorJobKind | "", string][]
+            ).map(([value, label]) => (
+              <button
+                key={value || "auto"}
+                type="button"
+                onClick={() => setKind(value)}
+                className={cn(
+                  "rounded-md border px-2.5 py-1.5 text-[12px] transition",
+                  kind === value
+                    ? "border-accent bg-[var(--accent-soft)] text-accent"
+                    : "border-border-2 text-dim hover:bg-surface-2 hover:text-text",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {kind === "review" ? (
+            <div className="mt-2">
+              <input
+                value={prNumber}
+                onChange={(e) =>
+                  setPrNumber(e.target.value.replace(/[^\d]/g, ""))
+                }
+                inputMode="numeric"
+                placeholder="PR number (e.g. 116)"
+                className="w-full rounded-md border border-border-2 bg-surface px-3 py-2 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
+              />
+              <p className="mt-1 text-[11px] text-faint">
+                Atlas fetches this PR and reviews the diff — no build, no PR of its own.
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div>
-        <p className="text-[12px] font-medium text-dim">First message</p>
+        <p className="text-[12px] font-medium text-dim">
+          First message
+          {kind === "review" ? (
+            <span className="ml-1 font-normal text-faint">(optional — the PR is already set)</span>
+          ) : null}
+        </p>
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}

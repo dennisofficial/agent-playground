@@ -63,7 +63,7 @@ export function pgConnectionString(env: EnvService): string {
         applicationName: 'atlas (TypeORM)',
         connectTimeoutMS: 10_000,
         ssl: resolveSsl(env),
-        extra: { max: env.get('POSTGRES_POOL_MAX') ?? 10 },
+        extra: { max: 10 },
       }),
     }),
   ],

@@ -241,7 +241,7 @@ wait_live "$STANDBY" 90 || rollback_and_exit "$STANDBY" "$ACTIVE" "$PREV_TAG"
 # to exit (stop_grace_period in compose also enforces this). The backend's
 # BeforeApplicationShutdown hook:
 #   1. Rejects new operator turns (503).
-#   2. Awaits in-flight turns (up to DRAIN_GRACE_MS).
+#   2. Awaits in-flight turns (up to the 120s drain-grace code constant).
 #   3. Releases the advisory lock (or lets it auto-release on process exit).
 # Once the old leader releases the lock, the standby acquires it and becomes leader.
 log "Stopping backend-${ACTIVE} (sending SIGTERM, waiting up to 300s for drain) ..."

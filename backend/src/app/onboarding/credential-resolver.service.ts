@@ -1,68 +1,52 @@
-import { EnvService } from '@core/config/env/env.service';
 import { Injectable } from '@nestjs/common';
 import type { EngineAuth } from '../engine/engine.types';
-import { engineAuthFromEnv } from './env-engine-auth';
 import { TenantCredentialStore } from './tenant-credential.store';
 
 /**
  * THE credential seam. Every consumer (the LLM factories, the engine runner via the driver, the GitHub
- * token sites) resolves through here instead of reading env directly. Each method returns the TENANT's
- * value when a credential row exists, else falls back to EXACTLY what the old env-only code returned —
- * the load-bearing contract that keeps single-tenant dev (and the whole existing test suite) byte-
- * identical. A `orgId` of `undefined` (or a missing row / null column) always takes the env path.
+ * token sites) resolves through here instead of reading env directly. Each method returns the org's
+ * per-tenant value from the encrypted `org_credentials` store, or `undefined` when it's absent — there is
+ * NO env fallback. Local dev gets its credentials by seeding the dev orgs' rows (`pnpm db:seed`, fed by
+ * `.env.seed.enc`), exactly like a deployed org sets them through onboarding. A missing `orgId` / row /
+ * column simply yields `undefined`, and the caller handles the absence (the engine throws a clear "no
+ * auth" error rather than silently metering an API key).
  */
 @Injectable()
 export class CredentialResolver {
-  constructor(
-    private readonly store: TenantCredentialStore,
-    private readonly env: EnvService,
-  ) {}
+  constructor(private readonly store: TenantCredentialStore) {}
 
-  /** Anthropic key for LLM calls: tenant → `ANTHROPIC_API_KEY`. */
+  /** Anthropic key for LLM calls — the org's stored key, or undefined. */
   async anthropicKey(orgId?: string): Promise<string | undefined> {
-    if (orgId) {
-      const creds = await this.store.read(orgId);
-      if (creds?.anthropicApiKey) return creds.anthropicApiKey;
-    }
-    return this.env.get('ANTHROPIC_API_KEY');
+    if (!orgId) return undefined;
+    return (await this.store.read(orgId))?.anthropicApiKey;
   }
 
-  /** OpenAI key for embeddings: tenant → `OPENAI_API_KEY`. */
+  /** OpenAI key for embeddings — the org's stored key, or undefined. */
   async openaiKey(orgId?: string): Promise<string | undefined> {
-    if (orgId) {
-      const creds = await this.store.read(orgId);
-      if (creds?.openaiApiKey) return creds.openaiApiKey;
-    }
-    return this.env.get('OPENAI_API_KEY');
+    if (!orgId) return undefined;
+    return (await this.store.read(orgId))?.openaiApiKey;
   }
 
-  /** GitHub token for clone/push/PR: tenant PAT → `GITHUB_TOKEN` → `GITHUB_TOKEN`. */
+  /** GitHub token for clone/push/PR — the org's stored PAT, or undefined. */
   async githubToken(orgId?: string): Promise<string | undefined> {
-    if (orgId) {
-      const creds = await this.store.read(orgId);
-      if (creds?.githubPat) return creds.githubPat;
-    }
-    return this.env.get('GITHUB_TOKEN');
+    if (!orgId) return undefined;
+    return (await this.store.read(orgId))?.githubPat;
   }
 
   /**
-   * Engine (SDK harness) subscription secret for `engine`: the per-org secret for THAT engine wins,
-   * else the env-derived fallback. Subscription-only — returns `undefined` when neither is set so the
-   * caller omits `auth` and `EngineCore.resolveAuth` throws (never an API-key fallback).
+   * Engine (SDK harness) subscription secret for `engine` — the per-org secret for THAT engine, stamped
+   * with `refreshBack` provenance so the auth-refresh write-back can persist a refreshed blob back to the
+   * row. Subscription-only — returns `undefined` when the org has no secret for this engine so the caller
+   * omits `auth` and `EngineCore.resolveAuth` throws (never an API-key fallback).
    */
   async engineAuth(
     orgId: string | undefined,
     engine: 'claude' | 'codex',
   ): Promise<EngineAuth | undefined> {
-    if (orgId) {
-      const creds = await this.store.read(orgId);
-      const secret = engine === 'claude' ? creds?.claudeOauthToken : creds?.codexAuthSecret;
-      // Stamp `refreshBack` provenance ONLY on an org-sourced secret — it marks this credential as one the
-      // auth-refresh write-back may persist a refreshed blob back to (the env fallback below has nowhere to
-      // write, so it stays bare and never triggers a readback).
-      if (secret) return { secret, refreshBack: { orgId, engine } };
-      // A partial/absent posture falls through to the env-derived default.
-    }
-    return engineAuthFromEnv(this.env, engine);
+    if (!orgId) return undefined;
+    const creds = await this.store.read(orgId);
+    const secret = engine === 'claude' ? creds?.claudeOauthToken : creds?.codexAuthSecret;
+    if (!secret) return undefined;
+    return { secret, refreshBack: { orgId, engine } };
   }
 }

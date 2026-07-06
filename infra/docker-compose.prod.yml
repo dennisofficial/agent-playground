@@ -18,7 +18,7 @@
 x-backend-common: &backend-common
   image: ghcr.io/dennisofficial/atlas-backend:${ATLAS_IMAGE_TAG:-latest}
   init: true
-  stop_grace_period: "300s"   # must exceed DRAIN_GRACE_MS (default 120 s) so Docker
+  stop_grace_period: "300s"   # must exceed the 120s drain-grace code constant so Docker
   stop_signal: SIGTERM         # doesn't SIGKILL before the graceful drain finishes
   env_file:
     - /srv/atlas/secrets/atlas.env
@@ -64,10 +64,8 @@ x-backend-common: &backend-common
     MCP_HUB_BUNDLE_PATH: /srv/atlas/data/engine/mcp-hub-server.mjs
     # CORS origin for the Atlas web console
     FRONTEND_HOST: https://atlas.dltechnologies.co
-    # Clustering / rolling-update (Part A env vars added by parallel agent)
-    LEADER_POLL_INTERVAL_MS: "2000"
-    DRAIN_GRACE_MS: "120000"
-    REALTIME_SLOT_PREFIX: pg_realtime_slot
+    # NOTE: the clustering/rolling-update timings (leader poll 2s, drain grace 120s, realtime slot prefix)
+    # are code constants, not env vars — see backend src (leader-election / drain / realtime services).
     NODE_ENV: production
     APP_ENV: production
   volumes:

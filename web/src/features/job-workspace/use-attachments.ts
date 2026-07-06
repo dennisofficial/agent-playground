@@ -90,3 +90,6 @@ export function useAttachments() {
 
   return { attachments, error, add, remove, clear, addPastedImages };
 }
+
+/** The shared attachment tray API — lifted to the transcript so a pane-wide drop can add into the composer. */
+export type AttachmentsApi = ReturnType<typeof useAttachments>;

@@ -23,7 +23,7 @@ import {
 } from '../persistence/entities';
 import type { ThreadTerminalRecord } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
-import { isDriverExecutableKind, threadKindSpec } from '../thread-kind';
+import { isDriverExecutableKind, laneDefaultFooter, threadKindSpec } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import type { PlannedStep } from './render-plan';
@@ -632,6 +632,9 @@ export class DriverStoreService {
       return {
         status: 'no_job',
         mainTasks: Array.isArray(thread.main_tasks) ? thread.main_tasks : [],
+        // The Main (brain) lane's pre-turn footer default — so a planning job shows "Opus 4.8" before
+        // its first brain turn completes (no `turn_meta` to derive from yet).
+        mainDefaultFooter: laneDefaultFooter('main'),
       };
     }
     const allThreads = await this.threads.find({
@@ -668,7 +671,11 @@ export class DriverStoreService {
       .catch(() => null);
     const planReview =
       codexRow || planReviewThread
-        ? { status: codexRow?.status ?? planReviewThread?.status ?? 'reviewing' }
+        ? {
+            status: codexRow?.status ?? planReviewThread?.status ?? 'reviewing',
+            // The Codex-review lane's pre-turn footer default ("Codex · xHigh").
+            defaultFooter: laneDefaultFooter('plan_review'),
+          }
         : null;
     // All the thread's steps in one query (avoid N+1), grouped by thread for the nav folder tree.
     const steps = await this.steps.find({
@@ -704,12 +711,17 @@ export class DriverStoreService {
       // fixed/expected set the way there is for review agents). The old job-level PR-review fields
       // (`reviewAgents`/`tasks`/`prReviewStatus`) are gone — master review is now a normal build thread.
       mainTasks: Array.isArray(thread.main_tasks) ? thread.main_tasks : [],
+      // The Main (brain) lane's pre-turn footer default — the web renders Main from `mainTasks` (it's not in
+      // the `threads` array), so it needs its own default carrier for the pre-first-turn footer.
+      mainDefaultFooter: laneDefaultFooter('main'),
       threads: threads.map((s) => ({
         id: s.id,
         ordinal: s.ordinal,
         brief: s.brief,
         type: s.type,
         status: s.status,
+        // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's kind.
+        defaultFooter: laneDefaultFooter(s.kind),
         // Derived from `kind` (the `is_master_review` column is gone) — the web keys "Master review"
         // rendering off this field. `kind` is also surfaced directly for the data-driven tree.
         kind: s.kind,
@@ -863,6 +875,8 @@ interface PipelineReviewChild {
   lensId?: string;
   findings: number | null;
   lane: string;
+  /** The lane's pre-turn composer-footer default (`model · effort`), keyed off the child's kind. */
+  defaultFooter: ReturnType<typeof laneDefaultFooter>;
 }
 
 /**
@@ -901,6 +915,7 @@ function pipelineReviewChildren(
         c.kind === 'review_lens'
           ? laneFor('autofix-lens', parent.id, lensId ?? 'review')
           : laneFor('autofix-fix', parent.id),
+      defaultFooter: laneDefaultFooter(c.kind),
     };
   });
 }
@@ -924,6 +939,7 @@ function toPipelineChild(c: ThreadEntity, parentId: string): PipelineReviewChild
       c.kind === 'review_lens'
         ? laneFor('autofix-lens', parentId, lensId ?? 'review')
         : laneFor('autofix-fix', parentId),
+    defaultFooter: laneDefaultFooter(c.kind),
   };
 }
 

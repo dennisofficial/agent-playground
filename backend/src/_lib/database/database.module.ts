@@ -35,7 +35,7 @@ function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
         applicationName: 'agent-playground (TypeORM)',
         connectTimeoutMS: 10_000,
         ssl: resolveSsl(env),
-        extra: { max: env.get('POSTGRES_POOL_MAX') ?? 10 },
+        extra: { max: 10 },
       }),
     }),
   ],

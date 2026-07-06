@@ -31,7 +31,6 @@ export {
   type LoadedManifest,
 } from './legacy-worktree-manifest';
 export { encryptSecret, decryptSecret, loadSecretsKey } from './secret-cipher';
-export { engineAuthFromEnv } from './env-engine-auth';
 
 // NOTE: this layer is now credentials-only. The Slack-facing onboarding edge (OAuth install,
 // interactivity bridge, in-Slack card/modal) was removed when Atlas collapsed to the single web surface.

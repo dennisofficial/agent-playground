@@ -9,7 +9,7 @@ import {
   useStop,
 } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
-import { useAttachments } from "./use-attachments";
+import type { AttachmentsApi } from "./use-attachments";
 import { AttachmentTray } from "./attachment-tray";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
 import { useAllJobs } from "@/lib/api/inbox";
@@ -36,8 +36,10 @@ export interface ComposerFooter {
  * box is empty, the Send button becomes a STOP button (`…/jobs/:jobId/stop`) that gracefully ends the turn.
  *
  * The `＋` attach button is wired: it opens a file picker, and the operator can also PASTE images straight
- * into the textarea. Attachments preview in a tray (local blob URLs — no base64) and send as a multipart
- * `say`; the backend writes them to the sandbox and the brain reads them with its Read tool. The `Plan ▾`
+ * into the textarea OR drag-and-drop files anywhere onto the conversation pane (the drop target lives in
+ * {@link TranscriptView}, which owns the attachment tray and passes it in via `attach`). Attachments preview
+ * in a tray (local blob URLs — no base64) and send as a multipart `say`; the backend writes them to the
+ * sandbox and the brain reads them with its Read tool. The `Plan ▾`
  * mode pill remains a static design affordance for now. The model · effort label and the context ring ARE
  * live: they thread the lane's latest `turn_meta` (via the `footer` prop), so they change per lane.
  *
@@ -48,12 +50,15 @@ export interface ComposerFooter {
  */
 export function Composer({
   jobRef,
+  attach,
   placeholder = "Message Atlas — ask, plan, or steer…",
   onHeightChange,
   footer,
   readOnly = false,
 }: {
   jobRef: JobRef;
+  /** The attachment tray API, owned by {@link TranscriptView} so a pane-wide file drop feeds the same tray. */
+  attach: AttachmentsApi;
   placeholder?: string;
   /** Reports the composer overlay's rendered height so the transcript can reserve matching space. */
   onHeightChange?: (height: number) => void;
@@ -75,7 +80,7 @@ export function Composer({
     remove: removeAttachment,
     clear: clearAttachments,
     addPastedImages,
-  } = useAttachments();
+  } = attach;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);

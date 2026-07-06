@@ -226,6 +226,6 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
   }
 
   private pollMs(): number {
-    return this.env.get('LEADER_POLL_INTERVAL_MS') ?? 2000;
+    return 2000; // how often a follower re-tries to acquire the advisory lock.
   }
 }

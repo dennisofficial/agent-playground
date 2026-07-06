@@ -83,7 +83,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # from .nvmrc with no baked default, corepack resolves each repo's OWN pnpm from its `packageManager`
 # field (or its default when none), cached under the durable HOME's ~/.cache/node/corepack. The engine
 # SDKs below install via plain `npm`, so this build no longer needs an activated pnpm.
-RUN npm install -g corepack@0.34.6 --force \
+RUN npm install -g npm@latest \
+  && npm install -g corepack@0.34.6 --force \
   && mkdir -p /opt/corepack-shims \
   && /usr/local/bin/corepack enable --install-directory /opt/corepack-shims
 

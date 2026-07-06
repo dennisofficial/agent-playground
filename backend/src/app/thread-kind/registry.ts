@@ -10,7 +10,16 @@
 import { Agent, renderAgentPrompt } from '../prompt-kit';
 import { THREAD_REGISTRY } from '../surface/thread-registry';
 import { DEFAULT_LENSES } from '../autofix/autofix-lenses';
+import type { SessionEngine } from '../domain';
+import type { CodexReasoningEffort } from '../engine';
 import type { ThreadKindSpec, ThreadRowKind } from './spec';
+
+/**
+ * The shared Claude worker/brain model default — mirrors engine-core's `DEFAULT_WORKER_MODEL` and the
+ * brain's `BRAIN_MODEL` (both the `'opus'` alias). Kept as a local literal because those live in
+ * unexported engine internals; a divergence would only mislabel the pre-turn footer, never a real turn.
+ */
+const CLAUDE_DEFAULT_MODEL = 'opus';
 
 /** Default fix-turn severity threshold for a builder's `post_review` child (matches AutoFixStage's default). */
 const POST_REVIEW_MIN_SEVERITY = 'medium';
@@ -111,6 +120,9 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     agent: Agent.META_PLAN_REVIEW,
     engine: 'codex',
     mode: 'review',
+    // The plan reviewer reasons hard — the effort the `review_plan` turn actually runs at
+    // (`plan-review.service.ts` reads it from here, single source of truth).
+    reasoningEffort: 'xhigh',
     execution: 'render-only',
     gates: { verification: false, liveVerification: false },
     laneKind: 'codex-review',
@@ -138,6 +150,30 @@ export function threadKindSpec(kind: string): ThreadKindSpec {
 /** Is this kind driven by the driver's top loop (vs a child / render-only kind)? */
 export function isDriverExecutableKind(kind: string): boolean {
   return driverExecutableKinds.has(kind as ThreadRowKind);
+}
+
+/** The static per-lane composer-footer default (`model · effort`), derived from the kind's spec. */
+export interface LaneDefaultFooter {
+  engine: SessionEngine;
+  /** The Claude model id (`'opus'`) for claude kinds; omitted for codex (no pinned model). */
+  model?: string;
+  /** Codex reasoning effort, when the kind runs at one. */
+  effort?: CodexReasoningEffort;
+}
+
+/**
+ * The config-driven composer-footer default for a lane — what the footer shows BEFORE the lane's first
+ * turn completes (so a fresh Main reads "Opus 4.8", a Codex review reads "Codex · xHigh"). Registry is the
+ * single source: `engine`/`effort` come straight off the spec; `model` is the shared Claude default for
+ * claude kinds (codex has no pinned model). Once a real `turn_meta` exists the web prefers it over this.
+ */
+export function laneDefaultFooter(kind: string): LaneDefaultFooter {
+  const spec = threadKindSpec(kind);
+  return {
+    engine: spec.engine,
+    ...(spec.engine === 'claude' ? { model: CLAUDE_DEFAULT_MODEL } : {}),
+    ...(spec.reasoningEffort ? { effort: spec.reasoningEffort } : {}),
+  };
 }
 
 /**

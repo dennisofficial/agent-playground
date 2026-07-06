@@ -498,8 +498,8 @@ export class RedisEngineRunner implements EngineRunnerPort {
     const put = (key: string, value: string | undefined): void => {
       if (value) e[key] = value;
     };
-    put('CLAUDE_OAUTH_TOKEN', this.env.get('CLAUDE_OAUTH_TOKEN'));
-    put('CODEX_OAUTH_TOKEN', this.env.get('CODEX_OAUTH_TOKEN'));
+    // Engine subscription auth is NOT injected via env — it rides the turn spec as explicit `args.auth`
+    // (resolved per-org by CredentialResolver.engineAuth). There is no ambient-env fallback.
     e.AGENT_HOME_ROOT = CONTAINER_AGENT_HOME;
     // Redis transport: the engine reads its spec from / writes events to Redis under this turn id.
     e.ENGINE_TRANSPORT = 'redis';

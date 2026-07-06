@@ -68,7 +68,7 @@ async function bootstrap() {
   // runs via enableShutdownHooks; this just closes the lingering sockets + force-exits as a backstop. Cap:
   // generous in prod (drain grace + buffer, so the graceful blue/green handoff always wins), tight in dev.
   const isProd = env.get('NODE_ENV') === ENodeEnv.PROD;
-  const drainGraceMs = env.get('DRAIN_GRACE_MS') ?? 120_000;
+  const drainGraceMs = 120_000; // SIGTERM drain budget; must stay < the container stop_grace_period.
   installShutdownGuard(app, { forceExitAfterMs: isProd ? drainGraceMs + 15_000 : 4_000 });
 
   log.log(
