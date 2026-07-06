@@ -442,8 +442,11 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
           const first = await iter.next();
           seen.push(first.value as (typeof seen)[number]);
           yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
+          // First committed assistant message ⇒ the engine flushes any HELD steer (a steer that arrives
+          // before this point is buffered — injecting priority:'now' pre-stream aborts the turn).
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] }, session_id: 'sess-1' };
           yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'r1', usage: { input_tokens: 1, output_tokens: 1 } };
-          const second = await iter.next(); // the steer, injected by the engine after the first result
+          const second = await iter.next(); // the steer, injected once the turn is streaming
           if (!second.done) {
             seen.push(second.value as (typeof seen)[number]);
             yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'r2', usage: { input_tokens: 1, output_tokens: 1 } };
@@ -478,7 +481,8 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
   });
 
   it('steerable: emits input_ack for a steer carrying an id, and dedupes a redelivered id (no double-push, still re-acks)', async () => {
-    // The SDK consumes the task, then two more input messages (the steer + its redelivery).
+    // The SDK consumes the task, emits a first assistant message (flushing the held steer), then reads the
+    // injected steer. The steer's redelivery is gated to arrive AFTER injection (a lost-ack re-drive).
     const pushed: unknown[] = [];
     const sdk = {
       query: ({ prompt }: { prompt: AsyncIterable<{ type: string; message?: { content?: unknown } }> }) =>
@@ -487,20 +491,26 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
           const first = await iter.next();
           pushed.push((first.value as { message?: { content?: unknown } }).message?.content);
           yield { type: 'system', subtype: 'init', session_id: 's' };
+          // First assistant message ⇒ flush the held steer so it injects (subtype=success regime).
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] }, session_id: 's' };
           yield { type: 'result', subtype: 'success', session_id: 's', result: 'r1', usage: { input_tokens: 1, output_tokens: 1 } };
-          // A steer lands (id S1) → pushed; then the SAME id S1 is redelivered → must NOT push again.
+          // The injected steer (id S1) is read exactly once; the redelivery is a no-op push (still re-acks).
           const a = await iter.next();
           if (!a.done) pushed.push((a.value as { message?: { content?: unknown } }).message?.content);
-          const b = await iter.next();
-          if (!b.done) pushed.push((b.value as { message?: { content?: unknown } }).message?.content);
           yield { type: 'result', subtype: 'success', session_id: 's', result: 'r2', usage: { input_tokens: 1, output_tokens: 1 } };
         })(),
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 
-    // Two steers with the SAME id (the second is a lost-ack re-drive from the delivery pump).
+    // Two steers with the SAME id (the second is a lost-ack re-drive). The redelivery is gated to fire only
+    // AFTER the first has been injected+acked, so it hits the "already injected → re-ack, never re-push" path.
+    let releaseRedelivery: () => void = () => {};
+    const redeliveryGate = new Promise<void>((r) => {
+      releaseRedelivery = r;
+    });
     const steerInput: AsyncIterable<{ id?: string; text: string }> = {
       async *[Symbol.asyncIterator]() {
         yield { id: 'S1', text: 'do X' };
+        await redeliveryGate;
         yield { id: 'S1', text: 'do X' };
       },
     };
@@ -517,7 +527,10 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       steerable: true,
       steerInput,
       onEvent: (e) => {
-        if (e.kind === 'input_ack') acks.push(e.id);
+        if (e.kind === 'input_ack') {
+          acks.push(e.id);
+          if (acks.length === 1) releaseRedelivery(); // first ack landed → let the redelivery re-drive
+        }
       },
     });
 
@@ -525,6 +538,61 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(pushed).toEqual(['the task', 'do X']);
     // ...but BOTH deliveries of S1 emit an ack, so a lost-ack re-drive still converges to delivered.
     expect(acks).toEqual(['S1', 'S1']);
+  });
+
+  it('steerable: HOLDS a steer that arrives before the first assistant message, then injects it on flush', async () => {
+    // The startup-race guard: a priority:'now' steer pushed before the model commits its first assistant
+    // message aborts the turn. So a steer arriving pre-stream must be HELD (not pushed, not acked) until the
+    // first `assistant` message; only then is it injected + acked. Here the steer is available immediately,
+    // but the SDK reads the injected message (and emits the ack) ONLY after the assistant message is yielded.
+    const pushedAfterEachStage: { beforeAssistant: unknown[]; afterAssistant: unknown[] } = {
+      beforeAssistant: [],
+      afterAssistant: [],
+    };
+    const acks: string[] = [];
+    let sawAssistant = false;
+    const sdk = {
+      query: ({ prompt }: { prompt: AsyncIterable<{ type: string; message?: { content?: unknown } }> }) =>
+        (async function* () {
+          const iter = prompt[Symbol.asyncIterator]();
+          await iter.next(); // the task
+          yield { type: 'system', subtype: 'init', session_id: 's' };
+          // The steer is present on steerInput already, but must be HELD — no ack yet.
+          await new Promise((r) => setTimeout(r, 5));
+          if (acks.length !== 0) throw new Error('steer was acked BEFORE the first assistant message (not held)');
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'thinking' }] }, session_id: 's' };
+          sawAssistant = true;
+          const injected = await iter.next(); // now the flushed steer arrives
+          pushedAfterEachStage.afterAssistant.push((injected.value as { message?: { content?: unknown } }).message?.content);
+          yield { type: 'result', subtype: 'success', session_id: 's', result: 'done', usage: { input_tokens: 1, output_tokens: 1 } };
+        })(),
+    } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+
+    const steerInput: AsyncIterable<{ id?: string; text: string }> = {
+      async *[Symbol.asyncIterator]() {
+        yield { id: 'S9', text: 'held steer' };
+      },
+    };
+
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+    await core.run({
+      engine: 'claude',
+      task: 'the task',
+      cwd: '/tmp/wt',
+      systemPrompt: 'p',
+      sandboxKey: 'k',
+      mode: 'execute',
+      steerable: true,
+      steerInput,
+      onEvent: (e) => {
+        if (e.kind === 'input_ack') acks.push(e.id);
+      },
+    });
+
+    // The steer was injected (and acked) ONLY after the assistant message — never before.
+    expect(sawAssistant).toBe(true);
+    expect(pushedAfterEachStage.afterAssistant).toEqual(['held steer']);
+    expect(acks).toEqual(['S9']);
   });
 
   it('surfaces per-call context occupancy (NOT the cumulative billing sum) across multiple round-trips', async () => {

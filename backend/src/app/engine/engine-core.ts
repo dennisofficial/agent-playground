@@ -169,11 +169,14 @@ const STEER_IDLE_GRACE_MS = 350;
 
 /** Env-derived configuration (the values the host reads from EnvService, the container from process.env). */
 export interface EngineCoreConfig {
-  /** Root for the isolated agent home (AGENT_HOME_ROOT ?? AGENT_HOME_ROOT). */
+  /** Root for the isolated agent home (from AGENT_HOME_ROOT). */
   homeRoot?: string;
-  /** Subscription OAuth token for Claude when a run doesn't pass explicit `auth` (CLAUDE_OAUTH_TOKEN). */
+  /**
+   * Optional last-resort subscription secrets for when a run doesn't pass explicit `auth`. In practice every
+   * turn threads its per-org secret as `args.auth`, so these stay unset in the real engine — they exist only
+   * so `EngineCore` remains a self-contained, testable unit. There is NO ambient-env source for them.
+   */
   claudeOauthToken?: string;
-  /** Subscription secret (auth.json / token) for Codex when a run doesn't pass explicit `auth` (CODEX_OAUTH_TOKEN). */
   codexOauthToken?: string;
 }
 
@@ -417,10 +420,9 @@ export class EngineCore {
     if (explicit) return explicit;
     const secret = engine === 'claude' ? this.cfg.claudeOauthToken : this.cfg.codexOauthToken;
     if (secret) return { secret };
-    const envVar = engine === 'claude' ? 'CLAUDE_OAUTH_TOKEN' : 'CODEX_OAUTH_TOKEN';
     throw new Error(
-      `No ${engine} subscription secret — set a per-org secret or ${envVar}. ` +
-        'The engine runs subscription-only (no API-key fallback).',
+      `No ${engine} subscription secret — the org has no ${engine} credential set (add one via ` +
+        'onboarding, or `pnpm db:seed` in dev). The engine runs subscription-only (no API-key fallback).',
     );
   }
 
@@ -509,14 +511,39 @@ export class EngineCore {
       endTimer = setTimeout(() => input.end(), STEER_IDLE_GRACE_MS);
     };
     const steerIter = streaming ? steerInput![Symbol.asyncIterator]() : undefined;
+    // A priority:'now' steer pushed BEFORE the model commits its first assistant message makes the SDK
+    // abort the whole turn (result_type=user, terminal_reason=aborted_streaming, subtype=error_during_
+    // execution) — the startup-race red box. So a steer that arrives while the turn is still spinning up is
+    // HELD in `steerBuffer` and flushed the instant the first `assistant` message lands (`streamingStarted`),
+    // at which point a mid-turn steer injects cleanly (subtype=success, steer honored). Verified by spike.
+    let streamingStarted = false;
+    const steerBuffer: Array<{ id?: string; text: string }> = [];
+    let flushSteerBuffer = (): void => {}; // real impl set below when streaming; no-op for worker turns
     if (input) {
       input.push(steerUserMessage(task));
       // Drain operator steers into the live turn until the turn ends. Each steer carries its stimulus `id`;
       // we push it into the session with priority:'now', then emit an `input_ack` echoing the id — the
       // durable proof the message was TAKEN (the host stamps delivered_at only on this ack, never on the
       // stream write). A redelivered id (a lost ack re-driven by the delivery pump) is a NO-OP push
-      // (exactly-once injection) but STILL re-emits its ack so delivery converges.
+      // (exactly-once injection) but STILL re-emits its ack so delivery converges. A steer held pre-stream
+      // is NOT acked until it is actually injected (on flush), so a turn that dies before first content
+      // leaves the message pending (delivered_at null) for the sweep — no acked-but-dropped message.
       const injectedSteerIds = new Set<string>();
+      const bufferedIds = new Set<string>();
+      const injectSteer = (id: string | undefined, text: string): void => {
+        cancelEnd(); // a steer is in flight to the model — don't close input under it
+        input.push(steerUserMessage(text, 'now'));
+        if (typeof id === 'string') {
+          injectedSteerIds.add(id);
+          onEvent?.({ kind: 'input_ack', id });
+        }
+      };
+      flushSteerBuffer = (): void => {
+        while (steerBuffer.length) {
+          const s = steerBuffer.shift()!;
+          injectSteer(s.id, s.text);
+        }
+      };
       void (async () => {
         try {
           while (!turnEnded && steerIter) {
@@ -525,13 +552,18 @@ export class EngineCore {
             const text = value?.text;
             if (typeof text !== 'string' || text.length === 0) continue;
             const id = value?.id;
-            const duplicate = typeof id === 'string' && injectedSteerIds.has(id);
-            if (!duplicate) {
-              cancelEnd(); // a steer is in flight to the model — don't close input under it
-              input.push(steerUserMessage(text, 'now'));
-              if (typeof id === 'string') injectedSteerIds.add(id);
+            if (typeof id === 'string' && injectedSteerIds.has(id)) {
+              // Re-delivered after a lost ack — re-emit the ack so delivery converges; never re-push.
+              onEvent?.({ kind: 'input_ack', id });
+              continue;
             }
-            if (typeof id === 'string') onEvent?.({ kind: 'input_ack', id });
+            if (typeof id === 'string' && bufferedIds.has(id)) continue; // already held (not yet taken → no ack)
+            if (!streamingStarted) {
+              steerBuffer.push({ id, text }); // HOLD until first assistant message (see note above)
+              if (typeof id === 'string') bufferedIds.add(id);
+              continue;
+            }
+            injectSteer(id, text);
           }
         } catch {
           /* steer source closed — the turn's own lifecycle ends it */
@@ -661,6 +693,14 @@ export class EngineCore {
               onEvent?.({ kind: 'thinking_delta', text: ev.delta.thinking, ...sub });
           }
         } else if (message.type === 'assistant') {
+          // First committed assistant message ⇒ the turn is genuinely streaming: a held steer can now inject
+          // with priority:'now' without aborting the turn. Flush the pre-stream hold buffer (no-op after the
+          // first message / for turns that never held anything). Must be an `assistant` message, NOT a
+          // stream_event content delta — flushing on a partial delta still aborts (verified by spike).
+          if (!streamingStarted) {
+            streamingStarted = true;
+            flushSteerBuffer();
+          }
           // `parent_tool_use_id` is UNSET for the brain's own blocks, SET to the spawning Task id for a
           // subagent's blocks (forwardSubagentText forwards subagent text/thinking the same way).
           const parent = message.parent_tool_use_id ?? undefined;

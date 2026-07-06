@@ -198,6 +198,14 @@ export class AgentSessionManager
    */
   private readonly turnQueues = new Map<string, Promise<void>>();
 
+  /**
+   * Bounded silent auto-resume for a BENIGN `aborted_streaming` (an SDK stream abort that self-recovers) —
+   * keyed by jobId, count of consecutive auto-resumes. Reset on the next successful turn. Past the cap we
+   * stop swallowing and surface the normal retryable box, so a PERSISTENT abort still reaches the operator.
+   */
+  private readonly benignAbortRedrives = new Map<string, number>();
+  private static readonly MAX_BENIGN_ABORT_REDRIVES = 2;
+
   // ── reset_sandbox bookkeeping (all keyed `orgId:jobId`, in-memory, per-process) ─────────────────
   /** "Tear down before the verify turn": set by the `reset_sandbox` tool, consumed by the turn tail. */
   private readonly resetRequests = new Map<string, { reason: string }>();
@@ -1882,11 +1890,33 @@ export class AgentSessionManager
           stimulus,
           `${String(err)}\n\nThis thread can't continue — its engine session state is gone. Please start a new thread to pick this back up.`,
         );
+      } else if (this.isBenignStreamAbort(err)) {
+        // A self-recovering SDK stream abort (`aborted_streaming`) — NOT a real failure the operator must
+        // act on. The engine-side hold makes the startup-race variant impossible; this is the net for any
+        // residual/other abort. Instead of a scary red box, silently resume the SAME session once (the same
+        // nudge the operator's Resume button seeds), bounded so a PERSISTENT abort still surfaces a box.
+        const n = (this.benignAbortRedrives.get(stimulus.jobId) ?? 0) + 1;
+        if (n <= AgentSessionManager.MAX_BENIGN_ABORT_REDRIVES) {
+          this.benignAbortRedrives.set(stimulus.jobId, n);
+          this.logger.warn(
+            `benign aborted_streaming for thread=${stimulus.jobId} — auto-resuming (attempt ${n}/${AgentSessionManager.MAX_BENIGN_ABORT_REDRIVES}), no operator box: ${err}`,
+          );
+          this.surface.seedSystemNotification?.(stimulus.repoId, stimulus.jobId, 'Please continue.', {
+            orgId: stimulus.orgId,
+          });
+        } else {
+          this.logger.warn(
+            `benign aborted_streaming recurred ${n}× for thread=${stimulus.jobId} — surfacing retryable box`,
+          );
+          await this.saySystemOperator(stimulus, String(err), { retryable: true });
+        }
       } else {
         await this.saySystemOperator(stimulus, String(err), { retryable: true });
       }
       return;
     }
+    // A turn completed without throwing — clear any benign-abort auto-resume budget for this thread.
+    this.benignAbortRedrives.delete(stimulus.jobId);
 
     // Persist the session_id for resume.
     if (result.sessionId && sandboxRow) {
@@ -4571,6 +4601,15 @@ export class AgentSessionManager
    * `retryable: true` tells the web to render a "Resume" button (a turn-halting engine error the operator
    * can re-poke without retyping anything — see `POST …/retry-turn`); omit/false for terminal failures.
    */
+  /**
+   * A BENIGN, self-recovering SDK stream abort: the engine ended the turn with
+   * `terminal_reason="aborted_streaming"` (a priority:'now' steer that raced the stream, an interrupt).
+   * Distinct from a genuine engine failure — recovered by a silent single resume, not an operator box.
+   */
+  private isBenignStreamAbort(err: unknown): boolean {
+    return /aborted_streaming/.test(String(err));
+  }
+
   private async saySystemOperator(
     stimulus: ChatStimulus,
     text: string,
