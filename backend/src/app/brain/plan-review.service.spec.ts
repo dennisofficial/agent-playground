@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   PlanReviewService,
   parsePlanFindings,
@@ -139,6 +142,8 @@ function makeService(opts: {
   ensureContainer?: unknown;
   engineRun?: (args: unknown) => Promise<EngineRunResult>;
   contextDirHost?: string;
+  /** Called when the harness `finish()` runs — lets a test observe reply-persist ordering. */
+  onFinish?: () => void;
 }) {
   const engine = {
     run: vi.fn(
@@ -167,7 +172,9 @@ function makeService(opts: {
   const harness = {
     create: () => ({
       onEvent: () => undefined,
-      finish: async () => undefined,
+      finish: async () => {
+        opts.onFinish?.();
+      },
       abort: async () => undefined,
     }),
   } as unknown as TurnHarnessFactory;
@@ -221,6 +228,26 @@ describe('PlanReviewService.review', () => {
     expect(out.findings.map((f) => f.severity)).toEqual(['BLOCKING', 'ADVISORY']);
   });
 
+  it('flips the control row complete BEFORE persisting the reply transcript (no re-drive window)', async () => {
+    // The invariant that stops the doubled review turn: a re-drive needs status='running', so the row
+    // must reach 'complete' before the reply becomes durable. Assert that relative order.
+    const order: string[] = [];
+    const reviews = fakeReviewRepo();
+    const origUpdate = (reviews as unknown as { update: (w: unknown, p: { status?: string }) => Promise<void> }).update;
+    (reviews as unknown as { update: unknown }).update = vi.fn(
+      async (where: unknown, patch: { status?: string }) => {
+        if (patch.status === 'complete') order.push('row:complete');
+        return origUpdate(where, patch);
+      },
+    );
+    const svc = makeService({ reviews, onFinish: () => order.push('reply:persisted') });
+    await svc.review(baseInput);
+    expect(order).toEqual(['row:complete', 'reply:persisted']);
+    // The row is terminal, so the backstop worklist no longer sees it → it can never be re-driven.
+    expect(reviews._rows()[0].status).toBe('complete');
+    expect(await svc.findRunningReviews()).toEqual([]);
+  });
+
   it('records failed (no throw) when no sandbox can be attached', async () => {
     const reviews = fakeReviewRepo();
     const svc = makeService({ reviews, ensureContainer: null });
@@ -236,6 +263,35 @@ describe('PlanReviewService.review', () => {
     const svc = makeService({ reviews });
     const out = await svc.review(baseInput);
     expect(out.ceilingHit).toBe(true);
+  });
+});
+
+describe('PlanReviewService.review — resume_count is the plan-version/round (D2)', () => {
+  it('a same-spec_hash re-drive keeps resume_count; a changed-spec_hash review bumps it', async () => {
+    // A real specs dir so hashSpecs() returns a stable, non-null hash (the plan-version fingerprint).
+    const root = await mkdtemp(join(tmpdir(), 'plan-review-d2-'));
+    const specsDir = join(root, 'specs');
+    await mkdir(specsDir, { recursive: true });
+    await writeFile(join(specsDir, 'plan.md'), 'v1');
+    try {
+      const reviews = fakeReviewRepo();
+      const svc = makeService({ reviews, contextDirHost: root });
+
+      // First review of this plan version: fresh row, round 0.
+      await svc.review(baseInput);
+      expect(reviews._rows()[0].resume_count).toBe(0);
+
+      // Recovery re-drive of the SAME plan version (specs unchanged) → round stays 0.
+      await svc.review(baseInput);
+      expect(reviews._rows()[0].resume_count).toBe(0);
+
+      // Atlas revised the plan → the specs (and their hash) change → a genuine new round bumps to 1.
+      await writeFile(join(specsDir, 'plan.md'), 'v2 — revised');
+      await svc.review(baseInput);
+      expect(reviews._rows()[0].resume_count).toBe(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

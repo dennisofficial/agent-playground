@@ -268,7 +268,8 @@ export class PlanReviewService {
     const attempt = async (
       resumeSessionId: string | undefined,
     ): Promise<
-      { ok: true; output: string } | { ok: false; error: string; timedOut: boolean }
+      | { ok: true; output: string; findings: ReviewFinding[] }
+      | { ok: false; error: string; timedOut: boolean }
     > => {
       const harness = this.turnHarness.create({
         jobId: input.jobId,
@@ -323,11 +324,17 @@ export class PlanReviewService {
           }),
           watchdog,
         ]);
+        // Flip the control row TERMINAL before persisting the reply transcript. A re-drive requires the
+        // row to be `running`, so once it is `complete` the work-owed backstop can never re-run a review
+        // whose reply is about to become durable — the invariant "reply durable ⟹ row terminal" that
+        // stops the whole review turn (prompt + tools + reply + footer) from being re-persisted twice.
+        const findings = parsePlanFindings(result.result);
+        row = await this.persistRow(row, input, specHash, 'complete', findings, null);
         await harness.finish(
           result.result,
           result.usage ? { usage: result.usage } : undefined,
         );
-        return { ok: true, output: result.result };
+        return { ok: true, output: result.result, findings };
       } catch (err) {
         await harness.abort().catch(() => undefined);
         return { ok: false, error: summarizeEngineError(err), timedOut };
@@ -371,8 +378,9 @@ export class PlanReviewService {
       return { status: 'failed', findings: [], specHash, error: res.error };
     }
 
-    const findings = parsePlanFindings(res.output);
-    await this.persistRow(row, input, specHash, 'complete', findings, null);
+    // The row was already flipped `complete` (with these findings) inside `attempt()`, before the reply
+    // transcript was persisted — see the invariant note there.
+    const findings = res.findings;
     const blocking = findings.filter((f) => f.severity === 'BLOCKING').length;
     this.logger.log(
       findings.length
@@ -468,10 +476,17 @@ export class PlanReviewService {
         }),
       );
     }
-    // A transition to 'running' means a NEW review attempt — bump resume_count + refresh the spec hash.
+    // A transition to 'running' refreshes the spec hash + clears stale findings. `resume_count` is the
+    // plan-version/round number: bump it ONLY when the specs actually changed (a genuine re-review after
+    // Atlas revised the plan). A same-spec_hash re-drive is a RECOVERY of the same round — keep the count
+    // stable so the prompt idempotency key (`codex:<jobId>:<round>`) still dedups and a flaky recovery
+    // can't burn the re-review ceiling.
     const patch: Partial<CodexReviewEntity> = { status, error };
     if (status === 'running') {
-      patch.resume_count = existing.resume_count + 1;
+      const sameVersion = existing.spec_hash != null && existing.spec_hash === specHash;
+      patch.resume_count = sameVersion
+        ? existing.resume_count
+        : existing.resume_count + 1;
       patch.spec_hash = specHash;
       patch.findings = null;
     } else {
