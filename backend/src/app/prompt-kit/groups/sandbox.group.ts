@@ -9,7 +9,7 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
-import { SOLE_AUTHOR_NOTE } from '../fragments';
+import { SANDBOX_FILESYSTEM_MAP_NOTE, SOLE_AUTHOR_NOTE } from '../fragments';
 
 /**
  * The sandbox OS + the toolkit pre-baked into the image, shown to BOTH the normal and onboarding brains so
@@ -56,6 +56,12 @@ export class SandboxGroup {
       'ask_question for decisions and facts only the operator knows). Your work reaches their world ONLY',
       'through what you ship (the PR) and what you post in chat.',
     ].join('\n');
+  }
+
+  /** normal block 01c — the sandbox filesystem map (mount split: what git sees vs infra mounts). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1011, condition: notOnboarding })
+  filesystemMap(): string {
+    return SANDBOX_FILESYSTEM_MAP_NOTE;
   }
 
   /** normal block 01a — the sandbox OS + the pre-baked toolkit (also shown in onboarding, below). */

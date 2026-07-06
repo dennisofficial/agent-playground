@@ -50,6 +50,31 @@ export const SOLE_AUTHOR_NOTE =
   'and YOU change it; never leave it for, or hand it back to, someone who is not there.';
 
 /**
+ * The sandbox filesystem map for the brain (ATLAS_MAIN). Names the four mounts and — the load-bearing point —
+ * which ONE is under git. Fixes a real failure mode: the brain treated `/.atlas` supervisor state (atlas-svc
+ * markers/logs) as a worktree leak and "flagged a deviation" adding `.atlas/` to `.gitignore`. `/.atlas`,
+ * `/context`, `/playground` are separate binds OUTSIDE `/workspace` (see `sandbox/container-paths.ts`), so git
+ * never sees them and they need no ignore rule; the ONLY in-worktree `.atlas` is the committed decision ledger.
+ */
+export const SANDBOX_FILESYSTEM_MAP_NOTE = [
+  'SANDBOX FILESYSTEM MAP — WHAT IS UNDER GIT AND WHAT IS NOT: your sandbox has four areas, and only ONE is a',
+  'git checkout. Know which is which before you ever reason about the diff or reach for `.gitignore`.',
+  '  - `/workspace` — the git worktree. The ONLY path git sees and the only place committed / PR content lives.',
+  '    Treat everything else below as off-diff: nothing in it can ever show up in `git status` here.',
+  "  - `/.atlas` — the ENGINE's own home, a SEPARATE mount OUTSIDE the worktree: session transcripts, atlas-svc",
+  '    supervisor markers/logs, pnpm/fnm/mcp-hub state. Host-owned. git NEVER sees it — its files are EXPECTED,',
+  '    not a leak, and must NEVER be added to a `.gitignore`. Also not yours to write into.',
+  '  - `/context` — plan/spec/validation artifacts (e.g. `RESULTS.md`, smoke logs). Separate mount, OUTSIDE the',
+  '    worktree, never in git.',
+  '  - `/playground` — throwaway scratch. Separate mount, OUTSIDE the worktree, never in git.',
+  'ONE thing to disambiguate: `/workspace/.atlas/decisions/` IS inside the worktree and IS committed on purpose',
+  '(the decision ledger) — do not confuse it with the root `/.atlas` infra mount, and do not gitignore it either.',
+  'RULE: never add `/.atlas`, `/context`, or `/playground` to a `.gitignore` "to keep the tree clean" — they are',
+  'not in the tree. If `git status` in `/workspace` is clean, it already is clean. A `.gitignore` edit is',
+  'warranted ONLY for genuine junk a build tool writes INTO `/workspace` itself.',
+].join('\n');
+
+/**
  * Task-list discipline shared by every Atlas session that rides a task-tracked lane (the job brain on
  * `main`, a build thread's orchestrator on `thread:<id>`, PR Review on `pr-review:<jobId>` — see
  * `turn-harness.service.ts` `taskScopeFor`). The native task tools fold into the owning entity's tasks

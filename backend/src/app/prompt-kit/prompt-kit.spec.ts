@@ -9,6 +9,7 @@ import {
   DEVIATION_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
   REPORT_ONLY_NOTE,
+  SANDBOX_FILESYSTEM_MAP_NOTE,
   SUBAGENT_KERNEL_NOTE,
   SOLE_AUTHOR_NOTE,
   SPIKE_FIRST_NOTE,
@@ -54,7 +55,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       CLARITY_OVER_COMMENTS_NOTE,
     );
     // deliberately excluded: reviewers and the minimal-diff autofix apply persona.
-    for (const agent of [Agent.REVIEW_AGENT, Agent.PR_REVIEW, Agent.MASTER_REVIEW, Agent.AUTOFIX_FIX]) {
+    for (const agent of [Agent.REVIEW_AGENT, Agent.MASTER_REVIEW, Agent.AUTOFIX_FIX]) {
       expect(renderAgentPrompt(agent), String(agent)).not.toContain(CLARITY_OVER_COMMENTS_NOTE);
     }
   });
@@ -63,7 +64,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' })).toContain(CANDOR_NOTE);
     expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' })).toContain(CANDOR_NOTE);
     // brain-only conversational stance: not the build/review/writer personas.
-    for (const agent of [Agent.WORKER, Agent.FAN_OUT, Agent.REVIEW_AGENT, Agent.PR_REVIEW]) {
+    for (const agent of [Agent.WORKER, Agent.FAN_OUT, Agent.REVIEW_AGENT, Agent.MASTER_REVIEW]) {
       expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(CANDOR_NOTE);
     }
   });
@@ -86,8 +87,8 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('the sole-author invariant reaches every file-touching / operator-facing agent, exactly once', () => {
-    // brain (feature + onboarding), worker orchestrator, pr-review, and the fan-out writer.
-    for (const agent of [Agent.WORKER, Agent.PR_REVIEW, Agent.FAN_OUT]) {
+    // brain (feature + onboarding), worker orchestrator, and the fan-out writer.
+    for (const agent of [Agent.WORKER, Agent.FAN_OUT]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(SOLE_AUTHOR_NOTE).length - 1, String(agent)).toBe(1);
     }
@@ -95,9 +96,19 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' })).toContain(SOLE_AUTHOR_NOTE);
   });
 
-  it('the cloud-sandbox note is ONE shared fragment across the composed driver personas (dedup)', () => {
-    // worker + pr-review get the note from the SAME DriverFramingGroup fragment, exactly once each.
-    for (const agent of [Agent.WORKER, Agent.PR_REVIEW]) {
+  it('the sandbox filesystem map reaches the brain (build) but not the builder', () => {
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' })).toContain(SANDBOX_FILESYSTEM_MAP_NOTE);
+    // brain-only orientation: the build/writer personas do not get it.
+    for (const agent of [Agent.WORKER, Agent.FAN_OUT]) {
+      expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(
+        SANDBOX_FILESYSTEM_MAP_NOTE,
+      );
+    }
+  });
+
+  it('the cloud-sandbox note is ONE shared fragment on the composed driver persona (dedup)', () => {
+    // the worker gets the note from the shared DriverFramingGroup fragment, exactly once.
+    for (const agent of [Agent.WORKER]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(CLOUD_SANDBOX_NOTE).length - 1, String(agent)).toBe(1);
     }
@@ -118,8 +129,8 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       // it renders FIRST — before the persona body.
       expect(out.startsWith(SUBAGENT_KERNEL_NOTE), String(agent)).toBe(true);
     }
-    // NOT the full-session agents (brain, worker orchestrator, ship-time reviews) — they converse / span turns.
-    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.PR_REVIEW, Agent.MASTER_REVIEW]) {
+    // NOT the full-session agents (brain, worker orchestrator, master review) — they converse / span turns.
+    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.MASTER_REVIEW]) {
       expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(
         SUBAGENT_KERNEL_NOTE,
       );
@@ -193,11 +204,9 @@ describe('preview catalog (the dev-only /test/prompts source of truth)', () => {
       'brain',
       'brain-onboarding',
       'worker-orchestrate',
-      'ship-pr-review',
       'ship-master-review',
       'autofix-review',
       'subagent-writer',
-      'meta-decision-classifier',
     ]) {
       expect(ids.has(id), id).toBe(true);
     }
