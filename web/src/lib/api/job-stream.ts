@@ -64,6 +64,14 @@ export interface LiveTurn {
    * Drives the working-indicator elapsed timer; `undefined` until the first frame that carries it.
    */
   startedAt?: number;
+  /**
+   * LIVE context-window occupancy — updated mid-turn from each `usage` frame (Claude turns) so the composer
+   * ring fills DURING the turn. `undefined` until the turn's first `usage` frame; the durable `turn_meta`
+   * (from the last completed turn) is the footer's fallback baseline until then. Reset per turn.
+   */
+  contextTokens?: number;
+  contextModel?: string;
+  contextLimit?: number;
 }
 
 type StreamPayload = {
@@ -83,6 +91,10 @@ type StreamPayload = {
   active?: boolean;
   /** present on `kind:'turn_start'` and (for reconnect resilience) `kind:'snapshot'` — epoch-ms turn start. */
   startedAt?: number;
+  /** present on `kind:'usage'` — live mid-turn context-window occupancy. */
+  contextTokens?: number;
+  contextModel?: string;
+  contextLimit?: number;
 };
 
 let blockSeq = 0;
@@ -257,6 +269,23 @@ class ThreadStreamStore {
         }
         break;
       }
+      case "usage":
+        // LIVE context occupancy — update the ring values, keep blocks untouched. Preferred over the durable
+        // turn_meta by the composer footer while the turn is active.
+        this.map.set(key, {
+          blocks,
+          active: true,
+          lastSeq: seq,
+          startedAt: cur?.startedAt,
+          contextTokens:
+            typeof ev.contextTokens === "number" ? ev.contextTokens : cur?.contextTokens,
+          contextModel:
+            typeof ev.contextModel === "string" ? ev.contextModel : cur?.contextModel,
+          contextLimit:
+            typeof ev.contextLimit === "number" ? ev.contextLimit : cur?.contextLimit,
+        });
+        this.notify(key);
+        return;
       default:
         // session / result — advance seq but don't change rendered blocks.
         this.map.set(key, {
@@ -264,6 +293,9 @@ class ThreadStreamStore {
           active: true,
           lastSeq: seq,
           startedAt: cur?.startedAt,
+          contextTokens: cur?.contextTokens,
+          contextModel: cur?.contextModel,
+          contextLimit: cur?.contextLimit,
         });
         this.notify(key);
         return;
@@ -274,6 +306,10 @@ class ThreadStreamStore {
       active: true,
       lastSeq: seq,
       startedAt: cur?.startedAt,
+      // Carry the live occupancy across block deltas so a text/tool frame doesn't wipe the ring mid-turn.
+      contextTokens: cur?.contextTokens,
+      contextModel: cur?.contextModel,
+      contextLimit: cur?.contextLimit,
     });
     this.notify(key);
   }

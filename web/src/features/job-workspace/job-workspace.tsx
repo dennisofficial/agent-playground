@@ -232,6 +232,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
                   messages={messages}
                   isLoading={messagesLoading}
                   live={status === "running" || status === "plan_review"}
+                  mainDefaultFooter={pipeline?.mainDefaultFooter}
                   onOpenPlan={onOpenPlan}
                   onSelectNode={(node) => selectNode(node, { push: true })}
                 />

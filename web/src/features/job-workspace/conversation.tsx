@@ -44,6 +44,7 @@ import { indexAutofixBlocks } from "./review-lane";
 import { Composer, type ComposerFooter } from "./composer";
 import { DetailTopBar } from "./detail-top-bar";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
+import type { LaneDefaultFooter } from "@/lib/api/types";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
 import { useAllJobs } from "@/lib/api/inbox";
 
@@ -57,6 +58,7 @@ export function Conversation({
   messages,
   isLoading,
   live,
+  mainDefaultFooter,
   onOpenPlan,
   onSelectNode,
 }: {
@@ -64,6 +66,8 @@ export function Conversation({
   messages: JobMessage[];
   isLoading: boolean;
   live: boolean;
+  /** The Main (brain) lane's pre-turn footer default ("Opus 4.8") — shown before the first brain turn. */
+  mainDefaultFooter?: LaneDefaultFooter;
   onOpenPlan?: () => void;
   /** Open a node in the right detail pane (e.g. a subagent run's sub-page). */
   onSelectNode?: (node: string) => void;
@@ -78,6 +82,7 @@ export function Conversation({
         composer
         isLoading={isLoading}
         live={live}
+        defaultFooter={mainDefaultFooter}
         onOpenPlan={onOpenPlan}
         onSelectNode={onSelectNode}
       />
@@ -103,6 +108,7 @@ export function TranscriptView({
   isLoading = false,
   live = false,
   emptyText,
+  defaultFooter,
   onOpenPlan,
   onSelectNode,
 }: {
@@ -120,6 +126,9 @@ export function TranscriptView({
   live?: boolean;
   /** The empty-state line when the lane has no activity yet. */
   emptyText?: string;
+  /** The lane's backend-supplied `model · effort` default — shown in the footer BEFORE the lane's first turn
+   *  completes (no `turn_meta` yet). A real `turn_meta` always wins over it. */
+  defaultFooter?: LaneDefaultFooter;
   onOpenPlan?: () => void;
   onSelectNode?: (node: string) => void;
 }) {
@@ -156,13 +165,35 @@ export function TranscriptView({
   // (no client queue). Every operator message renders inline in the main log at its natural position.
   const log = messages;
 
-  // The composer footer — the model · effort + context ring for THIS lane, from its most recent reporting
-  // `turn_meta`. Computed for every lane that shows a composer (Main and read-only), scoped to the lane so
-  // it changes as the operator switches lanes.
-  const footer = useMemo(
-    () => (composer ? laneFooterMeta(messages, lane, phaseIds) : null),
-    [messages, composer, lane, phaseIds],
-  );
+  // The composer footer — model · effort (from the latest `turn_meta`, else the lane's config default) + the
+  // context ring. Computed for every lane that shows a composer (Main + read-only), scoped to the lane. The
+  // ring prefers a LIVE occupancy value (`liveTurn.contextTokens`, streamed mid-turn by the engine's `usage`
+  // event) while the turn is running, so a multi-minute turn's ring fills as it goes instead of only jumping
+  // at turn end; it falls back to the durable `turn_meta` occupancy between turns.
+  const footer = useMemo(() => {
+    if (!composer) return null;
+    const base = laneFooterMeta(messages, lane, phaseIds) ?? defaultFooterAsComposer(defaultFooter);
+    const liveContext =
+      turnActive && typeof liveTurn?.contextTokens === "number" && liveTurn.contextLimit
+        ? {
+            tokens: liveTurn.contextTokens,
+            limit: liveTurn.contextLimit,
+            model: liveTurn.contextModel,
+          }
+        : null;
+    if (!liveContext) return base;
+    return { ...(base ?? {}), context: liveContext };
+  }, [
+    composer,
+    messages,
+    lane,
+    phaseIds,
+    defaultFooter,
+    turnActive,
+    liveTurn?.contextTokens,
+    liveTurn?.contextLimit,
+    liveTurn?.contextModel,
+  ]);
 
   // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent/phase
   // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
@@ -870,6 +901,16 @@ function laneFooterMeta(
   if (model === undefined && effort === undefined && engine === undefined && !context)
     return null;
   return { model, effort, engine, context };
+}
+
+/**
+ * The lane's STATIC footer default (`model · effort`) as a {@link ComposerFooter} — used when the lane has no
+ * `turn_meta` yet (before its first turn completes). No `context` ring (occupancy is unknown until a turn
+ * runs). Returns null when there's no default (very old pipeline payloads), so the footer just stays blank.
+ */
+function defaultFooterAsComposer(d?: LaneDefaultFooter): ComposerFooter | null {
+  if (!d) return null;
+  return { model: d.model, effort: d.effort, engine: d.engine, context: null };
 }
 
 /**

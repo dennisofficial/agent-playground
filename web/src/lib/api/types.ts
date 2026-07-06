@@ -251,6 +251,19 @@ export interface PipelineStep {
  * `lensId` and finding count. The navigator renders these directly as bare child-thread nodes (no synthetic
  * `rev:`/`fix:` ids); `lane` is the `autofix:<parentId>:<lensId>` / `autofix:<parentId>:fix` transcript lane.
  */
+/**
+ * A lane's STATIC composer-footer default (`model · effort`) — what the footer shows BEFORE the lane's
+ * first turn completes (no `turn_meta` to derive from yet). Backend-supplied per kind (`laneDefaultFooter`),
+ * so nothing is hardcoded in the frontend. No `context` field — occupancy is only known after a turn runs.
+ */
+export interface LaneDefaultFooter {
+  engine: string;
+  /** The Claude model id (`'opus'`) for claude lanes; absent for codex (no pinned model → labels "Codex"). */
+  model?: string;
+  /** Codex reasoning effort (`'xhigh'`), when the lane runs at one. */
+  effort?: string;
+}
+
 export interface PipelineReviewChild {
   id: string;
   kind: "review_lens" | "post_review";
@@ -262,6 +275,8 @@ export interface PipelineReviewChild {
   findings: number | null;
   /** The transcript lane the child streams on (the SAME lane the backend turn writes). */
   lane: string;
+  /** The lane's pre-turn footer default (`model · effort`). */
+  defaultFooter: LaneDefaultFooter;
 }
 
 /**
@@ -306,6 +321,8 @@ export interface PipelineThread {
   hasPlan: boolean;
   /** The thread's steps (execute folder leaves), ordinal-sorted. */
   steps: PipelineStep[];
+  /** The lane's pre-turn composer-footer default (`model · effort`), keyed off `kind`. */
+  defaultFooter?: LaneDefaultFooter;
 }
 
 export interface PipelineJob {
@@ -321,9 +338,12 @@ export interface PipelineJob {
    * are gone — master review is now a normal build thread with its own per-thread fields.)
    */
   mainTasks: TaskItem[];
+  /** The Main (brain) lane's pre-turn footer default — Main renders from `mainTasks` (not `threads`), so it
+   *  carries its own default. Absent on very old payloads. */
+  mainDefaultFooter?: LaneDefaultFooter;
   /** The plan-review (Codex) thread — a first-class navigator row that opens the `codex-review:<jobId>`
    *  lane (the review dialogue Main communicates with). Null when no review has run. */
-  planReview: { status: string } | null;
+  planReview: { status: string; defaultFooter?: LaneDefaultFooter } | null;
   /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
   prUrl: string | null;
   prNumber: number | null;
@@ -343,7 +363,7 @@ export interface PipelineJob {
  */
 export type PipelineState =
   | PipelineJob
-  | { status: "no_job"; mainTasks?: TaskItem[] };
+  | { status: "no_job"; mainTasks?: TaskItem[]; mainDefaultFooter?: LaneDefaultFooter };
 
 /** The Main brain session's task list, from either pipeline shape (`no_job` carries it too). */
 export function pipelineMainTasks(

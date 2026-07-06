@@ -227,6 +227,7 @@ export function PhaseView({
         lane={codexReviewLane(jobRef.jobId)}
         composer
         readOnly
+        defaultFooter={job?.planReview?.defaultFooter}
         emptyText="No review activity yet — Codex’s reasoning appears here as it runs."
         onSelectNode={onSelectNode}
       />
@@ -251,6 +252,7 @@ export function PhaseView({
         lane={reviewChild.lane}
         composer
         readOnly
+        defaultFooter={reviewChild.defaultFooter}
         emptyText={
           isFix
             ? "No fixes were needed — the review found nothing to change."
@@ -291,6 +293,7 @@ export function PhaseView({
         phaseIds={new Set([step.anchorStepId])}
         composer
         readOnly
+        defaultFooter={owningSection?.defaultFooter}
         onSelectNode={onSelectNode}
         emptyText="No build activity yet — this step hasn’t run."
       />
@@ -313,6 +316,7 @@ export function PhaseView({
         phaseIds={phaseIds}
         composer
         readOnly
+        defaultFooter={thread.defaultFooter}
         onSelectNode={onSelectNode}
         emptyText="No build activity yet — this thread hasn’t run."
       />

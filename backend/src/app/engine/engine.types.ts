@@ -87,7 +87,15 @@ export type EngineEvent =
       parentToolUseId?: string;
       /** Edit/MultiEdit only: the SDK's structured patch (real file offsets) for an accurate diff gutter. */
       structuredPatch?: StructuredPatchHunk[];
-    };
+    }
+  /**
+   * LIVE context-window occupancy — emitted mid-turn each time the MAIN agent produces an assistant message
+   * (i.e. every model round-trip), so the composer's context ring updates DURING a long turn instead of only
+   * at `finish`. Live-only: NOT persisted as a durable block (the turn-end `turn_meta` stays authoritative);
+   * `contextLimit` is resolved engine-side so the client renders the ring without its own model→window map.
+   * Claude-only — the Codex SDK surfaces no per-call token counts before its turn end.
+   */
+  | { kind: 'usage'; contextTokens: number; contextModel?: string; contextLimit: number };
 
 /**
  * One model's slice of a turn's usage — the SDK's per-model breakdown (Claude only; absent for Codex).
@@ -173,12 +181,28 @@ const MODEL_CONTEXT_LIMITS: ReadonlyArray<readonly [match: string, limit: number
 /** Fallback window when the model id is unknown/absent — the conservative 200k floor. */
 export const DEFAULT_CONTEXT_LIMIT = 200_000;
 
-/** Resolve a model's context-window size (max input tokens) from its reported id. */
-export function resolveContextLimit(model?: string): number {
+/**
+ * The Codex INPUT context window. Codex runs subscription-only with NO pinned model (the account default is
+ * used and the SDK never reports which id), so its window can't be resolved from a model id. Per OpenAI's
+ * Codex product limits (GPT-5.x family, 2026): the Codex surface caps the window at 400K TOTAL, split into
+ * 272K input + 128K reserved output (the raw API model is 1M — deliberately capped in Codex). The ring's
+ * occupancy is per-turn INPUT tokens, so the denominator is the 272K input window, NOT the 400K total (the
+ * Codex CLI itself keeps ~5% headroom → reports ~258K effective; we use the clean input window). Adjust
+ * here if the account's default model / Codex caps change.
+ */
+export const CODEX_CONTEXT_LIMIT = 272_000;
+
+/**
+ * Resolve a model's context-window size (max input tokens) from its reported id. When the id is
+ * unknown/absent, `engine` disambiguates the fallback: a Codex turn (no model id, ever) gets the Codex
+ * window; everything else the conservative default floor.
+ */
+export function resolveContextLimit(model?: string, engine?: SessionEngine): number {
   const id = (model ?? '').toLowerCase();
   for (const [match, limit] of MODEL_CONTEXT_LIMITS) {
     if (id.includes(match)) return limit;
   }
+  if (engine === 'codex') return CODEX_CONTEXT_LIMIT;
   return DEFAULT_CONTEXT_LIMIT;
 }
 

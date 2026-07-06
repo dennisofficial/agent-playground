@@ -468,6 +468,11 @@ export class RedisEngineRunner implements EngineRunnerPort {
         ? { userMcpServers: args.userMcpServers }
         : {}),
       ...(args.model ? { model: args.model } : {}),
+      // Codex-only reasoning-effort knob — WITHOUT this the in-container `codexThreadOptions` never sets
+      // the effort (the reviewer silently drops to the account default) and `stampUsageProvenance` never
+      // stamps `usage.reasoningEffort` (the composer footer shows no effort). The entrypoint spreads
+      // `...spec` into runArgs, so forwarding the key here is the whole fix.
+      ...(args.modelReasoningEffort ? { modelReasoningEffort: args.modelReasoningEffort } : {}),
       ...(args.richStream ? { richStream: args.richStream } : {}),
       // Steering: tell the entrypoint to run streaming-input mode + subscribe to `turn:{T}:input`/`:abort`.
       ...(args.steerable ? { steerable: true } : {}),

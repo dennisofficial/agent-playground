@@ -34,6 +34,7 @@ import {
   type ModelUsageBreakdown,
   type RunEngineArgs,
   type StructuredPatchHunk,
+  resolveContextLimit,
 } from './engine.types';
 
 /**
@@ -678,6 +679,14 @@ export class EngineCore {
               contextTokens =
                 (cu.input_tokens ?? 0) + (cu.cache_read_input_tokens ?? 0) + (cu.cache_creation_input_tokens ?? 0);
               if (amsg?.model) contextModel = amsg.model;
+              // Emit the occupancy LIVE so the composer ring fills mid-turn (a turn can run for minutes). Fires
+              // once per main-agent round-trip; the turn-end `turn_meta` remains the durable authority.
+              onEvent?.({
+                kind: 'usage',
+                contextTokens,
+                ...(contextModel ? { contextModel } : {}),
+                contextLimit: resolveContextLimit(contextModel),
+              });
             }
           }
           for (const block of message.message.content as Array<{

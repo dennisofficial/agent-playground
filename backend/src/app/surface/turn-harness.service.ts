@@ -376,7 +376,7 @@ export class TurnHarnessFactory {
             break;
           }
           default:
-            break; // session / result / *_delta — not part of the durable transcript
+            break; // session / result / *_delta / usage — live-only, not part of the durable transcript
         }
       },
 
@@ -400,13 +400,17 @@ export class TurnHarnessFactory {
           // otherwise fall back to the occupancy already living on `usage` (populated by engine-core for
           // every Claude turn), resolving the window with the SAME per-model map the brain + analytics
           // use. This is what lets build/step/autofix (Claude) lanes render a ring without each finish
-          // call site plumbing context. Codex turns carry no `contextTokens`, so those lanes stay null
-          // (no ring) — honest, since the SDK doesn't surface occupancy.
+          // call site plumbing context. For a Codex lane (plan/master review) the SDK reports no per-call
+          // occupancy field, but its per-turn `inputTokens` IS the context sent (input already includes the
+          // cached portion), so use that as the occupancy and size it against the Codex window — this is
+          // what gives Codex lanes a ring too.
           const u = turnMeta.usage;
-          const ctxTokens = turnMeta.contextTokens ?? u.contextTokens ?? null;
+          const codexOccupancy =
+            u.engine === 'codex' ? (u.contextTokens ?? u.inputTokens ?? null) : null;
+          const ctxTokens = turnMeta.contextTokens ?? u.contextTokens ?? codexOccupancy;
           const ctxLimit =
             turnMeta.contextLimit ??
-            (ctxTokens != null ? resolveContextLimit(u.contextModel ?? u.model) : null);
+            (ctxTokens != null ? resolveContextLimit(u.contextModel ?? u.model, u.engine) : null);
           blocks.push({
             kind: 'turn_meta',
             emittedAt: stamp(),
