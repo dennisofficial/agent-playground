@@ -813,6 +813,27 @@ export class BrainStoreService {
   }
 
   /**
+   * The thread's currently-OPEN file-request cards — posted, but not yet uploaded OR withdrawn — so a fresh
+   * turn (a new operator message, an event delivery, or a restart-rebuilt session that lost its in-context
+   * memory of what it requested) doesn't re-post a duplicate `request_file`. The file-card analog of
+   * {@link openQuestionCards}; surfaced via {@link AgentSessionManager.buildOpenFileRequestsPrefix}.
+   */
+  async openFileCards(jobId: string): Promise<WebFileRequestCard[]> {
+    const rows = await this.messages.find({
+      where: { job_id: jobId, kind: 'card' },
+      order: { created_at: 'DESC' },
+    });
+    return rows
+      .map((m) => m.card as unknown as WebFileRequestCard)
+      .filter(
+        (c) =>
+          c?.type === 'file_request_card' &&
+          c.provided_at == null &&
+          c.withdrawnAt == null,
+      );
+  }
+
+  /**
    * Withdraw a still-open file-upload request ATOMICALLY and IDEMPOTENTLY — the file-card mirror of
    * {@link withdrawQuestion}: a conditional update that only fires `WHERE the request is still open` (not
    * yet uploaded, not already withdrawn), so it can't race the operator's upload — only one of upload /

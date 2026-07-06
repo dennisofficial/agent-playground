@@ -479,14 +479,16 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       },
     });
 
-    // open f-1 → card row persists (per-card, no counter).
+    // open f-1 → card row persists (per-card, no counter) + surfaces as an open card (re-post guard).
     expect(await store.openFileRequest(jobId, mkFile('f-1', '.env.keys'))).toEqual({ ok: true });
     expect((await store.getFileCard(jobId, 'f-1'))?.path).toBe('.env.keys');
+    expect((await store.openFileCards(jobId)).map((c) => c.requestId)).toEqual(['f-1']);
 
     // WITHDRAW f-1 → terminal; stamps withdrawnAt + reason; drops out of the open pipeline.
     expect(await store.withdrawFileRequest(jobId, 'f-1', 'wrong path')).toEqual({ withdrawn: true });
     expect((await store.getFileCard(jobId, 'f-1'))?.withdrawnAt).toBeTruthy();
     expect((await store.getFileCard(jobId, 'f-1'))?.withdrawnReason).toBe('wrong path');
+    expect(await store.openFileCards(jobId)).toEqual([]); // withdrawn → no longer surfaced
 
     // Idempotent: a second withdraw is a no-op.
     expect(await store.withdrawFileRequest(jobId, 'f-1', 'again')).toEqual({ withdrawn: false });
@@ -496,6 +498,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await store.markFileProvided(jobId, 'f-2', 'prod.env.keys');
     expect(await store.withdrawFileRequest(jobId, 'f-2', 'too late')).toEqual({ withdrawn: false });
     expect((await store.getFileCard(jobId, 'f-2'))?.withdrawnAt).toBeFalsy();
+    expect(await store.openFileCards(jobId)).toEqual([]); // provided → also not surfaced as open
 
     // A withdrawn (unprovided) card is not a boot-redelivery candidate.
     expect(

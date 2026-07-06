@@ -1567,6 +1567,21 @@ export class AgentSessionManager
       });
     }
 
+    // Same idea for still-open file-upload requests (posted, not yet uploaded/withdrawn): a compacted or
+    // restart-rebuilt session has no memory of what it requested, so without this it re-posts a duplicate
+    // request_file. Advisory reminder listing each open card's id + destination path, so it waits (or
+    // `withdraw_file_request`s a stale one) instead of re-requesting. Applies to every turn; best-effort.
+    const openFilesPrefix = await this.buildOpenFileRequestsPrefix(
+      stimulus.jobId,
+    );
+    if (openFilesPrefix) {
+      reminderChunks.push({
+        kind: 'system_reminder',
+        body: openFilesPrefix,
+        attrs: { reminderKind: 'open_file_requests' },
+      });
+    }
+
     // Render the envelope: notice/reminder chunks first (renderTurn keeps `<user>` last), then the body.
     // A seed body is already framed XML — append it after the prefixes rather than re-wrapping it.
     const framedPrefix = renderTurn([...noticeChunks, ...reminderChunks]);
@@ -4385,6 +4400,31 @@ export class AgentSessionManager
       );
     } catch (err) {
       this.logger.debug(`open-questions prefix failed (continuing): ${err}`);
+      return null;
+    }
+  }
+
+  /**
+   * The file-request analog of {@link buildOpenQuestionsPrefix}: an advisory reminder of the file-upload
+   * cards still awaiting an upload (posted, not yet provided/withdrawn), so a fresh/compacted brain session
+   * doesn't re-post a duplicate `request_file`. Lists each open card's id + destination path. Best-effort.
+   */
+  private async buildOpenFileRequestsPrefix(
+    jobId: string,
+  ): Promise<string | null> {
+    try {
+      const open = await this.store.openFileCards(jobId);
+      if (open.length === 0) return null;
+      const lines = open.map((c) => `  • [${c.requestId}] ${c.path}`);
+      const n = open.length;
+      return (
+        `You have ${n} file-upload request${n === 1 ? '' : 's'} already posted to the operator and still ` +
+        `awaiting an upload. Do NOT re-post ${n === 1 ? 'it' : 'them'} — wait for the file to arrive on a ` +
+        `later turn, or call withdraw_file_request({ requestId, reason }) to retract one (e.g. wrong path or ` +
+        `no longer needed).\n${lines.join('\n')}`
+      );
+    } catch (err) {
+      this.logger.debug(`open-file-requests prefix failed (continuing): ${err}`);
       return null;
     }
   }
