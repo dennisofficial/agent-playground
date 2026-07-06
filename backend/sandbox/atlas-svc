@@ -4,6 +4,11 @@
 # NOT auto-started on sandbox attach. Markers + captured logs live under the DURABLE agent home so they
 # survive a container recreate (a reaped process is then reported `stopped` and the agent restarts it on
 # demand). Health-checking is the agent's job — read the logs / curl the endpoint. See docs/adr/0002.
+#
+# SCOPE: this is for the operator's USER-FACING application processes only (their dev server, the
+# app-under-test, anything meant to show up in the SERVICES sidebar) — NOT for built-in Atlas
+# infrastructure. Sandbox-lifetime infra (inner dockerd, the graphify watch, the planned mcp-hub) is
+# launched directly by sandbox-init.sh's start_<svc>() functions, not registered here.
 set -uo pipefail
 
 SVC_DIR="${ATLAS_SUPERVISOR_DIR:-/.atlas/supervisor}"

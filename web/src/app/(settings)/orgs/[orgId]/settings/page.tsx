@@ -9,6 +9,7 @@ const SECTIONS = new Set<SettingsSection>([
   "general",
   "credentials",
   "worktree-secrets",
+  "mcp-servers",
   "members",
   "repos",
 ]);

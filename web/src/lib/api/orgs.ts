@@ -178,6 +178,142 @@ export function useDeleteWorktreeSecretFile(orgId: string) {
   });
 }
 
+// ── MCP servers (user-defined tool servers, in System / Org / Repo tiers) ──────────────────────────
+// GET returns the read-only System tier plus the org + repo user servers, with EVERY secret header/env
+// value redacted (secret slots come back `null` in `config`, and are listed in `secretKeys`). Writes
+// (PUT/DELETE/validate) are owner-only server-side. A secret field follows the credentials UX: presence
+// is shown, and re-entering a value changes it — submitting a secret entry with an EMPTY value preserves
+// the stored one. The URL scope is `'org'` (org-wide) or a repo id (repo-scoped).
+
+export type McpTransport = "http" | "sse" | "stdio";
+export type McpSurface = "brain" | "build" | "review";
+
+/** A built-in server, shown read-only so operators know what the agent already has. */
+export interface SystemMcpServer {
+  name: string;
+  description: string;
+  transport: McpTransport;
+  tools: string[];
+  /** Whether this built-in is actually live right now, for this org + deployment. */
+  active: boolean;
+  /** When inactive, what to configure to turn it on. */
+  inactiveReason?: string;
+}
+
+/** The non-secret, fully displayable config; secret header/env values appear as `null`. */
+export interface StoredMcpConfig {
+  url?: string;
+  command?: string;
+  args?: string[];
+  headers?: Record<string, string | null>;
+  env?: Record<string, string | null>;
+}
+
+/** A user server as returned to the client — NEVER any secret value. */
+export interface McpServer {
+  /** `'org'` for an org-wide server, otherwise the repo id. */
+  scope: "org" | string;
+  name: string;
+  transport: McpTransport;
+  config: StoredMcpConfig;
+  /** `header:<name>` / `env:<name>` keys whose value is a stored secret. */
+  secretKeys: string[];
+  surfaces: McpSurface[];
+  enabled: boolean;
+  discoveredTools: string[] | null;
+  lastValidatedAt: string | null;
+  validationError: string | null;
+}
+
+export interface McpServersView {
+  system: SystemMcpServer[];
+  servers: McpServer[];
+}
+
+/** One header/env entry sent on write. `secret:true` + empty `value` preserves the stored secret. */
+export interface McpHeaderInput {
+  name: string;
+  value: string;
+  secret?: boolean;
+}
+
+/** Body for `PUT /web/orgs/:orgId/mcp-servers/:scope/:name` — replaces the server row. */
+export interface SaveMcpServerBody {
+  transport: McpTransport;
+  url?: string;
+  command?: string;
+  args?: string[];
+  headers?: McpHeaderInput[];
+  env?: McpHeaderInput[];
+  surfaces?: McpSurface[];
+  enabled?: boolean;
+}
+
+export interface McpValidateResult {
+  ok: boolean;
+  discoveredTools?: string[];
+  error?: string;
+}
+
+export function useMcpServers(orgId: string) {
+  return useQuery({
+    queryKey: qk.orgMcpServers(orgId),
+    queryFn: () => webJson<McpServersView>(`/orgs/${orgId}/mcp-servers`),
+    enabled: Boolean(orgId),
+    staleTime: 15_000,
+  });
+}
+
+/** Owner-only: create/replace a server at a scope (`'org'` or a repo id). */
+export function useSaveMcpServer(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      scope,
+      name,
+      body,
+    }: {
+      scope: string;
+      name: string;
+      body: SaveMcpServerBody;
+    }) =>
+      webJson<{ ok: boolean }>(
+        `/orgs/${orgId}/mcp-servers/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`,
+        { method: "PUT", body: JSON.stringify(body) },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) }),
+  });
+}
+
+/** Owner-only: delete a server at a scope. */
+export function useDeleteMcpServer(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
+      webJson<{ ok: boolean }>(
+        `/orgs/${orgId}/mcp-servers/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) }),
+  });
+}
+
+/** Owner-only: best-effort probe (remote handshake / stdio structural). Persists the discovered tools. */
+export function useValidateMcpServer(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
+      webJson<McpValidateResult>(
+        `/orgs/${orgId}/mcp-servers/${encodeURIComponent(scope)}/${encodeURIComponent(name)}/validate`,
+        { method: "POST" },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) }),
+  });
+}
+
 // ── Org CRUD (create / rename / delete) ──────────────────────────────────────────────────────────
 // The org rail + settings read orgs off the SESSION (`GET /auth/session`), so every write invalidates
 // `qk.session()`. The cross-org inbox (`/web/threads`, `useAllJobs`) embeds `org.name` per row and

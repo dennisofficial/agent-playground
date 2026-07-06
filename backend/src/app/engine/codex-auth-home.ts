@@ -88,9 +88,40 @@ export interface CodexMcpBridge {
   env: Record<string, string>;
 }
 
+/** A plain stdio MCP server to render as a `[mcp_servers.<name>]` config.toml block (command/args/env). */
+export interface CodexMcpServer {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+/**
+ * Extra stdio MCP servers to register for a Codex execute turn ALONGSIDE the host tool bridge — keyed by
+ * server name (`cocoindex`, `graphify`). Built once in the entrypoint (same command/args/env as the Claude
+ * bridge, no drift) and rendered here into config.toml. See `sandbox/image/code-index-bridge-options.ts`.
+ */
+export type CodexExtraMcpServers = Record<string, CodexMcpServer>;
+
 /** Minimal TOML string escaper for the simple values we write (paths, ids, urls, tool-name CSV). */
 function tomlStr(v: string): string {
   return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/** Render one `[mcp_servers.<name>]` block (+ auto-approve + optional env sub-table). */
+function mcpServerBlock(name: string, command: string, args: string[], env?: Record<string, string>): string[] {
+  const lines = [
+    `[mcp_servers.${name}]`,
+    `command = ${tomlStr(command)}`,
+    `args = [${args.map(tomlStr).join(', ')}]`,
+    // Auto-approve this server's tool calls (no interactive approver in SDK mode). Short-circuits the MCP
+    // approval gate before approval_policy, so sandboxMode:'workspace-write' is preserved.
+    `default_tools_approval_mode = "approve"`,
+    '',
+  ];
+  if (env && Object.keys(env).length > 0) {
+    lines.push(`[mcp_servers.${name}.env]`, ...Object.entries(env).map(([k, v]) => `${k} = ${tomlStr(v)}`), '');
+  }
+  return lines;
 }
 
 /**
@@ -117,6 +148,7 @@ export function ensureCodexAuthHome(
   sandboxKey: string,
   secret: string,
   mcpBridge?: CodexMcpBridge,
+  extraMcpServers?: CodexExtraMcpServers,
 ): string {
   let parsed: unknown;
   try {
@@ -129,21 +161,19 @@ export function ensureCodexAuthHome(
   const home = codexAuthHomeDir(root, sandboxKey);
   writeFileSync(join(home, 'auth.json'), secret, { mode: 0o600 });
 
+  // Accumulate every MCP server block into ONE config.toml — the host tool bridge (atlasbridge) plus the
+  // code-index servers (cocoindex/graphify). Written only when at least one block exists (read-only turns
+  // get neither, hence no config.toml).
+  const blocks: string[] = [];
   if (mcpBridge && mcpBridge.toolNames.length > 0) {
     const env = { ...mcpBridge.env, BRIDGE_TOOLS: mcpBridge.toolNames.join(',') };
-    const lines = [
-      '[mcp_servers.atlasbridge]',
-      `command = "node"`,
-      `args = [${tomlStr(mcpBridge.serverPath)}]`,
-      // Auto-approve this server's tool calls (no interactive approver in SDK mode). Short-circuits the
-      // MCP approval gate before approval_policy, so sandboxMode:'workspace-write' is preserved.
-      `default_tools_approval_mode = "approve"`,
-      '',
-      '[mcp_servers.atlasbridge.env]',
-      ...Object.entries(env).map(([k, v]) => `${k} = ${tomlStr(v)}`),
-      '',
-    ];
-    writeFileSync(join(home, 'config.toml'), lines.join('\n'), { mode: 0o600 });
+    blocks.push(...mcpServerBlock('atlasbridge', 'node', [mcpBridge.serverPath], env));
+  }
+  for (const [name, srv] of Object.entries(extraMcpServers ?? {})) {
+    blocks.push(...mcpServerBlock(name, srv.command, srv.args ?? [], srv.env));
+  }
+  if (blocks.length > 0) {
+    writeFileSync(join(home, 'config.toml'), blocks.join('\n'), { mode: 0o600 });
   }
   return home;
 }

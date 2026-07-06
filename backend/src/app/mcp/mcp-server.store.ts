@@ -1,0 +1,210 @@
+import { EnvService } from '@core/config/env/env.service';
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { DB_CONNECTION } from '../persistence/database.module';
+import {
+  McpServerEntity,
+  type McpSecretValues,
+  type McpSurface,
+  type StoredMcpConfig,
+} from '../persistence/entities';
+import { decryptSecret, encryptSecret, loadSecretsKey } from '../onboarding/secret-cipher';
+
+/** The org-wide scope sentinel (mirrors `OrgCredentialsEntity.scope`); a non-`*` scope is a repo id. */
+export const ORG_SCOPE = '*';
+
+/** One header/env entry from the console form. `secret:true` ⇒ its value is encrypted, never returned. */
+export interface McpHeaderInput {
+  name: string;
+  /** The value; on edit, an EMPTY value for a `secret` entry PRESERVES the stored one (re-enter to change). */
+  value: string;
+  secret?: boolean;
+}
+
+/** The full server definition a `PUT` writes (replaces the row). */
+export interface McpServerInput {
+  transport: 'http' | 'sse' | 'stdio';
+  url?: string;
+  command?: string;
+  args?: string[];
+  headers?: McpHeaderInput[];
+  env?: McpHeaderInput[];
+  surfaces?: McpSurface[];
+  enabled?: boolean;
+}
+
+/** A server as returned to a client — NEVER any secret value (secret slots show as `null` in `config`). */
+export interface RedactedMcpServer {
+  /** 'org' for an org-wide server, otherwise the repo id. */
+  scope: 'org' | string;
+  name: string;
+  transport: 'http' | 'sse' | 'stdio';
+  config: StoredMcpConfig;
+  /** `header:<name>` / `env:<name>` keys whose value is a stored secret. */
+  secretKeys: string[];
+  surfaces: McpSurface[];
+  enabled: boolean;
+  discoveredTools: string[] | null;
+  lastValidatedAt: string | null;
+  validationError: string | null;
+}
+
+/**
+ * The encrypt-on-write / decrypt-on-read path for user-defined MCP servers. Mirrors
+ * {@link WorktreeSecretFileStore} / {@link TenantCredentialStore}: AES-256-GCM via `secret-cipher`, the
+ * `SECRETS_ENCRYPTION_KEY` required to write/read a secret value, values NEVER logged or returned.
+ *
+ * `scope` is `'*'` for an org-wide server or a repo id for a repo-scoped one. The public API takes the
+ * URL-friendly `'org'` alias and maps it to the `'*'` sentinel here (one translation point).
+ */
+@Injectable()
+export class McpServerStore {
+  private readonly logger = new Logger(McpServerStore.name);
+
+  constructor(
+    @InjectRepository(McpServerEntity, DB_CONNECTION)
+    private readonly servers: Repository<McpServerEntity>,
+    private readonly env: EnvService,
+  ) {}
+
+  private key(): Buffer {
+    return loadSecretsKey(this.env.get('SECRETS_ENCRYPTION_KEY'));
+  }
+
+  /** URL-facing `'org'` ⇄ DB `'*'`; any other value is a repo id passed through unchanged. */
+  static toDbScope(scope: string): string {
+    return scope === 'org' ? ORG_SCOPE : scope;
+  }
+  static fromDbScope(scope: string): 'org' | string {
+    return scope === ORG_SCOPE ? 'org' : scope;
+  }
+
+  // ── reads (redacted) ────────────────────────────────────────────────────────────────────────
+
+  /** Every server for an org (org-wide + all repo scopes), redacted — never a secret value. */
+  async list(orgId: string): Promise<RedactedMcpServer[]> {
+    const rows = await this.servers.find({ where: { org_id: orgId } });
+    return rows.map((r) => this.redact(r));
+  }
+
+  private redact(r: McpServerEntity): RedactedMcpServer {
+    const secretKeys: string[] = [];
+    for (const [k, v] of Object.entries(r.config.headers ?? {})) if (v === null) secretKeys.push(`header:${k}`);
+    for (const [k, v] of Object.entries(r.config.env ?? {})) if (v === null) secretKeys.push(`env:${k}`);
+    return {
+      scope: McpServerStore.fromDbScope(r.scope),
+      name: r.name,
+      transport: r.transport,
+      config: r.config,
+      secretKeys,
+      surfaces: r.surfaces,
+      enabled: r.enabled,
+      discoveredTools: r.discovered_tools,
+      lastValidatedAt: r.last_validated_at ? new Date(r.last_validated_at).toISOString() : null,
+      validationError: r.validation_error,
+    };
+  }
+
+  // ── writes ──────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Upsert a server definition. Splits secret header/env values out of `config` (null placeholder) into
+   * the encrypted `secrets_enc` blob. A `secret` entry with an EMPTY value preserves the stored value
+   * (the console shows presence, not the value; re-enter to change). Writing resets the validation state.
+   */
+  async write(orgId: string, dbScope: string, name: string, input: McpServerInput): Promise<void> {
+    const existing = await this.servers.findOne({
+      where: { org_id: orgId, scope: dbScope, name },
+    });
+    const prior = existing ? this.decryptSecrets(existing) : {};
+
+    const config: StoredMcpConfig = {};
+    if (input.url) config.url = input.url;
+    if (input.command) config.command = input.command;
+    if (input.args && input.args.length > 0) config.args = input.args;
+
+    const secrets: McpSecretValues = {};
+    const applyPairs = (
+      entries: McpHeaderInput[] | undefined,
+      slot: 'headers' | 'env',
+    ): void => {
+      if (!entries || entries.length === 0) return;
+      const bag: Record<string, string | null> = {};
+      for (const e of entries) {
+        if (!e.name) continue;
+        if (e.secret) {
+          bag[e.name] = null;
+          // Non-empty ⇒ new secret value; empty ⇒ keep the prior stored value (re-enter to change).
+          const value = e.value !== '' ? e.value : prior[slot]?.[e.name];
+          if (value !== undefined && value !== '') {
+            (secrets[slot] ??= {})[e.name] = value;
+          }
+        } else {
+          bag[e.name] = e.value;
+        }
+      }
+      if (Object.keys(bag).length > 0) config[slot] = bag;
+    };
+    applyPairs(input.headers, 'headers');
+    applyPairs(input.env, 'env');
+
+    const hasSecrets = !!(secrets.headers || secrets.env);
+    const row =
+      existing ?? this.servers.create({ org_id: orgId, scope: dbScope, name });
+    row.transport = input.transport;
+    row.config = config;
+    row.secrets_enc = hasSecrets ? encryptSecret(JSON.stringify(secrets), this.key()) : null;
+    row.surfaces = input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['brain', 'build'];
+    row.enabled = input.enabled ?? true;
+    // A changed config invalidates any prior validation probe.
+    row.discovered_tools = null;
+    row.last_validated_at = null;
+    row.validation_error = null;
+    await this.servers.save(row);
+    this.logger.log(`wrote mcp server org=${orgId} scope=${dbScope} name=${name}`);
+  }
+
+  async delete(orgId: string, dbScope: string, name: string): Promise<void> {
+    await this.servers.delete({ org_id: orgId, scope: dbScope, name });
+    this.logger.log(`deleted mcp server org=${orgId} scope=${dbScope} name=${name}`);
+  }
+
+  /** Persist the outcome of a validation probe (tool list or error). */
+  async recordValidation(
+    orgId: string,
+    dbScope: string,
+    name: string,
+    result: { discoveredTools?: string[]; error?: string },
+  ): Promise<void> {
+    const row = await this.servers.findOne({ where: { org_id: orgId, scope: dbScope, name } });
+    if (!row) return;
+    row.discovered_tools = result.error ? null : (result.discoveredTools ?? []);
+    row.validation_error = result.error ?? null;
+    row.last_validated_at = new Date();
+    await this.servers.save(row);
+  }
+
+  // ── resolution helpers (used by McpResolver) ─────────────────────────────────────────────────
+
+  /** Raw rows for the org's `'*'` scope plus one repo scope — the input to `McpResolver`. */
+  async rowsForTurn(orgId: string, repoId: string): Promise<McpServerEntity[]> {
+    return this.servers.find({
+      where: [
+        { org_id: orgId, scope: ORG_SCOPE },
+        { org_id: orgId, scope: repoId },
+      ],
+    });
+  }
+
+  /** Fetch one raw row (for a validation probe that needs the decrypted secrets). */
+  async rawRow(orgId: string, dbScope: string, name: string): Promise<McpServerEntity | null> {
+    return this.servers.findOne({ where: { org_id: orgId, scope: dbScope, name } });
+  }
+
+  /** Decrypt a row's secret blob into `{ headers?, env? }`, or `{}` when it has none. */
+  decryptSecrets(row: McpServerEntity): McpSecretValues {
+    if (!row.secrets_enc) return {};
+    return JSON.parse(decryptSecret(row.secrets_enc, this.key())) as McpSecretValues;
+  }
+}

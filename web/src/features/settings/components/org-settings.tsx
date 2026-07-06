@@ -9,6 +9,7 @@ import {
   FileKey,
   GitBranch,
   KeyRound,
+  Plug,
   Settings as SettingsIcon,
   Users,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import { orgSwatch, orgInitials, roleLabel } from "@/lib/org-display";
 import { GeneralSection } from "./general-section";
 import { CredentialsSection } from "./credentials-section";
 import { WorktreeSecretsSection } from "./worktree-secrets-section";
+import { McpSection } from "./mcp-section";
 import { MembersSection } from "./members-section";
 import { ReposSection } from "./repos-section";
 
@@ -29,6 +31,7 @@ const NAV: { id: SettingsSection; label: string; icon: typeof SettingsIcon }[] =
     { id: "general", label: "General", icon: SettingsIcon },
     { id: "credentials", label: "Credentials", icon: KeyRound },
     { id: "worktree-secrets", label: "Worktree secrets", icon: FileKey },
+    { id: "mcp-servers", label: "MCP servers", icon: Plug },
     { id: "members", label: "Members", icon: Users },
     { id: "repos", label: "Repos", icon: GitBranch },
   ];
@@ -170,6 +173,8 @@ export function OrgSettings({
               <CredentialsSection orgId={org.id} />
             ) : section === "worktree-secrets" ? (
               <WorktreeSecretsSection orgId={org.id} role={org.role} />
+            ) : section === "mcp-servers" ? (
+              <McpSection orgId={org.id} role={org.role} />
             ) : section === "repos" ? (
               <ReposSection
                 orgId={org.id}

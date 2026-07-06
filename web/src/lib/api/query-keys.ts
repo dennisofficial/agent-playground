@@ -11,6 +11,8 @@ export const qk = {
   /** One org's worktree secret names + grants (`GET /web/orgs/:orgId/worktree-secrets`). */
   orgWorktreeSecrets: (orgId: string) =>
     ["org-worktree-secrets", orgId] as const,
+  /** One org's user-defined MCP servers + the read-only system tier (`GET /web/orgs/:orgId/mcp-servers`). */
+  orgMcpServers: (orgId: string) => ["org-mcp-servers", orgId] as const,
   /** One org's connected repos (`GET /web/orgs/:orgId/repos`) — the create-job picker. */
   orgRepos: (orgId: string) => ["org-repos", orgId] as const,
   /** One repo's branches (`GET /web/orgs/:orgId/repos/:repoId/branches`) — the base-branch picker. */

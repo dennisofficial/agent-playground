@@ -124,6 +124,18 @@ function mcpBridgeImageBundlePath(): string {
   return join(sandboxContextDir(), 'mcp-bridge-server.mjs');
 }
 
+/** In-context home of the persistent MCP hub bundle (COPY'd by the Dockerfile, bind-mounted live, launched
+ *  by `sandbox-init.sh` — see `image/mcp-hub-server.ts`). Mirrors {@link imageBundlePath}. */
+function mcpHubImageBundlePath(): string {
+  return join(sandboxContextDir(), 'mcp-hub-server.mjs');
+}
+
+/** The live bind-mount source for the MCP hub bundle (honors `MCP_HUB_BUNDLE_PATH`, same rationale as
+ *  {@link engineBundlePath}). */
+export function mcpHubBundlePath(): string {
+  return process.env.MCP_HUB_BUNDLE_PATH ?? mcpHubImageBundlePath();
+}
+
 /** The live bind-mount source for the MCP bridge bundle (honors `MCP_BRIDGE_BUNDLE_PATH`, same rationale
  *  as {@link engineBundlePath}). */
 export function mcpBridgeBundlePath(): string {
@@ -157,6 +169,40 @@ export async function bundleMcpBridge(): Promise<string> {
     logLevel: 'silent',
   });
   const live = mcpBridgeBundlePath();
+  if (live !== outfile) {
+    mkdirSync(dirname(live), { recursive: true });
+    copyFileSync(outfile, live);
+  }
+  return live;
+}
+
+/**
+ * (Re)bundle the persistent in-sandbox MCP hub (`image/mcp-hub-server.ts`). Standalone from the engine
+ * bundle: NO externals (`@modelcontextprotocol/sdk` bundled in) because `sandbox-init.sh` launches it as a
+ * bare `node mcp-hub-server.mjs` with no access to the engine's node_modules. Same hot-reload contract as
+ * {@link bundleEngine} (in-context copy + optional live-mount mirror). Returns the live path.
+ */
+export async function bundleMcpHub(): Promise<string> {
+  const dir = entrySourceDir();
+  const tsEntry = join(dir, 'mcp-hub-server.ts');
+  const jsEntry = join(dir, 'mcp-hub-server.js');
+  const entry = existsSync(tsEntry) ? tsEntry : jsEntry;
+  if (!existsSync(entry)) {
+    throw new Error(`no mcp-hub-server source at ${tsEntry} or ${jsEntry}`);
+  }
+  const outfile = mcpHubImageBundlePath();
+  mkdirSync(dirname(outfile), { recursive: true });
+  await build({
+    entryPoints: [entry],
+    outfile,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+    logLevel: 'silent',
+  });
+  const live = mcpHubBundlePath();
   if (live !== outfile) {
     mkdirSync(dirname(live), { recursive: true });
     copyFileSync(outfile, live);

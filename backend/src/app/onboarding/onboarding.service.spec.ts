@@ -247,10 +247,11 @@ describe('OnboardingService', () => {
       expect(status.steps).toEqual({
         repoConnected: false,
         llmKey: false,
+        openaiKey: false,
         engineAuth: false,
         githubPat: false,
       });
-      expect(status.missing).toEqual(['repo', 'llm_key', 'engine_auth', 'github_pat']);
+      expect(status.missing).toEqual(['repo', 'llm_key', 'openai_key', 'engine_auth', 'github_pat']);
       expect(status.lifecycle).toBe('onboarding');
     });
 
@@ -266,7 +267,7 @@ describe('OnboardingService', () => {
     it('reflects credential presence + validated llm key → complete', async () => {
       const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
       const { svc } = assemble({
-        presence: { hasAnthropic: true, hasGithub: true, engineAuthSet: true },
+        presence: { hasAnthropic: true, hasOpenai: true, hasGithub: true, engineAuthSet: true },
         creds: { github: 'ghp_x' },
         repoInfo: info,
         llmValidated: true,
@@ -432,7 +433,7 @@ describe('OnboardingService', () => {
     it('flips to active once every step is met', async () => {
       const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
       const { svc, orgs } = assemble({
-        presence: { hasAnthropic: true, hasGithub: true, engineAuthSet: true },
+        presence: { hasAnthropic: true, hasOpenai: true, hasGithub: true, engineAuthSet: true },
         creds: { github: 'ghp_x' },
         repoInfo: info,
         llmValidated: true,

@@ -44,6 +44,7 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // awareness
     tickets as TicketService,
     { engineAuth: async () => undefined } as never, // creds
+    { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
     {
       getState: () => 'leader',
       isLeader: () => true,

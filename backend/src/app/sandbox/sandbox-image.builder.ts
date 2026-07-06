@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { bundleEngine, bundleMcpBridge, sandboxContextDir } from './bundle-engine';
+import { bundleEngine, bundleMcpBridge, bundleMcpHub, sandboxContextDir } from './bundle-engine';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 
 /** The image label that carries the build-context hash — the signal for auto-rebuild-on-change. */
@@ -68,6 +68,12 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
       this.logger.log(`refreshed mcp-bridge bundle → ${out}`);
     } catch (err) {
       this.logger.warn(`mcp-bridge rebundle skipped (using existing bundle): ${err}`);
+    }
+    try {
+      const out = await bundleMcpHub();
+      this.logger.log(`refreshed mcp-hub bundle → ${out}`);
+    } catch (err) {
+      this.logger.warn(`mcp-hub rebundle skipped (using existing bundle): ${err}`);
     }
     this.logger.log('sandbox image warm-up starting in background');
     void this.ensureImage()

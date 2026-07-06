@@ -36,6 +36,7 @@ import {
   laneFor,
 } from '../surface';
 import { CredentialResolver } from '../onboarding';
+import { McpResolver } from '../mcp';
 import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
@@ -162,6 +163,7 @@ export class ThreadDriver implements JobDispatcher {
     private readonly env: EnvService,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
     private readonly creds: CredentialResolver,
+    private readonly mcp: McpResolver,
     private readonly threadLifecycle: JobLifecycleService,
     private readonly ship: BuildShipService,
     private readonly awareness: PipelineAwarenessStore,
@@ -1802,6 +1804,8 @@ export class ThreadDriver implements JobDispatcher {
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
           auth: await this.creds.engineAuth(job.orgId, spec.engine),
+          indexEmbeddingKey: await this.creds.openaiKey(job.orgId),
+          userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true,
           turnMeta: {
@@ -1956,6 +1960,8 @@ export class ThreadDriver implements JobDispatcher {
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
           auth: await this.creds.engineAuth(job.orgId, engine),
+          indexEmbeddingKey: await this.creds.openaiKey(job.orgId),
+          userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
@@ -2166,6 +2172,8 @@ export class ThreadDriver implements JobDispatcher {
           systemPrompt: renderAgentPrompt(Agent.WORKER, { jobKind: job.kind }),
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
+          indexEmbeddingKey: await this.creds.openaiKey(job.orgId),
+          userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true,
           toolBridge,

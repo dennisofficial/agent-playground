@@ -77,6 +77,7 @@ export type SettingsSection =
   | "general"
   | "credentials"
   | "worktree-secrets"
+  | "mcp-servers"
   | "members"
   | "repos";
 

@@ -26,6 +26,27 @@ export const CONTAINER_AGENT_HOME = '/.atlas';
 export const CONTAINER_HOME = '/home/atlas';
 
 /**
+ * The CODE-INDEX root INSIDE the sandbox — where the background code indexes (ccc's SQLite +
+ * Graphify's graph.json) are written and read. Lives UNDER {@link CONTAINER_AGENT_HOME} (`/.atlas`), so it is
+ * PER-JOB durable (survives a `reset_sandbox` of the same job, NOT shared across other jobs on the repo) —
+ * NOT the per-repo {@link CONTAINER_HOME}. Per-job is deliberate: (1) each job has its OWN worktree/branch/edits,
+ * so a shared index would misrepresent every job but the one that wrote it; (2) multiple concurrent job
+ * containers on one repo would otherwise fight over a single graph.json/SQLite (the `graphify watch` daemon
+ * writes continuously). Deliberately OUTSIDE {@link CONTAINER_WORKTREE} so the (large) index artifacts never
+ * land in the git worktree / a PR diff — the index is a derived artifact, never committed. Nested under an
+ * existing bind, so it adds NO new container mount (no CONFIG_REV bump). See `sandbox/sandbox-init.sh`
+ * (graphify watch), `SandboxManager.kickCodeIndexRefresh` (initial graphify + ccc builds),
+ * `code-index-bridge-options.ts`.
+ */
+export const CONTAINER_CODE_INDEX = `${CONTAINER_AGENT_HOME}/code-index`;
+
+/** ccc/CocoIndex-Code's runtime + SQLite index dir (see `COCOINDEX_CODE_DB_PATH_MAPPING`). */
+export const CONTAINER_COCOINDEX_DIR = `${CONTAINER_CODE_INDEX}/cocoindex`;
+
+/** Graphify's output dir (= `GRAPHIFY_OUT` for the watch daemon); the queryable graph is `${dir}/graph.json`. */
+export const CONTAINER_GRAPHIFY_DIR = `${CONTAINER_CODE_INDEX}/graphify`;
+
+/**
  * The worktree's mount path INSIDE the sandbox — a NEUTRAL container path, NOT the host path. The host
  * worktree is bind-mounted here so the engine never sees host-shaped paths (and can tell it is boxed);
  * `cwd` is translated host→container at the runner boundary.
@@ -135,6 +156,29 @@ export const CONTAINER_CONTEXT = '/context';
  * scratch pad, given no imposed structure.
  */
 export const CONTAINER_PLAYGROUND = '/playground';
+
+/**
+ * The fixed LOOPBACK port the per-sandbox MCP hub (`start_mcp_hub` in `sandbox-init.sh`) listens on. The
+ * per-turn engine `docker exec` shares the container's netns, so `127.0.0.1:<port>` reaches the hub with no
+ * inbound external port exposure (which sandboxes lack anyway). A constant, not a mount — see
+ * `image/mcp-hub-server.ts` (the hub) + `image/user-mcp-bridge-options.ts` (the engine-side endpoints).
+ */
+export const MCP_HUB_PORT = 8785;
+
+/**
+ * The MCP hub's per-JOB working dir INSIDE the sandbox (pidfile `hub.pid` + `hub.log`), under the durable
+ * {@link CONTAINER_AGENT_HOME} (host-writable, survives `reset_sandbox`). Already covered by the `/.atlas`
+ * reserved mount — no separate bind.
+ */
+export const CONTAINER_MCP_HUB_DIR = `${CONTAINER_AGENT_HOME}/mcp-hub`;
+
+/**
+ * The host-written hub CONFIG the in-sandbox hub reads — the resolved union of THIS sandbox's user MCP
+ * servers (secrets inlined) plus the stdio `spawn` identity block. Lands under {@link CONTAINER_AGENT_HOME}
+ * (same trust boundary as the durable agent home, which already holds creds/transcripts). See
+ * `image/mcp-hub-config.ts` for the shape.
+ */
+export const CONTAINER_MCP_HUB_CONFIG = `${CONTAINER_AGENT_HOME}/mcp-hub.json`;
 
 /** True if a mount `path` is an ABSOLUTE container path (an external mount) vs a worktree-relative one. */
 export function isExternalMountPath(path: string): boolean {

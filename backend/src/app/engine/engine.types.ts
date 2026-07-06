@@ -287,6 +287,31 @@ export type CodexReasoningEffort =
   | 'high'
   | 'xhigh';
 
+/**
+ * A user-defined MCP server, fully RESOLVED host-side (secret header/env values already inlined) and
+ * ready to serialize onto the turn spec. `McpResolver.resolveForTurn` produces these from the
+ * `mcp_servers` rows for the turn's org/repo/surface; the in-container entrypoint turns them into Claude
+ * `mcpServers` entries and Codex `[mcp_servers.<name>]` config.toml blocks (see user-mcp-bridge-options.ts).
+ *
+ * Kept SDK-import-free (like the rest of this file) — the SDKs load dynamically in-container.
+ */
+export interface ResolvedMcpServer {
+  /** Server name — the model addresses tools as `mcp__<name>__<tool>`. */
+  name: string;
+  /** Remote (`http`/`sse`, uses `url`+`headers`) or `stdio` (uses `command`+`args`+`env`). */
+  transport: 'http' | 'sse' | 'stdio';
+  /** Remote endpoint URL (http/sse). */
+  url?: string;
+  /** Remote headers, secrets already inlined (http/sse). */
+  headers?: Record<string, string>;
+  /** stdio launch command. */
+  command?: string;
+  /** stdio command args. */
+  args?: string[];
+  /** stdio env, secrets already inlined. */
+  env?: Record<string, string>;
+}
+
 export interface RunEngineArgs {
   /** Which engine backs this run. */
   engine: SessionEngine;
@@ -327,6 +352,22 @@ export interface RunEngineArgs {
    * `CODEX_OAUTH_TOKEN` the container can't distinguish) never emit a secret into the final frame.
    */
   persistAuthRefresh?: boolean;
+  /**
+   * The per-org OpenAI embedding key, threaded through to the in-container code-index bridges (ccc's
+   * cloud embeddings need it; graphify doesn't). Host-resolved via `CredentialResolver.openaiKey(orgId)`
+   * on both the brain and build turn-assembly paths. Serialized into the turn spec — it's a secret that
+   * legitimately rides into the sandbox (like `auth.secret`), no org-id provenance attached. Unset →
+   * the cocoindex server is skipped in-container (graphify still loads). See code-index-bridge-options.ts.
+   */
+  indexEmbeddingKey?: string;
+  /**
+   * User-defined MCP servers to register for this turn, RESOLVED host-side (secrets inlined) by
+   * `McpResolver.resolveForTurn` from the org/repo `mcp_servers` rows whose `surfaces` include this
+   * turn's surface. Serialized into the turn spec — the header/env values are secrets that legitimately
+   * ride into the sandbox (like `auth.secret`/`indexEmbeddingKey`), so keep them OUT of any log line.
+   * Empty/omitted → no user MCP servers this turn. See user-mcp-bridge-options.ts.
+   */
+  userMcpServers?: ResolvedMcpServer[];
   /** Override the model for this run. Falls back to the engine's env/default when unset. */
   model?: string;
   /**

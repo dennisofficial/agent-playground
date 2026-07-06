@@ -123,12 +123,12 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
       <CredentialCard
         icon={<MessageSquare size={16} />}
         title="OpenAI API key"
-        sub="Memory embeddings"
+        sub="Memory embeddings + code index — required"
         present={presence.hasOpenai}
         pill={
           presence.hasOpenai
             ? { label: "saved", tone: "green" }
-            : { label: "not set", tone: "faint" }
+            : { label: "required", tone: "faint" }
         }
         modes={[
           {
@@ -136,7 +136,7 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
             fieldLabel: "New OpenAI key",
             placeholder: "sk-…",
             maskedPrefix: "sk-proj-",
-            tag: "embeddings",
+            tag: "embeddings · code index",
             help: (
               <HelpBlock>
                 <p>
@@ -144,7 +144,8 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
                   <HelpLink href="https://platform.openai.com/api-keys">
                     OpenAI API keys
                   </HelpLink>{" "}
-                  page. It’s used only for semantic-memory embeddings.
+                  page. It powers semantic-memory embeddings and the per-repo
+                  code index (ccc) — required to activate the org.
                 </p>
                 <p>
                   Paste the <Code>sk-…</Code> key it shows.

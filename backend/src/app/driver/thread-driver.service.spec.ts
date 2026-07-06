@@ -827,6 +827,8 @@ function assemble(
       githubToken: async () => undefined,
       engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
+    // McpResolver: no user-defined MCP servers in tests.
+    { resolveForTurn: async () => [] } as never,
     // JobLifecycleService: returns the thread's pre-provisioned sandbox — the ONLY sandbox path now
     // (the brain provisions every thread before any build runs). Its branch is the source of truth.
     {

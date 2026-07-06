@@ -73,6 +73,7 @@ import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/render-plan';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
+import { McpResolver } from '../mcp';
 import {
   isExternalMountPath,
   isReservedContainerPath,
@@ -241,6 +242,8 @@ export class AgentSessionManager
     private readonly tickets: TicketService,
     // Per-org engine subscription secret for the in-sandbox brain turn (the SDK harness).
     private readonly creds: CredentialResolver,
+    // User-defined MCP servers resolved onto the brain turn (org/repo tiers, `brain` surface).
+    private readonly mcp: McpResolver,
     // Singleton-leadership gate: boot crash-recovery sweeps + new-turn intake run only on the leader.
     private readonly election: LeaderElectionService,
     // Durable decision ledger — writes promoted cross-cutting decisions into `.atlas/decisions/`.
@@ -443,6 +446,10 @@ export class AgentSessionManager
           `Leader: re-delivering ${pendingSecrets.length} provided-but-undelivered secret(s)`,
         );
         for (const s of pendingSecrets) {
+          const notice = maskedSecretNotice(s.name, {
+            ...(s.path ? { path: s.path } : {}),
+            ...(s.ephemeral ? { ephemeral: true } : {}),
+          });
           const stimulus = harnessDeliveryStimulus({
             jobId: s.jobId,
             orgId: s.orgId,
@@ -472,6 +479,7 @@ export class AgentSessionManager
           `Leader: re-delivering ${pendingFiles.length} provided-but-undelivered file(s)`,
         );
         for (const f of pendingFiles) {
+          const notice = maskedFileNotice(f.path);
           const stimulus = harnessDeliveryStimulus({
             jobId: f.jobId,
             orgId: f.orgId,
@@ -1692,6 +1700,15 @@ export class AgentSessionManager
     // Per-org Claude subscription secret (deployed); undefined locally → the in-container engine falls
     // back to CLAUDE_OAUTH_TOKEN, and throws if neither is set (never an API-key fallback).
     const auth = await this.creds.engineAuth(stimulus.orgId, 'claude');
+    // Per-org OpenAI key for the in-container ccc code-index (cloud embeddings). Required at org
+    // onboarding, so normally present; undefined → the cocoindex bridge is skipped (graphify still loads).
+    const indexEmbeddingKey = await this.creds.openaiKey(stimulus.orgId);
+    // User-defined MCP servers active on the brain surface for this org/repo (secrets inlined host-side).
+    const userMcpServers = await this.mcp.resolveForTurn(
+      stimulus.orgId,
+      stimulus.repoId,
+      'brain',
+    );
     // Authenticated git for the operator-facing brain turn: resolve the repo url + org PAT (cached per
     // job) so the brain can fetch/merge/rebase/resolve-conflicts/push directly from inside the sandbox —
     // it OWNS git, not the host. Sourced from the resolved repo, never `sandbox` (a row-sourced sandbox
@@ -1709,6 +1726,8 @@ export class AgentSessionManager
       }),
       sandboxKey,
       ...(auth ? { auth } : {}),
+      ...(indexEmbeddingKey ? { indexEmbeddingKey } : {}),
+      ...(userMcpServers.length > 0 ? { userMcpServers } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)

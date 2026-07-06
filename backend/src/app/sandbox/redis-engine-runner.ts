@@ -462,6 +462,14 @@ export class RedisEngineRunner implements EngineRunnerPort {
             ...(args.auth.refreshBack ? { persistAuthRefresh: true } : {}),
           }
         : {}),
+      // The per-org OpenAI embedding key for the in-container code-index (ccc cloud embeddings). A secret
+      // that legitimately rides into the sandbox (like `auth.secret` above); omit-when-absent.
+      ...(args.indexEmbeddingKey ? { indexEmbeddingKey: args.indexEmbeddingKey } : {}),
+      // User-defined MCP servers (secrets already inlined host-side). Rides the spec into the container
+      // like indexEmbeddingKey — a legitimate secret-bearing field; the spec is never logged.
+      ...(args.userMcpServers && args.userMcpServers.length > 0
+        ? { userMcpServers: args.userMcpServers }
+        : {}),
       ...(args.model ? { model: args.model } : {}),
       ...(args.richStream ? { richStream: args.richStream } : {}),
       // Steering: tell the entrypoint to run streaming-input mode + subscribe to `turn:{T}:input`/`:abort`.

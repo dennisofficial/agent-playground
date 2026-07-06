@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { type FeatureSandbox } from '../git';
-import { WorktreeConfigStore } from '../onboarding';
+import { McpResolver } from '../mcp';
+import { CredentialResolver, WorktreeConfigStore } from '../onboarding';
 import { SANDBOX_PROVIDER, type SandboxMilestoneStage, type SandboxProvider } from '../sandbox';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { WorktreeHydrator } from './worktree-hydrator.service';
@@ -46,6 +47,8 @@ export class WorktreeProvisioner {
     private readonly hydrator: WorktreeHydrator,
     private readonly awareness: PipelineAwarenessStore,
     private readonly config: WorktreeConfigStore,
+    private readonly creds: CredentialResolver,
+    private readonly mcp: McpResolver,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
   ) {}
 
@@ -100,6 +103,29 @@ export class WorktreeProvisioner {
       onMilestone: input.onMilestone,
       ...(repoDbId ? { repoDbId } : {}),
     });
+
+    // Fire-and-forget INITIAL code-index builds now the container is live — the keyless Graphify structural
+    // graph (the `graphify watch` daemon only maintains it on edits, so a fresh sandbox needs an initial
+    // build) always, and the ccc semantic index when the per-org OpenAI key is present (its cloud embeddings
+    // aren't available at container-create, so the first build is kicked here so the job's first `search`
+    // isn't cold). Best-effort (flock + no-container no-op), never blocks or fails provisioning.
+    if (this.sandboxProvider.kickCodeIndexRefresh) {
+      const embeddingKey = await this.creds.openaiKey(orgId).catch(() => undefined);
+      void this.sandboxProvider
+        .kickCodeIndexRefresh({ jobId, ...(embeddingKey ? { embeddingKey } : {}) })
+        .catch((err) => this.logger.debug(`ccc warm-build kick skipped (continuing): ${err}`));
+    }
+
+    // Push the sandbox's user MCP servers to the persistent per-sandbox hub (connect once per sandbox, not
+    // once per turn). Best-effort: writes the config even if the container's still coming up (the hub reads
+    // it on boot), never blocks or fails provisioning.
+    if (this.sandboxProvider.kickMcpHubRefresh) {
+      const servers = await this.mcp.resolveForSandbox(orgId, sandbox.repoId).catch(() => []);
+      void this.sandboxProvider
+        .kickMcpHubRefresh({ jobId, servers })
+        .catch((err) => this.logger.debug(`mcp-hub refresh kick skipped (continuing): ${err}`));
+    }
+
     return { sandbox: attached, hydrationSig };
   }
 }

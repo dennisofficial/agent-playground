@@ -18,10 +18,14 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
     const awareness = { appendMarker: vi.fn(async () => undefined) } as unknown as PipelineAwarenessStore;
     const config = { importLegacyIfEmpty: vi.fn(async () => undefined) } as unknown as import('../onboarding').WorktreeConfigStore;
     const attach = vi.fn(async () => ({ repoId: 'proj', branch: 'main', worktreePath: '/wt', gitUrl: '' }));
-    const sandboxProvider = { attach } as unknown as import('../sandbox').SandboxProvider;
+    const kickCodeIndexRefresh = vi.fn(async () => undefined);
+    const kickMcpHubRefresh = vi.fn(async () => undefined);
+    const sandboxProvider = { attach, kickCodeIndexRefresh, kickMcpHubRefresh } as unknown as import('../sandbox').SandboxProvider;
+    const creds = { openaiKey: vi.fn(async () => 'sk-test') } as unknown as import('../onboarding').CredentialResolver;
+    const mcp = { resolveForSandbox: vi.fn(async () => [{ name: 's', transport: 'http', url: 'https://s' }]) } as unknown as import('../mcp').McpResolver;
 
-    const provisioner = new WorktreeProvisioner(hydrator, awareness, config, sandboxProvider);
-    return { provisioner, attach };
+    const provisioner = new WorktreeProvisioner(hydrator, awareness, config, creds, mcp, sandboxProvider);
+    return { provisioner, attach, kickCodeIndexRefresh, kickMcpHubRefresh };
   }
 
   it('threads onMilestone straight through to SandboxProvider.attach()', async () => {
@@ -48,5 +52,32 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
     });
 
     expect(attach).toHaveBeenCalledWith(expect.objectContaining({ onMilestone: undefined }));
+  });
+
+  it('kicks a background code-index refresh with the resolved per-org embedding key after attach', async () => {
+    const { provisioner, kickCodeIndexRefresh } = makeProvisioner();
+
+    await provisioner.provisionAndAttach({
+      sandbox: { repoId: 'proj', branch: 'main', worktreePath: '/wt', gitUrl: '' },
+      orgId: 'org-1',
+      jobId: 'job-1',
+    });
+
+    expect(kickCodeIndexRefresh).toHaveBeenCalledWith({ jobId: 'job-1', embeddingKey: 'sk-test' });
+  });
+
+  it('pushes the resolved user MCP servers to the per-sandbox hub after attach', async () => {
+    const { provisioner, kickMcpHubRefresh } = makeProvisioner();
+
+    await provisioner.provisionAndAttach({
+      sandbox: { repoId: 'proj', branch: 'main', worktreePath: '/wt', gitUrl: '' },
+      orgId: 'org-1',
+      jobId: 'job-1',
+    });
+
+    expect(kickMcpHubRefresh).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      servers: [{ name: 's', transport: 'http', url: 'https://s' }],
+    });
   });
 });

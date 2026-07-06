@@ -353,7 +353,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockRepos,
       mockAwareness,
       {} as unknown as TicketService,
-      { engineAuth: async () => undefined } as unknown as CredentialResolver,
+      { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
+      { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
       {
         getState: () => 'leader',
         isLeader: () => true,
@@ -1516,7 +1517,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as DriverRepoResolver,
       awareness,
       {} as unknown as TicketService,
-      { engineAuth: async () => undefined } as unknown as CredentialResolver,
+      { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
+      { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
       {
         getState: () => 'leader',
         isLeader: () => true,
@@ -2216,7 +2218,8 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
       } as unknown as PipelineAwarenessStore,
       {} as unknown as TicketService,
-      { engineAuth: async () => undefined } as unknown as CredentialResolver,
+      { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
+      { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
       {
         getState: () => 'leader',
         isLeader: () => true,
@@ -2319,7 +2322,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, // sandboxRows (11)
       stimulusRows as never, // stimulusRows (12)
       inert, // stimulusStore (13)
-      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 14 … 27 (incl. secretStore, configStore, git)
+      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 14 … 28 (incl. secretStore, configStore, mcp, git)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
@@ -2425,7 +2428,8 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       stimulusRows as never, // stimulusRows (12)
       stimulusStore as never, // stimulusStore (13)
       inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
-      election, // election (21)
+      inert, // mcp (McpResolver, 21)
+      election, // election (22)
       inert, inert, inert, inert, inert, inert, // ledger…git (27)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
@@ -2624,7 +2628,8 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, // stimulusRows (12)
         stimulusStore as never, // stimulusStore (13)
         inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
-        election, // election (21)
+        inert, // mcp (McpResolver, 21)
+        election, // election (22)
         inert, inert, inert, inert, inert, inert, // ledger…git (27)
         { generate: () => 'SYSTEM' } as never, // prompts (28)
         { register: () => undefined } as never, // threadInput (29)

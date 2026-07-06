@@ -21,7 +21,7 @@ import { TenantCredentialStore } from './tenant-credential.store';
 export type OrgLifecycle = 'onboarding' | 'active' | 'suspended';
 
 /** The ordered onboarding checklist steps (first-unmet is the next thing to do). */
-export type OnboardingStep = 'repo' | 'llm_key' | 'engine_auth' | 'github_pat';
+export type OnboardingStep = 'repo' | 'llm_key' | 'openai_key' | 'engine_auth' | 'github_pat';
 
 /** The derived onboarding state for an org — computed from rows, never a separate source of truth. */
 export interface OnboardingStatus {
@@ -30,6 +30,8 @@ export interface OnboardingStatus {
   steps: {
     repoConnected: boolean;
     llmKey: boolean;
+    /** The OpenAI key — powers pgvector memory embeddings AND the per-repo ccc code index. Required. */
+    openaiKey: boolean;
     engineAuth: boolean;
     githubPat: boolean;
   };
@@ -188,7 +190,14 @@ export class OnboardingService {
     const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
     if (!repo || !repo.access_ok || repo.onboarding_job_id) return; // gone / not validated / already done
     const status = await this.status(orgId);
-    if (!(status.steps.llmKey && status.steps.engineAuth && status.steps.githubPat)) {
+    if (
+      !(
+        status.steps.llmKey &&
+        status.steps.openaiKey &&
+        status.steps.engineAuth &&
+        status.steps.githubPat
+      )
+    ) {
       return; // org can't run Atlas yet — tryActivate will re-trigger once the credentials land
     }
 
@@ -238,9 +247,16 @@ export class OnboardingService {
       );
     }
     const status = await this.status(orgId);
-    if (!(status.steps.llmKey && status.steps.engineAuth && status.steps.githubPat)) {
+    if (
+      !(
+        status.steps.llmKey &&
+        status.steps.openaiKey &&
+        status.steps.engineAuth &&
+        status.steps.githubPat
+      )
+    ) {
       throw new BadRequestException(
-        'Finish org setup (Anthropic key, engine auth, GitHub PAT) before onboarding a repo.',
+        'Finish org setup (Anthropic key, OpenAI key, engine auth, GitHub PAT) before onboarding a repo.',
       );
     }
 
@@ -402,12 +418,16 @@ export class OnboardingService {
       repoConnected,
       // The Anthropic key must be PRESENT and validated (1-token probe) to count.
       llmKey: presence.hasAnthropic && !!credRow?.llm_validated_at,
+      // The OpenAI key is REQUIRED — it powers both pgvector memory AND the per-repo ccc code index
+      // (cloud embeddings). Presence is enough (no separate validation gate today).
+      openaiKey: presence.hasOpenai,
       engineAuth: presence.engineAuthSet,
       githubPat: presence.hasGithub,
     };
     const missing: OnboardingStep[] = [];
     if (!steps.repoConnected) missing.push('repo');
     if (!steps.llmKey) missing.push('llm_key');
+    if (!steps.openaiKey) missing.push('openai_key');
     if (!steps.engineAuth) missing.push('engine_auth');
     if (!steps.githubPat) missing.push('github_pat');
     return { orgId, lifecycle, steps, missing };

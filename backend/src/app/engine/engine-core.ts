@@ -8,6 +8,7 @@ import { applyClaudeAuth } from './claude-auth';
 import { atlasEngineHomeDir } from './engine-home';
 import {
   assertValidCodexAuthJson,
+  type CodexExtraMcpServers,
   type CodexMcpBridge,
   ensureCodexAuthHome,
   readCodexAuthHome,
@@ -22,6 +23,7 @@ import { renderAgentPrompt } from '../prompt-kit/assemble';
 import { Agent } from '../prompt-kit/agent';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
 import { context7Enabled, qualifyContext7ToolNames } from './context7-tools';
+import { qualifyCocoindexToolNames, qualifyGraphifyToolNames } from './code-index-tools';
 import {
   EngineAuthError,
   isAuthErrorMessage,
@@ -235,10 +237,21 @@ const PLAN_TOOLS = [...WORKER_TOOLS, 'ExitPlanMode'];
 // A read-only review turn gets the read tools (+ web for verifying against current docs). No Task — a
 // review turn shouldn't fan out.
 const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS];
+// Code-index tools (`cocoindex` semantic search + `graphify` structural graph, registered per-turn — see
+// sandbox/image/code-index-bridge-options.ts). Both are READ-ONLY (there is no write variant), so every
+// investigator AND writer subagent gets the same set — locating/understanding code helps them all equally.
+// `graphify` is always registered on execute turns (keyless); `cocoindex` needs the per-org OpenAI key
+// (required at onboarding), so on a keyless turn its server isn't registered and the name is simply inert,
+// exactly as it is for the parent turn (the bridge omits it). Added to AUTO_APPROVE + the subagent tool
+// arrays below so a subagent's call never stalls on a permission prompt (same reason CONTEXT7_TOOLS is).
+const CODE_INDEX_TOOLS = [...qualifyCocoindexToolNames(), ...qualifyGraphifyToolNames()];
+
 // Auto-approve safe reads, web, and subagent spawning; writes/bash fall through to canUseTool where the
 // boundary is re-applied. Context7 docs tools (read-only, gated off by default) auto-approve too so the
 // `docs` subagent never stalls on a permission prompt for them.
-const AUTO_APPROVE = ['Read', 'Glob', 'Grep', 'Task', ...TASK_TOOLS, ...WEB_TOOLS, ...CONTEXT7_TOOLS];
+const AUTO_APPROVE = [
+  'Read', 'Glob', 'Grep', 'Task', ...TASK_TOOLS, ...WEB_TOOLS, ...CONTEXT7_TOOLS, ...CODE_INDEX_TOOLS,
+];
 
 // LSP navigation/rename (`atlas-lsp-ts`, registered per-turn — see sandbox/image/lsp-bridge-options.ts).
 // Subagent `tools:` arrays are explicit, not inherited from the parent turn's `allowedTools`, so each
@@ -262,7 +275,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'README, ARCHITECTURE.md, docs/). State the search breadth you want: "quick" (one targeted ' +
       'lookup), "medium" (moderate exploration), or "very thorough" (sweep multiple locations and ' +
       'naming conventions). For EXTERNAL library/framework/API documentation, use `docs` instead.',
-    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS, ...CODE_INDEX_TOOLS],
     model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.EXPLORE),
   },
@@ -282,7 +295,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'concrete findings — correctness bugs, behavior silently removed, convention/altitude drift, ' +
       'missing edge cases — grounded in the surrounding code. A cheap second pair of eyes before a step ' +
       'is called done. It reports; it does NOT fix.',
-    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS, ...CODE_INDEX_TOOLS],
     model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.REVIEW_AGENT),
   },
@@ -291,7 +304,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'Read-only root-cause tracer. Give it a failure (error, stack trace, failing test, wrong ' +
       'behavior) and it traces the cause through the code and names the exact fix site and smallest fix ' +
       '— it does not run commands or change anything. Use `test` to actually run the verification.',
-    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS, ...CODE_INDEX_TOOLS],
     model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.DEBUG),
   },
@@ -314,7 +327,9 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
 // boxed). They have NO `Task` tool — writers cannot recursively fan out (no nesting blowup). The
 // orchestrator owns the decomposition and runs writers ONE AT A TIME; file ownership between writers is
 // by serialization, not a hard lock (see ORCHESTRATE_EXECUTE_SYSTEM in the driver).
-const WRITER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', ...WEB_TOOLS, ...LSP_WRITE_TOOLS];
+const WRITER_TOOLS = [
+  'Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', ...WEB_TOOLS, ...LSP_WRITE_TOOLS, ...CODE_INDEX_TOOLS,
+];
 const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
   implement: {
     description:
@@ -415,9 +430,10 @@ export class EngineCore {
     extraClaudeOptions?: Record<string, unknown>,
     bridgeToolNames?: string[],
     codexBridgeTools?: string[],
+    codexExtraMcpServers?: CodexExtraMcpServers,
   ): Promise<EngineRunResult> {
     return args.engine === 'codex'
-      ? this.runCodex(args, codexBridgeTools)
+      ? this.runCodex(args, codexBridgeTools, codexExtraMcpServers)
       : this.runClaude(args, extraClaudeOptions, bridgeToolNames);
   }
 
@@ -746,12 +762,17 @@ export class EngineCore {
 
   // ── Codex ─────────────────────────────────────────────────────────────────────────────────────
 
-  private getCodex(sandboxKey: string, auth: EngineAuth, bridge?: CodexMcpBridge): Codex {
+  private getCodex(
+    sandboxKey: string,
+    auth: EngineAuth,
+    bridge?: CodexMcpBridge,
+    extraMcpServers?: CodexExtraMcpServers,
+  ): Codex {
     const root = this.homeRoot();
     // Subscription-only: an overlay home owning its own auth.json (refreshed each turn) + — for an execute
-    // turn with a host tool bridge — a config.toml `[mcp_servers.atlasbridge]` block. The cache key keeps
-    // separate sandboxes apart. NO apiKey is ever passed — the CLI reads auth.json from CODEX_HOME.
-    const codexHome = ensureCodexAuthHome(root, sandboxKey, auth.secret, bridge);
+    // turn — a config.toml with the host tool bridge (`[mcp_servers.atlasbridge]`) plus the code-index
+    // servers (cocoindex/graphify). The cache key keeps separate sandboxes apart. NO apiKey is ever passed.
+    const codexHome = ensureCodexAuthHome(root, sandboxKey, auth.secret, bridge, extraMcpServers);
     const cacheKey = `sub:${sandboxKey}`;
     let client = this.codexClients.get(cacheKey);
     if (!client) {
@@ -788,7 +809,11 @@ export class EngineCore {
     };
   }
 
-  private async runCodex(args: RunEngineArgs, bridgeTools?: string[]): Promise<EngineRunResult> {
+  private async runCodex(
+    args: RunEngineArgs,
+    bridgeTools?: string[],
+    extraMcpServers?: CodexExtraMcpServers,
+  ): Promise<EngineRunResult> {
     const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream } =
       args;
     const auth = this.resolveAuth('codex', args.auth);
@@ -810,7 +835,7 @@ export class EngineCore {
           }
         : undefined;
 
-    const client = this.getCodex(sandboxKey, auth, bridge);
+    const client = this.getCodex(sandboxKey, auth, bridge, extraMcpServers);
     const opts = this.codexThreadOptions(cwd, model, readOnly, args.modelReasoningEffort);
     const thread = sessionId ? client.resumeThread(sessionId, opts) : client.startThread(opts);
 

@@ -13,6 +13,7 @@ import { SandboxModule } from './sandbox';
 import { StimulusModule } from './stimulus';
 import { LiveTurnModule, SurfaceModule } from './surface';
 import { MemoryModule } from './memory';
+import { McpModule } from './mcp';
 import { OnboardingModule } from './onboarding';
 import { OrgModule } from './org';
 import { RealtimeModule } from './realtime';
@@ -55,6 +56,7 @@ import { ThreadKindModule } from './thread-kind';
     AnalyticsModule,
     AuthModule,
     OnboardingModule,
+    McpModule,
     OrgModule,
     TitlingModule,
     TicketsModule,

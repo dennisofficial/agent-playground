@@ -9,7 +9,7 @@ import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
 import { BRIDGE_SERVER_NAME } from '../../sandbox/image/bridge-options';
-import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
+import { CODE_INDEX_NOTE, LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class HostToolsGroup {
@@ -61,6 +61,21 @@ export class HostToolsGroup {
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1045, condition: notOnboarding })
   lspTools(): string {
     return LSP_TOOLS_NOTE;
+  }
+
+  /**
+   * normal block 046 — the code-index MCP tools (cocoindex semantic + graphify structural). Addressed to
+   * every agent that actually HAS the tools: the brain (ATLAS_MAIN) + the read-only investigator subagents
+   * (explore/review/debug) + the writer subagents (fan_out) — all wired in engine-core's SUBAGENTS/WRITER
+   * tool arrays. (The WORKER orchestrator gets the same note inline in its own body fragment.)
+   */
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN, Agent.EXPLORE, Agent.REVIEW_AGENT, Agent.DEBUG, Agent.FAN_OUT],
+    order: 1046,
+    condition: notOnboarding,
+  })
+  codeIndexTools(): string {
+    return CODE_INDEX_NOTE;
   }
 
   /** normal block 05 — the args-wrapper calling convention. */

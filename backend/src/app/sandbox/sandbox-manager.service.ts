@@ -3,25 +3,33 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { atlasAgentHomeBase } from '../engine/engine-home';
 import type { FeatureSandbox } from '../git';
-import { engineBundlePath, mcpBridgeBundlePath } from './bundle-engine';
+import { engineBundlePath, mcpBridgeBundlePath, mcpHubBundlePath } from './bundle-engine';
 import {
   CONTAINER_AGENT_HOME,
   CONTAINER_CONTEXT,
+  CONTAINER_COCOINDEX_DIR,
   CONTAINER_FNM_STORE,
   CONTAINER_GIT_COMMON,
+  CONTAINER_GRAPHIFY_DIR,
   CONTAINER_HOME,
+  CONTAINER_MCP_HUB_CONFIG,
+  CONTAINER_MCP_HUB_DIR,
   CONTAINER_PLAYGROUND,
   CONTAINER_PNPM_STORE,
   CONTAINER_WORKTREE,
   isExternalMountPath,
   isReservedContainerPath,
 } from './container-paths';
+import type { ResolvedMcpServer } from '../engine/engine.types';
+import type { McpHubConfig } from './image/mcp-hub-config';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import { hostExecUser } from './host-exec-user';
+import { cocoindexExcludedPatternsEnv } from '../engine/code-index-tools';
+import { cccBootstrapScript, graphifyIgnoreSeedScript } from './image/code-index-bridge-options';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import type { SandboxAttachInput, SandboxProvider, ServiceLivenessProbe } from './sandbox-provider.port';
 
@@ -32,6 +40,9 @@ const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
 /** The in-container path of the Codex MCP tool-bridge server (spawned by codex via config.toml). Baked by
  *  the Dockerfile, bind-mounted live over it — same hot-reload contract as the engine bundle. */
 const CONTAINER_MCP_BRIDGE_BUNDLE = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
+/** The in-container path of the persistent MCP hub (launched by `sandbox-init.sh`). Baked by the Dockerfile,
+ *  bind-mounted live over it — same hot-reload contract as the engine bundle. */
+const CONTAINER_MCP_HUB_BUNDLE = '/usr/local/lib/atlas/mcp-hub-server.mjs';
 
 /** Hard cap on the liveness probe exec — it's a trivial `kill -0` loop, so anything slower is a wedged
  *  docker exec we'd rather abandon (→ `unknown`) than let pile up behind the ~5s status poll. */
@@ -139,7 +150,7 @@ export function submoduleGitlinks(worktreePath: string): string[] {
  * NOTE: the per-repo mount SET is ALSO hashed into the `atlas.cfg` fingerprint below, so a changed
  * manifest mount list recreates the container even without bumping this rev.
  */
-const CONFIG_REV = 12;
+const CONFIG_REV = 13;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -288,6 +299,11 @@ export class SandboxManager implements SandboxProvider {
     const mcpBridge = mcpBridgeBundlePath();
     if (existsSync(mcpBridge)) {
       binds.push(`${mcpBridge}:${CONTAINER_MCP_BRIDGE_BUNDLE}:ro`);
+    }
+    // The persistent MCP hub bundle (launched by sandbox-init.sh), bind-mounted live like the engine bundle.
+    const mcpHub = mcpHubBundlePath();
+    if (existsSync(mcpHub)) {
+      binds.push(`${mcpHub}:${CONTAINER_MCP_HUB_BUNDLE}:ro`);
     }
     // The host-maintained, READ-ONLY cross-repo reference library (per-tenant) at /refs.
     const refsDir = this.teamRefsDir(orgId);
@@ -608,6 +624,131 @@ export class SandboxManager implements SandboxProvider {
    * Runs as the host exec-uid so a FIFO the brain created (also as that uid) is writable (no EPERM). See
    * {@link SandboxProvider.writeToJobContainerPath}.
    */
+  /**
+   * Kick detached, best-effort **initial builds** of the job's two code indexes (see the port doc). Both are
+   * fire-and-forget (`execDetached`, own `flock`, never blocks/throws):
+   *
+   *   - **Graphify (structural, KEYLESS)** — always. The `graphify watch` daemon in `sandbox-init.sh` only
+   *     MAINTAINS the graph on file changes; it does NOT build the initial `graph.json` (with no changes it
+   *     sits idle), so a fresh sandbox has nothing for `graphify-mcp` to read until the first edit. We build
+   *     it here with `graphify update`. First we seed `/workspace/.graphifyignore` (mirrors the ccc
+   *     exclusions + drops the data/doc formats graphify parses to zero nodes) and git-exclude it — without
+   *     it those never-cached files drive a re-extraction busy-loop (graphify #1666); see
+   *     {@link GRAPHIFY_IGNORE_PATTERNS}.
+   *   - **ccc (semantic, needs the OpenAI key)** — only when `embeddingKey` is present (cloud embeddings
+   *     can't run keyless). The key isn't in the container at create time, so this first build is triggered
+   *     here so the job's first `search` isn't a slow cold index; ongoing freshness is the MCP `search`
+   *     tool's own job (it re-indexes incrementally before searching).
+   *
+   * Never throws.
+   */
+  async kickCodeIndexRefresh(input: { jobId: string; embeddingKey?: string }): Promise<void> {
+    try {
+      const name = this.containerName('', '', '', input.jobId);
+      const info = await this.engine.inspect(name);
+      if (!info || info.state !== 'running') return;
+      const asUser = hostExecUser() ? { user: hostExecUser() } : {};
+
+      // Graphify structural graph — keyless, always. Seed `.graphifyignore` (only if absent, so a repo's own
+      // is respected) + git-exclude it, then build the initial graph behind a flock. GRAPHIFY_OUT redirects
+      // graph.json out of the worktree into the durable per-job index root (matches the bridge --graph path).
+      const graphifyScript = [
+        `mkdir -p "${CONTAINER_GRAPHIFY_DIR}" 2>/dev/null || true`,
+        graphifyIgnoreSeedScript(),
+        `exec 8>"${CONTAINER_GRAPHIFY_DIR}/.build.lock" || exit 0`,
+        `flock -n 8 || exit 0`,
+        `graphify update ${CONTAINER_WORKTREE} >/dev/null 2>&1 || true`,
+      ].join('\n');
+      await this.engine.execDetached(info.id, ['sh', '-c', graphifyScript], {
+        ...asUser,
+        env: { HOME: CONTAINER_HOME, GRAPHIFY_OUT: CONTAINER_GRAPHIFY_DIR },
+      });
+
+      if (!input.embeddingKey) return; // ccc cloud embeddings need the key; without it there's nothing to warm.
+
+      // ccc config via env (secrets/config never on argv). Mirrors code-index-bridge-options.ts so the
+      // warm-build and the query-time MCP server agree on root / db-location / exclusions.
+      const env: Record<string, string> = {
+        HOME: CONTAINER_HOME,
+        // The CLI chdirs here (its callback) so project-root discovery finds the `.cocoindex_code/settings.yml`
+        // marker the bootstrap writes — ROOT_PATH alone isn't honored by the CLI (only the server factory).
+        COCOINDEX_CODE_HOST_CWD: CONTAINER_WORKTREE,
+        COCOINDEX_CODE_ROOT_PATH: CONTAINER_WORKTREE,
+        COCOINDEX_CODE_RUNTIME_DIR: CONTAINER_COCOINDEX_DIR,
+        // Mapping SOURCE = the project root itself (resolve_db_dir checks `project_root == source`), so the
+        // heavy SQLite DB lands in the durable per-job index root, not `<worktree>/.cocoindex_code`.
+        COCOINDEX_CODE_DB_PATH_MAPPING: `${CONTAINER_WORKTREE}=${CONTAINER_COCOINDEX_DIR}`,
+        COCOINDEX_CODE_EXCLUDED_PATTERNS: cocoindexExcludedPatternsEnv(),
+        OPENAI_API_KEY: input.embeddingKey,
+      };
+
+      // dash-safe. Bootstrap the project (seed global settings, `ccc init`, git-exclude the marker — shared
+      // with the MCP bridge so the warm-build and query-time server agree), then a single build behind a
+      // non-blocking flock (a concurrent build in this container just skips).
+      const script = [
+        `mkdir -p "${CONTAINER_COCOINDEX_DIR}" 2>/dev/null || true`,
+        cccBootstrapScript(),
+        `exec 9>"${CONTAINER_COCOINDEX_DIR}/.build.lock" || exit 0`,
+        `flock -n 9 || exit 0`,
+        `ccc index >/dev/null 2>&1 || true`,
+      ].join('\n');
+
+      await this.engine.execDetached(info.id, ['sh', '-c', script], {
+        ...asUser,
+        env,
+      });
+    } catch (err) {
+      this.logger.debug(`kickCodeIndexRefresh(${input.jobId.slice(0, 8)}) skipped: ${String(err)}`);
+    }
+  }
+
+  /**
+   * Push the sandbox's user MCP servers to the persistent per-sandbox HUB (see `image/mcp-hub-server.ts`):
+   * write the resolved UNION (secrets inlined) + the stdio `spawn` identity to the host side of the durable
+   * `/.atlas` bind, then `SIGHUP` the hub so it reconciles (connect new / drop removed / leave unchanged).
+   * The config is the single source of truth — writing it converges the hub even if the signal is missed
+   * (the hub also mtime-re-stats). Called at provision (create / reset / warm re-attach) by
+   * `WorktreeProvisioner`. Best-effort: writes even when the container isn't running yet (the hub reads it on
+   * boot), signals only when it is; never throws.
+   */
+  async kickMcpHubRefresh(input: { jobId: string; servers: ResolvedMcpServer[] }): Promise<void> {
+    try {
+      const name = this.containerName('', '', '', input.jobId);
+      const hostHome = join(this.agentHomeRootHost(), 'sandboxes', name);
+      mkdirSync(hostHome, { recursive: true });
+
+      // stdio children must run with the per-turn exec identity (host uid, /workspace, /home/atlas HOME) —
+      // NOT the hub's root/PID1 one. PATH covers the image's node/npx + system bins (a repo's fnm/pnpm PATH
+      // additions are shell-init only and don't apply to a hub-spawned server).
+      const [uidStr, gidStr] = (hostExecUser() ?? '').split(':');
+      const uid = Number.parseInt(uidStr ?? '', 10);
+      const gid = Number.parseInt(gidStr ?? '', 10);
+      const config: McpHubConfig = {
+        spawn: {
+          ...(Number.isInteger(uid) ? { uid } : {}),
+          ...(Number.isInteger(gid) ? { gid } : {}),
+          cwd: CONTAINER_WORKTREE,
+          home: CONTAINER_HOME,
+          baseEnv: { PATH: '/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin', LANG: 'C.UTF-8' },
+        },
+        servers: input.servers,
+      };
+      // 0600: the config carries inlined upstream secrets. Same trust boundary as the durable agent home.
+      // hostHome is the host side of the `/.atlas` bind, so the basename must match CONTAINER_MCP_HUB_CONFIG.
+      writeFileSync(join(hostHome, basename(CONTAINER_MCP_HUB_CONFIG)), JSON.stringify(config), { mode: 0o600 });
+
+      const info = await this.engine.inspect(name);
+      if (!info || info.state !== 'running') return; // hub reads the file on its next boot
+      await this.engine.execDetached(
+        info.id,
+        ['sh', '-c', `kill -HUP "$(cat "${CONTAINER_MCP_HUB_DIR}/hub.pid" 2>/dev/null)" 2>/dev/null || true`],
+        { ...(hostExecUser() ? { user: hostExecUser() } : {}) },
+      );
+    } catch (err) {
+      this.logger.debug(`kickMcpHubRefresh(${input.jobId.slice(0, 8)}) skipped: ${String(err)}`);
+    }
+  }
+
   async writeToJobContainerPath(input: {
     jobId: string;
     path: string;

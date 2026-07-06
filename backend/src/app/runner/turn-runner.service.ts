@@ -9,6 +9,7 @@ import type {
   EngineEvent,
   EngineRunResult,
   EngineUsage,
+  ResolvedMcpServer,
   ToolBridgeOptions,
   TurnMeta,
 } from '../engine';
@@ -38,6 +39,17 @@ export interface RunTurnInput {
   modelReasoningEffort?: CodexReasoningEffort;
   /** How the turn authenticates (defaults derived from env by the EngineRunner). */
   auth?: EngineAuth;
+  /**
+   * The per-org OpenAI embedding key for the in-container ccc code-index (cloud embeddings). Resolved by
+   * the driver via `CredentialResolver.openaiKey(orgId)` and passed straight through to `RunEngineArgs`.
+   * Undefined → the cocoindex bridge is skipped in-container (graphify still loads).
+   */
+  indexEmbeddingKey?: string;
+  /**
+   * User-defined MCP servers for this turn, RESOLVED host-side (secrets inlined) by
+   * `McpResolver.resolveForTurn`. Passed straight through to `RunEngineArgs.userMcpServers`.
+   */
+  userMcpServers?: ResolvedMcpServer[];
   /**
    * Authenticated-git for this turn (resolved repo url + org PAT) so the agent can fetch/push/merge from
    * inside the sandbox. Sourced from the RESOLVED repo, NOT `sandbox` (a row-sourced sandbox has empty
@@ -157,6 +169,10 @@ export class TurnRunnerService {
             }
           : {}),
         ...(input.auth ? { auth: input.auth } : {}),
+        ...(input.indexEmbeddingKey ? { indexEmbeddingKey: input.indexEmbeddingKey } : {}),
+        ...(input.userMcpServers && input.userMcpServers.length > 0
+          ? { userMcpServers: input.userMcpServers }
+          : {}),
         ...(input.model ? { model: input.model } : {}),
         ...(input.modelReasoningEffort ? { modelReasoningEffort: input.modelReasoningEffort } : {}),
         ...(input.richStream ? { richStream: true } : {}),

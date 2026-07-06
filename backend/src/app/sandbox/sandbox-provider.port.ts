@@ -1,4 +1,5 @@
 import type { FeatureSandbox } from '../git';
+import type { ResolvedMcpServer } from '../engine/engine.types';
 
 /** DI token for the {@link SandboxProvider}. */
 export const SANDBOX_PROVIDER = Symbol('SANDBOX_PROVIDER');
@@ -146,4 +147,28 @@ export interface SandboxProvider {
     value: string;
     timeoutMs?: number;
   }): Promise<{ ok: boolean; reason?: string }>;
+
+  /**
+   * Kick DETACHED, best-effort **initial builds** of the job's code indexes inside its live container, after
+   * attach. Two indexes:
+   *   - **Graphify (structural, KEYLESS)** — built ALWAYS. The `graphify watch` daemon in `sandbox-init.sh`
+   *     only maintains the graph on file changes, so a fresh sandbox has no `graph.json` for `graphify-mcp`
+   *     to read until the first edit; this builds it (and seeds `.graphifyignore` to avoid the #1666 churn).
+   *   - **ccc (semantic)** — built only when `embeddingKey` is present (CLOUD embeddings need the per-org
+   *     OpenAI key, absent at container-create), so the job's first `search` isn't a slow cold index; ongoing
+   *     freshness is the MCP `search` tool's own job (it re-indexes incrementally before searching).
+   * Fire-and-forget: never blocks the turn, each build is `flock`-guarded, never throws (missing container =
+   * silent no-op; no key skips only the ccc half). `embeddingKey` = the per-org OpenAI key.
+   * Optional on the port so test fakes needn't implement it.
+   */
+  kickCodeIndexRefresh?(input: { jobId: string; embeddingKey?: string }): Promise<void>;
+
+  /**
+   * Push the sandbox's user MCP servers to the persistent per-sandbox MCP HUB: write the resolved UNION
+   * (secrets inlined) to the durable `/.atlas` config + `SIGHUP` the hub so it (re)connects once per sandbox
+   * instead of once per turn. Called at provision (create / reset / warm re-attach) by `WorktreeProvisioner`.
+   * Best-effort: writes even before the container is running (the hub reads it on boot), never throws.
+   * Optional on the port so test fakes needn't implement it.
+   */
+  kickMcpHubRefresh?(input: { jobId: string; servers: ResolvedMcpServer[] }): Promise<void>;
 }
