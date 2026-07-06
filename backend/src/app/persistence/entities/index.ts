@@ -16,6 +16,7 @@ export * from './tool-execution.entity';
 export * from './stimulus.entity';
 export * from './thread.entity';
 export * from './step.entity';
+export * from './build-leg.entity';
 export * from './decision-record.entity';
 export * from './repo-decision.entity';
 export * from './memory.entity';
@@ -43,6 +44,7 @@ import { ToolExecutionEntity } from './tool-execution.entity';
 import { StimulusEntity } from './stimulus.entity';
 import { ThreadEntity } from './thread.entity';
 import { StepEntity } from './step.entity';
+import { BuildLegEntity } from './build-leg.entity';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { RepoDecisionEntity } from './repo-decision.entity';
 import { MemoryEntity } from './memory.entity';
@@ -72,6 +74,7 @@ export const ENTITIES = [
   StimulusEntity,
   ThreadEntity,
   StepEntity,
+  BuildLegEntity,
   DecisionRecordEntity,
   RepoDecisionEntity,
   MemoryEntity,

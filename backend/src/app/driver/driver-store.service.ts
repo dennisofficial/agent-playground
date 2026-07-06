@@ -14,6 +14,7 @@ import type {
 } from '../domain';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
+  BuildLegEntity,
   DecisionRecordEntity,
   MessageEntity,
   StepEntity,
@@ -313,6 +314,163 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId, start_sha: IsNull() }, { start_sha: candidate });
     const row = await this.threads.findOne({ where: { id: threadId } });
     return row?.start_sha ?? candidate;
+  }
+
+  /**
+   * The newest recorded main-agent context occupancy for a build step's session — the durable backstop the
+   * Leg-rotation gate reads at batch boundaries and on restart, when there is no live in-turn `usage` signal.
+   * Reads `turn_stats` (where a builder turn's per-call occupancy is projected, keyed by `step_id`); returns
+   * the most recent row that actually carries a context-token count.
+   *
+   * POSITIVE-SIGNAL ONLY: a null return (no row yet, or the SDK surfaced no occupancy — e.g. a Codex turn)
+   * means the caller must NOT rotate. This polarity is deliberately INVERTED vs the brain's compaction gate
+   * (`latestBrainOccupancy`, which compacts on unknown occupancy): a builder never rotates an unknown turn.
+   */
+  async latestStepOccupancy(
+    stepId: string,
+  ): Promise<{ contextTokens: number | null; contextLimit: number | null } | null> {
+    const rows: Array<{ context_tokens: number | null; context_limit: number | null }> =
+      await this.dataSource.query(
+        `SELECT context_tokens, context_limit FROM turn_stats
+           WHERE step_id = $1 AND context_tokens IS NOT NULL
+           ORDER BY created_at DESC
+           LIMIT 1`,
+        [stepId],
+      );
+    const row = rows[0];
+    if (!row) return null;
+    return { contextTokens: row.context_tokens ?? null, contextLimit: row.context_limit ?? null };
+  }
+
+  // ── Leg rotation (context-rot mitigation: one build thread → many sequential engine sessions) ────────
+
+  /**
+   * Record/refresh the CURRENT (active) Leg row for a thread's anchor step — a `build_legs` projection used
+   * by the UI. Idempotent upsert keyed by (thread_id, ordinal=leg_ordinal): the first call (leg 1) inserts it,
+   * later calls refresh the live session id + peak occupancy. Safe to call after every batch turn; never
+   * touches resume-critical state (that lives on the step). No-op-safe if the anchor step is gone.
+   */
+  async recordActiveLeg(
+    anchorStepId: string,
+    sessionId: string | null,
+    contextTokensPeak?: number | null,
+  ): Promise<void> {
+    const step = await this.steps.findOne({ where: { id: anchorStepId } });
+    if (!step) return;
+    const legs = this.dataSource.getRepository(BuildLegEntity);
+    const existing = await legs.findOne({
+      where: { thread_id: step.thread_id, ordinal: step.leg_ordinal },
+    });
+    if (existing) {
+      await legs.update(
+        { id: existing.id },
+        {
+          session_id: sessionId,
+          ...(contextTokensPeak != null
+            ? { context_tokens_peak: Math.max(existing.context_tokens_peak ?? 0, contextTokensPeak) }
+            : {}),
+        },
+      );
+      return;
+    }
+    await legs.save(
+      legs.create({
+        org_id: step.org_id,
+        job_id: step.job_id,
+        thread_id: step.thread_id,
+        ordinal: step.leg_ordinal,
+        session_id: sessionId,
+        status: 'active',
+        context_tokens_peak: contextTokensPeak ?? null,
+      }),
+    );
+  }
+
+  /**
+   * ROTATE the anchor step's build session in ONE transaction (the analog of the brain's `completeCompaction`,
+   * applied to a build step). Reads the current fat session off the step, then atomically:
+   *   • sets `steps.rotating_session_id` = the fat session (abandon marker + restart signal),
+   *   • NULLs `steps.session_id` (so the next turn starts FRESH — resume reads null),
+   *   • stores `steps.pending_leg_seed` = the seed (folded into the next Leg's task),
+   *   • increments `steps.leg_ordinal`,
+   *   • closes the current `build_legs` row (status='rotated', handoff_md, peak, ended_at),
+   *   • opens the next `build_legs` row (ordinal+1, status='active').
+   * `commit_sha` / `batch_ordinal` are DELIBERATELY untouched — a rotation must never look like a committed
+   * batch to the atomic-resume fast-forward. Returns null (no-op) when there is no live session to rotate.
+   */
+  async completeLegRotation(input: {
+    anchorStepId: string;
+    handoff: string;
+    seed: string;
+    contextTokensPeak?: number | null;
+  }): Promise<{ fromLeg: number; toLeg: number; abandonedSessionId: string } | null> {
+    return this.dataSource.transaction(async (m) => {
+      const steps = m.getRepository(StepEntity);
+      const legs = m.getRepository(BuildLegEntity);
+      const step = await steps.findOne({ where: { id: input.anchorStepId } });
+      if (!step || !step.session_id) return null; // nothing live to rotate
+      const abandonedSessionId = step.session_id;
+      const fromLeg = step.leg_ordinal;
+      const toLeg = fromLeg + 1;
+
+      await steps.update(
+        { id: step.id },
+        {
+          rotating_session_id: abandonedSessionId,
+          session_id: null,
+          pending_leg_seed: input.seed,
+          leg_ordinal: toLeg,
+        },
+      );
+
+      // Close the outgoing Leg's projection row (upsert — create it if leg 1 never got a live row).
+      const current = await legs.findOne({ where: { thread_id: step.thread_id, ordinal: fromLeg } });
+      const closed = {
+        status: 'rotated',
+        handoff_md: input.handoff,
+        session_id: abandonedSessionId,
+        ended_at: new Date(),
+        ...(input.contextTokensPeak != null ? { context_tokens_peak: input.contextTokensPeak } : {}),
+      };
+      if (current) await legs.update({ id: current.id }, closed);
+      else
+        await legs.save(
+          legs.create({
+            org_id: step.org_id,
+            job_id: step.job_id,
+            thread_id: step.thread_id,
+            ordinal: fromLeg,
+            ...closed,
+          }),
+        );
+
+      // Open the incoming Leg (session id fills in when the fresh turn is born).
+      await legs.save(
+        legs.create({
+          org_id: step.org_id,
+          job_id: step.job_id,
+          thread_id: step.thread_id,
+          ordinal: toLeg,
+          status: 'active',
+          session_id: null,
+        }),
+      );
+
+      return { fromLeg, toLeg, abandonedSessionId };
+    });
+  }
+
+  /** Read the anchor step's pending Leg seed (the handoff folded into the next turn's task), or null. */
+  async getPendingLegSeed(anchorStepId: string): Promise<string | null> {
+    const step = await this.steps.findOne({ where: { id: anchorStepId } });
+    return step?.pending_leg_seed ?? null;
+  }
+
+  /** All Legs of a thread, oldest first — the read model behind the UI's per-Leg rows + handoff pills. */
+  async getLegs(threadId: string): Promise<BuildLegEntity[]> {
+    return this.dataSource
+      .getRepository(BuildLegEntity)
+      .find({ where: { thread_id: threadId }, order: { ordinal: 'ASC' } });
   }
 
   /** Live single-thread read (not the run-start snapshot). Used to detect a thread a concurrent/stale drive

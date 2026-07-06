@@ -110,10 +110,16 @@ export class TurnRunnerService {
   async runTurn(input: RunTurnInput): Promise<RunTurnResult> {
     const { sandbox, stepId, jobId, engine, mode } = input;
 
-    // Resume handle: the step row's prior session id (if any) — durable across restarts.
-    const priorSessionId = stepId
-      ? ((await this.steps.findOne({ where: { id: stepId } }))?.session_id ?? undefined)
-      : undefined;
+    // Resume handle: the step row's prior session id (if any) — durable across restarts. Fetched with the
+    // Leg-rotation markers so the fresh-session birth below can clear them atomically (see clear-on-birth).
+    const priorStep = stepId ? await this.steps.findOne({ where: { id: stepId } }) : null;
+    const priorSessionId = priorStep?.session_id ?? undefined;
+    // After a rotation the driver NULLs `session_id` (so we start fresh here) but leaves `pending_leg_seed` +
+    // `rotating_session_id` set; the fold of that seed into `input.task` already happened driver-side. We must
+    // clear those markers the instant the FRESH Leg session is born — mirrors the brain's compaction-seed
+    // clear. `rotatingSessionId` guards against clearing on a resume of the very session being abandoned.
+    const rotatingSessionId = priorStep?.rotating_session_id ?? null;
+    const hasPendingLegSeed = priorStep?.pending_leg_seed != null;
 
     // The sandbox key namespaces the engine's isolated home + Codex client cache, so two concurrent
     // features never share engine state. The feature branch is unique per job/feature.
@@ -134,9 +140,22 @@ export class TurnRunnerService {
     // Persist the session id the instant the engine surfaces it (turn START) — so a mid-turn halt
     // (process crash, container/host restart, kill) recovers by RESUMING this same session rather than
     // spawning a fresh one. Best-effort write; the turn-end + auth-error persists below are belt-and-braces.
+    let legSeedCleared = false;
     const onEvent = (e: EngineEvent): void => {
       if (e.kind === 'session' && stepId && e.sessionId) {
-        void this.steps.update({ id: stepId }, { session_id: e.sessionId }).catch(() => undefined);
+        // Fresh Leg session born (rotation was pending, and this is a NEW id — not a resume of the abandoned
+        // session): persist the id AND clear the rotation seed markers in ONE write. Otherwise just persist.
+        if (hasPendingLegSeed && !legSeedCleared && e.sessionId !== rotatingSessionId) {
+          legSeedCleared = true;
+          void this.steps
+            .update(
+              { id: stepId },
+              { session_id: e.sessionId, pending_leg_seed: null, rotating_session_id: null },
+            )
+            .catch(() => undefined);
+        } else {
+          void this.steps.update({ id: stepId }, { session_id: e.sessionId }).catch(() => undefined);
+        }
       }
       input.onEvent?.(e);
     };
@@ -185,9 +204,17 @@ export class TurnRunnerService {
       throw err;
     }
 
-    // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread.
+    // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread. Belt-and-
+    // braces for the Leg-seed clear too: if the session event never fired the clear but a fresh id surfaced
+    // here, null the rotation markers alongside (see clear-on-birth above).
     if (stepId && result.sessionId) {
-      await this.steps.update({ id: stepId }, { session_id: result.sessionId });
+      const alsoClearLegSeed = hasPendingLegSeed && !legSeedCleared && result.sessionId !== rotatingSessionId;
+      await this.steps.update(
+        { id: stepId },
+        alsoClearLegSeed
+          ? { session_id: result.sessionId, pending_leg_seed: null, rotating_session_id: null }
+          : { session_id: result.sessionId },
+      );
     }
 
     // Durable per-model usage/cost analytics (best-effort; never blocks the turn). Every build/step/

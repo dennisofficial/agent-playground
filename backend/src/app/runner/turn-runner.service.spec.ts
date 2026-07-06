@@ -104,6 +104,59 @@ describe('TurnRunnerService — session-handle durability', () => {
     await runner.runTurn(baseInput);
     expect(seen).toBe('sess-prior'); // continues the SAME session, not a new one
   });
+
+  // ── Leg-rotation clear-on-birth: a rotated step starts fresh, and the birth write clears its markers ──
+
+  /** A steps repo pre-seeded with a PENDING rotation (session NULLed, seed + abandon marker still set). */
+  function fakeRotatedSteps(rotatingSessionId: string) {
+    const updates: Array<{ id: unknown; patch: Record<string, unknown> }> = [];
+    const repo = {
+      findOne: vi.fn(
+        async () =>
+          ({
+            session_id: null, // driver NULLed it on rotation → we start fresh
+            rotating_session_id: rotatingSessionId,
+            pending_leg_seed: 'ROTATION SEED',
+          }) as unknown as StepEntity,
+      ),
+      update: vi.fn(async (where: { id: unknown }, patch: Record<string, unknown>) => {
+        updates.push({ id: where.id, patch });
+        return { affected: 1 } as never;
+      }),
+    } as unknown as Repository<StepEntity>;
+    return { repo, updates };
+  }
+
+  it('clears the Leg-rotation markers atomically when a FRESH rotated session is born', async () => {
+    const { repo, updates } = fakeRotatedSteps('sess-fat');
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        args.onEvent?.({ kind: 'session', sessionId: 'sess-fresh' });
+        return { result: 'continued', sessionId: 'sess-fresh' };
+      }),
+    };
+    await new TurnRunnerService(engine, repo).runTurn(baseInput);
+    // The birth write nulls the seed + abandon marker in the SAME update as the new session id.
+    const birth = updates.find((u) => u.patch.session_id === 'sess-fresh');
+    expect(birth?.patch).toMatchObject({
+      session_id: 'sess-fresh',
+      pending_leg_seed: null,
+      rotating_session_id: null,
+    });
+  });
+
+  it('does NOT clear the markers if the born session equals the one being abandoned (defensive guard)', async () => {
+    const { repo, updates } = fakeRotatedSteps('sess-fat');
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        // Pathological: the engine re-surfaces the abandoned session id — must NOT be treated as a fresh birth.
+        args.onEvent?.({ kind: 'session', sessionId: 'sess-fat' });
+        return { result: 'x', sessionId: 'sess-fat' };
+      }),
+    };
+    await new TurnRunnerService(engine, repo).runTurn(baseInput);
+    expect(updates.every((u) => !('pending_leg_seed' in u.patch))).toBe(true);
+  });
 });
 
 describe('TurnRunnerService — git auth threading', () => {

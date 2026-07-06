@@ -620,6 +620,11 @@ export class EngineCore {
       stderr: captureStderr,
       ...(sessionId ? { resume: sessionId } : {}),
       ...(model ? { model } : {}),
+      // Enable the 1M-token context window explicitly. Opus 4.x and Sonnet 5 negotiate it automatically, but
+      // we pass the beta as belt-and-suspenders so a builder session that fills past 200k does NOT truncate —
+      // Leg rotation's HARD threshold (200k) depends on there being headroom ABOVE it to author the handoff
+      // (see the context-rot plan). The SDK forwards `anthropic-beta: context-1m-2025-08-07`.
+      betas: ['context-1m-2025-08-07'],
       // Rich streaming (the thread brain): partial-message stream → token-level deltas, and extended
       // thinking → thinking blocks. Adaptive lets Claude decide thinking depth per turn.
       // forwardSubagentText: forward a subagent's FULL text+thinking (not just its tool calls) tagged with

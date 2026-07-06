@@ -88,4 +88,32 @@ export class StepEntity extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   commit_sha!: string | null;
+
+  // ── Leg rotation (context-rot mitigation) ──────────────────────────────────────────────────────────
+  // One build thread spans many sequential engine sessions ("Legs"). When the anchor's live session fills
+  // its context window, we ROTATE: author a structured handoff, abandon the fat session, and start a fresh
+  // one seeded with that handoff. These mirror the brain's compaction trio on `job_sandboxes`. Crucially,
+  // `commit_sha`/`batch_ordinal` above are NEVER touched by rotation — the atomic-resume fast-forward keys
+  // off them, so a rotation must not masquerade as a committed batch. WIP survives on disk in the worktree.
+
+  /**
+   * The fat session being abandoned mid-rotation (analog of `job_sandboxes.compacting_session_id`). Set
+   * before the handoff is authored; a restart signal (if `session_id` still equals this, the reseed never
+   * committed) and a re-attach guard (never re-attach a session equal to this). Cleared when the fresh Leg
+   * session is born.
+   */
+  @Column({ type: 'text', nullable: true })
+  rotating_session_id!: string | null;
+
+  /**
+   * The structured handoff (`ROTATION_PREAMBLE + summary`) folded into the NEXT Leg's task, exactly as the
+   * brain folds `pending_compaction_seed` (analog of that column). Set at rotation; cleared the instant the
+   * fresh session is born. A crash before the clear re-folds it next turn (safe).
+   */
+  @Column({ type: 'text', nullable: true })
+  pending_leg_seed!: string | null;
+
+  /** Which Leg (1..N) the anchor is currently on. Incremented on each rotation; surfaced in the UI. */
+  @Column({ type: 'int', default: 1 })
+  leg_ordinal!: number;
 }

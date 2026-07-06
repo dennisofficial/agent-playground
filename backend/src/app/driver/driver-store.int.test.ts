@@ -446,4 +446,89 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(oks).toHaveLength(1);
     expect(oks[0]).toEqual({ ok: true, used: 2 });
   });
+
+  // ── Leg rotation (context-rot: one build thread → many sequential engine sessions) ─────────────────
+
+  async function seedJobThreadStep(
+    sessionId: string | null,
+  ): Promise<{ jobId: string; threadId: string; anchorStepId: string }> {
+    const { jobId, threadId } = await seedJobThread();
+    const step = await steps.save(
+      steps.create({
+        thread_id: threadId,
+        job_id: jobId,
+        org_id: ORG_ID,
+        ordinal: 10,
+        title: 'anchor',
+        brief: 'build anchor',
+        stage: 'build',
+        status: 'building',
+        batch_ordinal: 1,
+        ...(sessionId ? { session_id: sessionId } : {}),
+      }),
+    );
+    return { jobId, threadId, anchorStepId: step.id };
+  }
+
+  it('completeLegRotation rotates the anchor session, stashes the seed, bumps leg_ordinal, projects Legs', async () => {
+    const { threadId, anchorStepId } = await seedJobThreadStep('sess-1');
+
+    const res = await store.completeLegRotation({
+      anchorStepId,
+      handoff: 'HANDOFF BODY',
+      seed: 'SEED PREAMBLE + HANDOFF BODY',
+      contextTokensPeak: 210_000,
+    });
+    expect(res).toEqual({ fromLeg: 1, toLeg: 2, abandonedSessionId: 'sess-1' });
+
+    // The anchor step: session NULLed (fresh start next turn), abandon marker + seed set, leg bumped. The
+    // atomic-resume markers are untouched — a rotation must never look like a committed batch.
+    const step = await steps.findOne({ where: { id: anchorStepId } });
+    expect(step?.session_id).toBeNull();
+    expect(step?.rotating_session_id).toBe('sess-1');
+    expect(step?.pending_leg_seed).toBe('SEED PREAMBLE + HANDOFF BODY');
+    expect(step?.leg_ordinal).toBe(2);
+    expect(step?.batch_ordinal).toBe(1); // untouched
+    expect(step?.commit_sha).toBeNull(); // untouched
+
+    // The seed reads back for the driver-side fold.
+    expect(await store.getPendingLegSeed(anchorStepId)).toBe('SEED PREAMBLE + HANDOFF BODY');
+
+    // The Leg projection: leg 1 closed (rotated + handoff + peak + ended_at), leg 2 opened (active).
+    const legs = await store.getLegs(threadId);
+    expect(legs.map((l) => l.ordinal)).toEqual([1, 2]);
+    expect(legs[0]).toMatchObject({
+      status: 'rotated',
+      handoff_md: 'HANDOFF BODY',
+      session_id: 'sess-1',
+      context_tokens_peak: 210_000,
+    });
+    expect(legs[0].ended_at).toBeInstanceOf(Date);
+    expect(legs[1]).toMatchObject({ status: 'active', session_id: null });
+    expect(legs[1].ended_at).toBeNull();
+  });
+
+  it('completeLegRotation is a no-op (returns null) when there is no live session to rotate', async () => {
+    const { threadId, anchorStepId } = await seedJobThreadStep(null);
+    const res = await store.completeLegRotation({ anchorStepId, handoff: 'x', seed: 'y' });
+    expect(res).toBeNull();
+    const step = await steps.findOne({ where: { id: anchorStepId } });
+    expect(step?.leg_ordinal).toBe(1); // unchanged
+    expect(step?.pending_leg_seed).toBeNull();
+    expect(await store.getLegs(threadId)).toEqual([]);
+  });
+
+  it('recordActiveLeg upserts the current Leg row idempotently and keeps the PEAK occupancy', async () => {
+    const { threadId, anchorStepId } = await seedJobThreadStep('sess-1');
+    await store.recordActiveLeg(anchorStepId, 'sess-1', 120_000);
+    await store.recordActiveLeg(anchorStepId, 'sess-1', 90_000); // lower sample must NOT lower the peak
+    const legs = await store.getLegs(threadId);
+    expect(legs).toHaveLength(1);
+    expect(legs[0]).toMatchObject({
+      ordinal: 1,
+      status: 'active',
+      session_id: 'sess-1',
+      context_tokens_peak: 120_000,
+    });
+  });
 });

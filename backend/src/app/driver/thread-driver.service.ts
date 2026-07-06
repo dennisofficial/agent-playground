@@ -60,6 +60,7 @@ import {
   type ReviewChildThread,
 } from './driver-store.service';
 import { renderPlan, type PlannedStep } from './render-plan';
+import { LegRotationWatch, resolveRotationThresholds } from './leg-rotation-watch';
 import {
   DRIVER_REPO,
   type DriverRepoResolver,
@@ -1591,9 +1592,15 @@ export class ThreadDriver implements JobDispatcher {
     // The instruction the engine receives — the build turn's "first message". Computed once here so it
     // can both kick off the turn AND be persisted on the anchor row (the web renders it like a subagent's
     // Task prompt, so the step transcript shows what was asked, not just the engine's reply).
-    const task = thread.kind === 'master_review'
+    const baseTask = thread.kind === 'master_review'
       ? renderMasterReviewTask(record, repo)
       : renderBatchTask(record, thread, steps);
+    // LEG-ROTATION SEED FOLD: if a prior Leg rotated, its structured handoff is stashed on the anchor step.
+    // Prepend it so the FRESH Leg session continues mid-flight (its WIP is already on disk in the worktree)
+    // instead of restarting the batch. The seed is cleared the instant the fresh session is born (turn-runner
+    // clear-on-birth). Mirrors the brain's `pending_compaction_seed` fold in `runChatTurnInner`.
+    const legSeed = await this.store.getPendingLegSeed(anchor.id);
+    const task = legSeed ? `${legSeed}\n\n---\n\n${baseTask}` : baseTask;
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -1968,6 +1975,17 @@ export class ThreadDriver implements JobDispatcher {
     const spec = threadKindSpec(thread.kind);
     const engine: SessionEngine = spec.engine;
     const systemPrompt = renderAgentPrompt(spec.agent, { jobKind: job.kind });
+    // Leg-rotation observation (Stage 0 — OBSERVE ONLY, no action yet): watch this builder session's live
+    // main-agent context occupancy and log when it crosses the SOFT/HARD thresholds. Codex/master-review turns
+    // emit no per-call occupancy, so the watch never latches for them (positive-signal only). Later stages hang
+    // the steer + rotation off this same signal. See `leg-rotation-watch.ts` + the plan.
+    const rotationWatch = new LegRotationWatch(resolveRotationThresholds(), (sig) =>
+      this.logger.warn(
+        `leg-rotation ${sig.phase.toUpperCase()} threshold crossed [observe-only] — thread ${thread.ordinal} ` +
+          `anchor ${anchor.id} (${engine}): contextTokens=${sig.contextTokens}` +
+          (sig.contextLimit ? `/${sig.contextLimit}` : ''),
+      ),
+    );
     // Circuit breaker (#3): bound the engine turn with the shared PAUSABLE deadline (paused across a
     // `request_operator_input` human wait). On breach it both signals the SDK to abort AND hard-rejects so
     // the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute to the anchor
@@ -2013,6 +2031,7 @@ export class ThreadDriver implements JobDispatcher {
             },
           },
           onEvent: (e) => {
+            if (e.kind === 'usage') rotationWatch.observe(e);
             if (e.kind === 'tool') this.logger.debug(`batch tool: ${e.name}`);
             harness.onEvent(e);
           },
