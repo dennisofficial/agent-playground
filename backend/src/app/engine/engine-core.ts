@@ -346,6 +346,29 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
   },
 };
 
+// VALIDATE subagent — build-time LIVE end-to-end validation + evidence capture. Added ONLY on EXECUTE
+// turns (like the writers), so only the builder can spawn it. It gets `Bash` (to boot services via
+// atlas-svc, curl endpoints, drive Playwright, run e2e) and `Write` (to author the `/context/artifacts/`
+// evidence bundle + RESULTS.md — the `/context` mount is a writable root, see redis-engine-runner). It has
+// NO `Task` (no recursive fan-out). Its "write only under /context/artifacts, don't edit code" contract is
+// prompt discipline (the `canUseTool` write boundary is per-turn, not per-subagent) — same model as `test`
+// being "read-only by prompt". Distinct from `test`: `test` runs typecheck/build/unit → a diagnosis;
+// `validate` boots the thing, exercises it live, and leaves durable proof the operator can see.
+const VALIDATE_SUBAGENT: NonNullable<Options['agents']> = {
+  validate: {
+    description:
+      'LIVE validation + evidence capture (Sonnet). Delegate END-TO-END validation here to keep your ' +
+      'context clean: it BOOTS the change and exercises it as a real caller would (atlas-svc services, ' +
+      'curl, Playwright UI drives, the repo\'s own e2e/smoke), then leaves the PROOF in `/context/artifacts/` ' +
+      '(logs, screenshots, a `RESULTS.md` index) that renders in the operator\'s ARTIFACTS panel. Returns a ' +
+      'verdict + the observed behavior + the exact artifact paths it wrote — reference those instead of ' +
+      'recapturing. Use `test` instead for a fast typecheck/build/unit diagnosis with no artifacts.',
+    tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
+    model: 'claude-sonnet-5',
+    prompt: renderAgentPrompt(Agent.VALIDATE),
+  },
+};
+
 /** Is `path` inside `root` (after resolution)? Confines writes to the worktree. */
 function isInsideRoot(path: string, root: string): boolean {
   const r = resolvePath(root);
@@ -534,9 +557,13 @@ export class EngineCore {
       tools: planMode ? PLAN_TOOLS : readOnly ? REVIEW_TOOLS : WORKER_TOOLS,
       // Programmatic subagent definitions (settingSources [] means none are read from disk) — the only
       // spawnable Task subagents. Advisory subagents (read-only, Sonnet) are always available; the WRITER
-      // subagents (implement/implement-deep) are added ONLY on EXECUTE turns, so a plan/brain/review turn
-      // can never fan out a file-mutating subagent. See SUBAGENTS / WRITER_SUBAGENTS.
-      agents: mode === 'execute' ? { ...SUBAGENTS, ...WRITER_SUBAGENTS } : SUBAGENTS,
+      // subagents (implement/implement-deep) and the build-time VALIDATE subagent are added ONLY on EXECUTE
+      // turns, so a plan/brain/review turn can never fan out a file-mutating or evidence-writing subagent.
+      // See SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT.
+      agents:
+        mode === 'execute'
+          ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT }
+          : SUBAGENTS,
       // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
       // they're host-controlled, never a human prompt. Empty for non-bridge turns (workers).

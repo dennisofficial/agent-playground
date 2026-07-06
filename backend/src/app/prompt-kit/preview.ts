@@ -34,6 +34,7 @@ export const AGENT_PROMPTS: AgentPromptInfo[] = [
   { id: 'subagent-review', agent: Agent.REVIEW_AGENT, note: 'engine review subagent', ctx: {} },
   { id: 'subagent-debug', agent: Agent.DEBUG, note: 'engine debug subagent', ctx: {} },
   { id: 'subagent-test', agent: Agent.TEST, note: 'engine test subagent', ctx: {} },
+  { id: 'subagent-validate', agent: Agent.VALIDATE, note: 'engine live-validation + evidence subagent', ctx: {} },
   { id: 'subagent-writer', agent: Agent.FAN_OUT, note: 'engine implement/implement-deep writer', ctx: {} },
   { id: 'meta-plan-review', agent: Agent.META_PLAN_REVIEW, note: 'plan-review Codex chain', ctx: {} },
   { id: 'meta-decision-classifier', agent: Agent.META_CLASSIFIER, note: 'decision-gate classifier chain', ctx: {} },

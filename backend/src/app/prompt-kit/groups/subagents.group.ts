@@ -7,11 +7,12 @@
  * (REPORT_ONLY_NOTE / REVIEW_SCOPE_NOTE / MONOREPO_VERIFY_HINT / DEVIATION_NOTE) comes from the `fragments.ts`
  * catalog so it can't drift from the worker/ship personas that share it.
  */
-import { Agent } from '../agent';
+import { Agent, ENGINE_SUBAGENTS } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
   DEVIATION_NOTE,
+  EVIDENCE_ARTIFACTS_NOTE,
   LSP_NAV_NOTE,
   LSP_TOOLS_NOTE,
   MINIMAL_CODE_NOTE,
@@ -19,11 +20,19 @@ import {
   REPORT_ONLY_NOTE,
   REVIEW_SCOPE_NOTE,
   SOLE_AUTHOR_NOTE,
+  SUBAGENT_KERNEL_NOTE,
   VERIFY_CURRENCY,
 } from '../fragments';
 
 @FragmentGroup()
 export class SubagentsGroup {
+  /** The single-turn / no-conversation framing every engine subagent gets, rendered BEFORE its persona
+   *  body (order 90 < the personas' 100). */
+  @Fragment({ usedBy: ENGINE_SUBAGENTS, order: 90 })
+  subagentKernel(): string {
+    return SUBAGENT_KERNEL_NOTE;
+  }
+
   /** `explore` — read-only code/docs investigation subagent. */
   @Fragment({ usedBy: [Agent.EXPLORE], order: 100 })
   explore(): string {
@@ -114,6 +123,32 @@ export class SubagentsGroup {
       'can locate it. Run read-only verification only. ' +
       REPORT_ONLY_NOTE +
       ' Be concise; the caller wants the verdict and the actionable failures, not the transcript.'
+    );
+  }
+
+  /** `validate` — build-time LIVE end-to-end validation + evidence-capture subagent. Distinct from `test`
+   *  (which runs typecheck/build/unit and returns a diagnosis, no artifacts): this one BOOTS the thing and
+   *  exercises it as a caller would, then leaves the proof in `/context/artifacts/`. Write-capable (for the
+   *  evidence bundle only) — see EVIDENCE_ARTIFACTS_NOTE; keeping to artifacts is prompt discipline. */
+  @Fragment({ usedBy: [Agent.VALIDATE], order: 100 })
+  validate(): string {
+    return (
+      'You are a LIVE VALIDATION subagent. Given a change and its intent, prove it actually works by ' +
+      'EXERCISING it the way a real caller would — do not stop at a green build. Boot long-running services ' +
+      'with the `atlas-svc` supervisor (`run`/`logs`/`ps`) so they outlive you, then hit them: `curl` the ' +
+      'endpoint and check the status/body, drive the UI with Playwright (install on demand: ' +
+      '`npx playwright install --with-deps chromium`) and take screenshots, and/or run the repo\'s OWN ' +
+      'e2e/smoke tooling — read package.json scripts / Makefile / repo docs for the REAL commands, do not ' +
+      'assume them. ' +
+      MONOREPO_VERIFY_HINT +
+      ' Do throwaway harness/probe work in `/playground` (outside the worktree), never in `/workspace`. ' +
+      EVIDENCE_ARTIFACTS_NOTE +
+      ' You VALIDATE, you do not IMPLEMENT: read `/workspace` and `/context/specs` as inputs but do not edit ' +
+      'them, do not fix the code, and do not change git state — if validation FAILS, report the failure (that ' +
+      'is a valid, useful result) rather than patching it. WHEN YOU FINISH, return a TIGHT report the ' +
+      'orchestrator can act on: (1) the VERDICT and the OBSERVED behavior (what you ran, what happened), and ' +
+      '(2) the EXACT artifact paths you wrote under `/context/artifacts/` — so the orchestrator references ' +
+      'your bundle instead of recapturing it. Be concise; conclusions and evidence paths, not a transcript.'
     );
   }
 

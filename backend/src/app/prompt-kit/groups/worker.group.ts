@@ -11,6 +11,7 @@ import {
   DELETION_SAFETY_NOTE,
   DEVIATION_NOTE,
   DOCS_BEFORE_GREP,
+  EVIDENCE_ARTIFACTS_NOTE,
   LSP_TOOLS_NOTE,
   MINIMAL_CODE_NOTE,
   MONOREPO_VERIFY_HINT,
@@ -53,7 +54,9 @@ const ORCHESTRATOR_SUBAGENTS_NOTE =
   'tight summary. Writers are for big, context-heavy work — anything small or quick you do yourself. ' +
   'Run writers ONE AT A TIME (they share one worktree — concurrent writers corrupt it). Read-only ' +
   'helpers: `explore` (trace the code/own docs), `docs` (external library docs), `review` (a second ' +
-  'pass on a diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw logs).';
+  'pass on a diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw ' +
+  'logs), `validate` (LIVE end-to-end validation — boots the change, exercises it as a caller would, and ' +
+  'leaves the evidence bundle in `/context/artifacts/`).';
 
 @FragmentGroup()
 export class WorkerGroup {
@@ -113,5 +116,23 @@ export class WorkerGroup {
   @Fragment({ usedBy: [Agent.WORKER], order: 420 })
   minimalCode(): string {
     return MINIMAL_CODE_NOTE;
+  }
+
+  /** The evidence-artifact mandate: every build thread leaves durable PROOF in `/context/artifacts/`.
+   *  Owned jointly with the `validate` subagent — the orchestrator DELEGATES the heavy live-validation +
+   *  capture to `validate` (to keep its own context clean) and, if `validate` already wrote the bundle,
+   *  does NOT recapture. */
+  @Fragment({ usedBy: [Agent.WORKER], order: 430 })
+  evidenceArtifacts(): string {
+    return (
+      EVIDENCE_ARTIFACTS_NOTE +
+      ' PREFER TO DELEGATE this — spawn the `validate` subagent to run the live end-to-end validation and ' +
+      'write the evidence bundle, so the heavy validation context (booted services, Playwright, log tails) ' +
+      'stays off YOUR window. When it returns, it tells you exactly which files it wrote under ' +
+      '`/context/artifacts/`: reference those (do NOT recapture the same evidence). Capture directly ' +
+      'yourself only for something too small to delegate. Before you call `complete_thread`, make sure the ' +
+      'evidence bundle (a `RESULTS.md` plus its logs/screenshots) exists in `/context/artifacts/` and cite ' +
+      'it in your `verification`.'
+    );
   }
 }

@@ -20,6 +20,8 @@ export enum Agent {
   REVIEW_AGENT = 'review_agent',
   DEBUG = 'debug',
   TEST = 'test',
+  /** The build-time live-validation + evidence-capture subagent (spawned via Task on execute turns). */
+  VALIDATE = 'validate',
   /** The ship-time PR-review orchestrator (`ship-pr-review`). */
   PR_REVIEW = 'pr_review',
   /** The ship-time Codex master review (`ship-master-review`). */
@@ -43,6 +45,10 @@ export const ALL: Agent[] = Object.values(Agent);
 /** The code-changing build agents (worker orchestrator + its fan-out writers). */
 export const BUILDERS: Agent[] = [Agent.WORKER, Agent.FAN_OUT];
 
+/** The build agents that own capturing evidence artifacts into `/context/artifacts/` (the orchestrator
+ *  + its dedicated live-validation subagent). Shared audience for `EVIDENCE_ARTIFACTS_NOTE`. */
+export const EVIDENCE_OWNERS: Agent[] = [Agent.WORKER, Agent.VALIDATE];
+
 /** The read-only advisory subagents (spawned via Task). */
 export const ADVISORY: Agent[] = [
   Agent.EXPLORE,
@@ -51,6 +57,12 @@ export const ADVISORY: Agent[] = [
   Agent.DEBUG,
   Agent.TEST,
 ];
+
+/** EVERY engine subagent spawnable via `Task` inside a turn — the read-only advisory set plus the
+ *  file-writing writers (`implement`/`implement-deep`) and the live `validate` subagent. These are the
+ *  single-turn, no-conversation helpers; shared audience for `SUBAGENT_KERNEL_NOTE`. (Excludes the ship-time
+ *  PR/master-review turns, which are full sessions, not Task subagents.) */
+export const ENGINE_SUBAGENTS: Agent[] = [...ADVISORY, Agent.VALIDATE, Agent.FAN_OUT];
 
 /** Every code-review surface (the per-diff `review` subagent + the two ship-time reviews). */
 export const REVIEWERS: Agent[] = [Agent.REVIEW_AGENT, Agent.PR_REVIEW, Agent.MASTER_REVIEW];

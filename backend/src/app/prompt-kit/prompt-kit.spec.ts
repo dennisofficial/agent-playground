@@ -6,7 +6,9 @@ import {
   CLOUD_SANDBOX_NOTE,
   DELETION_SAFETY_NOTE,
   DEVIATION_NOTE,
+  EVIDENCE_ARTIFACTS_NOTE,
   REPORT_ONLY_NOTE,
+  SUBAGENT_KERNEL_NOTE,
   SOLE_AUTHOR_NOTE,
   SPIKE_FIRST_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
@@ -98,6 +100,52 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(CLOUD_SANDBOX_NOTE).length - 1, String(agent)).toBe(1);
     }
+  });
+
+  it('SUBAGENT_KERNEL_NOTE reaches every engine subagent (once) as a preamble, but not full-session agents', () => {
+    for (const agent of [
+      Agent.EXPLORE,
+      Agent.DOCS,
+      Agent.REVIEW_AGENT,
+      Agent.DEBUG,
+      Agent.TEST,
+      Agent.VALIDATE,
+      Agent.FAN_OUT,
+    ]) {
+      const out = renderAgentPrompt(agent);
+      expect(out.split(SUBAGENT_KERNEL_NOTE).length - 1, String(agent)).toBe(1);
+      // it renders FIRST — before the persona body.
+      expect(out.startsWith(SUBAGENT_KERNEL_NOTE), String(agent)).toBe(true);
+    }
+    // NOT the full-session agents (brain, worker orchestrator, ship-time reviews) — they converse / span turns.
+    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.PR_REVIEW, Agent.MASTER_REVIEW]) {
+      expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(
+        SUBAGENT_KERNEL_NOTE,
+      );
+    }
+  });
+
+  it('EVIDENCE_ARTIFACTS_NOTE reaches the worker orchestrator AND the validate subagent, not the writer/brain', () => {
+    for (const agent of [Agent.WORKER, Agent.VALIDATE]) {
+      const out = renderAgentPrompt(agent, { jobKind: 'feature' });
+      expect(out.split(EVIDENCE_ARTIFACTS_NOTE).length - 1, String(agent)).toBe(1);
+      expect(out, String(agent)).toContain('/context/artifacts');
+      expect(out, String(agent)).toContain('RESULTS.md');
+    }
+    // NOT the writer (it implements a slice and reports up) nor the planning brain.
+    for (const agent of [Agent.FAN_OUT, Agent.ATLAS_MAIN]) {
+      expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(
+        EVIDENCE_ARTIFACTS_NOTE,
+      );
+    }
+  });
+
+  it('the validate subagent renders a non-empty persona with its report contract', () => {
+    const out = renderAgentPrompt(Agent.VALIDATE);
+    expect(out.length).toBeGreaterThan(0);
+    expect(out).toContain('LIVE VALIDATION');
+    expect(out).toContain('EXACT artifact paths'); // the report-back contract
+    expect(out).toContain('/context/artifacts');
   });
 
   it('the worker behavioral tail (validate + spike) follows the job-kind block, in order', () => {

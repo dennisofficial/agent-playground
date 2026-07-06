@@ -239,6 +239,21 @@ export const MINIMAL_CODE_NOTE =
 // ── SUBAGENT POLICY BLOCKS ──────────────────────────────────────────────────────────────────────────
 
 /**
+ * SUBAGENT KERNEL — the tiny framing preamble every engine subagent gets (audience `ENGINE_SUBAGENTS`:
+ * explore/docs/review/debug/test/validate + the writers). It just tells them WHAT they are: a single-turn,
+ * no-conversation helper whose final message IS its whole output. Renders BEFORE the persona body (lower
+ * order) so each subagent reads "here's your shape" then "here's your job". Deliberately says nothing about
+ * tools or scope — the personas own that.
+ */
+export const SUBAGENT_KERNEL_NOTE =
+  'You are a SUBAGENT — a parent agent spawned you (via Task) to do ONE scoped job in a SINGLE turn. There ' +
+  'is no conversation here: no operator to ask, no follow-up message coming, no next turn. Finish the whole ' +
+  'job NOW, autonomously and to the best of your ability, and return your answer as your FINAL message — ' +
+  'that text is your ENTIRE output, the only thing the parent receives. Do not defer work, do not stop early ' +
+  'expecting to continue later, and do not ask questions; if a detail is ambiguous, make the most reasonable ' +
+  'assumption, proceed, and note it in what you return.';
+
+/**
  * REPORT-ONLY discipline — the shared kernel across the advisory subagents (explore/docs/review) and the
  * `test` subagent. Deliberately NARROW: it says only "don't edit files / change git — report only". It says
  * NOTHING about running commands (`test` legitimately runs Bash while `debug` must not — those clauses stay
@@ -285,6 +300,29 @@ export const VALIDATE_BY_RUNNING_NOTE =
   'long-running services with the `atlas-svc` supervisor (`run`/`logs`/`ps`) so they outlive the turn, ' +
   'then hit them — `curl` the endpoint and check the status/body, drive the UI with Playwright, or run ' +
   "the repo's own e2e/smoke tooling — and confirm the OBSERVED behavior matches the intent.";
+
+/**
+ * EVIDENCE ARTIFACTS — the human-facing PROOF that live-validation actually happened. Shared by the build
+ * agents that own capture (EVIDENCE_OWNERS = the WORKER orchestrator + the `validate` subagent). Complements
+ * {@link VALIDATE_BY_RUNNING_NOTE} (which says "actually run it"): this says "and leave the proof on disk."
+ * `/context/artifacts/` is the ONE `/context` bucket builders write; `specs/` + `generated/` are read-only
+ * grounding. The web ARTIFACTS panel lists this folder and renders logs/markdown as text and screenshots
+ * (PNG/JPG) inline — so what you write here is exactly what the operator sees as evidence the app runs.
+ * NOTE: this is prompt-level discipline, not a mount guarantee — write ONLY under `/context/artifacts/`.
+ */
+export const EVIDENCE_ARTIFACTS_NOTE =
+  'CAPTURE EVIDENCE ARTIFACTS — once you have live-validated (see VALIDATE BY RUNNING), leave the PROOF on ' +
+  'disk in `/context/artifacts/` so the operator can see the work actually runs. This is the ONE `/context` ' +
+  'bucket you may write (treat `/context/specs` and `/context/generated` as READ-ONLY grounding, and put all ' +
+  'CODE under `/workspace`); everything you drop in `/context/artifacts/` surfaces in the operator\'s ARTIFACTS ' +
+  'panel — logs and markdown render as text, screenshots (`.png`) render inline. Capture, per scenario you ' +
+  'validated: the command/test OUTPUT as a `*.log`, a `.png` SCREENSHOT of any UI you drove (Playwright ' +
+  '`page.screenshot`), any report the run produced, and a top-level `RESULTS.md` that INDEXES what you ' +
+  'validated, HOW (the exact commands/flows), the OBSERVED result, and links to each evidence file. Name ' +
+  'files by scenario so the panel reads cleanly (e.g. `server-presence/jest-integration.log`, ' +
+  '`boot.png`). EVIDENCE, NOT CLAIMS: prefer a captured artifact over prose, and where something genuinely ' +
+  'cannot be validated in this Linux sandbox (a Windows GUI app, real device hardware), SAY SO plainly in ' +
+  'RESULTS.md — validate everything you can and mark the honest remainder, never fabricate a result.';
 
 /**
  * SPIKE FIRST — for planning + workers. Prove a risky/unverified assumption (especially an SDK or library

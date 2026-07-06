@@ -2499,9 +2499,11 @@ export function renderBatchTask(
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nThread: ${thread.brief}`,
-    `\nYour grounding is the READ-ONLY directory \`/context/specs/\` (a folder): read its \`plan.md\`` +
-      ` index, this thread's \`sections/NN-*.md\` file, and \`data-model.md\`. Make ALL code changes under` +
-      ` \`/workspace\` — never edit anything in \`/context\`.`,
+    `\nYour grounding is \`/context/specs/\` — read its \`plan.md\` index, this thread's \`sections/NN-*.md\`` +
+      ` file, and \`data-model.md\`; treat \`/context/specs\` and \`/context/generated\` as READ-ONLY. Make ALL` +
+      ` code changes under \`/workspace\`. The one \`/context\` bucket you may write is \`/context/artifacts/\`:` +
+      ` leave your live-validation evidence there (logs, screenshots, a \`RESULTS.md\` index) so it surfaces in` +
+      ` the operator's ARTIFACTS panel.`,
     // Advisory orientation cheat-sheet, when a prior pass captured one (may be absent — the fresh session
     // then orients off the repo docs itself). Kept subordinate to the code + specs (authoritative).
     ...(thread.orientation

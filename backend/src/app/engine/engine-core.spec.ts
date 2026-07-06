@@ -252,12 +252,21 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     // The advisory read-only subagent is still there.
     expect(execAgents.explore).toBeDefined();
 
-    // Plan + review turns get ONLY the advisory set — no writers can be spawned.
+    // The build-time `validate` subagent: execute-only, Sonnet, Bash + Write (to author the evidence
+    // bundle) but NO Task (no recursive fan-out). Its "write only under /context/artifacts" contract is
+    // prompt discipline, NOT enforced here — the write boundary is per-turn (see the canUseTool test).
+    expect(execAgents.validate).toBeDefined();
+    expect(execAgents.validate.model).toBe('claude-sonnet-5');
+    expect(execAgents.validate.tools).toEqual(expect.arrayContaining(['Bash', 'Write']));
+    expect(execAgents.validate.tools).not.toContain('Task');
+
+    // Plan + review turns get ONLY the advisory set — no writers or validator can be spawned.
     for (const mode of ['plan', 'review'] as const) {
       const agents = await run(mode);
       expect(agents.explore).toBeDefined();
       expect(agents.implement).toBeUndefined();
       expect(agents['implement-deep']).toBeUndefined();
+      expect(agents.validate).toBeUndefined();
     }
   });
 
