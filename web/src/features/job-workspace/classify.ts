@@ -1,5 +1,6 @@
 import type {
   WebApprovalCard,
+  WebAttachmentsCard,
   WebFileRequestCard,
   WebQuestionCard,
   WebReviewCommentsCard,
@@ -33,6 +34,8 @@ export type ClassifiedMessage =
       message: JobMessage;
       card: WebReviewCommentsCard;
     }
+  /** Files/images the operator attached in the composer — thumbnails on top, caption (if any) underneath. */
+  | { kind: "attachments"; message: JobMessage; card: WebAttachmentsCard }
   | { kind: "event"; message: JobMessage; tone: SystemTone }
   /** A session-compaction pill that also carries the full handoff summary (expandable to inspect it). */
   | {
@@ -91,6 +94,10 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
   // renders as one — check it BEFORE the plain-user fallback below.
   if (message.card?.type === "review_comments_card") {
     return { kind: "review_comments", message, card: message.card };
+  }
+  // Composer attachments are ALSO operator-authored but carry an attachments card — check before the fallback.
+  if (message.card?.type === "attachments_card") {
+    return { kind: "attachments", message, card: message.card };
   }
 
   if (message.author === "user" || message.local) {

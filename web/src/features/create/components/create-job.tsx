@@ -1,14 +1,16 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, Plug } from "lucide-react";
+import { Check, Paperclip, Plug } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { BranchPicker, Dropdown } from "@/components/branch-picker";
 import { useOrgs } from "@/lib/api/me";
 import { useOrgRepos, useCreateThread } from "@/lib/api/job-queries";
+import { useAttachments } from "@/features/job-workspace/use-attachments";
+import { AttachmentTray } from "@/features/job-workspace/attachment-tray";
 import { orgSwatch, orgInitials } from "@/lib/org-display";
 import { ROUTES, threadHref } from "@/lib/routes";
 
@@ -38,6 +40,14 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   const [branch, setBranch] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const {
+    attachments,
+    error: attachError,
+    add: addFiles,
+    remove: removeAttachment,
+    addPastedImages,
+  } = useAttachments();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Default the org to the operator's first org (owned first, from the session order).
   useEffect(() => {
@@ -84,13 +94,22 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     const text = message.trim();
     if (!orgId) return setError("Pick an organization.");
     if (!repoId) return setError("Pick a repo to start a job.");
-    if (!text) return setError("Add a first message — it starts the job.");
+    if (!text && attachments.length === 0) {
+      return setError("Add a first message or an attachment — it starts the job.");
+    }
     setError(null);
     // Seed a title from the first line of the message so the thread isn't "Untitled" before the
     // brain renames it (the create endpoint takes an optional title).
     const title = text.split("\n")[0].trim().slice(0, 80) || undefined;
     create.mutate(
-      { firstMessage: text, title, baseBranch: branch.trim() || undefined },
+      {
+        firstMessage: text,
+        title,
+        baseBranch: branch.trim() || undefined,
+        ...(attachments.length
+          ? { files: attachments.map((a) => a.file) }
+          : {}),
+      },
       {
         onSuccess: ({ jobId }) => {
           router.push(threadHref({ orgId, repoId, jobId }));
@@ -99,6 +118,11 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         onError: () => setError("Could not start the job. Try again."),
       },
     );
+  }
+
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files) addFiles(Array.from(e.target.files));
+    e.target.value = "";
   }
 
   return (
@@ -165,10 +189,39 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
+          onPaste={(e) => {
+            if (addPastedImages(e)) e.preventDefault();
+          }}
           rows={4}
           placeholder="Describe the work — sent as your first message the moment the job is ready…"
           className="mt-1.5 w-full resize-none rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
         />
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1.5 rounded-md border border-border-2 px-2.5 py-1.5 text-[12px] text-dim transition hover:bg-surface-2 hover:text-text"
+          >
+            <Paperclip size={13} strokeWidth={2} />
+            Attach files
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,.pdf,.txt,.md,.markdown,.json,.csv,.log,.xml,.yaml,.yml,.html,.htm,.css,.js,.ts,.tsx"
+            className="hidden"
+            onChange={onPick}
+          />
+        </div>
+        <AttachmentTray
+          attachments={attachments}
+          onRemove={removeAttachment}
+          className="mt-2"
+        />
+        {attachError ? (
+          <p className="mt-1.5 text-[12px] text-red">{attachError}</p>
+        ) : null}
       </div>
 
       {error ? <p className="text-[12px] text-red">{error}</p> : null}

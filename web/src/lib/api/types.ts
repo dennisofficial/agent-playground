@@ -187,13 +187,41 @@ export interface WebReviewCommentsCard {
   message?: string;
 }
 
+/** One attachment the operator sent from the composer (image or file). Mirrors the backend `AttachmentCardItem`. */
+export interface WebAttachmentItem {
+  /** Display filename. */
+  name: string;
+  /** Bucket-relative `/context` path (`uploads/<name>`) — fetched from the streaming raw endpoint. */
+  path: string;
+  kind: "image" | "file";
+  size: number;
+  /**
+   * OPTIMISTIC-ONLY local preview URL (`URL.createObjectURL`), set on the client's own optimistic row so
+   * the thumbnail shows instantly before the durable row (server `path`) reconciles in. Never sent by the
+   * server.
+   */
+  localUrl?: string;
+}
+
+/**
+ * Files/images the operator attached in the composer (or pasted). Rendered as a chip/thumbnail row ON TOP
+ * of the operator's optional caption bubble. Mirrors the backend `attachments_card`.
+ */
+export interface WebAttachmentsCard {
+  type: "attachments_card";
+  items: WebAttachmentItem[];
+  /** The operator's optional typed caption, rendered as a normal bubble beneath the attachments. */
+  message?: string;
+}
+
 export type WebCard =
   | WebApprovalCard
   | WebVerdictCard
   | WebQuestionCard
   | WebSecretInputCard
   | WebFileRequestCard
-  | WebReviewCommentsCard;
+  | WebReviewCommentsCard
+  | WebAttachmentsCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
 /** One step of a thread's locked plan — the execute folder's leaf (a Claude Code session). */

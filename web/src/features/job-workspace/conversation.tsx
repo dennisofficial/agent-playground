@@ -27,6 +27,7 @@ import { QuestionCardView } from "./question-card";
 import { SecretCardView } from "./secret-card";
 import { FileCardView } from "./file-card";
 import { ReviewCommentsCardView } from "./review-comments-card";
+import { AttachmentsCardView } from "./attachments-card";
 import { SubagentCard, indexDurableSubagents, subagentNode } from "./subagents";
 import {
   AgentPromptBlock,
@@ -666,6 +667,16 @@ function buildLogItems(
           <ReviewCommentsCardView
             key={message.ts}
             card={c.card}
+            time={message.postedAt}
+          />,
+        );
+        break;
+      case "attachments":
+        push(
+          <AttachmentsCardView
+            key={message.ts}
+            card={c.card}
+            jobRef={jobRef}
             time={message.postedAt}
           />,
         );

@@ -2,8 +2,15 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, ChevronDown, Plus, Square } from "lucide-react";
-import { useSay, useSendReviewComments, useStop } from "@/lib/api/job-queries";
+import {
+  useSay,
+  useSayWithAttachments,
+  useSendReviewComments,
+  useStop,
+} from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
+import { useAttachments } from "./use-attachments";
+import { AttachmentTray } from "./attachment-tray";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
 import { useAllJobs } from "@/lib/api/inbox";
 import { ContextMeter } from "./bubbles";
@@ -28,10 +35,11 @@ export interface ComposerFooter {
  * reacts mid-turn) — no code change here beyond dropping the old client queue. When a turn is live AND the
  * box is empty, the Send button becomes a STOP button (`…/jobs/:jobId/stop`) that gracefully ends the turn.
  *
- * The `Plan ▾` mode pill and the `＋` attach button are visual affordances from the design and are
- * intentionally static for now (no backend wiring) — see `web/BACKEND_GAPS.md`. The model · effort
- * label and the context ring, however, ARE live: they thread the lane's latest `turn_meta` (via the
- * `footer` prop), so they change as the operator switches lanes.
+ * The `＋` attach button is wired: it opens a file picker, and the operator can also PASTE images straight
+ * into the textarea. Attachments preview in a tray (local blob URLs — no base64) and send as a multipart
+ * `say`; the backend writes them to the sandbox and the brain reads them with its Read tool. The `Plan ▾`
+ * mode pill remains a static design affordance for now. The model · effort label and the context ring ARE
+ * live: they thread the lane's latest `turn_meta` (via the `footer` prop), so they change per lane.
  *
  * The composer renders on EVERY transcript lane. On non-Main lanes it is `readOnly`: the box is dimmed
  * and non-editable and the Send button is disabled (greyed), because the operator steers the brain from
@@ -55,12 +63,32 @@ export function Composer({
   readOnly?: boolean;
 }) {
   const say = useSay(jobRef);
+  const sayWithAttachments = useSayWithAttachments(jobRef);
   const stop = useStop(jobRef);
   const sendReviewComments = useSendReviewComments(jobRef);
   const { comments, clearComments } = useReviewComments();
   const [text, setText] = useState("");
+  const {
+    attachments,
+    error: attachError,
+    add: addFiles,
+    remove: removeAttachment,
+    clear: clearAttachments,
+    addPastedImages,
+  } = useAttachments();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files) addFiles(Array.from(e.target.files));
+    e.target.value = ""; // allow re-picking the same file
+  }
+
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (readOnly) return;
+    if (addPastedImages(e)) e.preventDefault();
+  }
 
   // Is the brain's turn live? Same reconciliation the transcript uses: the SSE live turn, self-healed by the
   // authoritative realtime `needsYou` (idle = no turn), so a dropped `turn_end` doesn't strand a Stop button.
@@ -73,7 +101,11 @@ export function Composer({
   // Stop replaces Send only when a turn is running AND the composer is empty (no pending text/comments to
   // send). With text present, the button is Send — which now STEERS the running turn server-side. Never on
   // a read-only lane.
-  const showStop = turnActive && !text.trim() && comments.length === 0;
+  const showStop =
+    turnActive &&
+    !text.trim() &&
+    comments.length === 0 &&
+    attachments.length === 0;
 
   // Auto-grow the textarea to fit its content (capped by the CSS max-height, which then scrolls).
   // Reset to `auto` first so the box can also shrink as lines are removed.
@@ -111,6 +143,14 @@ export function Composer({
       setText("");
       return;
     }
+    if (attachments.length > 0) {
+      // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
+      // URLs; they're freed on composer unmount (the hook's createdUrlsRef backstop).
+      sayWithAttachments.mutate({ text: trimmed, attachments });
+      clearAttachments();
+      setText("");
+      return;
+    }
     if (!trimmed) return;
     say.mutate(trimmed);
     setText("");
@@ -143,12 +183,23 @@ export function Composer({
               "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
           }}
         >
+          {!readOnly ? (
+            <AttachmentTray
+              attachments={attachments}
+              onRemove={removeAttachment}
+              className="mb-2"
+            />
+          ) : null}
+          {!readOnly && attachError ? (
+            <div className="mb-2 text-[11px] text-red">{attachError}</div>
+          ) : null}
           <div className={`flex items-start gap-2.5${readOnly ? " opacity-60" : ""}`}>
             <textarea
               ref={textareaRef}
               value={readOnly ? "" : text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={onKeyDown}
+              onPaste={onPaste}
               rows={1}
               disabled={readOnly}
               placeholder={
@@ -177,8 +228,11 @@ export function Composer({
                 onClick={send}
                 disabled={
                   readOnly ||
-                  (!text.trim() && comments.length === 0) ||
+                  (!text.trim() &&
+                    comments.length === 0 &&
+                    attachments.length === 0) ||
                   say.isPending ||
+                  sayWithAttachments.isPending ||
                   sendReviewComments.isPending
                 }
                 className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
@@ -191,17 +245,30 @@ export function Composer({
           </div>
 
           <div className="mt-2.5 flex items-center gap-2">
-            {/* Static affordances (design parity — not wired yet) */}
+            {/* Plan pill: static design affordance (not wired). The ＋ beside it IS wired (attach/paste). */}
             <span
               className={`flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text${readOnly ? " opacity-60" : ""}`}
             >
               Plan <ChevronDown size={11} strokeWidth={2.6} />
             </span>
-            <span
-              className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim${readOnly ? " opacity-60" : ""}`}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={readOnly}
+              className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim transition hover:bg-surface-2 hover:text-text${readOnly ? " opacity-60" : ""}`}
+              aria-label="Attach files"
+              title="Attach files or images"
             >
               <Plus size={16} strokeWidth={2.2} />
-            </span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.txt,.md,.markdown,.json,.csv,.log,.xml,.yaml,.yml,.html,.htm,.css,.js,.ts,.tsx"
+              className="hidden"
+              onChange={onPick}
+            />
             <div className="flex-1" />
             {/* Live: the model · effort the lane's latest turn ran on (threads `turn_meta.usage`). */}
             {modelLabel ? (

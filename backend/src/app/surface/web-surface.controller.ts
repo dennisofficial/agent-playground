@@ -14,9 +14,15 @@ import {
   Query,
   ServiceUnavailableException,
   Sse,
+  StreamableFile,
+  UploadedFiles,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { createReadStream, readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import {
   Observable,
@@ -57,7 +63,7 @@ import type { WebFileRequestCard } from './web-file-request-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
-import type { ServiceLivenessProbe } from '../sandbox';
+import { CONTAINER_CONTEXT, type ServiceLivenessProbe } from '../sandbox';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
@@ -304,6 +310,91 @@ interface ProvideSecretDto {
 }
 /** Upload cap for `request_file` — file secrets are small config/key files (JSON, .pem, .env.keys), not blobs. */
 const MAX_FILE_UPLOAD_BYTES = 512 * 1024;
+
+// ── Composer attachments (`say`/`createJob` multipart) ───────────────────────────────────────────────
+/** Per-file cap for composer attachments (images can be large screenshots). Enforced by multer + here. */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+/** Max attachments per message. */
+const MAX_ATTACHMENTS = 10;
+/**
+ * The extensions an operator may attach in the composer. Images (Read renders them visually) + a
+ * conservative set of text/doc types the brain's Read tool can parse. Anything else is rejected — we don't
+ * want the brain fed opaque binaries it can't use. `.pdf` isn't in `MIME_BY_EXT` (added just here).
+ */
+const ATTACHMENT_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', // images
+  '.txt', '.md', '.markdown', '.log', '.json', '.csv', '.xml', '.yaml', '.yml', // text
+  '.html', '.htm', '.css', '.js', '.ts', '.tsx', '.pdf', // code + pdf
+]);
+
+/** One persisted composer attachment (rides `messages.card`; the web renders a chip/thumbnail from it). */
+interface AttachmentCardItem {
+  /** The operator's (sanitized) filename, for display. */
+  name: string;
+  /** Bucket-relative path under `/context` (`uploads/<safeName>`) — the raw-file endpoint re-roots it. */
+  path: string;
+  kind: 'image' | 'file';
+  size: number;
+}
+/** The multipart file shape multer hands us (subset we use — avoids depending on global Express.Multer types). */
+interface UploadedAttachment {
+  originalname: string;
+  buffer: Buffer;
+  size: number;
+}
+
+/** Escape a string for safe inclusion in an XML attribute value (filenames are operator-controlled). */
+function xmlEscapeAttr(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Sanitize an operator-supplied filename into a flat, collision-resistant name safe as BOTH a disk path
+ * and an XML attribute value: basename only (no dirs), `[A-Za-z0-9._-]` only (so no `../` traversal and no
+ * forged `</user>`/`<uploaded-files>` tags), a short random prefix to de-collide, length-capped.
+ */
+function safeUploadName(original: string): string {
+  const base =
+    basename(original)
+      .replace(/[^A-Za-z0-9._-]/g, '_')
+      .replace(/^\.+/, '')
+      .slice(0, 100) || 'file';
+  return `${randomBytes(4).toString('hex')}-${base}`;
+}
+
+/** The `<uploaded-files>` block prepended to an operator message that carried attachments (brain body). */
+function renderUploadedFilesXml(items: AttachmentCardItem[]): string {
+  const rows = items
+    .map(
+      (it) =>
+        `  <file name="${xmlEscapeAttr(it.name)}" kind="${it.kind}" path="${CONTAINER_CONTEXT}/${it.path}" size="${it.size}" />`,
+    )
+    .join('\n');
+  return `<uploaded-files note="The operator attached the file(s) below. Read any you need with your Read tool — images render visually.">\n${rows}\n</uploaded-files>`;
+}
+
+/**
+ * Resolve a caller-supplied path WITHIN the thread's `/context/uploads/` bucket only (rejects absolute
+ * paths and `..` traversal, and any bucket other than `uploads/`). Kept separate from
+ * `resolveContextFilePath` so the base64 `contextFile` endpoint can NEVER be pointed at an upload (uploads
+ * are served ONLY by the streaming raw endpoint — no synchronous base64 of large images on the host loop).
+ */
+function resolveUploadFilePath(root: string, relPath: string): string {
+  const cleaned = relPath.replace(/^[/\\]+/, '');
+  const abs = resolve(root, cleaned);
+  const rootWithSep = root.endsWith(sep) ? root : root + sep;
+  if (!abs.startsWith(rootWithSep)) {
+    throw new BadRequestException('path escapes the context directory');
+  }
+  if (relative(root, abs).split(sep)[0] !== 'uploads') {
+    throw new BadRequestException('path must be inside uploads/');
+  }
+  return abs;
+}
 interface ProvideFileDto {
   /** The file-request card's id (its message `ts`). */
   requestId: string;
@@ -529,14 +620,22 @@ export class WebSurfaceController {
   /** `POST …/repos/:repoId/jobs` — create a thread + inject its first message. Returns the real id. */
   @Post('orgs/:orgId/repos/:repoId/jobs')
   @UseGuards(OrgMembershipGuard)
+  @UseInterceptors(
+    FilesInterceptor('files', MAX_ATTACHMENTS, {
+      limits: { fileSize: MAX_ATTACHMENT_BYTES },
+    }),
+  )
   async createJob(
     @CurrentOrg() org: CurrentOrgCtx,
     @CurrentUser() user: UserEntity,
     @Param('repoId') repoId: string,
     @Body() body: CreateThreadDto,
+    @UploadedFiles() files?: UploadedAttachment[],
   ): Promise<{ jobId: string }> {
     const text = body?.firstMessage?.trim();
-    if (!text) throw new BadRequestException('firstMessage is required');
+    if (!text && !files?.length) {
+      throw new BadRequestException('firstMessage is required');
+    }
     // Resolve the repo WITHIN the caller's org — the thread's org_id/repo_id derive from this resolved
     // row, never from raw input (so the denormalized tenant keys can't be pointed at another org's repo).
     const repo = await this.requireRepo(repoId, org.id);
@@ -553,15 +652,37 @@ export class WebSurfaceController {
         base_branch: body.baseBranch ?? null,
       }),
     );
+    const operatorText = text ?? '';
+    // Write any attachments to the job's /context/uploads (visible in-sandbox) and PREPEND an
+    // <uploaded-files> block to the body so the brain reads them; persist a card for the web transcript.
+    const attach = files?.length
+      ? await this.ingestAttachments(org.id, thread.id, files)
+      : null;
+    const bodyText = attach ? `${attach.xml}\n\n${operatorText}` : operatorText;
     // Inject the first message — the chat bridge resolves the thread by its real id and triages it.
-    this.surface.receiveFromClient(repo.id, text, {
+    this.surface.receiveFromClient(repo.id, bodyText, {
       orgId: org.id,
       threadTs: thread.id,
       ...operatorAuthor(user),
+      ...(attach
+        ? {
+            card: {
+              type: 'attachments_card',
+              items: attach.items,
+              ...(operatorText ? { message: operatorText } : {}),
+            },
+          }
+        : {}),
     });
     // Fire-and-forget: generate a concise title from the first message and push it live (see service).
     void this.threadTitle
-      .generateAndApply(thread.id, org.id, repo.id, text, placeholder)
+      .generateAndApply(
+        thread.id,
+        org.id,
+        repo.id,
+        operatorText || 'Attached files',
+        placeholder,
+      )
       .catch((err) =>
         this.logger.warn(`title gen dispatch failed for ${thread.id}: ${err}`),
       );
@@ -607,17 +728,34 @@ export class WebSurfaceController {
     }));
   }
 
-  /** `POST …/threads/:jobId/say` — inject a human reply. Returns the synthetic ts. */
+  /**
+   * `POST …/threads/:jobId/say` — inject a human reply. Returns the synthetic ts.
+   *
+   * Text-only sends stay pure JSON (the `FilesInterceptor` no-ops on non-multipart requests, so the
+   * optimistic-`useSay` hot path is untouched). When the operator attaches files/images the request is
+   * multipart: each file is streamed to `/context/uploads/` (visible in-sandbox), an `<uploaded-files>`
+   * XML block is PREPENDED to the body so the brain reads them with its Read tool, and an `attachments_card`
+   * rides `messages.card` for the transcript.
+   */
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/say')
   @UseGuards(OrgMembershipGuard)
+  @UseInterceptors(
+    FilesInterceptor('files', MAX_ATTACHMENTS, {
+      limits: { fileSize: MAX_ATTACHMENT_BYTES },
+    }),
+  )
   async say(
     @CurrentOrg() org: CurrentOrgCtx,
     @CurrentUser() user: UserEntity,
     @Param('repoId') repoId: string,
     @Param('jobId') jobId: string,
     @Body() body: SayDto,
+    @UploadedFiles() files?: UploadedAttachment[],
   ): Promise<{ ts: string }> {
-    if (!body?.text) throw new BadRequestException('text is required');
+    const operatorText = body?.text ?? '';
+    if (!operatorText && !files?.length) {
+      throw new BadRequestException('text or an attachment is required');
+    }
     // Only the leader processes turns. During a deploy's drain window this instance is draining (or is a
     // standby), so reject new turns with 503 — the client retries and lands on the freshly-promoted
     // leader within a poll interval. (isLeader() is false while draining or a follower.)
@@ -627,12 +765,68 @@ export class WebSurfaceController {
       );
     }
     const thread = await this.requireThread(jobId, org.id);
-    const ts = this.surface.receiveFromClient(thread.repo_id, body.text, {
+    const attach = files?.length
+      ? await this.ingestAttachments(org.id, jobId, files)
+      : null;
+    const bodyText = attach ? `${attach.xml}\n\n${operatorText}` : operatorText;
+    const ts = this.surface.receiveFromClient(thread.repo_id, bodyText, {
       orgId: org.id,
       threadTs: jobId,
       ...operatorAuthor(user),
+      ...(attach
+        ? {
+            card: {
+              type: 'attachments_card',
+              items: attach.items,
+              ...(operatorText ? { message: operatorText } : {}),
+            },
+          }
+        : {}),
     });
     return { ts };
+  }
+
+  /**
+   * Persist a batch of composer attachments to the job's durable `/context/uploads/` bucket (host-side of
+   * the `/context` bind-mount, so they appear in-sandbox at `/context/uploads/…` with no new bind), and
+   * build both the `<uploaded-files>` XML (for the brain body) and the `attachments_card` items (for the
+   * web). Streams each buffer to disk — no base64, no synchronous whole-file encode on the host loop.
+   */
+  private async ingestAttachments(
+    orgId: string,
+    jobId: string,
+    files: UploadedAttachment[],
+  ): Promise<{ xml: string; items: AttachmentCardItem[] }> {
+    if (files.length > MAX_ATTACHMENTS) {
+      throw new BadRequestException(`at most ${MAX_ATTACHMENTS} attachments`);
+    }
+    const uploadsDir = join(
+      this.threadLifecycle.contextDirHost(jobId, orgId),
+      'uploads',
+    );
+    await mkdir(uploadsDir, { recursive: true });
+    const items: AttachmentCardItem[] = [];
+    for (const file of files) {
+      const ext = extname(file.originalname).toLowerCase();
+      if (!ATTACHMENT_EXTS.has(ext)) {
+        throw new BadRequestException(`unsupported attachment type: ${ext || file.originalname}`);
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        throw new PayloadTooLargeException(
+          `attachment too large (${file.size} bytes; limit ${MAX_ATTACHMENT_BYTES})`,
+        );
+      }
+      const safeName = safeUploadName(file.originalname);
+      await writeFile(join(uploadsDir, safeName), file.buffer);
+      const mime = MIME_BY_EXT[ext]?.mime ?? '';
+      items.push({
+        name: basename(file.originalname).slice(0, 100) || safeName,
+        path: `uploads/${safeName}`,
+        kind: mime.startsWith('image/') ? 'image' : 'file',
+        size: file.size,
+      });
+    }
+    return { xml: renderUploadedFilesXml(items), items };
   }
 
   /**
@@ -1163,6 +1357,40 @@ export class WebSurfaceController {
       mime,
       content: binary ? buf.toString('base64') : buf.toString('utf8'),
     };
+  }
+
+  /**
+   * `GET …/threads/:jobId/context/file/raw?path=uploads/xx.png` — STREAM one composer attachment as raw
+   * binary (correct `Content-Type`), for `<img>` thumbnails and file downloads in the transcript.
+   * Deliberately NOT the base64 `contextFile` endpoint above: a large image would block the host event
+   * loop on `readFileSync + toString('base64')` and inflate ~33%. Scoped to the `uploads/` bucket only.
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/context/file/raw')
+  @UseGuards(OrgMembershipGuard)
+  async contextFileRaw(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Query('path') relPath: string,
+  ): Promise<StreamableFile> {
+    await this.requireThread(jobId, org.id);
+    if (!relPath) throw new BadRequestException('path is required');
+    const root = this.threadLifecycle.contextDirHost(jobId, org.id);
+    const abs = resolveUploadFilePath(root, relPath);
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(abs);
+    } catch {
+      throw new NotFoundException('file not found');
+    }
+    if (!st.isFile()) throw new NotFoundException('not a file');
+    const ext = extname(abs).toLowerCase();
+    const mime =
+      MIME_BY_EXT[ext]?.mime ??
+      (ext === '.pdf' ? 'application/pdf' : 'application/octet-stream');
+    return new StreamableFile(createReadStream(abs), {
+      type: mime,
+      length: st.size,
+    });
   }
 
   /**

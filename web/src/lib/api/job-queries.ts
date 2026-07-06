@@ -8,6 +8,7 @@ import {
   provideFile,
   approveThread,
   createJob,
+  createJobWithFiles,
   deleteThread,
   fetchContextFile,
   fetchMessages,
@@ -21,6 +22,7 @@ import {
   retryJob,
   retryTurn,
   sayMessage,
+  sayMessageWithFiles,
   stopJob,
   type AnswerQuestionBody,
   type ProvideSecretBody,
@@ -31,7 +33,7 @@ import {
   type JobRef,
   type ReviewCommentItemBody,
 } from "./job-api";
-import type { WebReviewCommentsCard } from "./types";
+import type { WebAttachmentsCard, WebReviewCommentsCard } from "./types";
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
@@ -148,6 +150,77 @@ export function useSay(ref: JobRef) {
       return { prev };
     },
     onError: (_e, _text, ctx) => {
+      if (ctx?.prev) qc.setQueryData(qk.threadMessages(ref), ctx.prev);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+    },
+  });
+}
+
+/** One pending composer attachment: the `File` to upload + its local blob preview URL + image/file kind. */
+export interface PendingAttachment {
+  file: File;
+  /** `URL.createObjectURL(file)` — the instant local preview (revoked by the composer on send/remove). */
+  url: string;
+  kind: "image" | "file";
+}
+
+interface SayWithAttachmentsInput {
+  text: string;
+  attachments: PendingAttachment[];
+}
+
+/**
+ * Send a message WITH attachments (multipart). Mirrors `useSay`'s optimistic-append, but the optimistic row
+ * carries an `attachments_card` whose items use the LOCAL blob URLs (`localUrl`) so thumbnails render
+ * instantly; on settle the durable row (server `path`, served via the streaming raw endpoint) reconciles in.
+ */
+export function useSayWithAttachments(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation<
+    { ts: string },
+    Error,
+    SayWithAttachmentsInput,
+    SayContext
+  >({
+    mutationFn: (input) =>
+      sayMessageWithFiles(
+        ref,
+        input.text,
+        input.attachments.map((a) => a.file),
+      ),
+    onMutate: async (input) => {
+      const key = qk.threadMessages(ref);
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<JobMessage[]>(key);
+      const card: WebAttachmentsCard = {
+        type: "attachments_card",
+        items: input.attachments.map((a) => ({
+          name: a.file.name,
+          path: "",
+          kind: a.kind,
+          size: a.file.size,
+          localUrl: a.url,
+        })),
+        ...(input.text ? { message: input.text } : {}),
+      };
+      const optimistic: JobMessage = {
+        ts: `local-${Date.now()}`,
+        author: "user",
+        authorId: "me",
+        authorName: "You",
+        text: input.text,
+        kind: "chat",
+        source: "operator",
+        card,
+        postedAt: new Date().toISOString(),
+        local: true,
+      };
+      qc.setQueryData<JobMessage[]>(key, [...(prev ?? []), optimistic]);
+      return { prev };
+    },
+    onError: (_e, _input, ctx) => {
       if (ctx?.prev) qc.setQueryData(qk.threadMessages(ref), ctx.prev);
     },
     onSettled: () => {
@@ -298,11 +371,19 @@ export function useProvideFile(ref: JobRef) {
   });
 }
 
-/** Create a thread in a repo (posts the first message). Invalidates the cross-org inbox on success. */
+/**
+ * Create a thread in a repo (posts the first message, optionally with attachments). Invalidates the
+ * cross-org inbox on success. When `files` are present the request goes multipart (`createJobWithFiles`).
+ */
 export function useCreateThread(orgId: string, repoId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: CreateThreadBody) => createJob(orgId, repoId, body),
+    mutationFn: (body: CreateThreadBody & { files?: File[] }) => {
+      const { files, ...rest } = body;
+      return files?.length
+        ? createJobWithFiles(orgId, repoId, rest, files)
+        : createJob(orgId, repoId, rest);
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },

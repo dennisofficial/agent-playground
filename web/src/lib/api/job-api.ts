@@ -39,11 +39,14 @@ export class ThreadApiError extends Error {
 }
 
 async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
+  // A FormData body must NOT get a hardcoded content-type — the browser sets `multipart/form-data` with the
+  // boundary itself. Only JSON string bodies carry the json content-type. (Used by the attachment uploads.)
+  const isForm = init?.body instanceof FormData;
   const res = await fetchWithRefresh(`${BASE}${path}`, {
     ...init,
     headers: {
       accept: "application/json",
-      "content-type": "application/json",
+      ...(isForm ? {} : { "content-type": "application/json" }),
       ...init?.headers,
     },
   });
@@ -155,6 +158,37 @@ export function sayMessage(ref: JobRef, text: string): Promise<{ ts: string }> {
     method: "POST",
     body: JSON.stringify({ text }),
   });
+}
+
+/**
+ * Send a message WITH attachments — multipart (`text` + repeated `files` parts). Binary all the way (no
+ * base64): the files stream to the server, which writes them to the sandbox and points the brain at them.
+ */
+export function sayMessageWithFiles(
+  ref: JobRef,
+  text: string,
+  files: File[],
+): Promise<{ ts: string }> {
+  const form = new FormData();
+  form.append("text", text);
+  for (const f of files) form.append("files", f, f.name);
+  return webJson(threadPath(ref, "/say"), { method: "POST", body: form });
+}
+
+/**
+ * Fetch a composer attachment as a blob object-URL (for `<img>` thumbnails / file links). Uses a
+ * credentialed fetch of the STREAMING raw endpoint — never a base64 data URL — so large images don't
+ * bloat memory or block. The caller MUST `URL.revokeObjectURL` the result when done.
+ */
+export async function fetchAttachmentUrl(
+  ref: JobRef,
+  path: string,
+): Promise<string> {
+  const res = await fetchWithRefresh(
+    `${BASE}${threadPath(ref, "/context/file/raw")}?path=${encodeURIComponent(path)}`,
+  );
+  if (!res.ok) throw new ThreadApiError(res.status, res.statusText);
+  return URL.createObjectURL(await res.blob());
 }
 
 /**
@@ -391,5 +425,23 @@ export function createJob(
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",
     body: JSON.stringify(body),
+  });
+}
+
+/** Create a job WITH attachments — multipart (`firstMessage`/`title`/`baseBranch` fields + `files` parts). */
+export function createJobWithFiles(
+  orgId: string,
+  repoId: string,
+  body: CreateThreadBody,
+  files: File[],
+): Promise<{ jobId: string }> {
+  const form = new FormData();
+  form.append("firstMessage", body.firstMessage);
+  if (body.title) form.append("title", body.title);
+  if (body.baseBranch) form.append("baseBranch", body.baseBranch);
+  for (const f of files) form.append("files", f, f.name);
+  return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
+    method: "POST",
+    body: form,
   });
 }
