@@ -1,4 +1,5 @@
 import type { Observable } from 'rxjs';
+import type { SeedRow } from '../domain/stimulus';
 
 import { renderChunk } from '../stimulus/chunk-vocabulary';
 
@@ -56,6 +57,8 @@ export interface InboundChatMessage {
    * `delivered_at` on success — same at-least-once bookkeeping as `seedQuestionId`. Undefined otherwise.
    */
   seedFileId?: string;
+  /** SEED RENDER COMMAND — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
+  seedRow?: SeedRow;
   /**
    * Optional structured card payload to persist alongside this message (render-only — the brain still
    * reads `text`, never `card`). E.g. the review-comments batch renders as a styled card in the web

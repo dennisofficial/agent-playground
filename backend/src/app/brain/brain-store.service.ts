@@ -231,7 +231,7 @@ export class BrainStoreService {
   }
 
   /**
-   * Persist a harness-injected chunk (a `system_notice` or `system_reminder` from the chunk-vocabulary) as a
+   * Persist a harness-injected chunk (a `system_notice`, `system_reminder`, or `untrusted` from the chunk-vocabulary) as a
    * VISIBLE transcript row — so a sandbox-reset notice, a pipeline-awareness or open-questions reminder, etc.
    * that the brain reads inline is also legible in the web (the classifier keys on `meta.source`). The row's
    * `text` is the CLEAN body (no XML tag — the tag is engine-only). System-authored (`author_bot_id: null`,
@@ -241,10 +241,13 @@ export class BrainStoreService {
    */
   async recordSystemChunk(input: {
     jobId: string;
-    kind: 'system_notice' | 'system_reminder';
+    kind: 'system_notice' | 'system_reminder' | 'untrusted';
     text: string;
     chunkKey: string;
     reminderKind?: string;
+    /** `<untrusted>` provenance/severity — surfaced on the web's untrusted pill. */
+    untrustedSource?: string;
+    severity?: string;
     createdAt?: Date;
   }): Promise<void> {
     const dup = await this.messages
@@ -267,6 +270,10 @@ export class BrainStoreService {
           source: input.kind,
           chunkKey: input.chunkKey,
           ...(input.reminderKind ? { reminderKind: input.reminderKind } : {}),
+          ...(input.untrustedSource
+            ? { untrustedSource: input.untrustedSource }
+            : {}),
+          ...(input.severity ? { severity: input.severity } : {}),
         },
         ...(input.createdAt ? { created_at: input.createdAt } : {}),
       }),

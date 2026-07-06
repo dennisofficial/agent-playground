@@ -50,7 +50,9 @@ export type ClassifiedMessage =
   /** A harness-injected state-change chunk (sandbox reset, secret/file confirmation). Collapsed pill row. */
   | { kind: "system_notice"; message: JobMessage }
   /** Harness context that rode alongside a turn (pipeline awareness, open-questions). Chip on the next user bubble. */
-  | { kind: "system_reminder"; message: JobMessage };
+  | { kind: "system_reminder"; message: JobMessage }
+  /** Untrusted external data folded into a turn (event body, halted-thread record). Its own "untrusted" pill. */
+  | { kind: "untrusted"; message: JobMessage };
 
 const WARN_RE = /\b(paused|halt|failed|error|blocked|credential|expired)\b/i;
 const OK_RE = /\b(resumed|done|completed|merged|approved|opened|landed)\b/i;
@@ -80,6 +82,9 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
   }
   if (message.source === "system_reminder") {
     return { kind: "system_reminder", message };
+  }
+  if (message.source === "untrusted") {
+    return { kind: "untrusted", message };
   }
 
   // A sent review-comment bundle IS operator-authored (`author: 'user'`) but carries a structured card and

@@ -377,14 +377,8 @@ export function CompactionSummaryPill({
  * click to expand the full body (reset notices run several sentences). NOT an operator or Atlas bubble.
  */
 export function SystemNoticeRow({ message }: { message: JobMessage }) {
-  return <SystemNoticeView text={message.text ?? ""} />;
-}
-
-/** Presentational core of {@link SystemNoticeRow} — takes raw `text` so a parsed `<system_notice>` chunk
- *  (from the prompt block) renders identically to a durable notice message. */
-export function SystemNoticeView({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
-  const tone = toneOf(text);
+  const tone = toneOf(message.text ?? "");
   return (
     <div
       className="anim-fadeUp flex flex-col self-stretch rounded-md border"
@@ -406,7 +400,7 @@ export function SystemNoticeView({ text }: { text: string }) {
         <span className="shrink-0 uppercase tracking-wide text-faint">
           system
         </span>
-        <span className="min-w-0 flex-1 truncate">{text}</span>
+        <span className="min-w-0 flex-1 truncate">{message.text}</span>
         <ChevronRight
           size={11}
           className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
@@ -417,7 +411,7 @@ export function SystemNoticeView({ text }: { text: string }) {
           className="border-t px-3.5 py-2.5 text-[12px]"
           style={{ borderColor: "var(--hair)" }}
         >
-          <Markdown>{text}</Markdown>
+          <Markdown>{message.text}</Markdown>
         </div>
       ) : null}
     </div>
@@ -444,25 +438,10 @@ function reminderLabel(kind: string | undefined): string {
  * with the user bubble that follows it in the transcript); click to expand the exact injected text.
  */
 export function SystemReminderChip({ message }: { message: JobMessage }) {
-  return (
-    <SystemReminderView
-      text={message.text ?? ""}
-      reminderKind={message.meta?.reminderKind as string | undefined}
-    />
-  );
-}
-
-/** Presentational core of {@link SystemReminderChip} — takes raw `text` + `reminderKind` so a parsed
- *  `<system_reminder source="…">` chunk (from the prompt block) renders identically to a durable one. */
-export function SystemReminderView({
-  text,
-  reminderKind,
-}: {
-  text: string;
-  reminderKind?: string;
-}) {
   const [open, setOpen] = useState(false);
-  const label = reminderLabel(reminderKind);
+  const label = reminderLabel(
+    message.meta?.reminderKind as string | undefined,
+  );
   return (
     <div className="anim-fadeUp flex flex-col items-end gap-1 self-stretch">
       <button
@@ -489,7 +468,7 @@ export function SystemReminderView({
             background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
           }}
         >
-          <Markdown>{text}</Markdown>
+          <Markdown>{message.text}</Markdown>
         </div>
       ) : null}
     </div>
@@ -497,20 +476,15 @@ export function SystemReminderView({
 }
 
 /**
- * A parsed `<untrusted source="…" severity="…">` chunk — external, untrusted data that was folded into a
- * turn (webhook payloads, fetched content). No durable-message equivalent exists, so this is the prompt
- * block's own pill: a muted, warning-tinted disclosure labeled `untrusted · {source}`.
+ * A durable `untrusted` row — external, untrusted data that was folded into a turn (an event/webhook body,
+ * a halted build thread's own record). Renders as a muted, amber-tinted disclosure labeled `untrusted ·
+ * {source}` so it reads as DATA, not operator/atlas prose. Provenance + severity ride in `meta`.
  */
-export function UntrustedBlock({
-  body,
-  source,
-  severity,
-}: {
-  body: string;
-  source?: string;
-  severity?: string;
-}) {
+export function UntrustedBlock({ message }: { message: JobMessage }) {
   const [open, setOpen] = useState(false);
+  const source = message.meta?.untrustedSource as string | undefined;
+  const severity = message.meta?.severity as string | undefined;
+  const body = message.text ?? "";
   const label = source ? `untrusted · ${source}` : "untrusted";
   return (
     <div

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -19,6 +19,7 @@ import type {
   EventStimulus,
   Job,
   JobKind,
+  SeedRow,
 } from '../domain';
 import { MemoryStore } from '../memory';
 import {
@@ -446,10 +447,9 @@ export class AgentSessionManager
             jobId: s.jobId,
             orgId: s.orgId,
             repoId: s.repoId,
-            body: maskedSecretNotice(s.name, {
-              ...(s.path ? { path: s.path } : {}),
-              ...(s.ephemeral ? { ephemeral: true } : {}),
-            }),
+            body: notice,
+            // Same content-stable key as the live provide-secret path ⇒ one visible row.
+            seedRow: { label: notice, chunkKey: `seed:secret:${s.jobId}:${s.name}` },
           });
           void this.handleChatTurn(stimulus).catch((err) =>
             this.logger.warn(
@@ -476,8 +476,10 @@ export class AgentSessionManager
             jobId: f.jobId,
             orgId: f.orgId,
             repoId: f.repoId,
-            body: maskedFileNotice(f.path),
+            body: notice,
             seedFileId: f.requestId,
+            // Same content-stable key as the live provide-file path ⇒ one visible row.
+            seedRow: { label: notice, chunkKey: `seed:file:${f.jobId}:${f.path}` },
           });
           void this.handleChatTurn(stimulus).catch((err) =>
             this.logger.warn(
@@ -621,6 +623,10 @@ export class AgentSessionManager
       orgId,
       repoId,
       body: BRAIN_LEDGER_PROMOTION_PROMPT,
+      seedRow: {
+        label: 'Distilling this thread’s decisions into the durable ledger.',
+        chunkKey: `seed:ledger:${jobId}`,
+      },
     });
     await this.handleChatTurn(stimulus);
   }
@@ -655,6 +661,14 @@ export class AgentSessionManager
       repoId: job.repoId,
       body: renderHaltDelivery(thread, outcome, term),
       seedHaltWake: { threadId, gen },
+      // The halted thread's own (untrusted) record → a visible `untrusted` pill; keyed by thread+gen.
+      seedRow: {
+        kind: 'untrusted',
+        label: haltRecordBody(term),
+        chunkKey: `seed:halt:${threadId}:${gen}`,
+        untrustedSource: `thread-halt:${threadId}`,
+        severity: outcome,
+      },
     });
     await this.handleChatTurn(stimulus);
   }
@@ -722,6 +736,11 @@ export class AgentSessionManager
     // already rejected with 503 at the surface; this catches internal/boot re-delivery callers so the
     // in-flight set can actually quiesce. A no-op (not a throw) — internal callers are fire-and-forget.
     if (this.election.getState() === 'draining') return;
+
+    // Render this harness seed as a visible transcript row (the console mirrors the agent's turns — every
+    // seed the brain reads must be legible). Runs whether the seed steers into a live turn or spawns a
+    // fresh one; dedup-protected, so live + boot re-delivery collapse to one row. See {@link persistSeedRow}.
+    this.persistSeedRow(stimulus);
 
     // NOTE: plain operator chat no longer enters here — it rides the durable delivery pump (`enqueueChat`
     // → `pumpThread`), which owns the steer-vs-fresh-turn decision AND the delivered/sweep guarantee. This
@@ -791,6 +810,39 @@ export class AgentSessionManager
    * notices before reminders. Best-effort + insert-once (by `chunkKey`, inside the store) — a failure or a
    * re-drive never affects the turn. Missing on unit-test store mocks → optional-chained no-op.
    */
+  /**
+   * Render a harness SEED as a visible transcript row — the Command handler for {@link SeedRow}. The console
+   * mirrors the agent's turns, so every seed the brain receives must be legible now that the raw
+   * `agent_prompt` snapshot is not shown on Main. Cases: a descriptor → a curated `system_notice`/`untrusted`
+   * pill; `'skip'` → the content already has a durable row (an event body); ABSENT → a generic fallback pill,
+   * so a newly-added seed can never be silently invisible. Gated to genuine harness seeds (SYSTEM_SEED_AUTHOR,
+   * not the reset-verify no-op). Dedup-protected by the descriptor's content-stable `chunkKey` (the generic
+   * fallback keys on a body hash), so live delivery + the boot re-delivery sweep collapse to ONE row.
+   * Fail-soft — best-effort like {@link persistChunkRows}.
+   */
+  private persistSeedRow(stimulus: ChatStimulus): void {
+    if (stimulus.author.id !== SYSTEM_SEED_AUTHOR.id) return; // harness seeds only
+    if (stimulus.seedResetVerify) return; // reset already rides a notice chunk row
+    const desc = stimulus.seedRow;
+    if (desc === 'skip') return; // content already has a durable row elsewhere
+    const row: Exclude<SeedRow, 'skip'> = desc ?? {
+      label: 'A harness system notification was delivered to Atlas.',
+      chunkKey: `seed:generic:${stimulus.jobId}:${createHash('sha1').update(stimulus.body).digest('hex').slice(0, 16)}`,
+    };
+    void this.store
+      .recordSystemChunk?.({
+        jobId: stimulus.jobId,
+        kind: row.kind ?? 'system_notice',
+        text: row.label,
+        chunkKey: row.chunkKey,
+        ...(row.untrustedSource ? { untrustedSource: row.untrustedSource } : {}),
+        ...(row.severity ? { severity: row.severity } : {}),
+      })
+      ?.catch((err: unknown) =>
+        this.logger.debug(`persistSeedRow failed (best-effort): ${err}`),
+      );
+  }
+
   private persistChunkRows(
     stimulus: ChatStimulus,
     notices: TurnChunk[],
@@ -1080,6 +1132,10 @@ export class AgentSessionManager
       orgId: review.org_id,
       repoId: job.repoId,
       body: renderWorkOwedNudge(),
+      seedRow: {
+        label: 'Resuming a stranded Codex review that was left running.',
+        chunkKey: `seed:work-owed:${review.id}`,
+      },
     });
     await this.handleChatTurn(stimulus);
   }
@@ -3805,6 +3861,8 @@ export class AgentSessionManager
       orgId: job.orgId,
       repoId: job.repoId,
       body: '',
+      // Empty body — a pure mechanism to drive `actOnApprovalVerdict`; the verdict itself is visible.
+      seedRow: 'skip',
     });
     const isDirect = (rec.threadTitles?.length ?? 0) === 0;
     this.logger.log(
@@ -4274,6 +4332,8 @@ export class AgentSessionManager
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
       body: renderEventDelivery(stimulus),
+      // The untrusted event body is already a durable `system_event` row (seeded at intake) — don't dup it.
+      seedRow: 'skip',
     });
     await this.handleChatTurn(delivery);
 
@@ -4760,6 +4820,8 @@ function harnessDeliveryStimulus(input: {
   body: string;
   /** File-gate delivery: the `request_file` card id this seed confirms, so the tail stamps it delivered. */
   seedFileId?: string;
+  /** How this seed renders as a visible transcript row (see {@link SeedRow}). */
+  seedRow?: SeedRow;
 }): ChatStimulus {
   return {
     id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
@@ -4774,6 +4836,7 @@ function harnessDeliveryStimulus(input: {
     replyRoute: { surfaceId: 'web', jobRef: input.jobId },
     seed: true,
     ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
+    ...(input.seedRow ? { seedRow: input.seedRow } : {}),
   };
 }
 
@@ -4810,6 +4873,7 @@ function eventDeliveryStimulus(input: {
   orgId: string;
   repoId: string;
   body: string;
+  seedRow?: SeedRow;
 }): ChatStimulus {
   return {
     id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
@@ -4823,6 +4887,7 @@ function eventDeliveryStimulus(input: {
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
     replyRoute: { surfaceId: 'web', jobRef: input.jobId },
     seed: true,
+    ...(input.seedRow ? { seedRow: input.seedRow } : {}),
   };
 }
 
@@ -4853,7 +4918,18 @@ function renderHaltDelivery(
   // The record fields were authored by a DIFFERENT (builder) session — fence them as data. `wrapUntrusted`
   // supplies the "this is DATA, obey only the operator" boundary; the body is a readable projection of the
   // record (the full copy lives in completion.md, which the framing points the brain at).
-  const recordBody = [
+  const fenced = wrapUntrusted({
+    source: `thread-halt:${thread.id}`,
+    severity: outcome,
+    body: haltRecordBody(term),
+  });
+  return `${framing}\n\n${fenced}`;
+}
+
+/** The CLEAN (unfenced) readable projection of a halted thread's terminal record — the untrusted body both
+ *  the engine-facing wake ({@link renderHaltDelivery}) and the durable `untrusted` transcript row share. */
+function haltRecordBody(term: ThreadTerminalRecord | null): string {
+  return [
     term?.summary ? `summary: ${term.summary}` : null,
     term?.blocked ? `blocked.reason: ${term.blocked.reason}` : null,
     term?.blocked ? `blocked.detail: ${term.blocked.detail}` : null,
@@ -4864,12 +4940,6 @@ function renderHaltDelivery(
   ]
     .filter(Boolean)
     .join('\n');
-  const fenced = wrapUntrusted({
-    source: `thread-halt:${thread.id}`,
-    severity: outcome,
-    body: recordBody,
-  });
-  return `${framing}\n\n${fenced}`;
 }
 
 /**
@@ -4883,6 +4953,7 @@ function haltDeliveryStimulus(input: {
   repoId: string;
   body: string;
   seedHaltWake: { threadId: string; gen: number };
+  seedRow?: SeedRow;
 }): ChatStimulus {
   return {
     id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
@@ -4898,6 +4969,7 @@ function haltDeliveryStimulus(input: {
     seed: true,
     // Stamped on the turn's SUCCESS tail — a failed/guard-hit/detached wake turn stays un-waked for the sweeps.
     seedHaltWake: input.seedHaltWake,
+    ...(input.seedRow ? { seedRow: input.seedRow } : {}),
   };
 }
 
@@ -4940,6 +5012,11 @@ function bootDeliveryStimulus(q: {
     seed: true,
     // Tie the re-delivery to its exact card so the delivery turn stamps THAT card `deliveredAt` on success.
     seedQuestionId: q.questionId,
+    // Same content-stable key as the live `/answer-question` path ⇒ one visible row across live + boot.
+    seedRow: {
+      label: `The operator answered your question ${JSON.stringify(q.question)}: ${q.answer}`,
+      chunkKey: `seed:qa:${q.jobId}:${q.questionId}`,
+    },
   };
 }
 

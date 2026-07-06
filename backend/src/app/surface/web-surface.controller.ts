@@ -324,7 +324,10 @@ export type WebMessageSource =
   // reset, secret/file confirmation); `system_reminder` = context that rode alongside a turn (pipeline
   // awareness, open-questions). Rendered distinctly from operator/atlas prose.
   | 'system_notice'
-  | 'system_reminder';
+  | 'system_reminder'
+  // Untrusted external data folded into a turn (an event/webhook body, a halted build thread's own record).
+  // Rendered as a distinct "untrusted" pill so it reads as DATA, not operator/atlas prose.
+  | 'untrusted';
 
 /** Map a row's stored `meta.source` to the web renderer's audience-explicit source. Only the `system_*`
  *  kinds are stamped on the row; ordinary operator/atlas messages carry no `source` and derive from isAtlas. */
@@ -337,6 +340,7 @@ export function mapMessageSource(
   if (stored === 'system_event') return 'system_event';
   if (stored === 'system_notice') return 'system_notice';
   if (stored === 'system_reminder') return 'system_reminder';
+  if (stored === 'untrusted') return 'untrusted';
   return isAtlas ? 'atlas' : 'operator';
 }
 
@@ -820,14 +824,13 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
   ): Promise<{ ok: boolean }> {
     const thread = await this.requireThread(jobId, org.id);
-    this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      'Please continue.',
-      {
-        orgId: org.id,
+    this.surface.seedSystemNotification(thread.repo_id, jobId, 'Please continue.', {
+      orgId: org.id,
+      seedRow: {
+        label: 'Resuming the turn after a transient engine error.',
+        chunkKey: `seed:retry:${jobId}:${Date.now()}`,
       },
-    );
+    });
     return { ok: true };
   }
 
@@ -899,12 +902,12 @@ export class WebSurfaceController {
     // persisted as a chat bubble (the answer lives on the card). The seed carries `deliveredQuestionId` so
     // its delivery turn stamps exactly THIS card `deliveredAt` on success (at-least-once recovery on boot).
     const question = (payload.question ?? '').trim();
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      `The operator answered your question ${JSON.stringify(question)}: ${answer}`,
-      { orgId: org.id, deliveredQuestionId: body.questionId },
-    );
+    const notice = `The operator answered your question ${JSON.stringify(question)}: ${answer}`;
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+      orgId: org.id,
+      deliveredQuestionId: body.questionId,
+      seedRow: { label: notice, chunkKey: `seed:qa:${jobId}:${body.questionId}` },
+    });
     return { ok: true, ts };
   }
 
@@ -966,12 +969,11 @@ export class WebSurfaceController {
         // The reader is gone / not reading — this card is dead. Clear the single-slot gate so the brain can
         // re-run the login, and seed a turn telling it to.
         await this.store.clearAwaitingSecret(jobId, body.requestId);
-        const ts = this.surface.seedSystemNotification(
-          thread.repo_id,
-          jobId,
-          `The one-time value \`${payload.name}\` could not be delivered (${delivered.reason ?? 'the target process is not reading'}). Restart the interactive login and request the code again.`,
-          { orgId: org.id },
-        );
+        const notice = `The one-time value \`${payload.name}\` could not be delivered (${delivered.reason ?? 'the target process is not reading'}). Restart the interactive login and request the code again.`;
+        const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+          orgId: org.id,
+          seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:${payload.name}:fail` },
+        });
         return { ok: false, ts };
       }
       // Delivered — stamp the card provided (no value) + hand the brain a masked confirmation. The gate clears
@@ -981,12 +983,11 @@ export class WebSurfaceController {
         provided_at: new Date().toISOString(),
       };
       await this.messages.save(card);
-      const ts = this.surface.seedSystemNotification(
-        thread.repo_id,
-        jobId,
-        `The operator provided the one-time value \`${payload.name}\` (delivered to the running process, not stored). Verify the login completed and continue.`,
-        { orgId: org.id },
-      );
+      const notice = `The operator provided the one-time value \`${payload.name}\` (delivered to the running process, not stored). Verify the login completed and continue.`;
+      const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+        orgId: org.id,
+        seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:${payload.name}` },
+      });
       return { ok: true, ts };
     }
 
@@ -1014,12 +1015,11 @@ export class WebSurfaceController {
     // delivery turn's success tail, so a crash before it re-delivers on boot (at-least-once).
     card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
     await this.messages.save(card);
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      `The operator provided the secret \`${payload.name}\` (stored encrypted, granted to \`${payload.path}\`). Continue onboarding.`,
-      { orgId: org.id },
-    );
+    const notice = `The operator provided the secret \`${payload.name}\` (stored encrypted, granted to \`${payload.path}\`). Continue onboarding.`;
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+      orgId: org.id,
+      seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:${payload.name}` },
+    });
     return { ok: true, ts };
   }
 
@@ -1081,12 +1081,12 @@ export class WebSurfaceController {
       filename,
     };
     await this.messages.save(card);
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      `The operator uploaded the file for \`${payload.path}\` (stored encrypted, granted). Continue onboarding.`,
-      { orgId: org.id, deliveredFileId: body.requestId },
-    );
+    const notice = `The operator uploaded the file for \`${payload.path}\` (stored encrypted, granted). Continue onboarding.`;
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+      orgId: org.id,
+      deliveredFileId: body.requestId,
+      seedRow: { label: notice, chunkKey: `seed:file:${jobId}:${payload.path}` },
+    });
     return { ok: true, ts };
   }
 

@@ -14,6 +14,7 @@ import {
   LiveTurnView,
   SystemEventPill,
   SystemNoticeRow,
+  UntrustedBlock,
   SystemOperatorNotice,
   SystemReminderChip,
   ThinkingBlock,
@@ -455,7 +456,11 @@ function buildLogItems(
       const aid = typeof m.autofixId === "string" ? m.autofixId : null;
       let show = false;
       if (isMain)
-        show = !cid && !pid && !aid; // the brain's own turn — no sub-lane key
+        // The brain's Main transcript mirrors the agent's turns via typed durable rows (operator bubble,
+        // system_notice/system_reminder/untrusted pills) — so the raw serialized prompt snapshot is pure
+        // duplication here and is NOT rendered. It stays on the agent sub-lanes below, which have no
+        // per-chunk rows, so the prompt is their only record of what the sub-agent was asked.
+        show = false;
       else if (isCodexLane) show = cid != null;
       else if (phaseSet) show = pid != null && phaseSet.has(pid);
       else if (isAutofixLane)
@@ -473,7 +478,6 @@ function buildLogItems(
               key={message.ts}
               text={message.text}
               defaultOpen={!isMain}
-              isMain={isMain}
             />
           ),
         });
@@ -699,6 +703,9 @@ function buildLogItems(
         break;
       case "system_reminder":
         push(<SystemReminderChip key={message.ts} message={message} />);
+        break;
+      case "untrusted":
+        push(<UntrustedBlock key={message.ts} message={message} />);
         break;
       case "claude":
       default:

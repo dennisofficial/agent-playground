@@ -89,7 +89,8 @@ export interface RawThreadMessage {
     | "system_shared"
     | "system_event"
     | "system_notice"
-    | "system_reminder";
+    | "system_reminder"
+    | "untrusted";
   card?: WebCard | null;
   meta?: Record<string, unknown> | null;
   postedAt: string;
@@ -119,7 +120,8 @@ export interface JobMessage {
     | "system_shared"
     | "system_event"
     | "system_notice"
-    | "system_reminder";
+    | "system_reminder"
+    | "untrusted";
   card?: WebCard;
   meta?: Record<string, unknown>;
   postedAt: string;

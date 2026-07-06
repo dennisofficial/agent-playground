@@ -21,6 +21,32 @@ import type { TurnChunk } from '../stimulus/chunk-vocabulary';
 /** Trust label. Chat from a known surface is `trusted`; every notification body is `untrusted`. */
 export type StimulusTrust = 'trusted' | 'untrusted';
 
+/**
+ * SEED RENDER COMMAND — how a system-seeded turn appears as a visible transcript row. The console mirrors
+ * the agent's transcript, so EVERY seed the brain receives must be legible; this is the per-seed strategy
+ * the central `persistSeedRow` executes (Command pattern — the seed site describes the row, one handler
+ * performs it). Cases:
+ *   - a descriptor  → a `system_notice` (or `untrusted`) pill with a short curated `label`;
+ *   - `'skip'`      → the seed's content already has a durable row elsewhere (an event body, a compaction
+ *                     summary), so no row is added;
+ *   - absent        → a GENERIC fallback pill, so a newly-added seed can never be silently invisible.
+ * The `chunkKey` is content-stable so live delivery, the boot re-delivery sweep, and re-drive collapse to
+ * ONE row. In-memory only — never persisted on the stimulus itself.
+ */
+export type SeedRow =
+  | 'skip'
+  | {
+      /** Short, human-readable pill text — NOT the raw engine prompt/instruction. */
+      label: string;
+      /** Content-stable dedup key (e.g. `seed:secret:<jobId>:<name>`). */
+      chunkKey: string;
+      /** Row kind. Defaults to `system_notice`; `untrusted` for fenced external data. */
+      kind?: 'system_notice' | 'untrusted';
+      /** `<untrusted>` provenance/severity, surfaced on the untrusted pill. */
+      untrustedSource?: string;
+      severity?: string;
+    };
+
 /** Coarse urgency the notification adapter maps from its gateway's payload. */
 export type EventSeverity = 'info' | 'warning' | 'critical';
 
@@ -86,6 +112,11 @@ export interface ChatStimulus extends BaseStimulus {
    * (at-least-once, matching `seedQuestionId`'s delivered-on-success semantics). In-memory only.
    */
   seedHaltWake?: { threadId: string; gen: number };
+  /**
+   * SEED RENDER COMMAND (see {@link SeedRow}): how this seed turn shows in the transcript. Read by the
+   * central `persistSeedRow` at turn intake. In-memory only — never persisted on the stimulus row.
+   */
+  seedRow?: SeedRow;
   /**
    * COMPACTION turn: a synthetic, Atlas-authored turn (enqueued e.g. by `dispatch_build`) whose ONLY job is
    * to compact the brain session — summarize the current (fat) session into a lean handoff, then null the

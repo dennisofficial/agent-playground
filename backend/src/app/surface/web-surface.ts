@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
 import type { ChatSurface, InboundChatMessage, PostOptions } from './chat-surface.port';
+import type { SeedRow } from '../domain/stimulus';
 import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from './chat-surface.port';
 import { APPROVE_ACTION_ID } from './approval-blocks';
 import type { ApprovalDecision } from './approval-blocks';
@@ -37,6 +38,8 @@ export interface WebInboundOptions {
   seedQuestionId?: string;
   /** Delivery seed — the `request_file` card id whose uploaded file this seed confirms (see `InboundChatMessage.seedFileId`). */
   seedFileId?: string;
+  /** Seed render command — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
+  seedRow?: SeedRow;
   /** Optional structured card payload to persist alongside this message (see `InboundChatMessage.card`). */
   card?: Record<string, unknown>;
 }
@@ -158,6 +161,7 @@ export class WebSurface implements ChatSurface {
       ...(opts.seed ? { seed: true } : {}),
       ...(opts.seedQuestionId ? { seedQuestionId: opts.seedQuestionId } : {}),
       ...(opts.seedFileId ? { seedFileId: opts.seedFileId } : {}),
+      ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
       ...(opts.card ? { card: opts.card } : {}),
       ts: new Date(),
     };
@@ -177,7 +181,13 @@ export class WebSurface implements ChatSurface {
     channel: string,
     jobId: string,
     body: string,
-    opts: { orgId?: string; deliveredQuestionId?: string; deliveredFileId?: string } = {},
+    opts: {
+      orgId?: string;
+      deliveredQuestionId?: string;
+      deliveredFileId?: string;
+      /** How this seed renders as a visible transcript row (see `ChatStimulus.seedRow`). */
+      seedRow?: SeedRow;
+    } = {},
   ): string {
     return this.receiveFromClient(channel, wrapSystemNotification(body), {
       threadTs: jobId,
@@ -187,6 +197,7 @@ export class WebSurface implements ChatSurface {
       ...(opts.orgId ? { orgId: opts.orgId } : {}),
       ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),
       ...(opts.deliveredFileId ? { seedFileId: opts.deliveredFileId } : {}),
+      ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
     });
   }
 
