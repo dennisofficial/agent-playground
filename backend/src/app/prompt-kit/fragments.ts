@@ -114,26 +114,6 @@ export const DOCS_BEFORE_GREP =
   'the CODE is authoritative; where they disagree, trust the code.';
 
 /**
- * The two per-turn CODE-INDEX MCP servers (`cocoindex` = semantic, `graphify` = structural). Steers the
- * agent to reach for them FIRST — they answer "where is X?" and "how does X connect?" in a few hundred
- * tokens instead of a Grep-storm + reading whole files. Kept behavioral (the tools carry their own detailed
- * descriptions). Addressed to the execute-turn agents that actually have the tools (ATLAS_MAIN + WORKER).
- */
-export const CODE_INDEX_NOTE =
-  'CODE INDEX (prefer over a grep-storm): this repo is pre-indexed by two MCP servers — reach for them ' +
-  'FIRST to orient, then Read the exact file:line ranges they return.\n' +
-  '  • `mcp__cocoindex__search` — SEMANTIC search over the whole codebase: describe the concept or behavior ' +
-  "(\"where are Stripe webhooks handled\", \"jwt refresh-token validation\", \"retry/backoff logic\") and it " +
-  'returns the most relevant file:line chunks. Use it to LOCATE code by meaning instead of guessing at grep ' +
-  'patterns. It re-indexes incrementally before each search, so it reflects your own just-made edits.\n' +
-  '  • `mcp__graphify__get_neighbors` / `mcp__graphify__shortest_path` / `mcp__graphify__get_node` — ' +
-  'STRUCTURAL graph: a symbol’s call graph, what imports/depends on it, and how two symbols connect. Use ' +
-  'these to understand wiring and blast-radius ("what breaks if I change this?") in ~hundreds of tokens ' +
-  'instead of reading every file. ' +
-  'These COMPLEMENT Read/Glob/Grep (still the right tool for a pinpoint read or a known literal) — they do ' +
-  'not replace them; they save you the grep-storm to find where to look.';
-
-/**
  * VERIFY CURRENCY — the anti-"it's modern" trigger. A claim about whether a dependency/tool/framework is
  * current, outdated, deprecated, "the latest", or the reputable/standard choice is a claim about the OUTSIDE
  * WORLD, not something the lockfile answers — so it must be checked on the web, not asserted from memory or

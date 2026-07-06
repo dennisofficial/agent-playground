@@ -30,7 +30,7 @@ export interface OnboardingStatus {
   steps: {
     repoConnected: boolean;
     llmKey: boolean;
-    /** The OpenAI key — powers pgvector memory embeddings AND the per-repo ccc code index. Required. */
+    /** The OpenAI key — powers pgvector memory embeddings. Required. */
     openaiKey: boolean;
     engineAuth: boolean;
     githubPat: boolean;
@@ -418,8 +418,8 @@ export class OnboardingService {
       repoConnected,
       // The Anthropic key must be PRESENT and validated (1-token probe) to count.
       llmKey: presence.hasAnthropic && !!credRow?.llm_validated_at,
-      // The OpenAI key is REQUIRED — it powers both pgvector memory AND the per-repo ccc code index
-      // (cloud embeddings). Presence is enough (no separate validation gate today).
+      // The OpenAI key is REQUIRED — it powers pgvector memory embeddings (cloud embeddings). Presence
+      // is enough (no separate validation gate today).
       openaiKey: presence.hasOpenai,
       engineAuth: presence.engineAuthSet,
       githubPat: presence.hasGithub,

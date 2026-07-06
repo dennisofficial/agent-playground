@@ -31,7 +31,7 @@ describe('loadLegacyManifestFile', () => {
     writeManifest(
       JSON.stringify({
         mounts: [
-          { path: '.cocoindex', mode: 'per-thread' },
+          { path: '.venv', mode: 'per-thread' },
           { path: 'reference', mode: 'shared-ro' },
           { path: '.gcloud', mode: 'shared-rw' },
         ],
@@ -41,7 +41,7 @@ describe('loadLegacyManifestFile', () => {
     const { manifest } = loadLegacyManifestFile(wt);
     expect(manifest).toEqual({
       mounts: [
-        { path: '.cocoindex', mode: 'per-thread' },
+        { path: '.venv', mode: 'per-thread' },
         { path: 'reference', mode: 'shared-ro' },
         { path: '.gcloud', mode: 'shared-rw' },
       ],
@@ -73,11 +73,11 @@ describe('loadLegacyManifestFile', () => {
   it('drops malformed entries but keeps valid ones', () => {
     writeManifest(
       JSON.stringify({
-        mounts: [{ path: '.cocoindex', mode: 'per-thread' }, { mode: 'shared-ro' }],
+        mounts: [{ path: '.venv', mode: 'per-thread' }, { mode: 'shared-ro' }],
       }),
     );
     const { manifest, warnings } = loadLegacyManifestFile(wt);
-    expect(manifest.mounts).toEqual([{ path: '.cocoindex', mode: 'per-thread' }]);
+    expect(manifest.mounts).toEqual([{ path: '.venv', mode: 'per-thread' }]);
     expect(warnings.length).toBeGreaterThan(0);
   });
 

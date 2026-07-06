@@ -13,7 +13,7 @@ export const SANDBOX_PROVIDER = Symbol('SANDBOX_PROVIDER');
 export type SandboxMilestoneStage = 'image_build' | 'container_create';
 
 /**
- * A cache/state directory to bind-mount into the container under the worktree (e.g. `.cocoindex`,
+ * A cache/state directory to bind-mount into the container under the worktree (e.g. `.venv`,
  * `node_modules/.cache`). Declared here (not imported from the driver's manifest types) so the sandbox
  * layer takes no dependency on the driver — the `WorktreeProvisioner` passes already-validated specs.
  * `per-thread` = its own host dir (no cross-thread write contention); `shared-ro` = one immutable host
@@ -147,21 +147,6 @@ export interface SandboxProvider {
     value: string;
     timeoutMs?: number;
   }): Promise<{ ok: boolean; reason?: string }>;
-
-  /**
-   * Kick DETACHED, best-effort **initial builds** of the job's code indexes inside its live container, after
-   * attach. Two indexes:
-   *   - **Graphify (structural, KEYLESS)** — built ALWAYS. The `graphify watch` daemon in `sandbox-init.sh`
-   *     only maintains the graph on file changes, so a fresh sandbox has no `graph.json` for `graphify-mcp`
-   *     to read until the first edit; this builds it (and seeds `.graphifyignore` to avoid the #1666 churn).
-   *   - **ccc (semantic)** — built only when `embeddingKey` is present (CLOUD embeddings need the per-org
-   *     OpenAI key, absent at container-create), so the job's first `search` isn't a slow cold index; ongoing
-   *     freshness is the MCP `search` tool's own job (it re-indexes incrementally before searching).
-   * Fire-and-forget: never blocks the turn, each build is `flock`-guarded, never throws (missing container =
-   * silent no-op; no key skips only the ccc half). `embeddingKey` = the per-org OpenAI key.
-   * Optional on the port so test fakes needn't implement it.
-   */
-  kickCodeIndexRefresh?(input: { jobId: string; embeddingKey?: string }): Promise<void>;
 
   /**
    * Push the sandbox's user MCP servers to the persistent per-sandbox MCP HUB: write the resolved UNION

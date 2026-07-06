@@ -1804,7 +1804,6 @@ export class ThreadDriver implements JobDispatcher {
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
           auth: await this.creds.engineAuth(job.orgId, spec.engine),
-          indexEmbeddingKey: await this.creds.openaiKey(job.orgId),
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true,
@@ -1960,7 +1959,6 @@ export class ThreadDriver implements JobDispatcher {
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
           auth: await this.creds.engineAuth(job.orgId, engine),
-          indexEmbeddingKey: await this.creds.openaiKey(job.orgId),
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
@@ -2172,7 +2170,6 @@ export class ThreadDriver implements JobDispatcher {
           systemPrompt: renderAgentPrompt(Agent.WORKER, { jobKind: job.kind }),
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
-          indexEmbeddingKey: await this.creds.openaiKey(job.orgId),
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true,

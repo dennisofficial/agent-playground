@@ -169,42 +169,10 @@ RUN npm install -g "typescript@${TYPESCRIPT_VERSION}" "typescript-language-serve
 COPY atlas-lsp-server.mjs /usr/local/lib/atlas/atlas-lsp-server.mjs
 RUN node --check /usr/local/lib/atlas/atlas-lsp-server.mjs
 
-# Code-index toolchain: two per-turn stdio MCP servers the engine registers (see code-index-bridge-options.ts).
-#   ccc (cocoindex-code)  — AST-chunked SEMANTIC search. Installed WITHOUT `[full]`: base pulls litellm+openai
-#                           for CLOUD (OpenAI) embeddings, NOT torch/sentence-transformers (~1 GB) — the spike
-#                           showed cloud beats local and keeps the image slim. `graphify`/`graphify-mcp` — a
-#                           local AST knowledge GRAPH (structural queries, no model at query time). Extras:
-#                           `mcp` (the graphify-mcp stdio server) + `watch` (pulls `watchdog`, without which
-#                           the `graphify watch` daemon in sandbox-init.sh dies "watchdog not installed").
-# Installed with uv (standalone binary, no pip/PEP-668 dance). uv drops tool console-scripts in the user bin
-# dir by default (~/.local/bin — root's, off the agent PATH), so redirect them to /usr/local/bin, which the
-# agent shell already has. Verify each entrypoint + hard-assert torch never got pulled (keeps the image lean).
-ENV UV_TOOL_BIN_DIR=/usr/local/bin \
-    UV_TOOL_DIR=/opt/uv-tools
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh \
-  && uv --version \
-  && uv tool install cocoindex-code \
-  && uv tool install "graphifyy[mcp,watch]" \
-  && ccc --help >/dev/null 2>&1 \
-  && graphify --help >/dev/null 2>&1 \
-  && graphify-mcp --help >/dev/null 2>&1 \
-  && if find /opt/uv-tools -maxdepth 5 -type d -name torch | grep -q .; then \
-       echo "ERROR: torch was pulled into the ccc install — cloud embeddings should not need it; the image would bloat ~1GB" >&2; exit 1; \
-     fi
-
-# Baked ccc embedding config (provider + model only — NO secret). The provisioner copies this to the durable
-# per-repo HOME (~/.cocoindex_code/global_settings.yml) on first attach; the per-org OpenAI key arrives via
-# OPENAI_API_KEY in the MCP server's env (see code-index-bridge-options.ts). Kept in sync with the spike's
-# winning config (openai/text-embedding-3-small).
-RUN mkdir -p /etc/atlas \
-  && printf 'embedding:\n  provider: litellm\n  model: openai/text-embedding-3-small\n' \
-      > /etc/atlas/cocoindex-global_settings.yml
-
-# Trust every worktree for ALL users (system-level → covers both root, which runs the `graphify watch` daemon
-# from sandbox-init.sh as PID 1, and the host-uid exec user that owns the bind-mounted worktree). Without this
-# git reports "detected dubious ownership" and graphify's git-based change detection fails, falling back to
-# full-tree diffing — which re-scans the whole repo every cycle (a CPU busy-loop). Sandboxes are single-tenant
-# throwaways, so a blanket safe.directory is fine here (never do this on a shared host).
+# Trust every worktree for ALL users (system-level → covers both root, which runs sandbox-init.sh as PID 1,
+# and the host-uid exec user that owns the bind-mounted worktree). Without this, in-sandbox git reports
+# "detected dubious ownership" whenever root and the host-uid user touch the same worktree. Sandboxes are
+# single-tenant throwaways, so a blanket safe.directory is fine here (never do this on a shared host).
 RUN git config --system --add safe.directory '*'
 
 # Engine runtime: the two SDKs (each ships its native CLI via a per-platform package) + the bundled

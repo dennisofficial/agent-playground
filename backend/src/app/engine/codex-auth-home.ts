@@ -97,8 +97,9 @@ export interface CodexMcpServer {
 
 /**
  * Extra stdio MCP servers to register for a Codex execute turn ALONGSIDE the host tool bridge — keyed by
- * server name (`cocoindex`, `graphify`). Built once in the entrypoint (same command/args/env as the Claude
- * bridge, no drift) and rendered here into config.toml. See `sandbox/image/code-index-bridge-options.ts`.
+ * server name (the user-defined MCP servers resolved for this turn). Built once in the entrypoint (same
+ * command/args/env as the Claude bridge, no drift) and rendered here into config.toml. See
+ * `sandbox/image/user-mcp-bridge-options.ts`.
  */
 export type CodexExtraMcpServers = Record<string, CodexMcpServer>;
 
@@ -161,9 +162,9 @@ export function ensureCodexAuthHome(
   const home = codexAuthHomeDir(root, sandboxKey);
   writeFileSync(join(home, 'auth.json'), secret, { mode: 0o600 });
 
-  // Accumulate every MCP server block into ONE config.toml — the host tool bridge (atlasbridge) plus the
-  // code-index servers (cocoindex/graphify). Written only when at least one block exists (read-only turns
-  // get neither, hence no config.toml).
+  // Accumulate every MCP server block into ONE config.toml — the host tool bridge (atlasbridge) plus any
+  // user-defined stdio MCP servers. Written only when at least one block exists (read-only turns get
+  // neither, hence no config.toml).
   const blocks: string[] = [];
   if (mcpBridge && mcpBridge.toolNames.length > 0) {
     const env = { ...mcpBridge.env, BRIDGE_TOOLS: mcpBridge.toolNames.join(',') };

@@ -40,12 +40,6 @@ export interface RunTurnInput {
   /** How the turn authenticates (defaults derived from env by the EngineRunner). */
   auth?: EngineAuth;
   /**
-   * The per-org OpenAI embedding key for the in-container ccc code-index (cloud embeddings). Resolved by
-   * the driver via `CredentialResolver.openaiKey(orgId)` and passed straight through to `RunEngineArgs`.
-   * Undefined → the cocoindex bridge is skipped in-container (graphify still loads).
-   */
-  indexEmbeddingKey?: string;
-  /**
    * User-defined MCP servers for this turn, RESOLVED host-side (secrets inlined) by
    * `McpResolver.resolveForTurn`. Passed straight through to `RunEngineArgs.userMcpServers`.
    */
@@ -169,7 +163,6 @@ export class TurnRunnerService {
             }
           : {}),
         ...(input.auth ? { auth: input.auth } : {}),
-        ...(input.indexEmbeddingKey ? { indexEmbeddingKey: input.indexEmbeddingKey } : {}),
         ...(input.userMcpServers && input.userMcpServers.length > 0
           ? { userMcpServers: input.userMcpServers }
           : {}),

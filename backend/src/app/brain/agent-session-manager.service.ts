@@ -1700,9 +1700,6 @@ export class AgentSessionManager
     // Per-org Claude subscription secret (deployed); undefined locally → the in-container engine falls
     // back to CLAUDE_OAUTH_TOKEN, and throws if neither is set (never an API-key fallback).
     const auth = await this.creds.engineAuth(stimulus.orgId, 'claude');
-    // Per-org OpenAI key for the in-container ccc code-index (cloud embeddings). Required at org
-    // onboarding, so normally present; undefined → the cocoindex bridge is skipped (graphify still loads).
-    const indexEmbeddingKey = await this.creds.openaiKey(stimulus.orgId);
     // User-defined MCP servers active on the brain surface for this org/repo (secrets inlined host-side).
     const userMcpServers = await this.mcp.resolveForTurn(
       stimulus.orgId,
@@ -1726,7 +1723,6 @@ export class AgentSessionManager
       }),
       sandboxKey,
       ...(auth ? { auth } : {}),
-      ...(indexEmbeddingKey ? { indexEmbeddingKey } : {}),
       ...(userMcpServers.length > 0 ? { userMcpServers } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus

@@ -353,18 +353,10 @@ export interface RunEngineArgs {
    */
   persistAuthRefresh?: boolean;
   /**
-   * The per-org OpenAI embedding key, threaded through to the in-container code-index bridges (ccc's
-   * cloud embeddings need it; graphify doesn't). Host-resolved via `CredentialResolver.openaiKey(orgId)`
-   * on both the brain and build turn-assembly paths. Serialized into the turn spec — it's a secret that
-   * legitimately rides into the sandbox (like `auth.secret`), no org-id provenance attached. Unset →
-   * the cocoindex server is skipped in-container (graphify still loads). See code-index-bridge-options.ts.
-   */
-  indexEmbeddingKey?: string;
-  /**
    * User-defined MCP servers to register for this turn, RESOLVED host-side (secrets inlined) by
    * `McpResolver.resolveForTurn` from the org/repo `mcp_servers` rows whose `surfaces` include this
    * turn's surface. Serialized into the turn spec — the header/env values are secrets that legitimately
-   * ride into the sandbox (like `auth.secret`/`indexEmbeddingKey`), so keep them OUT of any log line.
+   * ride into the sandbox (like `auth.secret`), so keep them OUT of any log line.
    * Empty/omitted → no user MCP servers this turn. See user-mcp-bridge-options.ts.
    */
   userMcpServers?: ResolvedMcpServer[];

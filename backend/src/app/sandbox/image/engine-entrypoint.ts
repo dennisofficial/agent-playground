@@ -19,9 +19,7 @@ import type { EngineEvent, RunEngineArgs } from '../../engine/engine.types';
 import { BRIDGE_SERVER_NAME, buildBridgeClaudeOptions, type BridgeClaudeOptions } from './bridge-options';
 import { buildLspBridgeOptions } from './lsp-bridge-options';
 import { buildContext7BridgeOptions } from './context7-bridge-options';
-import { buildCodeIndexBridgeOptions } from './code-index-bridge-options';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
-import type { CodexExtraMcpServers } from '../../engine/codex-auth-home';
 
 /** The serialized turn — everything `RunEngineArgs` carries except host-only, non-serializable bits. */
 type TurnSpec = Omit<RunEngineArgs, 'onEvent' | 'signal' | 'target' | 'toolBridge' | 'steerInput'> & {
@@ -167,12 +165,6 @@ async function runOverRedis(turnId: string): Promise<void> {
     // container env; execute-mode only (same gate as the LSP bridge). See context7-bridge-options.ts.
     const context7 = buildContext7BridgeOptions(spec.mode);
 
-    // ── Code-index bridges (cocoindex semantic + graphify structural, external stdio) ───────────
-    // Both read per-repo indexes maintained in the background under the durable HOME. `cocoindex` needs
-    // the per-org OpenAI key (cloud embeddings) threaded onto the spec; `graphify` needs none. Same
-    // execute-mode gate as the LSP/Context7 bridges. See code-index-bridge-options.ts.
-    const codeIndex = buildCodeIndexBridgeOptions(spec.mode, spec.cwd, spec.indexEmbeddingKey);
-
     // ── User-defined MCP servers (org/repo tiers, resolved host-side) ────────────────────────────
     // Whatever `McpResolver` picked for this turn's org/repo/surface (secrets already inlined). No mode
     // gate — the host already filtered by surface. Claude gets every server; Codex gets the stdio ones.
@@ -233,14 +225,12 @@ async function runOverRedis(turnId: string): Promise<void> {
       ...(bridge?.extraClaudeOptions.mcpServers ?? {}),
       ...(lsp?.extraClaudeOptions.mcpServers ?? {}),
       ...(context7?.extraClaudeOptions.mcpServers ?? {}),
-      ...(codeIndex?.extraClaudeOptions.mcpServers ?? {}),
       ...(userMcp?.extraClaudeOptions.mcpServers ?? {}),
     };
     const mergedToolNames = [
       ...(bridge?.bridgeToolNames ?? []),
       ...(lsp?.lspToolNames ?? []),
       ...(context7?.context7ToolNames ?? []),
-      ...(codeIndex?.codeIndexToolNames ?? []),
       ...(userMcp?.userMcpToolNames ?? []),
     ];
     // For a Codex execute turn, hand the BARE bridge tool names to `runCodex` — it renders them into the
@@ -250,13 +240,11 @@ async function runOverRedis(turnId: string): Promise<void> {
       spec.engine === 'codex' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0
         ? spec.toolBridgeTools
         : undefined;
-    // For a Codex execute turn, the code-index servers ride in as config.toml `[mcp_servers.*]` blocks
-    // (Codex ignores the Claude `mcpServers` above). Same command/args/env as the Claude side — one source.
-    // The code-index stdio servers PLUS the user's stdio servers both ride in as config.toml blocks.
+    // For a Codex execute turn, the user's stdio MCP servers ride in as config.toml `[mcp_servers.*]`
+    // blocks (Codex ignores the Claude `mcpServers` above). Same command/args/env as the Claude side.
     const codexExtraMcpServers =
       spec.engine === 'codex'
         ? {
-            ...((codeIndex?.extraClaudeOptions.mcpServers as CodexExtraMcpServers | undefined) ?? {}),
             ...(userMcp?.codexExtraMcpServers ?? {}),
           }
         : undefined;

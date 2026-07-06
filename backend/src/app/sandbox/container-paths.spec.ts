@@ -60,7 +60,7 @@ describe('isReservedMountPath', () => {
 
   it('does not match ordinary cache paths', () => {
     expect(isReservedMountPath('.next/cache')).toBe(false);
-    expect(isReservedMountPath('.cocoindex')).toBe(false);
+    expect(isReservedMountPath('.venv')).toBe(false);
     expect(isReservedMountPath('node_modules/.cache')).toBe(false);
   });
 });

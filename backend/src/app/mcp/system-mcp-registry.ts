@@ -1,9 +1,3 @@
-import {
-  COCOINDEX_SERVER_NAME,
-  COCOINDEX_TOOL_NAMES,
-  GRAPHIFY_SERVER_NAME,
-  GRAPHIFY_TOOL_NAMES,
-} from '../engine/code-index-tools';
 import { CONTEXT7_SERVER_NAME, CONTEXT7_TOOL_NAMES } from '../engine/context7-tools';
 import { LSP_SERVER_NAME, LSP_TOOL_NAMES } from '../engine/lsp-tools';
 
@@ -24,8 +18,6 @@ export interface SystemMcpServer {
 export interface SystemMcpSignals {
   /** Context7 docs MCP — gated on `CONTEXT7_API_KEY` on the deployment. */
   context7Configured: boolean;
-  /** cocoindex semantic search — gated on the org having an OpenAI (embeddings) key. */
-  openaiKeyConfigured: boolean;
 }
 
 /**
@@ -49,27 +41,6 @@ export function buildSystemMcpServers(signals: SystemMcpSignals): SystemMcpServe
       transport: 'stdio',
       tools: [...LSP_TOOL_NAMES],
       active: true,
-    },
-    {
-      name: GRAPHIFY_SERVER_NAME,
-      description:
-        'Graphify — a local AST knowledge graph for structural questions: a symbol’s definition and ' +
-        'degree, its call graph / imports, and how two symbols connect. Pure graph traversal, no key.',
-      transport: 'stdio',
-      tools: [...GRAPHIFY_TOOL_NAMES],
-      active: true,
-    },
-    {
-      name: COCOINDEX_SERVER_NAME,
-      description:
-        'cocoindex (ccc) — AST-chunked semantic code search (“where is the concept X?”). Uses OpenAI ' +
-        'embeddings, so it needs the org’s OpenAI key.',
-      transport: 'stdio',
-      tools: [...COCOINDEX_TOOL_NAMES],
-      active: signals.openaiKeyConfigured,
-      inactiveReason: signals.openaiKeyConfigured
-        ? undefined
-        : 'Add the org’s OpenAI API key under Credentials to enable semantic search.',
     },
     {
       name: CONTEXT7_SERVER_NAME,

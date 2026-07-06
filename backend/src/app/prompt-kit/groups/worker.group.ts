@@ -8,7 +8,6 @@ import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
-  CODE_INDEX_NOTE,
   DELETION_SAFETY_NOTE,
   DEVIATION_NOTE,
   DOCS_BEFORE_GREP,
@@ -65,8 +64,6 @@ export class WorkerGroup {
     return (
       'You are Atlas, the ORCHESTRATOR for ONE thread of an approved plan, working in a feature worktree. ' +
       DOCS_BEFORE_GREP +
-      ' ' +
-      CODE_INDEX_NOTE +
       ' The ' +
       'steps below are your plan and your suggested decomposition — YOU own the fan-out. DELEGATE the ' +
       'substantial, long-running coding to writer subagents via the Task tool — `implement` (Sonnet) is ' +

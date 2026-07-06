@@ -41,12 +41,12 @@ describe('WorktreeConfigStore', () => {
   });
 
   it('upsertMount is idempotent and upserts by path (never duplicates, replaces mode)', async () => {
-    await store.upsertMount(ORG, REPO, '.cocoindex', 'per-thread');
-    await store.upsertMount(ORG, REPO, '.cocoindex', 'per-thread');
-    expect(await store.listMounts(ORG, REPO)).toEqual([{ path: '.cocoindex', mode: 'per-thread' }]);
+    await store.upsertMount(ORG, REPO, '.venv', 'per-thread');
+    await store.upsertMount(ORG, REPO, '.venv', 'per-thread');
+    expect(await store.listMounts(ORG, REPO)).toEqual([{ path: '.venv', mode: 'per-thread' }]);
 
-    await store.upsertMount(ORG, REPO, '.cocoindex', 'shared-ro');
-    expect(await store.listMounts(ORG, REPO)).toEqual([{ path: '.cocoindex', mode: 'shared-ro' }]);
+    await store.upsertMount(ORG, REPO, '.venv', 'shared-ro');
+    expect(await store.listMounts(ORG, REPO)).toEqual([{ path: '.venv', mode: 'shared-ro' }]);
   });
 
   it('removeMount drops exactly that mount', async () => {
@@ -72,10 +72,10 @@ describe('WorktreeConfigStore', () => {
     it('imports mounts from a legacy atlas.json when the DB is empty (a legacy seed[] is ignored)', async () => {
       writeFileSync(
         join(wt, 'atlas.json'),
-        JSON.stringify({ mounts: [{ path: '.cocoindex', mode: 'per-thread' }], seed: ['.env.local'] }),
+        JSON.stringify({ mounts: [{ path: '.venv', mode: 'per-thread' }], seed: ['.env.local'] }),
       );
       await store.importLegacyIfEmpty(ORG, REPO, wt);
-      expect(await store.listMounts(ORG, REPO)).toEqual([{ path: '.cocoindex', mode: 'per-thread' }]);
+      expect(await store.listMounts(ORG, REPO)).toEqual([{ path: '.venv', mode: 'per-thread' }]);
     });
 
     it('no-ops when the DB already has rows, even if a legacy file exists', async () => {

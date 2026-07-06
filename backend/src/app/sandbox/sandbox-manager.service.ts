@@ -11,10 +11,8 @@ import { engineBundlePath, mcpBridgeBundlePath, mcpHubBundlePath } from './bundl
 import {
   CONTAINER_AGENT_HOME,
   CONTAINER_CONTEXT,
-  CONTAINER_COCOINDEX_DIR,
   CONTAINER_FNM_STORE,
   CONTAINER_GIT_COMMON,
-  CONTAINER_GRAPHIFY_DIR,
   CONTAINER_HOME,
   CONTAINER_MCP_HUB_CONFIG,
   CONTAINER_MCP_HUB_DIR,
@@ -28,8 +26,6 @@ import type { ResolvedMcpServer } from '../engine/engine.types';
 import type { McpHubConfig } from './image/mcp-hub-config';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import { hostExecUser } from './host-exec-user';
-import { cocoindexExcludedPatternsEnv } from '../engine/code-index-tools';
-import { cccBootstrapScript, graphifyIgnoreSeedScript } from './image/code-index-bridge-options';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import type { SandboxAttachInput, SandboxProvider, ServiceLivenessProbe } from './sandbox-provider.port';
 
@@ -620,93 +616,6 @@ export class SandboxManager implements SandboxProvider {
   }
 
   /**
-   * EPHEMERAL secret delivery — pipe a value into a path inside a thread's LIVE container over exec STDIN
-   * (never argv/env, so it can't surface in `docker inspect`/`ps`), bounded by `timeoutMs`. `cat > "$1"`
-   * writes exactly the bytes we send to `path`; when `path` is a FIFO the brain wired a waiting process to
-   * read (an OAuth-login prompt), the open blocks until that reader exists — so a DEAD reader trips the
-   * timeout and we return `{ ok:false }` for the caller to restart the flow, rather than hanging the request.
-   * Runs as the host exec-uid so a FIFO the brain created (also as that uid) is writable (no EPERM). See
-   * {@link SandboxProvider.writeToJobContainerPath}.
-   */
-  /**
-   * Kick detached, best-effort **initial builds** of the job's two code indexes (see the port doc). Both are
-   * fire-and-forget (`execDetached`, own `flock`, never blocks/throws):
-   *
-   *   - **Graphify (structural, KEYLESS)** — always. The `graphify watch` daemon in `sandbox-init.sh` only
-   *     MAINTAINS the graph on file changes; it does NOT build the initial `graph.json` (with no changes it
-   *     sits idle), so a fresh sandbox has nothing for `graphify-mcp` to read until the first edit. We build
-   *     it here with `graphify update`. First we seed `/workspace/.graphifyignore` (mirrors the ccc
-   *     exclusions + drops the data/doc formats graphify parses to zero nodes) and git-exclude it — without
-   *     it those never-cached files drive a re-extraction busy-loop (graphify #1666); see
-   *     {@link GRAPHIFY_IGNORE_PATTERNS}.
-   *   - **ccc (semantic, needs the OpenAI key)** — only when `embeddingKey` is present (cloud embeddings
-   *     can't run keyless). The key isn't in the container at create time, so this first build is triggered
-   *     here so the job's first `search` isn't a slow cold index; ongoing freshness is the MCP `search`
-   *     tool's own job (it re-indexes incrementally before searching).
-   *
-   * Never throws.
-   */
-  async kickCodeIndexRefresh(input: { jobId: string; embeddingKey?: string }): Promise<void> {
-    try {
-      const name = this.containerName('', '', '', input.jobId);
-      const info = await this.engine.inspect(name);
-      if (!info || info.state !== 'running') return;
-      const asUser = hostExecUser() ? { user: hostExecUser() } : {};
-
-      // Graphify structural graph — keyless, always. Seed `.graphifyignore` (only if absent, so a repo's own
-      // is respected) + git-exclude it, then build the initial graph behind a flock. GRAPHIFY_OUT redirects
-      // graph.json out of the worktree into the durable per-job index root (matches the bridge --graph path).
-      const graphifyScript = [
-        `mkdir -p "${CONTAINER_GRAPHIFY_DIR}" 2>/dev/null || true`,
-        graphifyIgnoreSeedScript(),
-        `exec 8>"${CONTAINER_GRAPHIFY_DIR}/.build.lock" || exit 0`,
-        `flock -n 8 || exit 0`,
-        `graphify update ${CONTAINER_WORKTREE} >/dev/null 2>&1 || true`,
-      ].join('\n');
-      await this.engine.execDetached(info.id, ['sh', '-c', graphifyScript], {
-        ...asUser,
-        env: { HOME: CONTAINER_HOME, GRAPHIFY_OUT: CONTAINER_GRAPHIFY_DIR },
-      });
-
-      if (!input.embeddingKey) return; // ccc cloud embeddings need the key; without it there's nothing to warm.
-
-      // ccc config via env (secrets/config never on argv). Mirrors code-index-bridge-options.ts so the
-      // warm-build and the query-time MCP server agree on root / db-location / exclusions.
-      const env: Record<string, string> = {
-        HOME: CONTAINER_HOME,
-        // The CLI chdirs here (its callback) so project-root discovery finds the `.cocoindex_code/settings.yml`
-        // marker the bootstrap writes — ROOT_PATH alone isn't honored by the CLI (only the server factory).
-        COCOINDEX_CODE_HOST_CWD: CONTAINER_WORKTREE,
-        COCOINDEX_CODE_ROOT_PATH: CONTAINER_WORKTREE,
-        COCOINDEX_CODE_RUNTIME_DIR: CONTAINER_COCOINDEX_DIR,
-        // Mapping SOURCE = the project root itself (resolve_db_dir checks `project_root == source`), so the
-        // heavy SQLite DB lands in the durable per-job index root, not `<worktree>/.cocoindex_code`.
-        COCOINDEX_CODE_DB_PATH_MAPPING: `${CONTAINER_WORKTREE}=${CONTAINER_COCOINDEX_DIR}`,
-        COCOINDEX_CODE_EXCLUDED_PATTERNS: cocoindexExcludedPatternsEnv(),
-        OPENAI_API_KEY: input.embeddingKey,
-      };
-
-      // dash-safe. Bootstrap the project (seed global settings, `ccc init`, git-exclude the marker — shared
-      // with the MCP bridge so the warm-build and query-time server agree), then a single build behind a
-      // non-blocking flock (a concurrent build in this container just skips).
-      const script = [
-        `mkdir -p "${CONTAINER_COCOINDEX_DIR}" 2>/dev/null || true`,
-        cccBootstrapScript(),
-        `exec 9>"${CONTAINER_COCOINDEX_DIR}/.build.lock" || exit 0`,
-        `flock -n 9 || exit 0`,
-        `ccc index >/dev/null 2>&1 || true`,
-      ].join('\n');
-
-      await this.engine.execDetached(info.id, ['sh', '-c', script], {
-        ...asUser,
-        env,
-      });
-    } catch (err) {
-      this.logger.debug(`kickCodeIndexRefresh(${input.jobId.slice(0, 8)}) skipped: ${String(err)}`);
-    }
-  }
-
-  /**
    * Push the sandbox's user MCP servers to the persistent per-sandbox HUB (see `image/mcp-hub-server.ts`):
    * write the resolved UNION (secrets inlined) + the stdio `spawn` identity to the host side of the durable
    * `/.atlas` bind, then `SIGHUP` the hub so it reconciles (connect new / drop removed / leave unchanged).
@@ -753,6 +662,15 @@ export class SandboxManager implements SandboxProvider {
     }
   }
 
+  /**
+   * EPHEMERAL secret delivery — pipe a value into a path inside a thread's LIVE container over exec STDIN
+   * (never argv/env, so it can't surface in `docker inspect`/`ps`), bounded by `timeoutMs`. `cat > "$1"`
+   * writes exactly the bytes we send to `path`; when `path` is a FIFO the brain wired a waiting process to
+   * read (an OAuth-login prompt), the open blocks until that reader exists — so a DEAD reader trips the
+   * timeout and we return `{ ok:false }` for the caller to restart the flow, rather than hanging the request.
+   * Runs as the host exec-uid so a FIFO the brain created (also as that uid) is writable (no EPERM). See
+   * {@link SandboxProvider.writeToJobContainerPath}.
+   */
   async writeToJobContainerPath(input: {
     jobId: string;
     path: string;

@@ -26,27 +26,6 @@ export const CONTAINER_AGENT_HOME = '/.atlas';
 export const CONTAINER_HOME = '/home/atlas';
 
 /**
- * The CODE-INDEX root INSIDE the sandbox — where the background code indexes (ccc's SQLite +
- * Graphify's graph.json) are written and read. Lives UNDER {@link CONTAINER_AGENT_HOME} (`/.atlas`), so it is
- * PER-JOB durable (survives a `reset_sandbox` of the same job, NOT shared across other jobs on the repo) —
- * NOT the per-repo {@link CONTAINER_HOME}. Per-job is deliberate: (1) each job has its OWN worktree/branch/edits,
- * so a shared index would misrepresent every job but the one that wrote it; (2) multiple concurrent job
- * containers on one repo would otherwise fight over a single graph.json/SQLite (the `graphify watch` daemon
- * writes continuously). Deliberately OUTSIDE {@link CONTAINER_WORKTREE} so the (large) index artifacts never
- * land in the git worktree / a PR diff — the index is a derived artifact, never committed. Nested under an
- * existing bind, so it adds NO new container mount (no CONFIG_REV bump). See `sandbox/sandbox-init.sh`
- * (graphify watch), `SandboxManager.kickCodeIndexRefresh` (initial graphify + ccc builds),
- * `code-index-bridge-options.ts`.
- */
-export const CONTAINER_CODE_INDEX = `${CONTAINER_AGENT_HOME}/code-index`;
-
-/** ccc/CocoIndex-Code's runtime + SQLite index dir (see `COCOINDEX_CODE_DB_PATH_MAPPING`). */
-export const CONTAINER_COCOINDEX_DIR = `${CONTAINER_CODE_INDEX}/cocoindex`;
-
-/** Graphify's output dir (= `GRAPHIFY_OUT` for the watch daemon); the queryable graph is `${dir}/graph.json`. */
-export const CONTAINER_GRAPHIFY_DIR = `${CONTAINER_CODE_INDEX}/graphify`;
-
-/**
  * The worktree's mount path INSIDE the sandbox — a NEUTRAL container path, NOT the host path. The host
  * worktree is bind-mounted here so the engine never sees host-shaped paths (and can tell it is boxed);
  * `cwd` is translated host→container at the runner boundary.

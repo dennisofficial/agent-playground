@@ -615,9 +615,8 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       mode: 'execute',
     });
     const opts = captured.options!;
-    // Auto-approve: safe reads + subagent spawning + the task tools (live task list) + web + the code-index
-    // tool names (cocoindex/graphify — always in the set so a subagent never stalls on approval; inert when
-    // their servers aren't registered, as here). Writes/Bash still fall through to canUseTool.
+    // Auto-approve: safe reads + subagent spawning + the task tools (live task list) + web. Writes/Bash
+    // still fall through to canUseTool.
     expect(opts.allowedTools).toEqual([
       'Read',
       'Glob',
@@ -629,10 +628,6 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       'TaskGet',
       'WebSearch',
       'WebFetch',
-      'mcp__cocoindex__search',
-      'mcp__graphify__get_node',
-      'mcp__graphify__get_neighbors',
-      'mcp__graphify__shortest_path',
     ]);
     expect(opts.mcpServers).toBeUndefined();
   });

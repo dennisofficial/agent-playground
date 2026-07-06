@@ -1,7 +1,6 @@
 /**
- * User-defined MCP servers → SDK option assembly. Mirrors `context7-bridge-options.ts` (remote) +
- * `code-index-bridge-options.ts` (stdio + dual-engine): the SHAPE of the options handed to the SDK lives
- * here, unit-testable without spawning the bundled entrypoint.
+ * User-defined MCP servers → SDK option assembly. Mirrors `context7-bridge-options.ts` (remote): the SHAPE
+ * of the options handed to the SDK lives here, unit-testable without spawning the bundled entrypoint.
  *
  * Input is `spec.userMcpServers` — the servers `McpResolver.resolveForTurn` picked for THIS turn's
  * org/repo/surface, already RESOLVED (secret header/env values inlined host-side). This file just renders
@@ -17,8 +16,8 @@
  *     Codex's config.toml can't point at the hub's HTTP route. Remote (http/sse) user servers stay
  *     Claude-only. Routing Codex through the hub (+ remote support) is a follow-up (a stdio proxy shim).
  *
- * Servers whose name collides with a RESERVED system server (host bridge, LSP, Context7, code-index) are
- * skipped defensively so a user definition can never shadow the orchestration plumbing.
+ * Servers whose name collides with a RESERVED system server (host bridge, LSP, Context7) are skipped
+ * defensively so a user definition can never shadow the orchestration plumbing.
  */
 import type { CodexExtraMcpServers } from '../../engine/codex-auth-home';
 import type { ResolvedMcpServer } from '../../engine/engine.types';
@@ -30,8 +29,6 @@ const RESERVED_NAMES = new Set([
   'atlasbridge',
   'atlas-lsp-ts',
   'context7',
-  'cocoindex',
-  'graphify',
 ]);
 
 export interface UserMcpBridgeOptions {

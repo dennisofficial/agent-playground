@@ -157,12 +157,12 @@ describe('WorktreeHydrator', () => {
       fakeSecrets({}),
       fakeConfig({
         mounts: [
-          { path: '.cocoindex', mode: 'per-thread' },
+          { path: '.venv', mode: 'per-thread' },
           { path: '../evil', mode: 'per-thread' },
         ],
       }),
     );
-    expect(await h.resolveMounts(ORG, REPO, wt)).toEqual([{ path: '.cocoindex', mode: 'per-thread' }]);
+    expect(await h.resolveMounts(ORG, REPO, wt)).toEqual([{ path: '.venv', mode: 'per-thread' }]);
   });
 
   it('resolveMounts keeps a valid EXTERNAL (absolute) mount and drops a reserved one', async () => {
@@ -220,7 +220,7 @@ describe('WorktreeHydrator', () => {
     const after = new WorktreeHydrator(
       fakeGit(new Set()),
       fakeSecrets({}),
-      fakeConfig({ mounts: [{ path: '.cocoindex', mode: 'per-thread' }] }),
+      fakeConfig({ mounts: [{ path: '.venv', mode: 'per-thread' }] }),
     );
     const a = await before.computeSig(wt, ORG, REPO);
     const b = await after.computeSig(wt, ORG, REPO);
