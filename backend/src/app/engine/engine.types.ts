@@ -141,6 +141,18 @@ export interface EngineUsage {
    * authoritative source for per-model token/cost analytics; the flat fields above collapse it to one.
    */
   modelUsage?: Record<string, ModelUsageBreakdown>;
+  /**
+   * Which engine ran this turn — stamped from the run's `args.engine` so the web can label a turn that
+   * carries no {@link model} (e.g. a Codex run, whose SDK doesn't surface a model id) as "Codex".
+   * Display-only provenance; not part of any billing number.
+   */
+  engine?: SessionEngine;
+  /**
+   * The reasoning effort the run used, when one was passed (Codex-only input — see
+   * {@link RunEngineArgs.modelReasoningEffort}; undefined for Claude, which has no effort knob).
+   * Display-only: threads through to the composer footer as the "· xHigh" suffix.
+   */
+  reasoningEffort?: CodexReasoningEffort;
 }
 
 /**

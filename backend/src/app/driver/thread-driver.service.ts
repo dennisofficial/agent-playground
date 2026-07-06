@@ -1824,7 +1824,7 @@ export class ThreadDriver implements JobDispatcher {
       await harness.abort();
       throw err;
     }
-    await harness.finish(result.report);
+    await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
     return result;
   }
 
@@ -1891,7 +1891,7 @@ export class ThreadDriver implements JobDispatcher {
         // `request_operator_input` request whose response the re-attached host must still serve.
         ...(toolBridge ? { toolBridge } : {}),
       });
-      await harness.finish(result.report);
+      await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
       return result;
     } catch (err) {
       if (isEngineDetachedError(err)) {
@@ -1997,7 +1997,7 @@ export class ThreadDriver implements JobDispatcher {
       throw err;
     }
     // Engine turn done — persist the transcript (+ fallback) and end the live lane.
-    await harness.finish(result.report);
+    await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
     return result;
   }
 
@@ -2124,7 +2124,7 @@ export class ThreadDriver implements JobDispatcher {
         onEvent: (e) => harness.onEvent(e),
         toolBridge,
       });
-      await harness.finish(result.report);
+      await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
       return result;
     } catch (err) {
       if (isEngineDetachedError(err)) throw err;
@@ -2191,7 +2191,7 @@ export class ThreadDriver implements JobDispatcher {
       await harness.abort();
       throw err;
     }
-    await harness.finish(result.report);
+    await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
     return result;
   }
 

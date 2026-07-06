@@ -40,7 +40,7 @@ import {
   indexCodexReviewBlocks,
 } from "./codex-review";
 import { indexAutofixBlocks } from "./review-lane";
-import { Composer } from "./composer";
+import { Composer, type ComposerFooter } from "./composer";
 import { DetailTopBar } from "./detail-top-bar";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
@@ -98,6 +98,7 @@ export function TranscriptView({
   lane = MAIN_LANE,
   phaseIds,
   composer = false,
+  readOnly = false,
   isLoading = false,
   live = false,
   emptyText,
@@ -110,8 +111,10 @@ export function TranscriptView({
   lane?: string;
   /** For a build THREAD lane: the phase anchor ids to aggregate (the `lane` still picks the live turn). */
   phaseIds?: Set<string>;
-  /** Show the composer (the Main lane only). Other lanes are read-only. */
+  /** Show the composer. On Main it's interactive; on every other lane pass `readOnly` alongside. */
   composer?: boolean;
+  /** Read-only lane (not Main): the composer's input + Send are disabled, but its footer stays live. */
+  readOnly?: boolean;
   isLoading?: boolean;
   live?: boolean;
   /** The empty-state line when the lane has no activity yet. */
@@ -136,8 +139,9 @@ export function TranscriptView({
   // The AUTHORITATIVE turn signal: the server-owned realtime `needsYou` (true = the AI is idle / awaiting
   // you — a turn is NOT running). If it flips true while a stale live turn still lingers (a dropped
   // `turn_end`), we treat the turn as OVER so the "working…" indicator self-heals OFF. Only the Main lane
-  // cross-checks this — the realtime feed is job-level, so it can't gate independent build (phase) lanes.
-  const realtimeIdle = useRealtimeIdle(composer ? jobRef.jobId : null);
+  // cross-checks this — the realtime feed is job-level, so it can't gate independent build (phase) lanes,
+  // and a read-only lane (composer on, but not Main) must NOT cross-check it either.
+  const realtimeIdle = useRealtimeIdle(composer && !readOnly ? jobRef.jobId : null);
   const turnActive = (liveTurn?.active ?? false) && !realtimeIdle;
 
   // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
@@ -151,11 +155,12 @@ export function TranscriptView({
   // (no client queue). Every operator message renders inline in the main log at its natural position.
   const log = messages;
 
-  // The context-window ring reads the MOST RECENT `turn_meta` block (the brain appends one per turn with
-  // the last request's occupancy + the model's window). Only the composer shows the ring.
-  const contextMeta = useMemo(
-    () => (composer ? latestContextMeta(messages) : null),
-    [messages, composer],
+  // The composer footer — the model · effort + context ring for THIS lane, from its most recent reporting
+  // `turn_meta`. Computed for every lane that shows a composer (Main and read-only), scoped to the lane so
+  // it changes as the operator switches lanes.
+  const footer = useMemo(
+    () => (composer ? laneFooterMeta(messages, lane, phaseIds) : null),
+    [messages, composer, lane, phaseIds],
   );
 
   // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent/phase
@@ -169,12 +174,12 @@ export function TranscriptView({
   // Unanswered question cards on the Main lane (each card's message `ts` IS its LogItem key). The operator
   // can jump to a buried one via the pinned chip below instead of scrolling the transcript to hunt for it.
   const openQuestions = useMemo(() => {
-    if (!composer) return [] as JobMessage[];
+    if (!composer || readOnly) return [] as JobMessage[];
     return messages.filter((m) => {
       const c = m.card;
       return c?.type === "question_card" && !c.answer && !c.withdrawnAt;
     });
-  }, [messages, composer]);
+  }, [messages, composer, readOnly]);
 
   // `pin` snaps the view to the bottom for the virtualized case (see useTailFollow). Assigned into a ref so
   // the callback passed to useTailFollow stays stable while still reaching the freshly-built `virtualizer`
@@ -305,7 +310,8 @@ export function TranscriptView({
         <Composer
           jobRef={jobRef}
           onHeightChange={setComposerHeight}
-          context={contextMeta}
+          footer={footer}
+          readOnly={readOnly}
         />
       ) : null}
     </div>
@@ -396,24 +402,20 @@ function buildLogItems(
   const codex = indexCodexReviewBlocks(log);
   const autofix = indexAutofixBlocks(log);
 
-  const isMain = lane === MAIN_LANE;
-  const isCodexLane = lane.startsWith("codex-review:");
-  // A build thread/step lane streams on the STABLE `thread:<id>` lane and always passes `phaseIds` (the step
-  // anchors to render); the legacy `phase:<id>` derivation is a fallback for any old lane string.
-  const phaseAnchor = lane.startsWith("phase:")
-    ? lane.slice("phase:".length)
-    : null;
-  const phaseSet: Set<string> | null =
-    opts.phaseIds ?? (phaseAnchor ? new Set([phaseAnchor]) : null);
-  // An auto-fix sub-page lane: `autofix:<autofixId>:<lensId>` (a review lens) OR `autofix:<autofixId>:fix`
-  // (the post-review fix turn) — see `review-lane.ts`. The two are tagged differently: a lens block carries
-  // `meta.lensId`, the fix turn carries `meta.fixTurn: true` (NO lensId), so the fix lane must match on the
-  // latter or its transcript renders permanently empty.
-  const isAutofixLane = lane.startsWith("autofix:");
-  const autofixParts = isAutofixLane ? lane.split(":") : null; // ['autofix', autofixId, lensId|'fix']
-  const reviewAutofixId = autofixParts?.[1] ?? null;
-  const reviewLensId = autofixParts?.[2] ?? null;
-  const isFixLane = reviewLensId === "fix";
+  // Decompose the lane once (shared with the footer selector so membership never drifts). A build
+  // thread/step lane streams on the STABLE `thread:<id>` lane and always passes `phaseIds` (the step
+  // anchors to render); the legacy `phase:<id>` derivation is a fallback for any old lane string. An
+  // auto-fix sub-page lane is `autofix:<autofixId>:<lensId>` (a review lens) OR `autofix:<autofixId>:fix`
+  // (the post-review fix turn) — a lens block carries `meta.lensId`, the fix turn carries `meta.fixTurn`.
+  const {
+    isMain,
+    isCodexLane,
+    phaseSet,
+    isAutofixLane,
+    reviewAutofixId,
+    reviewLensId,
+    isFixLane,
+  } = parseLane(lane, opts.phaseIds);
 
   const flush = () => {
     if (pending.length === 0) return;
@@ -731,45 +733,132 @@ function useRealtimeIdle(jobId: string | null): boolean {
   return threads?.find((t) => t.id === jobId)?.needsYou ?? false;
 }
 
+/** The parsed identity of a transcript lane — the ONE place a lane string is decomposed, shared by
+ *  `buildLogItems` (membership/peeling) and `laneMetaBelongs` (footer selection) so they never drift. */
+interface ParsedLane {
+  isMain: boolean;
+  isCodexLane: boolean;
+  /** For a build THREAD/step lane: the anchor step ids this lane aggregates (else null). */
+  phaseSet: Set<string> | null;
+  isAutofixLane: boolean;
+  reviewAutofixId: string | null;
+  reviewLensId: string | null;
+  isFixLane: boolean;
+}
+
+/** Decompose a lane token (+ optional explicit build `phaseIds`) into its {@link ParsedLane} identity. */
+function parseLane(lane: string, phaseIds?: Set<string>): ParsedLane {
+  const isMain = lane === MAIN_LANE;
+  const isCodexLane = lane.startsWith("codex-review:");
+  const phaseAnchor = lane.startsWith("phase:")
+    ? lane.slice("phase:".length)
+    : null;
+  const phaseSet: Set<string> | null =
+    phaseIds ?? (phaseAnchor ? new Set([phaseAnchor]) : null);
+  const isAutofixLane = lane.startsWith("autofix:");
+  const autofixParts = isAutofixLane ? lane.split(":") : null; // ['autofix', autofixId, lensId|'fix']
+  const reviewAutofixId = autofixParts?.[1] ?? null;
+  const reviewLensId = autofixParts?.[2] ?? null;
+  const isFixLane = reviewLensId === "fix";
+  return {
+    isMain,
+    isCodexLane,
+    phaseSet,
+    isAutofixLane,
+    reviewAutofixId,
+    reviewLensId,
+    isFixLane,
+  };
+}
+
+/** The lane-tag fields the backend stamps on a `turn_meta` block (via the harness `metaTag`). */
+interface LaneMeta {
+  phaseId?: string | null;
+  codexReviewId?: string | null;
+  autofixId?: string | null;
+  lensId?: string | null;
+  fixTurn?: boolean | null;
+  shipId?: string | null;
+}
+
+/** Does a `turn_meta`'s lane tag belong to `lane`? Mirrors `buildLogItems`' membership exactly. */
+function laneMetaBelongs(meta: LaneMeta, p: ParsedLane): boolean {
+  if (p.isCodexLane) return meta.codexReviewId != null;
+  if (p.isAutofixLane)
+    return (
+      meta.autofixId === p.reviewAutofixId &&
+      (p.isFixLane ? meta.fixTurn === true : meta.lensId === p.reviewLensId)
+    );
+  if (p.phaseSet)
+    return typeof meta.phaseId === "string" && p.phaseSet.has(meta.phaseId);
+  // Main (the brain): no lane tag at all — crucially INCLUDING no `shipId` (the build-ship lane writes
+  // `turn_meta` with only `{ shipId }`, which would otherwise masquerade as the brain's footer).
+  return (
+    meta.phaseId == null &&
+    meta.codexReviewId == null &&
+    meta.autofixId == null &&
+    meta.shipId == null
+  );
+}
+
 /**
- * The last REPORTED context occupancy of the BRAIN session — the most recent brain-lane `turn_meta` block
- * that actually carries usable numbers. Two filters:
- *  - Brain lane only: build/Codex-lane turns also emit `turn_meta`, tagged with `meta.phaseId`; the composer
- *    gets the FULL unscoped message list, so we skip any `phaseId`-tagged block (mirrors the backend's
- *    `latestBrainOccupancy` `phaseId IS NULL` filter) — else the ring would show a build lane's occupancy.
- *  - Last reported: not every brain turn reports usage — a recovered turn (restart JSONL backstop), an
- *    internal review/compaction turn, or one whose result lacked a usage block leaves `contextTokens` null.
- *    Rather than blanking on those (which made the ring flicker out mid-thread), scan back to the last brain
- *    turn that DID report. Tradeoff: right after a compaction+reseed the pre-compaction value can linger for
- *    a single turn until the fresh session reports — matches "last reported occupancy" (Claude-Code style).
+ * The composer footer for a given lane — the model/effort/engine of the lane's most recent reporting
+ * turn, plus its last reported context occupancy. Scans `messages` (the FULL unscoped list) backward,
+ * scoped to the lane via {@link laneMetaBelongs}:
+ *  - model/effort/engine: taken from the latest matching `turn_meta`'s `usage` (regardless of context
+ *    numbers — a Codex lane carries no occupancy but still has a model/effort to show).
+ *  - context: the latest matching block that carries usable `contextTokens`+`contextLimit` (may be an
+ *    OLDER block than the model one — matches "last reported occupancy", Claude-Code style, so the ring
+ *    doesn't flicker out on a turn whose result lacked a usage block).
  */
-function latestContextMeta(
+function laneFooterMeta(
   messages: JobMessage[],
-): { tokens: number; limit: number; model?: string } | null {
+  lane: string,
+  phaseIds?: Set<string>,
+): ComposerFooter | null {
+  const p = parseLane(lane, phaseIds);
+  let model: string | undefined;
+  let effort: string | undefined;
+  let engine: string | undefined;
+  let context: ComposerFooter["context"] = null;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.kind !== "turn_meta") continue;
-    const meta = (m.meta ?? {}) as {
+    const meta = (m.meta ?? {}) as LaneMeta & {
       contextTokens?: number | null;
       contextLimit?: number | null;
-      phaseId?: string | null;
-      usage?: { model?: string };
+      usage?: {
+        model?: string;
+        contextModel?: string;
+        engine?: string;
+        reasoningEffort?: string;
+      };
     };
-    if (meta.phaseId != null) continue; // build/Codex-lane turn_meta — not the brain's occupancy.
+    if (!laneMetaBelongs(meta, p)) continue;
+    const u = meta.usage ?? {};
+    if (model === undefined && engine === undefined) {
+      // First (newest) matching block wins the model/effort/engine.
+      model = u.model ?? u.contextModel;
+      effort = u.reasoningEffort;
+      engine = u.engine;
+    }
     if (
+      !context &&
       typeof meta.contextTokens === "number" &&
       typeof meta.contextLimit === "number" &&
       meta.contextLimit > 0
     ) {
-      return {
+      context = {
         tokens: meta.contextTokens,
         limit: meta.contextLimit,
-        model: meta.usage?.model,
+        model: u.contextModel ?? u.model,
       };
     }
-    // This brain turn_meta lacked usable numbers — keep scanning older turns for the last reported occupancy.
+    if ((model !== undefined || engine !== undefined) && context) break;
   }
-  return null;
+  if (model === undefined && effort === undefined && engine === undefined && !context)
+    return null;
+  return { model, effort, engine, context };
 }
 
 /**

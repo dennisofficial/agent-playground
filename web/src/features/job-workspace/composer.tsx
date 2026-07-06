@@ -9,6 +9,15 @@ import { useAllJobs } from "@/lib/api/inbox";
 import { ContextMeter } from "./bubbles";
 import { CommentTray } from "./comment-tray";
 import { useReviewComments } from "./review-comments";
+import { formatEffort, formatModelLabel } from "@/lib/format";
+
+/** The lane's live footer data — the model/effort/engine that ran + its context occupancy. */
+export interface ComposerFooter {
+  model?: string;
+  effort?: string;
+  engine?: string;
+  context?: { tokens: number; limit: number; model?: string } | null;
+}
 
 /**
  * The conversation composer — talks to the thread's brain. Posts to `…/jobs/:jobId/say`. Typed
@@ -19,21 +28,31 @@ import { useReviewComments } from "./review-comments";
  * reacts mid-turn) — no code change here beyond dropping the old client queue. When a turn is live AND the
  * box is empty, the Send button becomes a STOP button (`…/jobs/:jobId/stop`) that gracefully ends the turn.
  *
- * The `Plan ▾` mode pill, the `＋` attach button, and the model label are visual affordances from the
- * design and are intentionally static for now (no backend wiring) — see `web/BACKEND_GAPS.md`.
+ * The `Plan ▾` mode pill and the `＋` attach button are visual affordances from the design and are
+ * intentionally static for now (no backend wiring) — see `web/BACKEND_GAPS.md`. The model · effort
+ * label and the context ring, however, ARE live: they thread the lane's latest `turn_meta` (via the
+ * `footer` prop), so they change as the operator switches lanes.
+ *
+ * The composer renders on EVERY transcript lane. On non-Main lanes it is `readOnly`: the box is dimmed
+ * and non-editable and the Send button is disabled (greyed), because the operator steers the brain from
+ * the Main conversation, not a build/review lane — but the footer still shows that lane's model/effort/
+ * occupancy.
  */
 export function Composer({
   jobRef,
   placeholder = "Message Atlas — ask, plan, or steer…",
   onHeightChange,
-  context,
+  footer,
+  readOnly = false,
 }: {
   jobRef: JobRef;
   placeholder?: string;
   /** Reports the composer overlay's rendered height so the transcript can reserve matching space. */
   onHeightChange?: (height: number) => void;
-  /** The thread's context-window occupancy (latest turn) — rendered as the bottom-right ring, Claude-Code style. */
-  context?: { tokens: number; limit: number; model?: string } | null;
+  /** The lane's live footer data — model/effort/engine + context-window occupancy (latest turn). */
+  footer?: ComposerFooter | null;
+  /** Read-only lane (not Main): disable the input + Send, keep the footer live. */
+  readOnly?: boolean;
 }) {
   const say = useSay(jobRef);
   const stop = useStop(jobRef);
@@ -45,13 +64,15 @@ export function Composer({
 
   // Is the brain's turn live? Same reconciliation the transcript uses: the SSE live turn, self-healed by the
   // authoritative realtime `needsYou` (idle = no turn), so a dropped `turn_end` doesn't strand a Stop button.
+  // Read-only lanes never steer, so the Stop/live logic is irrelevant there (hooks stay unconditional).
   const liveActive = useLiveTurn(jobRef.jobId, MAIN_LANE)?.active ?? false;
   const { data: threads } = useAllJobs();
   const realtimeIdle =
     threads?.find((t) => t.id === jobRef.jobId)?.needsYou ?? false;
-  const turnActive = liveActive && !realtimeIdle;
+  const turnActive = !readOnly && liveActive && !realtimeIdle;
   // Stop replaces Send only when a turn is running AND the composer is empty (no pending text/comments to
-  // send). With text present, the button is Send — which now STEERS the running turn server-side.
+  // send). With text present, the button is Send — which now STEERS the running turn server-side. Never on
+  // a read-only lane.
   const showStop = turnActive && !text.trim() && comments.length === 0;
 
   // Auto-grow the textarea to fit its content (capped by the CSS max-height, which then scrolls).
@@ -75,6 +96,7 @@ export function Composer({
   }, [onHeightChange]);
 
   function send() {
+    if (readOnly) return;
     const trimmed = text.trim();
     if (comments.length > 0) {
       sendReviewComments.mutate({
@@ -101,6 +123,9 @@ export function Composer({
     }
   }
 
+  const modelLabel = formatModelLabel(footer?.model, footer?.engine);
+  const effortLabel = formatEffort(footer?.effort);
+
   return (
     <div
       ref={rootRef}
@@ -110,7 +135,7 @@ export function Composer({
       }}
     >
       <div className="pointer-events-auto mx-auto max-w-[880px]">
-        <CommentTray />
+        {readOnly ? null : <CommentTray />}
         <div
           className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
           style={{
@@ -118,19 +143,22 @@ export function Composer({
               "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
           }}
         >
-          <div className="flex items-start gap-2.5">
+          <div className={`flex items-start gap-2.5${readOnly ? " opacity-60" : ""}`}>
             <textarea
               ref={textareaRef}
-              value={text}
+              value={readOnly ? "" : text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={onKeyDown}
               rows={1}
+              disabled={readOnly}
               placeholder={
-                comments.length > 0
-                  ? "Add a message with your comments (optional)…"
-                  : placeholder
+                readOnly
+                  ? "Read-only — steer Atlas from the Conversation"
+                  : comments.length > 0
+                    ? "Add a message with your comments (optional)…"
+                    : placeholder
               }
-              className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint"
+              className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint disabled:cursor-default"
             />
             {showStop ? (
               <button
@@ -148,37 +176,47 @@ export function Composer({
                 type="button"
                 onClick={send}
                 disabled={
+                  readOnly ||
                   (!text.trim() && comments.length === 0) ||
                   say.isPending ||
                   sendReviewComments.isPending
                 }
                 className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
                 aria-label="Send"
+                title={readOnly ? "Read-only lane" : undefined}
               >
                 <ArrowUp size={15} strokeWidth={2.4} />
               </button>
             )}
           </div>
 
-          {/* Static affordances (design parity — not wired yet) */}
           <div className="mt-2.5 flex items-center gap-2">
-            <span className="flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text">
+            {/* Static affordances (design parity — not wired yet) */}
+            <span
+              className={`flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text${readOnly ? " opacity-60" : ""}`}
+            >
               Plan <ChevronDown size={11} strokeWidth={2.6} />
             </span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg text-dim">
+            <span
+              className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim${readOnly ? " opacity-60" : ""}`}
+            >
               <Plus size={16} strokeWidth={2.2} />
             </span>
             <div className="flex-1" />
-            <span className="font-mono text-[11px] text-dim">
-              Opus 4.8 · Fast
-            </span>
-            {context ? (
+            {/* Live: the model · effort the lane's latest turn ran on (threads `turn_meta.usage`). */}
+            {modelLabel ? (
+              <span className="font-mono text-[11px] text-dim">
+                {modelLabel}
+                {effortLabel ? ` · ${effortLabel}` : ""}
+              </span>
+            ) : null}
+            {footer?.context ? (
               <>
                 <span className="h-3.5 w-px bg-border" />
                 <ContextMeter
-                  tokens={context.tokens}
-                  limit={context.limit}
-                  model={context.model}
+                  tokens={footer.context.tokens}
+                  limit={footer.context.limit}
+                  model={footer.context.model}
                 />
               </>
             ) : null}

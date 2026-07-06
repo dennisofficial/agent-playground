@@ -225,6 +225,8 @@ export function PhaseView({
         jobRef={jobRef}
         messages={messages}
         lane={codexReviewLane(jobRef.jobId)}
+        composer
+        readOnly
         emptyText="No review activity yet — Codex’s reasoning appears here as it runs."
         onSelectNode={onSelectNode}
       />
@@ -247,6 +249,8 @@ export function PhaseView({
         jobRef={jobRef}
         messages={messages}
         lane={reviewChild.lane}
+        composer
+        readOnly
         emptyText={
           isFix
             ? "No fixes were needed — the review found nothing to change."
@@ -285,6 +289,8 @@ export function PhaseView({
             : threadLane(step.anchorStepId)
         }
         phaseIds={new Set([step.anchorStepId])}
+        composer
+        readOnly
         onSelectNode={onSelectNode}
         emptyText="No build activity yet — this step hasn’t run."
       />
@@ -305,6 +311,8 @@ export function PhaseView({
         messages={messages}
         lane={threadLane(thread.id)}
         phaseIds={phaseIds}
+        composer
+        readOnly
         onSelectNode={onSelectNode}
         emptyText="No build activity yet — this thread hasn’t run."
       />
@@ -321,6 +329,8 @@ export function PhaseView({
         messages={messages}
         lane="__none__"
         phaseIds={phaseIds}
+        composer
+        readOnly
         onSelectNode={onSelectNode}
         emptyText="No build activity yet."
       />

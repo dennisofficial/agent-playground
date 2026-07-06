@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { EngineEvent, EngineUsage } from '../engine';
+import { type EngineEvent, type EngineUsage, resolveContextLimit } from '../engine';
 import { foldTaskEvent } from '../driver/task-fold';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, MessageEntity, ThreadEntity } from '../persistence/entities';
@@ -396,14 +396,25 @@ export class TurnHarnessFactory {
         // monotonic `stamp()` sorts it after every transcript block) so the web renders it as the turn-end
         // divider and reads the latest one for the context ring. Only when usage is actually present.
         if (turnMeta?.usage) {
+          // Occupancy for the context ring: prefer the explicit top-level values the brain passes;
+          // otherwise fall back to the occupancy already living on `usage` (populated by engine-core for
+          // every Claude turn), resolving the window with the SAME per-model map the brain + analytics
+          // use. This is what lets build/step/autofix (Claude) lanes render a ring without each finish
+          // call site plumbing context. Codex turns carry no `contextTokens`, so those lanes stay null
+          // (no ring) — honest, since the SDK doesn't surface occupancy.
+          const u = turnMeta.usage;
+          const ctxTokens = turnMeta.contextTokens ?? u.contextTokens ?? null;
+          const ctxLimit =
+            turnMeta.contextLimit ??
+            (ctxTokens != null ? resolveContextLimit(u.contextModel ?? u.model) : null);
           blocks.push({
             kind: 'turn_meta',
             emittedAt: stamp(),
             meta: {
               ...(metaTag ?? {}),
               usage: turnMeta.usage as unknown as Record<string, unknown>,
-              contextTokens: turnMeta.contextTokens ?? null,
-              contextLimit: turnMeta.contextLimit ?? null,
+              contextTokens: ctxTokens,
+              contextLimit: ctxLimit,
             },
           });
         }
