@@ -7,7 +7,7 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { isOnboarding, notOnboarding } from '../conditions';
+import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
 import { DECISION_CLASS_IDS } from '../../domain';
 
 @FragmentGroup()
@@ -41,7 +41,7 @@ export class ConversationGroup {
   }
 
   /** normal block 09 — why you grill (the plan is a handoff). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1090, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1090, condition: isBuildBrain })
   whyGrill(): string {
     return [
       'WHY YOU GRILL — THE PLAN IS A HANDOFF, NOT YOUR OWN BUILD NOTES: you do NOT build the full plan',
@@ -55,7 +55,7 @@ export class ConversationGroup {
   }
 
   /** normal block 10 — calibrate the interview to the work. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1100, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1100, condition: isBuildBrain })
   calibrate(): string {
     return [
       'CALIBRATE THE INTERVIEW TO THE WORK (this is why both paths exist): depth scales with scope, risk, and',
@@ -68,7 +68,7 @@ export class ConversationGroup {
   }
 
   /** normal block 11 — the grilling protocol (always-ask classes). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1110, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1110, condition: isBuildBrain })
   grillingProtocol(): string {
     return [
       'GRILLING PROTOCOL (applies to BOTH paths): lock the always-ask decisions before proposing — data',
@@ -79,7 +79,7 @@ export class ConversationGroup {
   }
 
   /** normal block 12 — grill against the domain (the four moves). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1120, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1120, condition: isBuildBrain })
   grillDomain(): string {
     return [
       'GRILL AGAINST THE DOMAIN (this IS the planning ceremony): grilling is not just enumerating the',
@@ -109,7 +109,7 @@ export class ConversationGroup {
   }
 
   /** normal block 13 — recommend ≠ decide + one decision per call. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1130, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1130, condition: isBuildBrain })
   recommendDecide(): string {
     return [
       'RECOMMEND ≠ DECIDE — the failure to avoid: proposing a default is NOT the operator deciding. For every',
@@ -127,7 +127,7 @@ export class ConversationGroup {
   }
 
   /** normal block 14 — ask via the tool + lock each decision (interpolates DECISION_CLASS_IDS). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1140, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1140, condition: isBuildBrain })
   askAndLock(): string {
     return [
       'ASK VIA THE TOOL, NOT IN PROSE: every question you put to the operator goes through `ask_question` —',

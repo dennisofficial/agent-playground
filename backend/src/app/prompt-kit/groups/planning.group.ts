@@ -7,18 +7,18 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { notOnboarding } from '../conditions';
+import { isBuildBrain } from '../conditions';
 
 @FragmentGroup()
 export class PlanningGroup {
   /** normal block 18 — two paths header. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1180, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1180, condition: isBuildBrain })
   twoPaths(): string {
     return 'TWO PATHS — choose based on size/risk:';
   }
 
   /** normal block 19 — FULL PATH (review_plan → propose_plan). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1190, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1190, condition: isBuildBrain })
   fullPath(): string {
     return [
       'FULL PATH — review_plan then propose_plan (multi-thread build run by the deterministic driver). Use for',
@@ -31,7 +31,7 @@ export class PlanningGroup {
   }
 
   /** normal block 20 — PLAN DEPTH. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1200, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1200, condition: isBuildBrain })
   planDepth(): string {
     return [
       "PLAN DEPTH (applies to each thread's `## Approach`): the work must be buildable to the keystroke by a fresh",
@@ -54,7 +54,7 @@ export class PlanningGroup {
   }
 
   /** normal block 21 — PLAN.MD STRUCTURE. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1210, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1210, condition: isBuildBrain })
   planMdStructure(): string {
     return [
       'PLAN.MD STRUCTURE — the specs are MULTI-FILE; author them so build + operator read them the same way:',
@@ -92,7 +92,7 @@ export class PlanningGroup {
   }
 
   /** normal block 22 — DIAGRAMS. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1220, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1220, condition: isBuildBrain })
   diagrams(): string {
     return [
       'DIAGRAMS — LEAN ON THEM. A plan the operator can SEE beats one they have to decode. Mermaid code fences',
@@ -112,7 +112,7 @@ export class PlanningGroup {
   }
 
   /** normal block 23 — the review_plan → propose_plan flow. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1230, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1230, condition: isBuildBrain })
   submitPlanDetail(): string {
     return [
       'REVIEW THEN PROPOSE. `review_plan` and `propose_plan` are separate: review is mandatory to RUN but its',
@@ -159,7 +159,7 @@ export class PlanningGroup {
   }
 
   /** normal block 24 — FAST PATH (start_direct_build). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1240, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1240, condition: isBuildBrain })
   fastPath(): string {
     return [
       'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no threads/steps).',
@@ -180,7 +180,7 @@ export class PlanningGroup {
   }
 
   /** normal block 25 — promote_decisions. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1250, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1250, condition: isBuildBrain })
   promoteDecisions(): string {
     return [
       'PROMOTE_DECISIONS — write durable decisions into `/workspace/.atlas/decisions/`. Call it AT SHIP (direct',

@@ -7,14 +7,14 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { isOnboarding, notOnboarding } from '../conditions';
+import { isBuildBrain, isOnboarding, isReview, notOnboarding } from '../conditions';
 import { BRIDGE_SERVER_NAME } from '../../sandbox/image/bridge-options';
 import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class HostToolsGroup {
   /** normal block 04 — the host tools (qualification + enumeration + ambient capability tools). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1040, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1040, condition: isBuildBrain })
   hostTools(): string {
     return [
       `You have the host tools listed below. ${TOOL_QUALIFICATION_NOTE(BRIDGE_SERVER_NAME)}`,
@@ -76,7 +76,7 @@ export class HostToolsGroup {
   }
 
   /** normal block 06 — create_job (spin off a follow-up thread NOW). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1060, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1060, condition: isBuildBrain })
   createJob(): string {
     return [
       'CREATE_JOB — when the work splits into a separate unit of its own AND should start NOW, create a',
@@ -88,7 +88,7 @@ export class HostToolsGroup {
   }
 
   /** normal block 07 — tickets (the repo board/backlog). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1070, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1070, condition: isBuildBrain })
   tickets(): string {
     return [
       "TICKETS — the repo's internal board/backlog. This is the durable place for work that is OUT OF SCOPE",
@@ -131,6 +131,27 @@ export class HostToolsGroup {
       '    environment cold-boots from durable inputs (see RESET). It does not reset instantly — it recreates on',
       '    your NEXT turn, so call it then STOP; you will be prompted to verify once the fresh box is up.',
       `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: only after the stack boots green (see FINISH)`,
+    ].join('\n');
+  }
+
+  /** review block 05 — the review session's curated host tools (order 1041: unique vs hostTools@1040). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1041, condition: isReview })
+  reviewTools(): string {
+    return [
+      TOOL_QUALIFICATION_NOTE(BRIDGE_SERVER_NAME),
+      'Every host tool takes a SINGLE object parameter named `args`.',
+      'You have NO build/plan/ship tools this session (no propose_plan, start_direct_build, create_job, or',
+      'tickets) — a review does not build. You do the work with your NATIVE tools: `gh` via Bash to fetch the',
+      'PR, Read/Glob/Grep to study the code, and the `explore`/`review`/`debug`/`test` subagents (Task). Your',
+      'host tools this session:',
+      `  - mcp__${BRIDGE_SERVER_NAME}__ask_question        — ask/verify ONE thing with the operator (renders as a card)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_question   — retract a still-unanswered question BY questionId`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__set_job_kind        — re-classify this job if it turns out NOT to be a PR review`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__recall              — retrieve relevant memory facts`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__remember            — store a durable memory fact about this repo`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (only if you need one to run the branch's tests)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__request_file        — ask the operator to UPLOAD a file`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox       — recreate your container from scratch (rarely needed for a review)`,
     ].join('\n');
   }
 }

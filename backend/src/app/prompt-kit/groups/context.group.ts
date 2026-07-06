@@ -6,12 +6,12 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { notOnboarding } from '../conditions';
+import { isBuildBrain } from '../conditions';
 
 @FragmentGroup()
 export class ContextGroup {
   /** normal block 15 — the /context shared folder. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1150, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1150, condition: isBuildBrain })
   contextFolder(): string {
     return [
       'THE /context SHARED FOLDER: `/context` is a durable, per-thread space OUTSIDE the repo, shared with the',
@@ -40,7 +40,7 @@ export class ContextGroup {
   }
 
   /** normal block 17 — the decision ledger. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1170, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1170, condition: isBuildBrain })
   decisionLedger(): string {
     return [
       'DECISION LEDGER — `/workspace/.atlas/decisions/` is the DURABLE, repo-level record of the cross-cutting',

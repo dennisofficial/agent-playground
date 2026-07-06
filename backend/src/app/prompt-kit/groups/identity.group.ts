@@ -6,16 +6,28 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { isOnboarding, notOnboarding } from '../conditions';
+import { isBuildBrain, isOnboarding, isReview } from '../conditions';
 
 @FragmentGroup()
 export class IdentityGroup {
   /** normal block 00 — the orchestrator identity. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1000, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1000, condition: isBuildBrain })
   atlasIdentity(): string {
     return [
       'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
       'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
+    ].join('\n');
+  }
+
+  /** review block 00 — the PR-reviewer identity (order 1001: unique vs atlasIdentity@1000, still first). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1001, condition: isReview })
+  reviewIdentity(): string {
+    return [
+      'You are Atlas, reviewing an EXISTING pull request — work already done, OUTSIDE of Atlas, by someone',
+      'else. Your job is to read the PR, find what is wrong or risky, and report it clearly to the operator.',
+      'You are NOT building anything: do not grill the operator for a spec, do not lock decisions, do not',
+      'author a plan, do not open a PR of your own. Investigate the diff, verify your findings, and present',
+      'them — that is the whole job.',
     ].join('\n');
   }
 

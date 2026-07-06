@@ -24,6 +24,7 @@ import { ShipGroup } from './ship.group';
 import { AutofixGroup } from './autofix.group';
 import { MetaGroup } from './meta.group';
 import { SubagentsGroup } from './subagents.group';
+import { ReviewGroup } from './review.group';
 
 export const FRAGMENT_GROUPS = [
   // Brain (ATLAS_MAIN)
@@ -31,6 +32,7 @@ export const FRAGMENT_GROUPS = [
   SandboxGroup,
   HostToolsGroup,
   OrientationGroup,
+  ReviewGroup,
   ConversationGroup,
   ContextGroup,
   PlanningGroup,
@@ -54,6 +56,7 @@ export {
   SandboxGroup,
   HostToolsGroup,
   OrientationGroup,
+  ReviewGroup,
   ConversationGroup,
   ContextGroup,
   PlanningGroup,

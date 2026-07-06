@@ -887,7 +887,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('finish_onboarding refuses without a substantive `verified` (green-gate)', async () => {
-    const tools = manager.buildTools(fakeStimulus, true);
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
     const result = await tools['finish_onboarding']({ summary: 'done', verified: 'too short' });
     expect(result).toMatchObject({ ok: false });
     expect(mockLifecycle.markRepoOnboarded).not.toHaveBeenCalled();
@@ -896,7 +896,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('finish_onboarding: no repo diff → marks onboarded, does NOT ship a PR', async () => {
     (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: '/wt' });
     (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(false);
-    const tools = manager.buildTools(fakeStimulus, true);
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
 
     const result = await tools['finish_onboarding']({
       summary: 'Boots green',
@@ -924,7 +924,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       url: 'https://github.com/acme/widget/pull/3',
       number: 3,
     });
-    const tools = manager.buildTools(fakeStimulus, true);
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
 
     const result = await tools['finish_onboarding']({
       summary: 'Boots green after a script fix',
@@ -941,7 +941,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('finish_onboarding NEVER throws on a markRepoOnboarded/git failure — warns and returns the real error', async () => {
     (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: '/wt' });
     (mockLifecycle.markRepoOnboarded as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('db down'));
-    const tools = manager.buildTools(fakeStimulus, true);
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
 
     const result = await tools['finish_onboarding']({
       summary: 'Boots green',
@@ -2065,7 +2065,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     it('is available to BOTH normal and onboarding threads and flags a reset (posting the operator cue mid-turn)', async () => {
       const { manager, store } = makeManager({});
       expect(manager.buildTools(stimulus).reset_sandbox).toBeDefined();
-      expect(manager.buildTools(stimulus, true).reset_sandbox).toBeDefined();
+      expect(manager.buildTools(stimulus, 'onboarding').reset_sandbox).toBeDefined();
 
       const res = (await manager.buildTools(stimulus).reset_sandbox({ reason: 'verify mounts' })) as Record<
         string,

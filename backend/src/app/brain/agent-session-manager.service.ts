@@ -1316,10 +1316,9 @@ export class AgentSessionManager
     // Rebuild the dispatch map with the SAME shape the original kick used: an onboarding thread's
     // container declares the curated onboarding toolset, so a re-attach that registers the normal map
     // would reject those calls as "Unknown tool" (finish_onboarding at the end of a long run).
-    const isOnboarding =
-      (await this.store.loadJob(row.job_id).catch(() => null))?.kind ===
-      'onboarding';
-    const tools = this.buildTools(stimulus, isOnboarding);
+    const reattachKind =
+      (await this.store.loadJob(row.job_id).catch(() => null))?.kind ?? null;
+    const tools = this.buildTools(stimulus, reattachKind);
     const streamer = this.turnHarness.create({
       jobId: row.job_id,
       channel: row.channel,
@@ -1683,10 +1682,10 @@ export class AgentSessionManager
     const brainJob = await this.store
       .loadJob(stimulus.jobId)
       .catch(() => null);
-    const isOnboarding = brainJob?.kind === 'onboarding';
 
-    // Build the host-side tool dispatch table, scoped to this thread.
-    const tools = this.buildTools(stimulus, isOnboarding);
+    // Build the host-side tool dispatch table, scoped to this thread. Curated by kind (onboarding/review
+    // get build-free subsets — see buildTools).
+    const tools = this.buildTools(stimulus, brainJob?.kind ?? null);
 
     // All turns run inside the Docker sandbox container.
     const runner: EngineRunnerPort = this.engineRunner;
@@ -2057,15 +2056,18 @@ export class AgentSessionManager
   // ── Host-side tool impls ───────────────────────────────────────────────────────────────────────
 
   /**
-   * Build the host tool impls for a chat turn, all scoped to the stimulus's thread/team/project. When
-   * `onboarding` is true the thread is a repo-init thread (`kind='onboarding'`): it gets a CURATED,
-   * build-free toolset (explore + ask + the secure config tools) and NONE of the plan/build/PR tools —
-   * the omission is enforced (the in-container SDK only registers names present in the returned map).
+   * Build the host tool impls for a chat turn, all scoped to the stimulus's thread/team/project. The
+   * toolset is CURATED by job kind: an `onboarding` thread gets the build-free bring-up tools; a `review`
+   * thread (reviews an existing PR, never builds) gets ask/memory/secret tools only — NO plan/build/PR
+   * tools; every other kind gets the full set. The omission is enforced (the in-container SDK only
+   * registers names present in the returned map), so a gated-out tool is un-callable, not just discouraged.
    */
   buildTools(
     stimulus: ChatStimulus,
-    onboarding = false,
+    kind: string | null = null,
   ): Record<string, ToolImpl> {
+    const onboarding = kind === 'onboarding';
+    const review = kind === 'review';
     // CREATE a decision (the `create_decision` tool). Auto-attaches
     // the question the operator just answered — sourced AUTHORITATIVELY from the thread's human-input gate
     // pointer (no "latest answered card" race), persists with a fresh stable id, re-renders the generated
@@ -3202,6 +3204,19 @@ export class AgentSessionManager
       reset_sandbox: this.buildResetSandboxTool(stimulus),
     };
 
+    // Review threads get a curated, build-free subset (they review an EXISTING PR via `gh`/Read/subagents,
+    // never plan/build/ship) — no propose_plan/start_direct_build/create_job/tickets/decisions. Matches the
+    // `reviewTools` prompt fragment; the omission is enforced (un-callable, not just discouraged).
+    if (review) {
+      return {
+        ask_question: tools.ask_question,
+        withdraw_question: tools.withdraw_question,
+        set_job_kind: tools.set_job_kind,
+        recall: tools.recall,
+        remember: tools.remember,
+        ...intake,
+      };
+    }
     // Normal threads get the full toolset above + intake. Onboarding threads get a curated, build-free
     // subset (they don't build/PR; they explore, provision, and finish) — `finish_onboarding` stays
     // ceremony-only: it stamps `onboarded_at` and opens the ceremony's OWN dedicated config PR, which only

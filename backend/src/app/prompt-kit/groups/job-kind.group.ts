@@ -28,8 +28,6 @@ export class JobKindGroup {
     return jobKindFragment('event');
   }
 
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1903, condition: (c: PromptCtx) => c.jobKind === 'review' })
-  review(): string {
-    return jobKindFragment('review');
-  }
+  // NOTE: no `review` fragment here — a review job composes with the ReviewGroup persona (gated `isReview`),
+  // which owns its framing (like onboarding). See `job-kind.ts` (`review: ''`).
 }
