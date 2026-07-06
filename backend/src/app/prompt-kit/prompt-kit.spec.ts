@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUTHOR_LIVE_VALIDATION_NOTE,
   BASELINE_FIRST_NOTE,
   CANDOR_NOTE,
   CLARITY_OVER_COMMENTS_NOTE,
@@ -174,10 +175,13 @@ describe('shared review scope', () => {
 });
 
 describe('brain vs worker behavioral tails do not leak into each other', () => {
-  it('the brain carries baseline+spike; the worker carries validate+spike', () => {
+  it('the brain carries baseline+author-live-validation+spike; the worker carries validate+spike', () => {
     const brain = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
     expect(brain).toContain(BASELINE_FIRST_NOTE);
     expect(brain).toContain(SPIKE_FIRST_NOTE);
+    // The brain gets the AUTHORING twin (author validation as a live run, never optional), NOT the worker's
+    // run-it note — distinct consts so the split stays assertable.
+    expect(brain).toContain(AUTHOR_LIVE_VALIDATION_NOTE);
     expect(brain).not.toContain(VALIDATE_BY_RUNNING_NOTE); // validate-by-running is a WORKER note, not brain
   });
 });
@@ -191,7 +195,6 @@ describe('preview catalog (the dev-only /test/prompts source of truth)', () => {
       'worker-orchestrate',
       'ship-pr-review',
       'ship-master-review',
-      'ship-open-pr',
       'autofix-review',
       'subagent-writer',
       'meta-decision-classifier',

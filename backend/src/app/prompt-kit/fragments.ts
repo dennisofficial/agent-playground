@@ -343,8 +343,27 @@ export const BASELINE_FIRST_NOTE =
   'BASELINE THE CURRENT BEHAVIOR before you change it. WHEN the work modifies something that already ' +
   'exists, first reproduce and OBSERVE how it behaves today — this is READ-ONLY observation of existing ' +
   'behavior, not a change: run it, hit the endpoint, capture the response/output — so you know exactly ' +
-  'what "before" looks like and can later prove "after" actually differs. This catches a misunderstanding ' +
-  'early instead of building against an imagined baseline. If the thing does not exist yet, say so plainly.';
+  'what "before" looks like and can later prove "after" actually differs. WHEN the work is a BUG FIX, this ' +
+  'means REPRODUCE THE FAILURE FIRST: confirm the defect is actually broken the way it was reported and ' +
+  'capture the failing behavior (the error, the wrong output, the failing check) as a concrete baseline — ' +
+  'so you fix the real thing, and can PROVE it gone by re-running that exact reproduction. This catches a ' +
+  'misunderstanding early instead of building against an imagined baseline. If the thing does not exist ' +
+  'yet (or you cannot reproduce the reported bug), say so plainly rather than guessing.';
+
+/**
+ * AUTHOR LIVE VALIDATION — for the BRAIN. The brain-authoring twin of {@link VALIDATE_BY_RUNNING_NOTE}
+ * (which tells the WORKER to run it): this tells the brain, when it AUTHORS a plan's `## Validation` and
+ * when it builds directly (FAST PATH), that live-running is the proof and is never optional. Kept a DISTINCT
+ * const from VALIDATE_BY_RUNNING_NOTE so the brain-vs-worker fragment split stays assertable.
+ */
+export const AUTHOR_LIVE_VALIDATION_NOTE =
+  'PROVE IT BY RUNNING IT — Atlas knows work is done because it SAW it run, not because the build was green. ' +
+  'When a change has ANY runtime surface (an endpoint, a UI, a CLI, a job, a script), the proof is actually ' +
+  'RUNNING it and observing the result — `curl` the endpoint and check the body, drive the UI, run the CLI — ' +
+  'and typecheck/build/test is only the FLOOR beneath that. This holds both ways: in a PLAN, author each ' +
+  "thread's `## Validation` as that live run and NEVER mark it \"optional\"/\"nice to have\"/\"smoke (optional)\"; " +
+  'and on a DIRECT build you run yourself, live-validate before you finalize. The only work that validates by ' +
+  'tests alone is work with genuinely no runtime surface — and then say that is why.';
 
 /**
  * CANDOR — the calibrated-adviser stance for the brain's conversation with the operator. Complements the

@@ -43,9 +43,13 @@ export class PlanningGroup {
       '    short code skeleton (the 3–8 lines that matter), and any ordering/safety constraint (e.g. "set the',
       '    failure field BEFORE the early return"). A builder must not have to re-derive the code. Trivial edits',
       '    (a one-line add, a stub→real call) stay one sentence — do not pad them;',
-      '  • verify — the ACTUAL command(s) that prove the work (test file/path, build or lint cmd) plus any',
-      '    non-obvious gotcha (must rebuild native, won\'t hot-reload, needs a generated migration). "Unit-test',
-      '    it" is a goal, not verification. Let detail follow difficulty — the hard part gets the depth.',
+      '  • verify — the ACTUAL command(s) that prove the work. Typecheck/build/lint/test is the FLOOR (test',
+      '    file/path, build or lint cmd); when the change affects RUNTIME behavior (an endpoint, a UI, a CLI, a',
+      '    job, a script), the verify MUST also include the LIVE RUN that exercises it as a caller would — the',
+      '    exact command AND its expected observation (e.g. "`curl -s localhost:PORT/uptime` → `{\"uptimeSeconds\":<int>}`",',
+      '    a Playwright drive, the repo\'s e2e/smoke). Plus any non-obvious gotcha (must rebuild native, won\'t',
+      '    hot-reload, needs a generated migration). "Unit-test it" is a goal, not verification, and a green',
+      '    build is never a substitute for running the thing. Let detail follow difficulty — the hard part gets the depth.',
     ].join('\n');
   }
 
@@ -69,13 +73,21 @@ export class PlanningGroup {
       "        ## Flow                    (PREFERRED — a mermaid sequence/flowchart of THIS thread's behavior; see DIAGRAMS)",
       '        ## Approach                (the work at PLAN DEPTH — concrete edits, signatures, hard ordering stated',
       '                                    inline as PROSE; NOT a numbered step list — the running thread turns it into tasks)',
-      '        ## Validation              (the demo-able outcome that closes the thread)',
+      '        ## Validation              (the LIVE, RUN-IT proof that closes the thread — see below; never "optional")',
       '  These files ARE the thread-level plan the build reads; `propose_plan` carries only the structured thread',
       '  list (title + type). When a thread runs, its orchestrator session reads this file and decomposes it into',
       '  a LIVE TASK LIST — so write `## Approach` at PLAN DEPTH (exact path:line anchors, concrete code/signatures',
       '  for the hard edits) but do NOT pre-number steps or author concurrency/grouping — that is the running',
       '  thread\'s job. Do NOT write a "review" section: thread self-review is a FIXED automatic stage selected by',
       "  the thread's TYPE; `## Validation` says what success looks like, not how it is reviewed.",
+      '  VALIDATION IS A LIVE RUN, NOT A CLAIM: when the thread has ANY runtime surface (an endpoint, a UI, a CLI,',
+      '  a job, a script), its `## Validation` MUST specify actually RUNNING it and observing the result — start',
+      '  long-running services with `atlas-svc`, then `curl` the endpoint and check the status/body, drive the UI',
+      '  with Playwright, or run the CLI — and state the OBSERVED outcome that proves it works. Typecheck/build/test',
+      '  is the FLOOR, never a substitute: a runtime check is REQUIRED and MUST NOT be marked "optional", "nice to',
+      '  have", "smoke (optional)", or "if time permits" — the point of Atlas is to KNOW the thing runs, not to infer',
+      '  it from a green build. Only a thread with genuinely NO runtime surface (pure docs, or a refactor fully',
+      '  covered by existing tests) may validate by tests alone — and it must SAY that is why.',
     ].join('\n');
   }
 
@@ -125,6 +137,8 @@ export class PlanningGroup {
       'propose_plan with:',
       '  - goal: the one-line goal of the whole thread (verbatim the plan.md `# <H1>`; becomes the thread title)',
       '  - overview: intent + stack + constraints',
+      '  - kind: `feature` (default) or `bugfix` — pass `bugfix` when this job fixes a DEFECT, so the build is',
+      '    oriented to reproduce the failure first and prove it gone by re-running the exact reproduction.',
       "  - threads: the ordered build threads (lanes), each `{ title, type }`. `type` = the thread's scope — backend | frontend |",
       '    docs | testing | analytics | infra (or another short label if none fit); it SELECTS the review agents.',
       '    Do NOT enumerate steps — a thread carries no step list. When it runs, its orchestrator session reads the',
@@ -150,13 +164,18 @@ export class PlanningGroup {
     return [
       'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no threads/steps).',
       'Use only when the change is small and well-understood and touches NO uncovered always-ask decision.',
-      'Args: { summary, changeOutline?: string[], decisions? }. summary = what you will change and why;',
-      'changeOutline = a few bullet lines of the concrete edits. This posts a lightweight approval card. If it',
-      'trips an uncovered always-ask decision it is refused — lock that decision first or use the full path (review_plan/propose_plan).',
+      'Args: { summary, changeOutline?: string[], decisions?, kind? }. summary = what you will change and why;',
+      'changeOutline = a few bullet lines of the concrete edits; kind = `feature` (default) or `bugfix` — pass',
+      '`bugfix` when this job fixes a DEFECT (it orients you to reproduce the failure first). This posts a',
+      'lightweight approval card. If it trips an uncovered always-ask decision it is refused — lock that decision',
+      'first or use the full path (review_plan/propose_plan).',
       'AFTER the operator approves, you will be asked (autonomously) to implement it: make the edits in',
-      '`/workspace`, verify them, then — if this change settled any DURABLE cross-cutting decision — call',
-      '`promote_decisions` (see below) BEFORE `finalize_build` so the ledger lands in the same commit. Then',
-      'call `finalize_build` to commit, review, and open the PR.',
+      '`/workspace`, then VERIFY AND LIVE-VALIDATE — clear the typecheck/build/test floor AND, if the change has',
+      'any runtime surface, actually RUN it and exercise it as a caller would (start services with `atlas-svc`,',
+      '`curl` the endpoint, drive the UI) to confirm the OBSERVED behavior before you claim done; a green build is',
+      'not enough. Then — if this change settled any DURABLE cross-cutting decision — call `promote_decisions`',
+      '(see below) BEFORE `finalize_build` so the ledger lands in the same commit. Then call `finalize_build` to',
+      'commit, review, and open the PR.',
     ].join('\n');
   }
 

@@ -62,7 +62,7 @@ import { threadDirName } from '../driver/thread-dir-name';
 import { Agent, LEDGER_COMMIT_MESSAGE, PromptService } from '../prompt-kit';
 // The ledger-promotion prompt is delivered as a TASK message (`body:`), not a system prompt; the brain's
 // system prompt is assembled from fragments via `PromptService.generate`.
-import { BRAIN_LEDGER_PROMOTION_PROMPT } from '../prompt-kit/messages/brain-ledger';
+import { LEDGER_PROMOTION_TURN } from '../prompt-kit';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -630,7 +630,7 @@ export class AgentSessionManager
       jobId,
       orgId,
       repoId,
-      body: BRAIN_LEDGER_PROMOTION_PROMPT,
+      body: LEDGER_PROMOTION_TURN.task,
       seedRow: {
         label: 'Distilling this thread’s decisions into the durable ledger.',
         chunkKey: `seed:ledger:${jobId}`,
@@ -2462,6 +2462,9 @@ export class AgentSessionManager
         // The one-line goal — the SAME text Atlas writes as plan.md's `# <H1>`. Becomes the thread title
         // (durable + live `thread_meta` frame, repainted inside requestApprovalAndAct).
         const goal = String(args['goal'] ?? '').trim();
+        // `kind` orients the whole job: `bugfix` lights up the reproduce-the-failure-first framing (job-kind
+        // block + build orientation). Default `feature`; only `bugfix` is a meaningful override here.
+        const kind: JobKind = args['kind'] === 'bugfix' ? 'bugfix' : 'feature';
         // Decisions are LOCKED incrementally during grilling (create_decision → pending_decisions). Source
         // them from the working set; an explicit `decisions` arg, if given, is an authoritative override.
         const decisions =
@@ -2481,7 +2484,7 @@ export class AgentSessionManager
           };
         }
 
-        const jobId = await this.ensureJob(stimulus, overview, 'feature');
+        const jobId = await this.ensureJob(stimulus, overview, kind);
 
         // ── MANDATORY-RUN GATE (version-tied, failure-tolerant) ─────────────────────────────────
         // A Codex review must have RUN for the plan version being proposed. `reviewForCurrentSpecs`
@@ -2511,7 +2514,7 @@ export class AgentSessionManager
           repoId: stimulus.repoId,
           jobId,
           title: goal,
-          kind: 'feature',
+          kind,
           overview,
           decisions,
           threadTitles,
@@ -2628,6 +2631,8 @@ export class AgentSessionManager
         const changeOutline = Array.isArray(args['changeOutline'])
           ? args['changeOutline'].map((c) => String(c).trim()).filter(Boolean)
           : [];
+        // `bugfix` orients the direct build to reproduce the failure first; default `feature`.
+        const kind: JobKind = args['kind'] === 'bugfix' ? 'bugfix' : 'feature';
         // Honor decisions locked during grilling (create_decision → pending_decisions); an explicit arg overrides.
         const decisions =
           args['decisions'] != null
@@ -2658,13 +2663,13 @@ export class AgentSessionManager
 
         // Persist a MINIMAL record (overview = summary, any locked decisions, NO threads) and post the
         // lightweight approval card. The build runs only after approval (kind: 'direct').
-        const jobId = await this.ensureJob(stimulus, summary, 'feature');
+        const jobId = await this.ensureJob(stimulus, summary, kind);
         const { thread: job, decisionRecordId } = await this.store.persistPlan({
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
           jobId: jobId,
           title: jobTitle(summary),
-          kind: 'feature',
+          kind,
           overview: summary,
           decisions,
           threadTitles: [],

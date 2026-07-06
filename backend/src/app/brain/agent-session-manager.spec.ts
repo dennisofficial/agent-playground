@@ -411,11 +411,33 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(persistArgs.title).toBe(goal);
     expect(persistArgs.threadTitles).toEqual(['RateLimiter guard', 'Integration tests']);
     expect(persistArgs.status).toBe('awaiting_approval');
+    expect(persistArgs.kind).toBe('feature'); // default kind when none passed
     // 3. The approval card is posted async, and the review disposition lands as a system event.
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID });
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).toHaveBeenCalledOnce();
     expect(mockStore.appendSystemEvent).toHaveBeenCalled();
+  });
+
+  it('propose_plan: kind:"bugfix" is persisted (lights up the reproduce-first job-kind block)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'o',
+      decisions: [],
+      threadTitles: ['S'],
+    });
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'some overview',
+      kind: 'bugfix',
+      threads: [{ title: 'S', type: 'backend' }],
+    });
+    expect(result).toMatchObject({ ok: true });
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(persistArgs.kind).toBe('bugfix');
+    expect(mockStore.openJob).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'bugfix' }),
+    );
   });
 
   it('propose_plan: REFUSES (no persist, no card) when no review has run for the current specs', async () => {
@@ -576,6 +598,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const result = await tools['start_direct_build']({
       summary: 'Fix the off-by-one in the pagination cursor',
       changeOutline: ['adjust the slice bound in paginate()'],
+      kind: 'bugfix',
     });
 
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
@@ -583,6 +606,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistArgs.threadTitles).toEqual([]);
     expect(persistArgs.overview).toContain('off-by-one');
+    expect(persistArgs.kind).toBe('bugfix'); // kind flows through the direct-build path too
 
     // The card is the lightweight 'direct' variant carrying the change outline.
     await new Promise((r) => setTimeout(r, 0));

@@ -25,11 +25,13 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
     const identityAt = out.indexOf('You are Atlas, an autonomous software-engineering orchestrator');
     const jobKindAt = out.indexOf('JOB KIND — FEATURE');
     const baselineAt = out.indexOf('BASELINE THE CURRENT BEHAVIOR');
+    const liveValAt = out.indexOf('PROVE IT BY RUNNING IT');
     const spikeAt = out.indexOf('SPIKE BEFORE YOU COMMIT');
     expect(identityAt).toBe(0); // identity leads
     expect(jobKindAt).toBeGreaterThan(identityAt);
     expect(baselineAt).toBeGreaterThan(jobKindAt); // tail after the job-kind block
-    expect(spikeAt).toBeGreaterThan(baselineAt); // baseline before spike
+    expect(liveValAt).toBeGreaterThan(baselineAt); // author-live-validation after baseline
+    expect(spikeAt).toBeGreaterThan(liveValAt); // ...and before spike
   });
 
   it('onboarding vs feature select DIFFERENT fragments (jobKind is a condition, not an agent)', () => {
