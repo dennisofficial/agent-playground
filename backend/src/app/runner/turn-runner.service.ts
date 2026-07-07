@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '../domain';
-import { ENGINE_RUNNER, EngineAuthError, SANDBOX_RESET_NOTICE, type EngineRunnerPort } from '../engine';
+import { ENGINE_RUNNER, EngineAuthError, SANDBOX_RESET_NOTICE, pickKeys, type EngineRunnerPort } from '../engine';
 import type {
   CodexReasoningEffort,
   EngineAuth,
@@ -85,6 +85,26 @@ export interface RunTurnInput {
    */
   turnMeta?: TurnMeta;
 }
+
+// ── RunTurnInput → RunEngineArgs forwarding contract (second half of the host↔engine wire) ──────────────
+// The other half of the drop the Leg-rotation `rotationNudge` fell through. Fields NOT forwarded verbatim
+// are either DERIVED into other RunEngineArgs fields, or host-wrapped, or REQUIRED (handled explicitly in
+// `runTurn` where a missing one is already a compile error). Everything else must be listed in
+// TURN_INPUT_FORWARD_KEYS — the exhaustiveness check below fails the build if a new optional field is added
+// to RunTurnInput without being forwarded (so it can never again be silently dropped at this hop).
+type TurnInputDerivedOrRequiredKey =
+  | 'jobId' | 'stepId' | 'sandbox' | 'gitAuth' // derived (→ target) / host-only
+  | 'onEvent' | 'signal' // host-wrapped, set explicitly
+  | 'engine' | 'mode' | 'task' | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
+type TurnInputForwardKey = Exclude<keyof RunTurnInput, TurnInputDerivedOrRequiredKey>;
+const TURN_INPUT_FORWARD_KEYS = [
+  'auth', 'userMcpServers', 'model', 'modelReasoningEffort',
+  'richStream', 'steerable', 'rotationNudge', 'toolBridge', 'turnMeta',
+] as const satisfies readonly TurnInputForwardKey[];
+const _TURN_INPUT_FORWARD_KEYS_EXHAUSTIVE: [Exclude<TurnInputForwardKey, (typeof TURN_INPUT_FORWARD_KEYS)[number]>] extends [never]
+  ? true
+  : { ADD_TO_TURN_INPUT_FORWARD_KEYS: Exclude<TurnInputForwardKey, (typeof TURN_INPUT_FORWARD_KEYS)[number]> } = true;
+void _TURN_INPUT_FORWARD_KEYS_EXHAUSTIVE;
 
 /** The result of one turn — the engine report + the live SessionRef for the next turn. */
 export interface RunTurnResult {
@@ -194,23 +214,10 @@ export class TurnRunnerService {
               },
             }
           : {}),
-        ...(input.auth ? { auth: input.auth } : {}),
-        ...(input.userMcpServers && input.userMcpServers.length > 0
-          ? { userMcpServers: input.userMcpServers }
-          : {}),
-        ...(input.model ? { model: input.model } : {}),
-        ...(input.modelReasoningEffort ? { modelReasoningEffort: input.modelReasoningEffort } : {}),
-        ...(input.richStream ? { richStream: true } : {}),
-        // Mid-turn steering (Leg-rotation nudges / brain operator messages) — streaming-input mode.
-        ...(input.steerable ? { steerable: true } : {}),
-        // ENGINE-LOCAL Leg-rotation nudge thresholds+prompts — forwarded to the engine so it injects the
-        // SOFT/HARD wrap-up seed itself (race-free). Like `steerable`, this is an explicit passthrough: without
-        // it the field is dropped here and the builder is never seeded to hand off.
-        ...(input.rotationNudge ? { rotationNudge: input.rotationNudge } : {}),
-        // Host-side tool bridge (e.g. the orchestrate build turn's `request_operator_input`).
-        ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
-        // Register the turn (Redis transport only) so a fresh backend can RE-ATTACH it after a restart.
-        ...(input.turnMeta ? { turnMeta: input.turnMeta } : {}),
+        // All verbatim pass-through fields (auth, userMcpServers, model, modelReasoningEffort, richStream,
+        // steerable, rotationNudge, toolBridge, turnMeta) forwarded via the exhaustiveness-checked manifest —
+        // so a new RunEngineArgs/RunTurnInput field can never again be silently dropped at this hop.
+        ...pickKeys(input, TURN_INPUT_FORWARD_KEYS),
         onEvent,
         ...(input.signal ? { signal: input.signal } : {}),
       });

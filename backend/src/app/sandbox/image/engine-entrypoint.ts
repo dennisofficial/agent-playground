@@ -15,17 +15,14 @@
  */
 import { randomUUID } from 'node:crypto';
 import { EngineCore } from '../../engine/engine-core';
-import type { EngineEvent, RunEngineArgs } from '../../engine/engine.types';
+import type { EngineEvent, RunEngineArgs, TurnSpec } from '../../engine/engine.types';
 import { BRIDGE_SERVER_NAME, buildBridgeClaudeOptions, type BridgeClaudeOptions } from './bridge-options';
 import { buildLspBridgeOptions } from './lsp-bridge-options';
 import { buildContext7BridgeOptions } from './context7-bridge-options';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
 
-/** The serialized turn — everything `RunEngineArgs` carries except host-only, non-serializable bits. */
-type TurnSpec = Omit<RunEngineArgs, 'onEvent' | 'signal' | 'target' | 'toolBridge' | 'steerInput'> & {
-  /** When present, activates the tool bridge — the list of host tool names to proxy via an MCP server. */
-  toolBridgeTools?: string[];
-};
+// `TurnSpec` is the SINGLE host↔engine wire contract — imported from engine.types (the same type the host's
+// `redis-engine-runner.buildSpec` produces), NOT re-declared here, so producer + consumer can never drift.
 
 /** The host's reply frame on `turn:{T}:replies` (correlated to a tool_request by `id`). */
 type HostFrame =

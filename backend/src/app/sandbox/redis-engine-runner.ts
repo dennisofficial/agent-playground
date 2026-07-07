@@ -12,7 +12,8 @@ import {
   type RunEngineArgs,
 } from '../engine';
 import { dispatchToolRequest } from '../engine/tool-bridge-host';
-import type { ToolBridgeOptions, ToolRequestFrame } from '../engine/engine.types';
+import { SPEC_VERBATIM_KEYS, pickKeys } from '../engine/engine.types';
+import type { ToolBridgeOptions, ToolRequestFrame, TurnSpec } from '../engine/engine.types';
 import { gitAuthEnv } from '../git';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
@@ -437,51 +438,33 @@ export class RedisEngineRunner implements EngineRunnerPort {
   }
 
   /** The serializable turn spec — identical shape to the pipe runner's (the same EngineCore reads it). */
+  /**
+   * Project a host `RunEngineArgs` onto the on-the-wire {@link TurnSpec}. The VERBATIM fields are forwarded by
+   * `pickKeys(args, SPEC_VERBATIM_KEYS)` — a single manifest that is compile-checked exhaustive against
+   * `RunEngineArgs` (see engine.types), so a new field can never again be silently dropped here. Only the
+   * boundary-TRANSFORMED fields are mapped by hand below (cwd/writableRoots → container paths, auth → secret
+   * only, toolBridge → tool names). Typed `: TurnSpec`, the same type the in-container entrypoint consumes.
+   */
   private buildSpec(
     args: RunEngineArgs,
     target: NonNullable<RunEngineArgs['target']>,
     turnId: string,
-  ): object {
+  ): TurnSpec {
     return {
+      ...pickKeys(args, SPEC_VERBATIM_KEYS),
       turnId,
-      engine: args.engine,
-      task: args.task,
       cwd: this.toContainerCwd(args.cwd, target),
       writableRoots: [CONTAINER_CONTEXT, CONTAINER_PLAYGROUND, ...(args.writableRoots ?? [])],
-      systemPrompt: args.systemPrompt,
-      sandboxKey: args.sandboxKey,
-      mode: args.mode,
-      ...(args.sessionId ? { sessionId: args.sessionId } : {}),
       // Send ONLY the secret into the container — STRIP the host-only `refreshBack` provenance so org ids
-      // never ride Redis into the sandbox. Instead carry the non-secret `persistAuthRefresh` gate ONLY when
-      // set (omit-when-false, like richStream/steerable) so the in-container engine reads its refreshed
-      // auth.json back solely for org-sourced credentials.
+      // never ride Redis into the sandbox. Carry the non-secret `persistAuthRefresh` gate ONLY when set so the
+      // in-container engine reads its refreshed auth.json back solely for org-sourced credentials.
       ...(args.auth
         ? {
             auth: { secret: args.auth.secret },
             ...(args.auth.refreshBack ? { persistAuthRefresh: true } : {}),
           }
         : {}),
-      // User-defined MCP servers (secrets already inlined host-side). Rides the spec into the container
-      // like `auth.secret` above — a legitimate secret-bearing field; the spec is never logged.
-      ...(args.userMcpServers && args.userMcpServers.length > 0
-        ? { userMcpServers: args.userMcpServers }
-        : {}),
-      ...(args.model ? { model: args.model } : {}),
-      // Codex-only reasoning-effort knob — WITHOUT this the in-container `codexThreadOptions` never sets
-      // the effort (the reviewer silently drops to the account default) and `stampUsageProvenance` never
-      // stamps `usage.reasoningEffort` (the composer footer shows no effort). The entrypoint spreads
-      // `...spec` into runArgs, so forwarding the key here is the whole fix.
-      ...(args.modelReasoningEffort ? { modelReasoningEffort: args.modelReasoningEffort } : {}),
-      ...(args.richStream ? { richStream: args.richStream } : {}),
-      // Steering: tell the entrypoint to run streaming-input mode + subscribe to `turn:{T}:input`/`:abort`.
-      ...(args.steerable ? { steerable: true } : {}),
-      // ENGINE-LOCAL Leg-rotation nudge (thresholds + seed prompts). MUST be forwarded here — the spec is an
-      // explicit whitelist, so a new RunEngineArgs field is silently dropped without this line, and the
-      // in-container engine then never injects the SOFT/HARD wrap-up seed (the builder is never told to hand
-      // off). Plain data; the entrypoint spreads `...spec` into runArgs.
-      ...(args.rotationNudge ? { rotationNudge: args.rotationNudge } : {}),
-      // Tool-bridge: tell the entrypoint which host tools exist so it builds the MCP proxy for each.
+      // Tool-bridge: the host closure can't cross — send only the tool NAMES so the entrypoint builds the proxy.
       ...(args.toolBridge ? { toolBridgeTools: Object.keys(args.toolBridge.tools) } : {}),
     };
   }
