@@ -46,21 +46,22 @@ export function shipOpenPrBody(args: ShipOpenPrArgs): string {
   const { branch, defaultBranch, title } = args;
   const decisions = args.decisionsBlock.trim();
   const decisionsStep = decisions
-    ? `\n     Then append, VERBATIM and unchanged, this decisions block as the final section:\n\n${decisions}\n`
+    ? `\n     Append this block to the body VERBATIM and unchanged, as its final section:\n\n${decisions}\n`
     : '';
   return (
-    `It is SHIP TIME: the build is complete on branch \`${branch}\`. RECONCILE against the base, then ` +
-    `publish it as a pull request against \`${defaultBranch}\`. You have authenticated git and the \`gh\` ` +
-    `CLI in this sandbox — this is a build step, not a conversation.\n` +
-    `  1. RECONCILE THE BASE. Run \`git fetch origin\`. The base may have MOVED while this build ran, so ` +
-    `check for drift: \`git log --oneline HEAD..origin/${defaultBranch}\` (commits on the base you don't ` +
-    `have yet). If there are any, integrate them — \`git merge origin/${defaultBranch}\` (or rebase). If that ` +
-    `produces MERGE CONFLICTS, resolve them PROPERLY — understand both sides, never blindly take one — then ` +
-    `commit the merge. Verify the tree still builds after reconciling.\n` +
+    `It is SHIP TIME: the build is complete on branch \`${branch}\`. Publish it as a pull request against ` +
+    `\`${defaultBranch}\` using your own authenticated git + \`gh\`. Work through the steps and END WITH ONE ` +
+    `LINE to the operator (the PR url) — this is a build step, not a play-by-play or a conversation.\n` +
+    `  1. RECONCILE THE BASE. Run \`git fetch origin\`, then check for drift: ` +
+    `\`git log --oneline HEAD..origin/${defaultBranch}\` (commits on the base you don't have yet). If there ` +
+    `are any, integrate them — \`git merge origin/${defaultBranch}\` (or rebase). If that produces MERGE ` +
+    `CONFLICTS, resolve them PROPERLY — understand both sides, never blindly take one — then commit the merge, ` +
+    `and re-run the build/tests to confirm the tree still passes after reconciling. (No drift → skip straight ` +
+    `to the push.)\n` +
     `  2. Commit anything uncommitted, then \`git push -u origin ${branch}\`.\n` +
-    `  3. WRITE THE PR BODY yourself, then open the PR. First understand what you shipped: run ` +
-    `\`git diff origin/${defaultBranch}...HEAD\` for the real change, and read \`/context/artifacts/RESULTS.md\` ` +
-    `(your evidence bundle) if it exists. Then compose a Markdown body with these sections:\n` +
+    `  3. AUTHOR THE PR BODY yourself, from what you ACTUALLY shipped — run ` +
+    `\`git diff origin/${defaultBranch}...HEAD\` for the real change and read \`/context/artifacts/RESULTS.md\` ` +
+    `(your evidence bundle) if it exists. Do NOT restate the plan. Compose a Markdown body with these sections:\n` +
     `       ## Summary\n` +
     `       — 1–3 bullets on what the diff actually changes (behavior/mechanism), not a restatement of the plan.\n` +
     `       ## Verification\n` +
@@ -68,14 +69,21 @@ export function shipOpenPrBody(args: ShipOpenPrArgs): string {
     `(build/tests green, the artifacts you captured), and \`- [ ]\` for any manual check left for the reviewer. ` +
     `If there is no evidence bundle, list the build/test status you do have.` +
     decisionsStep +
-    `\n     Open it: \`gh pr create --base ${defaultBranch} --head ${branch} --title ${JSON.stringify(title)} ` +
-    `--body "$(cat <<'EOF'\n<your body>\nEOF\n)"\`. Keep the TITLE under 70 characters (shorten the given ` +
-    `title if needed; put detail in the body). If a PR for this branch already exists, UPDATE it with ` +
-    `\`gh pr edit\` instead of opening a second one. Once \`gh pr create\`/\`gh pr edit\` reports the PR url, ` +
-    `you are done — the host records the open PR automatically.\n` +
+    `\n     Then open the PR, passing the body through a SINGLE-QUOTED heredoc so backticks/\`$\`/code fences ` +
+    `stay literal (no shell expansion):\n` +
+    `       gh pr create --base ${defaultBranch} --head ${branch} --title ${JSON.stringify(title)} --body "$(cat <<'EOF'\n` +
+    `       <your markdown body>\n` +
+    `       EOF\n` +
+    `       )"\n` +
+    `     Keep the TITLE under 70 characters (shorten the given title if needed; put detail in the body). Do NOT ` +
+    `add any "Generated with Claude" / "Co-Authored-By" attribution. If a PR for this branch already exists, ` +
+    `UPDATE it with \`gh pr edit\` instead of opening a second one.\n` +
+    `  4. CONFIRM. Reply with ONE short line to the operator containing the PR url ` +
+    `(\`gh pr view ${branch} --json url -q .url\` prints it). The host records the open PR automatically by ` +
+    `branch — you do not need to report it any other way.\n` +
     `\n` +
     `GIT SAFETY: NEVER run destructive or irreversible git commands (\`push --force\`, \`reset --hard\`, ` +
-    `history rewrites, etc.) unless explicitly instructed, and make NO unrelated code changes beyond what a ` +
-    `clean conflict resolution requires.`
+    `history rewrites, etc.) unless explicitly instructed. Never skip hooks (\`--no-verify\`) and never touch ` +
+    `git config. Make NO code changes beyond what a clean conflict resolution requires.`
   );
 }

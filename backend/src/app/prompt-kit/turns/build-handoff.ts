@@ -81,9 +81,10 @@ export const ROTATION_PREAMBLE = [
  */
 export const ROTATION_SOFT_NUDGE = [
   '<context_pressure phase="soft">',
-  'Your context window is getting high (~150k tokens). Finish only the phase you are on and, if you are at a',
-  'natural boundary, commit it. Then call `record_leg_handoff` with a structured handoff for a fresh session',
-  'and stop — do NOT start new large work. If you are mid-edit, get to a safe stopping point first.',
+  'Your context window is filling up. This is a system signal based on your ACTUAL live token usage — trust it',
+  'even if it feels early. Finish only the phase you are on and, if you are at a natural boundary, commit it.',
+  'Then call `record_leg_handoff` with a structured handoff for a fresh session and stop — do NOT start new',
+  'large work. If you are mid-edit, get to a safe stopping point first.',
   '</context_pressure>',
 ].join('\n');
 
@@ -93,10 +94,11 @@ export const ROTATION_SOFT_NUDGE = [
  */
 export const ROTATION_HARD_NUDGE = [
   '<context_pressure phase="hard">',
-  'You are past 200k tokens and entering context-rot territory — your reasoning and recall are degrading. Stop',
-  'after the current action. Call `record_leg_handoff` NOW with a structured handoff (scope & files by status,',
-  'FAILED attempts with their verbatim errors, current on-disk state, next safe action), then yield. Do not',
-  'start anything new.',
+  'You are deep into your context window and entering context-rot territory — your reasoning and recall are',
+  'degrading. This is a system signal based on your ACTUAL live token usage; act on it now, do not second-guess',
+  'it. Stop after the current action. Call `record_leg_handoff` NOW with a structured handoff (scope & files by',
+  'status, FAILED attempts with their verbatim errors, current on-disk state, next safe action), then yield.',
+  'Do not start anything new.',
   '</context_pressure>',
 ].join('\n');
 

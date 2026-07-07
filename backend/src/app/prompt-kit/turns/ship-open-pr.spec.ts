@@ -32,6 +32,24 @@ describe('turns / ship-open-pr', () => {
       expect(task).toContain('under 70 characters');
     });
 
+    it('passes the PR body via a single-quoted heredoc (Claude Code idiom — no shell expansion)', () => {
+      const task = shipOpenPrBody(base);
+      expect(task).toContain("--body \"$(cat <<'EOF'");
+      expect(task).toContain('EOF');
+    });
+
+    it('suppresses the default Claude attribution (per house style — no Co-Authored-By)', () => {
+      const task = shipOpenPrBody(base);
+      expect(task).toContain('Co-Authored-By');
+      expect(task).toMatch(/Do NOT add.*attribution/);
+    });
+
+    it('tells the visible brain turn to close with ONE line (the PR url), not a play-by-play', () => {
+      const task = shipOpenPrBody(base);
+      expect(task).toContain('ONE LINE');
+      expect(task).toContain('gh pr view');
+    });
+
     it('folds the git-safety guardrail into the task body (task-only — no system prompt)', () => {
       expect(shipOpenPrBody(base)).toContain('NEVER run destructive');
     });

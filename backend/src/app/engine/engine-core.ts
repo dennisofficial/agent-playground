@@ -466,7 +466,7 @@ export class EngineCore {
     extraClaudeOptions?: Record<string, unknown>,
     bridgeToolNames?: string[],
   ): Promise<EngineRunResult> {
-    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput } =
+    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput, rotationNudge } =
       args;
 
     const abortController = new AbortController();
@@ -503,6 +503,12 @@ export class EngineCore {
     let streamingStarted = false;
     const steerBuffer: Array<{ id?: string; text: string }> = [];
     let flushSteerBuffer = (): void => {}; // real impl set below when streaming; no-op for worker turns
+    // ENGINE-LOCAL Leg-rotation nudge (see RunEngineArgs.rotationNudge): latch SOFT then HARD as this turn's
+    // own main-agent occupancy fills, injecting the nudge straight into the live input. Race-free by design —
+    // it fires mid-stream (input open), never over the host→Redis path that raced the post-result close.
+    let nudgedSoft = false;
+    let nudgedHard = false;
+    let injectRotationNudge = (_text: string): void => {}; // real impl set below when streaming
     if (input) {
       input.push(steerUserMessage(task));
       // Drain operator steers into the live turn until the turn ends. Each steer carries its stimulus `id`;
@@ -527,6 +533,12 @@ export class EngineCore {
           const s = steerBuffer.shift()!;
           injectSteer(s.id, s.text);
         }
+      };
+      // The rotation nudge rides the SAME injection as an operator steer (priority:'now', cancels any pending
+      // close) — but carries no stimulus id, so it emits no `input_ack` (nothing durable to converge on).
+      injectRotationNudge = (text: string): void => {
+        cancelEnd();
+        input.push(steerUserMessage(text, 'now'));
       };
       void (async () => {
         try {
@@ -716,6 +728,20 @@ export class EngineCore {
                 ...(contextModel ? { contextModel } : {}),
                 contextLimit: resolveContextLimit(contextModel),
               });
+              // ENGINE-LOCAL Leg-rotation nudge: this main-agent round-trip's occupancy is the freshest signal,
+              // and we're mid-stream (input open, streamingStarted true) — the SAFE moment to steer, so the nudge
+              // lands like a manual steer instead of racing the post-`result` close. Latch HARD once (supersedes
+              // SOFT) then SOFT once; a turn that jumps straight past HARD skips SOFT (parity with the watch).
+              if (rotationNudge) {
+                if (!nudgedHard && contextTokens >= rotationNudge.hardTokens) {
+                  nudgedHard = true;
+                  nudgedSoft = true; // HARD implies SOFT is spent — never replay the softer nudge afterwards
+                  injectRotationNudge(rotationNudge.hardText);
+                } else if (!nudgedSoft && contextTokens >= rotationNudge.softTokens) {
+                  nudgedSoft = true;
+                  injectRotationNudge(rotationNudge.softText);
+                }
+              }
             }
           }
           for (const block of message.message.content as Array<{

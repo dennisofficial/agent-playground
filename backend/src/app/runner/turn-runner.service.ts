@@ -62,6 +62,12 @@ export interface RunTurnInput {
    * batch turns so the SOFT/HARD occupancy nudges land mid-flight (NEVER on Codex turns). Omit elsewhere.
    */
   steerable?: boolean;
+  /**
+   * ENGINE-LOCAL Leg-rotation nudge (builder Claude batch turns): thresholds + SOFT/HARD seed prompts the
+   * engine injects itself the instant its own occupancy crosses — race-free vs the post-`result` input close.
+   * Forwarded verbatim into {@link RunEngineArgs.rotationNudge}. Omit for non-rotating turns.
+   */
+  rotationNudge?: { softTokens: number; hardTokens: number; softText: string; hardText: string };
   /** Progress callback. */
   onEvent?: (e: EngineEvent) => void;
   signal?: AbortSignal;
@@ -197,6 +203,10 @@ export class TurnRunnerService {
         ...(input.richStream ? { richStream: true } : {}),
         // Mid-turn steering (Leg-rotation nudges / brain operator messages) — streaming-input mode.
         ...(input.steerable ? { steerable: true } : {}),
+        // ENGINE-LOCAL Leg-rotation nudge thresholds+prompts — forwarded to the engine so it injects the
+        // SOFT/HARD wrap-up seed itself (race-free). Like `steerable`, this is an explicit passthrough: without
+        // it the field is dropped here and the builder is never seeded to hand off.
+        ...(input.rotationNudge ? { rotationNudge: input.rotationNudge } : {}),
         // Host-side tool bridge (e.g. the orchestrate build turn's `request_operator_input`).
         ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
         // Register the turn (Redis transport only) so a fresh backend can RE-ATTACH it after a restart.

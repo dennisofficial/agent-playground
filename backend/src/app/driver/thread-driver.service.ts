@@ -2,7 +2,6 @@ import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { exec } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -2109,9 +2108,11 @@ export class ThreadDriver implements JobDispatcher {
           (sig.contextLimit ? `/${sig.contextLimit}` : ''),
       );
       if (!rotation) return;
-      rotation.state.reached = sig.phase; // monotonic none<soft<hard — drives the post-turn safety-net decision
-      const nudge = sig.phase === 'hard' ? ROTATION_HARD_NUDGE : ROTATION_SOFT_NUDGE;
-      void this.steerRotation(job.id, lane, anchor.id, nudge);
+      // The MID-TURN nudge is now injected ENGINE-LOCALLY (`RunEngineArgs.rotationNudge`, keyed off the same
+      // thresholds) so it lands like a manual steer and can never race the post-`result` input close that
+      // previously wedged the turn with "Stream closed". Here we only record the highest phase reached, which
+      // drives the POST-turn safety-net rotation decision (`maybeRotateLeg`).
+      rotation.state.reached = sig.phase; // monotonic none<soft<hard
     });
     // Circuit breaker (#3): bound the engine turn with the shared PAUSABLE deadline (paused across a
     // `request_operator_input` human wait). On breach it both signals the SDK to abort AND hard-rejects so
@@ -2138,9 +2139,21 @@ export class ThreadDriver implements JobDispatcher {
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
-          // Mid-turn steering — armed for Claude builder turns so the Leg-rotation SOFT/HARD nudges land in the
-          // LIVE turn (`priority:'now'`). Never for Codex (no streaming-input steering there).
-          ...(rotation ? { steerable: true } : {}),
+          // Mid-turn steering — armed for Claude builder turns so operator steers AND the engine-local
+          // Leg-rotation SOFT/HARD nudges land in the LIVE turn (`priority:'now'`). Never for Codex (no
+          // streaming-input steering there). `rotationNudge` gives the engine the thresholds + seed prompts so
+          // it injects the nudge itself the instant its own occupancy crosses — race-free vs the input close.
+          ...(rotation
+            ? {
+                steerable: true,
+                rotationNudge: {
+                  softTokens: rotation.thresholds.softTokens,
+                  hardTokens: rotation.thresholds.hardTokens,
+                  softText: ROTATION_SOFT_NUDGE,
+                  hardText: ROTATION_HARD_NUDGE,
+                },
+              }
+            : {}),
           // The orchestrator's host tool bridge — exposes `request_operator_input` (pause & ask). The
           // orchestrator's OTHER tools (Edit/Bash/Task) run in-sandbox, not over this bridge.
           toolBridge,
@@ -2185,32 +2198,6 @@ export class ThreadDriver implements JobDispatcher {
     return result;
   }
 
-  /**
-   * Steer a Leg-rotation nudge into the LIVE build turn (mirrors the brain's `steerIntoLiveBrainTurn`). Resolves
-   * the running `active_turns` row for this anchor's batch turn and publishes the nudge to its input stream so
-   * the in-container SDK injects it mid-flight (`priority:'now'`). Best-effort: if the runner can't steer, or no
-   * live turn is found, or the XADD fails, we log and move on — the post-turn safety-net rotation still catches a
-   * still-fat session. A fresh uuid is used for the steer id (host-originated nudge, no delivery-tracking need).
-   */
-  private async steerRotation(
-    jobId: string,
-    lane: string,
-    anchorStepId: string,
-    text: string,
-  ): Promise<void> {
-    if (!this.turn.canSteer()) return;
-    const live = await this.findReattachableTurn(jobId, lane, anchorStepId, 'step').catch(() => null);
-    if (!live?.turn_id) {
-      this.logger.warn(`leg-rotation steer: no live turn for anchor ${anchorStepId} — relying on the safety net`);
-      return;
-    }
-    try {
-      await this.turn.steer(live.turn_id, randomUUID(), text);
-      this.logger.log(`leg-rotation: steered a context-pressure nudge into live turn ${live.turn_id}`);
-    } catch (err) {
-      this.logger.warn(`leg-rotation steer into turn ${live.turn_id} failed: ${shortReason(err)}`);
-    }
-  }
 
   /**
    * Decide whether the Leg that just ended should ROTATE — and if so, do it (the builder analog of the brain's

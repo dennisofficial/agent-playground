@@ -194,6 +194,9 @@ export function ToolGroup({ tools }: { tools: ToolItem[] }) {
   const count = tools.length;
   const totalStat = aggregateDiffstat(tools);
   const totalLines = aggregateLines(tools);
+  // How many grouped tools failed — a failed tool's own line/diffstat badge is dropped from the
+  // rollups above, so without this the collapsed header gives no hint that anything errored.
+  const errorCount = tools.filter((t) => t.isError).length;
   const allFiles = tools.every((t) => isFileEditTool(t.name));
   // How many of the grouped files are newly created (their row carries a "NEW" pill) — rolled up onto
   // the collapsed header alongside the diffstat, mirroring the per-row tags.
@@ -209,6 +212,7 @@ export function ToolGroup({ tools }: { tools: ToolItem[] }) {
   const showStat = totalStat && (!allFiles || !open);
   const showNew = allFiles && !open && newCount > 0;
   const showLines = totalLines && !open;
+  const showError = errorCount > 0 && !open;
 
   return (
     <div className="anim-fadeUp my-px">
@@ -223,6 +227,14 @@ export function ToolGroup({ tools }: { tools: ToolItem[] }) {
         <span className="flex-1 truncate font-mono text-[11px] text-faint">
           {preview}
         </span>
+        {showError ? (
+          <span
+            className="shrink-0 font-mono text-[10px]"
+            style={{ color: "var(--red)" }}
+          >
+            {errorCount === 1 ? "error" : `${errorCount} errors`}
+          </span>
+        ) : null}
         {showNew ? (
           <NewPill
             text={newCount === count ? "NEW" : `${newCount} NEW`}

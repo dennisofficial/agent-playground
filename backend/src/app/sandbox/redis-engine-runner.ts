@@ -476,6 +476,11 @@ export class RedisEngineRunner implements EngineRunnerPort {
       ...(args.richStream ? { richStream: args.richStream } : {}),
       // Steering: tell the entrypoint to run streaming-input mode + subscribe to `turn:{T}:input`/`:abort`.
       ...(args.steerable ? { steerable: true } : {}),
+      // ENGINE-LOCAL Leg-rotation nudge (thresholds + seed prompts). MUST be forwarded here — the spec is an
+      // explicit whitelist, so a new RunEngineArgs field is silently dropped without this line, and the
+      // in-container engine then never injects the SOFT/HARD wrap-up seed (the builder is never told to hand
+      // off). Plain data; the entrypoint spreads `...spec` into runArgs.
+      ...(args.rotationNudge ? { rotationNudge: args.rotationNudge } : {}),
       // Tool-bridge: tell the entrypoint which host tools exist so it builds the MCP proxy for each.
       ...(args.toolBridge ? { toolBridgeTools: Object.keys(args.toolBridge.tools) } : {}),
     };
