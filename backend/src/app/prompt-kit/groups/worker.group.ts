@@ -10,6 +10,7 @@ import {
   CLARITY_OVER_COMMENTS_NOTE,
   DELETION_SAFETY_NOTE,
   DEVIATION_NOTE,
+  DOC_VERSION_VERIFY_NOTE,
   DOCS_BEFORE_GREP,
   EVIDENCE_ARTIFACTS_NOTE,
   LSP_TOOLS_NOTE,
@@ -18,6 +19,7 @@ import {
   PLAYGROUND_NOTE,
   SPIKE_FIRST_NOTE,
   TASK_LIST_NOTE,
+  TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from '../fragments';
 
@@ -116,6 +118,19 @@ export class WorkerGroup {
   @Fragment({ usedBy: [Agent.WORKER], order: 420 })
   minimalCode(): string {
     return MINIMAL_CODE_NOTE;
+  }
+
+  /** TYPESCRIPT TYPE STYLE — the orchestrator makes small edits itself; same house rule the brain + writers
+   *  carry. No-op on non-TS repos by its own wording. */
+  @Fragment({ usedBy: [Agent.WORKER], order: 421 })
+  tsStyle(): string {
+    return TS_STYLE_NOTE;
+  }
+
+  /** VERIFY DOCS + INSTALLED VERSION before building on a dependency. Shared with the brain + fan-out writers. */
+  @Fragment({ usedBy: [Agent.WORKER], order: 422 })
+  docVersionVerify(): string {
+    return DOC_VERSION_VERIFY_NOTE;
   }
 
   /** The evidence-artifact mandate: every build thread leaves durable PROOF in `/context/artifacts/`.

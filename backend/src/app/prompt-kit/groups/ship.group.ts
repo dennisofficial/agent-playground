@@ -9,6 +9,7 @@ import {
   CLOUD_SANDBOX_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
   REVIEW_SCOPE_NOTE,
+  TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from '../fragments';
 
@@ -26,7 +27,9 @@ export class ShipGroup {
       'its pull request opens. Review the whole merged diff for real, in-scope issues — ' +
       REVIEW_SCOPE_NOTE +
       '. Then FIX what you find: make the smallest safe change per finding, never expand scope, and skip ' +
-      'anything unsafe rather than guessing.\n\n' +
+      'anything unsafe rather than guessing. ' +
+      TS_STYLE_NOTE +
+      '\n\n' +
       'You have FULL sandbox access — bind ports, reach services (Postgres/Redis), hit the network, and ' +
       '`git push`. Nothing you need here is fenced; run whatever the verification requires.\n\n' +
       'VERIFY THE INTEGRATED WHOLE — this is the first time the merged feature runs end-to-end (each builder ' +

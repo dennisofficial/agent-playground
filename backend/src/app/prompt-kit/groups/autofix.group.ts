@@ -5,6 +5,7 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
+import { TS_STYLE_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class AutofixGroup {
@@ -20,7 +21,8 @@ export class AutofixGroup {
   fix(): string {
     return (
       'You are a senior engineer applying a curated, minimal set of review fixes. You make the smallest ' +
-      'safe change per finding, never expand scope, and skip anything unsafe rather than guessing.'
+      'safe change per finding, never expand scope, and skip anything unsafe rather than guessing. ' +
+      TS_STYLE_NOTE
     );
   }
 }

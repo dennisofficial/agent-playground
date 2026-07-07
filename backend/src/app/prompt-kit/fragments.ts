@@ -157,6 +157,28 @@ export const VERIFY_CURRENCY =
   'behind latest you are. When you do report a version\'s status, name BOTH the installed and the current ' +
   'version (e.g. "Electron 35 — three majors behind the current 44"), never a bare adjective like "modern".';
 
+/**
+ * DOCUMENTATION + VERSION VERIFICATION — the implementation-correctness twin of {@link VERIFY_CURRENCY}.
+ * VERIFY_CURRENCY governs a CLAIM about whether something is current; this governs the CODE you write against
+ * a dependency: before building on any library/SDK/framework/platform-API/CLI/service, confirm the current
+ * official docs AND that the approach matches the version actually installed (not a pattern remembered from an
+ * older generation). Shared by every persona that AUTHORS code (the brain, the worker orchestrator, the
+ * fan-out writers). The Codex plan reviewer carries its OWN inline version of this mandate (`meta.group.ts`)
+ * because its prompt is self-contained.
+ */
+export const DOC_VERSION_VERIFY_NOTE =
+  'VERIFY DOCS + INSTALLED VERSION BEFORE YOU BUILD ON A DEPENDENCY — before you implement, refactor, or ' +
+  'recommend anything against a library, SDK, framework, platform API, CLI, or third-party service, confirm ' +
+  'the CURRENT official docs AND that your approach matches the version actually installed here. Do not rely ' +
+  'on memory or a pattern from an older generation of the tool: read package.json / the lockfile / the ' +
+  'existing imports for the REAL installed version, then confirm THAT version\'s true API shape — the ' +
+  'export/component names, config flags, supported params, CLI syntax — against its own docs (WebSearch / ' +
+  'WebFetch, or a Context7 docs tool when one is available; the sandbox has live web). Never mix patterns ' +
+  'from different versions or generations of the same tool. If the official docs, the installed version, and ' +
+  'your approach do not clearly line up, STOP and surface the mismatch — name the options and the safest ' +
+  'path — rather than guessing. (VERIFY CURRENCY governs claiming something IS current; this governs writing ' +
+  'code that actually matches the version in your hands.)';
+
 export const VERIFY_NOTE =
   "VERIFY before you finish: discover and run the repository's OWN typecheck/build/test tooling (read the " +
   'package.json scripts / Makefile / repo docs for the REAL commands — do not assume them) and make sure ' +
@@ -226,6 +248,21 @@ export const CLARITY_OVER_COMMENTS_NOTE =
   '"correct because…") — that belongs in the PR description and rots the moment it merges. TIEBREAKER: ' +
   'this is the default for new code you author; where the repo you are editing already follows a ' +
   'different, established comment style, match the repo.';
+
+/**
+ * TYPESCRIPT TYPE STYLE — the house rule for `type` vs `interface`, shared by every persona that AUTHORS or
+ * fixes TypeScript (the brain's direct builds, the worker orchestrator, the fan-out writers, and the two fix
+ * lanes — Codex master review + autofix-fix). Language-gated in its own wording so it is a silent no-op on a
+ * non-TS repo. Carries the same repo-match TIEBREAKER as {@link CLARITY_OVER_COMMENTS_NOTE} so it never fights
+ * a codebase that already commits to interfaces.
+ */
+export const TS_STYLE_NOTE =
+  'TYPESCRIPT TYPE STYLE — when you author TypeScript, default to `type` for object shapes, unions, and ' +
+  'aliases; reach for `interface` ONLY when you actually need what it uniquely gives: declaration merging, ' +
+  'extending third-party/library typings, a public library/SDK surface you are contributing to, or a case ' +
+  'where you specifically want interface semantics. TIEBREAKER: this is the default for new code you author; ' +
+  'where the file/package you are editing already commits to an established convention (interfaces throughout, ' +
+  'or a linter that enforces one), match it rather than mixing styles.';
 
 /**
  * DELETION safety — prove code is genuinely dead before removing it. Shared by the worker execute prompts.

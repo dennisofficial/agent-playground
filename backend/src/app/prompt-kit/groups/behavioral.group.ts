@@ -15,8 +15,10 @@ import {
   BASELINE_FIRST_NOTE,
   CANDOR_NOTE,
   CLARITY_OVER_COMMENTS_NOTE,
+  DOC_VERSION_VERIFY_NOTE,
   MINIMAL_CODE_NOTE,
   SPIKE_FIRST_NOTE,
+  TS_STYLE_NOTE,
 } from '../fragments';
 
 @FragmentGroup()
@@ -54,5 +56,19 @@ export class BehavioralGroup {
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8030 })
   minimalCode(): string {
     return MINIMAL_CODE_NOTE;
+  }
+
+  /** TYPESCRIPT TYPE STYLE — the brain authors code on direct builds + onboarding script fixes; same house
+   *  rule the worker orchestrator and fan-out writers carry. No-op on non-TS repos by its own wording. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8040 })
+  tsStyle(): string {
+    return TS_STYLE_NOTE;
+  }
+
+  /** VERIFY DOCS + INSTALLED VERSION before building on a dependency — the implementation-correctness twin of
+   *  VERIFY_CURRENCY (which the brain carries in orientation). Shared with the worker + fan-out writers. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8050 })
+  docVersionVerify(): string {
+    return DOC_VERSION_VERIFY_NOTE;
   }
 }

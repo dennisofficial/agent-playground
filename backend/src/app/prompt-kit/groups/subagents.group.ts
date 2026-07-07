@@ -12,6 +12,7 @@ import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
   DEVIATION_NOTE,
+  DOC_VERSION_VERIFY_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
   LSP_NAV_NOTE,
   LSP_TOOLS_NOTE,
@@ -21,6 +22,7 @@ import {
   REVIEW_SCOPE_NOTE,
   SOLE_AUTHOR_NOTE,
   SUBAGENT_KERNEL_NOTE,
+  TS_STYLE_NOTE,
   VERIFY_CURRENCY,
 } from '../fragments';
 
@@ -170,6 +172,10 @@ export class SubagentsGroup {
       CLARITY_OVER_COMMENTS_NOTE +
       ' ' +
       MINIMAL_CODE_NOTE +
+      ' ' +
+      TS_STYLE_NOTE +
+      ' ' +
+      DOC_VERSION_VERIFY_NOTE +
       ' When you finish, return a ' +
       'TIGHT summary — the files you changed and the key choices — NOT a transcript or the full diff. Do ' +
       'NOT commit or otherwise change git state; the orchestrator integrates, verifies, and commits.'

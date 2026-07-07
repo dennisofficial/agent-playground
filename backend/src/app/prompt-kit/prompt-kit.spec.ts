@@ -7,12 +7,14 @@ import {
   CLOUD_SANDBOX_NOTE,
   DELETION_SAFETY_NOTE,
   DEVIATION_NOTE,
+  DOC_VERSION_VERIFY_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
   REPORT_ONLY_NOTE,
   SANDBOX_FILESYSTEM_MAP_NOTE,
   SUBAGENT_KERNEL_NOTE,
   SOLE_AUTHOR_NOTE,
   SPIKE_FIRST_NOTE,
+  TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from './fragments';
 import { Agent, jobKindFragment, renderAgentPrompt } from './index';
@@ -58,6 +60,37 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     for (const agent of [Agent.REVIEW_AGENT, Agent.MASTER_REVIEW, Agent.AUTOFIX_FIX]) {
       expect(renderAgentPrompt(agent), String(agent)).not.toContain(CLARITY_OVER_COMMENTS_NOTE);
     }
+  });
+
+  it('TS_STYLE_NOTE reaches every code-writing agent (authors + fix lanes) but no read-only advisory persona', () => {
+    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.FAN_OUT, Agent.MASTER_REVIEW, Agent.AUTOFIX_FIX]) {
+      const out = renderAgentPrompt(agent, { jobKind: 'feature' });
+      expect(out.split(TS_STYLE_NOTE).length - 1, String(agent)).toBe(1);
+    }
+    // onboarding brain authors code too (script fixes) — it rides the un-gated behavioral tail.
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' })).toContain(TS_STYLE_NOTE);
+    // read-only advisories never write code.
+    for (const agent of [Agent.EXPLORE, Agent.DOCS, Agent.REVIEW_AGENT, Agent.DEBUG, Agent.TEST]) {
+      expect(renderAgentPrompt(agent), String(agent)).not.toContain(TS_STYLE_NOTE);
+    }
+  });
+
+  it('DOC_VERSION_VERIFY_NOTE reaches the three code authors but not the fix lanes or advisories', () => {
+    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.FAN_OUT]) {
+      const out = renderAgentPrompt(agent, { jobKind: 'feature' });
+      expect(out.split(DOC_VERSION_VERIFY_NOTE).length - 1, String(agent)).toBe(1);
+    }
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' })).toContain(DOC_VERSION_VERIFY_NOTE);
+    // the reviewer carries its OWN inline mandate; the fix lanes + advisories do not get this fragment.
+    for (const agent of [Agent.MASTER_REVIEW, Agent.AUTOFIX_FIX, Agent.EXPLORE, Agent.DOCS]) {
+      expect(renderAgentPrompt(agent), String(agent)).not.toContain(DOC_VERSION_VERIFY_NOTE);
+    }
+  });
+
+  it('the plan reviewer mandates verifying current docs + the installed version before certifying a choice', () => {
+    const out = renderAgentPrompt(Agent.META_PLAN_REVIEW);
+    expect(out).toContain('MUST use it whenever the plan rests on a version-sensitive detail');
+    expect(out).toContain('WEB-SEARCH');
   });
 
   it('CANDOR_NOTE reaches the brain (feature + onboarding) but no worker/subagent persona', () => {
