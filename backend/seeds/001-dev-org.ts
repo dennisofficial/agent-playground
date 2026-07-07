@@ -7,8 +7,8 @@ import {
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
- * Dev org fixtures — ensures the two demo organizations the dev user OWNS exist so a FRESH database has an
- * org rail + "All organizations" board to render, and so `003-dev-credentials` has orgs to attach the
+ * Dev org fixtures — ensures the single demo organization the dev user OWNS exists so a FRESH database has an
+ * org rail + "All organizations" board to render, and so `003-dev-credentials` has an org to attach the
  * seeded credentials to.
  *
  * NON-DESTRUCTIVE + ADDITIVE ONLY. This seed NEVER deletes or resets anything: it does not touch repos,
@@ -38,10 +38,7 @@ export default (async (ds) => {
   const orgs = ds.getRepository(OrganizationEntity);
   const members = ds.getRepository(OrganizationMemberEntity);
 
-  const SPEC = [
-    { id: DEV_SEED_IDS.orgs.hannibal, name: 'Hannibal AI', slug: 'hannibal-ai' },
-    { id: DEV_SEED_IDS.orgs.cubix, name: 'Cubix Hosts', slug: 'cubix-hosts' },
-  ];
+  const SPEC = [{ id: DEV_SEED_IDS.orgs.atlasTest, name: 'Atlas Test', slug: 'atlas-test' }];
 
   for (const o of SPEC) {
     const existing = await orgs.findOne({ where: { id: o.id } });

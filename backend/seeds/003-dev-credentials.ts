@@ -5,8 +5,8 @@ import { decryptSecret, encryptSecret, loadSecretsKey } from '../src/app/onboard
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
- * Dev credentials for the seeded orgs — writes the encrypted `org_credentials` row (`scope='*'`) for both
- * `001` orgs so a fresh `pnpm db:seed` yields orgs that can actually run Claude/Codex turns + git ops
+ * Dev credentials for the seeded org — writes the encrypted `org_credentials` row (`scope='*'`) for the
+ * `001` org so a fresh `pnpm db:seed` yields an org that can actually run Claude/Codex turns + git ops
  * WITHOUT any runtime env fallback (there no longer is one — the resolver reads these rows only). The five
  * secrets come from `.env.seed.enc` (layered into `db:seed` by dotenvx) via `process.env`; the values are
  * never embedded here. Requires `SECRETS_ENCRYPTION_KEY` (same key the runtime decrypts with).
@@ -47,7 +47,7 @@ export default (async (ds) => {
   }
 
   const creds = ds.getRepository(OrgCredentialsEntity);
-  const orgIds = [DEV_SEED_IDS.orgs.hannibal, DEV_SEED_IDS.orgs.cubix];
+  const orgIds = [DEV_SEED_IDS.orgs.atlasTest];
 
   for (const orgId of orgIds) {
     const row =
