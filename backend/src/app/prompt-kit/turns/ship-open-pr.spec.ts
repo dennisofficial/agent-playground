@@ -50,6 +50,11 @@ describe('turns / ship-open-pr', () => {
       expect(task).toContain('gh pr view');
     });
 
+    it('tells the brain to free RAM by stopping the service fleet at ship', () => {
+      const task = shipOpenPrBody(base);
+      expect(task).toContain('atlas-svc stop-all');
+    });
+
     it('folds the git-safety guardrail into the task body (task-only — no system prompt)', () => {
       expect(shipOpenPrBody(base)).toContain('NEVER run destructive');
     });

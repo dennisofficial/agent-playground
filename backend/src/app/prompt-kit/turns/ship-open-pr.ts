@@ -81,6 +81,11 @@ export function shipOpenPrBody(args: ShipOpenPrArgs): string {
     `  4. CONFIRM. Reply with ONE short line to the operator containing the PR url ` +
     `(\`gh pr view ${branch} --json url -q .url\` prints it). The host records the open PR automatically by ` +
     `branch — you do not need to report it any other way.\n` +
+    `  5. FREE THE RAM. The build is shipped and the container stays up for review, but any services you ` +
+    `started under the supervisor are just holding memory on a shared host now. Tear the whole fleet down ` +
+    `with \`atlas-svc stop-all\` — a later review/demo re-derives and boots only what it needs. Do this ` +
+    `silently; do NOT add a line about it to the operator (your PR-url line from step 4 stays the last ` +
+    `thing you say).\n` +
     `\n` +
     `GIT SAFETY: NEVER run destructive or irreversible git commands (\`push --force\`, \`reset --hard\`, ` +
     `history rewrites, etc.) unless explicitly instructed. Never skip hooks (\`--no-verify\`) and never touch ` +
