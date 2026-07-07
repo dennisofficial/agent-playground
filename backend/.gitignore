@@ -8,6 +8,8 @@
 engine-entrypoint.mjs
 # generated Codex MCP tool-bridge server bundle (re-bundled on boot alongside the engine bundle)
 mcp-bridge-server.mjs
+# generated in-sandbox MCP hub bundle (re-bundled on boot alongside the engine bundle)
+mcp-hub-server.mjs
 
 # logs
 *.log
