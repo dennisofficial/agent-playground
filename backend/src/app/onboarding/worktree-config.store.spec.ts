@@ -3,15 +3,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { OrgWorktreeMountEntity } from '../persistence/entities';
+import type { OrgWorktreeMountEntity, RepoEntity } from '../persistence/entities';
 import { WorktreeConfigStore } from './worktree-config.store';
 
-/** A tiny in-memory stand-in for a TypeORM repository (composite-key find/save/delete). */
-function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> {
+/** A tiny in-memory stand-in for a TypeORM repository (composite-key find/save/update/delete). */
+function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> & { rows: T[] } {
   let rows: T[] = [];
   const match = (where: Partial<T>) => (r: T) =>
     (Object.entries(where) as [keyof T, unknown][]).every(([k, v]) => r[k] === v);
   return {
+    get rows() {
+      return rows;
+    },
     create: (v: Partial<T>) => ({ ...v }) as T,
     find: async ({ where }: { where?: Partial<T> } = {}) =>
       where ? rows.filter(match(where)) : rows,
@@ -21,11 +24,16 @@ function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> {
       rows.push(row);
       return row;
     },
+    update: async (where: Partial<T>, partial: Partial<T>) => {
+      let affected = 0;
+      rows = rows.map((r) => (match(where)(r) ? (affected++, { ...r, ...partial }) : r));
+      return { affected, raw: [] };
+    },
     delete: async (where: Partial<T>) => {
       rows = rows.filter((r) => !match(where)(r));
       return { affected: 0, raw: [] };
     },
-  } as unknown as Repository<T>;
+  } as unknown as Repository<T> & { rows: T[] };
 }
 
 const ORG = 'org-1';
@@ -33,10 +41,13 @@ const REPO = 'repo-1';
 
 describe('WorktreeConfigStore', () => {
   let store: WorktreeConfigStore;
+  let repos: Repository<RepoEntity> & { rows: RepoEntity[] };
 
   beforeEach(() => {
+    repos = memRepo<RepoEntity>(['id']);
     store = new WorktreeConfigStore(
       memRepo<OrgWorktreeMountEntity>(['org_id', 'repo_id', 'path']),
+      repos,
     );
   });
 
@@ -60,6 +71,31 @@ describe('WorktreeConfigStore', () => {
     await store.upsertMount(ORG, REPO, 'a', 'per-thread');
     expect(await store.listMounts('other-org', REPO)).toEqual([]);
     expect(await store.listMounts(ORG, 'other-repo')).toEqual([]);
+  });
+
+  describe('setup script', () => {
+    beforeEach(async () => {
+      await repos.save({ id: REPO, org_id: ORG, setup_script: null } as RepoEntity);
+    });
+
+    it('round-trips get/set on repos.setup_script', async () => {
+      expect(await store.getSetupScript(ORG, REPO)).toBeNull();
+      await store.setSetupScript(ORG, REPO, 'pnpm install');
+      expect(await store.getSetupScript(ORG, REPO)).toBe('pnpm install');
+    });
+
+    it('treats an empty / whitespace-only script as clearing it (null)', async () => {
+      await store.setSetupScript(ORG, REPO, 'pnpm install');
+      await store.setSetupScript(ORG, REPO, '   ');
+      expect(await store.getSetupScript(ORG, REPO)).toBeNull();
+      await store.setSetupScript(ORG, REPO, 'pnpm install');
+      await store.setSetupScript(ORG, REPO, null);
+      expect(await store.getSetupScript(ORG, REPO)).toBeNull();
+    });
+
+    it('returns null for an unknown repo', async () => {
+      expect(await store.getSetupScript(ORG, 'nope')).toBeNull();
+    });
   });
 
   describe('importLegacyIfEmpty', () => {

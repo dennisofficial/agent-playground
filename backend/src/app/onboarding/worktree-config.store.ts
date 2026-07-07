@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { OrgWorktreeMountEntity } from '../persistence/entities';
+import { OrgWorktreeMountEntity, RepoEntity } from '../persistence/entities';
 import type { MountMode, MountSpec } from '../sandbox/container-paths';
 import { loadLegacyManifestFile } from './legacy-worktree-manifest';
 
@@ -20,7 +20,30 @@ export class WorktreeConfigStore {
   constructor(
     @InjectRepository(OrgWorktreeMountEntity, DB_CONNECTION)
     private readonly mounts: Repository<OrgWorktreeMountEntity>,
+    @InjectRepository(RepoEntity, DB_CONNECTION)
+    private readonly repos: Repository<RepoEntity>,
   ) {}
+
+  /**
+   * The repo's cold-boot setup script (`repos.setup_script`), or null when unset. Resolved by the
+   * `WorktreeProvisioner` on every attach and handed to `SandboxManager`, which runs it on COLD bring-up
+   * only (see {@link RepoEntity.setup_script}).
+   */
+  async getSetupScript(orgId: string, repoId: string): Promise<string | null> {
+    const row = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    return row?.setup_script ?? null;
+  }
+
+  /** Set (or clear, when empty/blank) the repo's cold-boot setup script. Live for every future job's next
+   *  cold attach — no PR. */
+  async setSetupScript(orgId: string, repoId: string, script: string | null): Promise<void> {
+    const trimmed = script?.trim() ? script : null;
+    await this.repos.update({ id: repoId, org_id: orgId }, { setup_script: trimmed });
+    this.logger.log(
+      `${trimmed ? 'set' : 'cleared'} setup script org=${orgId} repo=${repoId}` +
+        (trimmed ? ` (${trimmed.length} chars)` : ''),
+    );
+  }
 
   /** All mounts for a repo. */
   async listMounts(orgId: string, repoId: string): Promise<MountSpec[]> {

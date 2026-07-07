@@ -71,6 +71,12 @@ export class WorktreeProvisioner {
     // Mounts are cheap to (re)compute and must be passed on EVERY attach (a cold recreate needs them).
     const mounts = repoDbId ? await this.hydrator.resolveMounts(orgId, repoDbId, worktreePath) : [];
 
+    // The repo's cold-boot setup script — resolved like the mounts and passed on EVERY attach; `attach` runs it
+    // only on a COLD bring-up and folds its hash into the recreate fingerprint. Failures ride back on the
+    // returned sandbox (`setupScriptResult`); `JobLifecycleService` stamps them + wakes the brain (this
+    // provisioner has no brain access, so it never surfaces them itself).
+    const setupScript = repoDbId ? await this.config.getSetupScript(orgId, repoDbId) : null;
+
     // File hydration is gated: re-run only when the manifest/secret/grant signature changed, or when
     // forced (a freshly cut or restored worktree has no files yet).
     const hydrationSig = await this.hydrator.computeSig(worktreePath, orgId, repoDbId);
@@ -98,6 +104,7 @@ export class WorktreeProvisioner {
       sandbox,
       orgId,
       mounts,
+      setupScript,
       jobId,
       onMilestone: input.onMilestone,
       ...(repoDbId ? { repoDbId } : {}),

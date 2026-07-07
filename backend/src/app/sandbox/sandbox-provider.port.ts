@@ -70,12 +70,31 @@ export interface SandboxAttachInput {
    */
   mounts?: SandboxMount[];
   /**
+   * The repo's cold-boot setup script, resolved by the `WorktreeProvisioner` from the repo's DB config
+   * (`repos.setup_script`). `attach` runs it ONLY on a COLD bring-up (fresh create / restart-from-stopped),
+   * never on a warm reuse, and folds its hash into the recreate fingerprint so an edited script recreates a
+   * warm container. Opaque text — the sandbox layer takes no dependency on the store. Absent/empty → no step.
+   */
+  setupScript?: string | null;
+  /**
    * Optional callback fired ONLY on genuinely slow attach sub-steps (see {@link SandboxMilestoneStage}) —
    * never on the common warm/fast path. A plain function param (not DI), so this low-level infra module
    * takes no dependency on the message store; the caller (ultimately `AgentSessionManager`) decides what
    * to do with it. Omitted by the acceptance gate (no thread/chat surface exists there).
    */
   onMilestone?: (stage: SandboxMilestoneStage) => void;
+}
+
+/**
+ * The outcome of running a repo's cold-boot {@link SandboxAttachInput.setupScript}. Set on the returned
+ * `FeatureSandbox` (transient, never persisted) only when a script actually ran (a cold attach). `tail` is
+ * the last chunk of combined stdout+stderr for surfacing the failure to the brain; a timeout / exec error is
+ * reported as `ok:false` with `exitCode:-1` rather than throwing.
+ */
+export interface SetupScriptResult {
+  ok: boolean;
+  exitCode: number;
+  tail: string;
 }
 
 /**

@@ -118,6 +118,10 @@ export class OrientationGroup {
       "     (or the tool's equivalent) + `validate` + `plan` (config parse / dry-run), and record what the plan",
       '     shows (in sync, drifted, or would-create). Anything that would mutate EXTERNAL state — `apply`, real',
       '     cloud provisioning, live writes — is OFF LIMITS from here; never run it, no matter how it is asked for.',
+      '  6. Once bring-up WORKS, capture the commands that get a cold box ready (deps install, client/codegen,',
+      '     index build) into write_setup_script (idempotent — see SETUP SCRIPT), so every future job comes up',
+      '     ready without your help. Then reset_sandbox to PROVE it cold-boots from durable config + the script,',
+      '     verify on the fresh box, and only then finish_onboarding (see RESET / FINISH).',
       'NEVER ask the operator anything the repo already answers — investigate first.',
     ].join('\n');
   }

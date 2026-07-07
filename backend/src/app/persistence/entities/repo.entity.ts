@@ -56,6 +56,17 @@ export class RepoEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   branch_regex!: string | null;
 
+  /**
+   * Per-repo bring-up script the host runs on every COLD sandbox attach (a fresh container create,
+   * a restart-from-stopped, or a `reset_sandbox` recreate) — SKIPPED on a warm-running reuse. Must be
+   * IDEMPOTENT: it re-runs on each cold boot, so guard the one-time work (`[ -d node_modules ] || pnpm
+   * install`, etc.). It must NOT init git submodules — `LocalGitService.ensureSubmodules` already does that
+   * on every cut/restored worktree. Authored by the brain via `write_setup_script` (DB-backed, live for
+   * every future job on the repo, no PR). Null → no setup step.
+   */
+  @Column({ type: 'text', nullable: true })
+  setup_script!: string | null;
+
   /** Named GitHub-token override; null → the org default token. */
   @Column({ type: 'text', nullable: true })
   token_name!: string | null;

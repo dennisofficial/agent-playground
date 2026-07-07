@@ -1,4 +1,5 @@
 import type { EnvService } from '@core/config/env/env.service';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -286,11 +287,11 @@ describe('SandboxManager.teardownByIdentity', () => {
 });
 
 describe('SandboxManager.attach — onMilestone', () => {
-  // CONFIG_REV is a private module constant (currently 14); mirrored here to construct a matching
+  // CONFIG_REV is a private module constant (currently 15); mirrored here to construct a matching
   // fingerprint label for the warm-reuse case. `atlas.cfg` mirrors the private L_CFG label key.
-  const CONFIG_REV = 14;
+  const CONFIG_REV = 15;
   const IMAGE_ID = 'img-1';
-  const FINGERPRINT = `${IMAGE_ID}|cfg${CONFIG_REV}|mnone`; // no mounts in these tests
+  const FINGERPRINT = `${IMAGE_ID}|cfg${CONFIG_REV}|mnone|snone`; // no mounts + no setup script in these tests
 
   let agentHomeRoot: string;
   beforeEach(() => {
@@ -445,6 +446,82 @@ describe('SandboxManager.attach — onMilestone', () => {
     await expect(
       mgr.attach({ sandbox: sandbox(), orgId: 'org1', jobId: 'job1' } as SandboxAttachInput),
     ).resolves.toBeDefined();
+  });
+
+  // ── cold-boot setup script ──────────────────────────────────────────────────────────────────────
+  const SCRIPT = 'pnpm install';
+  const scriptFp = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 12);
+
+  it('runs the setup script on a COLD create (bash -c, in /workspace) and returns ok', async () => {
+    const { engine } = fullFakeEngine(null);
+    const mgr = new SandboxManager(engine, fakeBuilder(false), env({ AGENT_HOME_ROOT: agentHomeRoot }));
+
+    const res = await mgr.attach({ sandbox: sandbox(), orgId: 'org1', jobId: 'job1', setupScript: SCRIPT } as SandboxAttachInput);
+
+    expect(engine.exec).toHaveBeenCalledWith(
+      'new-container-id',
+      ['bash', '-c', SCRIPT],
+      expect.objectContaining({ cwd: '/workspace' }),
+    );
+    expect(res.setupScriptResult).toEqual({ ok: true, exitCode: 0, tail: expect.any(String) });
+  });
+
+  it('SKIPS the setup script on a warm reuse (running container, matching fingerprint incl. script hash)', async () => {
+    const existing: ContainerInfo = {
+      id: 'existing-id',
+      name: 'atlas-sbx-thread-job1',
+      state: 'running',
+      labels: { 'atlas.cfg': `${IMAGE_ID}|cfg${CONFIG_REV}|mnone|s${scriptFp(SCRIPT)}` },
+      startedAt: null,
+    };
+    const { engine } = fullFakeEngine(existing);
+    const mgr = new SandboxManager(engine, fakeBuilder(false), env({ AGENT_HOME_ROOT: agentHomeRoot }));
+
+    const res = await mgr.attach({ sandbox: sandbox(), orgId: 'org1', jobId: 'job1', setupScript: SCRIPT } as SandboxAttachInput);
+
+    expect(res.setupScriptResult).toBeUndefined();
+    expect(engine.exec).not.toHaveBeenCalledWith('existing-id', ['bash', '-c', SCRIPT], expect.anything());
+  });
+
+  it('reports a non-zero exit as ok:false WITHOUT throwing', async () => {
+    const { engine } = fullFakeEngine(null);
+    // Fail only the setup-script exec; keep waitReady's `docker info` succeeding.
+    engine.exec = vi.fn(async (_id: string, argv: string[]) =>
+      argv[0] === 'bash'
+        ? { exitCode: 2, stdout: 'boom', stderr: 'nope' }
+        : { exitCode: 0, stdout: 'v1', stderr: '' },
+    );
+    const mgr = new SandboxManager(engine, fakeBuilder(false), env({ AGENT_HOME_ROOT: agentHomeRoot }));
+
+    const res = await mgr.attach({ sandbox: sandbox(), orgId: 'org1', jobId: 'job1', setupScript: SCRIPT } as SandboxAttachInput);
+
+    expect(res.setupScriptResult?.ok).toBe(false);
+    expect(res.setupScriptResult?.exitCode).toBe(2);
+  });
+
+  it('folds the script hash into the fingerprint — different scripts → different atlas.cfg label', async () => {
+    const a = fullFakeEngine(null);
+    await new SandboxManager(a.engine, fakeBuilder(false), env({ AGENT_HOME_ROOT: agentHomeRoot })).attach({
+      sandbox: sandbox(), orgId: 'org1', jobId: 'job1', setupScript: 'script-A',
+    } as SandboxAttachInput);
+    const b = fullFakeEngine(null);
+    await new SandboxManager(b.engine, fakeBuilder(false), env({ AGENT_HOME_ROOT: agentHomeRoot })).attach({
+      sandbox: sandbox(), orgId: 'org1', jobId: 'job1', setupScript: 'script-B',
+    } as SandboxAttachInput);
+
+    const cfgA = a.createContainer.mock.calls[0][0].labels['atlas.cfg'];
+    const cfgB = b.createContainer.mock.calls[0][0].labels['atlas.cfg'];
+    expect(cfgA).not.toBe(cfgB);
+  });
+
+  it('does not run or attach a result when there is no setup script', async () => {
+    const { engine } = fullFakeEngine(null);
+    const mgr = new SandboxManager(engine, fakeBuilder(false), env({ AGENT_HOME_ROOT: agentHomeRoot }));
+
+    const res = await mgr.attach({ sandbox: sandbox(), orgId: 'org1', jobId: 'job1' } as SandboxAttachInput);
+
+    expect(res.setupScriptResult).toBeUndefined();
+    expect(engine.exec).not.toHaveBeenCalledWith('new-container-id', ['bash', '-c', expect.anything()], expect.anything());
   });
 });
 

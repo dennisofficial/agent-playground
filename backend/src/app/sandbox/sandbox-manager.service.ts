@@ -27,7 +27,7 @@ import type { McpHubConfig } from './image/mcp-hub-config';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import { hostExecUser } from './host-exec-user';
 import { SandboxImageBuilder } from './sandbox-image.builder';
-import type { SandboxAttachInput, SandboxProvider, ServiceLivenessProbe } from './sandbox-provider.port';
+import type { SandboxAttachInput, SandboxProvider, ServiceLivenessProbe, SetupScriptResult } from './sandbox-provider.port';
 
 const execFileAsync = promisify(execFile);
 
@@ -48,6 +48,14 @@ const PROBE_TIMEOUT_MS = 4_000;
  *  FIFO whose open blocks until the brain's waiting process reads it; if that process is dead the write hangs
  *  forever, so we abandon it and let the caller restart the login rather than wedge the request. */
 const DELIVER_TIMEOUT_MS = 15_000;
+
+/** Hard cap on the repo's cold-boot setup script exec. Generous (installs / index builds are legitimately
+ *  slow) but bounded so a hung script can't wedge every cold attach — a timeout is reported as a failure the
+ *  brain is woken to fix, not a stuck provision. */
+const SETUP_SCRIPT_TIMEOUT_MS = 300_000;
+
+/** How much of the setup script's combined stdout+stderr to keep as the failure `tail` surfaced to the brain. */
+const SETUP_SCRIPT_TAIL_BYTES = 2_000;
 
 /** realpath a path, falling back to the input if it can't be resolved (e.g. doesn't exist yet). */
 function realpathSafe(p: string): string {
@@ -146,11 +154,14 @@ export function submoduleGitlinks(worktreePath: string): string[] {
  *   MCP_HUB_BUNDLE_PATH bind. The hub bundle bind (rev 13) fell back to an in-container path that isn't
  *   host-resolvable, leaving `Created` containers pinned to a bad bind; the bundle path isn't part of the
  *   `atlas.cfg` fingerprint, so a config-only fix wouldn't otherwise invalidate the stale containers.
+ * rev 15 = per-repo cold-boot setup script (`repos.setup_script`): run on every COLD attach and its hash
+ *   folded into the `atlas.cfg` fingerprint (so editing the script recreates a warm container to re-run it).
+ *   Bumped once so existing warm containers recreate and pick up the run-on-cold codepath.
  *
- * NOTE: the per-repo mount SET is ALSO hashed into the `atlas.cfg` fingerprint below, so a changed
- * manifest mount list recreates the container even without bumping this rev.
+ * NOTE: the per-repo mount SET + the setup-script hash are ALSO folded into the `atlas.cfg` fingerprint
+ * below, so a changed manifest mount list / setup script recreates the container even without bumping this rev.
  */
-const CONFIG_REV = 14;
+const CONFIG_REV = 15;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -218,7 +229,12 @@ export class SandboxManager implements SandboxProvider {
     // recreates an existing (warm) container — binds are only applied at create time.
     const mountKey = (input.mounts ?? []).map((m) => `${m.path}:${m.mode}`).sort().join(',');
     const mountFp = mountKey ? createHash('sha256').update(mountKey).digest('hex').slice(0, 12) : 'none';
-    const fingerprint = `${(await this.engine.imageId(image)) ?? 'noimg'}|cfg${CONFIG_REV}|m${mountFp}`;
+    // Fold the cold-boot setup script into the fingerprint too: it runs only on a COLD attach, so an edited
+    // script must recreate a warm container to re-run it (mirrors the mount-set rationale above).
+    const scriptFp = input.setupScript
+      ? createHash('sha256').update(input.setupScript).digest('hex').slice(0, 12)
+      : 'none';
+    const fingerprint = `${(await this.engine.imageId(image)) ?? 'noimg'}|cfg${CONFIG_REV}|m${mountFp}|s${scriptFp}`;
 
     const existing = await this.engine.inspect(name);
     if (existing) {
@@ -241,7 +257,8 @@ export class SandboxManager implements SandboxProvider {
         } else {
           this.logger.log(`reusing running sandbox ${name}`);
         }
-        return this.augment(sandbox, existing.id, warm);
+        // COLD restart re-runs the repo's setup script (its container state is gone); a WARM reuse never does.
+        return this.applySetupScript(this.augment(sandbox, existing.id, warm), existing.id, warm ? null : input.setupScript);
       }
     }
 
@@ -397,7 +414,8 @@ export class SandboxManager implements SandboxProvider {
     await this.engine.start(id);
     await this.attachRedisBus(id);
     await this.waitReady(id);
-    return this.augment(sandbox, id, false); // freshly created → cold
+    // Freshly created → cold: run the repo's setup script (if any) before handing the sandbox back.
+    return this.applySetupScript(this.augment(sandbox, id, false), id, input.setupScript);
   }
 
   /**
@@ -512,6 +530,60 @@ export class SandboxManager implements SandboxProvider {
   private augment(sandbox: FeatureSandbox, containerId: string, warm: boolean): FeatureSandbox {
     const user = hostExecUser();
     return { ...sandbox, containerId, warm, ...(user ? { execUser: user } : {}) };
+  }
+
+  /**
+   * Attach the cold-boot setup-script result to a just-attached sandbox — a no-op (returns `fs` unchanged)
+   * when there's no script or it's a warm reuse (caller passes `script=null` then). Kept OUT of {@link augment}
+   * so that stays a pure, synchronous shape-builder (also used for teardown).
+   */
+  private async applySetupScript(
+    fs: FeatureSandbox,
+    containerId: string,
+    script: string | null | undefined,
+  ): Promise<FeatureSandbox> {
+    if (!script) return fs;
+    return { ...fs, setupScriptResult: await this.runSetupScript(containerId, script) };
+  }
+
+  /**
+   * Run the repo's cold-boot setup script inside a freshly-attached (COLD) container, via the SAME non-login
+   * `bash -c` path the agent's own Bash tool uses so the image's `BASH_ENV` (`/etc/atlas/shell-init.sh` →
+   * fnm/direnv/node) is applied. Execs as the host uid so anything it writes to the bind-mounted worktree stays
+   * host-owned. NEVER throws — a non-zero exit, an exec error, or a timeout all resolve to `{ ok:false }` with
+   * the tail of the output, which the caller stamps on the sandbox row + wakes the brain to fix.
+   */
+  private async runSetupScript(containerId: string, script: string): Promise<SetupScriptResult> {
+    const user = hostExecUser();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), SETUP_SCRIPT_TIMEOUT_MS);
+    let out = '';
+    const capture = (chunk: string) => {
+      out = (out + chunk).slice(-SETUP_SCRIPT_TAIL_BYTES);
+    };
+    try {
+      const res = await this.engine.exec(containerId, ['bash', '-c', script], {
+        cwd: CONTAINER_WORKTREE,
+        ...(user ? { user } : {}),
+        onStdout: capture,
+        onStderr: capture,
+        signal: ctrl.signal,
+      });
+      const ok = res.exitCode === 0;
+      this.logger[ok ? 'log' : 'warn'](`setup script on ${containerId.slice(0, 12)} exited ${res.exitCode}`);
+      return { ok, exitCode: res.exitCode, tail: out.trim() };
+    } catch (err) {
+      const aborted = ctrl.signal.aborted;
+      this.logger.warn(
+        `setup script on ${containerId.slice(0, 12)} failed: ${aborted ? 'timeout' : String(err)}`,
+      );
+      const tail = (
+        aborted ? `setup script timed out after ${SETUP_SCRIPT_TIMEOUT_MS}ms\n${out}` : `setup script exec error: ${String(err)}\n${out}`
+      ).trim();
+      return { ok: false, exitCode: -1, tail: tail.slice(-SETUP_SCRIPT_TAIL_BYTES) };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**

@@ -54,6 +54,13 @@ export interface FeatureSandbox {
    * to decide whether a resumed turn needs the "sandbox was reset" notice.
    */
   warm?: boolean;
+  /**
+   * TRANSIENT (set by `SandboxProvider.attach`, never persisted): the outcome of running the repo's
+   * cold-boot setup script — present only on a COLD attach that had a `repos.setup_script`. Structurally
+   * the `SetupScriptResult` from the sandbox port (inlined here so `git` takes no dependency on `sandbox`,
+   * exactly like `warm`). `JobLifecycleService` reads it to stamp `job_sandboxes.setup_error` + wake the brain.
+   */
+  setupScriptResult?: { ok: boolean; exitCode: number; tail: string };
 }
 
 /**

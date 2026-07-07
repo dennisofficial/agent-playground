@@ -113,7 +113,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
     const raw = await new Docker().getContainer(attached.containerId!).inspect();
     const mounts = (raw.Mounts ?? []) as Array<{ Destination?: string }>;
     expect(mounts.some((m) => m.Destination === '/usr/local/lib/atlas/engine-entrypoint.mjs')).toBe(true);
-    expect(raw.Config?.Labels?.['atlas.cfg']).toMatch(/\|cfg\d+\|m([0-9a-f]+|none)$/);
+    expect(raw.Config?.Labels?.['atlas.cfg']).toMatch(/\|cfg\d+\|m([0-9a-f]+|none)\|s([0-9a-f]+|none)$/);
 
     // idempotent: a second attach reuses the same container (fingerprint matches → not stale).
     const again = await manager.attach({ sandbox, orgId: 'team1' });

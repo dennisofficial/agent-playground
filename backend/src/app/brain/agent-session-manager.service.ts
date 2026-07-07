@@ -728,6 +728,33 @@ export class AgentSessionManager
   }
 
   /**
+   * WAKE the job brain because the repo's cold-boot SETUP SCRIPT failed on a fresh sandbox bring-up. Called
+   * by `JobLifecycleService` (via ModuleRef) at `createJob` provisioning — a brand-new job has no turn yet, so
+   * without this the failure would sit until the operator happened to message. Runs a TRUSTED harness turn
+   * (like {@link promoteDurableDecisionsAtShip}); the SPECIFIC error is delivered as a system notice on this
+   * turn (drained from `job_sandboxes.setup_error` in {@link handleChatTurn}), so this body stays generic to
+   * avoid duplicating it. Concurrency-safe via `handleChatTurn` (steers into a live turn / queues behind one).
+   */
+  async wakeForProvisioningFailure(jobId: string, orgId: string, repoId: string): Promise<void> {
+    const stimulus = harnessDeliveryStimulus({
+      jobId,
+      orgId,
+      repoId,
+      body: [
+        'Your repo setup script failed on this sandbox’s cold bring-up (the specific error is in a system',
+        'notice on this turn). Investigate and fix the cause: it may be the environment (a missing dependency,',
+        'secret, or mount) or the script itself. If the script is wrong, re-author it with `write_setup_script`,',
+        'then call `reset_sandbox` to re-run it cold and confirm the environment comes up clean.',
+      ].join('\n'),
+      seedRow: {
+        label: 'Repo setup script failed on cold bring-up — checking the environment.',
+        chunkKey: `seed:setup-fail:${jobId}`,
+      },
+    });
+    await this.handleChatTurn(stimulus);
+  }
+
+  /**
    * Boot-recovery for one shipped-but-unpromoted thread: re-run the promotion turn, then commit + push the
    * ledger onto the EXISTING PR branch (ship is idempotent — it finds the open PR). Skips silently when the
    * worktree is gone (the PR already merged + the thread closed), since there's nothing left to write.
@@ -1645,6 +1672,23 @@ export class AgentSessionManager
           )
           .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
       }
+    }
+
+    // DRAIN a cold-boot setup-script failure into THIS turn (stamped on the row by JobLifecycleService after
+    // the last attach). Folded here — regardless of warm/cold — so it reaches the very next brain turn: the
+    // proactive wake for a fresh job, the reset→verify retest turn, the first operator turn after a warm
+    // re-attach a cold-only notice would miss, or a restart. Cleared once folded so it fires exactly once.
+    if (sandboxRow?.setup_error) {
+      noticeChunks.push({
+        kind: 'system_notice',
+        body:
+          `[setup script] Your repo setup script failed on the last cold sandbox bring-up:\n${sandboxRow.setup_error}\n` +
+          'Fix the cause (a dependency, the script itself via `write_setup_script`, or a missing secret/mount), ' +
+          'then `reset_sandbox` to re-run it cold and confirm.',
+      });
+      await this.sandboxRows
+        .update({ id: sandboxRow.id }, { setup_error: null })
+        .catch((err) => this.logger.debug(`clear setup_error failed: ${err}`));
     }
 
     // PASSIVE pipeline-milestone awareness (buffer-and-flush, NOT a push). On an OPERATOR turn — and only
@@ -3282,6 +3326,7 @@ export class AgentSessionManager
       request_file: this.buildRequestFileTool(stimulus),
       withdraw_file_request: this.buildWithdrawFileRequestTool(stimulus),
       write_worktree_config: this.buildWriteWorktreeConfigTool(stimulus),
+      write_setup_script: this.buildWriteSetupScriptTool(stimulus),
       derive_secret: this.buildDeriveSecretTool(stimulus),
       reset_sandbox: this.buildResetSandboxTool(stimulus),
     };
@@ -3646,6 +3691,33 @@ export class AgentSessionManager
         };
       } catch (err) {
         this.logger.warn(`write_worktree_config failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `write_setup_script({ script })` — save (or clear, with an empty `script`) the repo's DB-backed cold-boot
+   * SETUP SCRIPT. The host runs it on every COLD sandbox bring-up (fresh create / restart-from-stopped /
+   * `reset_sandbox`) for EVERY future job on this repo — no PR — and skips it on a warm reuse. It MUST be
+   * idempotent (it re-runs on each cold boot) and must NOT init submodules (already automatic). org/repo come
+   * from the closure (never tool args) — tenant safety. Writes to the same store as `write_worktree_config`.
+   * The right way to test it is `reset_sandbox`, which recreates the container so the script runs cold.
+   */
+  private buildWriteSetupScriptTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const script = String(args['script'] ?? '').trim() ? String(args['script']) : null;
+      try {
+        await this.configStore.setSetupScript(stimulus.orgId, stimulus.repoId, script);
+        await this.store.appendSystemEvent(
+          stimulus.jobId,
+          script
+            ? '⚙️ Saved the repo setup script — it runs on every COLD sandbox bring-up for every job on this repo. Call `reset_sandbox` to test it cold.'
+            : '⚙️ Cleared the repo setup script — no cold-boot setup step will run.',
+        );
+        return { ok: true, saved: !!script };
+      } catch (err) {
+        this.logger.warn(`write_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };

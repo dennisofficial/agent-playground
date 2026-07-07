@@ -127,9 +127,27 @@ export class EnvironmentGroup {
       '    expects `./.cache`) OR ABSOLUTE (an external durable dir anywhere in the box, outside /workspace, so',
       '    it never enters the git tree). Modes: `per-thread` / `shared-ro` / `shared-rw` (one per-repo rw dir).',
       'For a non-secret file the repo needs but gitignores, COMMIT a sensible default instead; for anything that',
-      'must stay out of git (secret or not), use request_secret/request_file. Do NOT record how-to-run commands',
-      'here — those are re-derived from the repo. The pnpm store and Node (via fnm) are AUTO-MANAGED caches —',
-      'NEVER add `.pnpm-store`, `node_modules`, or a Node dir as a mount.',
+      'must stay out of git (secret or not), use request_secret/request_file. Bring-up COMMANDS (install/build/',
+      'index) do not go here — record them in the SETUP SCRIPT (below). The pnpm store and Node (via fnm) are',
+      'AUTO-MANAGED caches — NEVER add `.pnpm-store`, `node_modules`, or a Node dir as a mount.',
+    ].join('\n');
+  }
+
+  /** onboarding block 10b — SETUP SCRIPT (write_setup_script; runs on every cold bring-up). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2105, condition: isOnboarding })
+  setupScript(): string {
+    return [
+      'SETUP SCRIPT — the bring-up COMMANDS a cold sandbox needs to become usable (install deps, build a client,',
+      'warm/build an index). Record them via write_setup_script({ script }); the host runs it on EVERY cold',
+      'sandbox bring-up (fresh job, restart, reset_sandbox) for every future job on this repo, and skips it on a',
+      'warm reuse. Because it re-runs on each cold boot it MUST be IDEMPOTENT — guard the one-time work:',
+      '  [ -d node_modules ] || pnpm install --frozen-lockfile',
+      '  [ -f .index/.built ] || (my-indexer build && touch .index/.built)',
+      'Do NOT init git submodules in it (the host already runs `git submodule update --init` on every cut',
+      'worktree). Keep it reasonably fast (it is bounded by a ~5-minute timeout) — push heavy one-time artifacts',
+      'into your durable HOME or a mount so re-runs are cheap. It runs as your uid in /workspace via the same',
+      'shell your Bash tool uses (fnm/direnv applied). Author it once bring-up works, then reset_sandbox to prove',
+      'it comes up clean cold; if it fails, the host wakes you with the error to fix (re-author + reset to retest).',
     ].join('\n');
   }
 
@@ -144,8 +162,9 @@ export class EnvironmentGroup {
       'then STOP. On your next turn the box is fresh — the worktree, recorded mounts, granted secrets, your',
       'durable HOME (~/.config, ~/.local/bin), and /.atlas survive; everything else is gone. Re-run setup and see',
       'what broke: whatever you have to re-do by hand is exactly what you forgot to record (fix it via',
-      'write_worktree_config / request_secret / derive_secret, then reset again to confirm). This is the',
-      'strongest evidence onboarding is DURABLE, not just working now.',
+      'write_setup_script for bring-up commands, or write_worktree_config / request_secret / derive_secret for',
+      'durable state, then reset again to confirm). This is the strongest evidence onboarding is DURABLE, not',
+      'just working now.',
     ].join('\n');
   }
 }

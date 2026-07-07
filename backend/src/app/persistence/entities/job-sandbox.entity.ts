@@ -110,4 +110,14 @@ export class JobSandboxEntity extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   hydration_sig!: string | null;
+
+  /**
+   * The last COLD-boot setup-script failure for this sandbox (`exit <N>: <tail>`), or null when the last
+   * cold run succeeded / there was no `repos.setup_script`. Set by `JobLifecycleService` after each attach
+   * (cleared on a clean/absent run), then DRAINED — folded into a system notice and reset to null — by the
+   * brain's next turn in `handleChatTurn`. Transient run STATE (not config): the durable script lives on
+   * `repos.setup_script`.
+   */
+  @Column({ type: 'text', nullable: true })
+  setup_error!: string | null;
 }

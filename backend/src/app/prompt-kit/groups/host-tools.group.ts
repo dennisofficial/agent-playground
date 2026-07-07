@@ -49,6 +49,7 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_file_request — retract a still-open request_file card BY requestId (wrong path / no longer needed); post a corrected request_file if you still need the file`,
       `  - mcp__${BRIDGE_SERVER_NAME}__derive_secret        — store a value YOU computed from an already-granted credential (no operator wait; e.g. a printed webhook secret)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — amend the repo's DB-backed worktree config (mounts) — a live write for every future job on this repo, no PR`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__write_setup_script   — save the repo's cold-boot setup script ({ script }) — runs on EVERY cold sandbox bring-up for every future job on this repo (no PR); must be idempotent`,
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox        — recreate your container from scratch to prove the setup cold-boots (recreates on your NEXT turn — call it, then STOP)`,
     ].join('\n');
   }
@@ -127,6 +128,10 @@ export class HostToolsGroup {
       '    a DB write, live instantly for every job on this repo (no PR). Merges with what is already recorded',
       '    (upserts a mount by path) — pass only the ONE new entry you are adding; existing entries survive',
       '    automatically, you never need to reconstruct the whole set yourself.',
+      `  - mcp__${BRIDGE_SERVER_NAME}__write_setup_script  — save the repo's cold-boot SETUP SCRIPT ({ script }) —`,
+      '    a DB write, live for every future job on this repo (no PR). The host runs it on EVERY cold sandbox',
+      '    bring-up (and skips it warm), so it MUST be idempotent (guard the one-time work) and must NOT init',
+      '    submodules (already automatic). This is how you record the bring-up steps so a cold box comes up ready.',
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox       — recreate your container from scratch to PROVE the`,
       '    environment cold-boots from durable inputs (see RESET). It does not reset instantly — it recreates on',
       '    your NEXT turn, so call it then STOP; you will be prompted to verify once the fresh box is up.',

@@ -83,14 +83,18 @@ function makeService(
 }
 
 /** Build a service whose sandbox repo + provisioner are controllable, for rehydrateThread tests. */
-function makeServiceWithMocks(row: JobSandboxEntity | null, hydrationSig = 'new') {
+function makeServiceWithMocks(
+  row: JobSandboxEntity | null,
+  hydrationSig = 'new',
+  sandboxExtra: Partial<import('../git').FeatureSandbox> = {},
+) {
   const sandboxes = {
     findOne: vi.fn().mockResolvedValue(row),
     save: vi.fn(),
     create: vi.fn(),
   } as unknown as Repository<JobSandboxEntity>;
   const provisionAndAttach = vi.fn().mockResolvedValue({
-    sandbox: { worktreePath: row?.worktree_path, containerId: 'c1', repoId: 'proj', branch: 'main' },
+    sandbox: { worktreePath: row?.worktree_path, containerId: 'c1', repoId: 'proj', branch: 'main', ...sandboxExtra },
     hydrationSig,
   });
   const svc = new JobLifecycleService(
@@ -302,6 +306,40 @@ describe('JobLifecycleService — onMilestone forwarding', () => {
       await svc.ensureContainer('thread-1', 'T1', onMilestone);
 
       expect(provisionAndAttach).toHaveBeenCalledWith(expect.objectContaining({ onMilestone }));
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('JobLifecycleService — cold-boot setup_error stamping (ensureContainer)', () => {
+  it('stamps setup_error on the row when the setup script failed', async () => {
+    const wt = mkdtempSync(join(tmpdir(), 'atlas-setup-'));
+    try {
+      const row = makeRow({ worktree_path: wt });
+      const { svc, sandboxes } = makeServiceWithMocks(row, 'sig', {
+        setupScriptResult: { ok: false, exitCode: 2, tail: 'boom' },
+      });
+
+      await svc.ensureContainer('thread-1', 'T1');
+
+      const saved = (sandboxes.save as unknown as { mock: { calls: JobSandboxEntity[][] } }).mock.calls.at(-1)![0];
+      expect(saved.setup_error).toBe('exit 2: boom');
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  it('clears setup_error (null) when the setup script succeeded / there was none', async () => {
+    const wt = mkdtempSync(join(tmpdir(), 'atlas-setup-'));
+    try {
+      const row = makeRow({ worktree_path: wt, setup_error: 'exit 1: stale' });
+      const { svc, sandboxes } = makeServiceWithMocks(row, 'sig'); // no setupScriptResult
+
+      await svc.ensureContainer('thread-1', 'T1');
+
+      const saved = (sandboxes.save as unknown as { mock: { calls: JobSandboxEntity[][] } }).mock.calls.at(-1)![0];
+      expect(saved.setup_error).toBeNull();
     } finally {
       rmSync(wt, { recursive: true, force: true });
     }

@@ -83,6 +83,16 @@ export class ProvisioningNotReadyError extends Error {
  *   3. `reapIdle` / `evictForCapacity` — detach idle/over-cap containers (worktree survives).
  *   4. `closeJob` / `pollPrClosures` — terminal cleanup (PR merged or operator close).
  */
+
+/**
+ * Format a cold-boot setup-script outcome for `job_sandboxes.setup_error` — the failure as `exit <N>: <tail>`,
+ * or null when the run succeeded / there was no script (which clears any stale error). Pure.
+ */
+function setupErrorFrom(sandbox: FeatureSandbox): string | null {
+  const r = sandbox.setupScriptResult;
+  return r && !r.ok ? `exit ${r.exitCode}: ${r.tail}` : null;
+}
+
 @Injectable()
 export class JobLifecycleService {
   private readonly logger = new Logger(JobLifecycleService.name);
@@ -337,6 +347,7 @@ export class JobLifecycleService {
     row.container_id = attached.containerId ?? null;
     row.hydration_sig = hydrationSig;
     row.last_active_at = new Date();
+    row.setup_error = setupErrorFrom(attached);
     await this.sandboxes.save(row);
     return true;
   }
@@ -388,6 +399,8 @@ export class JobLifecycleService {
     row.lifecycle = 'attached';
     row.last_active_at = new Date();
     row.hydration_sig = hydrationSig;
+    // Stamp the cold-boot setup outcome (cleared on a clean/warm run); the brain's imminent turn drains it.
+    row.setup_error = setupErrorFrom(attached);
     await this.sandboxes.save(row);
 
     if (wasReset) this.logger.log(`thread ${jobId} re-attached a COLD container — turn will be told the sandbox reset`);
@@ -751,6 +764,7 @@ export class JobLifecycleService {
       row.lifecycle = 'attached';
       row.last_active_at = new Date();
       row.hydration_sig = hydrationSig;
+      row.setup_error = setupErrorFrom(attached);
       await this.sandboxes.save(row);
 
       // Record the feature branch on the THREAD (single owner).
@@ -760,6 +774,16 @@ export class JobLifecycleService {
         `provisioned sandbox for thread ${thread.id} on ${featureBranch}: worktree=${attached.worktreePath}` +
           (attached.containerId ? ` container=${attached.containerId.slice(0, 12)}` : ' (local)'),
       );
+
+      // A brand-new job whose setup script failed on this cold create has NO brain turn yet — proactively
+      // WAKE the brain to fix it (the specific error rides into that turn via the `setup_error` drain). Never
+      // let a wake hiccup break job creation. Not done on the re-attach paths (`ensureContainer`/
+      // `rehydrateThread`) — those run around a brain turn that drains the notice on its own.
+      if (row.setup_error) {
+        await this.wakeBrainForSetupFailure(thread.id, thread.org_id, project.id).catch((err) =>
+          this.logger.warn(`setup-failure wake skipped for thread ${thread.id}: ${err}`),
+        );
+      }
     } catch (err) {
       // Mark detached so a recovery pass / next ensureContainer can re-attach (or closeJob reclaims).
       row.lifecycle = 'detached';
@@ -782,6 +806,18 @@ export class JobLifecycleService {
       { onboarded_at: new Date() },
     );
     this.logger.log(`repo ${repoId} (org ${orgId}) marked onboarded`);
+  }
+
+  /**
+   * WAKE the job brain to deal with a cold-boot setup-script failure (see {@link AgentSessionManager.
+   * wakeForProvisioningFailure}). Resolved lazily through ModuleRef — the brain module already depends on
+   * this service, so a static import would be a cycle (same pattern the driver uses everywhere it reaches
+   * the brain). The concrete error is delivered into the woken turn from the sandbox row's `setup_error`.
+   */
+  private async wakeBrainForSetupFailure(jobId: string, orgId: string, repoId: string): Promise<void> {
+    const { AgentSessionManager } = await import('../brain/agent-session-manager.service.js');
+    const brain = this.moduleRef.get(AgentSessionManager, { strict: false });
+    await brain.wakeForProvisioningFailure(jobId, orgId, repoId);
   }
 
   /** Resolve the `ProjectRepo` (clone path + token) for a sandbox row — keyed by the repo's SLUG. */
