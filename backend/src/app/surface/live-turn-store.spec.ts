@@ -88,6 +88,8 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       { write: async () => undefined, list: async () => [], listForRepo: async () => [], read: async () => null } as never, // secrets (WorktreeSecretFileStore)
       {} as never, // store (BrainStoreService)
       { stopTurn: async () => false } as never, // brain (AgentSessionManager)
+      {} as never, // mcpStore (McpServerStore)
+      {} as never, // mcpProbe (McpProbeService)
     );
   }
 

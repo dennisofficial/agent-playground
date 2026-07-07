@@ -151,6 +151,49 @@ export class EnvironmentGroup {
     ].join('\n');
   }
 
+  /** onboarding block 10c — MCP SERVERS (propose_mcp_servers; owner-approved, stack-matched). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2108, condition: isOnboarding })
+  mcpServers(): string {
+    return [
+      'MCP SERVERS — while you have the repo’s stack, dependencies, and infra in front of you, recommend the MCP',
+      'servers a builder on THIS repo would actually benefit from (like the "Claude Code Setup" plugin: scan the',
+      'deps, suggest the few highest-impact integrations — not a generic list). Propose a SHORT set (aim for 3–6,',
+      'highest-impact first), matched to real signals:',
+      '  - GitHub (issues/PRs/code) — almost always worth it. The hosted server (https://api.githubcopilot.com/mcp/)',
+      '    REQUIRES an `Authorization` bearer token (a GitHub PAT), declared as a secret header — a separately',
+      '    authenticated `gh` CLI does NOT authenticate it, so always declare that secret slot.',
+      '  - Postgres / a DB MCP when the repo talks to that database; Sentry when it reports errors there.',
+      '  - Linear or Jira when the team tracks work there; Slack for team comms; Playwright for UI/e2e verification.',
+      'Call propose_mcp_servers({ servers: [{ name, transport, url|command|args, headers|env, reason }] }). Declare',
+      'a credential slot by NAME with `secret: true` (e.g. an Authorization header or a token env var) — you NEVER',
+      'put a secret value here. You do NOT register servers yourself: this posts an owner-approvable proposal card;',
+      'the OWNER approves it, which registers the servers on this repo. Do NOT propose the built-in SYSTEM servers',
+      '(context7, atlas-lsp-ts, graphify, cocoindex) — they are already provided. After the owner approves, for',
+      'each `secret: true` slot call request_secret({ description, mcp: { server, slot, key } }) — the operator',
+      'enters the credential through the same secure field (it goes ENCRYPTED straight into the MCP server and',
+      'activates it; you see only a masked confirmation). Keep this proportionate — a couple of well-chosen',
+      'servers beats a long speculative list; skip it entirely if nothing clearly fits.',
+      'THEN VERIFY IT — this is mandatory, not optional. A newly-registered MCP server is NOT yet loaded into',
+      'your CURRENT session (its tools attach when a session starts against the per-sandbox MCP hub). So once',
+      'the server is approved AND every secret slot is filled: call reset_sandbox({ reason: "load the new MCP',
+      'server(s)" }) and STOP. On your next (fresh) turn the `mcp__<name>__*` tools attach — invoke ONE',
+      'read-only tool to PROVE it actually works end-to-end (e.g. for a github server, `mcp__github__get_me`,',
+      'or list this repo\'s open PRs) and report the raw result. Note: on the VERY FIRST turn right after a',
+      'reset the per-sandbox MCP hub may still be connecting the upstream, so the tools can be briefly absent —',
+      'if you do not see them yet, do NOT conclude failure; check once more on your next turn (the hub warms in',
+      'a few seconds). Only if they are still absent after that second check do you report it plainly. Never',
+      'claim it works on registration alone — do not treat "registered" as "works" until a real tool call returns.',
+      'IF A SERVER FAILS AUTH (a 401/"missing Authorization", or its upstream won’t connect for lack of a key):',
+      'the DURABLE fix is to add the credential to the REGISTERED server via request_secret({ mcp: { server,',
+      'slot, key } }) — that writes it to the encrypted `mcp_servers` row so EVERY future provision (and this',
+      'repo’s other jobs) gets it. Do NOT hand-patch the running MCP hub config or hand-edit the session’s',
+      'mcp-config to inject a token, and do NOT pull a token out of the `gh` CLI and wire it in by hand: any such',
+      'live patch is EPHEMERAL — the host rewrites the hub from the DB on the next reset, so the server breaks',
+      'again and no other job benefits. Fix it once, durably, through request_secret; then reset_sandbox and',
+      'verify. (If you forgot the secret slot at propose time, you can still add it this way to the live server.)',
+    ].join('\n');
+  }
+
   /** onboarding block 11 — RESET / PROVE-IT-COLD-BOOTS. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2110, condition: isOnboarding })
   reset(): string {

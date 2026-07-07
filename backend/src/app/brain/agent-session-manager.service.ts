@@ -35,8 +35,10 @@ import {
   TurnHarnessFactory,
   ThreadInputService,
   SYSTEM_SEED_AUTHOR,
+  type McpProposalServer,
   type WebQuestionCard,
   webFileRequestCard,
+  webMcpProposalCard,
   webQuestionCard,
   webSecretInputCard,
   wrapSystemNotification,
@@ -51,7 +53,7 @@ import {
   CodexReviewEntity,
   MessageEntity,
 } from '../persistence/entities';
-import type { ThreadTerminalRecord } from '../persistence/entities';
+import type { McpSurface, ThreadTerminalRecord } from '../persistence/entities';
 import {
   ProvisioningNotReadyError,
   JobLifecycleService,
@@ -457,6 +459,7 @@ export class AgentSessionManager
           const notice = maskedSecretNotice(s.name, {
             ...(s.path ? { path: s.path } : {}),
             ...(s.ephemeral ? { ephemeral: true } : {}),
+            ...(s.mcp ? { mcp: s.mcp } : {}),
           });
           const stimulus = harnessDeliveryStimulus({
             jobId: s.jobId,
@@ -3355,6 +3358,7 @@ export class AgentSessionManager
       recall: tools.recall,
       remember: tools.remember,
       ...intake,
+      propose_mcp_servers: this.buildProposeMcpServersTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
     };
   }
@@ -3433,6 +3437,51 @@ export class AgentSessionManager
             `Ephemeral secure card posted for "${label}". Make SURE your process is already reading ${deliverTo} ` +
             `(open the FIFO read-write: \`exec 0<>${deliverTo}\`) before the operator submits. Stop and wait — ` +
             'the value is piped straight into that path and never stored; you only get a masked confirmation.',
+        };
+      }
+
+      // MCP-TARGET: the value is a credential slot (header/env) for a user-defined MCP server the OWNER just
+      // approved (via propose_mcp_servers). It writes into `mcp_servers.secrets_enc` (McpServerStore.setSecret)
+      // — NOT the worktree store — and does not grant/rehydrate; the scope is re-derived from this thread's
+      // repo at commit (never trusted from the card). No worktree `path`.
+      const mcpArg = args['mcp'];
+      if (mcpArg && typeof mcpArg === 'object' && !Array.isArray(mcpArg)) {
+        const m = mcpArg as Record<string, unknown>;
+        const server = String(m['server'] ?? '').trim();
+        const slot = String(m['slot'] ?? '').trim();
+        const key = String(m['key'] ?? '').trim();
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(server)) {
+          return { ok: false, reason: 'mcp.server must be the name of a registered MCP server' };
+        }
+        if (slot !== 'header' && slot !== 'env') {
+          return { ok: false, reason: "mcp.slot must be 'header' or 'env'" };
+        }
+        if (!key) return { ok: false, reason: 'mcp.key is required (the header/env key name)' };
+        const requestId = `s-${randomUUID()}`;
+        const card = webSecretInputCard({
+          jobId: stimulus.jobId,
+          requestId,
+          name: key,
+          description,
+          mcp: { server, slot, key },
+          ...(url ? { url } : {}),
+        });
+        const opened = await this.store.openSecretRequest(stimulus.jobId, { requestId, card });
+        if (!opened.ok) {
+          return {
+            ok: false,
+            reason: opened.alreadyOpen
+              ? 'A secret request is already awaiting the operator — wait for it before requesting another.'
+              : 'Could not open the secret request (thread not found).',
+          };
+        }
+        return {
+          ok: true,
+          requestId,
+          message:
+            `Secure secret card posted for MCP server "${server}" (${slot}:${key}). Stop and wait — the ` +
+            "operator's value goes straight into the encrypted MCP store and activates the server; you only " +
+            'see a masked confirmation. Never ask for the value in chat.',
         };
       }
 
@@ -3718,6 +3767,143 @@ export class AgentSessionManager
         return { ok: true, saved: !!script };
       } catch (err) {
         this.logger.warn(`write_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `propose_mcp_servers({ servers })` — recommend a stack-matched set of MCP servers for the operator to
+   * approve, mirroring Anthropic's "Claude Code Setup" plugin. The brain NEVER writes an MCP server itself
+   * (that's an owner-only Administer action, gated the same as the console `McpServersController`): this
+   * posts a value-FREE PROPOSAL card that the OWNER approves at the owner-gated
+   * `…/jobs/:jobId/mcp-proposals/:requestId/approve` endpoint, which commits each server on THIS repo's
+   * scope. Secret header/env slots are declared here by NAME only (`secret:true`) and filled AFTER approval
+   * via `request_secret` (with an `mcp` target) — no secret value ever passes through this tool. Reserved
+   * system names are rejected. org/repo/job come from the closure (never tool args) — tenant safety.
+   */
+  private buildProposeMcpServersTool(stimulus: ChatStimulus): ToolImpl {
+    // Names the system already owns (host bridge, LSP, Context7 + the code-index pair) — a user server may
+    // not shadow the orchestration plumbing (mirrors the sandbox render's RESERVED_NAMES + system tier).
+    const RESERVED = new Set([
+      'atlas-host-bridge',
+      'atlasbridge',
+      'atlas-lsp-ts',
+      'context7',
+      'graphify',
+      'cocoindex',
+    ]);
+    const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+    const VALID_SURFACES = new Set<McpSurface>(['brain', 'build', 'review']);
+    // A secret entry carries NO value (the operator supplies it later via request_secret — invariant). A
+    // non-secret entry may carry a static value (e.g. an API-version header) since it isn't a credential.
+    const normPairs = (
+      v: unknown,
+    ): { name: string; secret?: boolean; value?: string }[] | undefined => {
+      if (!Array.isArray(v)) return undefined;
+      const out: { name: string; secret?: boolean; value?: string }[] = [];
+      for (const e of v as unknown[]) {
+        const rec = (e ?? {}) as Record<string, unknown>;
+        const n = String(rec['name'] ?? '').trim();
+        if (!n) continue;
+        if (rec['secret'] === true) {
+          out.push({ name: n, secret: true });
+        } else {
+          const val = rec['value'] != null ? String(rec['value']) : undefined;
+          out.push(val != null ? { name: n, value: val } : { name: n });
+        }
+      }
+      return out.length > 0 ? out : undefined;
+    };
+    return async (args) => {
+      const raw = Array.isArray(args['servers'])
+        ? (args['servers'] as unknown[])
+        : null;
+      if (!raw || raw.length === 0) {
+        return {
+          ok: false,
+          reason: 'servers must be a non-empty array of proposed MCP server definitions',
+        };
+      }
+      const servers: McpProposalServer[] = [];
+      for (const item of raw) {
+        const s = (item ?? {}) as Record<string, unknown>;
+        const name = String(s['name'] ?? '').trim();
+        if (!NAME_RE.test(name)) {
+          return {
+            ok: false,
+            reason: `invalid server name "${name}" — use letters/digits/_/- (e.g. github, sentry)`,
+          };
+        }
+        if (RESERVED.has(name.toLowerCase())) {
+          return {
+            ok: false,
+            reason: `"${name}" is a reserved system server (already provided) — pick a different tool`,
+          };
+        }
+        const transport = String(s['transport'] ?? '').trim();
+        if (transport !== 'http' && transport !== 'sse' && transport !== 'stdio') {
+          return { ok: false, reason: `server "${name}": transport must be http | sse | stdio` };
+        }
+        const url = String(s['url'] ?? '').trim() || undefined;
+        const command = String(s['command'] ?? '').trim() || undefined;
+        // Transport-shape guard (mirrors McpServersController.assertShape).
+        if (transport === 'stdio') {
+          if (!command) return { ok: false, reason: `server "${name}": stdio transport requires a command` };
+        } else if (!url) {
+          return { ok: false, reason: `server "${name}": ${transport} transport requires a url` };
+        }
+        const argv = Array.isArray(s['args'])
+          ? (s['args'] as unknown[]).map((a) => String(a))
+          : undefined;
+        const headers = normPairs(s['headers']);
+        const env = normPairs(s['env']);
+        const surfaces = (
+          Array.isArray(s['surfaces']) ? (s['surfaces'] as unknown[]).map((x) => String(x)) : []
+        ).filter((x): x is McpSurface => VALID_SURFACES.has(x as McpSurface));
+        const reason = String(s['reason'] ?? '').trim() || undefined;
+        servers.push({
+          name,
+          transport,
+          ...(url ? { url } : {}),
+          ...(command ? { command } : {}),
+          ...(argv && argv.length ? { args: argv } : {}),
+          ...(headers ? { headers } : {}),
+          ...(env ? { env } : {}),
+          ...(surfaces.length ? { surfaces } : {}),
+          ...(reason ? { reason } : {}),
+        });
+      }
+      const lowerNames = servers.map((s) => s.name.toLowerCase());
+      if (new Set(lowerNames).size !== lowerNames.length) {
+        return { ok: false, reason: 'duplicate server names in the proposal' };
+      }
+      try {
+        const requestId = `mcp-${randomUUID()}`;
+        const card = webMcpProposalCard({
+          jobId: stimulus.jobId,
+          requestId,
+          repoId: stimulus.repoId,
+          servers,
+        });
+        const opened = await this.store.openMcpProposal(stimulus.jobId, { requestId, card });
+        if (!opened.ok) return { ok: false, reason: 'Could not open the MCP proposal (thread not found).' };
+        const needSecrets = servers.flatMap((s) => [
+          ...(s.headers ?? []).filter((h) => h.secret).map((h) => `${s.name} header:${h.name}`),
+          ...(s.env ?? []).filter((e) => e.secret).map((e) => `${s.name} env:${e.name}`),
+        ]);
+        return {
+          ok: true,
+          requestId,
+          proposed: servers.map((s) => s.name),
+          message:
+            `Posted an MCP proposal card for ${servers.length} server(s). The OWNER approves it to register ` +
+            'them on this repo — you cannot register servers yourself. Stop and wait for approval. After ' +
+            'approval, use request_secret (with an mcp target) to fill each secret slot' +
+            (needSecrets.length ? `: ${needSecrets.join('; ')}.` : '.'),
+        };
+      } catch (err) {
+        this.logger.warn(`propose_mcp_servers failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
@@ -4558,7 +4744,8 @@ export class AgentSessionManager
       'bring-up will take a while and a lot of tokens, and ask for their go-ahead via ask_question before ' +
       'proceeding. STOP and wait for their response. Only after they green-light it: bring up and validate ' +
       'the fleet, register required secrets via request_secret, record non-secret config with ' +
-      'write_worktree_config, then call finish_onboarding.';
+      'write_worktree_config, propose any stack-matched MCP servers for the owner to approve via ' +
+      'propose_mcp_servers, then call finish_onboarding.';
     const stimulus: ChatStimulus = {
       id: randomUUID(),
       orgId,
@@ -4928,7 +5115,11 @@ function userChunkFor(stimulus: ChatStimulus): TurnChunk {
  */
 function maskedSecretNotice(
   name: string,
-  opts: { path?: string; ephemeral?: boolean },
+  opts: {
+    path?: string;
+    ephemeral?: boolean;
+    mcp?: { server: string; slot: 'header' | 'env'; key: string };
+  },
 ): string {
   if (opts.ephemeral) {
     // Ephemeral value was already piped to the running process at provide-time; nothing to re-deliver. Re-run
@@ -4936,6 +5127,15 @@ function maskedSecretNotice(
     return (
       `The operator provided the one-time value \`${name}\` (delivered to the running session, not stored). ` +
       'Verify the interactive login completed (e.g. `gcloud auth list`) and re-run it only if it did not.'
+    );
+  }
+  if (opts.mcp) {
+    return (
+      `The operator provided the secret \`${opts.mcp.key}\` for MCP server \`${opts.mcp.server}\` ` +
+      `(${opts.mcp.slot}, stored encrypted). The server is registered, but its \`mcp__${opts.mcp.server}__*\` ` +
+      'tools are NOT loaded into THIS session yet. Once every secret slot for it is filled, call ' +
+      'reset_sandbox to load it into a fresh session, then invoke one of its tools to prove it works ' +
+      '(see MCP SERVERS).'
     );
   }
   return `The operator provided the secret \`${name}\` (stored encrypted, granted to \`${opts.path}\`). Continue onboarding.`;

@@ -5,6 +5,7 @@ import type { Decision, Job, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type {
   WebFileRequestCard,
+  WebMcpProposalCard,
   WebQuestionCard,
   WebSecretInputCard,
 } from '../surface';
@@ -655,7 +656,9 @@ export class BrainStoreService {
           author_bot_id: 'atlas',
           text: input.card.ephemeral
             ? `Requested a one-time value \`${input.card.name}\` (delivered to the running session, not stored)`
-            : `Requested secret \`${input.card.name}\` → \`${input.card.path}\``,
+            : input.card.mcp
+              ? `Requested secret \`${input.card.mcp.key}\` for MCP server \`${input.card.mcp.server}\``
+              : `Requested secret \`${input.card.name}\` → \`${input.card.path}\``,
           kind: 'card',
           ts: input.requestId,
           card: input.card as unknown as Record<string, unknown>,
@@ -730,6 +733,7 @@ export class BrainStoreService {
       name: string;
       path?: string;
       ephemeral?: boolean;
+      mcp?: { server: string; slot: 'header' | 'env'; key: string };
     }[]
   > {
     const rows = await this.jobs.find({
@@ -743,6 +747,7 @@ export class BrainStoreService {
       name: string;
       path?: string;
       ephemeral?: boolean;
+      mcp?: { server: string; slot: 'header' | 'env'; key: string };
     }[] = [];
     for (const t of rows) {
       const card = await this.getSecretCard(t.id, t.awaiting_secret_id!);
@@ -755,6 +760,7 @@ export class BrainStoreService {
           name: card.name,
           ...(card.path ? { path: card.path } : {}),
           ...(card.ephemeral ? { ephemeral: true } : {}),
+          ...(card.mcp ? { mcp: card.mcp } : {}),
         });
       }
     }
@@ -905,6 +911,60 @@ export class BrainStoreService {
       path: string;
     }[];
     return rows;
+  }
+
+  // ── MCP-proposal gate (propose_mcp_servers lifecycle: proposed → approved) ───────────────────────────
+  // Like the file-request gate: PER-CARD (no thread pointer — a proposal is a one-shot recommendation the
+  // OWNER approves at the owner-gated endpoint). The card carries only the NON-secret definitions; secret
+  // header/env VALUES are collected separately via the `request_secret` MCP target after approval. The
+  // actual `McpServerStore.write` happens ONLY at the owner-gated approve endpoint, never here.
+
+  /** Post a value-free MCP-proposal card. No thread pointer + no one-at-a-time gate (like file requests). */
+  async openMcpProposal(
+    jobId: string,
+    input: { requestId: string; card: WebMcpProposalCard },
+  ): Promise<{ ok: boolean }> {
+    const thread = await this.jobs.findOne({ where: { id: jobId } });
+    if (!thread) return { ok: false };
+    await this.messages.save(
+      this.messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: `Proposed ${input.card.servers.length} MCP server(s): ${input.card.servers
+          .map((s) => `\`${s.name}\``)
+          .join(', ')}`,
+        kind: 'card',
+        ts: input.requestId,
+        card: input.card as unknown as Record<string, unknown>,
+      }),
+    );
+    return { ok: true };
+  }
+
+  /** Fetch one thread's MCP-proposal card by id (the card's `ts`); null if absent / not a proposal card. */
+  async getMcpProposalCard(
+    jobId: string,
+    requestId: string,
+  ): Promise<WebMcpProposalCard | null> {
+    const row = await this.messages.findOne({
+      where: { job_id: jobId, ts: requestId, kind: 'card' },
+    });
+    const card = row?.card as WebMcpProposalCard | undefined;
+    return card?.type === 'mcp_proposal_card' ? card : null;
+  }
+
+  /** Stamp an MCP-proposal card APPROVED (the owner committed the servers). Records the committed names. */
+  async markMcpProposalApproved(
+    jobId: string,
+    requestId: string,
+    committed: string[],
+  ): Promise<void> {
+    await this.updateCardMessage(jobId, requestId, {
+      approved_at: new Date().toISOString(),
+      committed,
+    });
   }
 
   // ── pending decisions (the grilling working set; snapshotted into a record by submit_plan) ──────────

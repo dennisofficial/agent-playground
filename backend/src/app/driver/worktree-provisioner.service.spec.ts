@@ -16,14 +16,18 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
       hydrateFiles: vi.fn(async () => ({ forbiddenPaths: [], notices: [] })),
     } as unknown as WorktreeHydrator;
     const awareness = { appendMarker: vi.fn(async () => undefined) } as unknown as PipelineAwarenessStore;
-    const config = { importLegacyIfEmpty: vi.fn(async () => undefined) } as unknown as import('../onboarding').WorktreeConfigStore;
+    const config = {
+      importLegacyIfEmpty: vi.fn(async () => undefined),
+      getSetupScript: vi.fn(async () => null),
+    } as unknown as import('../onboarding').WorktreeConfigStore;
     const attach = vi.fn(async () => ({ repoId: 'proj', branch: 'main', worktreePath: '/wt', gitUrl: '' }));
     const kickMcpHubRefresh = vi.fn(async () => undefined);
     const sandboxProvider = { attach, kickMcpHubRefresh } as unknown as import('../sandbox').SandboxProvider;
-    const mcp = { resolveForSandbox: vi.fn(async () => [{ name: 's', transport: 'http', url: 'https://s' }]) } as unknown as import('../mcp').McpResolver;
+    const resolveForSandbox = vi.fn(async () => [{ name: 's', transport: 'http', url: 'https://s' }]);
+    const mcp = { resolveForSandbox } as unknown as import('../mcp').McpResolver;
 
     const provisioner = new WorktreeProvisioner(hydrator, awareness, config, mcp, sandboxProvider);
-    return { provisioner, attach, kickMcpHubRefresh };
+    return { provisioner, attach, kickMcpHubRefresh, resolveForSandbox };
   }
 
   it('threads onMilestone straight through to SandboxProvider.attach()', async () => {
@@ -52,8 +56,27 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
     expect(attach).toHaveBeenCalledWith(expect.objectContaining({ onMilestone: undefined }));
   });
 
-  it('pushes the resolved user MCP servers to the per-sandbox hub after attach', async () => {
-    const { provisioner, kickMcpHubRefresh } = makeProvisioner();
+  it('resolves user MCP servers by the repo UUID (repoDbId) — NOT the slug-valued sandbox.repoId — and pushes them to the hub', async () => {
+    const { provisioner, kickMcpHubRefresh, resolveForSandbox } = makeProvisioner();
+
+    await provisioner.provisionAndAttach({
+      // sandbox.repoId is the SLUG; the repo UUID is carried separately as repoDbId. mcp_servers.scope is
+      // the UUID, so resolving by the slug silently returns [] (the bug this guards against).
+      sandbox: { repoId: 'cubix-infra', branch: 'main', worktreePath: '/wt', gitUrl: '' },
+      orgId: 'org-1',
+      jobId: 'job-1',
+      repoDbId: 'repo-uuid-1',
+    });
+
+    expect(resolveForSandbox).toHaveBeenCalledWith('org-1', 'repo-uuid-1');
+    expect(kickMcpHubRefresh).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      servers: [{ name: 's', transport: 'http', url: 'https://s' }],
+    });
+  });
+
+  it('skips the hub refresh entirely when there is no repoDbId (no UUID → nothing to scope by)', async () => {
+    const { provisioner, kickMcpHubRefresh, resolveForSandbox } = makeProvisioner();
 
     await provisioner.provisionAndAttach({
       sandbox: { repoId: 'proj', branch: 'main', worktreePath: '/wt', gitUrl: '' },
@@ -61,9 +84,7 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
       jobId: 'job-1',
     });
 
-    expect(kickMcpHubRefresh).toHaveBeenCalledWith({
-      jobId: 'job-1',
-      servers: [{ name: 's', transport: 'http', url: 'https://s' }],
-    });
+    expect(resolveForSandbox).not.toHaveBeenCalled();
+    expect(kickMcpHubRefresh).not.toHaveBeenCalled();
   });
 });

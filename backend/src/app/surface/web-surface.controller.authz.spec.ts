@@ -41,6 +41,8 @@ function makeController(threadOrgId: string) {
     { write: async () => undefined, list: async () => [], listForRepo: async () => [], read: async () => null } as never, // secrets (WorktreeSecretFileStore)
     {} as never, // store (BrainStoreService)
     { stopTurn: async () => false } as never, // brain (AgentSessionManager)
+    {} as never, // mcpStore (McpServerStore)
+    {} as never, // mcpProbe (McpProbeService)
   );
   return { controller, deleteJobDeep, claimDeleteJob, threads, messages };
 }

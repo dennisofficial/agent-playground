@@ -141,4 +141,52 @@ describe('McpServerStore', () => {
     await store.delete('org1', '*', 'gone');
     expect(repo.rows).toHaveLength(0);
   });
+
+  describe('setSecret — single-slot read-modify-write (the provide-secret MCP lane)', () => {
+    it('fills one empty placeholder slot without clobbering siblings, adds the config null placeholder', async () => {
+      // A server registered by the approve endpoint: a secret header declared as an empty placeholder plus a
+      // non-secret header inline.
+      await store.write('org1', 'repo-1', 'github', {
+        transport: 'http',
+        url: 'https://api.githubcopilot.com/mcp/',
+        headers: [
+          { name: 'Authorization', value: '', secret: true },
+          { name: 'X-Env', value: 'prod' },
+        ],
+      });
+      const ok = await store.setSecret('org1', 'repo-1', 'github', 'headers', 'Authorization', 'Bearer ghp_x');
+      expect(ok).toBe(true);
+      const row = repo.rows[0];
+      // The non-secret sibling is untouched; the secret slot stays a null placeholder in config.
+      expect(row.config.headers).toEqual({ Authorization: null, 'X-Env': 'prod' });
+      // The value round-trips out of the encrypted blob, and never appears in config/plaintext.
+      expect(store.decryptSecrets(row)).toEqual({ headers: { Authorization: 'Bearer ghp_x' } });
+      expect(JSON.stringify(row.config)).not.toContain('ghp_x');
+    });
+
+    it('adds a brand-new config placeholder when the key was not declared', async () => {
+      await store.write('org1', 'repo-1', 'svc', { transport: 'stdio', command: 'npx' });
+      const ok = await store.setSecret('org1', 'repo-1', 'svc', 'env', 'TOKEN', 't-1');
+      expect(ok).toBe(true);
+      expect(repo.rows[0].config.env).toEqual({ TOKEN: null });
+      expect(store.decryptSecrets(repo.rows[0])).toEqual({ env: { TOKEN: 't-1' } });
+    });
+
+    it('preserves other already-set secrets on the same slot', async () => {
+      await store.write('org1', 'repo-1', 'svc', {
+        transport: 'http',
+        url: 'https://svc',
+        headers: [
+          { name: 'A', value: 'a-1', secret: true },
+          { name: 'B', value: '', secret: true },
+        ],
+      });
+      await store.setSecret('org1', 'repo-1', 'svc', 'headers', 'B', 'b-1');
+      expect(store.decryptSecrets(repo.rows[0])).toEqual({ headers: { A: 'a-1', B: 'b-1' } });
+    });
+
+    it('returns false (no throw) when the server row is gone', async () => {
+      expect(await store.setSecret('org1', 'repo-1', 'missing', 'headers', 'X', 'v')).toBe(false);
+    });
+  });
 });

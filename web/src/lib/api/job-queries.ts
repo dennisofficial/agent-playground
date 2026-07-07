@@ -6,6 +6,7 @@ import {
   answerQuestion,
   provideSecret,
   provideFile,
+  approveMcpProposal,
   approveThread,
   createJob,
   createJobWithFiles,
@@ -355,6 +356,19 @@ export function useProvideSecret(ref: JobRef) {
     mutationFn: (body: ProvideSecretBody) => provideSecret(ref, body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+    },
+  });
+}
+
+/** Approve an `propose_mcp_servers` proposal (repo onboarding; owner-only). Registers each server on the
+ *  repo; the card flips to "registered" and the brain continues. Refreshes the org MCP-servers list too. */
+export function useApproveMcpProposal(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (requestId: string) => approveMcpProposal(ref, requestId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(ref.orgId) });
     },
   });
 }

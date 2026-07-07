@@ -148,6 +148,9 @@ export interface WebSecretInputCard {
   ephemeral?: boolean;
   /** Ephemeral-only: the in-container path the value is piped to (operational, not a secret). */
   deliver_to?: string;
+  /** MCP-target: the value is a credential slot for a user-defined MCP server (written to the encrypted MCP
+   *  store, not the worktree). `path` is absent for an MCP target. */
+  mcp?: { server: string; slot: "header" | "env"; key: string };
   provided_at?: string;
   delivered_at?: string;
 }
@@ -219,6 +222,36 @@ export interface WebAttachmentsCard {
   message?: string;
 }
 
+/** One proposed server in an MCP-proposal card — the non-secret definition only (mirrors the backend). */
+export interface WebMcpProposalServer {
+  name: string;
+  transport: "http" | "sse" | "stdio";
+  url?: string;
+  command?: string;
+  args?: string[];
+  /** Header names; `secret:true` marks a slot the owner fills after approval (via request_secret). */
+  headers?: { name: string; secret?: boolean; value?: string }[];
+  env?: { name: string; secret?: boolean; value?: string }[];
+  /** The brain's one-line rationale for why this server suits the repo. */
+  reason?: string;
+}
+
+/**
+ * A stack-matched MCP-server recommendation the onboarding brain posed via `propose_mcp_servers`. The
+ * OWNER approves it (owner-only) at `…/jobs/:jobId/mcp-proposals/:requestId/approve`, which registers each
+ * server on the repo; secret slots are then filled via a normal secure secret card. When `approved_at` is
+ * set the card renders a compact "registered" state. Value-free (server defs only, never a secret value).
+ */
+export interface WebMcpProposalCard {
+  type: "mcp_proposal_card";
+  jobId: string;
+  requestId: string;
+  repoId: string;
+  servers: WebMcpProposalServer[];
+  approved_at?: string;
+  committed?: string[];
+}
+
 export type WebCard =
   | WebApprovalCard
   | WebVerdictCard
@@ -226,7 +259,8 @@ export type WebCard =
   | WebSecretInputCard
   | WebFileRequestCard
   | WebReviewCommentsCard
-  | WebAttachmentsCard;
+  | WebAttachmentsCard
+  | WebMcpProposalCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
 /** One step of a thread's locked plan — the execute folder's leaf (a Claude Code session). */

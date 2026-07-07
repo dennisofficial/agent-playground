@@ -60,6 +60,7 @@ import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebQuestionCard } from './web-question-card';
 import type { WebSecretInputCard } from './web-secret-input-card';
 import type { WebFileRequestCard } from './web-file-request-card';
+import type { McpProposalServer } from './web-mcp-proposal-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
@@ -69,6 +70,9 @@ import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { OrganizationService } from '../org/organization.service';
 import { WorktreeSecretFileStore } from '../onboarding';
+import { McpServerStore } from '../mcp/mcp-server.store';
+import { McpProbeService } from '../mcp/mcp-probe.service';
+import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
@@ -529,6 +533,11 @@ export class WebSurfaceController {
     private readonly store: BrainStoreService,
     // The chat brain — used here to STOP a live turn (`/stop`). Also from the @Global BrainModule.
     private readonly brain: AgentSessionManager,
+    // User-defined MCP servers — the owner-gated `mcp-proposals/:id/approve` endpoint COMMITS a brain
+    // proposal here (the only place a brain-originated MCP write lands), and `provide-secret` writes an MCP
+    // credential slot via `setSecret`. Both resolved ambiently from the @Global McpModule.
+    private readonly mcpStore: McpServerStore,
+    private readonly mcpProbe: McpProbeService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -1228,6 +1237,51 @@ export class WebSurfaceController {
       return { ok: true, ts };
     }
 
+    // MCP-TARGET lane — the value is a credential slot (header/env) for a repo-scoped MCP server. It writes
+    // into `mcp_servers.secrets_enc` (NOT the worktree store), on THIS thread's repo scope (re-derived here,
+    // never trusted from the card), and does NOT grant/rehydrate — MCP secrets are resolved per-turn by
+    // `McpResolver`. After writing we best-effort re-probe a remote server so the masked confirmation can
+    // report whether it now connects. The value's only resting place is the encrypted blob.
+    if (payload.mcp) {
+      const { server, slot, key } = payload.mcp;
+      const wrote = await this.mcpStore.setSecret(
+        org.id,
+        thread.repo_id,
+        server,
+        slot === 'header' ? 'headers' : 'env',
+        key,
+        value,
+      );
+      if (!wrote) {
+        // The server row is gone (deleted between propose/approve and provide) — clear the gate and tell the
+        // brain rather than wedge on a stale card.
+        await this.store.clearAwaitingSecret(jobId, body.requestId);
+        const notice = `Could not store the secret \`${key}\` — MCP server \`${server}\` is no longer registered on this repo. Re-propose it if still needed.`;
+        const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+          orgId: org.id,
+          seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:mcp:${server}:${key}:fail` },
+        });
+        return { ok: false, ts };
+      }
+      // Best-effort validation so the confirmation says whether it connected (remote only; stdio spawns
+      // in-sandbox). Never throws — a failure is persisted as the server's validation state.
+      const row = await this.mcpStore.rawRow(org.id, thread.repo_id, server).catch(() => null);
+      if (row) {
+        const result = await this.mcpProbe.validate(row);
+        await this.mcpStore
+          .recordValidation(org.id, thread.repo_id, server, result)
+          .catch(() => undefined);
+      }
+      card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
+      await this.messages.save(card);
+      const notice = `The operator provided the secret \`${key}\` for MCP server \`${server}\` (${slot}, stored encrypted). The server is registered but its \`mcp__${server}__*\` tools are NOT loaded into this session yet — once all its secret slots are filled, call reset_sandbox to load it, then invoke one of its tools to verify (see MCP SERVERS).`;
+      const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+        orgId: org.id,
+        seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:mcp:${server}:${key}` },
+      });
+      return { ok: true, ts };
+    }
+
     if (!payload.path) {
       throw new BadRequestException(
         'secret request is missing its destination path',
@@ -1253,6 +1307,101 @@ export class WebSurfaceController {
       seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:${payload.name}` },
     });
     return { ok: true, ts };
+  }
+
+  /**
+   * `POST …/jobs/:jobId/mcp-proposals/:requestId/approve` — the OWNER approves a brain `propose_mcp_servers`
+   * card, committing each proposed server to `McpServerStore` on THIS thread's repo scope. This is the ONLY
+   * place a brain-originated MCP write lands: MCP mutations are an owner-only Administer action (same guard
+   * as the console `McpServersController`), and the scope is FORCED to `thread.repo_id` — never trusted from
+   * the card. Secret header/env slots commit as empty placeholders; the owner fills them afterwards via
+   * `request_secret` (mcp target). A remote server needing no secret is probed so its tool list populates
+   * immediately. Idempotent (a re-approve of an already-committed card is a no-op).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/mcp-proposals/:requestId/approve')
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
+  async approveMcpProposal(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('requestId') requestId: string,
+  ): Promise<{ ok: boolean; committed: string[]; ts?: string }> {
+    const thread = await this.requireThread(jobId, org.id);
+    const card = await this.store.getMcpProposalCard(jobId, requestId);
+    if (!card) throw new BadRequestException('no such MCP proposal on this thread');
+    if (card.approved_at) {
+      return { ok: true, committed: card.committed ?? [] };
+    }
+    // Defensive: never let an approval shadow a reserved system server, even if a stale card slipped one in.
+    const RESERVED = new Set([
+      'atlas-host-bridge',
+      'atlasbridge',
+      'atlas-lsp-ts',
+      'context7',
+      'graphify',
+      'cocoindex',
+    ]);
+    const committed: string[] = [];
+    const needSecrets: string[] = [];
+    for (const s of card.servers) {
+      if (!s.name || RESERVED.has(s.name.toLowerCase())) continue;
+      // Scope FORCED to the thread's repo — the card carries no scope; a brain-authored write is repo-only.
+      await this.mcpStore.write(org.id, thread.repo_id, s.name, this.mcpProposalToInput(s));
+      committed.push(s.name);
+      const secretSlots = [
+        ...(s.headers ?? []).filter((h) => h.secret).map((h) => `${s.name} header:${h.name}`),
+        ...(s.env ?? []).filter((e) => e.secret).map((e) => `${s.name} env:${e.name}`),
+      ];
+      needSecrets.push(...secretSlots);
+      // A remote server that needs no secret can be validated now so its tool list is populated.
+      if (s.transport !== 'stdio' && secretSlots.length === 0) {
+        const row = await this.mcpStore.rawRow(org.id, thread.repo_id, s.name).catch(() => null);
+        if (row) {
+          const result = await this.mcpProbe.validate(row);
+          await this.mcpStore
+            .recordValidation(org.id, thread.repo_id, s.name, result)
+            .catch(() => undefined);
+        }
+      }
+    }
+    await this.store.markMcpProposalApproved(jobId, requestId, committed);
+    const notice = committed.length
+      ? `The operator approved the MCP proposal — registered ${committed
+          .map((n) => `\`${n}\``)
+          .join(', ')} on this repo.` +
+        (needSecrets.length
+          ? ` Fill each secret slot now via request_secret (mcp target): ${needSecrets.join('; ')}. After every slot is filled, reset_sandbox to load the server(s), then invoke a tool to verify (see MCP SERVERS).`
+          : ' No secrets needed — now reset_sandbox to load the server(s) into a fresh session, then invoke one of their tools to verify it works (see MCP SERVERS).')
+      : 'The operator approved the MCP proposal, but no servers were committed.';
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+      orgId: org.id,
+      seedRow: { label: notice, chunkKey: `seed:mcp-approve:${jobId}:${requestId}` },
+    });
+    return { ok: true, committed, ts };
+  }
+
+  /** Map a proposal-card server (non-secret defn) to the store's `McpServerInput`: secret slots become empty
+   *  `secret:true` placeholders (filled later via `provide-secret`), non-secret entries keep their value. */
+  private mcpProposalToInput(s: McpProposalServer): McpServerInput {
+    const toPairs = (
+      entries: { name: string; secret?: boolean; value?: string }[] | undefined,
+    ): McpHeaderInput[] | undefined =>
+      entries && entries.length
+        ? entries.map((e) =>
+            e.secret
+              ? { name: e.name, value: '', secret: true }
+              : { name: e.name, value: e.value ?? '' },
+          )
+        : undefined;
+    const input: McpServerInput = { transport: s.transport };
+    if (s.url) input.url = s.url;
+    if (s.command) input.command = s.command;
+    if (s.args && s.args.length) input.args = s.args;
+    const headers = toPairs(s.headers);
+    if (headers) input.headers = headers;
+    const env = toPairs(s.env);
+    if (env) input.env = env;
+    if (s.surfaces && s.surfaces.length) input.surfaces = s.surfaces;
+    return input;
   }
 
   /**

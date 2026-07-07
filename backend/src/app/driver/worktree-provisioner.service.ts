@@ -112,9 +112,11 @@ export class WorktreeProvisioner {
 
     // Push the sandbox's user MCP servers to the persistent per-sandbox hub (connect once per sandbox, not
     // once per turn). Best-effort: writes the config even if the container's still coming up (the hub reads
-    // it on boot), never blocks or fails provisioning.
-    if (this.sandboxProvider.kickMcpHubRefresh) {
-      const servers = await this.mcp.resolveForSandbox(orgId, sandbox.repoId).catch(() => []);
+    // it on boot), never blocks or fails provisioning. NOTE: MCP servers are scoped by the repo UUID
+    // (`mcp_servers.scope`), so resolve by `repoDbId` — NOT `sandbox.repoId`, which is the slug-valued
+    // container/worktree name (see SandboxProvider.repoId doc). Passing the slug silently resolves to `[]`.
+    if (repoDbId && this.sandboxProvider.kickMcpHubRefresh) {
+      const servers = await this.mcp.resolveForSandbox(orgId, repoDbId).catch(() => []);
       void this.sandboxProvider
         .kickMcpHubRefresh({ jobId, servers })
         .catch((err) => this.logger.debug(`mcp-hub refresh kick skipped (continuing): ${err}`));

@@ -42,6 +42,11 @@ export function SecretCardView({
             <p className="truncate text-[12.5px] text-dim">
               {card.ephemeral ? (
                 "delivered to the session · not stored"
+              ) : card.mcp ? (
+                <>
+                  stored encrypted · MCP server{" "}
+                  <span className="font-mono">{card.mcp.server}</span>
+                </>
               ) : (
                 <>
                   stored encrypted · granted to{" "}
@@ -64,7 +69,7 @@ export function SecretCardView({
         </span>
         <div className="flex-1" />
         <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[9.5px] text-dim">
-          {card.ephemeral ? "one-time" : card.path}
+          {card.ephemeral ? "one-time" : card.mcp ? `mcp:${card.mcp.server}` : card.path}
         </span>
       </div>
 

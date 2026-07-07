@@ -19,6 +19,6 @@ import { SystemMcpResolver } from './system-mcp-resolver.service';
   imports: [TypeOrmModule.forFeature([McpServerEntity, RepoEntity], DB_CONNECTION)],
   controllers: [McpServersController],
   providers: [McpServerStore, McpResolver, McpProbeService, SystemMcpResolver],
-  exports: [McpServerStore, McpResolver, SystemMcpResolver],
+  exports: [McpServerStore, McpResolver, McpProbeService, SystemMcpResolver],
 })
 export class McpModule {}

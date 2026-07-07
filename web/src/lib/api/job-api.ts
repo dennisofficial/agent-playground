@@ -278,6 +278,17 @@ export function provideSecret(
   });
 }
 
+// ── MCP-proposal approval (repo onboarding; owner-only) ────────────────────────────────────────────
+/** Approve a brain `propose_mcp_servers` card — commits each server on the repo (owner-only on the server). */
+export function approveMcpProposal(
+  ref: JobRef,
+  requestId: string,
+): Promise<{ ok: boolean; committed: string[]; ts?: string }> {
+  return webJson(threadPath(ref, `/mcp-proposals/${requestId}/approve`), {
+    method: "POST",
+  });
+}
+
 // ── Secure file upload (repo onboarding) ─────────────────────────────────────────────────────────
 export interface ProvideFileBody {
   /** The file-request card's id (its message ts). */

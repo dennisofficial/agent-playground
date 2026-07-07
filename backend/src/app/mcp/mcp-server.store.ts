@@ -165,6 +165,34 @@ export class McpServerStore {
     this.logger.log(`wrote mcp server org=${orgId} scope=${dbScope} name=${name}`);
   }
 
+  /**
+   * Set ONE secret slot value on an EXISTING server (read-modify-write) without touching the rest of the
+   * row — the owner-gated `provide-secret` MCP lane uses this so a provided key lands in `secrets_enc`
+   * beside a server the brain registered with empty placeholders. Adds the matching `config[slot][key]`
+   * = `null` placeholder if absent (so `redact()` surfaces it as a `secretKeys` entry). Returns `false`
+   * (no throw) if the server row is gone. Does NOT reset the validation state — the caller re-probes.
+   */
+  async setSecret(
+    orgId: string,
+    dbScope: string,
+    name: string,
+    slot: 'headers' | 'env',
+    key: string,
+    value: string,
+  ): Promise<boolean> {
+    const row = await this.servers.findOne({ where: { org_id: orgId, scope: dbScope, name } });
+    if (!row) return false;
+    const secrets = this.decryptSecrets(row);
+    (secrets[slot] ??= {})[key] = value;
+    row.secrets_enc = encryptSecret(JSON.stringify(secrets), this.key());
+    const config: StoredMcpConfig = row.config ?? {};
+    (config[slot] ??= {})[key] = null;
+    row.config = config;
+    await this.servers.save(row);
+    this.logger.log(`set mcp secret org=${orgId} scope=${dbScope} name=${name} slot=${slot} key=${key}`);
+    return true;
+  }
+
   async delete(orgId: string, dbScope: string, name: string): Promise<void> {
     await this.servers.delete({ org_id: orgId, scope: dbScope, name });
     this.logger.log(`deleted mcp server org=${orgId} scope=${dbScope} name=${name}`);

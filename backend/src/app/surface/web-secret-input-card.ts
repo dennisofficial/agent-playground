@@ -38,6 +38,22 @@ export interface WebSecretInputCard {
    * created and wired its waiting process to read — e.g. `/tmp/atlas-login-in`). Operational, not a secret.
    */
   deliver_to?: string;
+  /**
+   * MCP-TARGET mode: the value is a credential for a user-defined MCP server (a header/env slot), not a
+   * worktree secret. When set, `provide-secret` writes the value into `mcp_servers.secrets_enc` (via
+   * `McpServerStore.setSecret`) instead of the worktree store, and does NOT grant/rehydrate (MCP secrets are
+   * resolved per-turn by `McpResolver`). `path` is absent for an MCP target. The scope is NOT carried here —
+   * it is re-derived from the thread's repo at commit (never trust a card-supplied scope). Value-free like
+   * every other lane.
+   */
+  mcp?: {
+    /** The MCP server `name` the secret belongs to (repo-scoped, on this thread's repo). */
+    server: string;
+    /** Which slot the value fills — a request header (remote) or an env var (stdio). */
+    slot: 'header' | 'env';
+    /** The header/env key name (e.g. `Authorization`, `GITHUB_TOKEN`). */
+    key: string;
+  };
   /** Why the secret is needed (the brain's one-line rationale). */
   description: string;
   /**
@@ -70,6 +86,7 @@ export function webSecretInputCard(input: {
   url?: string;
   ephemeral?: boolean;
   deliver_to?: string;
+  mcp?: { server: string; slot: 'header' | 'env'; key: string };
 }): WebSecretInputCard {
   return {
     type: 'secret_input_card',
@@ -81,5 +98,6 @@ export function webSecretInputCard(input: {
     ...(input.url ? { url: input.url } : {}),
     ...(input.ephemeral ? { ephemeral: true } : {}),
     ...(input.deliver_to ? { deliver_to: input.deliver_to } : {}),
+    ...(input.mcp ? { mcp: input.mcp } : {}),
   };
 }

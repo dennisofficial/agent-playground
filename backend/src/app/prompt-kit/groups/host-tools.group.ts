@@ -135,6 +135,9 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox       — recreate your container from scratch to PROVE the`,
       '    environment cold-boots from durable inputs (see RESET). It does not reset instantly — it recreates on',
       '    your NEXT turn, so call it then STOP; you will be prompted to verify once the fresh box is up.',
+      `  - mcp__${BRIDGE_SERVER_NAME}__propose_mcp_servers  — recommend stack-matched MCP servers ({ servers }) for`,
+      '    the OWNER to approve (see MCP SERVERS). Posts a proposal card; you never register servers yourself.',
+      '    Declare a credential slot by name with `secret: true`; fill it after approval via request_secret (mcp).',
       `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: only after the stack boots green (see FINISH)`,
     ].join('\n');
   }

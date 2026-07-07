@@ -2,6 +2,7 @@ import type {
   WebApprovalCard,
   WebAttachmentsCard,
   WebFileRequestCard,
+  WebMcpProposalCard,
   WebQuestionCard,
   WebReviewCommentsCard,
   WebSecretInputCard,
@@ -28,6 +29,8 @@ export type ClassifiedMessage =
   | { kind: "secret"; message: JobMessage; card: WebSecretInputCard }
   /** A secure file-upload request (repo onboarding) — rendered as a file picker card. */
   | { kind: "file"; message: JobMessage; card: WebFileRequestCard }
+  /** A stack-matched MCP-server recommendation (repo onboarding) — owner approves to register. */
+  | { kind: "mcp_proposal"; message: JobMessage; card: WebMcpProposalCard }
   /** A sent inline-highlight review-comment batch — rendered as a distinct card, prose (if any) underneath. */
   | {
       kind: "review_comments";
@@ -122,6 +125,9 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
   }
   if (message.card?.type === "file_request_card") {
     return { kind: "file", message, card: message.card };
+  }
+  if (message.card?.type === "mcp_proposal_card") {
+    return { kind: "mcp_proposal", message, card: message.card };
   }
 
   // The driver's build relays are a real backend kind (`build_event`) — the only system-pill source. A

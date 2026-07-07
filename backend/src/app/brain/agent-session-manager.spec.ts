@@ -97,6 +97,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markSecretDelivered: vi.fn().mockResolvedValue(undefined),
     clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
     findUndeliveredProvidedSecrets: vi.fn().mockResolvedValue([]),
+    // MCP-proposal gate (propose_mcp_servers lifecycle); default to "opened ok".
+    openMcpProposal: vi.fn().mockResolvedValue({ ok: true }),
+    getMcpProposalCard: vi.fn().mockResolvedValue(null),
+    markMcpProposalApproved: vi.fn().mockResolvedValue(undefined),
     // R4 async plan-review seam.
     appendSystemEvent: vi.fn().mockResolvedValue(undefined),
     markAwaitingApproval: vi.fn().mockResolvedValue(undefined),
@@ -282,6 +286,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // Human-input gate defaults: opening succeeds, no question currently open.
     (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
     (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    // Secure secret-request + MCP-proposal gates default to "opened ok" (resetAllMocks wiped the inline defaults).
+    (mockStore.openSecretRequest as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
+    (mockStore.openMcpProposal as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
     (mockStore.markQuestionDelivered as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockLifecycle.contextDirHost as ReturnType<typeof vi.fn>).mockReturnValue('/tmp/atlas-test-ctx');
     (mockLifecycle.markRepoOnboarded as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -968,6 +975,69 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('db down') });
     expect(mockShip.preShip).not.toHaveBeenCalled();
+  });
+
+  it('propose_mcp_servers is onboarding-only (unreachable from a normal thread)', () => {
+    expect(manager.buildTools(fakeStimulus)['propose_mcp_servers']).toBeUndefined();
+    expect(manager.buildTools(fakeStimulus, 'onboarding')['propose_mcp_servers']).toBeDefined();
+  });
+
+  it('propose_mcp_servers posts a proposal card + reports secret slots — writes NO server row', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [
+        {
+          name: 'github',
+          transport: 'http',
+          url: 'https://api.githubcopilot.com/mcp/',
+          headers: [{ name: 'Authorization', secret: true }],
+          reason: 'repo hosted on GitHub',
+        },
+      ],
+    });
+    expect(result).toMatchObject({ ok: true, proposed: ['github'] });
+    expect(mockStore.openMcpProposal).toHaveBeenCalledTimes(1);
+    const arg = (mockStore.openMcpProposal as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    // The card carries the non-secret definition only — a secret slot is declared by NAME, no value.
+    expect(arg.card.servers[0].headers).toEqual([{ name: 'Authorization', secret: true }]);
+    expect(JSON.stringify(arg.card)).not.toContain('scope'); // no scope on the card — derived at commit
+    // The brain is told which slots to fill afterwards.
+    expect((result as { message: string }).message).toContain('request_secret');
+  });
+
+  it('propose_mcp_servers rejects a reserved system name', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [{ name: 'context7', transport: 'http', url: 'https://x' }],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('reserved');
+    expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
+  });
+
+  it('propose_mcp_servers enforces the transport shape (http needs url, stdio needs command)', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const noUrl = await tools['propose_mcp_servers']({
+      servers: [{ name: 'svc', transport: 'http' }],
+    });
+    expect(noUrl).toMatchObject({ ok: false });
+    const noCommand = await tools['propose_mcp_servers']({
+      servers: [{ name: 'svc', transport: 'stdio' }],
+    });
+    expect(noCommand).toMatchObject({ ok: false });
+    expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
+  });
+
+  it('request_secret with an mcp target opens a value-free card carrying the MCP slot (no path)', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['request_secret']({
+      description: 'GitHub PAT for the GitHub MCP',
+      mcp: { server: 'github', slot: 'header', key: 'Authorization' },
+    });
+    expect(result).toMatchObject({ ok: true });
+    const arg = (mockStore.openSecretRequest as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(arg.card.mcp).toEqual({ server: 'github', slot: 'header', key: 'Authorization' });
+    expect(arg.card.path).toBeUndefined();
   });
 
   it('(e) ask_question opens the durable gate with a normalized question_card', async () => {
