@@ -287,7 +287,7 @@ export function TranscriptView({
             <p className="py-10 text-center text-[13px] text-faint">
               Loading conversation…
             </p>
-          ) : messages.length === 0 && liveBlockCount === 0 ? (
+          ) : items.length === 0 && liveBlockCount === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">
               {emptyText ?? "No messages yet — say something to Atlas below."}
             </p>

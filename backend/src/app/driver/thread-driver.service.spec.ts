@@ -569,6 +569,7 @@ interface AutofixHandle {
   runReviewLens: ReturnType<typeof vi.fn>;
   applyReviewFindings: ReturnType<typeof vi.fn>;
   ensureContextDiff: ReturnType<typeof vi.fn>;
+  emitReviewNotice: ReturnType<typeof vi.fn>;
 }
 function makeAutofix(): AutofixHandle {
   const autofixThread = vi.fn(async () => cleanSummary('thread'));
@@ -581,6 +582,8 @@ function makeAutofix(): AutofixHandle {
   const ensureContextDiff = vi.fn(
     async (ctx: Record<string, unknown>) => ({ ...ctx, diff: 'x', changedFiles: ['f.ts'] }),
   );
+  // Posts a self-describing NOTICE on a review child's own lane (failed lens/fix, or "nothing to fix").
+  const emitReviewNotice = vi.fn(async () => undefined);
   return {
     autofix: {
       autofixThread,
@@ -588,12 +591,14 @@ function makeAutofix(): AutofixHandle {
       runReviewLens,
       applyReviewFindings,
       ensureContextDiff,
+      emitReviewNotice,
     } as unknown as AutoFixStage,
     autofixThread,
     autofixPullRequest,
     runReviewLens,
     applyReviewFindings,
     ensureContextDiff,
+    emitReviewNotice,
   };
 }
 
@@ -986,6 +991,67 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       h.shipSeeds.length,
     ).toBeGreaterThanOrEqual(1);
     expect(state.job.status).toBe('done');
+  });
+
+  it('a failed review lens posts a self-describing notice on its lane and marks the child failed (never a silent blank)', async () => {
+    // Repro of the "blank review-agent pane" incident: the lens turn dies before streaming, so `abort()`
+    // persisted only the prompt snapshot. The driver must now post the REASON on the lens's own lane so the
+    // pane explains itself, isolate the failure (job still completes), and reset the lens to `failed`.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    h.autofix.runReviewLens.mockRejectedValue(
+      new Error('Command failed: git status\nfatal: cannot chdir to packages/jwt-auth'),
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // A notice went onto a LENS lane ({ lensId }) carrying the folded-in error reason (shortReason).
+    const lensNotices = h.autofix.emitReviewNotice.mock.calls.filter(
+      (c) => (c[1] as { lensId?: string }).lensId && String(c[2]).includes('failed to run'),
+    );
+    expect(lensNotices.length).toBeGreaterThan(0);
+    expect(String(lensNotices[0][2])).toContain('fatal: cannot chdir to packages/jwt-auth');
+
+    // Every review_lens child ended `failed`, and the failure never sank the job.
+    const lensKids = (state.reviewChildren ?? []).filter((c) => c.kind === 'review_lens');
+    expect(lensKids.length).toBeGreaterThan(0);
+    expect(lensKids.every((c) => c.status === 'failed')).toBe(true);
+    expect(state.job.status).toBe('done');
+  });
+
+  it('post-review with no actionable findings posts a "nothing to fix" notice and marks the child done', async () => {
+    // The clean-review path (every lens returns []) runs no fix turn — it must still leave an explicit line
+    // on the fix lane so the Post-review fixes pane reads as "nothing to fix" rather than a silent blank.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    const fixNotices = h.autofix.emitReviewNotice.mock.calls.filter(
+      (c) => (c[1] as { fix?: boolean }).fix === true && String(c[2]).includes('nothing to fix'),
+    );
+    expect(fixNotices.length).toBeGreaterThan(0);
+    const postKids = (state.reviewChildren ?? []).filter((c) => c.kind === 'post_review');
+    expect(postKids.length).toBeGreaterThan(0);
+    expect(postKids.every((c) => c.status === 'done')).toBe(true);
+    // No fix turn ran (nothing actionable) — the notice replaced it, not augmented it.
+    expect(h.autofix.applyReviewFindings).not.toHaveBeenCalled();
   });
 
   it('fast-forwards a thread a concurrent/stale drive already finished — no re-execute, no re-materialize of review children', async () => {

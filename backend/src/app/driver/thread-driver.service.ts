@@ -1097,6 +1097,11 @@ export class ThreadDriver implements JobDispatcher {
       await this.store.setThreadStatus(child.id, 'done');
     } catch (err) {
       this.logger.warn(`review lens "${lensId}" failed (continuing): ${err}`);
+      // Persist the reason on the lens's OWN lane so its pane explains itself instead of showing a
+      // blank (the turn died before streaming, so `abort()` persisted only the prompt snapshot).
+      await this.autofix
+        .emitReviewNotice(ctx, { lensId }, `This review lens failed to run: ${shortReason(err)}`)
+        .catch(() => undefined);
       await this.store.setThreadReviewFindings(child.id, []).catch(() => undefined);
       await this.store.setThreadStatus(child.id, 'failed').catch(() => undefined);
     }
@@ -1123,6 +1128,11 @@ export class ThreadDriver implements JobDispatcher {
       const deduped = dedupeFindings(all);
       const actionable = deduped.filter((f) => meetsSeverity(f.severity, minSeverity));
       if (actionable.length === 0) {
+        // No fix turn runs — post an explicit line so the Post-review fixes pane reads as "nothing to
+        // fix" rather than a silent blank (mirrors the empty-diff notice in reviewThreadChildren).
+        await this.autofix
+          .emitReviewNotice(ctx, { fix: true }, 'No findings met the fix threshold — nothing to fix.')
+          .catch(() => undefined);
         await this.store.setThreadStatus(child.id, 'done').catch(() => undefined);
         return;
       }
@@ -1130,6 +1140,10 @@ export class ThreadDriver implements JobDispatcher {
       await this.store.setThreadStatus(child.id, 'done');
     } catch (err) {
       this.logger.warn(`post-review fix failed (continuing): ${err}`);
+      // Persist the reason on the fix lane so a failed post-review explains itself, not a blank pane.
+      await this.autofix
+        .emitReviewNotice(ctx, { fix: true }, `Post-review fix failed to run: ${shortReason(err)}`)
+        .catch(() => undefined);
       await this.store.setThreadStatus(child.id, 'failed').catch(() => undefined);
     }
   }
