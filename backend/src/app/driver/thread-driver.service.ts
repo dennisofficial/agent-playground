@@ -717,7 +717,7 @@ export class ThreadDriver implements JobDispatcher {
         // HALT the build (ADR 0004): an unfinished thread must not ship. Relay a durable card, flip the job
         // to a needs-you state, record the owed brain wake + trail, and SKIP finalizeBuild — no PR on an
         // unfinished build. The brain wake fires from `drive()` once the job leaves the active window.
-        await this.haltJob(job, route, thread, res.outcome, sandbox);
+        await this.haltJob(job, route, thread, res.outcome);
         return;
       }
       handoff = res.handoff;
@@ -815,7 +815,6 @@ export class ThreadDriver implements JobDispatcher {
     route: JobRoute,
     thread: DriverThread,
     outcome: ThreadOutcome,
-    sandbox: FeatureSandbox,
   ): Promise<void> {
     const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
     const haltOutcome = outcome as 'blocked' | 'incomplete' | 'failed';
