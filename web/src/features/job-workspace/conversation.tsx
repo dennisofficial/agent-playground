@@ -6,12 +6,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { classifyMessage } from "./classify";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
 import {
+  buildLiveTurnItems,
   ClaudeBubble,
   CompactionSummaryPill,
   EventBubble,
   HarnessBubble,
   LiveIndicator,
-  LiveTurnView,
   SystemEventPill,
   SystemNoticeRow,
   UntrustedBlock,
@@ -177,8 +177,21 @@ export function TranscriptView({
   );
 
   // Steering is server-side now: a message sent mid-turn is injected into the running turn by the backend
-  // (no client queue). Every operator message renders inline in the main log at its natural position.
-  const log = messages;
+  // (no client queue) — a message posted mid-turn shows up in `messages` before the turn ends. So the
+  // durable log (below the live turn) and the live turn itself would render it TWICE — once here, once
+  // wherever it lands in `log` — unless we split it out and time-merge it into the LIVE window instead (see
+  // `trailing` below). Fallback (no live turn / startedAt unknown): behave exactly as today, one flat log.
+  const startedAt = liveTurn?.startedAt;
+  const liveActive = !!liveTurn?.active && startedAt != null && liveBlockCount > 0;
+  const postedMs = (m: JobMessage) => Date.parse(m.postedAt);
+  const midTurnRows = useMemo(
+    () => (liveActive ? messages.filter((m) => postedMs(m) > startedAt!) : []),
+    [messages, liveActive, startedAt],
+  );
+  const log = useMemo(
+    () => (liveActive ? messages.filter((m) => postedMs(m) <= startedAt!) : messages),
+    [messages, liveActive, startedAt],
+  );
 
   // The composer footer — model · effort (from the latest `turn_meta`, else the lane's config default) + the
   // context ring. Computed for every lane that shows a composer (Main + read-only), scoped to the lane. The
@@ -218,6 +231,33 @@ export function TranscriptView({
     [log, jobRef, lane, phaseIds, legOrdinal, onOpenPlan, onSelectNode],
   );
 
+  // The LIVE window: the in-flight turn's streaming blocks, time-merged with any mid-turn durable row (a
+  // steer the operator sent while the turn was running) by each item's real timestamp — so a steer renders
+  // at the moment it landed relative to the tokens streaming around it, not shoved before or after them.
+  const trailing = useMemo(() => {
+    if (!liveTurn || liveBlockCount === 0) return [];
+    const liveItems = buildLiveTurnItems(liveTurn, lane, onSelectNode);
+    const tsByKey = new Map(midTurnRows.map((m) => [m.ts, postedMs(m)]));
+    const midItems = buildLogItems(midTurnRows, jobRef, {
+      lane,
+      phaseIds,
+      legOrdinal,
+      onOpenPlan,
+      onSelectNode,
+    }).map((it) => ({ ...it, ts: tsByKey.get(it.key) ?? Number.POSITIVE_INFINITY }));
+    return [...liveItems, ...midItems].sort((a, b) => a.ts - b.ts);
+  }, [
+    liveTurn,
+    liveBlockCount,
+    midTurnRows,
+    lane,
+    phaseIds,
+    legOrdinal,
+    jobRef,
+    onOpenPlan,
+    onSelectNode,
+  ]);
+
   // Unanswered question cards on the Main lane (each card's message `ts` IS its LogItem key). The operator
   // can jump to a buried one via the pinned chip below instead of scrolling the transcript to hunt for it.
   const openQuestions = useMemo(() => {
@@ -240,6 +280,7 @@ export function TranscriptView({
       liveStreamSig,
       turnActive,
       composerHeight,
+      midTurnRows.length,
     ],
     () => pinRef.current(),
   );
@@ -325,13 +366,9 @@ export function TranscriptView({
               ))}
             </div>
           )}
-          {liveTurn && liveBlockCount > 0 ? (
-            <LiveTurnView
-              turn={liveTurn}
-              lane={lane}
-              onSelectNode={onSelectNode}
-            />
-          ) : null}
+          {trailing.map((it) => (
+            <div key={it.key}>{it.node}</div>
+          ))}
           {live || turnActive ? (
             <LiveIndicator turn={turnActive ? liveTurn : undefined} />
           ) : null}
