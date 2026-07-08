@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { StimulusModule } from '../stimulus';
 import { GenericWebhookNotificationSource } from './generic-webhook-notification.source';
-import { GithubIngressController } from './github-ingress.controller';
+import {
+  GithubIngressController,
+  GithubStateWebhookController,
+} from './github-ingress.controller';
 import { GithubNotificationSource } from './github-notification.source';
 import { WebhookIngressController } from './webhook-ingress.controller';
 
@@ -17,7 +20,11 @@ import { WebhookIngressController } from './webhook-ingress.controller';
  */
 @Module({
   imports: [StimulusModule],
-  controllers: [GithubIngressController, WebhookIngressController],
+  controllers: [
+    GithubIngressController,
+    GithubStateWebhookController,
+    WebhookIngressController,
+  ],
   providers: [GithubNotificationSource, GenericWebhookNotificationSource],
   exports: [GithubNotificationSource, GenericWebhookNotificationSource],
 })

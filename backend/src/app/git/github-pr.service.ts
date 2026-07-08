@@ -90,8 +90,12 @@ export interface RepoInfo {
 }
 
 /** Parse `https://github.com/<owner>/<repo>` into parts (drops any `.git`). null if it isn't one. */
-export function parseGithubRepoUrl(url: string): { owner: string; repo: string } | null {
-  const m = url.trim().match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
+export function parseGithubRepoUrl(
+  url: string,
+): { owner: string; repo: string } | null {
+  const m = url
+    .trim()
+    .match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
@@ -110,7 +114,10 @@ export class GithubPrService {
   }
 
   /** Create the PR, or return the already-open one for the same head (idempotent). */
-  async openPullRequest(token: string, args: OpenPullRequestArgs): Promise<PullRequestResult> {
+  async openPullRequest(
+    token: string,
+    args: OpenPullRequestArgs,
+  ): Promise<PullRequestResult> {
     const { owner, repo, head, base, title, body, draft } = args;
     const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls`, {
       method: 'POST',
@@ -131,7 +138,10 @@ export class GithubPrService {
       message?: string;
       errors?: Array<{ message?: string }>;
     };
-    const detail = [errBody.message, ...(errBody.errors ?? []).map((e) => e.message)]
+    const detail = [
+      errBody.message,
+      ...(errBody.errors ?? []).map((e) => e.message),
+    ]
       .filter(Boolean)
       .join('; ');
     // 422 "A pull request already exists for <owner>:<head>" → find and return it.
@@ -143,8 +153,16 @@ export class GithubPrService {
         { headers: this.headers(token) },
       );
       if (list.ok) {
-        const prs = (await list.json()) as Array<{ html_url: string; number: number }>;
-        if (prs[0]) return { url: prs[0].html_url, number: prs[0].number, existing: true };
+        const prs = (await list.json()) as Array<{
+          html_url: string;
+          number: number;
+        }>;
+        if (prs[0])
+          return {
+            url: prs[0].html_url,
+            number: prs[0].number,
+            existing: true,
+          };
       }
     }
     throw new Error(
@@ -161,10 +179,14 @@ export class GithubPrService {
     token: string,
     { owner, repo, number }: { owner: string; repo: string; number: number },
   ): Promise<{ isDraft: boolean }> {
-    const get = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
-      headers: this.headers(token),
-    });
-    if (!get.ok) throw new Error(`GitHub couldn't load PR #${number} (${get.status})`);
+    const get = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls/${number}`,
+      {
+        headers: this.headers(token),
+      },
+    );
+    if (!get.ok)
+      throw new Error(`GitHub couldn't load PR #${number} (${get.status})`);
     const { node_id: nodeId } = (await get.json()) as { node_id: string };
     const res = await this.fetchImpl(`${API}/graphql`, {
       method: 'POST',
@@ -176,33 +198,49 @@ export class GithubPrService {
       }),
     });
     const json = (await res.json().catch(() => ({}))) as {
-      data?: { markPullRequestReadyForReview?: { pullRequest?: { isDraft?: boolean } } };
+      data?: {
+        markPullRequestReadyForReview?: { pullRequest?: { isDraft?: boolean } };
+      };
       errors?: Array<{ message?: string }>;
     };
     if (!res.ok || json.errors?.length) {
       throw new Error(
         `GitHub refused mark-ready for PR #${number} (${res.status}): ${
-          json.errors?.map((e) => e.message).filter(Boolean).join('; ') || 'no detail'
+          json.errors
+            ?.map((e) => e.message)
+            .filter(Boolean)
+            .join('; ') || 'no detail'
         }`,
       );
     }
     return {
-      isDraft: json.data?.markPullRequestReadyForReview?.pullRequest?.isDraft ?? false,
+      isDraft:
+        json.data?.markPullRequestReadyForReview?.pullRequest?.isDraft ?? false,
     };
   }
 
   /** Post a comment on a PR (PRs are issues for the comments API). Best-effort by the caller. */
   async commentOnPullRequest(
     token: string,
-    { owner, repo, number, body }: { owner: string; repo: string; number: number; body: string },
+    {
+      owner,
+      repo,
+      number,
+      body,
+    }: { owner: string; repo: string; number: number; body: string },
   ): Promise<void> {
-    const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/issues/${number}/comments`, {
-      method: 'POST',
-      headers: this.headers(token),
-      body: JSON.stringify({ body }),
-    });
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/issues/${number}/comments`,
+      {
+        method: 'POST',
+        headers: this.headers(token),
+        body: JSON.stringify({ body }),
+      },
+    );
     if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+      const errBody = (await res.json().catch(() => ({}))) as {
+        message?: string;
+      };
       throw new Error(
         `GitHub refused the PR comment (${res.status}): ${errBody.message ?? 'no detail'}`,
       );
@@ -218,15 +256,26 @@ export class GithubPrService {
     token: string,
     { owner, repo, number }: { owner: string; repo: string; number: number },
   ): Promise<'open' | 'merged' | 'closed' | 'gone'> {
-    const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
-      headers: this.headers(token),
-    });
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls/${number}`,
+      {
+        headers: this.headers(token),
+      },
+    );
     if (res.status === 404) return 'gone';
     if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as { message?: string };
-      throw new Error(`GitHub couldn't load PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`);
+      const errBody = (await res.json().catch(() => ({}))) as {
+        message?: string;
+      };
+      throw new Error(
+        `GitHub couldn't load PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`,
+      );
     }
-    const pr = (await res.json()) as { state: 'open' | 'closed'; merged?: boolean; merged_at?: string | null };
+    const pr = (await res.json()) as {
+      state: 'open' | 'closed';
+      merged?: boolean;
+      merged_at?: string | null;
+    };
     if (pr.merged || pr.merged_at) return 'merged';
     return pr.state;
   }
@@ -244,7 +293,10 @@ export class GithubPrService {
       { headers: this.headers(token) },
     );
     if (!res.ok) return null;
-    const prs = (await res.json()) as Array<{ html_url: string; number: number }>;
+    const prs = (await res.json()) as Array<{
+      html_url: string;
+      number: number;
+    }>;
     return prs[0] ? { url: prs[0].html_url, number: prs[0].number } : null;
   }
 
@@ -258,15 +310,29 @@ export class GithubPrService {
     token: string,
     { owner, repo, number }: { owner: string; repo: string; number: number },
   ): Promise<PullDetail> {
-    const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
-      headers: this.headers(token),
-    });
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls/${number}`,
+      {
+        headers: this.headers(token),
+      },
+    );
     if (res.status === 404) {
-      return { number, url: '', state: 'gone', mergeableState: null, headSha: null, headRef: null };
+      return {
+        number,
+        url: '',
+        state: 'gone',
+        mergeableState: null,
+        headSha: null,
+        headRef: null,
+      };
     }
     if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as { message?: string };
-      throw new Error(`GitHub couldn't load PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`);
+      const errBody = (await res.json().catch(() => ({}))) as {
+        message?: string;
+      };
+      throw new Error(
+        `GitHub couldn't load PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`,
+      );
     }
     const pr = (await res.json()) as {
       html_url: string;
@@ -303,7 +369,9 @@ export class GithubPrService {
     );
     if (res.status === 404) return [];
     if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+      const errBody = (await res.json().catch(() => ({}))) as {
+        message?: string;
+      };
       throw new Error(
         `GitHub couldn't list check-runs for ${owner}/${repo}@${ref} (${res.status}): ${errBody.message ?? 'no detail'}`,
       );
@@ -342,7 +410,9 @@ export class GithubPrService {
     );
     if (res.status === 404) return [];
     if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+      const errBody = (await res.json().catch(() => ({}))) as {
+        message?: string;
+      };
       throw new Error(
         `GitHub couldn't list reviews for ${owner}/${repo}#${number} (${res.status}): ${errBody.message ?? 'no detail'}`,
       );
@@ -370,7 +440,11 @@ export class GithubPrService {
    * (100/page) and capped so a repo with thousands of branches can't run the request away. Returns the
    * names in GitHub's order (the caller surfaces the default branch first); throws on a non-OK response.
    */
-  async listBranches(token: string, owner: string, repo: string): Promise<string[]> {
+  async listBranches(
+    token: string,
+    owner: string,
+    repo: string,
+  ): Promise<string[]> {
     const PER_PAGE = 100;
     const MAX_PAGES = 10; // cap at 1000 branches
     const names: string[] = [];
@@ -380,7 +454,9 @@ export class GithubPrService {
         { headers: this.headers(token) },
       );
       if (!res.ok) {
-        const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+        const errBody = (await res.json().catch(() => ({}))) as {
+          message?: string;
+        };
         throw new Error(
           `GitHub couldn't list branches for ${owner}/${repo} (${res.status}): ${errBody.message ?? 'no detail'}`,
         );
@@ -393,7 +469,11 @@ export class GithubPrService {
   }
 
   /** Fetch one repo the token can see — the registration probe. null on 404/403; throws otherwise. */
-  async getRepo(token: string, owner: string, repo: string): Promise<RepoInfo | null> {
+  async getRepo(
+    token: string,
+    owner: string,
+    repo: string,
+  ): Promise<RepoInfo | null> {
     const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}`, {
       headers: this.headers(token),
     });
@@ -418,7 +498,9 @@ export class GithubPrService {
       };
     }
     if (res.status === 404 || res.status === 403) return null;
-    const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+    const errBody = (await res.json().catch(() => ({}))) as {
+      message?: string;
+    };
     throw new Error(
       `GitHub couldn't load ${owner}/${repo} (${res.status}): ${errBody.message ?? 'no detail'}`,
     );
@@ -434,33 +516,57 @@ export class GithubPrService {
    */
   async ensureWebhook(
     token: string,
-    args: { owner: string; repo: string; url: string; secret: string; events: string[] },
+    args: {
+      owner: string;
+      repo: string;
+      url: string;
+      secret: string;
+      events: string[];
+    },
   ): Promise<'created' | 'updated' | 'no-scope' | 'error'> {
-    const list = await this.fetchImpl(`${API}/repos/${args.owner}/${args.repo}/hooks`, {
-      headers: this.headers(token),
-    });
+    const list = await this.fetchImpl(
+      `${API}/repos/${args.owner}/${args.repo}/hooks`,
+      {
+        headers: this.headers(token),
+      },
+    );
     if (list.status === 403 || list.status === 404) return 'no-scope';
     if (!list.ok) return 'error';
-    const hooks = (await list.json()) as Array<{ id: number; config?: { url?: string } }>;
+    const hooks = (await list.json()) as Array<{
+      id: number;
+      config?: { url?: string };
+    }>;
     const mine = hooks.find((h) => h.config?.url === args.url);
     const body = {
-      config: { url: args.url, content_type: 'json', secret: args.secret, insecure_ssl: '0' },
+      config: {
+        url: args.url,
+        content_type: 'json',
+        secret: args.secret,
+        insecure_ssl: '0',
+      },
       events: args.events,
       active: true,
     };
     if (mine) {
-      const patch = await this.fetchImpl(`${API}/repos/${args.owner}/${args.repo}/hooks/${mine.id}`, {
-        method: 'PATCH',
-        headers: this.headers(token),
-        body: JSON.stringify(body),
-      });
+      const patch = await this.fetchImpl(
+        `${API}/repos/${args.owner}/${args.repo}/hooks/${mine.id}`,
+        {
+          method: 'PATCH',
+          headers: this.headers(token),
+          body: JSON.stringify(body),
+        },
+      );
+      if (patch.status === 403 || patch.status === 404) return 'no-scope';
       return patch.ok ? 'updated' : 'error';
     }
-    const created = await this.fetchImpl(`${API}/repos/${args.owner}/${args.repo}/hooks`, {
-      method: 'POST',
-      headers: this.headers(token),
-      body: JSON.stringify(body),
-    });
+    const created = await this.fetchImpl(
+      `${API}/repos/${args.owner}/${args.repo}/hooks`,
+      {
+        method: 'POST',
+        headers: this.headers(token),
+        body: JSON.stringify(body),
+      },
+    );
     if (created.status === 403 || created.status === 404) return 'no-scope';
     return created.ok ? 'created' : 'error';
   }

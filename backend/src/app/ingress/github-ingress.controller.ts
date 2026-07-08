@@ -32,3 +32,26 @@ export class GithubIngressController {
     return runIngress(this.logger, this.adapter, this.intake, req, this.prSync);
   }
 }
+
+/**
+ * `POST /webhooks/github` — the GitHub PR-state webhook front door. Registration sends only
+ * `pull_request` events here, and the adapter turns those into silent PR-state deltas instead of
+ * stimulus events.
+ */
+@Public()
+@Controller('webhooks/github')
+export class GithubStateWebhookController {
+  private readonly logger = new Logger(GithubStateWebhookController.name);
+
+  constructor(
+    private readonly adapter: GithubNotificationSource,
+    private readonly intake: StimulusIntake,
+    private readonly prSync: GithubPrStateSync,
+  ) {}
+
+  @Post()
+  @HttpCode(202)
+  async receive(@Req() req: RawBodyRequest): Promise<Record<string, unknown>> {
+    return runIngress(this.logger, this.adapter, this.intake, req, this.prSync);
+  }
+}
