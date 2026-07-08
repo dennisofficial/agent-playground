@@ -700,8 +700,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // The tool returns the open-PR instructions for the brain to act on in-turn (host no longer opens it).
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     expect((result as { message: string }).message).toContain('gh pr create');
-    // The ledger is stamped later (on PR discovery by the reconciler), NOT synchronously here.
-    expect(mockStore.markLedgerPromoted).not.toHaveBeenCalled();
+    // The direct path stamps the ledger-promotion spine COMPLETE inline (the brain already ran
+    // promote_decisions and preShip committed it), so the boot backstop never re-selects this shipped
+    // row and re-fires a redundant promote + open-PR turn against the already-open PR.
+    expect(mockStore.markLedgerPromoted).toHaveBeenCalledWith(FAKE_JOB_ID);
   });
 
   it('(c) finalize_build: a leak-scan block returns a hard failure (brain must clean the branch)', async () => {
