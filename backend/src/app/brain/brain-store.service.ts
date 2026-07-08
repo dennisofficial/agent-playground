@@ -1328,17 +1328,23 @@ export class BrainStoreService {
     await this.jobs.update({ id: jobId }, { kind });
   }
 
-  /** Anchor the upfront grill: flip the thread into the build lifecycle (`planning`) + set intent/title. */
+  /**
+   * Anchor the upfront grill: flip the thread into the build lifecycle (`planning`) + set intent/kind.
+   * The `title` is OPTIONAL: an empty/absent title leaves the thread's existing title untouched rather
+   * than clobbering it (e.g. `review_plan` anchors the job without a meaningful title — the authoritative
+   * rename happens later in `persistPlan` from the plan `goal`, via the titler).
+   */
   async openJob(input: {
     orgId: string;
     repoId: string;
     jobId: string;
-    title: string;
+    title?: string | null;
     kind: JobKind;
   }): Promise<string> {
+    const title = input.title?.trim();
     await this.jobs.update(
       { id: input.jobId },
-      { kind: input.kind, status: 'planning', title: input.title },
+      { kind: input.kind, status: 'planning', ...(title ? { title } : {}) },
     );
     return input.jobId;
   }
