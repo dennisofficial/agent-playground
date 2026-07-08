@@ -50,10 +50,40 @@ describe('conventions.group — repo house-style envelope', () => {
   });
 
   it('appends the envelope at the tail (operator-layer), not the head', () => {
-    const baseline = renderAgentPrompt(Agent.ATLAS_MAIN);
-    const withConv = renderAgentPrompt(Agent.ATLAS_MAIN, { settings: { repoConventions: PROFILE } });
+    // Use an onboarding ctx so the build-brain-only "notice drift" fragment (order 9110) is absent and the
+    // envelope (9100) is genuinely the last block — the property under test.
+    const baseline = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' });
+    const withConv = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      jobKind: 'onboarding',
+      settings: { repoConventions: PROFILE },
+    });
     // Everything before the envelope is byte-identical to the no-conventions prompt.
     expect(withConv.startsWith(baseline)).toBe(true);
     expect(withConv.trimEnd().endsWith(PROFILE.body)).toBe(true);
+  });
+});
+
+describe('conventions.group — notice-house-style-drift affordance', () => {
+  const MARK = 'NOTICING THE HOUSE STYLE SHOULD CHANGE';
+  const conv = { settings: { repoConventions: PROFILE } };
+
+  it('appears for the build brain (feature/bugfix) when a profile is attached', () => {
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature', ...conv })).toContain(MARK);
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'bugfix', ...conv })).toContain(MARK);
+  });
+
+  it('is absent when no profile is attached (nothing to notice)', () => {
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' })).not.toContain(MARK);
+  });
+
+  it('is absent for onboarding + review turns (only the build brain proposes profile changes)', () => {
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding', ...conv })).not.toContain(MARK);
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'review', ...conv })).not.toContain(MARK);
+  });
+
+  it('never reaches workers or advisory subagents', () => {
+    for (const a of [Agent.WORKER, Agent.FAN_OUT, Agent.REVIEW_AGENT, Agent.EXPLORE]) {
+      expect(renderAgentPrompt(a, conv)).not.toContain(MARK);
+    }
   });
 });

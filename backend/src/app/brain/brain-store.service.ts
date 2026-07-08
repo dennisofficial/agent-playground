@@ -4,6 +4,7 @@ import { DataSource, IsNull, MoreThan, Not, Repository } from 'typeorm';
 import type { Decision, Job, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type {
+  WebConventionEditProposalCard,
   WebConventionProposalCard,
   WebFileRequestCard,
   WebMcpProposalCard,
@@ -1033,6 +1034,50 @@ export class BrainStoreService {
 
   /** Stamp a convention-proposal card APPROVED (the owner attached the profile). */
   async markConventionProposalApproved(jobId: string, requestId: string): Promise<void> {
+    await this.updateCardMessage(jobId, requestId, {
+      approved_at: new Date().toISOString(),
+    });
+  }
+
+  // ── convention-profile EDIT proposals (owner-gated house-style CHANGE from a build) ─────────────────
+
+  /** Post an owner-approvable house-style CHANGE card (create/edit a profile's content). */
+  async openConventionEditProposal(
+    jobId: string,
+    input: { requestId: string; card: WebConventionEditProposalCard },
+  ): Promise<{ ok: boolean }> {
+    const thread = await this.jobs.findOne({ where: { id: jobId } });
+    if (!thread) return { ok: false };
+    const verb = input.card.mode === 'create' ? 'Proposed a new' : 'Proposed changes to the';
+    await this.messages.save(
+      this.messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: `${verb} "${input.card.name}" house-style profile`,
+        kind: 'card',
+        ts: input.requestId,
+        card: input.card as unknown as Record<string, unknown>,
+      }),
+    );
+    return { ok: true };
+  }
+
+  /** Fetch one thread's convention-EDIT-proposal card by id (the card's `ts`); null if absent / wrong type. */
+  async getConventionEditProposalCard(
+    jobId: string,
+    requestId: string,
+  ): Promise<WebConventionEditProposalCard | null> {
+    const row = await this.messages.findOne({
+      where: { job_id: jobId, ts: requestId, kind: 'card' },
+    });
+    const card = row?.card as WebConventionEditProposalCard | undefined;
+    return card?.type === 'convention_edit_proposal_card' ? card : null;
+  }
+
+  /** Stamp a convention-EDIT-proposal card APPROVED (the owner upserted the profile). */
+  async markConventionEditProposalApproved(jobId: string, requestId: string): Promise<void> {
     await this.updateCardMessage(jobId, requestId, {
       approved_at: new Date().toISOString(),
     });

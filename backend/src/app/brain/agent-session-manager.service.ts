@@ -38,6 +38,7 @@ import {
   type McpProposalServer,
   type WebQuestionCard,
   webConventionProposalCard,
+  webConventionEditProposalCard,
   webFileRequestCard,
   webMcpProposalCard,
   webQuestionCard,
@@ -3337,6 +3338,10 @@ export class AgentSessionManager
           return { ok: false, reason: errText(err) };
         }
       },
+
+      // House-style: propose an owner-approved CHANGE to a reusable convention profile when the build notices
+      // the convention itself should evolve (attaching one is onboarding's `propose_convention_profile`).
+      propose_convention_profile_change: this.buildProposeConventionProfileChangeTool(stimulus),
     };
 
     // The ceremony and an ordinary build thread share the SAME onboarding capabilities — the ceremony just
@@ -3382,6 +3387,7 @@ export class AgentSessionManager
       propose_mcp_servers: this.buildProposeMcpServersTool(stimulus),
       list_convention_profiles: this.buildListConventionProfilesTool(stimulus),
       propose_convention_profile: this.buildProposeConventionProfileTool(stimulus),
+      propose_convention_profile_change: this.buildProposeConventionProfileChangeTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
     };
   }
@@ -4008,6 +4014,69 @@ export class AgentSessionManager
       } catch (err) {
         this.logger.warn(
           `propose_convention_profile failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `propose_convention_profile_change({ slug, name?, body, detectHint?, rationale })` — propose CREATING or
+   * EDITING a reusable house-style profile's CONTENT (distinct from `propose_convention_profile`, which
+   * ATTACHES an existing one to a repo). A house-style change is cross-cutting — it affects EVERY repo and
+   * job in the org — so the brain NEVER writes it: this posts an owner-approvable card, and only the OWNER's
+   * approval at `…/jobs/:jobId/convention-edit-proposals/:requestId/approve` upserts the profile. Use this when
+   * you notice the reusable convention itself is wrong/outdated (NOT for a this-repo-only decision — that
+   * belongs in the `.atlas/decisions/` ledger). If `slug` matches an existing profile it's an EDIT (the card
+   * shows the prior body); a new `slug` is a CREATE. org/repo/job come from the closure (never tool args).
+   */
+  private buildProposeConventionProfileChangeTool(stimulus: ChatStimulus): ToolImpl {
+    const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+    return async (args) => {
+      const slug = String(args['slug'] ?? '').trim();
+      const body = String(args['body'] ?? '').trim();
+      const rationale = String(args['rationale'] ?? '').trim();
+      const nameArg = String(args['name'] ?? '').trim();
+      const detectHintArg = String(args['detectHint'] ?? '').trim();
+      if (!SLUG_RE.test(slug)) {
+        return { ok: false, reason: 'slug must be lowercase letters/digits/_/- (e.g. nestjs-next-shared)' };
+      }
+      if (!body) return { ok: false, reason: 'body (the house-style rules) is required' };
+      if (!rationale) return { ok: false, reason: 'rationale — why the house style should change — is required' };
+      if (!this.conventions) return { ok: false, reason: 'house-style profiles are not configured for this org' };
+      try {
+        const existing = await this.conventions.getProfile(stimulus.orgId, slug);
+        const mode: 'create' | 'update' = existing ? 'update' : 'create';
+        const name = nameArg || existing?.name;
+        if (!name) return { ok: false, reason: 'name is required when creating a new profile' };
+        const requestId = `conv-edit-${randomUUID()}`;
+        const card = webConventionEditProposalCard({
+          jobId: stimulus.jobId,
+          requestId,
+          repoId: stimulus.repoId,
+          slug,
+          name,
+          body,
+          detectHint: detectHintArg || existing?.detect_hint || null,
+          mode,
+          ...(existing ? { priorBody: existing.body } : {}),
+          rationale,
+        });
+        const opened = await this.store.openConventionEditProposal(stimulus.jobId, { requestId, card });
+        if (!opened.ok) return { ok: false, reason: 'Could not open the proposal (thread not found).' };
+        return {
+          ok: true,
+          requestId,
+          mode,
+          message:
+            `Posted a house-style ${mode === 'create' ? 'creation' : 'change'} proposal for "${name}". Because ` +
+            'this changes the reusable convention for EVERY repo in the org, only the OWNER can approve it — you ' +
+            'cannot apply it yourself. Do NOT hand-edit repo code to force the new convention; keep building to ' +
+            'the CURRENT house style. Mention the proposal, then continue.',
+        };
+      } catch (err) {
+        this.logger.warn(
+          `propose_convention_profile_change failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
         );
         return { ok: false, reason: errText(err) };
       }

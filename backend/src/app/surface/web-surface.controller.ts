@@ -1417,6 +1417,42 @@ export class WebSurfaceController {
     return { ok: true, slug: card.slug, ts };
   }
 
+  /**
+   * `POST …/jobs/:jobId/convention-edit-proposals/:requestId/approve` — the OWNER approves a build brain
+   * `propose_convention_profile_change` card, UPSERTING the reusable house-style profile's content. A
+   * house-style change is cross-cutting (it affects every repo/job in the org), so it's owner-only. The
+   * profile is org-level — the write is keyed on `(org, slug)` from the card, not the repo. Idempotent (a
+   * re-approve of an already-applied card is a no-op).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/convention-edit-proposals/:requestId/approve')
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
+  async approveConventionEditProposal(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('requestId') requestId: string,
+  ): Promise<{ ok: boolean; slug: string; ts?: string }> {
+    const thread = await this.requireThread(jobId, org.id);
+    const card = await this.store.getConventionEditProposalCard(jobId, requestId);
+    if (!card) throw new BadRequestException('no such convention-edit proposal on this thread');
+    if (card.approved_at) {
+      return { ok: true, slug: card.slug };
+    }
+    await this.conventions.upsertProfile(org.id, card.slug, {
+      name: card.name,
+      body: card.body,
+      detectHint: card.detectHint,
+    });
+    await this.store.markConventionEditProposalApproved(jobId, requestId);
+    const notice =
+      `The operator approved the house-style ${card.mode === 'create' ? 'creation' : 'change'} — the ` +
+      `"${card.name}" profile is now live. Every repo attached to it builds to the updated conventions.`;
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+      orgId: org.id,
+      seedRow: { label: notice, chunkKey: `seed:conv-edit-approve:${jobId}:${requestId}` },
+    });
+    return { ok: true, slug: card.slug, ts };
+  }
+
   /** Map a proposal-card server (non-secret defn) to the store's `McpServerInput`: secret slots become empty
    *  `secret:true` placeholders (filled later via `provide-secret`), non-secret entries keep their value. */
   private mcpProposalToInput(s: McpProposalServer): McpServerInput {

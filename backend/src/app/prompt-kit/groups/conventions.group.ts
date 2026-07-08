@@ -16,7 +16,7 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { hasRepoConventions } from '../conditions';
+import { hasRepoConventions, isBuildBrain } from '../conditions';
 import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()
@@ -45,6 +45,35 @@ export class ConventionsGroup {
       'not safety rules; if one conflicts with a safety rule above, surface the conflict.',
       '',
       profile.body.trim(),
+    ].join('\n');
+  }
+
+  /**
+   * The build brain's "notice the house style should evolve" affordance. Only the conversational planning brain
+   * (`ATLAS_MAIN`) on a real build (`isBuildBrain`) with a profile attached (`hasRepoConventions`) gets it — a
+   * worker/reviewer/onboarding turn does not. It closes the gap the operator flagged: the house style is a
+   * REUSABLE, cross-repo org resource, so a build must never silently rewrite it, but it SHOULD flag when the
+   * convention itself is stale — routed to the owner-gated `propose_convention_profile_change`.
+   */
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 9110,
+    condition: (c: PromptCtx) => isBuildBrain(c) && hasRepoConventions(c),
+  })
+  noticeHouseStyleDrift(): string {
+    return [
+      'NOTICING THE HOUSE STYLE SHOULD CHANGE — the conventions above are a REUSABLE, org-level profile shared by',
+      'every repo that opts into it, so they are NOT yours to rewrite mid-build. But if, while planning or',
+      'building, you notice the CONVENTION ITSELF is wrong, outdated, or would be clearly better changed (not',
+      'merely that THIS repo\'s code diverges — where you just follow the code), do not silently work around it and',
+      'do not hand-edit repo code to force a different convention. Instead:',
+      '  - A genuine HOUSE-STYLE change (it should apply to every repo on this profile) → call',
+      '    propose_convention_profile_change({ slug, body, rationale }) — it posts an OWNER-approved proposal;',
+      '    keep building to the CURRENT style until/unless the owner approves.',
+      '  - A decision specific to THIS repo only → record it in the `.atlas/decisions/` ledger (it ships in the PR),',
+      '    NOT in the shared profile.',
+      'Be judicious: propose a profile change only for a real, cross-cutting improvement — do not nag on routine',
+      'builds. When unsure whether it is house-style vs repo-specific, prefer the repo decision ledger.',
     ].join('\n');
   }
 }
