@@ -2,6 +2,7 @@ import { Subject } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { LiveTurnStore } from './live-turn-store';
+import type { LiveStreamFrame } from './live-turn-store';
 import { WebSurfaceController } from './web-surface.controller';
 import type { WebOutboundMessage } from './web-surface';
 
@@ -62,6 +63,58 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
     expect(snap.blocks.map((b) => b.kind)).toEqual(['thinking', 'text', 'tool']);
     expect(snap.blocks[0]).toMatchObject({ kind: 'thinking', text: 'reasoning', done: true });
     expect(snap.blocks[1]).toMatchObject({ kind: 'text', text: 'Hello', done: true });
+  });
+});
+
+describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge live blocks vs durable rows)', () => {
+  it('fans a strictly-increasing emittedAt on each block-creating delta, mirrored inside event.emittedAt', () => {
+    const store = new LiveTurnStore();
+    const frames: LiveStreamFrame[] = [];
+    const sub = store.stream$.subscribe((f) => frames.push(f));
+
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hi' });
+    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: {} });
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'bye' });
+    sub.unsubscribe();
+
+    // turn_start creates no block and carries no stamp; every block-creating delta frame does.
+    const delta = frames.filter((f) => (f.event as { kind: string }).kind !== 'turn_start');
+    expect(delta).toHaveLength(3);
+    for (const f of delta) {
+      expect(typeof f.emittedAt).toBe('number');
+      // The stamp is embedded inside `event` too, so it reaches the web through the verbatim controller fan.
+      expect((f.event as { emittedAt?: number }).emittedAt).toBe(f.emittedAt);
+    }
+    const stamps = delta.map((f) => f.emittedAt as number);
+    for (let i = 1; i < stamps.length; i++) expect(stamps[i]).toBeGreaterThan(stamps[i - 1]);
+
+    // The turn_start frame creates no block, so it carries no stamp.
+    const start = frames.find((f) => (f.event as { kind: string }).kind === 'turn_start');
+    expect(start!.emittedAt).toBeUndefined();
+  });
+
+  it('snapshot blocks each carry an emittedAt, monotonic in block order', () => {
+    const store = new LiveTurnStore();
+    store.push(REPO, THREAD, { kind: 'thinking', text: 'reasoning' });
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hello' });
+    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: {} });
+
+    const blocks = store.snapshot(REPO, THREAD)!.blocks;
+    expect(blocks.map((b) => b.kind)).toEqual(['thinking', 'text', 'tool']);
+    for (const b of blocks) expect(typeof b.emittedAt).toBe('number');
+    for (let i = 1; i < blocks.length; i++) expect(blocks[i].emittedAt).toBeGreaterThan(blocks[i - 1].emittedAt);
+  });
+
+  it('appending text to an OPEN block keeps its emittedAt as the block start time (the ordering key)', () => {
+    const store = new LiveTurnStore();
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
+    const startStamp = store.snapshot(REPO, THREAD)!.blocks[0].emittedAt;
+    // A second delta appends to the SAME open block — it must not re-stamp the block.
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'lo' });
+
+    const block = store.snapshot(REPO, THREAD)!.blocks[0];
+    expect(block).toMatchObject({ kind: 'text', text: 'Hello' });
+    expect(block.emittedAt).toBe(startStamp);
   });
 });
 

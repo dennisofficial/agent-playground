@@ -17,6 +17,11 @@ export interface LiveTurnBlock {
   isError?: boolean;
   /** Edit/MultiEdit only: structured patch (real file offsets) for an accurate diff gutter on reconnect. */
   structuredPatch?: unknown;
+  /**
+   * Server epoch-ms when this block first appeared — lets the web time-merge live blocks against durable
+   * `messages` rows (which carry server `postedAt`) during the live window. Set on CREATE and never moved.
+   */
+  emittedAt: number;
   done: boolean;
   /**
    * Set only for SUBAGENT blocks (the spawning Task tool_use id). Carried through the snapshot so a
@@ -45,6 +50,11 @@ export interface LiveStreamFrame {
   jobId: string;
   lane: string;
   seq: number;
+  /**
+   * Server epoch-ms for a block-creating delta. Optional on purpose: `turn_start`/`turn_end` frames create
+   * no block and set no stamp. Also embedded inside `event` so it reaches the web with no controller change.
+   */
+  emittedAt?: number;
   event: unknown;
 }
 
@@ -88,6 +98,13 @@ export class LiveTurnStore {
   private readonly turns = new Map<string, Map<string, TurnState>>();
   private seq = 0;
   private blockSeq = 0;
+  private lastEmitMs = 0;
+
+  /** Strictly-monotonic wall-clock ms so blocks never tie within/across turns (interleave stays stable). */
+  private stamp(): number {
+    this.lastEmitMs = Math.max(Date.now(), this.lastEmitMs + 1);
+    return this.lastEmitMs;
+  }
 
   /** The live frame feed — the SSE controller fans this to web clients (filtered by repo). */
   get stream$(): Observable<LiveStreamFrame> {
@@ -116,10 +133,11 @@ export class LiveTurnStore {
         event: { kind: 'turn_start', startedAt: state.startedAt },
       });
     }
-    this.applyToState(state, event);
+    const emittedAt = this.stamp();
+    this.applyToState(state, event, emittedAt);
     const seq = ++this.seq;
     state.lastSeq = seq;
-    this.subject.next({ channel, jobId, lane, seq, event });
+    this.subject.next({ channel, jobId, lane, seq, emittedAt, event: { ...event, emittedAt } });
   }
 
   /** End a turn: fan a `turn_end` marker (so the client reconciles against the durable log), then drop it. */
@@ -178,7 +196,11 @@ export class LiveTurnStore {
   }
 
   /** Assemble cumulative blocks from engine events — identical logic to the web `job-stream` store. */
-  private applyToState(state: TurnState, ev: { kind: string; [k: string]: unknown }): void {
+  private applyToState(
+    state: TurnState,
+    ev: { kind: string; [k: string]: unknown },
+    emittedAt: number,
+  ): void {
     const blocks = state.blocks;
     const last = blocks[blocks.length - 1];
     const text = typeof ev['text'] === 'string' ? (ev['text'] as string) : '';
@@ -204,19 +226,19 @@ export class LiveTurnStore {
     switch (ev.kind) {
       case 'text_delta':
         if (last && last.kind === 'text' && !last.done && sameAuthor(last)) last.text = (last.text ?? '') + text;
-        else blocks.push({ kind: 'text', key: `b${this.blockSeq++}`, text, done: false, parentToolUseId: pid });
+        else blocks.push({ kind: 'text', key: `b${this.blockSeq++}`, text, done: false, emittedAt, parentToolUseId: pid });
         break;
       case 'text':
         if (!finalizeOpen('text'))
-          blocks.push({ kind: 'text', key: `b${this.blockSeq++}`, text, done: true, parentToolUseId: pid });
+          blocks.push({ kind: 'text', key: `b${this.blockSeq++}`, text, done: true, emittedAt, parentToolUseId: pid });
         break;
       case 'thinking_delta':
         if (last && last.kind === 'thinking' && !last.done && sameAuthor(last)) last.text = (last.text ?? '') + text;
-        else blocks.push({ kind: 'thinking', key: `b${this.blockSeq++}`, text, done: false, parentToolUseId: pid });
+        else blocks.push({ kind: 'thinking', key: `b${this.blockSeq++}`, text, done: false, emittedAt, parentToolUseId: pid });
         break;
       case 'thinking':
         if (!finalizeOpen('thinking'))
-          blocks.push({ kind: 'thinking', key: `b${this.blockSeq++}`, text, done: true, parentToolUseId: pid });
+          blocks.push({ kind: 'thinking', key: `b${this.blockSeq++}`, text, done: true, emittedAt, parentToolUseId: pid });
         break;
       case 'tool_use':
         blocks.push({
@@ -226,6 +248,7 @@ export class LiveTurnStore {
           name: typeof ev['name'] === 'string' ? (ev['name'] as string) : 'tool',
           input: ev['input'],
           done: false,
+          emittedAt,
           parentToolUseId: pid,
         });
         break;
