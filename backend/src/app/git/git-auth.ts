@@ -13,12 +13,27 @@ export function isHttpsGithub(gitUrl: string): boolean {
   return gitUrl.startsWith('https://github.com/');
 }
 
-/** Auth env for one git invocation against `gitUrl`, or {} when auth doesn't apply. */
+/**
+ * Auth env for one git invocation against `gitUrl`, or {} when auth doesn't apply (non-GitHub / non-https).
+ *
+ * With a per-org token we thread it as an `http.extraheader` (never argv/.git/config). WITHOUT a token, we
+ * do NOT return {} — instead we blank the credential-helper list (`credential.helper=`, an empty value
+ * resets it), so a missing/expired org token can NEVER silently fall back to the host machine's ambient
+ * GitHub credentials (a `gh auth login` session, an osxkeychain/store helper, cached creds). Atlas
+ * authenticates with the per-org PAT ONLY: an unauthenticated PRIVATE-repo op then fails loudly (auth
+ * required) instead of borrowing whatever the host box is logged into; a public-repo op still works (it
+ * needs no credentials). `GIT_TERMINAL_PROMPT=0` (set by the caller) blocks interactive prompts; blanking
+ * the helper closes the non-interactive cached-credential path too.
+ */
 export function gitAuthEnv(
   gitUrl: string,
   token: string | undefined,
 ): Record<string, string> {
-  if (!token || !isHttpsGithub(gitUrl)) return {};
+  if (!isHttpsGithub(gitUrl)) return {};
+  if (!token) {
+    // No per-org token → disable all credential helpers so git can't reach host ambient GitHub creds.
+    return { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '' };
+  }
   const basic = Buffer.from(`x-access-token:${token}`).toString('base64');
   return {
     GIT_CONFIG_COUNT: '1',
