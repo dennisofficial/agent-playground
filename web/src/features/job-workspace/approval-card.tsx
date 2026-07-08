@@ -126,7 +126,13 @@ export function ApprovalCardView({
       ) : null}
 
       <div className="border-t border-border bg-surface-2 px-4 py-3">
-        <VerdictButtons jobRef={jobRef} value={value} />
+        <VerdictButtons
+          jobRef={jobRef}
+          value={value}
+          approveLabel={
+            card.kind === "direct" ? "Approve Direct Build" : "Approve"
+          }
+        />
       </div>
     </div>
   );
