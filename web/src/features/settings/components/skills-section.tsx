@@ -287,6 +287,19 @@ function SystemSkillsGroup({ skills }: { skills: SystemSkill[] }) {
                 >
                   managed
                 </span>
+                {s.git ? (
+                  <span
+                    className="flex items-center gap-1 rounded-sm border border-border-2 bg-surface-3 px-1.5 py-0.5 font-mono text-[9.5px] text-dim"
+                    title={s.git.url}
+                  >
+                    <GitBranch size={9} /> git
+                  </span>
+                ) : null}
+                {s.git && !s.synced ? (
+                  <span className="rounded-sm border border-amber/30 bg-amber/10 px-1.5 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.03em] text-amber">
+                    pending sync
+                  </span>
+                ) : null}
               </div>
               <div className="mt-1.5 text-[12px] leading-relaxed text-dim">
                 {s.description}

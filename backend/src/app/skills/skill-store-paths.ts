@@ -51,3 +51,27 @@ export function skillDirHost(root: string | undefined, orgId: string, scope: str
 export function skillRelativeDir(scope: string, name: string): string {
   return scope === '*' ? safe(name) : join('repos', safe(scope), safe(name));
 }
+
+/**
+ * The HOST root of the GIT-SOURCED managed-skills tier — `ManagedSkillSyncService`'s sync target for a
+ * `system-skill-registry.ts` entry that carries a `git` source (as opposed to a STATIC managed entry,
+ * committed under `backend/skills-managed/` — see `system-skill-store-paths.ts`). A reserved subtree of
+ * this SAME central store, `_managed`, a SIBLING of `orgs/` — never collides with an org id (org ids only
+ * ever land under `orgs/<safe(orgId)>`). Global/org-agnostic: unlike the rest of this file, there is no
+ * per-org scoping here — one sync, shared by every org's turns.
+ */
+export function managedGitSkillsRootHost(root: string | undefined): string {
+  return join(skillsStoreRoot(root), '_managed');
+}
+
+/** One git-sourced managed skill's dir, given its registry `name`. Same sanitization as {@link safe}. */
+export function managedGitSkillDirHost(root: string | undefined, name: string): string {
+  return join(managedGitSkillsRootHost(root), safe(name));
+}
+
+/** A git-sourced managed skill's dir, relative to whichever git-managed root the consumer resolves
+ *  locally — the host's {@link managedGitSkillsRootHost} or the sandbox's `CONTAINER_SKILLS_MANAGED_GIT`.
+ *  Mirrors `system-skill-store-paths.ts`'s `managedSkillRelativeDir` for the static managed tier. */
+export function managedGitSkillRelativeDir(name: string): string {
+  return safe(name);
+}

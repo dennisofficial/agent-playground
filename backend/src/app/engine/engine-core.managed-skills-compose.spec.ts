@@ -13,6 +13,7 @@ const ROOT = join(tmpdir(), `atlas-managed-skills-compose-spec-${process.pid}`);
 const CLAUDE_CONFIG_DIR = join(ROOT, 'claude-config');
 const SKILLS_ROOT = join(ROOT, 'org-skills');
 const MANAGED_ROOT = join(ROOT, 'managed-skills');
+const MANAGED_GIT_ROOT = join(ROOT, 'managed-git-skills');
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 
 function writeSkillMd(dir: string, description: string): void {
@@ -67,5 +68,29 @@ describe('composeSkillsDir — managed (system) skills', () => {
     );
     const link = join(CLAUDE_CONFIG_DIR, 'skills', 'no-org-root');
     expect(readlinkSync(link)).toBe(join(MANAGED_ROOT, 'no-org-root'));
+  });
+
+  it('a managedGit skill composes from the git-managed root, not the static managed or org-scoped ones', () => {
+    writeSkillMd(join(MANAGED_GIT_ROOT, 'playwright-cli'), 'git-managed');
+    composeSkillsDir(
+      CLAUDE_CONFIG_DIR,
+      [{ name: 'playwright-cli', description: 'git-managed', dirPath: 'playwright-cli', managedGit: true }],
+      SKILLS_ROOT,
+      MANAGED_ROOT,
+      MANAGED_GIT_ROOT,
+    );
+    const link = join(CLAUDE_CONFIG_DIR, 'skills', 'playwright-cli');
+    expect(readlinkSync(link)).toBe(join(MANAGED_GIT_ROOT, 'playwright-cli'));
+  });
+
+  it('a managedGit skill not yet synced to disk is skipped, not a dangling symlink', () => {
+    composeSkillsDir(
+      CLAUDE_CONFIG_DIR,
+      [{ name: 'unsynced', description: 'd', dirPath: 'unsynced', managedGit: true }],
+      SKILLS_ROOT,
+      MANAGED_ROOT,
+      MANAGED_GIT_ROOT,
+    );
+    expect(existsSync(join(CLAUDE_CONFIG_DIR, 'skills', 'unsynced'))).toBe(false);
   });
 });

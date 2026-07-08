@@ -79,6 +79,7 @@ async function runOverRedis(turnId: string): Promise<void> {
         homeRoot: process.env.AGENT_HOME_ROOT,
         skillsRoot: process.env.SKILLS_ROOT,
         managedSkillsRoot: process.env.SKILLS_MANAGED_ROOT,
+        managedGitSkillsRoot: process.env.SKILLS_MANAGED_GIT_ROOT,
       },
       { warn: (m) => process.stderr.write(`[engine-core] ${m}\n`) },
     );

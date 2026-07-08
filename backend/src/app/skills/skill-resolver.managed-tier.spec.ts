@@ -11,6 +11,12 @@ vi.mock('./system-skill-registry', () => ({
   buildSystemSkills: () => [
     { name: 'shared', description: 'managed description', surfaces: ['build', 'brain'] },
     { name: 'managed-only', description: 'only on the system tier', surfaces: ['build'] },
+    {
+      name: 'git-shared',
+      description: 'git-sourced managed description',
+      surfaces: ['build'],
+      git: { url: 'https://github.com/example/repo', subpath: 'skills/git-shared', ref: 'main' },
+    },
   ],
 }));
 
@@ -88,5 +94,30 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
     const { resolver } = make();
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'review');
     expect(out.map((s) => s.name)).toEqual([]);
+  });
+
+  it('a git-sourced managed entry composes with managedGit: true, dirPath relative to the git-managed root', async () => {
+    const { resolver } = make();
+    const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
+    expect(out).toEqual(
+      expect.arrayContaining([
+        {
+          name: 'git-shared',
+          description: 'git-sourced managed description',
+          dirPath: 'git-shared',
+          managedGit: true,
+        },
+      ]),
+    );
+  });
+
+  it('an org-scoped skill overrides a git-sourced managed one by name, same as a static one', async () => {
+    const { resolver, store } = make();
+    await store.write('org1', '*', 'git-shared', { description: 'org override' });
+    const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
+    const gitShared = out.find((s) => s.name === 'git-shared');
+    expect(gitShared).toEqual({ name: 'git-shared', description: 'org override', dirPath: 'git-shared' });
+    expect(gitShared?.managed).toBeUndefined();
+    expect(gitShared?.managedGit).toBeUndefined();
   });
 });

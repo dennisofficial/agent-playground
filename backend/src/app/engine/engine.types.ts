@@ -383,12 +383,21 @@ export interface ResolvedSkill {
    */
   dirPath: string;
   /**
-   * True for a code-defined Atlas-managed (system-tier) skill (`SkillResolver`'s merge of
-   * `system-skill-registry.ts`'s `buildSystemSkills()`) — `dirPath` is then relative to the MANAGED skills
-   * root (`CONTAINER_SKILLS_MANAGED` in-sandbox), not the org-scoped skills store. Absent/false → the
-   * ordinary org/repo (`workspace_skills`) tier, relative to `CONTAINER_SKILLS_STORE`.
+   * True for a code-defined Atlas-managed (system-tier) STATIC skill (`SkillResolver`'s merge of a
+   * `system-skill-registry.ts` entry with no `git` source) — `dirPath` is then relative to the MANAGED
+   * skills root (`CONTAINER_SKILLS_MANAGED` in-sandbox, the repo-committed `backend/skills-managed/`).
+   * Absent/false → the ordinary org/repo (`workspace_skills`) tier, relative to `CONTAINER_SKILLS_STORE` —
+   * UNLESS {@link managedGit} is set instead. Mutually exclusive with `managedGit`.
    */
   managed?: boolean;
+  /**
+   * True for a code-defined Atlas-managed (system-tier) GIT-SOURCED skill (a `system-skill-registry.ts`
+   * entry WITH a `git` source, synced by `ManagedSkillSyncService`) — `dirPath` is then relative to the
+   * git-managed skills root (`CONTAINER_SKILLS_MANAGED_GIT` in-sandbox), a different global, read-only
+   * root than {@link managed}'s (repo-committed content vs. synced-from-upstream). Mutually exclusive
+   * with `managed`.
+   */
+  managedGit?: boolean;
 }
 
 export interface RunEngineArgs {
