@@ -1,4 +1,6 @@
 import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ModuleRef } from '@nestjs/core';
 import { EngineAuthError } from '../engine';
@@ -750,6 +752,12 @@ function assemble(
      *  build→ship pipeline tests still reach `done` without each re-encoding the gate. The dedicated
      *  ship-gate tests pass `false` to assert the park + drive the approval by hand. */
     autoShipApprove?: boolean;
+    /** Point the host-owned context bucket (`contextDirHost`) at a REAL dir so a test can assert the
+     *  on-disk halt-trail write (`<ctx>/generated/threads/<name>/completion.md`). Defaults to `/ctx`. */
+    contextDirHost?: string;
+    /** Point the thread sandbox's worktree at a REAL dir so a test can assert NOTHING is written under
+     *  `<worktree>/.atlas/threads/` (the halt-trail relocation regression guard). */
+    worktreePath?: string;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -910,7 +918,7 @@ function assemble(
         sandbox: {
           repoId: 'proj',
           branch: 'atlas/feature-job-abcd',
-          worktreePath: '/wt/atlas/feature-job-abcd',
+          worktreePath: opts.worktreePath ?? '/wt/atlas/feature-job-abcd',
           gitUrl: REPO.gitUrl,
           token: 'ghtok',
         },
@@ -918,6 +926,10 @@ function assemble(
       }),
       findSandbox: async () => null,
       recordPr: async () => undefined,
+      // The host-owned context bucket root — where the driver renders `/context/generated` projections
+      // (deviations.md, and the relocated halt-trail completion.md). Defaults to `/ctx`; a test can repoint
+      // it at a real temp dir to assert the on-disk write.
+      contextDirHost: (_jobId: string, _orgId: string) => opts.contextDirHost ?? '/ctx',
     } as unknown as import('./job-lifecycle.service').JobLifecycleService,
     // BuildShipService: the real terminal "ship" over the same git/pr/store fakes, so the leak-scan/latch
     // assertions hold. The open-PR step is now a SEEDED BRAIN TURN resolved via `brainModuleRef` (no separate
@@ -1599,6 +1611,38 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       h.posts.some((p) => p.includes('without asserting completion')),
     ).toBe(true); // a durable halt card, never a silent dead-end
     expect(h.store.materializeReviewChildren).not.toHaveBeenCalled(); // review skipped on a halt
+  });
+
+  it('writes the halt trail to /context/generated (host-owned), NOT the git worktree (ADR 0004 relocation)', async () => {
+    const ctxDir = mkdtempSync(join(tmpdir(), 'atlas-ctx-'));
+    const worktreeDir = mkdtempSync(join(tmpdir(), 'atlas-wt-'));
+    try {
+      const state: StoreState = {
+        job: makeJob(),
+        record: makeRecord(),
+        threads: [thread('sec-be', 10, 'Backend')],
+        steps: [],
+        route: { channel: 'C1', threadTs: 't1' },
+        operatorInputCards: [],
+      };
+      // A clean-but-incomplete turn halts the build (ADR 0004), driving the completion.md write.
+      const { turn } = makeTurn({ completeThread: false });
+      const h = assemble(state, { turn, contextDirHost: ctxDir, worktreePath: worktreeDir });
+
+      await h.driver.dispatch(state.job);
+      // The trail is rendered under `<contextDirHost>/generated/threads/<ordinal>-<slug>/` — here `010-backend`.
+      const trail = join(ctxDir, 'generated', 'threads', '010-backend', 'completion.md');
+      await flushUntil(() => existsSync(trail));
+
+      expect(existsSync(trail)).toBe(true);
+      expect(readFileSync(trail, 'utf8')).toContain('# Thread halted: Backend');
+
+      // Regression guard (the whole point): nothing is written into the git worktree.
+      expect(existsSync(join(worktreeDir, '.atlas'))).toBe(false);
+    } finally {
+      rmSync(ctxDir, { recursive: true, force: true });
+      rmSync(worktreeDir, { recursive: true, force: true });
+    }
   });
 
   it('SILENTLY RETRIES a transient infra blip and completes — never surfaces a phantom "failed" (ADR 0004)', async () => {

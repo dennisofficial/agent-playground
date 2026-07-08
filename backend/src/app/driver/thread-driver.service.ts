@@ -884,23 +884,29 @@ export class ThreadDriver implements JobDispatcher {
           ),
         );
     }
-    await this.writeCompletionMd(sandbox, thread, haltOutcome, term).catch((e) =>
+    await this.writeCompletionMd(job, thread, haltOutcome, term).catch((e) =>
       this.logger.warn(`could not write completion.md for thread=${thread.id}: ${e}`),
     );
   }
 
-  /** Render + write the durable halt trail to `<worktree>/.atlas/threads/<ordinal>-<slug>/completion.md`
-   *  (files-as-store, mirroring the decision ledger's plain `mkdir`+`writeFile`). A LIVE worktree artifact
-   *  the brain/operator read on the wake — NOT committed (the halted batch is un-committed + resumable; the
-   *  DB `terminal_record` is the durable source, this is its human-readable projection). Best-effort; never
-   *  blocks the halt. */
+  /** Render + write the durable halt trail to `<contextDirHost>/generated/threads/<ordinal>-<slug>/completion.md`
+   *  (host-written projection like the other `/context/generated` renders — `decision-record.md`,
+   *  `deviations.md` — read-only in-sandbox and surfaced in the operator UI; NOT the committed
+   *  `.atlas/decisions/` ledger, so it never lands in the git worktree). NOT committed (the halted batch is
+   *  un-committed + resumable; the DB `terminal_record` is the durable source, this is its human-readable
+   *  projection). Best-effort; never blocks the halt. */
   private async writeCompletionMd(
-    sandbox: FeatureSandbox,
+    job: Job,
     thread: DriverThread,
     outcome: 'blocked' | 'incomplete' | 'failed',
     term: ThreadTerminalRecord | null,
   ): Promise<void> {
-    const dir = join(sandbox.worktreePath, '.atlas', 'threads', threadDirName(thread));
+    const dir = join(
+      this.threadLifecycle.contextDirHost(job.id, job.orgId),
+      'generated',
+      'threads',
+      threadDirName(thread),
+    );
     await mkdir(dir, { recursive: true });
     await writeFile(
       join(dir, 'completion.md'),
@@ -3146,7 +3152,7 @@ export const COMMIT_AND_PUSH_INSTRUCTION =
   ` without committing, your work is treated as unfinished.`;
 
 /**
- * Render the durable halt trail for `.atlas/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
+ * Render the durable halt trail for `/context/generated/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
  * — every section is guarded on presence and tails are already length-capped in the record. The brain reads
  * this on its wake turn (alongside the fenced record in the wake body) to triage the halt.
  */
