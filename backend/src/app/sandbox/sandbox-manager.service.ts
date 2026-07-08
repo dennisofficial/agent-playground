@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { promisify } from 'node:util';
 import { atlasAgentHomeBase } from '../engine/engine-home';
 import type { FeatureSandbox } from '../git';
+import { orgSkillsRootHost } from '../skills/skill-store-paths';
 import { engineBundlePath, mcpBridgeBundlePath, mcpHubBundlePath } from './bundle-engine';
 import {
   CONTAINER_AGENT_HOME,
@@ -18,6 +19,7 @@ import {
   CONTAINER_MCP_HUB_DIR,
   CONTAINER_PLAYGROUND,
   CONTAINER_PNPM_STORE,
+  CONTAINER_SKILLS_STORE,
   CONTAINER_WORKTREE,
   isExternalMountPath,
   isReservedContainerPath,
@@ -328,6 +330,11 @@ export class SandboxManager implements SandboxProvider {
       mkdirSync(refsDir, { recursive: true });
       binds.push(`${refsDir}:/refs:ro`);
     }
+    // The central skills store — THIS org's whole subtree, read-write (see CONTAINER_SKILLS_STORE doc).
+    // Unlike /refs (opt-in via REFS_ROOT), this always binds — skills work with no extra config in dev.
+    const skillsDir = this.orgSkillsDir(orgId);
+    mkdirSync(skillsDir, { recursive: true });
+    binds.push(`${skillsDir}:${CONTAINER_SKILLS_STORE}`);
     // The thread's durable SHARED CONTEXT folder at /context — lives OUTSIDE the worktree (keyed by
     // jobId so it survives container recreate; the host reads it via contextDirHost()). THREE buckets,
     // pre-created so all always list cleanly:
@@ -615,20 +622,43 @@ export class SandboxManager implements SandboxProvider {
    *
    * Located by jobId alone: the container dir is `atlas-sbx-thread-<jobId>`, so we GLOB the sandbox
    * dir whose `-thread-<…>` suffix is a prefix of `jobId` (tolerates the 40-char `part()` cap truncating
-   * the tail), then the single `brain_*` home under it (verified: at most one per sandbox). Null when nothing
+   * the tail), then walk the nested `<orgId>/<repoId>/<jobId>/brain` engine-home leaf under it (see
+   * {@link findJobHomeDir} — a per-job sandbox only ever holds ITS OWN job's org/repo). Null when nothing
    * is on disk yet.
    */
   brainTranscriptProjectsDir(jobId: string): string | null {
     const sandboxHome = this.findSandboxHomeDir(jobId);
     if (!sandboxHome) return null;
+    const jobHome = this.findJobHomeDir(sandboxHome, jobId);
+    if (!jobHome) return null;
+    const brainHome = join(jobHome, 'brain');
+    return existsSync(brainHome) ? join(brainHome, 'claude', 'projects') : null;
+  }
+
+  /**
+   * Walk a sandbox home down to its `<orgId>/<repoId>/<jobId>` engine-home leaf (see {@link EngineHomeKey}).
+   * A per-job sandbox home only EVER holds that one job's own org + repo subtree, so there is always exactly
+   * one dir at each of the first two levels; anything else (not-yet-provisioned, or an unexpected shape) is
+   * treated as absent rather than guessed at. Null when no engine home has been created here yet.
+   */
+  private findJobHomeDir(sandboxHome: string, jobId: string): string | null {
+    const orgDir = this.soleSubdir(sandboxHome);
+    if (!orgDir) return null;
+    const repoDir = this.soleSubdir(join(sandboxHome, orgDir));
+    if (!repoDir) return null;
+    const jobHome = join(sandboxHome, orgDir, repoDir, jobId);
+    return existsSync(jobHome) ? jobHome : null;
+  }
+
+  /** The single subdirectory of `dir`, or null when it's absent/empty/ambiguous (more than one entry). */
+  private soleSubdir(dir: string): string | null {
     let entries: string[];
     try {
-      entries = readdirSync(sandboxHome);
+      entries = readdirSync(dir);
     } catch {
       return null;
     }
-    const brainHome = entries.find((d) => d.startsWith('brain_'));
-    return brainHome ? join(sandboxHome, brainHome, 'claude', 'projects') : null;
+    return entries.length === 1 ? entries[0]! : null;
   }
 
   /**
@@ -923,6 +953,12 @@ export class SandboxManager implements SandboxProvider {
     const root = this.env.get('REFS_ROOT');
     if (!root) return undefined;
     return join(root, orgId.replace(/[^a-z0-9_-]/gi, '_') || 'team');
+  }
+
+  /** This org's whole skills-store subtree, mounted read-write at {@link CONTAINER_SKILLS_STORE}. Always
+   *  resolves (SKILLS_ROOT ?? the local `.atlas-state/skills` default) — unlike `teamRefsDir`, never undefined. */
+  private orgSkillsDir(orgId: string): string {
+    return orgSkillsRootHost(this.env.get('SKILLS_ROOT'), orgId);
   }
 
   /** Poll the inner dockerd until it reports ready (or give up after the window, non-fatal). */

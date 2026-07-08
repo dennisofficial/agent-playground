@@ -36,6 +36,17 @@ export const CONTAINER_WORKTREE = '/workspace';
 export const CONTAINER_GIT_COMMON = `${CONTAINER_AGENT_HOME}/git-common`;
 
 /**
+ * The central skills store's mount path INSIDE the sandbox — the host bind-mounts ONE org's whole skills
+ * subtree here (`orgSkillsRootHost`, see `skills/skill-store-paths.ts`), read-write, mirroring `/refs`
+ * (read-only cross-repo reference library) but for this org's own skill dirs. `SkillResolver.resolveForTurn`
+ * puts an org-agnostic `dirPath` (relative to this root) on each `ResolvedSkill`; the per-turn skills-compose
+ * step in `engine-core.ts` joins it here to build write-through symlinks under `<CLAUDE_CONFIG_DIR>/skills/`.
+ * Read-write (not `:ro`) because a future session-scoped edit grant (Skill P3) writes THROUGH the mount to
+ * the canonical host file — enforcement is `canUseTool`-side, not a mount flag.
+ */
+export const CONTAINER_SKILLS_STORE = '/skills';
+
+/**
  * The in-sandbox path of the SHARED pnpm content-addressable store — explicitly pointed here regardless
  * of which pnpm version a repo's `packageManager` field (or corepack's own resolution) ends up running,
  * via TWO mechanisms baked in the sandbox Dockerfile (verified live against both): `npm_config_store_dir`

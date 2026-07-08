@@ -9,6 +9,7 @@ import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver, OnboardingService } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, JobEntity, JobSandboxEntity } from '../persistence/entities';
+import { SkillUpdaterService } from '../skills/skill-updater.service';
 import {
   hostExecUser,
   SANDBOX_PROVIDER,
@@ -119,6 +120,7 @@ export class JobLifecycleService {
     private readonly turnRegistry: TurnRegistry,
     // Lazily resolves the brain-module decision-ledger manifest for merge-time reconcile (avoids cycle).
     private readonly moduleRef: ModuleRef,
+    private readonly skillUpdater: SkillUpdaterService,
   ) {}
 
   /**
@@ -183,6 +185,10 @@ export class JobLifecycleService {
 
     // Provision the sandbox on the base branch.
     const sandboxRow = await this.provisionSandbox(thread, project, baseBranch);
+
+    // Fire-and-forget "on job start" skill-update check (the plan's second update trigger, alongside the
+    // updater's own cadence) — never awaited, so a slow/unreachable skill source can't delay job creation.
+    this.skillUpdater.reconcileOrgAsync(orgId);
 
     return {
       jobId: thread.id,

@@ -7,6 +7,7 @@ import type {
   CodexReasoningEffort,
   EngineAuth,
   EngineEvent,
+  EngineHomeKey,
   EngineRunResult,
   EngineUsage,
   ResolvedMcpServer,
@@ -21,6 +22,9 @@ import { StepEntity } from '../persistence/entities';
 
 /** What one turn needs to run. The sandbox supplies the worktree (the engine cwd) + branch. */
 export interface RunTurnInput {
+  /** The org that owns this job — together with `sandbox.repoId` + `jobId`, keys the build engine's
+   *  nested home (see {@link EngineHomeKey}). */
+  orgId: string;
   /** The job this turn serves. */
   jobId: string;
   /** The step this turn builds, if any (its `session_id` is the resume handle + is persisted). */
@@ -46,8 +50,9 @@ export interface RunTurnInput {
    */
   userMcpServers?: ResolvedMcpServer[];
   /**
-   * This repo's skills for this turn, RESOLVED host-side by `SkillResolver.resolveForTurn`. Passed straight
-   * through to `RunEngineArgs.skills` (the in-container engine renders each as a SKILL.md the SDK loads).
+   * This repo's skills for this turn, RESOLVED host-side by `SkillResolver.resolveForTurn` as dir paths +
+   * names (no bodies). Passed straight through to `RunEngineArgs.skills` — the in-container engine
+   * symlinks each into `<CLAUDE_CONFIG_DIR>/skills/`, natively discovered by the SDK.
    */
   skills?: ResolvedSkill[];
   /**
@@ -99,7 +104,7 @@ export interface RunTurnInput {
 // TURN_INPUT_FORWARD_KEYS — the exhaustiveness check below fails the build if a new optional field is added
 // to RunTurnInput without being forwarded (so it can never again be silently dropped at this hop).
 type TurnInputDerivedOrRequiredKey =
-  | 'jobId' | 'stepId' | 'sandbox' | 'gitAuth' // derived (→ target) / host-only
+  | 'orgId' | 'jobId' | 'stepId' | 'sandbox' | 'gitAuth' // derived (→ target / sandboxKey) / host-only
   | 'onEvent' | 'signal' // host-wrapped, set explicitly
   | 'engine' | 'mode' | 'task' | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
 type TurnInputForwardKey = Exclude<keyof RunTurnInput, TurnInputDerivedOrRequiredKey>;
@@ -160,9 +165,10 @@ export class TurnRunnerService {
     const rotatingSessionId = priorStep?.rotating_session_id ?? null;
     const hasPendingLegSeed = priorStep?.pending_leg_seed != null;
 
-    // The sandbox key namespaces the engine's isolated home + Codex client cache, so two concurrent
-    // features never share engine state. The feature branch is unique per job/feature.
-    const sandboxKey = `${sandbox.repoId}--${sandbox.branch}`;
+    // The engine-home key namespaces the isolated home + Codex client cache, so two concurrent jobs never
+    // share engine state. Keyed by JOB, not branch — a job owns its branch 1:1 (every step/thread of the
+    // job commits to the same branch), so the leaf stays STABLE across the job's whole build, not per-turn.
+    const sandboxKey: EngineHomeKey = { orgId: input.orgId, repoId: sandbox.repoId, jobId, type: 'build' };
 
     // Cold re-attach + resume: the container was created/restarted fresh (warm === false) but we're
     // resuming a session that remembers prior in-container state — tell it the box was reset. Flip warm

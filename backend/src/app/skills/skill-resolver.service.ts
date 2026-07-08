@@ -1,13 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import type { ResolvedSkill } from '../engine/engine.types';
 import type { McpSurface, WorkspaceSkillEntity } from '../persistence/entities';
+import { skillRelativeDir } from './skill-store-paths';
 import { WorkspaceSkillStore } from './workspace-skill.store';
 
 /**
  * The turn seam for skills — the analogue of `McpResolver` for `workspace_skills`. Given a turn's org,
- * repo, and surface, it returns the enabled skills (as plain `{name, description, body}`) to thread onto
- * `RunEngineArgs.skills`. Injected by the brain + driver turn-assembly paths (`@Global` module), exactly
- * like `McpResolver`.
+ * repo, and surface, it returns the enabled skills as `{name, description, dirPath}` — a dir path relative
+ * to the org-scoped skills-store root, NOT a body — to thread onto `RunEngineArgs.skills`. Injected by the
+ * brain + driver turn-assembly paths (`@Global` module), exactly like `McpResolver`.
  *
  * Precedence: a repo-scoped skill OVERRIDES an org-scoped skill of the same `name` — repo config wins.
  */
@@ -39,7 +40,7 @@ export class SkillResolver {
     return [...byName.values()].map((r) => ({
       name: r.name,
       description: r.description,
-      body: r.body,
+      dirPath: skillRelativeDir(r.scope, r.name),
     }));
   }
 }

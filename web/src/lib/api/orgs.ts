@@ -617,3 +617,191 @@ export function useAttachConventionProfile(orgId: string) {
       }),
   });
 }
+
+// ── Skills (directory-based skill bundles: git-installed or custom-authored) ───────────────────────
+// Registry metadata only — the real `SKILL.md` + support files live on the host store. Two writable
+// scopes (org-wide `'org'` + per-repo). GET (list + the file/content viewer) is any-member; every
+// mutation (install/set/update/fork/delete) is owner-only server-side. Mirrors the MCP hooks above.
+
+export type SkillProvenance = "git" | "custom" | "managed";
+export type SkillUpdatePolicy = "pinned" | "track-ref" | "manual";
+
+/** A skill as returned to the client — no secrets exist on a skill, so this is the full row. */
+export interface Skill {
+  /** `'org'` for an org-wide skill, otherwise the repo id. */
+  scope: "org" | string;
+  name: string;
+  description: string;
+  provenance: SkillProvenance;
+  sourceUrl: string | null;
+  sourceRef: string | null;
+  sourceSubpath: string | null;
+  installedSha: string | null;
+  updatePolicy: SkillUpdatePolicy | null;
+  forkedFrom: string | null;
+  surfaces: McpSurface[];
+  enabled: boolean;
+  /** True for a `pinned`/`manual` git skill whose remote has moved past `installedSha`. */
+  updateAvailable: boolean;
+}
+
+/** The `snake_case` shape the backend actually returns (`SkillView`) — mapped to `Skill` on read. */
+interface SkillWire {
+  scope: string;
+  name: string;
+  description: string;
+  provenance: SkillProvenance;
+  source_url: string | null;
+  source_ref: string | null;
+  source_subpath: string | null;
+  installed_sha: string | null;
+  update_policy: SkillUpdatePolicy | null;
+  forked_from: string | null;
+  surfaces: McpSurface[];
+  enabled: boolean;
+  update_available: boolean;
+}
+
+function fromWire(s: SkillWire): Skill {
+  return {
+    scope: s.scope,
+    name: s.name,
+    description: s.description,
+    provenance: s.provenance,
+    sourceUrl: s.source_url,
+    sourceRef: s.source_ref,
+    sourceSubpath: s.source_subpath,
+    installedSha: s.installed_sha,
+    updatePolicy: s.update_policy,
+    forkedFrom: s.forked_from,
+    surfaces: s.surfaces,
+    enabled: s.enabled,
+    updateAvailable: s.update_available,
+  };
+}
+
+/** Every skill for the org (org-wide + every repo scope). */
+export function useSkills(orgId: string) {
+  return useQuery({
+    queryKey: qk.orgSkills(orgId),
+    queryFn: async () => {
+      const { skills } = await webJson<{ skills: SkillWire[] }>(`/orgs/${orgId}/skills`);
+      return skills.map(fromWire);
+    },
+    enabled: Boolean(orgId),
+    staleTime: 15_000,
+  });
+}
+
+/** Body for `POST /web/orgs/:orgId/skills/install` — install (or re-install) from a git repo, or expand
+ *  every skill a marketplace manifest lists. */
+export interface InstallSkillBody {
+  scope: string;
+  sourceUrl: string;
+  ref?: string;
+  subpath?: string;
+  updatePolicy?: SkillUpdatePolicy;
+  surfaces?: McpSurface[];
+}
+
+/** Owner-only: install from GitHub. */
+export function useInstallSkill(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: InstallSkillBody) =>
+      webJson<{ skills: SkillWire[] }>(`/orgs/${orgId}/skills/install`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgSkills(orgId) }),
+  });
+}
+
+/** Body for `PUT /web/orgs/:orgId/skills/:scope/:name` — create/replace a skill's registry row, and (when
+ *  `body` is set) its `SKILL.md` content — a custom skill's create/edit path. */
+export interface SaveSkillBody {
+  description: string;
+  provenance?: SkillProvenance;
+  surfaces?: McpSurface[];
+  enabled?: boolean;
+  updatePolicy?: SkillUpdatePolicy;
+  /** `SKILL.md` body (frontmatter-stripped) — custom skills only. */
+  body?: string;
+}
+
+/** Owner-only: create a custom skill, or edit one (registry fields, and — for a custom skill — its
+ *  `SKILL.md` body). */
+export function useSaveSkill(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scope, name, body }: { scope: string; name: string; body: SaveSkillBody }) =>
+      webJson<{ ok: boolean }>(
+        `/orgs/${orgId}/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            description: body.description,
+            provenance: body.provenance,
+            surfaces: body.surfaces,
+            enabled: body.enabled,
+            update_policy: body.updatePolicy,
+            body: body.body,
+          }),
+        },
+      ),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgSkills(orgId) }),
+  });
+}
+
+/** Owner-only: apply-now — re-vendor a `git` skill from its recorded source, regardless of `updatePolicy`. */
+export function useUpdateSkill(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
+      webJson<{ ok: boolean }>(
+        `/orgs/${orgId}/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}/update`,
+        { method: "POST" },
+      ),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgSkills(orgId) }),
+  });
+}
+
+/** Owner-only: fork a `git` skill to a fresh, freely-editable `custom` copy in the same scope. */
+export function useForkSkill(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
+      webJson<{ skill: SkillWire }>(
+        `/orgs/${orgId}/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}/fork`,
+        { method: "POST" },
+      ).then((res) => fromWire(res.skill)),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgSkills(orgId) }),
+  });
+}
+
+/** Owner-only: delete a skill (registry row + its on-disk dir). */
+export function useDeleteSkill(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
+      webJson<{ ok: boolean }>(
+        `/orgs/${orgId}/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgSkills(orgId) }),
+  });
+}
+
+/** A skill's read-only file tree + `SKILL.md` content — the console viewer's data (any member; not cached
+ *  under `qk.orgSkills` since it's fetched on demand per open viewer). */
+export function useSkillFiles(orgId: string, scope: string, name: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...qk.orgSkills(orgId), "files", scope, name] as const,
+    queryFn: () =>
+      webJson<{ files: string[]; skillMd: string | null }>(
+        `/orgs/${orgId}/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}/files`,
+      ),
+    enabled: Boolean(orgId && scope && name) && enabled,
+    staleTime: 15_000,
+  });
+}

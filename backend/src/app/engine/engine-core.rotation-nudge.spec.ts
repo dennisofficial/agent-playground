@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 import { EngineCore } from './engine-core';
+import type { EngineHomeKey } from './engine-home';
 
 const HOME_ROOT = join(tmpdir(), `atlas-rotation-nudge-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
@@ -68,7 +69,7 @@ async function runWithOccupancies(occupancies: number[]): Promise<string[]> {
     task: 'do a tiny thing',
     cwd: '/tmp/wt',
     systemPrompt: 'persona',
-    sandboxKey: 'acme--feat',
+    sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' } as EngineHomeKey,
     mode: 'execute',
     auth: { secret: 'oauth-tok' },
     steerInput: idleSteerInput,

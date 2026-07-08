@@ -566,4 +566,48 @@ export class LocalGitService {
     if (!existsSync(dir)) return [];
     return (await readdir(dir)).map((name) => join(dir, name));
   }
+
+  /**
+   * Resolve `ref`'s remote HEAD sha at `gitUrl` WITHOUT cloning (`git ls-remote`) — the cheap round trip
+   * the skill updater uses to check "is there a newer commit" before paying for a re-vendor. `ref` omitted
+   * → resolve the remote's default branch (via `ls-remote --symref … HEAD`) and return its name too, so a
+   * caller that installed with no explicit ref can record what it actually landed on.
+   */
+  async resolveRemoteRef(
+    gitUrl: string,
+    ref: string | undefined,
+    token?: string,
+  ): Promise<{ ref: string; sha: string }> {
+    if (ref) {
+      const out = await this.git(['ls-remote', gitUrl, ref], { gitUrl, token });
+      const sha = out.split('\n')[0]?.split('\t')[0];
+      if (!sha) throw new Error(`ref '${ref}' not found on ${gitUrl}`);
+      return { ref, sha };
+    }
+    const out = await this.git(['ls-remote', '--symref', gitUrl, 'HEAD'], { gitUrl, token });
+    const lines = out.split('\n');
+    const symref = /^ref:\s+refs\/heads\/(\S+)\s+HEAD/.exec(lines[0] ?? '');
+    // The `ref: refs/heads/<default>\tHEAD` announcement line ALSO ends in `\tHEAD` — skip it explicitly so
+    // this finds the actual sha line (`<sha>\tHEAD`), not the symref line itself.
+    const shaLine = lines.find((l) => l.endsWith('\tHEAD') && !l.startsWith('ref:'));
+    const sha = shaLine?.split('\t')[0];
+    if (!symref || !sha) throw new Error(`could not resolve default branch for ${gitUrl}`);
+    return { ref: symref[1], sha };
+  }
+
+  /**
+   * Shallow-clone `gitUrl@ref` into an arbitrary EXTERNAL `destPath` — a throwaway scratch checkout (e.g.
+   * skill installation), NOT one of the durable `reposRoot()` clones: no worktree/lock bookkeeping, the
+   * caller owns `destPath`'s whole lifecycle (create fresh, delete when done). Returns the resolved HEAD
+   * sha of the clone.
+   */
+  async shallowCloneToPath(
+    gitUrl: string,
+    ref: string,
+    destPath: string,
+    token?: string,
+  ): Promise<string> {
+    await this.git(['clone', '--depth', '1', '--branch', ref, gitUrl, destPath], { gitUrl, token });
+    return this.git(['rev-parse', 'HEAD'], { cwd: destPath });
+  }
 }

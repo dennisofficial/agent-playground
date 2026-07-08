@@ -73,7 +73,7 @@ import { OrganizationService } from '../org/organization.service';
 import { WorktreeSecretFileStore } from '../onboarding';
 import { McpServerStore } from '../mcp/mcp-server.store';
 import { ConventionProfileResolver } from '../conventions';
-import { WorkspaceSkillStore } from '../skills';
+import { SkillFileWriter, WorkspaceSkillStore } from '../skills';
 import { McpProbeService } from '../mcp/mcp-probe.service';
 import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -548,8 +548,12 @@ export class WebSurfaceController {
     // `propose_convention_profile` here (the only place a brain-originated attach lands). @Global ConventionsModule.
     private readonly conventions: ConventionProfileResolver,
     // Skills — the owner-gated `skill-proposals/:id/approve` endpoint COMMITS a brain `propose_skill` here
-    // (the only place a brain-originated skill write lands). @Global SkillsModule.
+    // (the only place a brain-originated skill write lands); `skill-edit-access/:id/approve` grants live
+    // Edit/Write (forking a git skill to custom first, via `forkSkillToCustom`). @Global SkillsModule.
+    // `skillStore` writes the registry ROW (metadata only); `skillFiles` writes/removes/copies the actual
+    // skill dir on the host store.
     private readonly skillStore: WorkspaceSkillStore,
+    private readonly skillFiles: SkillFileWriter,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -1507,12 +1511,16 @@ export class WebSurfaceController {
     const dbScope = card.scope === 'org' ? '*' : card.repoId;
     if (card.mode === 'remove') {
       await this.skillStore.delete(org.id, dbScope, card.name);
+      this.skillFiles.removeSkillDir(org.id, dbScope, card.name);
     } else {
+      // Registry row (metadata only) + the actual SKILL.md content — a brain-authored skill is always
+      // 'custom' provenance (no remote source).
       await this.skillStore.write(org.id, dbScope, card.name, {
         description: card.description,
-        body: card.body,
+        provenance: 'custom',
         surfaces: card.surfaces,
       });
+      this.skillFiles.writeSkillMd(org.id, dbScope, card.name, card.description, card.body);
     }
     await this.store.markSkillProposalApproved(jobId, requestId);
     const notice =
@@ -1525,6 +1533,80 @@ export class WebSurfaceController {
       seedRow: { label: notice, chunkKey: `seed:skill-approve:${jobId}:${requestId}` },
     });
     return { ok: true, name: card.name, ts };
+  }
+
+  /**
+   * `POST …/jobs/:jobId/skill-edit-access/:requestId/approve` — the OWNER approves a brain
+   * `request_skill_edit_access` card, unlocking live `Edit`/`Write` on that skill for the REST of this
+   * session. For a `git`-provenance skill this FORKS it to a new `custom` skill first (the original stays
+   * untouched — clean and still auto-updatable) and grants the fork instead, so a re-approve after the fork
+   * already exists picks the SAME fork rather than minting another. Idempotent (a re-approve on an
+   * already-approved card is a no-op). Owner-only — unlocking a skill for live edits is as consequential as
+   * creating one.
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/skill-edit-access/:requestId/approve')
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
+  async approveSkillEditAccess(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('requestId') requestId: string,
+  ): Promise<{ ok: boolean; name: string; grantedAs?: string; ts?: string }> {
+    const thread = await this.requireThread(jobId, org.id);
+    const card = await this.store.getSkillEditAccessCard(jobId, requestId);
+    if (!card) throw new BadRequestException('no such skill edit-access request on this thread');
+    if (card.approved_at) {
+      return { ok: true, name: card.name, ...(card.forkedTo ? { grantedAs: card.forkedTo } : {}) };
+    }
+    const dbScope = card.scope === 'org' ? '*' : card.repoId;
+    const row = await this.skillStore.get(org.id, dbScope, card.name);
+    if (!row) {
+      // The skill was deleted/renamed since the request was posted — nothing to grant. Stamp approved
+      // (the card is terminal either way) and tell the brain rather than silently wedging the request.
+      await this.store.markSkillEditAccessApproved(jobId, requestId);
+      const gone = `The operator approved edit access to "${card.name}", but that skill no longer exists — nothing to edit. Call list_skills to see what's registered.`;
+      const goneTs = this.surface.seedSystemNotification(thread.repo_id, jobId, gone, {
+        orgId: org.id,
+        seedRow: { label: gone, chunkKey: `seed:skill-edit-approve:${jobId}:${requestId}` },
+      });
+      return { ok: true, name: card.name, ts: goneTs };
+    }
+    // git → fork-to-custom (§P3): the original stays clean + updatable; the grant applies to the fork.
+    const forkedTo = row.provenance === 'git' ? await this.forkSkillToCustom(org.id, dbScope, card.name) : undefined;
+    const grantName = forkedTo ?? card.name;
+    this.brain.grantSkillEditAccess(jobId, grantName);
+    await this.store.markSkillEditAccessApproved(jobId, requestId, forkedTo);
+    const notice = forkedTo
+      ? `The operator approved edit access to "${card.name}" — since it's installed from git, it was forked ` +
+        `to a new custom skill "${forkedTo}" (the original stays clean and keeps auto-updating). Edit/Write ` +
+        `files under "${forkedTo}" directly for the rest of this session.`
+      : `The operator approved edit access to "${card.name}" — Edit/Write its files directly for the rest of ` +
+        'this session.';
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+      orgId: org.id,
+      seedRow: { label: notice, chunkKey: `seed:skill-edit-approve:${jobId}:${requestId}` },
+    });
+    return { ok: true, name: card.name, ...(forkedTo ? { grantedAs: forkedTo } : {}), ts };
+  }
+
+  /** Fork a `git`-provenance skill to a fresh `custom` copy in the same scope — `<name>-custom`, or
+   *  `<name>-custom-2`/`-3`/… on a name collision (a prior fork, or an unrelated skill of that name). Copies
+   *  the dir (full fidelity) then writes the new registry row (`forked_from` the original's name). Returns
+   *  the fork's name. */
+  private async forkSkillToCustom(orgId: string, dbScope: string, name: string): Promise<string> {
+    let forkName = `${name}-custom`;
+    for (let n = 2; await this.skillStore.get(orgId, dbScope, forkName); n++) {
+      forkName = `${name}-custom-${n}`;
+    }
+    const source = await this.skillStore.get(orgId, dbScope, name);
+    this.skillFiles.forkSkillDir(orgId, dbScope, name, forkName);
+    await this.skillStore.write(orgId, dbScope, forkName, {
+      description: source?.description ?? `Forked from ${name}`,
+      provenance: 'custom',
+      forked_from: name,
+      surfaces: source?.surfaces,
+      enabled: true,
+    });
+    return forkName;
   }
 
   /** Map a proposal-card server (non-secret defn) to the store's `McpServerInput`: secret slots become empty

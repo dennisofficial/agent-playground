@@ -43,6 +43,7 @@ import {
   webMcpProposalCard,
   webQuestionCard,
   webSecretInputCard,
+  webSkillEditAccessCard,
   webSkillProposalCard,
   wrapSystemNotification,
 } from '../surface';
@@ -80,7 +81,7 @@ import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
-import { SkillResolver, WorkspaceSkillStore } from '../skills';
+import { SkillFileWriter, SkillResolver, WorkspaceSkillStore } from '../skills';
 import { WorkspaceProfileService } from '../workspace-profile';
 import {
   isExternalMountPath,
@@ -134,6 +135,7 @@ import type {
   RunEngineArgs,
   EngineRunResult,
 } from '../engine/engine.types';
+import type { EngineHomeKey } from '../engine/engine-home';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import type {
@@ -223,6 +225,16 @@ export class AgentSessionManager
   private readonly consecutiveResets = new Map<string, number>();
   /** Per-job resolved git auth (repo url + org PAT) for in-sandbox push/fetch — cached; see resolveBrainGitAuth. */
   private readonly gitAuthByJob = new Map<string, { gitUrl: string; token?: string }>();
+  /**
+   * SESSION-scoped `Edit`/`Write` grants for skills (`request_skill_edit_access`), keyed by jobId — in-memory
+   * on this manager, per `ARCHITECTURE.md`'s halt-and-resume model: the grant is recorded HOST-side when the
+   * owner approves, then forwarded on every subsequent brain turn's `RunEngineArgs.grantedSkills` so the
+   * in-container `canUseTool` (which has no DB/host-state access of its own) can honor it (see `engine-core.ts`
+   * `makeCanUseTool`'s skill guard). Lives for the process's lifetime / this job's — like `gitAuthByJob`, never
+   * explicitly cleared (a backend restart resets it; re-approval is cheap and the alternative, a durable grant
+   * that survives a job's ENTIRE life, is more surface than a "for this session" grant should have).
+   */
+  private readonly skillEditGrantsByJob = new Map<string, Set<string>>();
 
   constructor(
     private readonly store: BrainStoreService,
@@ -300,6 +312,9 @@ export class AgentSessionManager
     @Optional() private readonly skills?: SkillResolver,
     // Owner-approved `propose_skill` commits write through this. @Optional for unit tests; DI supplies live.
     @Optional() private readonly skillStore?: WorkspaceSkillStore,
+    // Reads a skill's current SKILL.md body for `propose_skill`'s `priorBody` (the registry row carries no
+    // content). @Optional for unit tests; DI (@Global SkillsModule) supplies it live.
+    @Optional() private readonly skillFiles?: SkillFileWriter,
     // Read-only for `list_mcp_servers` (the write path is the owner-gated approve endpoint). @Optional for
     // unit tests (undefined → the tool reports none); DI (@Global McpModule) supplies it live.
     @Optional() private readonly mcpStore?: McpServerStore,
@@ -1264,6 +1279,18 @@ export class AgentSessionManager
   }
 
   /**
+   * Record a SESSION-scoped skill edit grant for a job — called by the OWNER-gated
+   * `…/jobs/:jobId/skill-edit-access/:requestId/approve` endpoint after it resolves the fork-to-custom
+   * name (if any). The next brain turn forwards this on `RunEngineArgs.grantedSkills`, unlocking
+   * `Edit`/`Write` for exactly this skill name in-container (see `engine-core.ts`'s skill guard).
+   */
+  grantSkillEditAccess(jobId: string, skillName: string): void {
+    const set = this.skillEditGrantsByJob.get(jobId) ?? new Set<string>();
+    set.add(skillName);
+    this.skillEditGrantsByJob.set(jobId, set);
+  }
+
+  /**
    * Await all in-flight turns to finish, bounded by `graceMs`. Returns `true` if everything drained
    * cleanly, `false` if the grace cap was hit (the caller then lets the process exit; over-cap turns die
    * with it and cold-resume on the next leader). New turns are already blocked (drain gate above), so the
@@ -1828,7 +1855,12 @@ export class AgentSessionManager
     const branchCommandById = new Map<string, string>();
     let lastObservedBranch: string | null = null;
 
-    const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.jobId}`;
+    const sandboxKey: EngineHomeKey = {
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
+      jobId: stimulus.jobId,
+      type: 'brain',
+    };
     // Per-org Claude subscription secret (deployed); undefined locally → the in-container engine falls
     // back to CLAUDE_OAUTH_TOKEN, and throws if neither is set (never an API-key fallback).
     const auth = await this.creds.engineAuth(stimulus.orgId, 'claude');
@@ -1852,9 +1884,13 @@ export class AgentSessionManager
         )
       : null;
     // This repo's skills, resolved for the brain surface — forwarded on the run args so the in-container
-    // engine renders each as a SKILL.md the SDK loads (Layer B, like `userMcpServers`/`repoConventions`).
+    // engine symlinks each into `<CLAUDE_CONFIG_DIR>/skills/`, natively discovered by the SDK (Layer B,
+    // like `userMcpServers`/`repoConventions`).
     const skills =
       (await this.skills?.resolveForTurn(stimulus.orgId, stimulus.repoId, 'brain')) ?? [];
+    // This job's currently-approved skill edit-access grants (`request_skill_edit_access`), if any — see
+    // `skillEditGrantsByJob` / `grantSkillEditAccess`.
+    const grantedSkills = this.skillEditGrantsByJob.get(stimulus.jobId);
     // Authenticated git for the operator-facing brain turn: resolve the repo url + org PAT (cached per
     // job) so the brain can fetch/merge/rebase/resolve-conflicts/push directly from inside the sandbox —
     // it OWNS git, not the host. Sourced from the resolved repo, never `sandbox` (a row-sourced sandbox
@@ -1876,6 +1912,7 @@ export class AgentSessionManager
       ...(userMcpServers.length > 0 ? { userMcpServers } : {}),
       ...(repoConventions ? { repoConventions } : {}),
       ...(skills.length > 0 ? { skills } : {}),
+      ...(grantedSkills && grantedSkills.size > 0 ? { grantedSkills: Array.from(grantedSkills) } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
@@ -3430,6 +3467,7 @@ export class AgentSessionManager
       // by any job, not just onboarding: list what exists + propose new/edited ones (owner-approved).
       list_skills: this.buildListSkillsTool(stimulus),
       propose_skill: this.buildProposeSkillTool(stimulus),
+      request_skill_edit_access: this.buildRequestSkillEditAccessTool(stimulus),
       propose_skill_removal: this.buildProposeSkillRemovalTool(stimulus),
       list_mcp_servers: this.buildListMcpServersTool(stimulus),
       propose_mcp_servers: this.buildProposeMcpServersTool(stimulus),
@@ -4215,7 +4253,8 @@ export class AgentSessionManager
           ok: true,
           skills,
           message: skills.length
-            ? 'Existing skills — propose_skill with the SAME name to EDIT one, or a new name to CREATE one.'
+            ? 'Existing skills — propose_skill with a NEW name to create another; request_skill_edit_access ' +
+              'to iteratively edit one of these (Edit/Write, once the owner grants it).'
             : 'No skills registered yet — propose_skill to create the first.',
         };
       } catch (err) {
@@ -4226,13 +4265,15 @@ export class AgentSessionManager
   }
 
   /**
-   * `propose_skill({ name, description, body, scope?, surfaces?, rationale })` — propose CREATING or EDITING a
-   * reusable SKILL.md (a short instruction a build/brain/review session loads on demand). A skill shapes how
-   * future builds behave, so the brain NEVER writes it: this posts an owner-approvable card, and only the
-   * OWNER's approval at `…/jobs/:jobId/skill-proposals/:requestId/approve` writes it via `WorkspaceSkillStore`.
-   * `scope` is `'repo'` (this repo only, the default) or `'org'` (every repo). A `name` that already exists in
-   * that scope is an EDIT (the card shows the prior body); a new name is a CREATE. org/repo/job come from the
-   * closure (never tool args) — tenant safety.
+   * `propose_skill({ name, description, body, scope?, surfaces?, rationale })` — propose CREATING a new
+   * reusable SKILL.md (a short instruction a build/brain/review session loads on demand). CREATE-ONLY: a
+   * `name` that already exists in that scope is refused — a skill shapes how every future build behaves, so
+   * once it exists the brain never blanket-replaces its body; it calls `request_skill_edit_access` and edits
+   * it granularly via `Edit`/`Write` instead (multi-file capable, no re-pasting the whole file for a small
+   * change). The brain never writes a NEW skill directly either: this posts an owner-approvable card, and
+   * only the OWNER's approval at `…/jobs/:jobId/skill-proposals/:requestId/approve` writes it via
+   * `WorkspaceSkillStore`. `scope` is `'repo'` (this repo only, the default) or `'org'` (every repo).
+   * org/repo/job come from the closure (never tool args) — tenant safety.
    */
   private buildProposeSkillTool(stimulus: ChatStimulus): ToolImpl {
     const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -4260,7 +4301,15 @@ export class AgentSessionManager
       try {
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
         const existing = await this.skillStore.get(stimulus.orgId, dbScope, name);
-        const mode: 'create' | 'update' = existing ? 'update' : 'create';
+        if (existing) {
+          return {
+            ok: false,
+            reason:
+              `a ${scope}-scoped skill "${name}" already exists — propose_skill only CREATES. Call ` +
+              'request_skill_edit_access({ skill: \'' + name + '\' }) to get owner-approved edit access, ' +
+              'then Edit/Write its files directly.',
+          };
+        }
         const requestId = `skill-${randomUUID()}`;
         const card = webSkillProposalCard({
           jobId: stimulus.jobId,
@@ -4271,8 +4320,7 @@ export class AgentSessionManager
           description,
           body,
           surfaces,
-          mode,
-          ...(existing ? { priorBody: existing.body } : {}),
+          mode: 'create',
           rationale,
         });
         const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
@@ -4280,15 +4328,82 @@ export class AgentSessionManager
         return {
           ok: true,
           requestId,
-          mode,
+          mode: 'create',
           message:
-            `Posted a skill ${mode === 'create' ? 'creation' : 'change'} proposal for "${name}" (${scope}-scoped). ` +
-            'Only the OWNER can approve it — you cannot register it yourself. Once approved it loads on the next ' +
-            'fresh session (reset_sandbox to pick it up). Mention the proposal, then continue.',
+            `Posted a skill creation proposal for "${name}" (${scope}-scoped). Only the OWNER can approve it ` +
+            '— you cannot register it yourself. Once approved it loads on the next fresh session ' +
+            '(reset_sandbox to pick it up). Mention the proposal, then continue.',
         };
       } catch (err) {
         this.logger.warn(
           `propose_skill failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `request_skill_edit_access({ skill, rationale })` — request live `Edit`/`Write` access to an ALREADY
+   * REGISTERED skill for the rest of THIS session. Skills are read-only by default (`makeCanUseTool`'s
+   * skill guard, `engine-core.ts`) — a small fix or an iterative multi-file edit shouldn't need a whole new
+   * `propose_skill` body-replace proposal. Mirrors `request_secret`'s shape: posts an owner-approvable card
+   * and tells the model to stop and wait — the owner approves at
+   * `…/jobs/:jobId/skill-edit-access/:requestId/approve`, which (for a `git`-provenance skill) forks it to a
+   * custom copy FIRST, then records the grant this manager forwards on every subsequent brain turn
+   * (`grantSkillEditAccess` → `RunEngineArgs.grantedSkills`). PER-CARD (like `request_file`) — several may
+   * be open at once. org/repo/job come from the closure (never tool args) — tenant safety.
+   */
+  private buildRequestSkillEditAccessTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const name = String(args['skill'] ?? '').trim();
+      const rationale = String(args['rationale'] ?? '').trim();
+      if (!name) return { ok: false, reason: 'skill (the name to unlock) is required — call list_skills first' };
+      if (!rationale) return { ok: false, reason: 'rationale — why you need to edit this skill — is required' };
+      if (!this.skillStore) return { ok: false, reason: 'skills are not configured for this org' };
+      try {
+        // Repo scope overrides an org skill of the same name (SkillResolver's own precedence) — resolve
+        // whichever one is actually ACTIVE for this repo/job.
+        const repoRow = await this.skillStore.get(stimulus.orgId, stimulus.repoId, name);
+        const orgRow = repoRow
+          ? null
+          : await this.skillStore.get(stimulus.orgId, WorkspaceSkillStore.toDbScope('org'), name);
+        const row = repoRow ?? orgRow;
+        if (!row) {
+          return {
+            ok: false,
+            reason: `no skill named "${name}" is registered — call list_skills to see what's available`,
+          };
+        }
+        const scope: 'org' | 'repo' = repoRow ? 'repo' : 'org';
+        const requestId = `skill-edit-${randomUUID()}`;
+        const card = webSkillEditAccessCard({
+          jobId: stimulus.jobId,
+          requestId,
+          repoId: stimulus.repoId,
+          scope,
+          name,
+          provenance: row.provenance,
+          sourceUrl: row.source_url,
+          sourceRef: row.source_ref,
+          rationale,
+        });
+        const opened = await this.store.openSkillEditAccessRequest(stimulus.jobId, { requestId, card });
+        if (!opened.ok) {
+          return { ok: false, reason: 'Could not open the edit-access request (thread not found).' };
+        }
+        return {
+          ok: true,
+          requestId,
+          message:
+            `Posted an edit-access request for the "${name}" skill. Stop and wait — only the OWNER can grant ` +
+            'it. If it is installed from git, approval forks it to a custom copy first (the git original ' +
+            'stays clean and updatable) and the grant applies to the fork under a possibly DIFFERENT name — ' +
+            'the confirmation names the exact skill/dir to edit.',
+        };
+      } catch (err) {
+        this.logger.warn(
+          `request_skill_edit_access failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
         );
         return { ok: false, reason: errText(err) };
       }
@@ -4330,7 +4445,7 @@ export class AgentSessionManager
           body: '',
           surfaces: existing.surfaces,
           mode: 'remove',
-          priorBody: existing.body,
+          priorBody: this.skillFiles?.readSkillBody(stimulus.orgId, dbScope, name),
           rationale,
         });
         const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
@@ -4869,7 +4984,12 @@ export class AgentSessionManager
       return;
     }
 
-    const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.jobId}`;
+    const sandboxKey: EngineHomeKey = {
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
+      jobId: stimulus.jobId,
+      type: 'brain',
+    };
     const auth = await this.creds.engineAuth(stimulus.orgId, 'claude');
 
     // Durably mark the session being ABANDONED before the summary turn runs. Two duties: (1) recovery-skip —

@@ -10,6 +10,7 @@ import type {
   WebMcpProposalCard,
   WebQuestionCard,
   WebSecretInputCard,
+  WebSkillEditAccessCard,
   WebSkillProposalCard,
 } from '../surface';
 // Direct leaf import (not the '../surface' barrel): brain-store otherwise only TYPE-imports from surface,
@@ -1184,6 +1185,56 @@ export class BrainStoreService {
   async markSkillProposalApproved(jobId: string, requestId: string): Promise<void> {
     await this.updateCardMessage(jobId, requestId, {
       approved_at: new Date().toISOString(),
+    });
+  }
+
+  // ── skill edit-access requests (owner-gated `request_skill_edit_access`; grants live Edit/Write) ──────
+
+  /** Post an owner-approvable skill EDIT-ACCESS card. PER-CARD (like `request_file`) — several may be
+   *  open at once, no single-slot pointer. */
+  async openSkillEditAccessRequest(
+    jobId: string,
+    input: { requestId: string; card: WebSkillEditAccessCard },
+  ): Promise<{ ok: boolean }> {
+    const thread = await this.jobs.findOne({ where: { id: jobId } });
+    if (!thread) return { ok: false };
+    await this.messages.save(
+      this.messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: `Requested edit access to the "${input.card.name}" skill`,
+        kind: 'card',
+        ts: input.requestId,
+        card: input.card as unknown as Record<string, unknown>,
+      }),
+    );
+    return { ok: true };
+  }
+
+  /** Fetch one thread's skill-edit-access card by id (the card's `ts`); null if absent / wrong type. */
+  async getSkillEditAccessCard(
+    jobId: string,
+    requestId: string,
+  ): Promise<WebSkillEditAccessCard | null> {
+    const row = await this.messages.findOne({
+      where: { job_id: jobId, ts: requestId, kind: 'card' },
+    });
+    const card = row?.card as WebSkillEditAccessCard | undefined;
+    return card?.type === 'skill_edit_access_card' ? card : null;
+  }
+
+  /** Stamp a skill-edit-access card APPROVED — `forkedTo` set only when the underlying skill was forked
+   *  to a custom copy (the grant target, distinct from the card's original `name`). */
+  async markSkillEditAccessApproved(
+    jobId: string,
+    requestId: string,
+    forkedTo?: string,
+  ): Promise<void> {
+    await this.updateCardMessage(jobId, requestId, {
+      approved_at: new Date().toISOString(),
+      ...(forkedTo ? { forkedTo } : {}),
     });
   }
 

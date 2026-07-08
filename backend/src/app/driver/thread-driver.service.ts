@@ -21,6 +21,8 @@ import {
   EngineAuthError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
+  type EngineHomeKey,
+  type EngineHomeType,
   type ToolBridgeOptions,
   type ToolImpl,
 } from '../engine';
@@ -1100,7 +1102,7 @@ export class ThreadDriver implements JobDispatcher {
     // The shared review context — derive the diff ONCE and share it across every lens + the fix turn.
     const baseCtx: AutoFixContext = {
       worktreePath: sandbox.worktreePath,
-      sandboxKey: sandboxKey(sandbox),
+      sandboxKey: jobHomeKey(job, 'autofix'),
       ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
       intent: `${record?.overview ?? ''}\n\nSection: ${thread.brief}`.trim(),
       label: thread.brief,
@@ -2129,6 +2131,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id, // resumes the writer's persisted session — same conversation as its build turn
           sandbox,
@@ -2327,6 +2330,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id,
           sandbox,
@@ -2715,6 +2719,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id, // resumes the persisted engine session — same conversation as the build turn
           sandbox,
@@ -3326,8 +3331,10 @@ export function extractOrientation(text: string | undefined): string | null {
   return body.length > 1500 ? `${body.slice(0, 1500)}…` : body;
 }
 
-function sandboxKey(sandbox: FeatureSandbox): string {
-  return `${sandbox.repoId}--${sandbox.branch}`;
+/** A job's engine-home key for a given surface `type` — STABLE across every thread/step/lens of the job (all
+ *  its turns of that type share the job's own nested engine home), keyed by (org,repo,job), never per-branch. */
+function jobHomeKey(job: Job, type: EngineHomeType): EngineHomeKey {
+  return { orgId: job.orgId, repoId: job.repoId, jobId: job.id, type };
 }
 
 /** The ship-review gate applies only to the driver builds the operator drives to a PR — `feature` + `bugfix`.

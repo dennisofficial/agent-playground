@@ -92,6 +92,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       {} as never, // mcpProbe (McpProbeService)
       {} as never, // conventions (ConventionProfileResolver)
       {} as never, // skillStore (WorkspaceSkillStore)
+      {} as never, // skillFiles (SkillFileWriter)
     );
   }
 
