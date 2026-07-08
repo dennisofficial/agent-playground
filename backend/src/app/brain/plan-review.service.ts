@@ -5,7 +5,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
-import type { EngineAuth } from '../engine';
+import type { EngineAuth, EngineHomeKey } from '../engine';
 import type { Decision } from '../domain';
 import type { PlannedStep } from '../driver/render-plan';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
@@ -254,7 +254,12 @@ export class PlanReviewService {
 
     // STABLE per JOB (not per review): the Codex SDK stores its transcript under CODEX_HOME keyed by this
     // sandboxKey, so resuming a prior session only finds it when every review of a job shares ONE home.
-    const sandboxKey = `plan-review-${input.orgId}-${input.jobId}`;
+    const sandboxKey: EngineHomeKey = {
+      orgId: input.orgId,
+      repoId: sandbox.repoId,
+      jobId: input.jobId,
+      type: 'plan-review',
+    };
     const auth: EngineAuth | undefined = await this.creds.engineAuth(input.orgId, 'codex');
     const priorSessionId = row.codex_session_id ?? undefined;
     const task = isResume

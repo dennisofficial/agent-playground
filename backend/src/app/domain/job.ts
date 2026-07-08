@@ -37,6 +37,9 @@ export type ThreadOrigin = 'chat' | 'event' | 'control';
  * waiting on the operator, so it overrides every other axis (the asking turn may have briefly left
  * `turn_active` set; the gate still wins).
  *
+ * `halted` is the fourth axis: a thread with an unresolved turn-failure operator box outstanding needs
+ * you even while `status` still reads `running`/`plan_review` — chat-turn failures never touch `status`.
+ *
  * Derived — never stored — so there is exactly one rule, consumed by both the thread-list REST shape and
  * the realtime row mapper (they must never diverge).
  */
@@ -44,11 +47,15 @@ export function deriveNeedsYou(
   status: string,
   turnActive: boolean,
   awaitingQuestion: boolean,
+  halted: boolean,
 ): boolean {
   // A deleting job is going away — it must never light the alert dot, even with an open question. This
   // MUST precede the question gate below (which otherwise overrides every other axis).
   if (status === 'deleting') return false;
   if (awaitingQuestion) return true;
+  // A halted thread has an unresolved turn-failure box outstanding — it needs the operator even when its
+  // `status` is still `running`/`plan_review` (chat-turn failures never flip `status`).
+  if (halted) return true;
   if (turnActive) return false;
   return (
     status !== 'running' &&
