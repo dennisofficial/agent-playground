@@ -1,5 +1,12 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -31,10 +38,15 @@ describe('LocalGitService — full-clone provisioning for submodule repos (real 
   let git: LocalGitService;
   let prevAllowProtocol: string | undefined;
 
-  const g = (args: string[], cwd: string) => execFileAsync('git', args, { cwd });
+  const g = (args: string[], cwd: string) =>
+    execFileAsync('git', args, { cwd });
 
   /** A second, submodule-free fixture for the "unchanged" / linked-worktree assertions. */
-  async function buildNoSubmoduleFixture(): Promise<{ repo: ProjectRepo; mainClone: string }> {
+  async function buildNoSubmoduleFixture(): Promise<{
+    repo: ProjectRepo;
+    mainClone: string;
+    superRemote: string;
+  }> {
     const superRemote2 = join(root, 'super-remote-nosub');
     await execFileAsync('mkdir', ['-p', superRemote2]);
     await g(['init', '-q', '-b', 'main'], superRemote2);
@@ -54,7 +66,7 @@ describe('LocalGitService — full-clone provisioning for submodule repos (real 
       defaultBranch: 'main',
       repoPath: mainClone2,
     };
-    return { repo: repo2, mainClone: mainClone2 };
+    return { repo: repo2, mainClone: mainClone2, superRemote: superRemote2 };
   }
 
   beforeEach(async () => {
@@ -63,7 +75,9 @@ describe('LocalGitService — full-clone provisioning for submodule repos (real 
     process.env.GIT_ALLOW_PROTOCOL = 'file:https:ssh';
 
     root = mkdtempSync(join(tmpdir(), 'atlas-clone-provision-'));
-    git = new LocalGitService({ get: () => undefined } as unknown as EnvService);
+    git = new LocalGitService({
+      get: () => undefined,
+    } as unknown as EnvService);
 
     // 1. A submodule "remote".
     subRemote = join(root, 'sub-remote');
@@ -71,7 +85,10 @@ describe('LocalGitService — full-clone provisioning for submodule repos (real 
     await g(['init', '-q', '-b', 'main'], subRemote);
     await g(['config', 'user.email', 'test@atlas.dev'], subRemote);
     await g(['config', 'user.name', 'Test'], subRemote);
-    writeFileSync(join(subRemote, 'package.json'), '{"name":"@workspace/shared"}');
+    writeFileSync(
+      join(subRemote, 'package.json'),
+      '{"name":"@workspace/shared"}',
+    );
     await g(['add', '-A'], subRemote);
     await g(['commit', '-qm', 'sub'], subRemote);
 
@@ -82,7 +99,18 @@ describe('LocalGitService — full-clone provisioning for submodule repos (real 
     await g(['config', 'user.email', 'test@atlas.dev'], superRemote);
     await g(['config', 'user.name', 'Test'], superRemote);
     writeFileSync(join(superRemote, 'README.md'), '# super');
-    await g(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', '../sub-remote', 'packages/shared'], superRemote);
+    await g(
+      [
+        '-c',
+        'protocol.file.allow=always',
+        'submodule',
+        'add',
+        '-q',
+        '../sub-remote',
+        'packages/shared',
+      ],
+      superRemote,
+    );
     await g(['add', '-A'], superRemote);
     await g(['commit', '-qm', 'super'], superRemote);
 
@@ -109,13 +137,25 @@ describe('LocalGitService — full-clone provisioning for submodule repos (real 
   it('reproduces the pre-fix bug: a linked worktree + corrupted submodule core.worktree fatals `git add -A` (control)', async () => {
     const wt = join(mainClone, '.worktrees', 'bug-repro');
     await g(['fetch', 'origin', 'main'], mainClone);
-    await g(['worktree', 'add', '-q', '--detach', wt, 'origin/main'], mainClone);
+    await g(
+      ['worktree', 'add', '-q', '--detach', wt, 'origin/main'],
+      mainClone,
+    );
     await git.ensureSubmodules(wt, { gitUrl });
 
     // Corrupt the submodule's per-worktree gitdir core.worktree to an unresolvable relative shape —
     // this is the shape a linked worktree's shared-common-dir submodule gitdir takes across the
     // container's two mounts.
-    const subConfigPath = join(mainClone, '.git', 'worktrees', 'bug-repro', 'modules', 'packages', 'shared', 'config');
+    const subConfigPath = join(
+      mainClone,
+      '.git',
+      'worktrees',
+      'bug-repro',
+      'modules',
+      'packages',
+      'shared',
+      'config',
+    );
     const config = readFileSync(subConfigPath, 'utf8');
     const broken = config.replace(
       /worktree = .*/,
@@ -124,9 +164,14 @@ describe('LocalGitService — full-clone provisioning for submodule repos (real 
     writeFileSync(subConfigPath, broken);
 
     // Dirty the submodule so `add -A` must check its worktree state (which chdirs via core.worktree).
-    writeFileSync(join(wt, 'packages', 'shared', 'package.json'), '{"name":"@workspace/shared","x":1}');
+    writeFileSync(
+      join(wt, 'packages', 'shared', 'package.json'),
+      '{"name":"@workspace/shared","x":1}',
+    );
 
-    await expect(g(['-c', 'core.hooksPath=/dev/null', 'add', '-A'], wt)).rejects.toMatchObject({
+    await expect(
+      g(['-c', 'core.hooksPath=/dev/null', 'add', '-A'], wt),
+    ).rejects.toMatchObject({
       stderr: expect.stringMatching(/cannot chdir|failed in submodule/i),
     });
   });
@@ -145,17 +190,22 @@ describe('LocalGitService — full-clone provisioning for submodule repos (real 
     // Real clone (DIR), not a linked-worktree pointer file.
     expect(statSync(join(wt, '.git')).isDirectory()).toBe(true);
     // Submodule gitdir lives under the clone's own `.git/modules/…`.
-    expect(existsSync(join(wt, '.git', 'modules', 'packages', 'shared'))).toBe(true);
+    expect(existsSync(join(wt, '.git', 'modules', 'packages', 'shared'))).toBe(
+      true,
+    );
 
     // The core proof: `git add -A` no longer fatals.
     writeFileSync(join(wt, 'newfile.txt'), 'hello');
-    await expect(g(['-c', 'core.hooksPath=/dev/null', 'add', '-A'], wt)).resolves.toBeTruthy();
+    await expect(
+      g(['-c', 'core.hooksPath=/dev/null', 'add', '-A'], wt),
+    ).resolves.toBeTruthy();
     const status = await g(['status', '--porcelain'], wt);
     expect(status.stdout).toMatch(/^A\s+newfile\.txt$/m);
   });
 
   it('keeps the linked-worktree path unchanged for a repo without submodules', async () => {
-    const { repo: repoNoSub, mainClone: mainCloneNoSub } = await buildNoSubmoduleFixture();
+    const { repo: repoNoSub, mainClone: mainCloneNoSub } =
+      await buildNoSubmoduleFixture();
     const jobId = 'job-nosub-1';
     const base = await git.createBaseWorktree(repoNoSub, jobId);
     const wt = base.worktreePath;
@@ -165,6 +215,36 @@ describe('LocalGitService — full-clone provisioning for submodule repos (real 
 
     const list = await g(['worktree', 'list'], mainCloneNoSub);
     expect(list.stdout).toContain(wt);
+  });
+
+  it('detects submodules from origin even when the persistent checkout is stale', async () => {
+    const {
+      repo: staleRepo,
+      mainClone: staleMainClone,
+      superRemote: staleRemote,
+    } = await buildNoSubmoduleFixture();
+    expect(existsSync(join(staleMainClone, '.gitmodules'))).toBe(false);
+
+    await g(
+      [
+        '-c',
+        'protocol.file.allow=always',
+        'submodule',
+        'add',
+        '-q',
+        '../sub-remote',
+        'packages/shared',
+      ],
+      staleRemote,
+    );
+    await g(['add', '-A'], staleRemote);
+    await g(['commit', '-qm', 'add submodule'], staleRemote);
+
+    const base = await git.createBaseWorktree(staleRepo, 'job-stale-submodule');
+
+    expect(existsSync(join(staleMainClone, '.gitmodules'))).toBe(false);
+    expect(statSync(join(base.worktreePath, '.git')).isDirectory()).toBe(true);
+    expect(existsSync(join(base.worktreePath, '.gitmodules'))).toBe(true);
   });
 
   it('removeSandbox rm -rf a full clone and leaves the main clone intact', async () => {
@@ -181,7 +261,8 @@ describe('LocalGitService — full-clone provisioning for submodule repos (real 
   });
 
   it('removeSandbox de-registers a linked worktree via `git worktree remove`', async () => {
-    const { repo: repoNoSub, mainClone: mainCloneNoSub } = await buildNoSubmoduleFixture();
+    const { repo: repoNoSub, mainClone: mainCloneNoSub } =
+      await buildNoSubmoduleFixture();
     const jobId = 'job-teardown-linked';
     const base = await git.createBaseWorktree(repoNoSub, jobId);
     const wt = base.worktreePath;
