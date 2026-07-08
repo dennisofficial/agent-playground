@@ -56,7 +56,7 @@ export function NeedsYouBand({ threads }: { threads: InboxThread[] }) {
               <span className="min-w-0 flex-1 truncate font-mono text-[9px] text-faint">
                 {t.org.name}
               </span>
-              <StatusPie status={t.status} size={14} />
+              <StatusPie status={t.status} halted={t.halted} size={14} />
             </div>
             <div className="text-[13px] font-semibold leading-tight text-text">
               {t.title}

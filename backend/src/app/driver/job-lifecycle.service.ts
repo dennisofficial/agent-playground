@@ -746,7 +746,9 @@ export class JobLifecycleService {
       // Host-named canonical branch: honors the repo's optional `branch_prefix` (falling back to the
       // historical `atlas/thread-` default) so a repo can enforce its own convention (e.g. `feat/`).
       const featureBranch = computeFeatureBranchName(project, thread.id);
-      const baseSandboxInput = await this.git.createBaseWorktree(projectRepo, thread.id);
+      const baseSandboxInput = (await this.git.hasSubmodules(projectRepo))
+        ? await this.git.createBaseClone(projectRepo, thread.id)
+        : await this.git.createBaseWorktree(projectRepo, thread.id);
       const branched = await this.git.switchBranch(baseSandboxInput, projectRepo, featureBranch);
 
       // Populate git submodules into the freshly cut worktree (no-op without a `.gitmodules`) so the
@@ -852,11 +854,12 @@ export class JobLifecycleService {
   private async ensureWorktree(row: JobSandboxEntity, projectRepo: ProjectRepo): Promise<void> {
     if (row.worktree_path && existsSync(row.worktree_path)) return;
     const thread = await this.jobs.findOne({ where: { id: row.job_id } });
-    const base = await this.git.createBaseWorktree(projectRepo, row.job_id);
+    const base = (await this.git.hasSubmodules(projectRepo))
+      ? await this.git.createBaseClone(projectRepo, row.job_id)
+      : await this.git.createBaseWorktree(projectRepo, row.job_id);
     const desired = thread?.current_branch ?? thread?.feature_branch ?? null;
     const target =
-      desired &&
-      (await this.git.refExists(projectRepo.repoPath, `refs/heads/${desired}`))
+      desired && (await this.git.refExists(base.worktreePath, `refs/heads/${desired}`))
         ? desired
         : (thread?.feature_branch ?? null);
     const sb = target
