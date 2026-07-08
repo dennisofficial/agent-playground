@@ -116,6 +116,34 @@ describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge liv
     expect(block).toMatchObject({ kind: 'text', text: 'Hello' });
     expect(block.emittedAt).toBe(startStamp);
   });
+
+  it('reuses the block emittedAt for frames that only update an existing block', () => {
+    const store = new LiveTurnStore();
+    const frames: LiveStreamFrame[] = [];
+    const sub = store.stream$.subscribe((f) => frames.push(f));
+
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
+    const startStamp = store.snapshot(REPO, THREAD)!.blocks[0].emittedAt;
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'lo' });
+    store.push(REPO, THREAD, { kind: 'text', text: 'Hello' });
+    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: {} });
+    const toolStamp = store.snapshot(REPO, THREAD)!.blocks[1].emittedAt;
+    store.push(REPO, THREAD, { kind: 'tool_result', id: 'tu1', result: 'contents', isError: false });
+    sub.unsubscribe();
+
+    const append = frames.find((f) => (f.event as { text?: string }).text === 'lo')!;
+    expect(append.emittedAt).toBe(startStamp);
+    expect((append.event as { emittedAt?: number }).emittedAt).toBe(startStamp);
+
+    const finalize = frames.find((f) => (f.event as { kind?: string }).kind === 'text')!;
+    expect(finalize.emittedAt).toBe(startStamp);
+    expect((finalize.event as { emittedAt?: number }).emittedAt).toBe(startStamp);
+    expect(store.snapshot(REPO, THREAD)!.blocks[0].emittedAt).toBe(startStamp);
+
+    const toolResult = frames.find((f) => (f.event as { kind?: string }).kind === 'tool_result')!;
+    expect(toolResult.emittedAt).toBe(toolStamp);
+    expect((toolResult.event as { emittedAt?: number }).emittedAt).toBe(toolStamp);
+  });
 });
 
 describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via snapshot, then streams live', () => {

@@ -51,8 +51,9 @@ export interface LiveStreamFrame {
   lane: string;
   seq: number;
   /**
-   * Server epoch-ms for a block-creating delta. Optional on purpose: `turn_start`/`turn_end` frames create
-   * no block and set no stamp. Also embedded inside `event` so it reaches the web with no controller change.
+   * Server epoch-ms for a visible block delta. Optional on purpose: `turn_start`/`turn_end` frames create
+   * no block and set no stamp. Updates to an existing block reuse that block's original stamp. Also embedded
+   * inside `event` so it reaches the web with no controller change.
    */
   emittedAt?: number;
   event: unknown;
@@ -98,12 +99,12 @@ export class LiveTurnStore {
   private readonly turns = new Map<string, Map<string, TurnState>>();
   private seq = 0;
   private blockSeq = 0;
-  private lastEmitMs = 0;
+  private lastBlockEmitMs = 0;
 
   /** Strictly-monotonic wall-clock ms so blocks never tie within/across turns (interleave stays stable). */
   private stamp(): number {
-    this.lastEmitMs = Math.max(Date.now(), this.lastEmitMs + 1);
-    return this.lastEmitMs;
+    this.lastBlockEmitMs = Math.max(Date.now(), this.lastBlockEmitMs + 1);
+    return this.lastBlockEmitMs;
   }
 
   /** The live frame feed — the SSE controller fans this to web clients (filtered by repo). */
@@ -133,11 +134,17 @@ export class LiveTurnStore {
         event: { kind: 'turn_start', startedAt: state.startedAt },
       });
     }
-    const emittedAt = this.stamp();
-    this.applyToState(state, event, emittedAt);
+    const emittedAt = this.applyToState(state, event);
     const seq = ++this.seq;
     state.lastSeq = seq;
-    this.subject.next({ channel, jobId, lane, seq, emittedAt, event: { ...event, emittedAt } });
+    this.subject.next({
+      channel,
+      jobId,
+      lane,
+      seq,
+      ...(emittedAt != null ? { emittedAt } : {}),
+      event: emittedAt != null ? { ...event, emittedAt } : event,
+    });
   }
 
   /** End a turn: fan a `turn_end` marker (so the client reconciles against the durable log), then drop it. */
@@ -199,8 +206,7 @@ export class LiveTurnStore {
   private applyToState(
     state: TurnState,
     ev: { kind: string; [k: string]: unknown },
-    emittedAt: number,
-  ): void {
+  ): number | undefined {
     const blocks = state.blocks;
     const last = blocks[blocks.length - 1];
     const text = typeof ev['text'] === 'string' ? (ev['text'] as string) : '';
@@ -212,35 +218,82 @@ export class LiveTurnStore {
     // adaptive thinking) means a turn can have TWO open delta blocks at once — an open `thinking` and an open
     // `text` — so the authoritative block we're closing is NOT necessarily `last`. Checking only `last` here
     // pushed a duplicate instead of merging (the "double stream" bug). Scan back for the matching open block.
-    const finalizeOpen = (kind: 'text' | 'thinking'): boolean => {
+    const finalizeOpen = (kind: 'text' | 'thinking'): number | undefined => {
       for (let i = blocks.length - 1; i >= 0; i--) {
         const b = blocks[i];
         if (b.kind === kind && !b.done && b.parentToolUseId === pid) {
           b.text = text;
           b.done = true;
-          return true;
+          return b.emittedAt;
         }
       }
-      return false;
+      return undefined;
     };
     switch (ev.kind) {
       case 'text_delta':
-        if (last && last.kind === 'text' && !last.done && sameAuthor(last)) last.text = (last.text ?? '') + text;
-        else blocks.push({ kind: 'text', key: `b${this.blockSeq++}`, text, done: false, emittedAt, parentToolUseId: pid });
+        if (last && last.kind === 'text' && !last.done && sameAuthor(last)) {
+          last.text = (last.text ?? '') + text;
+          return last.emittedAt;
+        } else {
+          const emittedAt = this.stamp();
+          blocks.push({
+            kind: 'text',
+            key: `b${this.blockSeq++}`,
+            text,
+            done: false,
+            emittedAt,
+            parentToolUseId: pid,
+          });
+          return emittedAt;
+        }
         break;
-      case 'text':
-        if (!finalizeOpen('text'))
-          blocks.push({ kind: 'text', key: `b${this.blockSeq++}`, text, done: true, emittedAt, parentToolUseId: pid });
-        break;
+      case 'text': {
+        const existingEmittedAt = finalizeOpen('text');
+        if (existingEmittedAt != null) return existingEmittedAt;
+        const emittedAt = this.stamp();
+        blocks.push({
+          kind: 'text',
+          key: `b${this.blockSeq++}`,
+          text,
+          done: true,
+          emittedAt,
+          parentToolUseId: pid,
+        });
+        return emittedAt;
+      }
       case 'thinking_delta':
-        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last)) last.text = (last.text ?? '') + text;
-        else blocks.push({ kind: 'thinking', key: `b${this.blockSeq++}`, text, done: false, emittedAt, parentToolUseId: pid });
+        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last)) {
+          last.text = (last.text ?? '') + text;
+          return last.emittedAt;
+        } else {
+          const emittedAt = this.stamp();
+          blocks.push({
+            kind: 'thinking',
+            key: `b${this.blockSeq++}`,
+            text,
+            done: false,
+            emittedAt,
+            parentToolUseId: pid,
+          });
+          return emittedAt;
+        }
         break;
-      case 'thinking':
-        if (!finalizeOpen('thinking'))
-          blocks.push({ kind: 'thinking', key: `b${this.blockSeq++}`, text, done: true, emittedAt, parentToolUseId: pid });
-        break;
-      case 'tool_use':
+      case 'thinking': {
+        const existingEmittedAt = finalizeOpen('thinking');
+        if (existingEmittedAt != null) return existingEmittedAt;
+        const emittedAt = this.stamp();
+        blocks.push({
+          kind: 'thinking',
+          key: `b${this.blockSeq++}`,
+          text,
+          done: true,
+          emittedAt,
+          parentToolUseId: pid,
+        });
+        return emittedAt;
+      }
+      case 'tool_use': {
+        const emittedAt = this.stamp();
         blocks.push({
           kind: 'tool',
           key: `b${this.blockSeq++}`,
@@ -251,7 +304,8 @@ export class LiveTurnStore {
           emittedAt,
           parentToolUseId: pid,
         });
-        break;
+        return emittedAt;
+      }
       case 'tool_result': {
         const id = typeof ev['id'] === 'string' ? (ev['id'] as string) : '';
         for (let i = blocks.length - 1; i >= 0; i--) {
@@ -261,7 +315,7 @@ export class LiveTurnStore {
             b.isError = Boolean(ev['isError']);
             if (ev['structuredPatch'] !== undefined) b.structuredPatch = ev['structuredPatch'];
             b.done = true;
-            break;
+            return b.emittedAt;
           }
         }
         break;
@@ -269,5 +323,6 @@ export class LiveTurnStore {
       default:
         break; // session / result — not part of the visible turn
     }
+    return undefined;
   }
 }

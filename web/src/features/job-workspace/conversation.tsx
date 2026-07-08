@@ -182,15 +182,20 @@ export function TranscriptView({
   // wherever it lands in `log` — unless we split it out and time-merge it into the LIVE window instead (see
   // `trailing` below). Fallback (no live turn / startedAt unknown): behave exactly as today, one flat log.
   const startedAt = liveTurn?.startedAt;
-  const liveActive = !!liveTurn?.active && startedAt != null && liveBlockCount > 0;
-  const postedMs = (m: JobMessage) => Date.parse(m.postedAt);
+  const liveWindowActive = !!liveTurn?.active && startedAt != null;
   const midTurnRows = useMemo(
-    () => (liveActive ? messages.filter((m) => postedMs(m) > startedAt!) : []),
-    [messages, liveActive, startedAt],
+    () =>
+      liveWindowActive
+        ? messages.filter((m) => messagePostedMs(m) >= startedAt!)
+        : [],
+    [messages, liveWindowActive, startedAt],
   );
   const log = useMemo(
-    () => (liveActive ? messages.filter((m) => postedMs(m) <= startedAt!) : messages),
-    [messages, liveActive, startedAt],
+    () =>
+      liveWindowActive
+        ? messages.filter((m) => messagePostedMs(m) < startedAt!)
+        : messages,
+    [messages, liveWindowActive, startedAt],
   );
 
   // The composer footer — model · effort (from the latest `turn_meta`, else the lane's config default) + the
@@ -232,23 +237,26 @@ export function TranscriptView({
   );
 
   // The LIVE window: the in-flight turn's streaming blocks, time-merged with any mid-turn durable row (a
-  // steer the operator sent while the turn was running) by each item's real timestamp — so a steer renders
-  // at the moment it landed relative to the tokens streaming around it, not shoved before or after them.
+  // steer, notice, reminder, card, seed, etc.) by each item's real timestamp — so each row renders at the
+  // moment it landed relative to the tokens streaming around it, not shoved before or after them.
   const trailing = useMemo(() => {
-    if (!liveTurn || liveBlockCount === 0) return [];
+    if (!liveWindowActive || !liveTurn) return [];
     const liveItems = buildLiveTurnItems(liveTurn, lane, onSelectNode);
-    const tsByKey = new Map(midTurnRows.map((m) => [m.ts, postedMs(m)]));
+    const tsByKey = new Map(midTurnRows.map((m) => [m.ts, messagePostedMs(m)]));
+    const itemTs = (key: string) =>
+      tsByKey.get(key.startsWith("tg-") ? key.slice(3) : key) ??
+      Number.POSITIVE_INFINITY;
     const midItems = buildLogItems(midTurnRows, jobRef, {
       lane,
       phaseIds,
       legOrdinal,
       onOpenPlan,
       onSelectNode,
-    }).map((it) => ({ ...it, ts: tsByKey.get(it.key) ?? Number.POSITIVE_INFINITY }));
+    }).map((it) => ({ ...it, ts: itemTs(it.key) }));
     return [...liveItems, ...midItems].sort((a, b) => a.ts - b.ts);
   }, [
     liveTurn,
-    liveBlockCount,
+    liveWindowActive,
     midTurnRows,
     lane,
     phaseIds,
@@ -280,7 +288,7 @@ export function TranscriptView({
       liveStreamSig,
       turnActive,
       composerHeight,
-      midTurnRows.length,
+      trailing.length,
     ],
     () => pinRef.current(),
   );
@@ -334,7 +342,7 @@ export function TranscriptView({
             <p className="py-10 text-center text-[13px] text-faint">
               Loading conversation…
             </p>
-          ) : items.length === 0 && liveBlockCount === 0 ? (
+          ) : items.length === 0 && trailing.length === 0 && liveBlockCount === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">
               {emptyText ?? "No messages yet — say something to Atlas below."}
             </p>
@@ -457,6 +465,11 @@ function OpenQuestionsChip({
       </svg>
     </button>
   );
+}
+
+function messagePostedMs(message: JobMessage): number {
+  const ms = Date.parse(message.postedAt);
+  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
 }
 
 /** One windowable top-level row of the durable transcript — a stable key plus its rendered node. */
