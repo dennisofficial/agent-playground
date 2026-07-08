@@ -2616,9 +2616,13 @@ export class AgentSessionManager
         const hasSteps = threads.some((s) => s.steps.length > 0);
 
         // Ensure there's an open scoping job (+ sandbox) so the review has specs + a container to run in.
+        // Do NOT invent a placeholder title here: in the normal full-path flow `goal`/`overview` go to
+        // `propose_plan`, not to `review_plan` (it reviews from the spec files), so both are usually empty.
+        // Passing an empty title lets `openJob` keep the thread's existing title — the authoritative rename
+        // happens later in `persistPlan` from the plan `goal` — instead of clobbering it with a phase name.
         const jobId = await this.ensureJob(
           stimulus,
-          overview || goal || 'plan review',
+          overview || goal,
           'feature',
         );
         const reviewTicket = await this.resolveReviewTicket(
@@ -3072,6 +3076,22 @@ export class AgentSessionManager
             message: 'Committed, but no GitHub token is configured — PR not opened.',
           };
         }
+
+        // STAMP the ledger-promotion spine COMPLETE inline. On the direct path the brain runs
+        // `promote_decisions` before `finalize_build`, and `preShip` just committed those files — so promotion
+        // is already done. Stamping here (mirrors the driver path's `markLedgerPromoted` in
+        // `ThreadDriver.finalizeBuild`) stops the boot backstop `threadsAwaitingLedgerPromotion` from
+        // re-selecting this shipped row and re-firing a redundant promote + open-PR turn against the
+        // already-open PR. Safe before the inline PR-open resolves: the backstop only ever acts on `pr_url`-set
+        // rows, and `setPrReady`'s partial update preserves this status. Fail-soft — a failed stamp only means
+        // the (idempotent) backstop would still re-fire.
+        await this.store
+          .markLedgerPromoted(jobId)
+          .catch((err) =>
+            this.logger.warn(
+              `markLedgerPromoted failed for direct build=${jobId} (harmless — boot backstop would re-fire): ${err}`,
+            ),
+          );
 
         return {
           ok: true,

@@ -557,6 +557,23 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect((result as { message: string }).message).toContain('INFRASTRUCTURE');
   });
 
+  it('review_plan: anchors the job WITHOUT a "plan review" placeholder title (empty when goal/overview absent)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 'complete',
+      findings: [],
+      specHash: 'h',
+    });
+
+    // Normal full-path flow: goal/overview go to propose_plan, not review_plan — so both are absent here.
+    await tools['review_plan']({ threads: [{ title: 'S', type: 'backend' }] });
+
+    expect(mockStore.openJob).toHaveBeenCalledOnce();
+    const openArgs = (mockStore.openJob as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(openArgs.title).toBe('');
+    expect(openArgs.title).not.toBe('plan review');
+  });
+
   it('(a) propose_plan: returns error (no persist) if goal is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['propose_plan']({
@@ -684,8 +701,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // The tool returns the open-PR instructions for the brain to act on in-turn (host no longer opens it).
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     expect((result as { message: string }).message).toContain('gh pr create');
-    // The ledger is stamped later (on PR discovery by the reconciler), NOT synchronously here.
-    expect(mockStore.markLedgerPromoted).not.toHaveBeenCalled();
+    // The direct path stamps the ledger-promotion spine COMPLETE inline (the brain already ran
+    // promote_decisions and preShip committed it), so the boot backstop never re-selects this shipped
+    // row and re-fires a redundant promote + open-PR turn against the already-open PR.
+    expect(mockStore.markLedgerPromoted).toHaveBeenCalledWith(FAKE_JOB_ID);
   });
 
   it('(c) finalize_build: a leak-scan block returns a hard failure (brain must clean the branch)', async () => {

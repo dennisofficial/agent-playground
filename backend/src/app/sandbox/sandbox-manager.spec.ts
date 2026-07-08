@@ -509,16 +509,8 @@ describe('SandboxManager.attach — onMilestone', () => {
       sandbox: sandbox(), orgId: 'org1', jobId: 'job1', setupScript: 'script-B',
     } as SandboxAttachInput);
 
-    const cfgA = (
-      a.createContainer.mock.calls[0] as unknown as [
-        { labels: Record<string, string> },
-      ]
-    )[0].labels['atlas.cfg'];
-    const cfgB = (
-      b.createContainer.mock.calls[0] as unknown as [
-        { labels: Record<string, string> },
-      ]
-    )[0].labels['atlas.cfg'];
+    const cfgA = (a.createContainer.mock.calls[0] as unknown as [{ labels: Record<string, string> }])[0].labels['atlas.cfg'];
+    const cfgB = (b.createContainer.mock.calls[0] as unknown as [{ labels: Record<string, string> }])[0].labels['atlas.cfg'];
     expect(cfgA).not.toBe(cfgB);
   });
 

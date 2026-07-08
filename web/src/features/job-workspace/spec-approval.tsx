@@ -63,9 +63,11 @@ function useApproveShip(jobRef: JobRef, value: string) {
 export function NavigatorApprovalCallout({
   jobRef,
   value,
+  directBuild,
 }: {
   jobRef: JobRef;
   value: string;
+  directBuild?: boolean;
 }) {
   const { submit, pending, approved, error } = useApprovePlan(jobRef, value);
   return (
@@ -95,6 +97,7 @@ export function NavigatorApprovalCallout({
         onClick={submit}
         pending={pending}
         approved={approved}
+        directBuild={directBuild}
         className="mt-[9px] w-full justify-center text-[11px]"
         style={{ borderRadius: "7px", padding: "7px 0" }}
         iconSize={12}
@@ -114,9 +117,11 @@ export function NavigatorApprovalCallout({
 export function NavigatorApproveButton({
   jobRef,
   value,
+  directBuild,
 }: {
   jobRef: JobRef;
   value: string;
+  directBuild?: boolean;
 }) {
   const { submit, pending, approved, error } = useApprovePlan(jobRef, value);
   return (
@@ -125,6 +130,7 @@ export function NavigatorApproveButton({
         onClick={submit}
         pending={pending}
         approved={approved}
+        directBuild={directBuild}
         className="w-full justify-center text-[11px]"
         style={{ borderRadius: "7px", padding: "7px 0" }}
         iconSize={12}
@@ -149,11 +155,13 @@ export function PersistentApprovalBar({
   value,
   specCount,
   stepCount,
+  directBuild,
 }: {
   jobRef: JobRef;
   value: string;
   specCount: number;
   stepCount: number;
+  directBuild?: boolean;
 }) {
   const { submit, pending, approved, error } = useApprovePlan(jobRef, value);
   return (
@@ -191,6 +199,7 @@ export function PersistentApprovalBar({
         onClick={submit}
         pending={pending}
         approved={approved}
+        directBuild={directBuild}
         className="text-[11.5px]"
         style={{
           borderRadius: "8px",
@@ -199,60 +208,6 @@ export function PersistentApprovalBar({
         }}
         iconSize={13}
       />
-    </div>
-  );
-}
-
-// ── Component 3 — Navigator Ship Callout ───────────────────────────────────────────────────────────
-/**
- * The ship-review counterpart of {@link NavigatorApprovalCallout} — sits above the OUTPUTS region (where
- * the diff/artifacts already live). Title row ("Build reviewed — ready to ship") + a full-width green
- * "Ship it" button.
- */
-export function NavigatorShipCallout({
-  jobRef,
-  value,
-}: {
-  jobRef: JobRef;
-  value: string;
-}) {
-  const { submit, pending, approved, error } = useApproveShip(jobRef, value);
-  return (
-    <div
-      className="mx-1.5 mb-3 rounded-lg border"
-      style={{
-        borderColor: "var(--accent-line)",
-        background: "var(--accent-soft)",
-        padding: "10px 11px",
-      }}
-    >
-      <div className="flex items-center gap-1.5">
-        <ClipboardCheck
-          size={11}
-          strokeWidth={2}
-          style={{ color: "var(--accent)" }}
-          className="shrink-0"
-        />
-        <span
-          className="text-[11px] font-bold"
-          style={{ color: "var(--accent)" }}
-        >
-          Build reviewed — ready to ship
-        </span>
-      </div>
-      <ShipButton
-        onClick={submit}
-        pending={pending}
-        approved={approved}
-        className="mt-[9px] w-full justify-center text-[11px]"
-        style={{ borderRadius: "7px", padding: "7px 0" }}
-        iconSize={12}
-      />
-      {error ? (
-        <p className="mt-1.5 text-[10px] text-red">
-          Couldn’t ship — try again.
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -403,17 +358,19 @@ function VerdictButton({
   );
 }
 
-/** The plan-approval verdict button — "Approve plan" / "Approving…" / "Approved". */
-function ApproveButton(
-  props: Omit<
-    React.ComponentProps<typeof VerdictButton>,
-    "idleLabel" | "pendingLabel" | "doneLabel"
-  >,
-) {
+/** The plan-approval verdict button — "Approve plan" / "Approving…" / "Approved". For a direct build
+ *  (`directBuild`) the idle copy becomes "Approve Direct Build" so the fast path is obvious at the gate. */
+function ApproveButton({
+  directBuild,
+  ...props
+}: Omit<
+  React.ComponentProps<typeof VerdictButton>,
+  "idleLabel" | "pendingLabel" | "doneLabel"
+> & { directBuild?: boolean }) {
   return (
     <VerdictButton
       {...props}
-      idleLabel="Approve plan"
+      idleLabel={directBuild ? "Approve Direct Build" : "Approve plan"}
       pendingLabel="Approving…"
       doneLabel="Approved"
     />
