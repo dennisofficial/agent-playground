@@ -199,7 +199,7 @@ function fakeRefreshingCodexSdk(refreshedBlob: string | null) {
 describe('EngineCore — Claude mode/home/credential wiring', () => {
   it('execute mode: write tools, default permission, isolated CLAUDE_CONFIG_DIR, subscription token threaded', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const res = await core.run({
       engine: 'claude',
       task: 'do it',
@@ -234,7 +234,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
   it('writer subagents (implement/implement-deep) are spawnable ONLY on execute turns, not plan/review', async () => {
     const run = async (mode: 'execute' | 'plan' | 'review') => {
       const { sdk, captured } = fakeClaudeSdk();
-      const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+      const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
       await core.run({ engine: 'claude', task: 't', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'a--b', mode, auth: { secret: 'tok' } });
       return captured.options!.agents as Record<string, { tools: string[]; model: string }>;
     };
@@ -272,7 +272,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('execute mode: canUseTool allows Write inside cwd OR a writableRoot, denies elsewhere', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
       task: 'do it',
@@ -280,6 +280,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       systemPrompt: 'persona',
       sandboxKey: 'acme--feat',
       mode: 'execute',
+      auth: { secret: 'tok' },
       // The durable `/context` shared mount the docker runner grants so the brain can author the plan.
       writableRoots: ['/context'],
     });
@@ -298,7 +299,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('plan mode: permissionMode plan, ExitPlanMode tool present, no writes flag in canUseTool', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
       task: 'plan it',
@@ -306,6 +307,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       systemPrompt: 'persona',
       sandboxKey: 'acme--feat',
       mode: 'plan',
+      auth: { secret: 'tok' },
     });
     const opts = captured.options!;
     expect(opts.permissionMode).toBe('plan');
@@ -314,7 +316,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('review mode: read-only tool set, default permission, no Write/Edit', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
       task: 'review it',
@@ -322,6 +324,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       systemPrompt: 'persona',
       sandboxKey: 'acme--feat',
       mode: 'review',
+      auth: { secret: 'tok' },
     });
     const opts = captured.options!;
     expect(opts.tools).not.toContain('Write');
@@ -331,7 +334,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('richStream: enables partial stream + thinking, emits token deltas, thinking, tool_use(input) + tool_result', async () => {
     const { sdk, captured } = fakeRichClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const events: EngineEvent[] = [];
     await core.run({
       engine: 'claude',
@@ -340,6 +343,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       systemPrompt: 'p',
       sandboxKey: 'k',
       mode: 'execute',
+      auth: { secret: 'tok' },
       richStream: true,
       onEvent: (e) => events.push(e),
     });
@@ -376,9 +380,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
           yield { type: 'result', subtype: 'success', session_id: 's', result: 'ok', usage: { input_tokens: 1, output_tokens: 1 } };
         })(),
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const events: EngineEvent[] = [];
-    await core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute', richStream: true, onEvent: (e) => events.push(e) });
+    await core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute', auth: { secret: 'tok' }, richStream: true, onEvent: (e) => events.push(e) });
 
     const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<EngineEvent, { kind: 'tool_result' }>;
     expect(toolResult.structuredPatch).toEqual(hunks);
@@ -402,15 +406,15 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
         })();
       },
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await expect(
-      core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute' }),
+      core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute', auth: { secret: 'tok' } }),
     ).rejects.toThrow(/Claude engine ended: error_during_execution.*stop_reason=refusal.*errors=boom: upstream failed.*stderr\(tail\)=.*529 overloaded_error/s);
   });
 
   it('without richStream: no partial stream; tool stays name-only; no thinking/tool_result', async () => {
     const { sdk, captured } = fakeRichClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const events: EngineEvent[] = [];
     await core.run({
       engine: 'claude',
@@ -419,6 +423,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       systemPrompt: 'p',
       sandboxKey: 'k',
       mode: 'execute',
+      auth: { secret: 'tok' },
       onEvent: (e) => events.push(e),
     });
     expect(captured.options!.includePartialMessages).toBeUndefined();
@@ -461,7 +466,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       },
     };
 
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const res = await core.run({
       engine: 'claude',
       task: 'do the thing',
@@ -469,6 +474,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       systemPrompt: 'p',
       sandboxKey: 'k',
       mode: 'execute',
+      auth: { secret: 'tok' },
       steerable: true,
       steerInput,
     });
@@ -516,7 +522,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     };
 
     const acks: string[] = [];
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
       task: 'the task',
@@ -524,6 +530,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       systemPrompt: 'p',
       sandboxKey: 'k',
       mode: 'execute',
+      auth: { secret: 'tok' },
       steerable: true,
       steerInput,
       onEvent: (e) => {
@@ -574,7 +581,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       },
     };
 
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
       task: 'the task',
@@ -582,6 +589,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       systemPrompt: 'p',
       sandboxKey: 'k',
       mode: 'execute',
+      auth: { secret: 'tok' },
       steerable: true,
       steerInput,
       onEvent: (e) => {
@@ -597,7 +605,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('surfaces per-call context occupancy (NOT the cumulative billing sum) across multiple round-trips', async () => {
     const { sdk } = fakeMultiTurnClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const res = await core.run({
       engine: 'claude',
       task: 'x',
@@ -618,15 +626,12 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(usage.contextModel).toBe('claude-opus-4-8');
   });
 
-  it('falls back to the env subscription token and strips any ambient API key', async () => {
+  it('threads the explicit subscription token and strips any ambient API key', async () => {
     const { sdk, captured } = fakeClaudeSdk();
     const prior = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = 'should-be-stripped';
     try {
-      const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
-        homeRoot: HOME_ROOT,
-        claudeOauthToken: 'oauth-from-env',
-      });
+      const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
       await core.run({
         engine: 'claude',
         task: 'x',
@@ -634,10 +639,10 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
         systemPrompt: 'p',
         sandboxKey: 'k',
         mode: 'execute',
-        // no explicit auth → falls back to cfg.claudeOauthToken
+        auth: { secret: 'oauth-from-host' },
       });
       const env = captured.options!.env as Record<string, string>;
-      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-from-env');
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-from-host');
       expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     } finally {
       if (prior === undefined) delete process.env.ANTHROPIC_API_KEY;
@@ -645,7 +650,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     }
   });
 
-  it('throws (no API-key fallback) when no subscription secret is available', async () => {
+  it('throws (no API-key or env fallback) when no subscription secret is passed', async () => {
     const { sdk } = fakeClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await expect(
@@ -656,18 +661,18 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
         systemPrompt: 'p',
         sandboxKey: 'k',
         mode: 'execute',
-        // no explicit auth, no cfg.claudeOauthToken
+        // no explicit auth → must throw (no env/config fallback exists)
       }),
     ).rejects.toThrow(/subscription secret/);
   });
 
   it('tool bridge: server registered under options.mcpServers (not a stray top-level key); names auto-approved', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const mcpServers = { 'atlas-host-bridge': { __fake: 'server' } };
     const names = ['mcp__atlas-host-bridge__submit_plan', 'mcp__atlas-host-bridge__get_pipeline_state'];
     await core.runWithExtras(
-      { engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute' },
+      { engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute', auth: { secret: 'tok' } },
       { mcpServers },
       names,
     );
@@ -682,7 +687,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('no bridge: allowedTools is the static auto-approve set and no mcpServers leak (worker invariant)', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
       task: 'x',
@@ -690,6 +695,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       systemPrompt: 'p',
       sandboxKey: 'k',
       mode: 'execute',
+      auth: { secret: 'tok' },
     });
     const opts = captured.options!;
     // Auto-approve: safe reads + subagent spawning + the task tools (live task list) + web. Writes/Bash
@@ -713,7 +719,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 describe('EngineCore — Codex mode/home/credential wiring', () => {
   it('execute mode: danger-full-access sandbox, subscription auth.json home, NO apiKey on the client', async () => {
     const { sdk, ctorCalls, threadCalls } = fakeCodexSdk();
-    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
     const res = await core.run({
       engine: 'codex',
       task: 'do it',
@@ -736,7 +742,7 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
 
   it('plan mode: danger-full-access sandbox (network for doc-checking; no-edit is prompt-enforced)', async () => {
     const { sdk, threadCalls } = fakeCodexSdk();
-    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'codex',
       task: 'plan it',
@@ -782,7 +788,7 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
       }
     }
     const sdk = { Codex: FakeCodex } as unknown as typeof import('@openai/codex-sdk');
-    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
     const events: EngineEvent[] = [];
     try {
       await core.run({
@@ -871,7 +877,7 @@ describe('EngineCore — unresumable session detection', () => {
 
   it('run() throws a marked, specific error (and never calls the SDK) when the session is unresumable', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await expect(
       core.run({
         engine: 'claude',
@@ -892,7 +898,7 @@ describe('EngineCore — unresumable session detection', () => {
     const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', 'resume-ok');
     mkdirSync(join(dir, 'projects', '-tmp-wt'), { recursive: true });
     writeFileSync(join(dir, 'projects', '-tmp-wt', 'live-session.jsonl'), '{}');
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
       task: 'resume me',

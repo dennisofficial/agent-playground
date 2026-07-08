@@ -171,13 +171,6 @@ const STEER_IDLE_GRACE_MS = 350;
 export interface EngineCoreConfig {
   /** Root for the isolated agent home (from AGENT_HOME_ROOT). */
   homeRoot?: string;
-  /**
-   * Optional last-resort subscription secrets for when a run doesn't pass explicit `auth`. In practice every
-   * turn threads its per-org secret as `args.auth`, so these stay unset in the real engine — they exist only
-   * so `EngineCore` remains a self-contained, testable unit. There is NO ambient-env source for them.
-   */
-  claudeOauthToken?: string;
-  codexOauthToken?: string;
 }
 
 /**
@@ -426,14 +419,12 @@ export class EngineCore {
   }
 
   /**
-   * Resolve the run's subscription secret: an explicit `args.auth` wins (the host-resolved per-org
-   * secret); otherwise fall back to the env-configured secret for this engine. There is NO api_key
-   * path — a missing secret THROWS so the turn fails loudly instead of silently billing the API.
+   * Resolve the run's subscription secret: the host-resolved per-org secret MUST arrive as `args.auth`.
+   * There is NO env/config fallback and NO api_key path — a missing secret THROWS so the turn fails
+   * loudly instead of silently billing the API or borrowing an ambient credential.
    */
   private resolveAuth(engine: 'claude' | 'codex', explicit: EngineAuth | undefined): EngineAuth {
     if (explicit) return explicit;
-    const secret = engine === 'claude' ? this.cfg.claudeOauthToken : this.cfg.codexOauthToken;
-    if (secret) return { secret };
     throw new Error(
       `No ${engine} subscription secret — the org has no ${engine} credential set (add one via ` +
         'onboarding, or `pnpm db:seed` in dev). The engine runs subscription-only (no API-key fallback).',
@@ -533,11 +524,11 @@ export class EngineCore {
     let streamingStarted = false;
     const steerBuffer: Array<{ id?: string; text: string }> = [];
     let flushSteerBuffer = (): void => {}; // real impl set below when streaming; no-op for worker turns
-    // ENGINE-LOCAL Leg-rotation nudge (see RunEngineArgs.rotationNudge): latch SOFT then HARD as this turn's
-    // own main-agent occupancy fills, injecting the nudge straight into the live input. Race-free by design —
-    // it fires mid-stream (input open), never over the host→Redis path that raced the post-result close.
-    let nudgedSoft = false;
-    let nudgedHard = false;
+    // ENGINE-LOCAL Leg-rotation nudge (see RunEngineArgs.rotationNudge): latch SOFT then a REMINDER on each
+    // further +delta as this turn's own main-agent occupancy fills, injecting the nudge straight into the live
+    // input. Race-free by design — it fires mid-stream (input open), never over the host→Redis path that raced
+    // the post-result close. `firedNudgeLevel` is the highest delta-band injected (-1 before soft; 0 = soft).
+    let firedNudgeLevel = -1;
     let injectRotationNudge = (_text: string): void => {}; // real impl set below when streaming
     if (input) {
       input.push(steerUserMessage(task));
@@ -762,16 +753,17 @@ export class EngineCore {
               });
               // ENGINE-LOCAL Leg-rotation nudge: this main-agent round-trip's occupancy is the freshest signal,
               // and we're mid-stream (input open, streamingStarted true) — the SAFE moment to steer, so the nudge
-              // lands like a manual steer instead of racing the post-`result` close. Latch HARD once (supersedes
-              // SOFT) then SOFT once; a turn that jumps straight past HARD skips SOFT (parity with the watch).
-              if (rotationNudge) {
-                if (!nudgedHard && contextTokens >= rotationNudge.hardTokens) {
-                  nudgedHard = true;
-                  nudgedSoft = true; // HARD implies SOFT is spent — never replay the softer nudge afterwards
-                  injectRotationNudge(rotationNudge.hardText);
-                } else if (!nudgedSoft && contextTokens >= rotationNudge.softTokens) {
-                  nudgedSoft = true;
-                  injectRotationNudge(rotationNudge.softText);
+              // lands like a manual steer instead of racing the post-`result` close. Level-latch (parity with the
+              // driver's LegRotationWatch): the FIRST crossing injects the SOFT nudge; each further +delta band
+              // injects the REMINDER. Fires the highest band crossed, each band at most once. No hard stop.
+              if (rotationNudge && contextTokens >= rotationNudge.softTokens) {
+                const level = Math.floor(
+                  (contextTokens - rotationNudge.softTokens) / rotationNudge.reminderDeltaTokens,
+                );
+                if (level > firedNudgeLevel) {
+                  const isFirst = firedNudgeLevel < 0;
+                  firedNudgeLevel = level;
+                  injectRotationNudge(isFirst ? rotationNudge.softText : rotationNudge.reminderText);
                 }
               }
             }
@@ -939,9 +931,10 @@ export class EngineCore {
       skipGitRepoCheck: true,
       webSearchMode: 'live',
       ...(model ? { model } : {}),
-      // Subscription accounts REJECT an explicit `model` but ACCEPT this knob (verified by spike) — the
-      // plan-review turn pins `'xhigh'` so the reviewer reasons hard.
-      ...(reasoningEffort ? { modelReasoningEffort: reasoningEffort } : {}),
+      // Codex ALWAYS runs at xhigh: default here so every Codex turn (current + any future thread-kind)
+      // reasons hard regardless of callsite. Subscription accounts REJECT an explicit `model` but ACCEPT
+      // this knob (verified by spike). A caller may still pass a lower explicit value if ever needed.
+      modelReasoningEffort: reasoningEffort ?? 'xhigh',
     };
   }
 
