@@ -16,11 +16,6 @@ dist
 # ATLAS_HYDRATION_STATE for a persistent volume in deployment. See backend/src/app/state-root.ts
 .atlas-state/
 
-# Atlas agent thread scratch/metadata — host-side runtime, never part of the repo…
-# …EXCEPT the durable decision ledger, which IS committed so future threads inherit it.
-.atlas/*
-!.atlas/decisions/
-
 # dotenvx — encrypted .env.*.enc files ARE committed; keys / personal / plaintext-local are NOT
 .env
 .env.local
