@@ -20,14 +20,10 @@ import { BRIDGE_SERVER_NAME, buildBridgeClaudeOptions, type BridgeClaudeOptions 
 import { buildLspBridgeOptions } from './lsp-bridge-options';
 import { buildContext7BridgeOptions } from './context7-bridge-options';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
+import { ToolBridgeReader } from './tool-bridge-reader';
 
 // `TurnSpec` is the SINGLE host↔engine wire contract — imported from engine.types (the same type the host's
 // `redis-engine-runner.buildSpec` produces), NOT re-declared here, so producer + consumer can never drift.
-
-/** The host's reply frame on `turn:{T}:replies` (correlated to a tool_request by `id`). */
-type HostFrame =
-  | { t: 'tool_response'; id: string; result: unknown }
-  | { t: 'tool_error'; id: string; message: string };
 
 /**
  * REDIS TRANSPORT (`ENGINE_TRANSPORT=redis`, additive): instead of stdin/stdout the engine reads its
@@ -52,8 +48,8 @@ async function runOverRedis(turnId: string): Promise<void> {
   }, 5_000);
   if (typeof heartbeat.unref === 'function') heartbeat.unref();
 
-  let stopReplies: (() => void) | undefined;
-  let sub: typeof client | undefined; // the tool-bridge replies-reader connection (must be closed)
+  let reader: ToolBridgeReader | undefined;
+  let sub: typeof client | undefined; // the tool-bridge replies-reader's CURRENT connection (must be closed)
   let stopInput: (() => void) | undefined;
   let inputSub: typeof client | undefined; // the steering input-reader connection (must be closed)
   let abortSub: typeof client | undefined; // the abort pub/sub connection (must be closed)
@@ -86,36 +82,19 @@ async function runOverRedis(turnId: string): Promise<void> {
     // same `turn:{T}:replies` stream).
     let bridge: BridgeClaudeOptions | undefined;
     if (spec.engine === 'claude' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
-      const pending = new Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>();
-      // A SEPARATE connection blocks on the replies stream (a blocking read can't share the main client).
-      sub = client.duplicate();
-      let stop = false;
-      stopReplies = () => {
-        stop = true;
-      };
-      const subConn = sub;
-      void (async () => {
-        let lastId = '0-0';
-        while (!stop) {
-          const r = (await subConn.xread('BLOCK', 1000, 'STREAMS', repliesKey, lastId)) as
-            | Array<[string, Array<[string, string[]]>]>
-            | null;
-          if (!r) continue;
-          for (const [, entries] of r) {
-            for (const [eid, f] of entries) {
-              lastId = eid;
-              const di = f.indexOf('data');
-              if (di < 0) continue;
-              const frame = JSON.parse(f[di + 1]) as HostFrame;
-              const entry = pending.get(frame.id);
-              if (!entry) continue;
-              pending.delete(frame.id);
-              if (frame.t === 'tool_response') entry.resolve(frame.result);
-              else entry.reject(new Error(frame.message));
-            }
-          }
-        }
-      })().catch(() => undefined);
+      // The shared reader owns its own blocking connection (a blocking read can't share the main
+      // client) and swaps it internally on a stall-reset; `makeSub` also assigns the outer `sub` so the
+      // `finally` cleanup below always disconnects whichever connection is CURRENT.
+      reader = new ToolBridgeReader({
+        repliesKey,
+        makeSub: () => {
+          sub = client.duplicate();
+          return sub;
+        },
+        log: (m) => process.stderr.write(`[engine-entrypoint] ${m}\n`),
+      });
+      reader.start();
+      const toolReader = reader;
 
       const z = (await import('zod/v4')).z;
       const mcpTools = spec.toolBridgeTools.map((toolName: string) =>
@@ -125,9 +104,7 @@ async function runOverRedis(turnId: string): Promise<void> {
           { args: z.record(z.string(), z.unknown()).optional().describe('Tool arguments') },
           async (input: { args?: Record<string, unknown> }) => {
             const id = randomUUID();
-            const resultPromise = new Promise<unknown>((resolve, reject) => {
-              pending.set(id, { resolve, reject });
-            });
+            const resultPromise = toolReader.register(id);
             await xadd(toolsKey, { t: 'tool_request', id, name: toolName, args: input.args ?? {} });
             try {
               const result = await resultPromise;
@@ -261,7 +238,7 @@ async function runOverRedis(turnId: string): Promise<void> {
     }).catch(() => undefined);
     process.exitCode = 1;
   } finally {
-    stopReplies?.();
+    reader?.stopReader();
     stopInput?.();
     clearInterval(heartbeat);
     sub?.disconnect(); // the replies-reader's separate connection — leaks the process if left open
