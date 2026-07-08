@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ArrowRight, Link2, Lock, Plus, Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
@@ -66,6 +67,15 @@ export function TicketsWorkspace({
   const [drawerId, setDrawerId] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
   const [showCancelled, setShowCancelled] = useState(false);
+
+  // Deep-link: `?ticket=<id>` (e.g. the job-workspace "Atlas raised a ticket" callout) opens that
+  // ticket's drawer directly. Honor it whenever the param is present — once the ticket is in `tickets`
+  // the drawer resolves; navigating between different `?ticket=` targets re-opens accordingly.
+  const searchParams = useSearchParams();
+  const deepLinkTicket = searchParams.get("ticket");
+  useEffect(() => {
+    if (deepLinkTicket) setDrawerId(deepLinkTicket);
+  }, [deepLinkTicket]);
 
   const boardCount = useMemo(
     () =>

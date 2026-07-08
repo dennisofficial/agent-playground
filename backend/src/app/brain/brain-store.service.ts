@@ -10,6 +10,9 @@ import type {
   WebQuestionCard,
   WebSecretInputCard,
 } from '../surface';
+// Direct leaf import (not the '../surface' barrel): brain-store otherwise only TYPE-imports from surface,
+// and a runtime value import of the whole barrel would add a surface→brain→brain-store→surface cycle.
+import { webTicketCard } from '../surface/web-ticket-card';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -20,6 +23,7 @@ import {
   ThreadEntity,
   StimulusEntity,
   JobEntity,
+  TicketEntity,
 } from '../persistence/entities';
 import { JobTitler } from '../titling';
 import type { TranscriptLine } from './brain.types';
@@ -332,6 +336,29 @@ export class BrainStoreService {
         card: input.card,
       }),
     );
+  }
+
+  /**
+   * Relay a ticket the brain just captured (`create_ticket`) as a durable callout card on the job's
+   * conversation — so the operator SEES out-of-scope work being raised, live, instead of it being silent
+   * (the tool otherwise only writes the row + a board-refresh event). Insert-once on the stable `ts`
+   * (`ticket:<id>`): a resumed brain turn that re-drives the tool must not double-post the same card
+   * (`appendCardMessage` does not dedup, unlike `recordSystemChunk`). Best-effort — the caller swallows
+   * failures so a transcript-write hiccup never fails the tool.
+   */
+  async appendTicketCard(jobId: string, ticket: TicketEntity): Promise<void> {
+    const ts = `ticket:${ticket.id}`;
+    const dup = await this.messages.count({
+      where: { job_id: jobId, ts, kind: 'card' },
+    });
+    if (dup > 0) return;
+    await this.appendCardMessage(jobId, {
+      ts,
+      text: `Raised ticket #${ticket.number}: ${ticket.title}`,
+      // A named-interface card has no index signature; the store's card is `Record<string, unknown>` — the
+      // house-style cast (mirrors the approval-card persist path in agent-session-manager).
+      card: webTicketCard(ticket) as unknown as Record<string, unknown>,
+    });
   }
 
   /** Merge a patch into a card row's `card` jsonb (e.g. stamp the answered state / `loggedDecision`). */

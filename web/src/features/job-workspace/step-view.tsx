@@ -35,6 +35,7 @@ import { resolveNode } from "./node-resolution";
 import { TranscriptView } from "./conversation";
 import { DetailTopBar } from "./detail-top-bar";
 import { ServiceLogView, serviceHeaderSubtitle } from "./service-log-view";
+import { TicketsRaisedPane } from "./tickets-raised-pane";
 import { useCommentableRef } from "./use-text-selection";
 import { useReviewComments } from "./review-comments";
 import { pipelineJob, type JobMessage, type JobRef } from "@/lib/api/job-api";
@@ -177,6 +178,10 @@ export function PhaseView({
     title = "Diff";
     subtitle = "the accumulated change across all threads";
     body = <DiffView />;
+  } else if (selectedNode === "tickets") {
+    title = "Tickets raised";
+    subtitle = "out-of-scope work Atlas captured from this job";
+    body = <TicketsRaisedPane jobRef={jobRef} />;
   } else if (selectedNode.startsWith("port:")) {
     const portMeta = PORT_META[selectedNode.slice("port:".length)];
     title = portMeta?.name ?? "Port";

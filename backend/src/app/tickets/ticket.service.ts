@@ -177,12 +177,16 @@ export class TicketService {
     return saved;
   }
 
-  /** List a repo's tickets, optionally filtered by status or a title/body substring. */
+  /**
+   * List a repo's tickets, optionally filtered by status, a title/body substring, or the job they were
+   * captured FROM (`originJobId` — powers the job workspace's "Tickets raised in this job" panel).
+   */
   async list(args: {
     orgId: string;
     repoId: string;
     status?: TicketStatus;
     q?: string;
+    originJobId?: string;
   }): Promise<TicketEntity[]> {
     if (args.status != null && !isTicketStatus(args.status)) {
       throw new BadRequestException(`invalid status: ${args.status}`);
@@ -191,6 +195,7 @@ export class TicketService {
       .createQueryBuilder('t')
       .where('t.org_id = :orgId AND t.repo_id = :repoId', { orgId: args.orgId, repoId: args.repoId });
     if (args.status) qb.andWhere('t.status = :status', { status: args.status });
+    if (args.originJobId) qb.andWhere('t.origin_job_id = :originJobId', { originJobId: args.originJobId });
     if (args.q?.trim()) {
       qb.andWhere('(t.title ILIKE :q OR t.body ILIKE :q)', { q: `%${args.q.trim()}%` });
     }
@@ -207,6 +212,7 @@ export class TicketService {
     repoId: string;
     status?: TicketStatus;
     q?: string;
+    originJobId?: string;
   }): Promise<TicketListItem[]> {
     const rows = await this.list(args);
     if (rows.length === 0) return [];

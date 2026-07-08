@@ -21,6 +21,7 @@ import {
   Server,
   ShieldCheck,
   SquareTerminal,
+  TicketIcon,
   Trash2,
 } from "lucide-react";
 import { Dot, KindBadge, StatusPie } from "@/components/ui/badges";
@@ -29,6 +30,7 @@ import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { pipelineJob } from "@/lib/api/job-api";
 import { useRetryJob, useServices } from "@/lib/api/job-queries";
+import { useJobTickets } from "@/lib/api/tickets-queries";
 import {
   Divider,
   PipelineTree,
@@ -151,6 +153,9 @@ export function Navigator({
     meta.status !== "paused" &&
     meta.status !== "failed";
   const [editing, setEditing] = useState(false);
+
+  // Tickets Atlas raised FROM this job — the header "Tickets raised" entry appears only once there's ≥1.
+  const { data: raisedTickets = [] } = useJobTickets(jobRef);
 
   const st = meta.status;
 
@@ -324,6 +329,26 @@ export function Navigator({
             <span className="font-mono text-[9px] text-faint">—</span>
           ) : null}
         </button>
+        {/* Tickets raised — appears only once Atlas has captured out-of-scope work from this job; opens the
+            standing "Tickets raised" list in the detail pane. */}
+        {raisedTickets.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => onSelectNode("tickets")}
+            className={cn(
+              "-mx-4 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2",
+              detailNode === "tickets" && "nav-selected-blue",
+            )}
+          >
+            <TicketIcon size={13} className="w-3.5 shrink-0 text-accent" />
+            <span className="flex-1 text-[11px] font-semibold text-dim">
+              Tickets raised
+            </span>
+            <span className="font-mono text-[9px] text-faint">
+              {raisedTickets.length}
+            </span>
+          </button>
+        ) : null}
         {/* Approve — pinned as the last header item while the plan is awaiting approval. */}
         {st === "awaiting_approval" && approveValue ? (
           <div className="mt-2">

@@ -175,10 +175,15 @@ export function useJobEvents(ref: JobRef): void {
       }
       if (frame?.type === "ticket_event") {
         // A board mutation on this repo (often Atlas capturing a ticket mid-conversation) — keep the
-        // tickets caches fresh so the board reflects it the moment the operator switches to it.
+        // tickets caches fresh so the board reflects it the moment the operator switches to it, and
+        // refresh any mounted per-job "Tickets raised" panel (prefix match covers every job under this
+        // repo — the frame carries no jobId).
         void qc.invalidateQueries({ queryKey: qk.ticketsList(orgId, repoId) });
         void qc.invalidateQueries({
           queryKey: ["ticket-detail", orgId, repoId],
+        });
+        void qc.invalidateQueries({
+          queryKey: ["job-tickets", orgId, repoId],
         });
         return;
       }

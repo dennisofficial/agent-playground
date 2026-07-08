@@ -62,7 +62,10 @@ export class TicketController {
     private readonly surface: WebSurface,
   ) {}
 
-  /** `GET …/repos/:repoId/tickets?status=&q=` — the repo's board + backlog. */
+  /**
+   * `GET …/repos/:repoId/tickets?status=&q=&originJobId=` — the repo's board + backlog. `originJobId`
+   * narrows to tickets captured FROM one job (the job workspace's "Tickets raised in this job" panel).
+   */
   @Get('orgs/:orgId/repos/:repoId/tickets')
   @UseGuards(OrgMembershipGuard)
   async list(
@@ -70,12 +73,14 @@ export class TicketController {
     @Param('repoId') repoId: string,
     @Query('status') status?: string,
     @Query('q') q?: string,
+    @Query('originJobId') originJobId?: string,
   ): Promise<unknown[]> {
     const rows = await this.tickets.listEnriched({
       orgId: org.id,
       repoId,
       status: status as TicketStatus | undefined,
       q,
+      originJobId,
     });
     return rows.map((r) => ({
       ...toTicketDto(r.ticket),

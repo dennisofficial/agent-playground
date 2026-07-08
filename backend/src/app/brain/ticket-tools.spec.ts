@@ -22,6 +22,7 @@ const STIMULUS: ChatStimulus = {
 function makeManager(tickets: Partial<TicketService>) {
   const store = {
     loadJob: vi.fn().mockResolvedValue({ id: 'thread-REAL', decisionRecordId: 'dr-1', baseBranch: 'main' }),
+    appendTicketCard: vi.fn().mockResolvedValue(undefined),
   };
   const manager = new AgentSessionManager(
     store as never, // store (loadJob)
@@ -98,6 +99,29 @@ describe('brain ticket tools — closure scoping', () => {
         priority: 'high',
       }),
     );
+  });
+
+  it('create_ticket relays a durable callout card on the job conversation for the created ticket', async () => {
+    const ticket = { id: 't-1', number: 7, title: 'Editable rename later' };
+    const create = vi.fn().mockResolvedValue(ticket);
+    const { manager, store } = makeManager({ create });
+    const tools = manager.buildTools(STIMULUS) as never as Record<string, (a: Record<string, unknown>) => Promise<unknown>>;
+
+    await qualified('create_ticket', tools)({ title: 'Editable rename later' });
+
+    expect(store.appendTicketCard).toHaveBeenCalledTimes(1);
+    expect(store.appendTicketCard).toHaveBeenCalledWith('thread-REAL', ticket);
+  });
+
+  it('create_ticket still succeeds when the callout write fails (best-effort relay)', async () => {
+    const create = vi.fn().mockResolvedValue({ id: 't-2', number: 8, title: 'x' });
+    const { manager, store } = makeManager({ create });
+    store.appendTicketCard.mockRejectedValueOnce(new Error('db down'));
+    const tools = manager.buildTools(STIMULUS) as never as Record<string, (a: Record<string, unknown>) => Promise<unknown>>;
+
+    const res = (await qualified('create_ticket', tools)({ title: 'x' })) as { ok: boolean; number?: number };
+    expect(res.ok).toBe(true);
+    expect(res.number).toBe(8);
   });
 
   it('create_ticket rejects an invalid status without calling the service', async () => {

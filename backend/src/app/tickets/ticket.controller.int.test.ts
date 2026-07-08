@@ -276,6 +276,31 @@ describe('TicketController HTTP (membership guard + scoping + dependencies, live
     expect(res.status).toBe(404);
   });
 
+  it('filters the list to tickets raised FROM one job (?originJobId=)', async () => {
+    // The board list narrows to a single job's captured tickets — the job workspace's "Tickets raised"
+    // panel. `origin_job_id` is stamped only by the brain, so seed it directly here after HTTP-creating.
+    const [job] = (await ds.query(
+      `INSERT INTO jobs (org_id, repo_id, origin) VALUES ($1, $2, 'control') RETURNING id`,
+      [ORG1, REPO1],
+    )) as Array<{ id: string }>;
+
+    const fromJob = await createTicket(ownerCookie, ORG1, REPO1, { title: 'raised from the job' });
+    const unrelated = await createTicket(ownerCookie, ORG1, REPO1, { title: 'created on the board' });
+    await ds.query(`UPDATE tickets SET origin_job_id = $1 WHERE id = $2`, [job.id, fromJob.body.id]);
+
+    const scoped = await request(server)
+      .get(`${ticketsPath(ORG1, REPO1)}?originJobId=${job.id}`)
+      .set('Cookie', ownerCookie);
+    expect(scoped.status).toBe(200);
+    const ids = (scoped.body as Array<{ id: string }>).map((t) => t.id);
+    expect(ids).toEqual([fromJob.body.id]);
+    expect(ids).not.toContain(unrelated.body.id);
+
+    // Unfiltered list still returns both (the filter is opt-in).
+    const all = await request(server).get(ticketsPath(ORG1, REPO1)).set('Cookie', ownerCookie);
+    expect((all.body as Array<{ id: string }>).length).toBe(2);
+  });
+
   it('promotes a ticket to a linked thread, flips status to in_progress, and is idempotent', async () => {
     const created = await createTicket(ownerCookie, ORG1, REPO1, { title: 'Editable rename (later)', body: 'do this next' });
     const ticketId = created.body.id as string;

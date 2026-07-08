@@ -252,6 +252,22 @@ export interface WebMcpProposalCard {
   committed?: string[];
 }
 
+/**
+ * A ticket-captured callout — posted when the brain raises a ticket mid-job via `create_ticket`. Purely
+ * informational (no approve/answer lifecycle); the operator clicks through to the ticket on the board.
+ * Mirrors the backend `WebTicketCard`.
+ */
+export interface WebTicketCard {
+  type: "ticket_card";
+  ticketId: string;
+  number: number;
+  title: string;
+  kind: string | null;
+  priority: string | null;
+  status: string;
+  originDecisionSummary: string | null;
+}
+
 export type WebCard =
   | WebApprovalCard
   | WebVerdictCard
@@ -260,7 +276,8 @@ export type WebCard =
   | WebFileRequestCard
   | WebReviewCommentsCard
   | WebAttachmentsCard
-  | WebMcpProposalCard;
+  | WebMcpProposalCard
+  | WebTicketCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
 /** One step of a thread's locked plan — the execute folder's leaf (a Claude Code session). */

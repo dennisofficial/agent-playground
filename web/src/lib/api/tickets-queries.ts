@@ -16,6 +16,7 @@ import {
   addTicketDependency,
   createTicket,
   deleteTicket,
+  fetchJobTickets,
   fetchTicket,
   fetchTickets,
   promoteTicket,
@@ -67,6 +68,24 @@ export function useTickets(orgId: string, repoId: string) {
     queryKey: qk.ticketsList(orgId, repoId),
     queryFn: () => fetchTickets(ref),
     enabled: !!orgId && !!repoId,
+    staleTime: 10_000,
+  });
+}
+
+/**
+ * Tickets Atlas raised FROM this job — powers the job workspace's "Tickets raised" panel. Kept live by
+ * `useJobEvents`, which invalidates the `job-tickets` key on any `ticket_event` for the repo.
+ */
+export function useJobTickets(ref: {
+  orgId: string;
+  repoId: string;
+  jobId: string;
+}) {
+  return useQuery({
+    queryKey: qk.jobTickets(ref.orgId, ref.repoId, ref.jobId),
+    queryFn: () =>
+      fetchJobTickets({ orgId: ref.orgId, repoId: ref.repoId }, ref.jobId),
+    enabled: !!ref.orgId && !!ref.repoId && !!ref.jobId,
     staleTime: 10_000,
   });
 }

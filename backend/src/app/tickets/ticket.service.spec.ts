@@ -105,6 +105,47 @@ describe('TicketService.revertForDeletedThread', () => {
   });
 });
 
+describe('TicketService.list — originJobId filter', () => {
+  /** A QueryBuilder stand-in that records every `andWhere(sql, params)` call; `getMany` resolves []. */
+  function makeListService() {
+    const andWhereCalls: Array<[string, Record<string, unknown> | undefined]> = [];
+    const qb: Record<string, unknown> = {};
+    qb['where'] = vi.fn(() => qb);
+    qb['andWhere'] = vi.fn((sql: string, params?: Record<string, unknown>) => {
+      andWhereCalls.push([sql, params]);
+      return qb;
+    });
+    for (const m of ['orderBy', 'addOrderBy']) qb[m] = vi.fn(() => qb);
+    qb['getMany'] = vi.fn().mockResolvedValue([]);
+    const tickets = { createQueryBuilder: vi.fn(() => qb) } as unknown as Repository<TicketEntity>;
+    const svc = new TicketService(
+      tickets,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    return { svc, andWhereCalls };
+  }
+
+  it('adds an origin_job_id clause when originJobId is given', async () => {
+    const { svc, andWhereCalls } = makeListService();
+    await svc.list({ orgId: ORG, repoId: 'repo-1', originJobId: THREAD });
+    const clause = andWhereCalls.find(([sql]) => sql.includes('origin_job_id'));
+    expect(clause).toBeDefined();
+    expect(clause?.[1]).toEqual({ originJobId: THREAD });
+  });
+
+  it('omits the origin_job_id clause when originJobId is absent', async () => {
+    const { svc, andWhereCalls } = makeListService();
+    await svc.list({ orgId: ORG, repoId: 'repo-1' });
+    expect(andWhereCalls.some(([sql]) => sql.includes('origin_job_id'))).toBe(false);
+  });
+});
+
 describe('TicketService.reconcileStrandedTickets', () => {
   /** Build a service whose stranded-ticket query returns `strandedRows`; expose the save + publish spies. */
   function makeReconcileService(strandedRows: Array<Partial<TicketEntity>>) {

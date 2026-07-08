@@ -43,6 +43,9 @@ export const qk = {
   /** One ticket's detail (deps + thread link). */
   ticketDetail: (orgId: string, repoId: string, ticketId: string) =>
     ["ticket-detail", orgId, repoId, ticketId] as const,
+  /** Tickets raised FROM one job (`?originJobId=`) — the job workspace's "Tickets raised" panel. */
+  jobTickets: (orgId: string, repoId: string, jobId: string) =>
+    ["job-tickets", orgId, repoId, jobId] as const,
   /** One org's reusable house-style profiles (`GET /web/orgs/:orgId/convention-profiles`). */
   orgConventionProfiles: (orgId: string) =>
     ["org-convention-profiles", orgId] as const,

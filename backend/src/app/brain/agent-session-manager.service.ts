@@ -3180,6 +3180,14 @@ export class AgentSessionManager
             originDecisionRecordId: job?.decisionRecordId ?? null,
             dependsOn: strArray(args['dependsOn']),
           });
+          // Relay the capture to the operator's live view — a durable callout card on this job's
+          // conversation. Best-effort: the ticket is already captured, so a transcript-write hiccup must
+          // never fail the tool (own try/catch — the outer catch would wrongly report the capture failed).
+          try {
+            await this.store.appendTicketCard(stimulus.jobId, ticket);
+          } catch {
+            /* swallow — the callout is a nicety, not the capture */
+          }
           return {
             ok: true,
             ticketId: ticket.id,

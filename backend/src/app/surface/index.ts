@@ -11,6 +11,7 @@ export * from './web-question-card';
 export * from './web-secret-input-card';
 export * from './web-file-request-card';
 export * from './web-mcp-proposal-card';
+export * from './web-ticket-card';
 export * from './web-convention-proposal-card';
 export * from './surface.module';
 export * from './web-surface.module';

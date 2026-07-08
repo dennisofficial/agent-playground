@@ -27,7 +27,7 @@ export const stepNode = (stepId: string): string => stepId;
 
 // ── placement: which pane a node opens in ───────────────────────────────────────────────────────
 /** Literals that render from card/derived data in the RIGHT detail pane. */
-const DETAIL_LITERALS = new Set(["plan", "decision", "diff"]);
+const DETAIL_LITERALS = new Set(["plan", "decision", "diff", "tickets"]);
 /** Prefixed detail-pane nodes (files, ports, services, section plans). Review lenses (`rev:`) and the
  *  post-review fix turn (`fix:`) are THREADS, not detail nodes — they open in the LEFT lane pane like the
  *  build/Codex-review threads (the RIGHT pane is reserved for tool-called sub-agents + outputs/docs). */
@@ -41,7 +41,7 @@ export function isDetailNode(node: string): boolean {
 
 // ── resolution (a stale `?node=`/`?lane=` → not-found) ──────────────────────────────────────────
 /** Literals that render from card / derived data — no live-id dependency, always resolvable. */
-const ID_FREE_NODES = new Set(["plan", "decision", "diff"]);
+const ID_FREE_NODES = new Set(["plan", "decision", "diff", "tickets"]);
 
 /**
  * Classify a node token against the live job. Job-derived tokens (`secplan:`/`rev:`/`fix:` carry a thread

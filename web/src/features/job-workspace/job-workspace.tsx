@@ -334,6 +334,7 @@ function baseCrumbLabel(node: string): string {
   if (node === "diff") return "Diff";
   if (node === "plan") return "Plan";
   if (node === "decision") return "Decision record";
+  if (node === "tickets") return "Tickets raised";
   const file = /^(?:spec|gen|artifact):(.+)$/.exec(node);
   if (file) return file[1].split("/").pop() ?? file[1];
   if (node.startsWith("port:")) return node.slice("port:".length);

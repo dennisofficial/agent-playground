@@ -123,6 +123,16 @@ export function fetchTickets(ref: TicketRef): Promise<TicketListRow[]> {
   return ticketJson<TicketListRow[]>(ticketsPath(ref));
 }
 
+/** Tickets captured FROM one job (`?originJobId=`) — the job workspace's "Tickets raised" panel. */
+export function fetchJobTickets(
+  ref: TicketRef,
+  jobId: string,
+): Promise<TicketListRow[]> {
+  return ticketJson<TicketListRow[]>(
+    ticketsPath(ref, `?originJobId=${encodeURIComponent(jobId)}`),
+  );
+}
+
 export function fetchTicket(
   ref: TicketRef,
   ticketId: string,
