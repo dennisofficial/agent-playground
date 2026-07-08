@@ -317,16 +317,10 @@ export class LocalGitService {
    * of a linked `git worktree add`, so every submodule gitdir lands under the clone's own
    * `.git/modules/…` instead of an unresolvable relative path in a shared common dir.
    *
-   * `baseRef`/`detach` are part of the shared signature so both `createBaseWorktree` and
-   * `createFeatureSandbox` can reuse this; the body always ends up detached at `FETCH_HEAD` — callers
-   * that need a named branch cut one afterward off that detached HEAD.
+   * Always ends up detached at `FETCH_HEAD`; a caller that needs a named branch
+   * (`createFeatureSandbox`) cuts one afterward off that detached HEAD.
    */
-  private async provisionFullClone(
-    repo: ProjectRepo,
-    worktreePath: string,
-    baseRef: string,
-    detach: boolean,
-  ): Promise<void> {
+  private async provisionFullClone(repo: ProjectRepo, worktreePath: string): Promise<void> {
     await mkdir(dirname(worktreePath), { recursive: true });
     // Local clone of the persistent main clone — objects hardlink on the same fs (fast, disk-cheap).
     await this.git(['clone', '--no-checkout', repo.repoPath, worktreePath]);
@@ -442,7 +436,7 @@ export class LocalGitService {
       }
       const base = `origin/${repo.defaultBranch}`;
       if (hasSub) {
-        await this.provisionFullClone(repo, worktreePath, base, false);
+        await this.provisionFullClone(repo, worktreePath);
         // Reuse an existing local branch ref if present (a resume); else cut it off the detached base HEAD.
         const branchExists = await this.refExists(worktreePath, `refs/heads/${branch}`);
         await this.git(branchExists ? ['checkout', branch] : ['checkout', '-b', branch], {
@@ -559,7 +553,7 @@ export class LocalGitService {
         await this.teardownCheckout(repo, worktreePath);
       }
       if (hasSub) {
-        await this.provisionFullClone(repo, worktreePath, `origin/${repo.defaultBranch}`, true);
+        await this.provisionFullClone(repo, worktreePath);
       } else {
         // Ensure we have the freshest base.
         await this.git(['fetch', 'origin', repo.defaultBranch], {
