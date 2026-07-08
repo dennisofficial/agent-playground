@@ -2,7 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir } from 'node:fs/promises';
+import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { repoStateDir } from '../state-root';
@@ -352,6 +352,11 @@ export class LocalGitService {
     }
   }
 
+  /** True iff the repo has git submodules at its base branch (drives clone-vs-worktree provisioning). */
+  async hasSubmodules(repo: ProjectRepo): Promise<boolean> {
+    return (await this.readFileAtRef(repo.repoPath, `origin/${repo.defaultBranch}`, '.gitmodules')) !== null;
+  }
+
   /** Resolve the repo's default branch from origin/HEAD; fall back to `main`. */
   private async detectDefaultBranch(repoPath: string): Promise<string> {
     try {
@@ -504,11 +509,53 @@ export class LocalGitService {
   }
 
   /**
+   * Cut a per-THREAD full CLONE on the BASE branch — the clone-mode analogue of {@link createBaseWorktree},
+   * used for repos WITH submodules (see the `sandbox-submodule-repos-full-clone` ADR). A linked worktree's
+   * submodule `.git` overlays are separate bind mounts from /workspace, so any tool that hardlinks a
+   * submodule's `.git` into the sandbox fs (e.g. pnpm's injected-deps sync) fails with `EXDEV: cross-device
+   * link`. A standalone clone puts `.git` and every submodule gitdir under the SAME /workspace mount, so
+   * submodule git fully works in-sandbox.
+   *
+   * Lands at the same per-thread path scheme as `createBaseWorktree` (`<repoPath>/.worktrees/thread-<jobId>`)
+   * so both modes are interchangeable to callers. Idempotent: an existing clone is reused (boot recovery).
+   */
+  async createBaseClone(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
+    const slug = `thread-${jobId.replace(/[^a-z0-9_-]/gi, '-')}`;
+    const worktreePath = join(repo.repoPath, '.worktrees', slug);
+
+    await this.withLock(repo.repoPath, async () => {
+      if (existsSync(worktreePath)) return; // reuse on recovery
+      // Freshen the base in the main clone, then LOCAL-clone it (fast; objects hardlinked on the host fs).
+      await this.git(['fetch', 'origin', repo.defaultBranch], {
+        cwd: repo.repoPath,
+        gitUrl: repo.gitUrl,
+        token: repo.token,
+      });
+      await this.git(['clone', repo.repoPath, worktreePath]);
+      // Point origin at the real GitHub remote (the local clone's origin is the on-disk main clone).
+      await this.git(['remote', 'set-url', 'origin', repo.gitUrl], { cwd: worktreePath });
+      // Fetch the fresh base from GitHub and detach on it (mirrors createBaseWorktree's detached base).
+      await this.git(['fetch', 'origin', repo.defaultBranch], {
+        cwd: worktreePath,
+        gitUrl: repo.gitUrl,
+        token: repo.token,
+      });
+      await this.git(['checkout', '--detach', `origin/${repo.defaultBranch}`], { cwd: worktreePath });
+    });
+
+    return { repoId: repo.repoId, branch: repo.defaultBranch, worktreePath, gitUrl: repo.gitUrl, token: repo.token };
+  }
+
+  /**
    * Switch a base-branch worktree to a feature branch IN-PLACE (R2: approval → build start).
    * Cuts `featureBranch` off `origin/<baseBranch>` inside the existing worktree checkout. This is
    * the branch-switch that happens once: planning ran on the base, build runs on the feature.
    *
    * Idempotent: if the branch already exists locally it is checked out without recreating (resume).
+   * CLONE RECOVERY: a full-clone sandbox (submodule repos — see the `sandbox-submodule-repos-full-clone`
+   * ADR) can be lost/re-cut (e.g. sandbox reset) without its local feature branch. If no local ref exists
+   * AND the checkout is a clone, this tries to restore the branch from `origin` (its feature commits were
+   * already pushed) before falling back to cutting a fresh branch off the base.
    * Returns the updated `FeatureSandbox` (same worktreePath, new branch name).
    */
   async switchBranch(
@@ -517,27 +564,75 @@ export class LocalGitService {
     featureBranch: string,
   ): Promise<FeatureSandbox> {
     await this.withLock(sandbox.worktreePath, async () => {
-      const branchExists = await this.refExists(repo.repoPath, `refs/heads/${featureBranch}`);
-      if (branchExists) {
+      const dotGit = join(sandbox.worktreePath, '.git');
+      let isClone = false;
+      try {
+        isClone = existsSync(dotGit) && (await stat(dotGit)).isDirectory();
+      } catch {
+        // fall through — treat as not a clone
+      }
+
+      const localBranchExists = await this.refExists(sandbox.worktreePath, `refs/heads/${featureBranch}`);
+      if (localBranchExists) {
         // Resume: the branch was already cut — just check it out.
         await this.git(['checkout', featureBranch], { cwd: sandbox.worktreePath });
-      } else {
-        // Fresh approval: cut the branch off the current detached HEAD (which is on base).
-        await this.git(['-c', `user.name=Atlas`, '-c', `user.email=atlas@users.noreply.github.com`,
-          'checkout', '-b', featureBranch], { cwd: sandbox.worktreePath });
+        return;
       }
+
+      if (isClone) {
+        // Recovery: the clone may have been re-provisioned after the feature branch was pushed. Try to
+        // restore it from origin before cutting a fresh one.
+        try {
+          await this.git(['fetch', 'origin', featureBranch], {
+            cwd: sandbox.worktreePath,
+            gitUrl: repo.gitUrl,
+            token: repo.token,
+          });
+        } catch {
+          // no remote branch (or fetch failed) — fall through to cutting fresh
+        }
+        if (await this.refExists(sandbox.worktreePath, `refs/remotes/origin/${featureBranch}`)) {
+          await this.git(['checkout', '-b', featureBranch, `origin/${featureBranch}`], {
+            cwd: sandbox.worktreePath,
+          });
+          return;
+        }
+      }
+
+      // Fresh approval (or no remote branch to restore): cut the branch off the current detached HEAD
+      // (which is on base).
+      await this.git(['-c', `user.name=Atlas`, '-c', `user.email=atlas@users.noreply.github.com`,
+        'checkout', '-b', featureBranch], { cwd: sandbox.worktreePath });
     });
     return { ...sandbox, branch: featureBranch };
   }
 
-  /** Remove a feature worktree (cleanup). Leaves the branch ref (the PR still references it). */
+  /**
+   * Remove a feature sandbox (cleanup). Leaves the branch ref (the PR still references it). Mode-aware:
+   * a full clone (submodule repos) is a plain directory with no worktree registration, so it's `rm -rf`'d
+   * outright; a linked worktree goes through `git worktree remove` as before.
+   */
   async removeSandbox(repo: ProjectRepo, worktreePath: string): Promise<void> {
     await this.withLock(repo.repoPath, async () => {
       if (!existsSync(worktreePath)) return;
+      const dotGit = join(worktreePath, '.git');
+      let isClone = false;
       try {
-        await this.git(['worktree', 'remove', '--force', worktreePath], { cwd: repo.repoPath });
-      } catch (err) {
-        this.logger.warn(`worktree remove failed for ${worktreePath}: ${err}`);
+        isClone = existsSync(dotGit) && (await stat(dotGit)).isDirectory();
+      } catch {
+        // fall through — treat as not a clone
+      }
+      if (isClone) {
+        // A full clone is a plain directory (no worktree registration) — remove it outright.
+        await rm(worktreePath, { recursive: true, force: true }).catch((err) =>
+          this.logger.warn(`clone remove failed for ${worktreePath}: ${err}`),
+        );
+      } else {
+        try {
+          await this.git(['worktree', 'remove', '--force', worktreePath], { cwd: repo.repoPath });
+        } catch (err) {
+          this.logger.warn(`worktree remove failed for ${worktreePath}: ${err}`);
+        }
       }
     });
   }

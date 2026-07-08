@@ -15,6 +15,7 @@ import type {
 // Direct leaf import (not the '../surface' barrel): brain-store otherwise only TYPE-imports from surface,
 // and a runtime value import of the whole barrel would add a surface→brain→brain-store→surface cycle.
 import { webTicketCard } from '../surface/web-ticket-card';
+import { nextQuestionId } from '../surface/web-question-card';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -435,6 +436,17 @@ export class BrainStoreService {
       (m) =>
         (m.card as Record<string, unknown> | null)?.type === 'question_card',
     );
+  }
+
+  /**
+   * Allocate the next stable brain question id for this job — `q1`, `q2`, … — over the existing question
+   * card ids (see {@link nextQuestionId}). Scans the durable card rows so numbering survives a restart and
+   * never reuses a withdrawn id. Race-safe in practice: one brain turn runs at a time and its `ask_question`
+   * tool calls are awaited in order, so each `openQuestion` lands before the next id is allocated.
+   */
+  async nextQuestionId(jobId: string): Promise<string> {
+    const cards = await this.questionCards(jobId);
+    return nextQuestionId(cards.map((m) => m.ts ?? ''));
   }
 
   /**
