@@ -105,7 +105,12 @@ async function runOverRedis(turnId: string): Promise<void> {
           async (input: { args?: Record<string, unknown> }) => {
             const id = randomUUID();
             const resultPromise = toolReader.register(id);
-            await xadd(toolsKey, { t: 'tool_request', id, name: toolName, args: input.args ?? {} });
+            try {
+              await xadd(toolsKey, { t: 'tool_request', id, name: toolName, args: input.args ?? {} });
+            } catch (err) {
+              toolReader.cancel(id);
+              throw err;
+            }
             try {
               const result = await resultPromise;
               const text = typeof result === 'string' ? result : JSON.stringify(result);

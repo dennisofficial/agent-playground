@@ -263,6 +263,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     const redis = new InMemoryRedisStream();
     const events: EngineEvent[] = [];
     const toolCalls: Array<{ name: string; args: unknown }> = [];
+    let sawProgress = false;
 
     // Simulated engine: emit a tool_request on the tools stream, await its reply on the replies stream,
     // then emit a text event + final on the events stream.
@@ -275,14 +276,24 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
           const callId = 'call-xyz';
           await redis.xadd(k.tools, { t: 'tool_request', id: callId, name: 'submit_plan', args: { foo: 'bar' } });
           let lastId = '0-0';
+          let done = false;
           for (let i = 0; i < 50; i++) {
             const r = await redis.xread({ stream: k.replies, lastId, count: 10, blockMs: 50 });
-            const hit = r.find((e) => (e.data as { id?: string }).id === callId);
-            if (hit) {
-              const d = hit.data as { t: string };
-              await redis.xadd(k.events, { t: 'event', e: { kind: 'text', text: d.t === 'tool_response' ? 'tool-ok' : 'tool-err' } });
+            for (const entry of r) {
+              const d = entry.data as { id?: string; t?: string };
+              if (d.id !== callId) continue;
+              if (d.t === 'tool_progress') {
+                sawProgress = true;
+                continue;
+              }
+              await redis.xadd(k.events, {
+                t: 'event',
+                e: { kind: 'text', text: d.t === 'tool_response' ? 'tool-ok' : 'tool-err' },
+              });
+              done = true;
               break;
             }
+            if (done) break;
             if (r.length) lastId = r[r.length - 1].id;
           }
           await redis.xadd(k.events, { t: 'final', r: { result: 'DONE' } });
@@ -304,6 +315,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     const out = await runner.run({ ...baseArgs((e) => events.push(e)), toolBridge: bridge as never });
 
     expect(toolCalls).toEqual([{ name: 'submit_plan', args: { foo: 'bar' } }]);
+    expect(sawProgress).toBe(true);
     expect(out).toEqual({ result: 'DONE' });
     expect(events.some((e) => (e as { kind?: string; text?: string }).text === 'tool-ok')).toBe(true);
   });

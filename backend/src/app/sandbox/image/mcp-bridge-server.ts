@@ -153,7 +153,12 @@ async function main(): Promise<void> {
   const callHostTool = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
     const id = randomUUID();
     const p = reader.register(id);
-    await pub.xadd(toolsKey, '*', 'data', JSON.stringify({ t: 'tool_request', id, name, args }));
+    try {
+      await pub.xadd(toolsKey, '*', 'data', JSON.stringify({ t: 'tool_request', id, name, args }));
+    } catch (err) {
+      reader.cancel(id);
+      throw err;
+    }
     return p;
   };
 
