@@ -62,6 +62,20 @@ export class ConventionProfileResolver {
     return rows.map((r) => ({ slug: r.slug, name: r.name, detectHint: r.detect_hint }));
   }
 
+  /** Every profile for an org WITH its body — for the console editor (no secrets here, so the body is fine). */
+  async allProfiles(
+    orgId: string,
+  ): Promise<{ slug: string; name: string; body: string; detectHint: string | null }[]> {
+    const rows = await this.profiles.find({ where: { org_id: orgId }, order: { slug: 'ASC' } });
+    return rows.map((r) => ({ slug: r.slug, name: r.name, body: r.body, detectHint: r.detect_hint }));
+  }
+
+  /** The slug currently attached to a repo (or null) — for the console repo-settings control. */
+  async attachedSlug(orgId: string, repoId: string): Promise<string | null> {
+    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    return repo?.convention_profile_slug ?? null;
+  }
+
   /** One full profile, or null. */
   async getProfile(orgId: string, slug: string): Promise<ConventionProfileEntity | null> {
     return this.profiles.findOne({ where: { org_id: orgId, slug } });
