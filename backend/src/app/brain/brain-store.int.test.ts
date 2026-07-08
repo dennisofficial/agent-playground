@@ -148,6 +148,48 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await draftCount(dataSource, jobId)).toBe(1);
   }, 30_000);
 
+  it('openJob anchors the thread into planning without clobbering an existing title when no title is given', async () => {
+    // Regression: `review_plan` anchors the scoping job with an EMPTY title (goal/overview go to
+    // propose_plan, not review). openJob must keep the thread's existing title in that case instead of
+    // overwriting it with a placeholder — the authoritative rename happens later in persistPlan.
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
+         ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, $2, 'BrainStore Repo', 'https://github.com/acme/brainstore.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+      [TEAM_ID, PROJECT_SLUG],
+    );
+    const repoId = repoRow.id;
+    const [thread]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
+         VALUES ($1, $2, 'chat', 'Discuss next feature') RETURNING id`,
+      [TEAM_ID, repoId],
+    );
+    const jobId = thread.id;
+
+    // Empty title → status flips to planning but the existing title is preserved.
+    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: '', kind: 'feature' });
+    let row = await loadThreadRow(dataSource, jobId);
+    expect(row?.status).toBe('planning');
+    expect(row?.title).toBe('Discuss next feature');
+
+    // Whitespace-only title is treated the same (no clobber).
+    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: '   ', kind: 'feature' });
+    row = await loadThreadRow(dataSource, jobId);
+    expect(row?.title).toBe('Discuss next feature');
+
+    // A meaningful title still updates (propose_plan / direct-build path — the rename feature works).
+    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'Profile picture CRUD', kind: 'feature' });
+    row = await loadThreadRow(dataSource, jobId);
+    expect(row?.title).toBe('Profile picture CRUD');
+  }, 30_000);
+
   it('stamps appended blocks with their emission time so a mid-turn user message keeps chronological order', async () => {
     // Regression for the "a question I asked later jumped to the top of the turn" bug. The turn's blocks
     // are persisted in a batch at turn END, but the operator's follow-up is persisted immediately. Without
