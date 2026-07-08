@@ -31,6 +31,7 @@ export type LiveBlock =
       text: string;
       done: boolean;
       parentToolUseId?: string;
+      emittedAt: number;
     }
   | {
       kind: "thinking";
@@ -38,6 +39,7 @@ export type LiveBlock =
       text: string;
       done: boolean;
       parentToolUseId?: string;
+      emittedAt: number;
     }
   | {
       kind: "tool";
@@ -51,6 +53,7 @@ export type LiveBlock =
       structuredPatch?: unknown;
       done: boolean;
       parentToolUseId?: string;
+      emittedAt: number;
     };
 
 export interface LiveTurn {
@@ -104,6 +107,8 @@ type StreamPayload = {
   contextTokens?: number;
   contextModel?: string;
   contextLimit?: number;
+  /** present on block-creating delta frames — server epoch-ms this block first appeared. */
+  emittedAt?: number;
 };
 
 let blockSeq = 0;
@@ -214,6 +219,7 @@ class ThreadStreamStore {
             text,
             done: false,
             parentToolUseId: pid,
+            emittedAt: ev.emittedAt ?? Date.now(),
           });
         break;
       case "text":
@@ -224,6 +230,7 @@ class ThreadStreamStore {
             text,
             done: true,
             parentToolUseId: pid,
+            emittedAt: ev.emittedAt ?? Date.now(),
           });
         break;
       case "thinking_delta":
@@ -236,6 +243,7 @@ class ThreadStreamStore {
             text,
             done: false,
             parentToolUseId: pid,
+            emittedAt: ev.emittedAt ?? Date.now(),
           });
         break;
       case "thinking":
@@ -246,6 +254,7 @@ class ThreadStreamStore {
             text,
             done: true,
             parentToolUseId: pid,
+            emittedAt: ev.emittedAt ?? Date.now(),
           });
         break;
       case "tool_use":
@@ -257,6 +266,7 @@ class ThreadStreamStore {
           input: ev.input,
           done: false,
           parentToolUseId: pid,
+          emittedAt: ev.emittedAt ?? Date.now(),
         });
         break;
       case "tool_result": {
