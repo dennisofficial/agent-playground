@@ -5544,6 +5544,9 @@ export class AgentSessionManager
       this.logger.debug(
         `suppressing duplicate system→operator notice for thread=${stimulus.jobId}`,
       );
+      // The outstanding box already exists, but this turn still stopped. Re-assert `halted` because a
+      // Resume/new turn clears it at turn start before the repeated failure gets deduped here.
+      await this.store.setHalted(stimulus.jobId, true).catch(() => undefined);
       return;
     }
     const meta = { source: 'system_operator', ...(opts.retryable ? { retryable: true } : {}) };
