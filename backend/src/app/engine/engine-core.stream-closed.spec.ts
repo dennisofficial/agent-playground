@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 import { EngineCore } from './engine-core';
+import type { EngineHomeKey } from './engine-home';
 
 const HOME_ROOT = join(tmpdir(), `atlas-stream-closed-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
@@ -101,7 +102,7 @@ async function runTurn(resultFields: ResultFields): Promise<{ state: RunState; t
     task: 'trace the withdraw flow and post the scope card',
     cwd: '/tmp/wt',
     systemPrompt: 'persona',
-    sandboxKey: 'acme--feat',
+    sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' } as EngineHomeKey,
     mode: 'execute',
     richStream: true,
     auth: { secret: 'oauth-tok' },
