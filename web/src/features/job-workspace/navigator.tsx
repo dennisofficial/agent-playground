@@ -41,7 +41,6 @@ import { codexReviewNode } from "./codex-review";
 import {
   NavigatorApproveButton,
   NavigatorShipButton,
-  NavigatorShipCallout,
 } from "./spec-approval";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
@@ -420,12 +419,6 @@ export function Navigator({
 
         {/* The whole-diff master review is now just another thread in the THREADS list above (rendered
             "Master review", no pinned region) — see the master-review-as-thread change. */}
-
-        {/* Ship-review callout — pinned above OUTPUTS (the diff/artifacts region it's about), mirroring
-            where the plan-approval callout is meant to sit above SPECS. */}
-        {st === "awaiting_ship_review" && shipValue ? (
-          <NavigatorShipCallout jobRef={jobRef} value={shipValue} />
-        ) : null}
 
         {/* OUTPUTS — specs / artifacts / generated, merged. Open in the RIGHT pane (blue highlight). */}
         <OutputsRegion
