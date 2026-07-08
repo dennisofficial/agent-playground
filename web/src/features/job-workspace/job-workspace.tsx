@@ -165,6 +165,9 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   }, [approvalCard, job, status]);
   const awaitingApproval =
     status === "awaiting_approval" && Boolean(approveValue);
+  // A direct build (fast path) parks at the same gate but carries `kind: 'direct'` — flip the approve CTA
+  // copy to "Approve Direct Build" so the operator can tell the fast path from a full plan at a glance.
+  const isDirectApproval = approvalCard?.kind === "direct";
 
   // The ship-review gate's surfaces render the same way, off the ship card's own `{ jobId }` value —
   // reconstructed from the job alone when no `approval_card` message is in the log yet (a job can reach
@@ -219,6 +222,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
             jobRef={ref}
             approveValue={awaitingApproval ? approveValue : ""}
             shipValue={awaitingShip ? shipValue : ""}
+            directBuild={isDirectApproval}
             onConversation={onConversation}
             onSelectNode={onSelectNode}
             onRename={onRename}
@@ -320,6 +324,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
                   value={approveValue}
                   specCount={specCount}
                   stepCount={stepCount}
+                  directBuild={isDirectApproval}
                 />
               ) : awaitingShip ? (
                 <PersistentShipBar jobRef={ref} value={shipValue} />

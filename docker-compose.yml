@@ -39,11 +39,15 @@ services:
       retries: 10
 
   # The host↔daemon communication bus (Redis Streams/pub-sub). Host 6380 (container 6379) so it runs
-  # alongside any personal Redis on the default 6379 — mirrors the Postgres 5433 choice. Workspace
-  # sandboxes reach it by service DNS on this compose network; the host harness via localhost:6380.
+  # alongside any personal Redis on the default 6379 — mirrors the Postgres 5433 choice. The host harness
+  # reaches it at localhost:6380; per-job sandboxes reach it by container-name DNS on the `atlas-bus`
+  # network below (SANDBOX_REDIS_URL=redis://agent-playground-redis:6379, SANDBOX_BUS_NETWORK=atlas-bus).
   redis:
     image: redis:7-alpine
     container_name: agent-playground-redis
+    networks:
+      - default
+      - atlas-bus
     ports:
       - '6380:6379'
     healthcheck:
@@ -54,3 +58,13 @@ services:
 
 volumes:
   pgdata:
+
+# `atlas-bus` is the engine bus network each per-job sandbox is attached to so its in-container engine can
+# reach Redis (its ONLY transport). Given a FIXED `name:` (not project-prefixed) so SANDBOX_BUS_NETWORK is a
+# stable, portable value regardless of the compose project / checkout directory — and mirrors the prod
+# `atlas-bus` network name. Redis carries container_name DNS on it. (The documented dev fallback of reaching
+# Redis via host.docker.internal does NOT work on Linux hosts where sandbox containers get no host-gateway
+# alias, so the bus network is the reliable cross-platform path.)
+networks:
+  atlas-bus:
+    name: atlas-bus
