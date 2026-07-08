@@ -75,7 +75,11 @@ async function runOverRedis(turnId: string): Promise<void> {
       codexSdk,
       // Engine subscription auth arrives per-turn as the spec's explicit `args.auth` (resolved per-org on
       // the host) — never from ambient env, so no oauth tokens are threaded into the core config here.
-      { homeRoot: process.env.AGENT_HOME_ROOT, skillsRoot: process.env.SKILLS_ROOT },
+      {
+        homeRoot: process.env.AGENT_HOME_ROOT,
+        skillsRoot: process.env.SKILLS_ROOT,
+        managedSkillsRoot: process.env.SKILLS_MANAGED_ROOT,
+      },
       { warn: (m) => process.stderr.write(`[engine-core] ${m}\n`) },
     );
 

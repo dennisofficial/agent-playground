@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { atlasAgentHomeBase } from '../engine/engine-home';
 import type { FeatureSandbox } from '../git';
 import { orgSkillsRootHost } from '../skills/skill-store-paths';
+import { managedSkillsRootHost } from '../skills/system-skill-store-paths';
 import { engineBundlePath, mcpBridgeBundlePath, mcpHubBundlePath } from './bundle-engine';
 import {
   CONTAINER_AGENT_HOME,
@@ -19,6 +20,7 @@ import {
   CONTAINER_MCP_HUB_DIR,
   CONTAINER_PLAYGROUND,
   CONTAINER_PNPM_STORE,
+  CONTAINER_SKILLS_MANAGED,
   CONTAINER_SKILLS_STORE,
   CONTAINER_WORKTREE,
   isExternalMountPath,
@@ -335,6 +337,14 @@ export class SandboxManager implements SandboxProvider {
     const skillsDir = this.orgSkillsDir(orgId);
     mkdirSync(skillsDir, { recursive: true });
     binds.push(`${skillsDir}:${CONTAINER_SKILLS_STORE}`);
+    // Atlas's own MANAGED (system-tier) skills — ONE fixed host dir (not per-org, code-defined; see
+    // CONTAINER_SKILLS_MANAGED + skills/system-skill-registry.ts), read-only. Committed to the repo, so it
+    // should always exist — the existsSync guard is a best-effort fallback like the bundle hot-reload binds
+    // above, not an expected-missing case.
+    const managedSkillsDir = managedSkillsRootHost();
+    if (existsSync(managedSkillsDir)) {
+      binds.push(`${managedSkillsDir}:${CONTAINER_SKILLS_MANAGED}:ro`);
+    }
     // The thread's durable SHARED CONTEXT folder at /context — lives OUTSIDE the worktree (keyed by
     // jobId so it survives container recreate; the host reads it via contextDirHost()). THREE buckets,
     // pre-created so all always list cleanly:

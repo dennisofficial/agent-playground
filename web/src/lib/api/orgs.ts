@@ -626,6 +626,14 @@ export function useAttachConventionProfile(orgId: string) {
 export type SkillProvenance = "git" | "custom" | "managed";
 export type SkillUpdatePolicy = "pinned" | "track-ref" | "manual";
 
+/** A built-in (Atlas-managed) skill, shown read-only — the skills counterpart of `SystemMcpServer`. Not a
+ *  `workspace_skills` row (no `scope`/`enabled`/etc.) — it's code-defined, always on. */
+export interface SystemSkill {
+  name: string;
+  description: string;
+  surfaces: McpSurface[];
+}
+
 /** A skill as returned to the client — no secrets exist on a skill, so this is the full row. */
 export interface Skill {
   /** `'org'` for an org-wide skill, otherwise the repo id. */
@@ -680,13 +688,25 @@ function fromWire(s: SkillWire): Skill {
   };
 }
 
-/** Every skill for the org (org-wide + every repo scope). */
+/** The `GET /skills` response: the read-only System tiers (Atlas-managed + Claude Code bundled) alongside
+ *  this org's writable Organization/Repository skills. */
+export interface SkillsView {
+  system: SystemSkill[];
+  bundled: string[];
+  skills: Skill[];
+}
+
+/** Every skill for the org — the System tiers plus org-wide + every repo scope. */
 export function useSkills(orgId: string) {
   return useQuery({
     queryKey: qk.orgSkills(orgId),
     queryFn: async () => {
-      const { skills } = await webJson<{ skills: SkillWire[] }>(`/orgs/${orgId}/skills`);
-      return skills.map(fromWire);
+      const { system, bundled, skills } = await webJson<{
+        system: SystemSkill[];
+        bundled: string[];
+        skills: SkillWire[];
+      }>(`/orgs/${orgId}/skills`);
+      return { system, bundled, skills: skills.map(fromWire) } satisfies SkillsView;
     },
     enabled: Boolean(orgId),
     staleTime: 15_000,

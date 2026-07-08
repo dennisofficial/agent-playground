@@ -14,17 +14,26 @@ import { dirname, join } from 'node:path';
  * `ATLAS_HYDRATION_STATE` / `SKILLS_ROOT`) to point at a persistent volume in deployment, where the repo
  * checkout is ephemeral and state must outlive it.
  */
-export function repoStateRoot(): string {
+/**
+ * The monorepo root — the dir holding `pnpm-workspace.yaml` — found by walking up from this compiled
+ * module. Stable whether running from `src` (ts-node/vitest, where `__dirname` is the source tree) or
+ * `dist`. Falls back to `cwd` (never `$HOME`) if the marker isn't found, so a caller anchored on this
+ * still lands inside the project tree. The shared primitive behind {@link repoStateRoot} and
+ * `skills/system-skill-store-paths.ts`'s `managedSkillsRootHost` (a DIFFERENT fixed subdir, same walk).
+ */
+export function monorepoRoot(): string {
   let dir = __dirname;
   for (let depth = 0; depth < 16; depth++) {
-    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) return join(dir, '.atlas-state');
+    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) return dir;
     const parent = dirname(dir);
     if (parent === dir) break; // reached the filesystem root without finding the marker
     dir = parent;
   }
-  // Marker not found (unexpected). Refuse to escape to `$HOME` anyway — anchor on cwd so state still
-  // lands inside the project tree rather than the developer's home dir.
-  return join(process.cwd(), '.atlas-state');
+  return process.cwd(); // marker not found (unexpected) — refuse to escape to $HOME anyway
+}
+
+export function repoStateRoot(): string {
+  return join(monorepoRoot(), '.atlas-state');
 }
 
 /** A named subdir of {@link repoStateRoot}. Callers create it lazily, exactly as before. */

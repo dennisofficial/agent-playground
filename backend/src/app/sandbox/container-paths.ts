@@ -47,6 +47,15 @@ export const CONTAINER_GIT_COMMON = `${CONTAINER_AGENT_HOME}/git-common`;
 export const CONTAINER_SKILLS_STORE = '/skills';
 
 /**
+ * The mount path INSIDE the sandbox for Atlas's own MANAGED (system-tier) skills — a SINGLE fixed host
+ * dir (`backend/skills-managed/`, see `skills/system-skill-store-paths.ts`'s `managedSkillsRootHost`),
+ * bind-mounted READ-ONLY. Unlike {@link CONTAINER_SKILLS_STORE} this is NOT per-org — Atlas-authored,
+ * identical for every sandbox. `SkillResolver`'s `managed: true` entries put a `dirPath` relative to this
+ * root on `ResolvedSkill`; the same per-turn skills-compose step in `engine-core.ts` joins it here.
+ */
+export const CONTAINER_SKILLS_MANAGED = '/skills-managed';
+
+/**
  * The in-sandbox path of the SHARED pnpm content-addressable store — explicitly pointed here regardless
  * of which pnpm version a repo's `packageManager` field (or corepack's own resolution) ends up running,
  * via TWO mechanisms baked in the sandbox Dockerfile (verified live against both): `npm_config_store_dir`

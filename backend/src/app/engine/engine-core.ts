@@ -172,11 +172,18 @@ export interface EngineCoreConfig {
   /** Root for the isolated agent home (from AGENT_HOME_ROOT). */
   homeRoot?: string;
   /**
-   * Root of the org-scoped skills store this run resolves `RunEngineArgs.skills[].dirPath` against (from
-   * `SKILLS_ROOT` — in-sandbox, always `CONTAINER_SKILLS_STORE`, set by `redis-engine-runner.ts`'s exec env).
-   * Undefined (e.g. a bare unit test with no cfg) → the skills-compose step wipes `skills/` but symlinks none.
+   * Root of the org-scoped skills store this run resolves a non-`managed` `RunEngineArgs.skills[].dirPath`
+   * against (from `SKILLS_ROOT` — in-sandbox, always `CONTAINER_SKILLS_STORE`, set by
+   * `redis-engine-runner.ts`'s exec env). Undefined (e.g. a bare unit test with no cfg) → the
+   * skills-compose step skips every non-managed skill (still symlinks any `managed` one).
    */
   skillsRoot?: string;
+  /**
+   * Root of Atlas's own MANAGED (system-tier) skills a `managed: true` `RunEngineArgs.skills[].dirPath`
+   * resolves against (from `SKILLS_MANAGED_ROOT` — in-sandbox, always `CONTAINER_SKILLS_MANAGED`, set by
+   * `redis-engine-runner.ts`'s exec env). Undefined → the skills-compose step skips every managed skill.
+   */
+  managedSkillsRoot?: string;
 }
 
 /**
@@ -407,25 +414,32 @@ export function applyConventionsToAgents(
 
 /**
  * Compose this turn's resolved skills into `<claudeConfigDir>/skills/` as write-through symlinks into the
- * central skills store, for the SDK to discover NATIVELY (`settingSources: ['user']` + `skills: 'all'`,
+ * central skills store — a `managed` skill from `managedSkillsRoot` (Atlas's own built-ins,
+ * `CONTAINER_SKILLS_MANAGED`), every other skill from `skillsRoot` (the org-scoped store,
+ * `CONTAINER_SKILLS_STORE`) — for the SDK to discover NATIVELY (`settingSources: ['user']` + `skills: 'all'`,
  * below) — no synthetic plugin. Idempotent wipe+rewrite EVERY turn (the config dir is durable across turns,
  * so a skill removed/disabled since last turn must not linger — same discipline the old plugin-render step
- * used). A skill whose source dir isn't actually on disk under `skillsRoot` yet (e.g. its DB row exists but
- * nothing installed/authored the files) is skipped rather than left as a dangling symlink.
+ * used). A skill whose source dir isn't actually on disk under its root yet (e.g. its DB row exists but
+ * nothing installed/authored the files) is skipped rather than left as a dangling symlink. `SkillResolver`
+ * already resolved precedence (a workspace skill overrides a managed one of the same name) into ONE entry
+ * per name, so this step never sees both — it just symlinks whichever root each entry says.
  */
 export function composeSkillsDir(
   claudeConfigDir: string,
   skills: RunEngineArgs['skills'],
   skillsRoot: string | undefined,
+  managedSkillsRoot: string | undefined,
 ): void {
   const skillsDir = join(claudeConfigDir, 'skills');
   rmSync(skillsDir, { recursive: true, force: true });
-  if (!skills || skills.length === 0 || !skillsRoot) return;
+  if (!skills || skills.length === 0 || (!skillsRoot && !managedSkillsRoot)) return;
   mkdirSync(skillsDir, { recursive: true });
   for (const skill of skills) {
     // Defensive: skill names are validated kebab at authoring time, but never let one escape skillsDir.
     const safeName = skill.name.replace(/[^a-z0-9_-]/gi, '-') || 'skill';
-    const source = join(skillsRoot, skill.dirPath);
+    const root = skill.managed ? managedSkillsRoot : skillsRoot;
+    if (!root) continue;
+    const source = join(root, skill.dirPath);
     if (!existsSync(source)) continue;
     symlinkSync(source, join(skillsDir, safeName), 'dir');
   }
@@ -455,6 +469,10 @@ export class EngineCore {
 
   private skillsRoot(): string | undefined {
     return this.cfg.skillsRoot;
+  }
+
+  private managedSkillsRoot(): string | undefined {
+    return this.cfg.managedSkillsRoot;
   }
 
   /**
@@ -664,7 +682,7 @@ export class EngineCore {
     // `<claudeConfigDir>/skills/` as write-through symlinks into the central skills store, for the SDK to
     // discover NATIVELY (settingSources 'user' + skills 'all' below). Re-composed every turn (wipes a
     // removed/disabled skill); a no-op wipe when the turn carries none.
-    composeSkillsDir(claudeConfigDir, args.skills, this.skillsRoot());
+    composeSkillsDir(claudeConfigDir, args.skills, this.skillsRoot(), this.managedSkillsRoot());
 
     const options: Options = {
       cwd,

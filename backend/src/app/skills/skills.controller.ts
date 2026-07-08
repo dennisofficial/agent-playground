@@ -24,9 +24,12 @@ import {
   type SkillProvenance,
   type SkillUpdatePolicy,
 } from '../persistence/entities';
+import { BUNDLED_CLAUDE_CODE_SKILLS } from './bundled-skills';
 import { SkillFileWriter } from './skill-file-writer.service';
 import { SkillInstallerService } from './skill-installer.service';
 import { SkillUpdaterService } from './skill-updater.service';
+import { SystemSkillResolver } from './system-skill-resolver.service';
+import type { SystemSkill } from './system-skill-registry';
 import { ORG_SCOPE, WorkspaceSkillStore, type SkillInput, type SkillView } from './workspace-skill.store';
 
 const SURFACES = ['brain', 'build', 'review'] as const;
@@ -83,13 +86,23 @@ export class SkillsController {
     private readonly installer: SkillInstallerService,
     private readonly updater: SkillUpdaterService,
     private readonly skillFiles: SkillFileWriter,
+    private readonly systemSkills: SystemSkillResolver,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
   ) {}
 
+  /** `system` = Atlas's own code-defined built-ins (read-only); `bundled` = the Claude Code CLI's own
+   *  bundled skill names (display-only — already active via `skills: 'all'`, see `bundled-skills.ts`);
+   *  `skills` = this org's Organization/Repository tiers, unchanged. */
   @Get()
-  async list(@CurrentOrg() org: CurrentOrgCtx): Promise<{ skills: SkillView[] }> {
-    return { skills: await this.store.list(org.id) };
+  async list(
+    @CurrentOrg() org: CurrentOrgCtx,
+  ): Promise<{ system: SystemSkill[]; bundled: string[]; skills: SkillView[] }> {
+    return {
+      system: this.systemSkills.list(),
+      bundled: [...BUNDLED_CLAUDE_CODE_SKILLS],
+      skills: await this.store.list(org.id),
+    };
   }
 
   /** Install (or re-install) a skill — or every skill a marketplace manifest lists — from a git repo. */

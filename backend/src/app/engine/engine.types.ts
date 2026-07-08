@@ -376,11 +376,19 @@ export interface ResolvedSkill {
    */
   description: string;
   /**
-   * The skill's dir, relative to the org-scoped skills-store root (`CONTAINER_SKILLS_STORE` in-sandbox) —
-   * `<name>` for an org-scoped skill, `repos/<repoId>/<name>` for a repo-scoped one. See
-   * `skills/skill-store-paths.ts` `skillRelativeDir` (the same function that produced it).
+   * The skill's dir, relative to whichever root `managed` selects (see below) — `<name>` for an org-scoped
+   * or managed skill, `repos/<repoId>/<name>` for a repo-scoped one. See `skills/skill-store-paths.ts`
+   * `skillRelativeDir` / `skills/system-skill-store-paths.ts` `managedSkillRelativeDir` (whichever produced
+   * it).
    */
   dirPath: string;
+  /**
+   * True for a code-defined Atlas-managed (system-tier) skill (`SkillResolver`'s merge of
+   * `system-skill-registry.ts`'s `buildSystemSkills()`) — `dirPath` is then relative to the MANAGED skills
+   * root (`CONTAINER_SKILLS_MANAGED` in-sandbox), not the org-scoped skills store. Absent/false → the
+   * ordinary org/repo (`workspace_skills`) tier, relative to `CONTAINER_SKILLS_STORE`.
+   */
+  managed?: boolean;
 }
 
 export interface RunEngineArgs {
@@ -442,12 +450,14 @@ export interface RunEngineArgs {
    */
   repoConventions?: { name: string; body: string } | null;
   /**
-   * This repo's skills, RESOLVED host-side (`SkillResolver.resolveForTurn` from the `workspace_skills` rows
-   * whose `surfaces` include this turn's surface) as `{name, description, dirPath}` — dirs, not bodies. The
-   * per-turn skills-compose step in `engine-core.ts` idempotently wipes+rewrites `<CLAUDE_CONFIG_DIR>/skills/`
-   * with a write-through symlink per skill (joining `dirPath` against `CONTAINER_SKILLS_STORE`), which the
-   * SDK loads NATIVELY (`settingSources: ['user']` + `skills: 'all'`) — no synthetic plugin. Empty/omitted →
-   * no skills this turn (the wipe still runs, so a prior turn's skills don't linger).
+   * This turn's skills, RESOLVED host-side (`SkillResolver.resolveForTurn`) as `{name, description, dirPath,
+   * managed?}` — dirs, not bodies. Merges the code-defined SYSTEM tier (`managed: true`) with the
+   * `workspace_skills` rows whose `surfaces` include this turn's surface, base-layer-then-overrides (see
+   * `SkillResolver`'s doc). The per-turn skills-compose step in `engine-core.ts` idempotently
+   * wipes+rewrites `<CLAUDE_CONFIG_DIR>/skills/` with a write-through symlink per skill (joining `dirPath`
+   * against `CONTAINER_SKILLS_STORE`, or `CONTAINER_SKILLS_MANAGED` when `managed`), which the SDK loads
+   * NATIVELY (`settingSources: ['user']` + `skills: 'all'`) — no synthetic plugin. Empty/omitted → no
+   * skills this turn (the wipe still runs, so a prior turn's skills don't linger).
    */
   skills?: ResolvedSkill[];
   /**

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
+  Bot,
   Check,
   Download,
   Eye,
@@ -12,6 +13,7 @@ import {
   Lock,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
   Trash2,
   X,
@@ -32,6 +34,7 @@ import {
   type Skill,
   type SkillProvenance,
   type SkillUpdatePolicy,
+  type SystemSkill,
 } from "@/lib/api/orgs";
 import { useOrgRepos } from "@/lib/api/job-queries";
 import type { RepoView } from "@/lib/api/job-api";
@@ -50,7 +53,8 @@ const SURFACE_META: { key: McpSurface; label: string; sub: string }[] = [
  * manager + read-only viewer, not a multi-file web IDE. Owner-only writes (the server enforces it).
  */
 export function SkillsSection({ orgId, role }: { orgId: string; role: string }) {
-  const { data: skills, isLoading, isError, refetch } = useSkills(orgId);
+  const { data, isLoading, isError, refetch } = useSkills(orgId);
+  const skills = data?.skills;
   const { data: repos } = useOrgRepos(orgId);
   const isOwner = role === "owner";
 
@@ -89,14 +93,17 @@ export function SkillsSection({ orgId, role }: { orgId: string; role: string }) 
         Skills
       </h1>
       <p className="mb-4 mt-1.5 max-w-[640px] text-[13px] leading-relaxed text-dim">
-        Directory-based skill bundles the agent can load —{" "}
+        Directory-based skill bundles the agent can load, in four layers:{" "}
+        <b className="font-semibold text-text">Atlas built-in</b> and{" "}
+        <b className="font-semibold text-text">Claude Code built-in</b> are
+        read-only and always on;{" "}
         <b className="font-semibold text-text">Organization</b> skills apply
         to every repo &amp; job; <b className="font-semibold text-text">
           Repository
         </b>{" "}
-        skills add to a single repo and override an org skill of the same
-        name. Install from a git repo (auto-updatable) or author a custom one
-        here.
+        skills add to a single repo and override an org or built-in skill of
+        the same name. Install from a git repo (auto-updatable) or author a
+        custom one here.
       </p>
 
       {!isOwner ? (
@@ -111,7 +118,7 @@ export function SkillsSection({ orgId, role }: { orgId: string; role: string }) 
         <div className="mt-7 flex items-center gap-2 text-[12px] text-faint">
           <Spinner className="h-3 w-3" /> Loading skills…
         </div>
-      ) : isError || !skills ? (
+      ) : isError || !data ? (
         <div className="mt-7 flex items-start gap-3 rounded-lg border border-red-line bg-red-soft p-5">
           <AlertCircle size={17} className="mt-0.5 shrink-0 text-red" />
           <div className="flex-1">
@@ -132,6 +139,16 @@ export function SkillsSection({ orgId, role }: { orgId: string; role: string }) 
         </div>
       ) : (
         <>
+          <SystemSkillsGroup skills={data.system} />
+          <BundledSkillsGroup names={data.bundled} />
+
+          <div className="mb-5 flex items-center gap-2.5">
+            <div className="font-disp text-[15px] font-semibold text-text">
+              Organization &amp; Repository
+            </div>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
           {isOwner ? (
             <div className="mb-5 flex items-center gap-2.5">
               <Button
@@ -153,7 +170,7 @@ export function SkillsSection({ orgId, role }: { orgId: string; role: string }) 
             </div>
           ) : null}
 
-          {skills.length === 0 ? (
+          {data.skills.length === 0 ? (
             <div className="flex flex-col items-center rounded-lg border border-dashed border-border-2 bg-surface-2 px-7 py-10 text-center">
               <div className="mb-3.5 flex h-11 w-11 items-center justify-center rounded-xl border border-border-2 bg-surface text-faint">
                 <Sparkles size={20} />
@@ -237,6 +254,118 @@ export function SkillsSection({ orgId, role }: { orgId: string; role: string }) 
         />
       ) : null}
     </>
+  );
+}
+
+// ── System · Atlas built-in (read-only, code-defined, composed into every turn) ────────────────────────
+function SystemSkillsGroup({ skills }: { skills: SystemSkill[] }) {
+  return (
+    <div className="mb-7">
+      <SystemGroupHeader icon={<ShieldCheck size={13} />} title="Atlas built-in" count={skills.length} />
+      {skills.length === 0 ? (
+        <p className="text-[12px] text-faint">
+          None shipped yet — Atlas's own built-in skills land here as they're authored. An org or repo
+          skill of the same name always overrides one of these.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {skills.map((s) => (
+            <div
+              key={s.name}
+              className="rounded-lg border border-border bg-surface-2 px-4 py-3.5"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="font-mono text-[13px] font-semibold text-text">
+                  {s.name}
+                </span>
+                <span
+                  className="rounded-sm border px-1.5 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.03em] text-green"
+                  style={{
+                    background: "color-mix(in srgb, var(--green) 10%, transparent)",
+                    borderColor: "color-mix(in srgb, var(--green) 30%, transparent)",
+                  }}
+                >
+                  managed
+                </span>
+              </div>
+              <div className="mt-1.5 text-[12px] leading-relaxed text-dim">
+                {s.description}
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                <span className="font-mono text-[8.5px] tracking-[0.08em] text-faint">
+                  SURFACES
+                </span>
+                {s.surfaces.map((surf) => (
+                  <span
+                    key={surf}
+                    className="rounded-sm border border-border-2 bg-surface-3 px-1.5 py-0.5 font-mono text-[9.5px] text-dim"
+                  >
+                    {surf}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── System · Claude Code built-in (display-only — already active via `skills: 'all'`) ─────────────────
+function BundledSkillsGroup({ names }: { names: string[] }) {
+  return (
+    <div className="mb-7">
+      <SystemGroupHeader icon={<Bot size={13} />} title="Claude Code built-in" count={names.length} />
+      <p className="mb-2.5 text-[11.5px] leading-relaxed text-faint">
+        Bundled with the Claude Code CLI itself — already active for every turn, not managed here (the
+        exact set depends on the CLI version Atlas runs).
+      </p>
+      {names.length === 0 ? (
+        <p className="text-[12px] text-faint">None detected.</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {names.map((n) => (
+            <span
+              key={n}
+              className="rounded-sm border border-border-2 bg-surface-3 px-2 py-1 font-mono text-[11px] text-dim"
+            >
+              {n}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SystemGroupHeader({
+  icon,
+  title,
+  count,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  count: number;
+}) {
+  return (
+    <div className="mb-2.5 flex items-center gap-2.5">
+      <span className="text-faint">{icon}</span>
+      <div className="font-disp text-[15px] font-semibold text-text">{title}</div>
+      <span
+        className="flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-mono text-[9px] text-green"
+        style={{
+          background: "var(--green-soft)",
+          borderColor: "color-mix(in srgb, var(--green) 30%, transparent)",
+        }}
+      >
+        <span className="h-[5px] w-[5px] rounded-full bg-green" />
+        always on
+      </span>
+      <CountPill n={count} />
+      <div className="h-px flex-1 bg-border" />
+      <span className="font-mono text-[9px] text-faint">read-only</span>
+    </div>
   );
 }
 
