@@ -563,9 +563,12 @@ function ThreadRow({
       }
     >
       <span className="mt-px flex-none">
-        {/* Once a PR exists the leaf shows its PR status (GitHub color convention); until then, the
-            build-lifecycle status pie. */}
-        {thread.pr ? (
+        {/* A halted thread (a turn-stopping error is outstanding) shows the failed ✕ over everything —
+            it needs attention above its PR glyph. Otherwise, once a PR exists the leaf shows its PR
+            status (GitHub color convention); until then, the build-lifecycle status pie. */}
+        {thread.halted ? (
+          <StatusPie status={thread.status} halted size={14} />
+        ) : thread.pr ? (
           <PrStatusIcon pr={thread.pr} size={14} />
         ) : (
           <StatusPie status={thread.status} size={14} />
