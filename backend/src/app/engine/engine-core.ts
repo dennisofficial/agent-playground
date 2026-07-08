@@ -154,6 +154,23 @@ function makeManualInput(): {
 const STEER_IDLE_GRACE_MS = 350;
 
 /**
+ * A streaming success `result` is TERMINAL — the model genuinely ended its turn — only when it carries
+ * `terminal_reason:'completed'` (or, defensively for CLI drift, no `terminal_reason` and a natural
+ * `stop_reason:'end_turn'`). The CLI also emits success results MID-turn when it PAUSES the loop for a
+ * rate-limit / retry / budget interrupt (`terminal_reason` `'blocking_limit'`/`'rapid_refill_breaker'`/
+ * `'background_requested'`/`'tool_deferred'`, or absent without an end_turn) — it will resume and may
+ * still invoke host tools, so input must stay OPEN. Closing stdin under a still-active turn makes every
+ * subsequent host-tool call throw a bare "Stream closed" (prod incident b30616d2). Verified against
+ * sdk 0.3.201: a genuinely-completed turn — even one that calls a host tool mid-turn — emits exactly one
+ * result with terminal_reason 'completed' + stop_reason 'end_turn', so gating here still ends normal turns.
+ */
+function isTurnGenuinelyDone(m: { terminal_reason?: string; stop_reason?: string | null }): boolean {
+  if (m.terminal_reason === 'completed') return true;
+  if (m.terminal_reason == null && m.stop_reason === 'end_turn') return true;
+  return false;
+}
+
+/**
  * The Atlas v2 ENGINE CORE — the vendor logic for running ONE Claude/Codex turn, with **zero Nest and
  * zero @core dependencies**. It is the single implementation shared by two callers:
  *   - the in-process Nest `EngineRunner` (host-local execution), and
@@ -892,10 +909,18 @@ export class EngineCore {
               usage.contextTokens = contextTokens;
               if (contextModel) usage.contextModel = contextModel;
             }
-            // Streaming-input mode: the model finished responding but the query stays alive awaiting more
-            // input. Close it after a short grace unless a steer lands (which cancels the timer). Single-
-            // message mode ends naturally when the generator closes.
-            if (streaming) scheduleEnd();
+            // Streaming-input mode: arm the end-of-turn close ONLY on a genuinely-completed result. A
+            // paused/interrupted success result (rate-limit / retry / budget) is not the end of the turn —
+            // cancel any pending close and keep input OPEN, because the CLI will resume and may still call
+            // host tools (closing stdin under it orphans the call → "Stream closed"). See decision d1.
+            // Single-message mode ends naturally when the generator closes.
+            if (streaming) {
+              if (isTurnGenuinelyDone(message as { terminal_reason?: string; stop_reason?: string | null })) {
+                scheduleEnd();
+              } else {
+                cancelEnd();
+              }
+            }
           } else {
             // Surface the SDKResultError detail the SDK otherwise flattens into `subtype`.
             // Keep the leading `Claude engine ended: <subtype>` intact — isAuthErrorMessage
