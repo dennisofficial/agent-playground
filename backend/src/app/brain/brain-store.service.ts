@@ -1264,6 +1264,16 @@ export class BrainStoreService {
   }
 
   /**
+   * Mark whether an unresolved turn-failure operator box is outstanding for this thread — the durable
+   * `halted` axis of the "needs you" signal (see `deriveNeedsYou`). Set when `saySystemOperator` posts a
+   * turn-failure box, cleared when the next turn starts. Best-effort — a write failure must never break
+   * the turn (the caller swallows errors). Deliberately NOT reset on boot (unlike `turn_active`).
+   */
+  async setHalted(jobId: string, halted: boolean): Promise<void> {
+    await this.jobs.update({ id: jobId }, { halted });
+  }
+
+  /**
    * The threads with a `turn_active` flag still set — i.e. a conversational turn was streaming when the
    * process died. Captured on boot BEFORE {@link resetAllTurnActive} clears the flags, so crash recovery
    * knows which threads have a possibly-orphaned engine still finishing in the container (to watch them to

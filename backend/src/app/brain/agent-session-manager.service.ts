@@ -1493,6 +1493,11 @@ export class AgentSessionManager
     await this.store
       .setTurnActive(stimulus.jobId, true)
       .catch(() => undefined);
+    // A new turn is starting (a fresh operator message OR the Resume nudge) — clear any outstanding halted
+    // flag so the thread reads as working again. Best-effort; never block the turn.
+    await this.store
+      .setHalted(stimulus.jobId, false)
+      .catch(() => undefined);
     try {
       await this.runChatTurnInner(stimulus, opts);
     } finally {
@@ -5552,6 +5557,9 @@ export class AgentSessionManager
       this.logger.warn(`failed to post system→operator notice: ${err}`);
     }
     await this.store.appendSystemOperatorMessage(stimulus.jobId, text, meta);
+    // A turn-failure operator box is now outstanding — mark the thread halted so the sidebar renders it as
+    // errored (a ✕ + needs-you dot) even though `status` is untouched. Cleared when the next turn starts.
+    await this.store.setHalted(stimulus.jobId, true).catch(() => undefined);
   }
 
   /** Find the open scoping job on this thread, or open a fresh one. */

@@ -589,10 +589,12 @@ export class WebSurfaceController {
         kind: t.kind, // job kind ('feature'/'bugfix'/'onboarding'/'event'/'review'/null) — drives the web badge
         status: t.status,
         turnActive: t.turn_active,
+        halted: t.halted,
         needsYou: deriveNeedsYou(
           t.status,
           t.turn_active,
           t.open_question_count > 0,
+          t.halted,
         ),
         createdAt: t.created_at,
         // The observed PR (null until one exists) — drives the sidebar's PR-status glyph. `mergeable`
@@ -654,10 +656,12 @@ export class WebSurfaceController {
       origin: t.origin,
       status: t.status,
       turnActive: t.turn_active,
+      halted: t.halted,
       needsYou: deriveNeedsYou(
         t.status,
         t.turn_active,
         t.open_question_count > 0,
+        t.halted,
       ),
       baseBranch: t.base_branch,
       createdAt: t.created_at,
