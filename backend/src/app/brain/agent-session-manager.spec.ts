@@ -112,6 +112,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markLedgerPromoted: vi.fn().mockResolvedValue(undefined),
     // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
     setTurnActive: vi.fn().mockResolvedValue(undefined),
+    setHalted: vi.fn().mockResolvedValue(undefined),
     resetAllTurnActive: vi.fn().mockResolvedValue(0),
   } as unknown as BrainStoreService;
 
@@ -1597,6 +1598,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       markSecretDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
       setTurnActive: vi.fn().mockResolvedValue(undefined),
+      setHalted: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox: vi.fn().mockResolvedValue(opts.findSandbox ?? null),
@@ -1716,6 +1718,9 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     await manager.handleChatTurn(stimulus);
 
+    // A fresh turn clears any previous halted flag once it starts.
+    expect(store.setHalted as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(THREAD_ID, false);
+
     // richStream is requested for the brain turn.
     const runArgs = (dockerRunner.run as ReturnType<typeof vi.fn>).mock.calls[0][0] as RunEngineArgs;
     expect(runArgs.richStream).toBe(true);
@@ -1824,6 +1829,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     // …and it does NOT tell the operator to "try again" (retrying is futile).
     expect(String(notice![1])).not.toContain('try again');
     expect(String(notice![1]).toLowerCase()).toContain('new thread');
+    expect((store.setHalted as ReturnType<typeof vi.fn>).mock.calls).toEqual([
+      [THREAD_ID, false],
+      [THREAD_ID, true],
+    ]);
   });
 
   it('routes a GENERIC in-sandbox engine failure to a system→operator notice, showing the TRUE error verbatim (no narrative wrapper)', async () => {
@@ -1848,6 +1857,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(
       (store.appendSystemOperatorMessage as ReturnType<typeof vi.fn>).mock.calls[0][2],
     ).toMatchObject({ retryable: true });
+    expect((store.setHalted as ReturnType<typeof vi.fn>).mock.calls).toEqual([
+      [THREAD_ID, false],
+      [THREAD_ID, true],
+    ]);
   });
 
   it('SUPPRESSES a duplicate system→operator notice — a persistent limit fails every re-driven turn identically', async () => {
@@ -1864,6 +1877,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       (c) => (c[2] as { meta?: { source?: string } } | undefined)?.meta?.source === 'system_operator',
     );
     expect(notice).toBeUndefined();
+    // A Resume/new turn clears `halted` at start, so a deduped repeated failure must re-assert it even
+    // though no second box is written.
+    expect((store.setHalted as ReturnType<typeof vi.fn>).mock.calls).toEqual([
+      [THREAD_ID, false],
+      [THREAD_ID, true],
+    ]);
   });
 
   it('does NOT mark the unresumable-session notice as retryable (retrying truly cannot help)', async () => {
@@ -2339,6 +2358,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       markSecretDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
       setTurnActive: vi.fn().mockResolvedValue(undefined),
+      setHalted: vi.fn().mockResolvedValue(undefined),
       ...storeOverrides,
     } as unknown as BrainStoreService;
     const manager = new AgentSessionManager(

@@ -1,0 +1,164 @@
+import { EnvService } from '@core/config/env/env.service';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, relative } from 'node:path';
+import { LocalGitService } from '../git/local-git.service';
+import { CredentialResolver } from '../onboarding';
+import type { McpSurface, SkillUpdatePolicy } from '../persistence/entities';
+import { parseSkillFrontmatter } from './skill-frontmatter';
+import { skillDirHost } from './skill-store-paths';
+import { type SkillView, WorkspaceSkillStore } from './workspace-skill.store';
+
+/** One `.claude-plugin/marketplace.json` — see the operator's `context-engineering-collection` for a real
+ *  example. Only the fields the installer reads; the rest (owner/metadata/strict…) are ignored. */
+interface MarketplaceManifest {
+  plugins?: Array<{ source?: string; skills?: string[] }>;
+}
+
+export interface SkillInstallInput {
+  orgId: string;
+  /** DB scope — `'*'` (org-wide) or a repo id. Already resolved/validated by the caller (the controller). */
+  scope: string;
+  sourceUrl: string;
+  /** Branch/tag to install. Omitted → the remote's default branch. */
+  ref?: string;
+  /** Subpath within the repo — a single skill dir, OR a dir containing `.claude-plugin/marketplace.json`. */
+  subpath?: string;
+  updatePolicy?: SkillUpdatePolicy;
+  surfaces?: McpSurface[];
+}
+
+/**
+ * Installs skills from a git repo into the central host skills store (§3 of the skills-redesign plan).
+ * Shallow-clones `sourceUrl@ref` to a scratch temp dir, vendors (copies — never a submodule) either ONE
+ * skill dir or, for a marketplace repo, every skill dir its manifest lists, and upserts a `workspace_skills`
+ * registry row per skill with `provenance:'git'` + the source/sha it landed on. Reused unchanged by
+ * `SkillUpdaterService` for re-vendoring on update.
+ */
+@Injectable()
+export class SkillInstallerService {
+  private readonly logger = new Logger(SkillInstallerService.name);
+
+  constructor(
+    private readonly env: EnvService,
+    private readonly git: LocalGitService,
+    private readonly creds: CredentialResolver,
+    private readonly store: WorkspaceSkillStore,
+  ) {}
+
+  private root(): string | undefined {
+    return this.env.get('SKILLS_ROOT');
+  }
+
+  /** Install (or re-install, on update) `input.sourceUrl` — returns every vendored skill's registry row. */
+  async install(input: SkillInstallInput): Promise<SkillView[]> {
+    const token = await this.resolveToken(input.sourceUrl, input.orgId);
+    const { ref, sha } = await this.git.resolveRemoteRef(input.sourceUrl, input.ref, token);
+
+    const tmpDir = await mkdtemp(join(tmpdir(), 'atlas-skill-install-'));
+    try {
+      await this.git.shallowCloneToPath(input.sourceUrl, ref, tmpDir, token);
+      const root = input.subpath ? join(tmpDir, input.subpath) : tmpDir;
+      if (!existsSync(root)) {
+        throw new BadRequestException(`subpath '${input.subpath}' not found in ${input.sourceUrl}@${ref}`);
+      }
+
+      const manifestPath = join(root, '.claude-plugin', 'marketplace.json');
+      if (existsSync(manifestPath)) {
+        return this.installMarketplace(input, tmpDir, root, manifestPath, ref, sha);
+      }
+      if (!existsSync(join(root, 'SKILL.md'))) {
+        throw new BadRequestException(
+          `no SKILL.md at '${input.subpath ?? '/'}' and no .claude-plugin/marketplace.json — ` +
+            `${input.sourceUrl}@${ref} isn't a skill or a marketplace repo`,
+        );
+      }
+      const skill = await this.vendorSkill(input, root, ref, sha, input.subpath ?? null);
+      return [skill];
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true }).catch((err) =>
+        this.logger.warn(`failed to clean up scratch clone ${tmpDir}: ${err}`),
+      );
+    }
+  }
+
+  /** Expand a marketplace repo's `plugins[].skills[]` into one vendored skill dir + row per entry. */
+  private async installMarketplace(
+    input: SkillInstallInput,
+    cloneRoot: string,
+    marketplaceRoot: string,
+    manifestPath: string,
+    ref: string,
+    sha: string,
+  ): Promise<SkillView[]> {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as MarketplaceManifest;
+    const results: SkillView[] = [];
+    for (const plugin of manifest.plugins ?? []) {
+      const pluginDir = join(marketplaceRoot, plugin.source ?? './');
+      for (const skillRel of plugin.skills ?? []) {
+        const skillDir = join(pluginDir, skillRel);
+        if (!existsSync(join(skillDir, 'SKILL.md'))) {
+          this.logger.warn(`marketplace ${input.sourceUrl}: skipping '${skillRel}' — no SKILL.md`);
+          continue;
+        }
+        // Store the subpath relative to the CLONE ROOT (not the marketplace root) so a re-install with the
+        // same `input.subpath` finds the manifest again, and the updater's re-expand walks the same tree.
+        const subpath = relative(cloneRoot, skillDir);
+        results.push(await this.vendorSkill(input, skillDir, ref, sha, subpath));
+      }
+    }
+    if (results.length === 0) {
+      throw new BadRequestException(`marketplace manifest at ${manifestPath} listed no valid skills`);
+    }
+    return results;
+  }
+
+  /** Copy one skill dir into the central store + upsert its registry row. Overwrites any prior copy. */
+  private async vendorSkill(
+    input: SkillInstallInput,
+    srcDir: string,
+    ref: string,
+    sha: string,
+    subpath: string | null,
+  ): Promise<SkillView> {
+    const md = readFileSync(join(srcDir, 'SKILL.md'), 'utf8');
+    const frontmatter = parseSkillFrontmatter(md);
+    const name = sanitizeName(frontmatter.name ?? basename(srcDir));
+    const description = frontmatter.description ?? `Installed from ${input.sourceUrl}${subpath ? `/${subpath}` : ''}`;
+
+    const dest = skillDirHost(this.root(), input.orgId, input.scope, name);
+    rmSync(dest, { recursive: true, force: true });
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(srcDir, dest, { recursive: true }); // full fidelity — binaries, scripts, nested dirs, all of it
+
+    await this.store.write(input.orgId, input.scope, name, {
+      description,
+      provenance: 'git',
+      source_url: input.sourceUrl,
+      source_ref: ref,
+      source_subpath: subpath,
+      installed_sha: sha,
+      update_policy: input.updatePolicy ?? 'track-ref',
+      surfaces: input.surfaces,
+      enabled: true,
+    });
+    this.logger.log(`installed skill '${name}' org=${input.orgId} scope=${input.scope} from ${input.sourceUrl}@${ref}`);
+    const view = await this.store.get(input.orgId, input.scope, name);
+    if (!view) throw new Error(`skill '${name}' vanished immediately after write — should be unreachable`);
+    return view;
+  }
+
+  /** Anonymous for public repos / non-GitHub remotes; the org's PAT for private GitHub repos. */
+  private async resolveToken(sourceUrl: string, orgId: string): Promise<string | undefined> {
+    if (!sourceUrl.startsWith('https://github.com/')) return undefined;
+    return this.creds.githubToken(orgId);
+  }
+}
+
+/** Never let a derived name (frontmatter or dir-basename, both untrusted repo content) escape the store's
+ *  path segment or collide with the registry's PK shape. */
+function sanitizeName(name: string): string {
+  return name.trim().replace(/[^a-z0-9_-]/gi, '-').replace(/^-+|-+$/g, '') || 'skill';
+}

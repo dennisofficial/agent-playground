@@ -104,13 +104,9 @@ export class WorkspaceProfileService {
             .join(', ')}`
         : '- MCP servers: none',
     );
-    lines.push(
-      s.skills.length
-        ? `- Skills: ${s.skills
-            .map((k) => `${k.name} [${k.tier}${k.enabled ? '' : ', disabled'}]`)
-            .join(', ')}`
-        : '- Skills: none',
-    );
+    // NOTE: no "Skills:" line here (dropped) — the SDK's native `skills: 'all'` listing (engine-core.ts)
+    // now owns skill surfacing for the model, with its own 1%-context budget + progressive disclosure.
+    // Repeating bare names here was pure duplication (see the skills-redesign plan's duplication finding).
     lines.push(
       s.houseStyle
         ? `- House style: ${s.houseStyle.name ?? s.houseStyle.slug} (${s.houseStyle.slug})`

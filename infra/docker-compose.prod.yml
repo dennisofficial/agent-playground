@@ -3,7 +3,7 @@
 # Prerequisites:
 #   - /srv/atlas/secrets/atlas.env  (mode 600, see infra/.env.prod.example)
 #   - /srv/atlas/pgdata/            (Postgres data directory)
-#   - /srv/atlas/data/{repos,agent-home,refs,golden,engine}/
+#   - /srv/atlas/data/{repos,agent-home,refs,skills,golden,engine}/
 #   - /srv/atlas/caddy/{data,config}/
 #   - /srv/atlas/state/             (blue/green active-color + tag)
 #   - /var/run/docker.sock          (the host Docker daemon socket)
@@ -45,6 +45,7 @@ x-backend-common: &backend-common
     REPOS_ROOT: /srv/atlas/data/repos
     AGENT_HOME_ROOT: /srv/atlas/data/agent-home
     REFS_ROOT: /srv/atlas/data/refs
+    SKILLS_ROOT: /srv/atlas/data/skills
     ATLAS_GOLDEN_ROOT: /srv/atlas/data/golden
     # Engine bundle hot-reload path (under the same-path mount → host-resolvable).
     # bundleEngine() writes here so running sandboxes pick up a fresh bundle without

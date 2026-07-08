@@ -21,6 +21,8 @@ import {
   EngineAuthError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
+  type EngineHomeKey,
+  type EngineHomeType,
   type ToolBridgeOptions,
   type ToolImpl,
 } from '../engine';
@@ -730,7 +732,7 @@ export class ThreadDriver implements JobDispatcher {
         // HALT the build (ADR 0004): an unfinished thread must not ship. Relay a durable card, flip the job
         // to a needs-you state, record the owed brain wake + trail, and SKIP finalizeBuild — no PR on an
         // unfinished build. The brain wake fires from `drive()` once the job leaves the active window.
-        await this.haltJob(job, route, thread, res.outcome, sandbox);
+        await this.haltJob(job, route, thread, res.outcome);
         return;
       }
       handoff = res.handoff;
@@ -828,7 +830,6 @@ export class ThreadDriver implements JobDispatcher {
     route: JobRoute,
     thread: DriverThread,
     outcome: ThreadOutcome,
-    sandbox: FeatureSandbox,
   ): Promise<void> {
     const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
     const haltOutcome = outcome as 'blocked' | 'incomplete' | 'failed';
@@ -897,23 +898,29 @@ export class ThreadDriver implements JobDispatcher {
           ),
         );
     }
-    await this.writeCompletionMd(sandbox, thread, haltOutcome, term).catch((e) =>
+    await this.writeCompletionMd(job, thread, haltOutcome, term).catch((e) =>
       this.logger.warn(`could not write completion.md for thread=${thread.id}: ${e}`),
     );
   }
 
-  /** Render + write the durable halt trail to `<worktree>/.atlas/threads/<ordinal>-<slug>/completion.md`
-   *  (files-as-store, mirroring the decision ledger's plain `mkdir`+`writeFile`). A LIVE worktree artifact
-   *  the brain/operator read on the wake — NOT committed (the halted batch is un-committed + resumable; the
-   *  DB `terminal_record` is the durable source, this is its human-readable projection). Best-effort; never
-   *  blocks the halt. */
+  /** Render + write the durable halt trail to `<contextDirHost>/generated/threads/<ordinal>-<slug>/completion.md`
+   *  (host-written projection like the other `/context/generated` renders — `decision-record.md`,
+   *  `deviations.md` — read-only in-sandbox and surfaced in the operator UI; NOT the committed
+   *  `.atlas/decisions/` ledger, so it never lands in the git worktree). NOT committed (the halted batch is
+   *  un-committed + resumable; the DB `terminal_record` is the durable source, this is its human-readable
+   *  projection). Best-effort; never blocks the halt. */
   private async writeCompletionMd(
-    sandbox: FeatureSandbox,
+    job: Job,
     thread: DriverThread,
     outcome: 'blocked' | 'incomplete' | 'failed',
     term: ThreadTerminalRecord | null,
   ): Promise<void> {
-    const dir = join(sandbox.worktreePath, '.atlas', 'threads', threadDirName(thread));
+    const dir = join(
+      this.threadLifecycle.contextDirHost(job.id, job.orgId),
+      'generated',
+      'threads',
+      threadDirName(thread),
+    );
     await mkdir(dir, { recursive: true });
     await writeFile(
       join(dir, 'completion.md'),
@@ -1113,7 +1120,7 @@ export class ThreadDriver implements JobDispatcher {
     // The shared review context — derive the diff ONCE and share it across every lens + the fix turn.
     const baseCtx: AutoFixContext = {
       worktreePath: sandbox.worktreePath,
-      sandboxKey: sandboxKey(sandbox),
+      sandboxKey: jobHomeKey(job, 'autofix'),
       ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
       intent: `${record?.overview ?? ''}\n\nSection: ${thread.brief}`.trim(),
       label: thread.brief,
@@ -2142,6 +2149,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id, // resumes the writer's persisted session — same conversation as its build turn
           sandbox,
@@ -2340,6 +2348,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id,
           sandbox,
@@ -2728,6 +2737,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id, // resumes the persisted engine session — same conversation as the build turn
           sandbox,
@@ -3159,7 +3169,7 @@ export const COMMIT_AND_PUSH_INSTRUCTION =
   ` without committing, your work is treated as unfinished.`;
 
 /**
- * Render the durable halt trail for `.atlas/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
+ * Render the durable halt trail for `/context/generated/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
  * — every section is guarded on presence and tails are already length-capped in the record. The brain reads
  * this on its wake turn (alongside the fenced record in the wake body) to triage the halt.
  */
@@ -3339,8 +3349,10 @@ export function extractOrientation(text: string | undefined): string | null {
   return body.length > 1500 ? `${body.slice(0, 1500)}…` : body;
 }
 
-function sandboxKey(sandbox: FeatureSandbox): string {
-  return `${sandbox.repoId}--${sandbox.branch}`;
+/** A job's engine-home key for a given surface `type` — STABLE across every thread/step/lens of the job (all
+ *  its turns of that type share the job's own nested engine home), keyed by (org,repo,job), never per-branch. */
+function jobHomeKey(job: Job, type: EngineHomeType): EngineHomeKey {
+  return { orgId: job.orgId, repoId: job.repoId, jobId: job.id, type };
 }
 
 /** The ship-review gate applies only to the driver builds the operator drives to a PR — `feature` + `bugfix`.
