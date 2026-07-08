@@ -488,3 +488,97 @@ export function useDisconnectRepo(orgId: string) {
     },
   });
 }
+
+// ── Convention profiles (reusable house-style bundles, opt-in per repo) ─────────────────────────────
+// An org defines named house-style profiles (folder conventions, stack idioms, a shared-contract layout);
+// a repo opts in by pointing `convention_profile_slug` at one, and its `body` is injected into every
+// build-facing prompt for that repo. GET is any-member; writes (PUT/DELETE profile, PUT repo attach) are
+// owner-only server-side. No secrets — the body is plain text. Mirrors the onboarding brain's owner-gated
+// proposal flow, exposed here for manual management.
+
+export interface ConventionProfile {
+  slug: string;
+  name: string;
+  body: string;
+  /** Natural-language "what stack this matches" — used by the onboarding brain to auto-propose it. */
+  detectHint: string | null;
+}
+
+export interface ConventionProfilesView {
+  profiles: ConventionProfile[];
+}
+
+/** Body for `PUT /web/orgs/:orgId/convention-profiles/:slug` — create or replace a profile. */
+export interface SaveConventionProfileBody {
+  name: string;
+  body: string;
+  detectHint?: string;
+}
+
+/** Every house-style profile for the org (with body) — the settings editor's data. */
+export function useConventionProfiles(orgId: string) {
+  return useQuery({
+    queryKey: qk.orgConventionProfiles(orgId),
+    queryFn: () =>
+      webJson<ConventionProfilesView>(`/orgs/${orgId}/convention-profiles`),
+    enabled: Boolean(orgId),
+    staleTime: 15_000,
+  });
+}
+
+/** Owner-only: create/replace a profile by slug. */
+export function useSaveConventionProfile(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, body }: { slug: string; body: SaveConventionProfileBody }) =>
+      webJson<{ ok: boolean }>(
+        `/orgs/${orgId}/convention-profiles/${encodeURIComponent(slug)}`,
+        { method: "PUT", body: JSON.stringify(body) },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.orgConventionProfiles(orgId) }),
+  });
+}
+
+/** Owner-only: delete a profile. Repos still pointing at it fall back to "no house style". */
+export function useDeleteConventionProfile(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) =>
+      webJson<{ ok: boolean }>(
+        `/orgs/${orgId}/convention-profiles/${encodeURIComponent(slug)}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.orgConventionProfiles(orgId) }),
+  });
+}
+
+/** The slug currently attached to a repo (or null) — the repo-attach control's initial state. */
+export function useRepoConventionProfile(orgId: string, repoId: string) {
+  return useQuery({
+    queryKey: qk.repoConventionProfile(orgId, repoId),
+    queryFn: () =>
+      webJson<{ slug: string | null }>(
+        `/orgs/${orgId}/convention-profiles/repo/${repoId}`,
+      ),
+    enabled: Boolean(orgId && repoId),
+    staleTime: 15_000,
+  });
+}
+
+/** Owner-only: attach a profile to a repo, or clear it with `slug: null`. */
+export function useAttachConventionProfile(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ repoId, slug }: { repoId: string; slug: string | null }) =>
+      webJson<{ ok: boolean; slug: string | null }>(
+        `/orgs/${orgId}/convention-profiles/repo/${repoId}`,
+        { method: "PUT", body: JSON.stringify({ slug }) },
+      ),
+    onSuccess: (_res, { repoId }) =>
+      void qc.invalidateQueries({
+        queryKey: qk.repoConventionProfile(orgId, repoId),
+      }),
+  });
+}
