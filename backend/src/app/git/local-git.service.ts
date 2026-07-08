@@ -1,9 +1,9 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { mkdir, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { mkdir, readdir, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { repoStateDir } from '../state-root';
 import { gitAuthEnv } from './git-auth';
@@ -298,6 +298,62 @@ export class LocalGitService {
     return next;
   }
 
+  /** A repo is provisioned as a full clone (not a linked worktree) exactly when it has submodules — a
+   *  linked worktree's shared-common-dir submodule gitdirs get an unresolvable relative core.worktree
+   *  across the container's split mounts, breaking `git add -A` at ship. */
+  private repoHasSubmodules(repoPath: string): boolean {
+    return existsSync(join(repoPath, '.gitmodules'));
+  }
+
+  /** True when the checkout at `worktreePath` is a full clone (real `.git` DIR) rather than a linked
+   *  worktree (whose `.git` is a pointer FILE). Runtime detection — no persisted flag needed. */
+  private isFullClone(worktreePath: string): boolean {
+    try { return statSync(join(worktreePath, '.git')).isDirectory(); } catch { return false; }
+  }
+
+  /**
+   * Provision a WORKTREE PATH as a full local clone of the repo's persistent main clone, detached at
+   * the freshest base from origin. Used for submodule repos (see {@link repoHasSubmodules}) in place
+   * of a linked `git worktree add`, so every submodule gitdir lands under the clone's own
+   * `.git/modules/…` instead of an unresolvable relative path in a shared common dir.
+   *
+   * `baseRef`/`detach` are part of the shared signature so both `createBaseWorktree` and
+   * `createFeatureSandbox` can reuse this; the body always ends up detached at `FETCH_HEAD` — callers
+   * that need a named branch cut one afterward off that detached HEAD.
+   */
+  private async provisionFullClone(
+    repo: ProjectRepo,
+    worktreePath: string,
+    baseRef: string,
+    detach: boolean,
+  ): Promise<void> {
+    await mkdir(dirname(worktreePath), { recursive: true });
+    // Local clone of the persistent main clone — objects hardlink on the same fs (fast, disk-cheap).
+    await this.git(['clone', '--no-checkout', repo.repoPath, worktreePath]);
+    // Repoint origin to GitHub so push + ensureSubmodules auth (keyed on the github.com host) work.
+    await this.git(['remote', 'set-url', 'origin', repo.gitUrl], { cwd: worktreePath });
+    // Refresh the base from GitHub (the main clone's local branch can lag origin/<default>).
+    await this.git(['fetch', 'origin', repo.defaultBranch], {
+      cwd: worktreePath,
+      gitUrl: repo.gitUrl,
+      token: repo.token,
+    });
+    await this.git(['checkout', '--detach', 'FETCH_HEAD'], { cwd: worktreePath });
+  }
+
+  /** Kind-aware removal of a checkout: `rm -rf` a full clone, `git worktree remove` a linked worktree. */
+  private async teardownCheckout(repo: ProjectRepo, worktreePath: string): Promise<void> {
+    if (this.isFullClone(worktreePath)) {
+      await rm(worktreePath, { recursive: true, force: true }); // standalone clone dir
+    } else {
+      try {
+        await this.git(['worktree', 'remove', '--force', worktreePath], { cwd: repo.repoPath });
+      } catch (err) {
+        this.logger.warn(`worktree remove failed for ${worktreePath}: ${err}`);
+      }
+    }
+  }
+
   /**
    * Ensure the project repo exists locally (clone on first use), returning a handle. Idempotent: an
    * existing clone is reused and its default branch refreshed from origin. The token authenticates the
@@ -377,20 +433,35 @@ export class LocalGitService {
     const worktreePath = join(repo.repoPath, '.worktrees', slug);
 
     await this.withLock(repo.repoPath, async () => {
-      if (existsSync(worktreePath)) return; // reuse
-      // Make sure we have the freshest base before cutting.
-      await this.git(['fetch', 'origin', repo.defaultBranch], {
-        cwd: repo.repoPath,
-        gitUrl: repo.gitUrl,
-        token: repo.token,
-      });
+      const hasSub = this.repoHasSubmodules(repo.repoPath);
+      if (existsSync(worktreePath)) {
+        // Reuse ONLY if the on-disk kind matches what this repo should now be. A stale linked worktree on a
+        // now-clone repo (or vice-versa) is torn down and re-provisioned.
+        if (this.isFullClone(worktreePath) === hasSub) return;
+        await this.teardownCheckout(repo, worktreePath);
+      }
       const base = `origin/${repo.defaultBranch}`;
-      // Reuse an existing branch ref if present (a resume); else create it off the base.
-      const branchExists = await this.refExists(repo.repoPath, `refs/heads/${branch}`);
-      const addArgs = branchExists
-        ? ['worktree', 'add', worktreePath, branch]
-        : ['worktree', 'add', '-b', branch, worktreePath, base];
-      await this.git(addArgs, { cwd: repo.repoPath });
+      if (hasSub) {
+        await this.provisionFullClone(repo, worktreePath, base, false);
+        // Reuse an existing local branch ref if present (a resume); else cut it off the detached base HEAD.
+        const branchExists = await this.refExists(worktreePath, `refs/heads/${branch}`);
+        await this.git(branchExists ? ['checkout', branch] : ['checkout', '-b', branch], {
+          cwd: worktreePath,
+        });
+      } else {
+        // Make sure we have the freshest base before cutting.
+        await this.git(['fetch', 'origin', repo.defaultBranch], {
+          cwd: repo.repoPath,
+          gitUrl: repo.gitUrl,
+          token: repo.token,
+        });
+        // Reuse an existing branch ref if present (a resume); else create it off the base.
+        const branchExists = await this.refExists(repo.repoPath, `refs/heads/${branch}`);
+        const addArgs = branchExists
+          ? ['worktree', 'add', worktreePath, branch]
+          : ['worktree', 'add', '-b', branch, worktreePath, base];
+        await this.git(addArgs, { cwd: repo.repoPath });
+      }
     });
 
     return {
@@ -480,18 +551,27 @@ export class LocalGitService {
     const worktreePath = join(repo.repoPath, '.worktrees', slug);
 
     await this.withLock(repo.repoPath, async () => {
-      if (existsSync(worktreePath)) return; // reuse on recovery
-      // Ensure we have the freshest base.
-      await this.git(['fetch', 'origin', repo.defaultBranch], {
-        cwd: repo.repoPath,
-        gitUrl: repo.gitUrl,
-        token: repo.token,
-      });
-      // Check out detached at origin/<defaultBranch> — no new branch ref so it stays read-only.
-      await this.git(
-        ['worktree', 'add', '--detach', worktreePath, `origin/${repo.defaultBranch}`],
-        { cwd: repo.repoPath },
-      );
+      const hasSub = this.repoHasSubmodules(repo.repoPath);
+      if (existsSync(worktreePath)) {
+        // Reuse ONLY if the on-disk kind matches what this repo should now be. A stale linked worktree on a
+        // now-clone repo (or vice-versa) is torn down and re-provisioned.
+        if (this.isFullClone(worktreePath) === hasSub) return;
+        await this.teardownCheckout(repo, worktreePath);
+      }
+      if (hasSub) {
+        await this.provisionFullClone(repo, worktreePath, `origin/${repo.defaultBranch}`, true);
+      } else {
+        // Ensure we have the freshest base.
+        await this.git(['fetch', 'origin', repo.defaultBranch], {
+          cwd: repo.repoPath,
+          gitUrl: repo.gitUrl,
+          token: repo.token,
+        });
+        // Check out detached at origin/<defaultBranch> — no new branch ref so it stays read-only.
+        await this.git(['worktree', 'add', '--detach', worktreePath, `origin/${repo.defaultBranch}`], {
+          cwd: repo.repoPath,
+        });
+      }
     });
 
     return {
@@ -517,15 +597,33 @@ export class LocalGitService {
     featureBranch: string,
   ): Promise<FeatureSandbox> {
     await this.withLock(sandbox.worktreePath, async () => {
-      const branchExists = await this.refExists(repo.repoPath, `refs/heads/${featureBranch}`);
-      if (branchExists) {
+      const clone = this.isFullClone(sandbox.worktreePath);
+      const localHas = clone
+        ? await this.refExists(sandbox.worktreePath, `refs/heads/${featureBranch}`)
+        : await this.refExists(repo.repoPath, `refs/heads/${featureBranch}`);
+      if (localHas) {
         // Resume: the branch was already cut — just check it out.
         await this.git(['checkout', featureBranch], { cwd: sandbox.worktreePath });
-      } else {
-        // Fresh approval: cut the branch off the current detached HEAD (which is on base).
-        await this.git(['-c', `user.name=Atlas`, '-c', `user.email=atlas@users.noreply.github.com`,
-          'checkout', '-b', featureBranch], { cwd: sandbox.worktreePath });
+        return;
       }
+      if (clone) {
+        // Clone refs are private to the clone; a resumed/recovered clone may need the branch from origin
+        // (builders pushed it). Try origin, else cut fresh off the detached base HEAD.
+        try {
+          await this.git(['fetch', 'origin', featureBranch], {
+            cwd: sandbox.worktreePath,
+            gitUrl: repo.gitUrl,
+            token: repo.token,
+          });
+          await this.git(['checkout', '-b', featureBranch, 'FETCH_HEAD'], { cwd: sandbox.worktreePath });
+          return;
+        } catch {
+          // origin doesn't have it → fresh cut below
+        }
+      }
+      // Fresh approval: cut the branch off the current detached HEAD (which is on base).
+      await this.git(['-c', `user.name=Atlas`, '-c', `user.email=atlas@users.noreply.github.com`,
+        'checkout', '-b', featureBranch], { cwd: sandbox.worktreePath });
     });
     return { ...sandbox, branch: featureBranch };
   }
@@ -534,11 +632,7 @@ export class LocalGitService {
   async removeSandbox(repo: ProjectRepo, worktreePath: string): Promise<void> {
     await this.withLock(repo.repoPath, async () => {
       if (!existsSync(worktreePath)) return;
-      try {
-        await this.git(['worktree', 'remove', '--force', worktreePath], { cwd: repo.repoPath });
-      } catch (err) {
-        this.logger.warn(`worktree remove failed for ${worktreePath}: ${err}`);
-      }
+      await this.teardownCheckout(repo, worktreePath);
     });
   }
 

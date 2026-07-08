@@ -848,11 +848,11 @@ export class JobLifecycleService {
     const thread = await this.jobs.findOne({ where: { id: row.job_id } });
     const base = await this.git.createBaseWorktree(projectRepo, row.job_id);
     const desired = thread?.current_branch ?? thread?.feature_branch ?? null;
-    const target =
+    const hasDesired =
       desired &&
-      (await this.git.refExists(projectRepo.repoPath, `refs/heads/${desired}`))
-        ? desired
-        : (thread?.feature_branch ?? null);
+      ((await this.git.refExists(projectRepo.repoPath, `refs/heads/${desired}`)) ||
+        (await this.git.refExists(projectRepo.repoPath, `refs/remotes/origin/${desired}`)));
+    const target = hasDesired ? desired : (thread?.feature_branch ?? null);
     const sb = target
       ? await this.git.switchBranch(base, projectRepo, target)
       : base;
