@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Inject,
   Logger,
   NotFoundException,
@@ -1715,6 +1716,51 @@ export class WebSurfaceController {
     if (!relPath) throw new BadRequestException('path is required');
     const root = this.threadLifecycle.contextDirHost(jobId, org.id);
     const abs = resolveUploadFilePath(root, relPath);
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(abs);
+    } catch {
+      throw new NotFoundException('file not found');
+    }
+    if (!st.isFile()) throw new NotFoundException('not a file');
+    const ext = extname(abs).toLowerCase();
+    const mime =
+      MIME_BY_EXT[ext]?.mime ??
+      (ext === '.pdf' ? 'application/pdf' : 'application/octet-stream');
+    return new StreamableFile(createReadStream(abs), {
+      type: mime,
+      length: st.size,
+    });
+  }
+
+  /**
+   * `GET …/jobs/:jobId/context/raw/<bucket-relative-path>` — STREAM one `/context` file (specs/ +
+   * generated/ + artifacts/) as raw bytes with the correct `Content-Type`, so a browser can render it
+   * directly — e.g. an `<iframe>` HTML preview of an artifact. Deliberately PATH-based (the file path lives
+   * in the URL path, not a `?path=` query) so an HTML document's own RELATIVE sub-resource URLs
+   * (`style.css`, `chart.png`) resolve against the document URL and get fetched here too. Same bucket +
+   * traversal guard as the base64 `contextFile` endpoint (`resolveContextFilePath`); distinct from
+   * `contextFileRaw` above, which stays scoped to `uploads/`. Express 5 hands the `*path` wildcard as an
+   * array of already-decoded path segments.
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/context/raw/*path')
+  // Enforce the sandbox SERVER-SIDE, not only via the viewer's <iframe sandbox>: a CSP `sandbox`
+  // response header forces this document into an opaque origin (scripts allowed, no same-origin) no
+  // matter how it is loaded — including a top-level navigation straight to this URL — so agent-authored
+  // HTML can never read the session cookie or call the API as the operator. nosniff pins the type.
+  @Header('Content-Security-Policy', 'sandbox allow-scripts')
+  @Header('X-Content-Type-Options', 'nosniff')
+  @UseGuards(OrgMembershipGuard)
+  async contextRaw(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('path') segments: string[] | string,
+  ): Promise<StreamableFile> {
+    await this.requireThread(jobId, org.id);
+    const relPath = (Array.isArray(segments) ? segments : [segments]).join('/');
+    if (!relPath) throw new BadRequestException('path is required');
+    const root = this.threadLifecycle.contextDirHost(jobId, org.id);
+    const abs = resolveContextFilePath(root, relPath);
     let st: ReturnType<typeof statSync>;
     try {
       st = statSync(abs);

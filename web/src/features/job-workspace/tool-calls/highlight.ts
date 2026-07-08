@@ -93,6 +93,7 @@ const EXT_LANG: Record<string, string> = {
   scss: "css",
   less: "css",
   html: "xml",
+  htm: "xml",
   xml: "xml",
   svg: "xml",
   vue: "xml",
