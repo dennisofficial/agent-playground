@@ -31,7 +31,12 @@ export interface WebQuestionCard {
    */
   origin?: 'brain' | 'build';
   jobId: string;
-  /** Stable key for this question (the card row's `ts`); the answer POST echoes it back. */
+  /**
+   * Stable key for this question (the card row's `ts`); the answer POST echoes it back. For the
+   * conversational brain's `ask_question` this is the short sequential form `q1`, `q2`, … (see
+   * {@link nextQuestionId}) — short enough for Atlas to reference back in `withdraw_question` /
+   * `create_decision({ questionId })`. The driver's build-origin cards use an opaque uuid instead.
+   */
   questionId: string;
   header?: string;
   question: string;
@@ -62,6 +67,20 @@ export interface WebQuestionCard {
   withdrawnAt?: string;
   /** Optional operator-visible note on WHY the brain withdrew the question. */
   withdrawnReason?: string;
+}
+
+/**
+ * Allocate the next stable brain question id: `q<max+1>` over the existing `q<n>` ids (`q1` when none),
+ * mirroring `nextDecisionId`'s `d<n>` scheme. Max-based so an id is NEVER reused after a withdrawal — a
+ * withdrawn id must not resurface and re-point a stale reference. Ignores ids that aren't `q<n>` (e.g. the
+ * driver's build-origin uuid cards), so the brain's ids stay a clean `q1, q2, …` sequence.
+ */
+export function nextQuestionId(existingIds: readonly string[]): string {
+  const max = existingIds.reduce((m, id) => {
+    const match = /^q(\d+)$/.exec(id);
+    return match ? Math.max(m, Number(match[1])) : m;
+  }, 0);
+  return `q${max + 1}`;
 }
 
 /** Lowercase-kebab a label into a stable option id. */

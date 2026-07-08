@@ -2403,7 +2403,7 @@ export class AgentSessionManager
         const options = normalizeQuestionOptions(args['options']);
         const decisionClass = asDecisionClass(args['decisionClass']);
         const header = String(args['header'] ?? '').trim();
-        const questionId = `q-${randomUUID()}`;
+        const questionId = await this.store.nextQuestionId(stimulus.jobId);
         const card = webQuestionCard({
           jobId: stimulus.jobId,
           questionId,
