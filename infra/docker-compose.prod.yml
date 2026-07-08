@@ -24,9 +24,11 @@ x-backend-common: &backend-common
     - /srv/atlas/secrets/atlas.env
   environment:
     # Internal compose network — postgres reachable by service name. POSTGRES_USER/PASSWORD/DB come from
-    # the dotenvx-decrypted backend/.env.production.enc at container start (single source shared with the
-    # migrator, which runs via `docker run` outside compose). The plain values in /srv/atlas/.env are only
-    # for compose's own bootstrap of the postgres service — keep them in sync (see infra/README.md).
+    # the dotenvx-decrypted backend/.env.production.enc at container start (authoritative; shared with the
+    # migrator, which runs via `docker run` outside compose). The plain values in /srv/atlas/.env are the
+    # box's single plaintext store, used ONLY for compose's own bootstrap of the postgres service below
+    # (${POSTGRES_*} substitution, deploy.sh `--env-file /srv/atlas/.env`) and by pg-backup.sh — keep them
+    # in sync with the encrypted copy (template: infra/.env.compose.example; rationale: infra/README.md).
     POSTGRES_HOST: postgres
     POSTGRES_SSL_MODE: disable
     REDIS_URL: "redis://redis:6379"
