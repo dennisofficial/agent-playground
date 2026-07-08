@@ -9,6 +9,18 @@ import { Injectable } from '@nestjs/common';
 
 const API = 'https://api.github.com';
 
+/** Events delivered to the existing event→job intake front door (`/ingress/github`). */
+export const WORK_EVENTS = [
+  'workflow_run',
+  'check_run',
+  'check_suite',
+  'pull_request_review',
+  'pull_request_review_comment',
+  'issue_comment',
+];
+/** Events delivered to the silent PR-state-sync front door (`/webhooks/github`). */
+export const STATE_EVENTS = ['pull_request'];
+
 export interface OpenPullRequestArgs {
   owner: string;
   repo: string;
@@ -410,5 +422,46 @@ export class GithubPrService {
     throw new Error(
       `GitHub couldn't load ${owner}/${repo} (${res.status}): ${errBody.message ?? 'no detail'}`,
     );
+  }
+
+  /**
+   * Idempotently ensure ONE webhook (identified by its `config.url`) exists on the repo with the given
+   * secret + event set. Returns 'created' | 'updated' | 'no-scope' (PAT lacks admin:repo_hook) | 'error'.
+   * An existing hook is ALWAYS re-PATCHed rather than skipped: GitHub never returns the stored
+   * `config.secret`, so we cannot detect secret drift (a rotated GITHUB_WEBHOOK_SECRET, or a stale manual
+   * hook) — unconditionally re-setting the full config guarantees the hook's secret matches
+   * verifyGithubSignature. PATCH is idempotent + cheap.
+   */
+  async ensureWebhook(
+    token: string,
+    args: { owner: string; repo: string; url: string; secret: string; events: string[] },
+  ): Promise<'created' | 'updated' | 'no-scope' | 'error'> {
+    const list = await this.fetchImpl(`${API}/repos/${args.owner}/${args.repo}/hooks`, {
+      headers: this.headers(token),
+    });
+    if (list.status === 403 || list.status === 404) return 'no-scope';
+    if (!list.ok) return 'error';
+    const hooks = (await list.json()) as Array<{ id: number; config?: { url?: string } }>;
+    const mine = hooks.find((h) => h.config?.url === args.url);
+    const body = {
+      config: { url: args.url, content_type: 'json', secret: args.secret, insecure_ssl: '0' },
+      events: args.events,
+      active: true,
+    };
+    if (mine) {
+      const patch = await this.fetchImpl(`${API}/repos/${args.owner}/${args.repo}/hooks/${mine.id}`, {
+        method: 'PATCH',
+        headers: this.headers(token),
+        body: JSON.stringify(body),
+      });
+      return patch.ok ? 'updated' : 'error';
+    }
+    const created = await this.fetchImpl(`${API}/repos/${args.owner}/${args.repo}/hooks`, {
+      method: 'POST',
+      headers: this.headers(token),
+      body: JSON.stringify(body),
+    });
+    if (created.status === 403 || created.status === 404) return 'no-scope';
+    return created.ok ? 'created' : 'error';
   }
 }

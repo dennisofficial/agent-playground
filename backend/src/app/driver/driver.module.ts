@@ -36,7 +36,7 @@ import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
 import { JobLifecycleService } from './job-lifecycle.service';
 import { GithubPrStateSync } from './github-pr-state-sync.service';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver, OnboardingService } from '../onboarding';
 import { LIVE_VERIFICATION_JUDGE, AnthropicLiveVerificationJudge } from './live-verification-judge';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
@@ -119,6 +119,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private demoteSub?: Subscription;
   private reapTimer?: ReturnType<typeof setInterval>;
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
+  private webhooksBackfilled = false; // per-repo webhook backfill runs ONCE per process on leadership
 
   constructor(
     private readonly driver: ThreadDriver,
@@ -127,6 +128,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     private readonly reconciler: GitStateReconciler,
     private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
+    private readonly onboarding: OnboardingService,
   ) {}
 
   /**
@@ -158,6 +160,13 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
         await this.lifecycle.reconcileOnBoot();
         // Finish any job stranded in `deleting` (crash between the delete claim and teardown completing).
         await this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
+      }
+      // Best-effort: register the GitHub delivery webhooks for already-connected repos so the fast path is
+      // live without a re-connect. Once per process, fire-and-forget — never blocks resume, and skips
+      // itself when the backend isn't publicly reachable. The 30-min poll covers sync regardless.
+      if (!this.webhooksBackfilled) {
+        this.webhooksBackfilled = true;
+        void this.onboarding.ensureWebhooksForActiveRepos().catch(() => undefined);
       }
       // Re-drive `running` jobs on EVERY promotion — including a mid-life re-promote. Leadership-fenced
       // drives (see ThreadDriver.runJob) YIELD on demotion, so a re-promote must re-pick-up the yielded job or

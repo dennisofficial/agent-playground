@@ -108,4 +108,14 @@ export class RepoEntity extends TimestampedEntity {
    */
   @Column({ type: 'timestamptz', nullable: true })
   onboarded_at!: Date | null;
+
+  /**
+   * Non-fatal webhook-registration warning surfaced to the operator — set when the org's GitHub token
+   * lacks `admin:repo_hook` so Atlas could not register the delivery webhook (PR state still syncs via the
+   * 30-minute poll). Null when the hooks registered cleanly (or registration was skipped for a local/non-
+   * public backend). Written fire-and-forget after connect/revalidate, so it can only surface here (row),
+   * not in the synchronous connect response.
+   */
+  @Column({ type: 'text', nullable: true })
+  webhook_warning!: string | null;
 }

@@ -120,6 +120,75 @@ describe('GithubPrService.listBranches', () => {
   });
 });
 
+describe('GithubPrService.ensureWebhook', () => {
+  const args = {
+    owner: 'acme',
+    repo: 'app',
+    url: 'https://api.example.com/ingress/github',
+    secret: 'S3CR',
+    events: ['workflow_run', 'check_run'],
+  };
+
+  it('creates a hook when none matches the url', async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, body: [] },
+      { status: 201, body: { id: 1 } },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const outcome = await svc.ensureWebhook('TOK', args);
+    expect(outcome).toBe('created');
+    expect(calls).toHaveLength(2);
+    expect(calls[1].init?.method).toBe('POST');
+    expect(calls[1].url).toBe('https://api.github.com/repos/acme/app/hooks');
+    const body = JSON.parse(String(calls[1].init?.body));
+    expect(body).toEqual({
+      config: { url: args.url, content_type: 'json', secret: args.secret, insecure_ssl: '0' },
+      events: args.events,
+      active: true,
+    });
+  });
+
+  it('updates (PATCHes) an existing hook matched by config.url', async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, body: [{ id: 42, config: { url: 'https://api.example.com/ingress/github' } }] },
+      { status: 200, body: { id: 42 } },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const outcome = await svc.ensureWebhook('TOK', args);
+    expect(outcome).toBe('updated');
+    expect(calls).toHaveLength(2);
+    expect(calls[1].init?.method).toBe('PATCH');
+    expect(calls[1].url).toBe('https://api.github.com/repos/acme/app/hooks/42');
+  });
+
+  it("returns 'no-scope' on a 403 listing hooks (only one fetch made)", async () => {
+    const { impl, calls } = fakeFetch([{ status: 403, body: { message: 'Resource not accessible' } }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    expect(await svc.ensureWebhook('TOK', args)).toBe('no-scope');
+    expect(calls).toHaveLength(1);
+  });
+
+  it("returns 'no-scope' on a 403 creating the hook", async () => {
+    const { impl } = fakeFetch([
+      { status: 200, body: [] },
+      { status: 403, body: {} },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    expect(await svc.ensureWebhook('TOK', args)).toBe('no-scope');
+  });
+
+  it("returns 'error' on a 500 listing hooks", async () => {
+    const { impl } = fakeFetch([{ status: 500, body: {} }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    expect(await svc.ensureWebhook('TOK', args)).toBe('error');
+  });
+});
+
 describe('parseGithubRepoUrl', () => {
   it('parses owner/repo and drops .git; null on non-github', () => {
     expect(parseGithubRepoUrl('https://github.com/acme/app.git')).toEqual({ owner: 'acme', repo: 'app' });

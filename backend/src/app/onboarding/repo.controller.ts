@@ -47,6 +47,8 @@ interface RepoView {
   onboardingThreadId: string | null;
   /** When onboarding completed (worktree config live), ISO; null until then — drives "Set up" vs "Re-run". */
   onboardedAt: string | null;
+  /** Non-fatal webhook-registration warning (e.g. the PAT lacks admin:repo_hook), or null when clear. */
+  webhookWarning: string | null;
 }
 
 /**
@@ -108,6 +110,7 @@ export class RepoController {
       threadCount: countByRepo.get(r.id) ?? 0,
       onboardingThreadId: r.onboarding_job_id,
       onboardedAt: r.onboarded_at ? r.onboarded_at.toISOString() : null,
+      webhookWarning: r.webhook_warning ?? null,
     }));
   }
 
