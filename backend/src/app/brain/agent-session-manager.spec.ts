@@ -82,6 +82,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // Milestone-compaction gate reads brain occupancy; a lean session ⇒ skip the compaction turn (no-op here).
     latestBrainOccupancy: vi.fn().mockResolvedValue({ contextTokens: 0, contextLimit: 1_000_000 }),
     // Durable human-input gate (ask_question lifecycle, per-card — stacking is allowed, no single-slot).
+    nextQuestionId: vi.fn().mockResolvedValue('q1'),
     openQuestion: vi.fn().mockResolvedValue({ ok: true }),
     getQuestionCard: vi.fn().mockResolvedValue(null),
     markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
@@ -284,6 +285,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       contextLimit: 1_000_000,
     });
     // Human-input gate defaults: opening succeeds, no question currently open.
+    (mockStore.nextQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q1');
     (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
     (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     // Secure secret-request + MCP-proposal gates default to "opened ok" (resetAllMocks wiped the inline defaults).

@@ -7,7 +7,7 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
-import { VERIFY_CURRENCY } from '../fragments';
+import { SUBAGENT_NUDGE_NOTE, VERIFY_CURRENCY } from '../fragments';
 
 @FragmentGroup()
 export class OrientationGroup {
@@ -44,6 +44,7 @@ export class OrientationGroup {
       '  • `debug` — trace a failure (error/stack/failing test) to its root cause and fix site;',
       "  • `test` — run the repo's verification and get back a diagnosis instead of raw logs.",
       'Reach for `review` and `test` especially when you implement a direct build yourself (FAST PATH).',
+      SUBAGENT_NUDGE_NOTE,
       'WEB ACCESS: you have WebSearch and WebFetch — the codebase is authoritative for THIS repo, the web for',
       'the outside world; reach for them to check current library docs, latest versions, and recent changes',
       'instead of relying on memory.',
