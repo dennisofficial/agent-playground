@@ -665,6 +665,19 @@ export class ThreadDriver implements JobDispatcher {
     // CHILDREN of their builder, never entered here. `threadsForJob` returns every row, so this gate is what
     // keeps the non-executable rows out of the section loop once they exist.
     const executable = allSections.filter((s) => isDriverExecutableKind(s.kind));
+    // DIRECT-BUILD / NON-DRIVER GUARD: a job with NO driver-executable threads (`builder`/`master_review`) is
+    // not a driver build — it's a brain-owned DIRECT build (only a render-only `main` thread), which implements
+    // and opens its OWN PR via the `finalize_build` tool. The driver must not touch it: a reconciler re-drive
+    // (boot `resume()`, `retry`, etc.) of a still-`running` direct build would otherwise fall through the empty
+    // thread loop to the SHIP GATE and wrongly PARK it at `awaiting_ship_review` (a spurious "Ship it" card) —
+    // or, past the gate, re-ship it. Every legitimately-dispatched driver build always carries >=1 builder + a
+    // master_review, so this only ever short-circuits brain-owned jobs the driver has nothing to build/ship for.
+    if (executable.length === 0) {
+      this.logger.log(
+        `job=${jobId} has no driver-executable threads (brain-owned/direct build) — driver yielding, nothing to build or ship`,
+      );
+      return;
+    }
     // Cap the BUILDER lanes at MAX_SECTIONS, but NEVER drop the master-review thread (it rides on top of the
     // builders and must always run last) — partition by kind, cap the builders, re-append the review last.
     const featureSections = executable.filter((s) => s.kind === 'builder');
