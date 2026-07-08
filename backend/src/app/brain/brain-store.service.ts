@@ -362,6 +362,54 @@ export class BrainStoreService {
     });
   }
 
+  /**
+   * Relay a block the brain CLEARED via retrieve-and-resume (its `note_cleared_block` tool) as a durable,
+   * NON-BLOCKING FYI card — so the operator SEES that Atlas unblocked a build thread by retrieving an existing
+   * answer, without it stalling for them. Deliberately NOT a `question_card` (which bumps the needs-you gate):
+   * this is an audit heads-up, not a question. Insert-once on the stable `ts` (`cleared:<threadId>:<gen>`) so a
+   * resumed wake turn re-driving the tool doesn't double-post. Best-effort — the caller swallows failures.
+   */
+  async appendClearedBlockCard(
+    jobId: string,
+    input: { threadId: string; gen: number; reason: string; evidence: string; text: string },
+  ): Promise<void> {
+    const ts = `cleared:${input.threadId}:${input.gen}`;
+    const dup = await this.messages.count({ where: { job_id: jobId, ts, kind: 'card' } });
+    if (dup > 0) return;
+    await this.appendCardMessage(jobId, {
+      ts,
+      text: input.text,
+      card: {
+        type: 'cleared_block_card',
+        threadId: input.threadId,
+        reason: input.reason,
+        evidence: input.evidence,
+      },
+    });
+  }
+
+  /** Every cleared-block FYI card on a job, oldest-first — the DURABLE source the `atlas-cleared-blocks.md`
+   *  projection re-renders from (the card rows survive sandbox teardown; the file is a pure re-render). */
+  async listClearedBlockCards(
+    jobId: string,
+  ): Promise<{ threadId: string; reason: string; evidence: string; at: Date }[]> {
+    const rows = await this.messages.find({
+      where: { job_id: jobId, kind: 'card' },
+      order: { created_at: 'ASC' },
+    });
+    return rows
+      .filter((m) => (m.card as Record<string, unknown> | null)?.type === 'cleared_block_card')
+      .map((m) => {
+        const c = (m.card ?? {}) as Record<string, unknown>;
+        return {
+          threadId: String(c['threadId'] ?? ''),
+          reason: String(c['reason'] ?? ''),
+          evidence: String(c['evidence'] ?? ''),
+          at: m.created_at,
+        };
+      });
+  }
+
   /** Merge a patch into a card row's `card` jsonb (e.g. stamp the answered state / `loggedDecision`). */
   async updateCardMessage(
     jobId: string,

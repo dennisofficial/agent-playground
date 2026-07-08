@@ -222,8 +222,13 @@ export const LSP_NAV_NOTE =
  */
 export const DEVIATION_NOTE =
   'If you make ANY change not explicitly called for by your assignment, or you depart from a locked decision ' +
-  '(e.g. adding a file/dependency/config nobody asked for), you MUST flag it: put each such change on its ' +
-  "own line in your final report starting with 'DEVIATION:' and a one-line why. Off-spec work is never silent.";
+  '(e.g. a small out-of-scope fix — a dead link, a wrong import — or adding a file/dependency/config nobody ' +
+  'asked for), you MUST record it — off-spec work is NEVER silent. If you have the `record_deviation` tool ' +
+  '(you are the orchestrator), call `record_deviation({note})` with a one-line what-and-why the moment you ' +
+  'make the change; it is logged to `/context/generated/deviations.md`, the operator\'s deviation log (NOT ' +
+  'the PR body). If you do NOT have that tool (you are a writer subagent), report each such change on its ' +
+  "own line starting 'DEVIATION:' in your summary back to the orchestrator, who records it. Reserve this for " +
+  'fixes you actually MADE — use `capture_ticket` for out-of-scope work you are deferring, not fixing.';
 
 /**
  * CLARITY OVER COMMENTS — the house coding style for every persona that AUTHORS code (the brain's direct

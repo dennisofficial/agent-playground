@@ -129,6 +129,18 @@ export class ThreadEntity extends TimestampedEntity {
   tasks!: TaskItem[];
 
   /**
+   * The RUNNING log of out-of-scope fixes the orchestrator made INLINE while building this thread — each a
+   * small, clearly-correct repair outside the assignment (a dead href, a wrong import) recorded via the
+   * `record_deviation` host tool the moment it's made, NOT deferred to the final report. The durable source
+   * of truth behind the `/context/generated/deviations.md` projection (that file is a pure re-render of this
+   * across the job's threads — `/context/generated` is read-only in the sandbox, so the host owns the write).
+   * Distinct from `terminal_record.deviations` (a one-shot end-of-turn summary). LITERAL default — a
+   * `() => '[]'::jsonb` function default makes `migration:generate` loop forever (jsonb-default-loop memory).
+   */
+  @Column({ type: 'jsonb', default: [] })
+  deviations!: DeviationEntry[];
+
+  /**
    * The thread's TYPED terminal assertion — written by the orchestrator's `complete_thread`/`block_thread`
    * tool call at the end of its build turn, then READ by the driver to decide the thread's outcome instead
    * of inferring it from whether the turn threw (ADR 0004). Null until the tool is called; a clean turn
@@ -213,6 +225,14 @@ export interface ThreadTerminalRecord {
       missingChecks?: string;
     };
   };
+}
+
+/** One inline out-of-scope fix the orchestrator made while building a thread (see {@link ThreadEntity.deviations}). */
+export interface DeviationEntry {
+  /** One line: what was changed off-spec and why. */
+  note: string;
+  /** ISO timestamp the deviation was recorded. */
+  ts: string;
 }
 
 /** One post-build review agent as the `/pipeline` read-model surfaces it — DERIVED at read time from a

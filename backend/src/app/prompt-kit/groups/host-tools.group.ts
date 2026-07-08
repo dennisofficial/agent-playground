@@ -37,6 +37,7 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__promote_decisions    — write durable cross-cutting decisions to the .atlas/decisions ledger (AT SHIP; see DECISION LEDGER)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__dispatch_build       — (gated) dispatch an already-approved full build`,
       `  - mcp__${BRIDGE_SERVER_NAME}__retry_thread         — re-drive a HALTED build thread you were woken about, passing {threadId, guidance} (your fix note); bounded attempts, then escalate (see HALTED THREADS)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__note_cleared_block   — record that you CLEARED a halt by RETRIEVING an existing answer, passing {threadId, reason, evidence} (the source you cited); call BEFORE retry_thread (see HALTED THREADS)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__create_job           — spin off a NEW job on this same repo (see CREATE_JOB below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__create_ticket        — capture work on this repo's board/backlog for later (see TICKETS below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__list_tickets         — list this repo's tickets (optionally by status)`,

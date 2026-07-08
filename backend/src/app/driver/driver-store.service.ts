@@ -22,7 +22,7 @@ import {
   JobEntity,
   CodexReviewEntity,
 } from '../persistence/entities';
-import type { TaskItem, ThreadTerminalRecord } from '../persistence/entities';
+import type { DeviationEntry, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
 import { isDriverExecutableKind, laneDefaultFooter, threadKindSpec } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
@@ -525,6 +525,40 @@ export class DriverStoreService {
   /** Record the thread's handoff note for the next thread (set when the thread is done). */
   async setThreadHandoffOut(threadId: string, handoffOut: string): Promise<void> {
     await this.threads.update({ id: threadId }, { handoff_out: handoffOut });
+  }
+
+  /** Append an inline out-of-scope fix to `threads.deviations` (from the builder's `record_deviation` tool).
+   *  Idempotent on note text so a re-driven turn re-recording the same fix doesn't duplicate it — the durable
+   *  source behind the `/context/generated/deviations.md` projection. Single host writer per thread, so a plain
+   *  read-modify-write is race-free. */
+  async recordDeviation(threadId: string, entry: DeviationEntry): Promise<void> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, deviations: true },
+    });
+    if (!row) return;
+    const current = Array.isArray(row.deviations) ? row.deviations : [];
+    if (current.some((d) => d.note.trim() === entry.note.trim())) return;
+    await this.threads.update({ id: threadId }, { deviations: [...current, entry] });
+  }
+
+  /** Every thread of a job that recorded at least one inline deviation, ordered for the `deviations.md`
+   *  projection (which re-renders the whole file from this — never appends). */
+  async getJobDeviations(
+    jobId: string,
+  ): Promise<{ ordinal: number; brief: string; deviations: DeviationEntry[] }[]> {
+    const rows = await this.threads.find({
+      where: { job_id: jobId },
+      select: { id: true, ordinal: true, brief: true, deviations: true },
+      order: { ordinal: 'ASC' },
+    });
+    return rows
+      .map((r) => ({
+        ordinal: r.ordinal,
+        brief: r.brief,
+        deviations: Array.isArray(r.deviations) ? r.deviations : [],
+      }))
+      .filter((r) => r.deviations.length > 0);
   }
 
   // ── typed terminal record (ADR 0004: the thread ASSERTS its outcome; the driver reads it) ──────────

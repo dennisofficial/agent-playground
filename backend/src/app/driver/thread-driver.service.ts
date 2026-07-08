@@ -84,6 +84,7 @@ import {
   type ResolvedRepo,
 } from './repo-resolver';
 import { JobLifecycleService } from './job-lifecycle.service';
+import { TicketService } from '../tickets';
 
 /**
  * W4 — the THREAD DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -209,6 +210,10 @@ export class ThreadDriver implements JobDispatcher {
     // @Optional so unit tests construct the driver without it (undefined → no house style injected); DI
     // (@Global ConventionsModule) supplies it live.
     @Optional() private readonly conventions?: ConventionProfileResolver,
+    // The per-repo ticket board — a builder's `capture_ticket` drops a `bug` here for an out-of-scope defect
+    // it found but is deferring (too big to fix inline, not a blocker). @Global TicketsModule; @Optional so
+    // unit tests construct the driver without it (undefined → capture_ticket reports it's unavailable).
+    @Optional() private readonly tickets?: TicketService,
   ) {}
 
   /** The repo's attached house-style, or null when none. Best-effort: a resolver hiccup never sinks a build. */
@@ -1413,6 +1418,67 @@ export class ThreadDriver implements JobDispatcher {
       };
     }
 
+    // OUT-OF-SCOPE routing (real builder lanes only, NOT the Codex master_review). A builder that trips over
+    // something outside its assignment routes it by cost: a CHEAP, clearly-correct fix it makes inline and
+    // logs via `record_deviation`; an EXPENSIVE-but-known defect it defers via `capture_ticket` and keeps
+    // building; a genuine open DESIGN gap it hands up via `block_thread`. These two are the first two rungs.
+    if (thread.kind !== 'master_review') {
+      // record_deviation — the builder made a small out-of-scope fix INLINE. Persist it to the durable
+      // per-thread store, then re-project `/context/generated/deviations.md` (host-owned; the sandbox mount
+      // is read-only). Idempotent on note text (store-level), so a re-driven turn never double-logs.
+      tools.record_deviation = async (args) => {
+        const note = String(args['note'] ?? '').trim();
+        if (!note) {
+          return { ok: false, error: 'note is required (one line: what you changed off-spec and why)' };
+        }
+        await this.store.recordDeviation(thread.id, { note, ts: new Date().toISOString() });
+        await this.writeDeviationsMd(job);
+        return { ok: true };
+      };
+
+      // capture_ticket — the builder found an out-of-scope defect too big to fix inline (but not a blocker):
+      // drop a `bug` on the board and keep building. WRITE-ONLY — no list/update/promote (those stay on the
+      // brain). Resume-safe: a re-driven turn that re-captures the same title is deduped against this job's
+      // already-captured tickets (create always allocates a fresh number, so we must guard before creating).
+      tools.capture_ticket = async (args) => {
+        if (!this.tickets) {
+          return { ok: false, error: 'ticket board unavailable in this environment' };
+        }
+        const title = String(args['title'] ?? '').trim();
+        if (!title) {
+          return { ok: false, error: 'title is required (imperative one-line summary of the out-of-scope defect)' };
+        }
+        const body = String(args['body'] ?? '').trim() || undefined;
+        try {
+          const existing = await this.tickets
+            .list({ orgId: job.orgId, repoId: job.repoId, originJobId: job.id })
+            .catch(() => []);
+          const dup = existing.find((t) => t.title.trim().toLowerCase() === title.toLowerCase());
+          if (dup) {
+            return { ok: true, ticketId: dup.id, number: dup.number, alreadyCaptured: true };
+          }
+          const ticket = await this.tickets.create({
+            orgId: job.orgId,
+            repoId: job.repoId,
+            title,
+            body,
+            kind: 'bug',
+            status: 'backlog',
+            originThreadId: job.id,
+            originDecisionRecordId: record?.id ?? job.decisionRecordId ?? null,
+          });
+          return {
+            ok: true,
+            ticketId: ticket.id,
+            number: ticket.number,
+            message: `Captured bug #${ticket.number}: ${title}. Keep building your assigned scope.`,
+          };
+        } catch (err) {
+          return { ok: false, error: shortReason(err) };
+        }
+      };
+    }
+
     // LIVE TASK LIST for the Codex master-review thread (parity with Claude Code's TaskCreate/TaskUpdate).
     // Codex has no native SDK task tools, so bridge `task_create`/`task_update` into the SAME `tasks` column
     // the Claude lanes fold into — the web then renders its checklist identically. Scoped to master_review:
@@ -2459,6 +2525,38 @@ export class ThreadDriver implements JobDispatcher {
       this.logger.log(
         `leg-rotation: re-attached handoff completed rotation Leg ${res.fromLeg}→${res.toLeg} for thread=${ctx.threadId}`,
       );
+    }
+  }
+
+  /**
+   * Re-render `/context/generated/deviations.md` — the operator's log of the small out-of-scope fixes builders
+   * made INLINE across this job's threads. A pure PROJECTION of the durable `threads.deviations` store (never
+   * an append), mirroring how `decision-record.md` re-renders from its store: idempotency + resume-safety fall
+   * out of re-rendering a deduped source. Host-written because `/context/generated` is mounted read-only in the
+   * sandbox. Best-effort — a write failure is logged and swallowed (the durable store is the real record).
+   */
+  private async writeDeviationsMd(job: Job): Promise<void> {
+    try {
+      const groups = await this.store.getJobDeviations(job.id);
+      const generated = join(this.threadLifecycle.contextDirHost(job.id, job.orgId), 'generated');
+      await mkdir(generated, { recursive: true });
+      const body = groups.length
+        ? groups
+            .map((g) => {
+              const lines = g.deviations
+                .map((d) => `- ${d.note}  \n  _(${d.ts})_`)
+                .join('\n');
+              return `## Thread ${g.ordinal} — ${g.brief}\n\n${lines}`;
+            })
+            .join('\n\n')
+        : '_No deviations recorded._';
+      await writeFile(
+        join(generated, 'deviations.md'),
+        `# Deviations — out-of-scope fixes made inline during the build\n\n${body}\n`,
+        'utf8',
+      );
+    } catch (err) {
+      this.logger.debug(`deviations projection write failed (display-only): ${shortReason(err)}`);
     }
   }
 

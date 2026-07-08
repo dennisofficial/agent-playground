@@ -48,6 +48,22 @@ const COMPLETE_THREAD_NOTE =
   'answerable inline) — which hands the thread to Atlas to diagnose and either fix or escalate. In short: ' +
   '`request_operator_input` keeps the turn alive for a quick answer; `block_thread` gives up the turn.';
 
+// Orchestrator note — ROUTING out-of-scope surprises by cost, so a builder is neither timid nor reckless.
+// Fix the obvious, ticket the expensive-but-known, block the genuinely-undecided. Names the two new bridge
+// tools (`record_deviation`, `capture_ticket`) that only the WORKER orchestrator holds, plus `block_thread`.
+const MID_BUILD_ROUTING_NOTE =
+  ' WHEN YOU HIT SOMETHING OUT OF SCOPE mid-build — a bug or gap the plan did not cover — do NOT silently ' +
+  'absorb it and do NOT rabbit-hole. Route it by cost and certainty: (1) a CHEAP, LOCAL, clearly-correct ' +
+  'fix (a dead link, a wrong import, an obvious one-liner) with no interface/contract change and no cascade ' +
+  '— FIX IT INLINE and call `record_deviation({note})`; do not open a card or block. (2) A clearly-correct ' +
+  'but EXPENSIVE or wide-reaching change — do NOT fix it and do NOT block: first spawn a SYNCHRONOUS ' +
+  '`explore` subagent to gauge the blast radius, then call `capture_ticket({title, body})` to file it as a ' +
+  'bug on the board and KEEP BUILDING your assigned scope. (3) A genuine OPEN design or product question you ' +
+  'CANNOT resolve from the spec, the decision record, or a documented convention — do NOT guess an answer: ' +
+  '`block_thread({reason:"question"|"decision", detail, gaps})` and hand it to Atlas. Rule of thumb: fix the ' +
+  'obvious, ticket the expensive-but-known, block the genuinely-undecided. NOTE: a locked, approved plan that ' +
+  'explicitly scopes something out (its "out of scope" list) OVERRIDES this — leave what the plan says to leave.';
+
 // Orchestrator note — the WRITER subagents (`implement`/`implement-deep`) alongside the read-only set.
 const ORCHESTRATOR_SUBAGENTS_NOTE =
   ' You have subagents (Task tool). WRITERS that change files: `implement` (Sonnet — your DEFAULT ' +
@@ -83,6 +99,7 @@ export class WorkerGroup {
       'failures (use `debug`/`test` subagents) — do NOT claim done on a guess. If verification fails and you ' +
       'cannot fix it within scope, say so explicitly. ' +
       COMPLETE_THREAD_NOTE +
+      MID_BUILD_ROUTING_NOTE +
       ' ' +
       MONOREPO_VERIFY_HINT +
       ' ' +
