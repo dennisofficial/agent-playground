@@ -3022,6 +3022,41 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     expect(h.store.parkForShipReview).not.toHaveBeenCalled();
     expect(h.shipSeeds).toHaveLength(1);
   });
+
+  it('does NOT gate or ship a brain-owned DIRECT build (no driver-executable threads) — the driver yields', async () => {
+    // A direct build persists ONLY a render-only `main` thread (zero builder/master_review), implements and
+    // opens its own PR via `finalize_build` — the driver never ships it. A reconciler re-drive (boot
+    // `resume()`, `retry`) of the still-`running` job sends it through `runJob`; the guard must yield rather
+    // than fall through the empty thread loop to the ship gate (which would wrongly PARK it at
+    // awaiting_ship_review + post a bogus "Ship it" card) or re-ship it. `dispatch` stands in for any
+    // `drive()` entry point here (the guard sits in `runJob`, shared by all of them).
+    const mainThread: DriverThread = {
+      id: 'main-1',
+      jobId: 'job-abcdef12',
+      orgId: 'T1',
+      ordinal: 0,
+      brief: 'Main',
+      plan: null,
+      orientation: null,
+      handoffIn: null,
+      handoffOut: null,
+      status: 'pending',
+      kind: 'main',
+      parentThreadId: null,
+      startSha: null,
+    };
+    const state = baseState();
+    state.threads = [mainThread];
+    const h = assemble(state, { autoShipApprove: false });
+
+    await h.driver.dispatch(state.job);
+    await flush();
+
+    expect(h.store.parkForShipReview).not.toHaveBeenCalled();
+    expect(h.shipSeeds).toHaveLength(0);
+    expect(state.job.status).toBe('running');
+    expect(state.job.prUrl).toBeNull();
+  });
 });
 
 // ── 401 auth recovery: pause (not fail) + ping-to-resume the SAME session, durable ─────────────────
