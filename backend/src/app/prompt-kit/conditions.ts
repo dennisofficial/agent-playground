@@ -31,3 +31,7 @@ export const isBuildBrain = (c: PromptCtx): boolean =>
 /** Standing operator/org instructions are present (the conditional operator fragment). */
 export const hasOrgInstructions = (c: PromptCtx): boolean =>
   !!c.settings?.userOrgInstructions && c.settings.userOrgInstructions.trim().length > 0;
+
+/** The repo has an attached house-style profile (the conditional conventions fragment). */
+export const hasRepoConventions = (c: PromptCtx): boolean =>
+  !!c.settings?.repoConventions && c.settings.repoConventions.body.trim().length > 0;

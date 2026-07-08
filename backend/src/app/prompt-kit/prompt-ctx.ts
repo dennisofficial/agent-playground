@@ -16,5 +16,12 @@ export interface PromptCtx {
   settings?: {
     /** Standing operator/org instructions appended to the assembled prompt when present. */
     userOrgInstructions?: string;
+    /**
+     * The REPO's opt-in house-style profile, resolved per turn from `repos.convention_profile_slug` by
+     * `ConventionProfileResolver`. When present, `conventions.group` wraps `body` in a fixed operator-layer
+     * envelope for every build-facing agent. Absent/null on a repo with no attached profile → nothing
+     * injected (the prompt is byte-identical to today), so a profile never misfires on a divergent repo.
+     */
+    repoConventions?: { name: string; body: string } | null;
   };
 }

@@ -14,6 +14,7 @@ import { StimulusModule } from './stimulus';
 import { LiveTurnModule, SurfaceModule } from './surface';
 import { MemoryModule } from './memory';
 import { McpModule } from './mcp';
+import { ConventionsModule } from './conventions';
 import { OnboardingModule } from './onboarding';
 import { OrgModule } from './org';
 import { RealtimeModule } from './realtime';
@@ -57,6 +58,7 @@ import { ThreadKindModule } from './thread-kind';
     AuthModule,
     OnboardingModule,
     McpModule,
+    ConventionsModule,
     OrgModule,
     TitlingModule,
     TicketsModule,

@@ -6,6 +6,7 @@ import { LocalGitService } from '../git';
 import { TurnHarnessFactory, type TurnHarness } from '../surface/turn-harness.service';
 import { laneFor } from '../surface/thread-registry';
 import { Agent, renderAgentPrompt } from '../prompt-kit';
+import { ConventionProfileResolver } from '../conventions';
 import {
   buildFixPrompt,
   buildReviewPrompt,
@@ -85,7 +86,23 @@ export class AutoFixStage {
     // Durable per-model usage/cost analytics (best-effort); orgId resolved from jobId (ctx has no org).
     // @Optional so unit tests construct the stage without wiring analytics; DI (@Global) supplies it live.
     @Optional() private readonly usage?: TurnUsageProjector,
+    // The repo's opt-in house-style profile — folded into the AUTOFIX_REVIEW/AUTOFIX_FIX system prompts when
+    // the ctx carries org+repo. @Optional so unit tests construct the stage without it (then nothing injected).
+    @Optional() private readonly conventions?: ConventionProfileResolver,
   ) {}
+
+  /**
+   * The prompt context for a review/fix turn — folds in the repo's house-style envelope when the ctx carries
+   * an org+repo AND a profile is attached. Absent (unit-test / standalone path, or no attached profile) ⇒
+   * `{}`, so the assembled prompt is byte-identical to before. Best-effort: a resolver hiccup never sinks a run.
+   */
+  private async promptCtx(ctx: AutoFixContext): Promise<{ settings?: { repoConventions: { name: string; body: string } } }> {
+    if (!this.conventions || !ctx.orgId || !ctx.repoId) return {};
+    const repoConventions = await this.conventions
+      .resolveForRepo(ctx.orgId, ctx.repoId)
+      .catch(() => null);
+    return repoConventions ? { settings: { repoConventions } } : {};
+  }
 
   /** The execution target for a turn — the sandbox container when the driver ran in docker mode. */
   private targetFor(ctx: AutoFixContext): ExecutionTarget | undefined {
@@ -284,7 +301,7 @@ export class AutoFixStage {
         engine: engine ?? 'claude',
         task,
         cwd: ctx.worktreePath,
-        systemPrompt: renderAgentPrompt(Agent.AUTOFIX_REVIEW),
+        systemPrompt: renderAgentPrompt(Agent.AUTOFIX_REVIEW, await this.promptCtx(ctx)),
         sandboxKey: `${ctx.sandboxKey}--review-${lens.id}`,
         mode: 'review',
         ...(harness ? { richStream: true, onEvent: (e) => harness.onEvent(e) } : {}),
@@ -407,7 +424,7 @@ export class AutoFixStage {
         engine: engine ?? 'claude',
         task,
         cwd: ctx.worktreePath,
-        systemPrompt: renderAgentPrompt(Agent.AUTOFIX_FIX),
+        systemPrompt: renderAgentPrompt(Agent.AUTOFIX_FIX, await this.promptCtx(ctx)),
         sandboxKey: `${ctx.sandboxKey}--fix`,
         mode: 'execute',
         ...(harness ? { richStream: true } : {}),

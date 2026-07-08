@@ -373,6 +373,36 @@ const VALIDATE_SUBAGENT: NonNullable<Options['agents']> = {
   },
 };
 
+// The build-facing subagents whose persona must carry the repo's house-style envelope (the FAN_OUT writers
+// + the REVIEW_AGENT) → the `Agent` their prompt is assembled from. The host bakes conventions into the
+// MAIN-agent `systemPrompt` only; these subagent personas are built HERE from static prompts, so this map is
+// the sole seam where the wire-forwarded `repoConventions` can reach them. Read-only advisory subagents
+// (explore/docs/debug/test/validate) are intentionally absent — they aren't in the fragment's `usedBy`.
+const CONVENTION_FACING_SUBAGENTS: Record<string, Agent> = {
+  implement: Agent.FAN_OUT,
+  'implement-deep': Agent.FAN_OUT,
+  review: Agent.REVIEW_AGENT,
+};
+
+/**
+ * Fold the repo's house-style envelope into the build-facing subagent prompts. When the turn carries no
+ * attached profile (`repoConventions` absent/null) this returns the map UNCHANGED — byte-identical to today.
+ * Otherwise it re-renders each convention-facing subagent's `prompt` WITH the conventions ctx (a subagent
+ * not present in this turn's map — e.g. the writers on a non-execute turn — is simply skipped).
+ */
+export function applyConventionsToAgents(
+  agents: NonNullable<Options['agents']>,
+  repoConventions: RunEngineArgs['repoConventions'],
+): NonNullable<Options['agents']> {
+  if (!repoConventions) return agents;
+  const ctx = { settings: { repoConventions } };
+  const out = { ...agents };
+  for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS)) {
+    if (out[name]) out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };
+  }
+  return out;
+}
+
 /** Is `path` inside `root` (after resolution)? Confines writes to the worktree. */
 function isInsideRoot(path: string, root: string): boolean {
   const r = resolvePath(root);
@@ -611,10 +641,12 @@ export class EngineCore {
       // subagents (implement/implement-deep) and the build-time VALIDATE subagent are added ONLY on EXECUTE
       // turns, so a plan/brain/review turn can never fan out a file-mutating or evidence-writing subagent.
       // See SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT.
-      agents:
+      agents: applyConventionsToAgents(
         mode === 'execute'
           ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT }
           : SUBAGENTS,
+        args.repoConventions,
+      ),
       // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
       // they're host-controlled, never a human prompt. Empty for non-bridge turns (workers).

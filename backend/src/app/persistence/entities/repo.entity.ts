@@ -71,6 +71,16 @@ export class RepoEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   token_name!: string | null;
 
+  /**
+   * Opt-in pointer to a reusable house-style profile ({@link ConventionProfileEntity}.slug within this org).
+   * When set, that profile's `body` is injected into every build-facing prompt for jobs on this repo. Null =
+   * no house style injected (the safe default) — a repo only adopts a style when the operator or the
+   * onboarding brain (`propose_convention_profile`, owner-gated) explicitly attaches one. Not a real FK
+   * (a profile may be renamed/removed out from under it; the resolver treats a dangling slug as null).
+   */
+  @Column({ type: 'text', nullable: true })
+  convention_profile_slug!: string | null;
+
   /** Whether the org's GitHub token reached the repo at the last connect/validate. */
   @Column({ type: 'boolean', default: false })
   access_ok!: boolean;

@@ -43,6 +43,7 @@ function makeController(threadOrgId: string) {
     { stopTurn: async () => false } as never, // brain (AgentSessionManager)
     {} as never, // mcpStore (McpServerStore)
     {} as never, // mcpProbe (McpProbeService)
+    {} as never, // conventions (ConventionProfileResolver)
   );
   return { controller, deleteJobDeep, claimDeleteJob, threads, messages };
 }

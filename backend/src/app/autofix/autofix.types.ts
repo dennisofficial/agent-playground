@@ -170,4 +170,14 @@ export interface AutoFixContext {
   autofixId?: string;
   /** Which pass this is — `'thread'` (per-thread, after a thread's steps) or `'pr'` (PR-tail, whole diff). */
   scope?: 'thread' | 'pr';
+
+  // ── house-style conventions (optional) ─────────────────────────────────────────────────────────
+  // The review + fix lenses assemble their OWN system prompts (`AUTOFIX_REVIEW`/`AUTOFIX_FIX`), so — unlike
+  // a build turn threaded from the driver — they need the org/repo here to resolve the repo's opt-in
+  // convention profile themselves. Both present ⇒ the stage folds the house-style envelope into each
+  // lens/fix prompt; absent (unit-test / standalone path) ⇒ nothing injected, byte-identical to before.
+  /** The owning org — for resolving `repos.convention_profile_slug`. */
+  orgId?: string;
+  /** The repo under review — for resolving its attached house-style profile. */
+  repoId?: string;
 }

@@ -18,6 +18,7 @@ import { SafetyGroup } from './safety.group';
 import { JobKindGroup } from './job-kind.group';
 import { BehavioralGroup } from './behavioral.group';
 import { OperatorGroup } from './operator.group';
+import { ConventionsGroup } from './conventions.group';
 import { DriverFramingGroup } from './driver-framing.group';
 import { WorkerGroup } from './worker.group';
 import { ShipGroup } from './ship.group';
@@ -42,6 +43,7 @@ export const FRAGMENT_GROUPS = [
   JobKindGroup,
   BehavioralGroup,
   OperatorGroup,
+  ConventionsGroup,
   // Driver / ship / autofix / meta / subagents
   DriverFramingGroup,
   WorkerGroup,
@@ -66,6 +68,7 @@ export {
   JobKindGroup,
   BehavioralGroup,
   OperatorGroup,
+  ConventionsGroup,
   DriverFramingGroup,
   WorkerGroup,
   ShipGroup,

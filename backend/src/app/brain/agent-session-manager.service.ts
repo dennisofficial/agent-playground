@@ -37,6 +37,7 @@ import {
   SYSTEM_SEED_AUTHOR,
   type McpProposalServer,
   type WebQuestionCard,
+  webConventionProposalCard,
   webFileRequestCard,
   webMcpProposalCard,
   webQuestionCard,
@@ -76,6 +77,7 @@ import type { PlannedStep } from '../driver/render-plan';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
 import { McpResolver } from '../mcp';
+import { ConventionProfileResolver } from '../conventions';
 import {
   isExternalMountPath,
   isReservedContainerPath,
@@ -280,6 +282,10 @@ export class AgentSessionManager
     // system_reminder chunks also persist as visible transcript rows. @Optional so unit tests can omit it
     // (undefined → default ON); DI (@Global EnvService) supplies it live.
     @Optional() private readonly env?: EnvService,
+    // The repo's opt-in house-style profile — injected into the brain prompt + forwarded to build subagents.
+    // @Optional so unit tests construct the manager without it (undefined → no house style injected); DI
+    // (@Global ConventionsModule) supplies it live.
+    @Optional() private readonly conventions?: ConventionProfileResolver,
   ) {}
 
   /**
@@ -1815,6 +1821,11 @@ export class AgentSessionManager
       stimulus.repoId,
       'brain',
     );
+    // The repo's opt-in house-style profile (null when none attached → nothing injected). Fed into the
+    // ATLAS_MAIN prompt below AND forwarded on the run args so any FAN_OUT/REVIEW_AGENT subagent the turn
+    // spawns in-container gets the same envelope (Layer B).
+    const repoConventions =
+      (await this.conventions?.resolveForRepo(stimulus.orgId, stimulus.repoId)) ?? null;
     // Authenticated git for the operator-facing brain turn: resolve the repo url + org PAT (cached per
     // job) so the brain can fetch/merge/rebase/resolve-conflicts/push directly from inside the sandbox —
     // it OWNS git, not the host. Sourced from the resolved repo, never `sandbox` (a row-sourced sandbox
@@ -1829,10 +1840,12 @@ export class AgentSessionManager
       // (see prompt-service.spec — the brain is assembled purely from `@Fragment`s).
       systemPrompt: this.prompts.generate(Agent.ATLAS_MAIN, {
         jobKind: brainJob?.kind ?? null,
+        settings: { repoConventions },
       }),
       sandboxKey,
       ...(auth ? { auth } : {}),
       ...(userMcpServers.length > 0 ? { userMcpServers } : {}),
+      ...(repoConventions ? { repoConventions } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
@@ -3359,6 +3372,8 @@ export class AgentSessionManager
       remember: tools.remember,
       ...intake,
       propose_mcp_servers: this.buildProposeMcpServersTool(stimulus),
+      list_convention_profiles: this.buildListConventionProfilesTool(stimulus),
+      propose_convention_profile: this.buildProposeConventionProfileTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
     };
   }
@@ -3904,6 +3919,88 @@ export class AgentSessionManager
         };
       } catch (err) {
         this.logger.warn(`propose_mcp_servers failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `list_convention_profiles()` — list the org's reusable house-style profiles (slug/name/detect_hint) so
+   * the onboarding brain can compare the stack it just mapped against each profile's `detect_hint` and pick
+   * the best match (or decide none fits). Read-only; org comes from the closure (never a tool arg).
+   */
+  private buildListConventionProfilesTool(stimulus: ChatStimulus): ToolImpl {
+    return async () => {
+      if (!this.conventions) return { ok: true, profiles: [], message: 'No house-style profiles are configured.' };
+      try {
+        const profiles = await this.conventions.listProfiles(stimulus.orgId);
+        return {
+          ok: true,
+          profiles,
+          message: profiles.length
+            ? 'Compare the repo stack you mapped against each `detectHint`, then call propose_convention_profile with the best-matching `slug` — or with "none" if the repo does not follow any of these house styles.'
+            : 'This org has no house-style profiles defined — skip propose_convention_profile.',
+        };
+      } catch (err) {
+        this.logger.warn(`list_convention_profiles failed for org=${stimulus.orgId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `propose_convention_profile({ slug, rationale })` — recommend the house-style profile that matches THIS
+   * repo's stack for the operator to approve. Like `propose_mcp_servers`, the brain NEVER attaches a profile
+   * itself (owner-only): a concrete `slug` posts an owner-gated proposal card that the OWNER approves at
+   * `…/jobs/:jobId/convention-proposals/:requestId/approve`, which sets `repos.convention_profile_slug`.
+   * `slug:'none'` (or empty) posts NO card — a repo that follows no house style just stays unset (the safe
+   * default), and the tool acknowledges. org/repo/job come from the closure (never tool args) — tenant safety.
+   */
+  private buildProposeConventionProfileTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const slug = String(args['slug'] ?? '').trim();
+      const rationale = String(args['rationale'] ?? '').trim();
+      // "none"/empty ⇒ the repo matches no house style; leave the pointer unset (the default) — nothing to approve.
+      if (!slug || slug.toLowerCase() === 'none') {
+        return {
+          ok: true,
+          proposed: null,
+          message:
+            'Recorded that no house-style profile matches this repo — leaving its conventions unset (the default). Continue onboarding.',
+        };
+      }
+      if (!this.conventions) return { ok: false, reason: 'house-style profiles are not configured for this org' };
+      try {
+        const profile = await this.conventions.getProfile(stimulus.orgId, slug);
+        if (!profile) {
+          return {
+            ok: false,
+            reason: `no house-style profile "${slug}" exists in this org — call list_convention_profiles to see the valid slugs`,
+          };
+        }
+        const requestId = `conv-${randomUUID()}`;
+        const card = webConventionProposalCard({
+          jobId: stimulus.jobId,
+          requestId,
+          repoId: stimulus.repoId,
+          slug: profile.slug,
+          profileName: profile.name,
+          rationale: rationale || `Matches this repo's stack.`,
+        });
+        const opened = await this.store.openConventionProposal(stimulus.jobId, { requestId, card });
+        if (!opened.ok) return { ok: false, reason: 'Could not open the convention proposal (thread not found).' };
+        return {
+          ok: true,
+          requestId,
+          proposed: profile.slug,
+          message:
+            `Posted a house-style proposal card for the "${profile.name}" profile. The OWNER approves it to ` +
+            'attach it to this repo — you cannot attach it yourself. Stop and wait for approval, then continue.',
+        };
+      } catch (err) {
+        this.logger.warn(
+          `propose_convention_profile failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -4745,7 +4842,9 @@ export class AgentSessionManager
       'proceeding. STOP and wait for their response. Only after they green-light it: bring up and validate ' +
       'the fleet, register required secrets via request_secret, record non-secret config with ' +
       'write_worktree_config, propose any stack-matched MCP servers for the owner to approve via ' +
-      'propose_mcp_servers, then call finish_onboarding.';
+      'propose_mcp_servers, match the repo against the org house-style profiles (list_convention_profiles → ' +
+      'propose_convention_profile with the best-matching slug, or "none" if it follows none), then call ' +
+      'finish_onboarding.';
     const stimulus: ChatStimulus = {
       id: randomUUID(),
       orgId,

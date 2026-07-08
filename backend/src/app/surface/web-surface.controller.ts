@@ -71,6 +71,7 @@ import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { OrganizationService } from '../org/organization.service';
 import { WorktreeSecretFileStore } from '../onboarding';
 import { McpServerStore } from '../mcp/mcp-server.store';
+import { ConventionProfileResolver } from '../conventions';
 import { McpProbeService } from '../mcp/mcp-probe.service';
 import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -538,6 +539,9 @@ export class WebSurfaceController {
     // credential slot via `setSecret`. Both resolved ambiently from the @Global McpModule.
     private readonly mcpStore: McpServerStore,
     private readonly mcpProbe: McpProbeService,
+    // House-style profiles — the owner-gated `convention-proposals/:id/approve` endpoint COMMITS a brain
+    // `propose_convention_profile` here (the only place a brain-originated attach lands). @Global ConventionsModule.
+    private readonly conventions: ConventionProfileResolver,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -1377,6 +1381,40 @@ export class WebSurfaceController {
       seedRow: { label: notice, chunkKey: `seed:mcp-approve:${jobId}:${requestId}` },
     });
     return { ok: true, committed, ts };
+  }
+
+  /**
+   * `POST …/jobs/:jobId/convention-proposals/:requestId/approve` — the OWNER approves a brain
+   * `propose_convention_profile` card, attaching the proposed house-style profile to THIS thread's repo. This
+   * is the ONLY place a brain-originated house-style attach lands: it is an owner-only action (same guard as
+   * the console), and the scope is FORCED to `thread.repo_id` — never trusted from the card. Idempotent (a
+   * re-approve of an already-attached card is a no-op).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/convention-proposals/:requestId/approve')
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
+  async approveConventionProposal(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('requestId') requestId: string,
+  ): Promise<{ ok: boolean; slug: string; ts?: string }> {
+    const thread = await this.requireThread(jobId, org.id);
+    const card = await this.store.getConventionProposalCard(jobId, requestId);
+    if (!card) throw new BadRequestException('no such convention proposal on this thread');
+    if (card.approved_at) {
+      return { ok: true, slug: card.slug };
+    }
+    // Scope FORCED to the thread's repo — the card's repoId is display-only. `attach` validates the slug still
+    // exists in the org (throws if the profile was deleted between propose and approve).
+    await this.conventions.attach(org.id, thread.repo_id, card.slug);
+    await this.store.markConventionProposalApproved(jobId, requestId);
+    const notice =
+      `The operator approved the house-style proposal — attached the "${card.profileName}" profile to this ` +
+      'repo. Future jobs on this repo will build to those conventions.';
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+      orgId: org.id,
+      seedRow: { label: notice, chunkKey: `seed:conv-approve:${jobId}:${requestId}` },
+    });
+    return { ok: true, slug: card.slug, ts };
   }
 
   /** Map a proposal-card server (non-secret defn) to the store's `McpServerInput`: secret slots become empty

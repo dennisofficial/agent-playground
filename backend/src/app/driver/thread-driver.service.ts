@@ -37,6 +37,7 @@ import {
 } from '../surface';
 import { CredentialResolver } from '../onboarding';
 import { McpResolver } from '../mcp';
+import { ConventionProfileResolver, type ResolvedConventions } from '../conventions';
 import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
@@ -203,7 +204,18 @@ export class ThreadDriver implements JobDispatcher {
     // (the SAME sink the Claude lanes' SDK TaskCreate/TaskUpdate use), so the web renders its checklist
     // identically. Claude builders keep using their native SDK task tools via the transcript harness.
     @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
+    // The repo's opt-in house-style profile — injected into every build-facing prompt (WORKER / gate /
+    // commit) and forwarded on the run args so the in-container FAN_OUT writer subagents get it too.
+    // @Optional so unit tests construct the driver without it (undefined → no house style injected); DI
+    // (@Global ConventionsModule) supplies it live.
+    @Optional() private readonly conventions?: ConventionProfileResolver,
   ) {}
+
+  /** The repo's attached house-style, or null when none. Best-effort: a resolver hiccup never sinks a build. */
+  private async repoConventionsFor(job: Job): Promise<ResolvedConventions | null> {
+    if (!this.conventions) return null;
+    return this.conventions.resolveForRepo(job.orgId, job.repoId).catch(() => null);
+  }
 
   /**
    * Buffer a PASSIVE pipeline milestone for the thread brain (no turn runs; it's drained into the next
@@ -1013,6 +1025,10 @@ export class ThreadDriver implements JobDispatcher {
       // Streaming identity — ride the shared transcript spine on `autofix:<threadId>:*` lanes (unchanged).
       jobId: job.id,
       channel,
+      // Org/repo for house-style resolution — the review/fix lenses render their own system prompts, so
+      // they resolve `repos.convention_profile_slug` themselves (the stage has no driver context otherwise).
+      orgId: job.orgId,
+      repoId: job.repoId,
       autofixId: thread.id,
       scope: 'thread',
       // The fix turn commits + pushes its own work now — give it the authenticated remote (same as the
@@ -1958,6 +1974,7 @@ export class ThreadDriver implements JobDispatcher {
       ` add it to \`.gitignore\` instead of committing it), commit with a clear message, and \`git push\`` +
       ` your branch. Leave the tree CLEAN, then stop. Do nothing else.`;
     await harness.emitPrompt(task, `commit:${anchor.id}:${attempt}`);
+    const repoConventions = await this.repoConventionsFor(job);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
     try {
       result = await this.runTurnBounded(
@@ -1967,11 +1984,15 @@ export class ThreadDriver implements JobDispatcher {
           sandbox,
           engine: spec.engine,
           mode: 'execute',
-          systemPrompt: renderAgentPrompt(spec.agent, { jobKind: job.kind }),
+          systemPrompt: renderAgentPrompt(spec.agent, {
+            jobKind: job.kind,
+            settings: { repoConventions },
+          }),
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
           auth: await this.creds.engineAuth(job.orgId, spec.engine),
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
+          ...(repoConventions ? { repoConventions } : {}),
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true,
           turnMeta: {
@@ -2109,7 +2130,13 @@ export class ThreadDriver implements JobDispatcher {
     // ignored by MASTER_REVIEW's fragments, so passing it uniformly is byte-identical for both.
     const spec = threadKindSpec(thread.kind);
     const engine: SessionEngine = spec.engine;
-    const systemPrompt = renderAgentPrompt(spec.agent, { jobKind: job.kind });
+    // The repo's house-style, folded into the builder's system prompt AND forwarded on the run args so the
+    // FAN_OUT writer subagents this turn spawns in-container render the same envelope (Layer B).
+    const repoConventions = await this.repoConventionsFor(job);
+    const systemPrompt = renderAgentPrompt(spec.agent, {
+      jobKind: job.kind,
+      settings: { repoConventions },
+    });
     // Leg-rotation occupancy watch: latches SOFT then HARD as this builder session's main-agent context fills.
     // Codex/master-review turns emit no per-call occupancy, so the watch never latches for them (positive-signal
     // only). When ARMED (Claude builder) each crossing records the latched phase on the run state AND steers an
@@ -2149,6 +2176,7 @@ export class ThreadDriver implements JobDispatcher {
           task,
           auth: await this.creds.engineAuth(job.orgId, engine),
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
+          ...(repoConventions ? { repoConventions } : {}),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
@@ -2591,6 +2619,7 @@ export class ThreadDriver implements JobDispatcher {
     // so without this the operator sees the fix work but never what was asked. Keyed per (step, iteration)
     // so a re-kick after a restart never duplicates it. The reattach path deliberately does NOT emit.
     await harness.emitPrompt(task, `gate:${anchor.id}:${iteration}`);
+    const repoConventions = await this.repoConventionsFor(job);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
     try {
       result = await this.runTurnBounded(
@@ -2600,10 +2629,14 @@ export class ThreadDriver implements JobDispatcher {
           sandbox,
           engine: 'claude',
           mode: 'execute',
-          systemPrompt: renderAgentPrompt(Agent.WORKER, { jobKind: job.kind }),
+          systemPrompt: renderAgentPrompt(Agent.WORKER, {
+            jobKind: job.kind,
+            settings: { repoConventions },
+          }),
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
+          ...(repoConventions ? { repoConventions } : {}),
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true,
           toolBridge,

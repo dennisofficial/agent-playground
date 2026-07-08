@@ -4,6 +4,7 @@ import { DataSource, IsNull, MoreThan, Not, Repository } from 'typeorm';
 import type { Decision, Job, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type {
+  WebConventionProposalCard,
   WebFileRequestCard,
   WebMcpProposalCard,
   WebQuestionCard,
@@ -964,6 +965,49 @@ export class BrainStoreService {
     await this.updateCardMessage(jobId, requestId, {
       approved_at: new Date().toISOString(),
       committed,
+    });
+  }
+
+  // ── convention-profile proposals (owner-gated house-style attach; mirrors the MCP-proposal flow) ─────
+
+  /** Post an owner-approvable house-style-profile proposal card (no thread pointer, like MCP proposals). */
+  async openConventionProposal(
+    jobId: string,
+    input: { requestId: string; card: WebConventionProposalCard },
+  ): Promise<{ ok: boolean }> {
+    const thread = await this.jobs.findOne({ where: { id: jobId } });
+    if (!thread) return { ok: false };
+    await this.messages.save(
+      this.messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: `Proposed the "${input.card.profileName}" house-style profile for this repo`,
+        kind: 'card',
+        ts: input.requestId,
+        card: input.card as unknown as Record<string, unknown>,
+      }),
+    );
+    return { ok: true };
+  }
+
+  /** Fetch one thread's convention-proposal card by id (the card's `ts`); null if absent / wrong type. */
+  async getConventionProposalCard(
+    jobId: string,
+    requestId: string,
+  ): Promise<WebConventionProposalCard | null> {
+    const row = await this.messages.findOne({
+      where: { job_id: jobId, ts: requestId, kind: 'card' },
+    });
+    const card = row?.card as WebConventionProposalCard | undefined;
+    return card?.type === 'convention_proposal_card' ? card : null;
+  }
+
+  /** Stamp a convention-proposal card APPROVED (the owner attached the profile). */
+  async markConventionProposalApproved(jobId: string, requestId: string): Promise<void> {
+    await this.updateCardMessage(jobId, requestId, {
+      approved_at: new Date().toISOString(),
     });
   }
 

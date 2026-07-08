@@ -31,6 +31,7 @@ export * from './ticket-counter.entity';
 export * from './turn-stats.entity';
 export * from './turn-model-usage.entity';
 export * from './mcp-server.entity';
+export * from './convention-profile.entity';
 
 import { OrganizationEntity } from './organization.entity';
 import { OrganizationMemberEntity } from './organization-member.entity';
@@ -59,6 +60,7 @@ import { TicketCounterEntity } from './ticket-counter.entity';
 import { TurnStatsEntity } from './turn-stats.entity';
 import { TurnModelUsageEntity } from './turn-model-usage.entity';
 import { McpServerEntity } from './mcp-server.entity';
+import { ConventionProfileEntity } from './convention-profile.entity';
 
 /** Every Atlas v2 entity — passed to the Atlas datasource's `entities` (NOT the shared `ENTITIES`). */
 export const ENTITIES = [
@@ -89,4 +91,5 @@ export const ENTITIES = [
   TurnStatsEntity,
   TurnModelUsageEntity,
   McpServerEntity,
+  ConventionProfileEntity,
 ];

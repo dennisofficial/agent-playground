@@ -396,6 +396,15 @@ export interface RunEngineArgs {
    * Empty/omitted → no user MCP servers this turn. See user-mcp-bridge-options.ts.
    */
   userMcpServers?: ResolvedMcpServer[];
+  /**
+   * The repo's opt-in house-style profile (`repos.convention_profile_slug` → the resolved profile), or
+   * null/absent when none is attached. Crosses the wire VERBATIM (plain data) so the in-container engine can
+   * fold the same envelope into the prompts it assembles ITSELF for the `FAN_OUT` writer + `REVIEW_AGENT`
+   * subagents (the host only assembles the main-agent `systemPrompt`; the subagent personas are built in
+   * `engine-core`). The MAIN agent already has it baked into `systemPrompt`; this field is what reaches the
+   * subagents. Absent → nothing injected, byte-identical to today.
+   */
+  repoConventions?: { name: string; body: string } | null;
   /** Override the model for this run. Falls back to the engine's env/default when unset. */
   model?: string;
   /**
@@ -498,7 +507,7 @@ export type SpecVerbatimKey = Exclude<keyof RunEngineArgs, HostOnlyArgKey | Tran
  *  `_SPEC_VERBATIM_KEYS_EXHAUSTIVE` check below rejects a MISSING one. Together ⇒ exact coverage. */
 export const SPEC_VERBATIM_KEYS = [
   'engine', 'task', 'systemPrompt', 'sandboxKey', 'sessionId', 'mode',
-  'userMcpServers', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
+  'userMcpServers', 'repoConventions', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
 ] as const satisfies readonly SpecVerbatimKey[];
 
 // COMPILE-TIME CONTRACT: if a verbatim field is missing from SPEC_VERBATIM_KEYS this is a non-`never` tuple

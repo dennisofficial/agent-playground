@@ -194,6 +194,23 @@ export class EnvironmentGroup {
     ].join('\n');
   }
 
+  /** onboarding block 10d — HOUSE STYLE (propose_convention_profile; owner-approved, stack-matched). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2109, condition: isOnboarding })
+  houseStyle(): string {
+    return [
+      'HOUSE STYLE — the org may define reusable "house-style" profiles (a NestJS+Next.js folder-structure',
+      'convention, a shared-contract layout, etc.) that shape how builders on a matching repo structure NEW code.',
+      'While you have this repo’s stack mapped, decide whether one FITS: call list_convention_profiles to see the',
+      'org’s profiles (each has a `detectHint` describing the stack it targets), compare it against what you',
+      'actually observed in THIS repo, then call propose_convention_profile({ slug, rationale }) with the',
+      'best-matching slug — or slug:"none" when the repo follows NONE of them. Matching must be honest: a house',
+      'style is injected into every builder prompt, so attaching one that does not fit would actively mislead the',
+      'build. When unsure, prefer "none" (the safe default — nothing is injected). You do NOT attach it yourself:',
+      'a concrete slug posts an owner-approvable card; the OWNER approves it, which attaches the profile to this',
+      'repo. If the org has no profiles, skip this entirely.',
+    ].join('\n');
+  }
+
   /** onboarding block 11 — RESET / PROVE-IT-COLD-BOOTS. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2110, condition: isOnboarding })
   reset(): string {

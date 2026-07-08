@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
@@ -15,6 +15,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { CodexReviewEntity, JobEntity, ThreadEntity } from '../persistence/entities';
 import { TurnHarnessFactory, laneFor, BLOCK_SINK, type BlockSink } from '../surface';
 import { Agent, renderAgentPrompt } from '../prompt-kit';
+import { ConventionProfileResolver } from '../conventions';
 import { threadKindSpec } from '../thread-kind/registry';
 import {
   type ReviewFinding,
@@ -194,6 +195,10 @@ export class PlanReviewService {
     private readonly turnHarness: TurnHarnessFactory,
     private readonly election: LeaderElectionService,
     @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
+    // The repo's opt-in house-style profile — folded into the META_PLAN_REVIEW prompt so the reviewer judges
+    // the plan against the same conventions the builders will follow. @Optional so unit tests construct the
+    // service without it (undefined → no house style injected); DI (@Global) supplies it live.
+    @Optional() private readonly conventions?: ConventionProfileResolver,
   ) {}
 
   get reviewCeiling(): number {
@@ -261,6 +266,12 @@ export class PlanReviewService {
       select: { id: true, repo_id: true },
     });
     const channel = job?.repo_id ?? input.jobId;
+    // The repo's house-style (null when none attached) — folded into the reviewer's system prompt so it
+    // grades the plan against the same conventions the builders get.
+    const repoConventions =
+      job?.repo_id && this.conventions
+        ? await this.conventions.resolveForRepo(input.orgId, job.repo_id).catch(() => null)
+        : null;
     // The reviewer's reasoning effort — sourced from the `plan_review` kind spec so it lives in one place
     // (and the composer footer's pre-turn default matches what the turn actually runs at).
     const reviewEffort = threadKindSpec('plan_review').reasoningEffort;
@@ -297,7 +308,9 @@ export class PlanReviewService {
             engine: 'codex',
             task,
             cwd: sandbox.worktreePath,
-            systemPrompt: renderAgentPrompt(Agent.META_PLAN_REVIEW),
+            systemPrompt: renderAgentPrompt(Agent.META_PLAN_REVIEW, {
+              settings: { repoConventions },
+            }),
             sandboxKey,
             mode: 'review',
             ...(reviewEffort ? { modelReasoningEffort: reviewEffort } : {}),
