@@ -556,6 +556,23 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect((result as { message: string }).message).toContain('INFRASTRUCTURE');
   });
 
+  it('review_plan: anchors the job WITHOUT a "plan review" placeholder title (empty when goal/overview absent)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 'complete',
+      findings: [],
+      specHash: 'h',
+    });
+
+    // Normal full-path flow: goal/overview go to propose_plan, not review_plan — so both are absent here.
+    await tools['review_plan']({ threads: [{ title: 'S', type: 'backend' }] });
+
+    expect(mockStore.openJob).toHaveBeenCalledOnce();
+    const openArgs = (mockStore.openJob as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(openArgs.title).toBe('');
+    expect(openArgs.title).not.toBe('plan review');
+  });
+
   it('(a) propose_plan: returns error (no persist) if goal is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['propose_plan']({
