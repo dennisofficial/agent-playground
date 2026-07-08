@@ -20,6 +20,7 @@ type Mocks = {
   rawRow: ReturnType<typeof vi.fn>;
   recordValidation: ReturnType<typeof vi.fn>;
   setSecret: ReturnType<typeof vi.fn>;
+  del: ReturnType<typeof vi.fn>;
   validate: ReturnType<typeof vi.fn>;
   rehydrateThread: ReturnType<typeof vi.fn>;
   messages: { findOne: ReturnType<typeof vi.fn>; save: ReturnType<typeof vi.fn> };
@@ -36,6 +37,7 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     rawRow: vi.fn(async () => ({ transport: 'http', config: { url: 'https://x' } })),
     recordValidation: vi.fn(async () => undefined),
     setSecret: vi.fn(async () => true),
+    del: vi.fn(async () => undefined),
     validate: vi.fn(async () => ({ discoveredTools: ['t'] })),
     rehydrateThread: vi.fn(async () => undefined),
     messages: {
@@ -77,8 +79,11 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
       rawRow: m.rawRow,
       recordValidation: m.recordValidation,
       setSecret: m.setSecret,
+      delete: m.del,
     } as never, // mcpStore
     { validate: m.validate } as never, // mcpProbe
+    {} as never, // conventions (ConventionProfileResolver)
+    {} as never, // skillStore (WorkspaceSkillStore)
   );
   return { controller, m };
 }
@@ -94,7 +99,7 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     expect(guards).toContain(OrgOwnerGuard);
   });
 
-  it('commits each server on the THREAD repo scope (never a card-supplied scope) + marks approved', async () => {
+  it('commits each server on the card scope (defaults to the thread repo) + marks approved', async () => {
     const card = {
       type: 'mcp_proposal_card',
       servers: [
@@ -111,7 +116,7 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     const res = await controller.approveMcpProposal(OWNER, 'job-1', 'mcp-1');
 
     expect(res).toMatchObject({ ok: true, committed: ['github', 'deepwiki'] });
-    // Scope is FORCED to the thread's repo for every write.
+    // No scope on the card ⇒ defaults to the thread's repo for every write.
     expect(m.write).toHaveBeenCalledTimes(2);
     for (const call of m.write.mock.calls) {
       expect(call[0]).toBe('orgA'); // orgId
@@ -123,6 +128,36 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     // deepwiki has no secret slot → probed now so its tool list populates; github (secret) is NOT probed.
     expect(m.validate).toHaveBeenCalledTimes(1);
     expect(m.markMcpProposalApproved).toHaveBeenCalledWith('job-1', 'mcp-1', ['github', 'deepwiki']);
+  });
+
+  it('commits ORG-wide (the "*" sentinel) when the card scope is "org"', async () => {
+    const card = {
+      type: 'mcp_proposal_card',
+      scope: 'org',
+      servers: [{ name: 'linear', transport: 'http', url: 'https://mcp.linear.app/sse' }],
+    };
+    const { controller, m } = makeController({ threadRepoId: 'repo-1', card });
+    await controller.approveMcpProposal(OWNER, 'job-1', 'mcp-1');
+    expect(m.write.mock.calls[0][1]).toBe('*'); // dbScope = org sentinel, not repo-1
+  });
+
+  it('removal card (mode:remove) DELETES the named servers on the card scope', async () => {
+    const card = {
+      type: 'mcp_proposal_card',
+      scope: 'org',
+      mode: 'remove',
+      removeNames: ['linear', 'deepwiki'],
+      servers: [],
+    };
+    const { controller, m } = makeController({ threadRepoId: 'repo-1', card });
+    const res = await controller.approveMcpProposal(OWNER, 'job-1', 'mcp-1');
+    expect(res).toMatchObject({ ok: true, committed: ['linear', 'deepwiki'] });
+    expect(m.del).toHaveBeenCalledTimes(2);
+    expect(m.del.mock.calls.map((c) => [c[1], c[2]])).toEqual([
+      ['*', 'linear'],
+      ['*', 'deepwiki'],
+    ]);
+    expect(m.write).not.toHaveBeenCalled(); // a removal never writes
   });
 
   it('is idempotent — a re-approve of an already-committed card writes nothing', async () => {

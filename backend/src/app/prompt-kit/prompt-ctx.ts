@@ -23,5 +23,12 @@ export interface PromptCtx {
      * injected (the prompt is byte-identical to today), so a profile never misfires on a divergent repo.
      */
     repoConventions?: { name: string; body: string } | null;
+    /**
+     * The rendered CURRENT state of this repo's WORKSPACE PROFILE (mounts, setup script, secret files, MCP
+     * servers, skills, house style), produced per turn by `WorkspaceProfileService.render`. Injected by
+     * `workspace-profile.group` so the brain SEES what is already provisioned and can keep it current.
+     * Absent/empty on a repo with nothing provisioned yet → the group prints "nothing recorded yet".
+     */
+    workspaceProfile?: string | null;
   };
 }

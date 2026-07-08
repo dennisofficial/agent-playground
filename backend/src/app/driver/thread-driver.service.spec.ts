@@ -878,6 +878,8 @@ function assemble(
     } as unknown as CredentialResolver,
     // McpResolver: no user-defined MCP servers in tests.
     { resolveForTurn: async () => [] } as never,
+    // SkillResolver: no skills in tests.
+    { resolveForTurn: async () => [] } as never,
     // JobLifecycleService: returns the thread's pre-provisioned sandbox — the ONLY sandbox path now
     // (the brain provisions every thread before any build runs). Its branch is the source of truth.
     {
@@ -3212,7 +3214,6 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
       operatorInputCards: [],
     };
 
-    const capturedTasks: string[] = [];
     const modes: string[] = [];
     let buildLeg = 0;
     const runTurn = vi.fn(

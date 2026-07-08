@@ -15,6 +15,8 @@ import { LiveTurnModule, SurfaceModule } from './surface';
 import { MemoryModule } from './memory';
 import { McpModule } from './mcp';
 import { ConventionsModule } from './conventions';
+import { SkillsModule } from './skills';
+import { WorkspaceProfileModule } from './workspace-profile';
 import { OnboardingModule } from './onboarding';
 import { OrgModule } from './org';
 import { RealtimeModule } from './realtime';
@@ -59,6 +61,8 @@ import { ThreadKindModule } from './thread-kind';
     OnboardingModule,
     McpModule,
     ConventionsModule,
+    SkillsModule,
+    WorkspaceProfileModule,
     OrgModule,
     TitlingModule,
     TicketsModule,

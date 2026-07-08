@@ -90,6 +90,8 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       { stopTurn: async () => false } as never, // brain (AgentSessionManager)
       {} as never, // mcpStore (McpServerStore)
       {} as never, // mcpProbe (McpProbeService)
+      {} as never, // conventions (ConventionProfileResolver)
+      {} as never, // skillStore (WorkspaceSkillStore)
     );
   }
 

@@ -977,9 +977,14 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.preShip).not.toHaveBeenCalled();
   });
 
-  it('propose_mcp_servers is onboarding-only (unreachable from a normal thread)', () => {
-    expect(manager.buildTools(fakeStimulus)['propose_mcp_servers']).toBeUndefined();
-    expect(manager.buildTools(fakeStimulus, 'onboarding')['propose_mcp_servers']).toBeDefined();
+  it('propose_mcp_servers + list_mcp_servers are available INCREMENTALLY on any thread (Workspace Profile upkeep)', () => {
+    // MCP servers are a Workspace Profile dimension like skills/mounts — maintainable on every job, not just
+    // onboarding (they ride the shared `intake` bundle).
+    for (const kind of [undefined, 'onboarding', 'review'] as const) {
+      const tools = manager.buildTools(fakeStimulus, kind);
+      expect(tools['propose_mcp_servers']).toBeDefined();
+      expect(tools['list_mcp_servers']).toBeDefined();
+    }
   });
 
   it('propose_mcp_servers posts a proposal card + reports secret slots — writes NO server row', async () => {
@@ -1000,9 +1005,21 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const arg = (mockStore.openMcpProposal as ReturnType<typeof vi.fn>).mock.calls[0][1];
     // The card carries the non-secret definition only — a secret slot is declared by NAME, no value.
     expect(arg.card.servers[0].headers).toEqual([{ name: 'Authorization', secret: true }]);
-    expect(JSON.stringify(arg.card)).not.toContain('scope'); // no scope on the card — derived at commit
+    expect(arg.card.scope).toBe('repo'); // defaults to repo scope (the owner-approved commit honors it)
     // The brain is told which slots to fill afterwards.
     expect((result as { message: string }).message).toContain('request_secret');
+  });
+
+  it('propose_mcp_servers carries scope:"org" onto the card when requested (org-wide registration)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['propose_mcp_servers']({
+      scope: 'org',
+      servers: [{ name: 'linear', transport: 'http', url: 'https://mcp.linear.app/sse' }],
+    });
+    expect(result).toMatchObject({ ok: true });
+    const arg = (mockStore.openMcpProposal as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(arg.card.scope).toBe('org');
+    expect((result as { message: string }).message).toContain('org-wide');
   });
 
   it('propose_mcp_servers rejects a reserved system name', async () => {

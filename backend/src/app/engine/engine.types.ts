@@ -356,6 +356,21 @@ export interface ResolvedMcpServer {
   env?: Record<string, string>;
 }
 
+/**
+ * A resolved SKILL, ready to serialize onto the turn spec. `SkillResolver.resolveForTurn` produces these
+ * from the `workspace_skills` rows for the turn's org/repo/surface; the in-container entrypoint renders
+ * each into a `SKILL.md` on disk the Claude SDK discovers. No secrets — a skill is plain markdown, so it
+ * crosses the wire verbatim (unlike `ResolvedMcpServer`, whose secret values ride in inlined).
+ */
+export interface ResolvedSkill {
+  /** Skill name — the on-disk skill dir under the discovered skills root. */
+  name: string;
+  /** The SKILL.md frontmatter `description` — the trigger blurb the model reads to decide when to load it. */
+  description: string;
+  /** The SKILL.md markdown body. */
+  body: string;
+}
+
 export interface RunEngineArgs {
   /** Which engine backs this run. */
   engine: SessionEngine;
@@ -413,6 +428,14 @@ export interface RunEngineArgs {
    * subagents. Absent → nothing injected, byte-identical to today.
    */
   repoConventions?: { name: string; body: string } | null;
+  /**
+   * This repo's skills, RESOLVED host-side (`SkillResolver.resolveForTurn` from the `workspace_skills` rows
+   * whose `surfaces` include this turn's surface). Crosses the wire VERBATIM (plain markdown, no secrets) —
+   * the in-container engine renders each into a `SKILL.md` under a local plugin dir and loads it via the SDK
+   * `plugins` option, independent of `settingSources` (which stays `[]` for isolation). Empty/omitted → no
+   * skills this turn (byte-identical to today). See `engine-core` `renderSkillsPlugin`.
+   */
+  skills?: ResolvedSkill[];
   /** Override the model for this run. Falls back to the engine's env/default when unset. */
   model?: string;
   /**
@@ -516,7 +539,7 @@ export type SpecVerbatimKey = Exclude<keyof RunEngineArgs, HostOnlyArgKey | Tran
  *  `_SPEC_VERBATIM_KEYS_EXHAUSTIVE` check below rejects a MISSING one. Together ⇒ exact coverage. */
 export const SPEC_VERBATIM_KEYS = [
   'engine', 'task', 'systemPrompt', 'sandboxKey', 'sessionId', 'mode',
-  'userMcpServers', 'repoConventions', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
+  'userMcpServers', 'repoConventions', 'skills', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
 ] as const satisfies readonly SpecVerbatimKey[];
 
 // COMPILE-TIME CONTRACT: if a verbatim field is missing from SPEC_VERBATIM_KEYS this is a non-`never` tuple

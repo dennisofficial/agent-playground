@@ -1,5 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -38,6 +38,7 @@ import {
 import { CredentialResolver } from '../onboarding';
 import { McpResolver } from '../mcp';
 import { ConventionProfileResolver, type ResolvedConventions } from '../conventions';
+import { SkillResolver } from '../skills';
 import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
@@ -181,6 +182,9 @@ export class ThreadDriver implements JobDispatcher {
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
     private readonly creds: CredentialResolver,
     private readonly mcp: McpResolver,
+    // This repo's skills for build turns — forwarded on `RunTurnInput.skills` (rendered in-container as
+    // SKILL.md the SDK loads), resolved for the 'build' surface exactly like `userMcpServers`.
+    private readonly skills: SkillResolver,
     private readonly threadLifecycle: JobLifecycleService,
     private readonly ship: BuildShipService,
     private readonly awareness: PipelineAwarenessStore,
@@ -2062,6 +2066,7 @@ export class ThreadDriver implements JobDispatcher {
           task,
           auth: await this.creds.engineAuth(job.orgId, spec.engine),
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
+          skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true,
@@ -2646,6 +2651,7 @@ export class ThreadDriver implements JobDispatcher {
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
+          skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true,
@@ -3252,3 +3258,4 @@ export function shortReason(err: unknown): string {
     .join(' | ');
   return detail.length > 500 ? `${detail.slice(0, 497)}...` : detail || 'unknown error';
 }
+

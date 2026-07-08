@@ -10,6 +10,7 @@ import type {
   EngineRunResult,
   EngineUsage,
   ResolvedMcpServer,
+  ResolvedSkill,
   ToolBridgeOptions,
   TurnMeta,
 } from '../engine';
@@ -44,6 +45,11 @@ export interface RunTurnInput {
    * `McpResolver.resolveForTurn`. Passed straight through to `RunEngineArgs.userMcpServers`.
    */
   userMcpServers?: ResolvedMcpServer[];
+  /**
+   * This repo's skills for this turn, RESOLVED host-side by `SkillResolver.resolveForTurn`. Passed straight
+   * through to `RunEngineArgs.skills` (the in-container engine renders each as a SKILL.md the SDK loads).
+   */
+  skills?: ResolvedSkill[];
   /**
    * Authenticated-git for this turn (resolved repo url + org PAT) so the agent can fetch/push/merge from
    * inside the sandbox. Sourced from the RESOLVED repo, NOT `sandbox` (a row-sourced sandbox has empty
@@ -98,7 +104,7 @@ type TurnInputDerivedOrRequiredKey =
   | 'engine' | 'mode' | 'task' | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
 type TurnInputForwardKey = Exclude<keyof RunTurnInput, TurnInputDerivedOrRequiredKey>;
 const TURN_INPUT_FORWARD_KEYS = [
-  'auth', 'userMcpServers', 'model', 'modelReasoningEffort',
+  'auth', 'userMcpServers', 'skills', 'model', 'modelReasoningEffort',
   'richStream', 'steerable', 'rotationNudge', 'toolBridge', 'turnMeta',
 ] as const satisfies readonly TurnInputForwardKey[];
 const _TURN_INPUT_FORWARD_KEYS_EXHAUSTIVE: [Exclude<TurnInputForwardKey, (typeof TURN_INPUT_FORWARD_KEYS)[number]>] extends [never]

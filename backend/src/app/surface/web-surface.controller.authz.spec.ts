@@ -44,6 +44,7 @@ function makeController(threadOrgId: string) {
     {} as never, // mcpStore (McpServerStore)
     {} as never, // mcpProbe (McpProbeService)
     {} as never, // conventions (ConventionProfileResolver)
+    {} as never, // skillStore (WorkspaceSkillStore)
   );
   return { controller, deleteJobDeep, claimDeleteJob, threads, messages };
 }

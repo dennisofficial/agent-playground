@@ -1,7 +1,7 @@
 import type { CanUseTool, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Codex, FileChangeItem, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { structuredPatch as diffStructuredPatch } from 'diff';
 import { applyClaudeAuth } from './claude-auth';
@@ -396,6 +396,34 @@ export function applyConventionsToAgents(
   return out;
 }
 
+/**
+ * Render this turn's resolved skills into a LOCAL SDK plugin dir and return its path (or null when there are
+ * none). The Claude Agent SDK loads skills from `plugins: [{type:'local', path}]` independent of
+ * `settingSources`, so this keeps full filesystem-settings isolation while adding exactly the skills Atlas
+ * resolved for the turn. Layout: `<dir>/.claude-plugin/plugin.json` + `<dir>/skills/<name>/SKILL.md`. The
+ * `skills/` subtree is wiped and rewritten each turn so a skill removed since last turn does not linger.
+ */
+export function renderSkillsPlugin(
+  dir: string,
+  skills: RunEngineArgs['skills'],
+): string | null {
+  if (!skills || skills.length === 0) return null;
+  const skillsRoot = join(dir, 'skills');
+  // Idempotent rewrite: clear the prior skill set so a removed/renamed skill can't survive.
+  rmSync(skillsRoot, { recursive: true, force: true });
+  mkdirSync(join(dir, '.claude-plugin'), { recursive: true });
+  writeFileSync(join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'atlas-skills' }));
+  for (const skill of skills) {
+    // Defensive: skill names are validated kebab at propose time, but never let one escape the skills root.
+    const safeName = skill.name.replace(/[^a-z0-9_-]/gi, '-') || 'skill';
+    const skillDir = join(skillsRoot, safeName);
+    mkdirSync(skillDir, { recursive: true });
+    const frontmatter = `---\nname: ${skill.name}\ndescription: ${skill.description.replace(/\n/g, ' ')}\n---\n`;
+    writeFileSync(join(skillDir, 'SKILL.md'), `${frontmatter}\n${skill.body}\n`);
+  }
+  return dir;
+}
+
 /** Is `path` inside `root` (after resolution)? Confines writes to the worktree. */
 function isInsideRoot(path: string, root: string): boolean {
   const r = resolvePath(root);
@@ -621,11 +649,21 @@ export class EngineCore {
       if (stderrTail.length > 40) stderrTail.shift(); // keep the last ~40 chunks
     };
 
+    // This repo's skills (resolved host-side, no secrets) rendered into a LOCAL plugin dir the SDK loads via
+    // `plugins` — independent of `settingSources` (which stays `[]`, so no ambient .claude config leaks in).
+    // Re-rendered each turn (drops removed skills). null when the turn carries none → no `plugins` key.
+    const skillsPluginDir = renderSkillsPlugin(
+      join(claudeConfigDir, 'atlas-skills-plugin'),
+      args.skills,
+    );
+
     const options: Options = {
       cwd,
       systemPrompt,
-      // No skills: settingSources [] means NO on-disk config files are read (full isolation).
+      // settingSources [] means NO on-disk config files are read (full isolation). Skills are loaded ONLY via
+      // the `plugins` key below (a host-controlled dir), never from ambient `.claude/skills`.
       settingSources: [],
+      ...(skillsPluginDir ? { plugins: [{ type: 'local' as const, path: skillsPluginDir }] } : {}),
       tools: planMode ? PLAN_TOOLS : readOnly ? REVIEW_TOOLS : WORKER_TOOLS,
       // Programmatic subagent definitions (settingSources [] means none are read from disk) — the only
       // spawnable Task subagents. Advisory subagents (read-only, Sonnet) are always available; the WRITER

@@ -1,43 +1,86 @@
 /**
- * prompt-kit / groups / environment — provisioning the box: fixing environment gaps for every future job
- * (normal brain), and the onboarding secret/auth/install/config/reset machinery.
+ * prompt-kit / groups / workspace-profile — THE WORKSPACE PROFILE: the one named area Atlas provisions
+ * once at onboarding (the bulk pass) and keeps current on every job after (incremental upkeep). It unifies
+ * the seven provisioning dimensions — secret files, mounts, cache folders, setup script, MCP servers,
+ * skills, house style — under one name, prints the CURRENT snapshot (from `ctx.settings.workspaceProfile`),
+ * and points each dimension at its upkeep tool.
  *
- * TOPIC bucket: environment & secrets provisioning.
+ * TOPIC bucket: the workspace profile (environment & provisioning). Was `environment.group.ts`.
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
+import type { PromptCtx } from '../prompt-ctx';
+
+/** The named area + its seven dimensions and the upkeep tool for each. Shared by both framings. */
+const WORKSPACE_PROFILE_DIMENSIONS = [
+  'THE WORKSPACE PROFILE — the durable, per-repo provisioning that turns a bare checkout into a runnable,',
+  'correctly-configured workspace. It is ONE area with SEVEN dimensions, each with its own upkeep tool:',
+  '  1. Secret files   — request_secret / request_file (or derive_secret for a self-computed value)',
+  '  2. Mounts         — write_worktree_config({ mounts }) — durable dirs a tool writes outside your HOME',
+  '  3. Cache folders  — write_worktree_config (a shared-rw mount); most caches already persist under HOME',
+  '  4. Setup script   — write_setup_script — the idempotent bring-up commands a cold sandbox needs',
+  '  5. MCP servers    — propose_mcp_servers (owner-approved)',
+  '  6. Skills         — propose_skill (owner-approved reusable SKILL.md)',
+  '  7. House style    — propose_convention_profile (owner-approved)',
+].join('\n');
+
+/** The live snapshot of what is ALREADY provisioned for this repo (or a note when nothing is yet). */
+function workspaceProfileSnapshot(ctx: PromptCtx): string {
+  const snap = ctx.settings?.workspaceProfile?.trim();
+  return snap
+    ? `CURRENT WORKSPACE PROFILE for this repo:\n${snap}`
+    : 'CURRENT WORKSPACE PROFILE for this repo: nothing recorded yet.';
+}
 
 @FragmentGroup()
-export class EnvironmentGroup {
-  /** normal block 28 — environment gaps are not yours alone (fix for future jobs). */
+export class WorkspaceProfileGroup {
+  /**
+   * normal block 28 — the WORKSPACE PROFILE overview for a real build (incremental upkeep framing). Names
+   * the area, prints the current snapshot, and tells the brain that keeping it current is ongoing work, not
+   * a one-time ceremony. Absorbs the old `environmentGaps` nudge (the persistence-by-kind recipe below).
+   */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1280, condition: notOnboarding })
-  environmentGaps(): string {
+  workspaceProfileNormal(ctx: PromptCtx): string {
     return [
-      'ENVIRONMENT GAPS ARE NOT YOUR PROBLEM ALONE — FIX THEM FOR EVERY FUTURE JOB TOO. This repo went through',
-      'an onboarding ceremony once, but that only covers what the ceremony happened to hit; you have the SAME',
-      'capabilities it did, used incrementally instead of all at once. If a build hits a missing secret/env var,',
-      'call `request_secret({ name, path, description })` (or `request_file({ path, description })` for a whole',
-      'file/key) — same secure flow as onboarding: the operator enters it once, it renders into YOUR live',
-      'worktree so you can keep going, and it persists for every future job on this repo (no more hand-off).',
-      'If instead you COMPUTE a value yourself (e.g. `stripe listen --print-secret` from an already-granted API',
-      'key — nobody typed it, nothing for an operator to gate), call `derive_secret({ name, path, value,',
-      'description })` to store it durably with no operator wait — otherwise every future job re-derives it from',
-      'scratch, paying the same tax you just paid.',
-      'Persistence, by kind: (a) a CLI the image does not already ship (run `command -v` first — the sandbox bakes',
-      'a broad toolkit) → drop it in `~/.local/bin` (already on PATH, durable) — never re-export PATH or install',
-      'into /workspace; (b) a tool credential/cache →',
-      'it already persists at its DEFAULT `~/.config`/`~/.cache` path (durable per-repo HOME), no mount or config',
-      'override needed; (c) a durable dir a tool insists on writing ELSEWHERE → `write_worktree_config({ mounts })`',
-      'with a worktree-relative OR an absolute (external, outside /workspace) path — a DB write, live for every job',
-      'next turn, no PR; (d) a system `apt` package → will NOT survive a reset, `remember` it for the base image.',
-      'Small environment fixes (a broken script, a missing build step another package needs) are just a normal',
-      'code change — make them as part of your build like anything else. Do not silently work around something',
-      'that will bite the next job too when it is fixable in the repo.',
-      'If you set up environment state by hand and want to confirm it will survive for the next job, call',
-      '`reset_sandbox({ reason })` — it recreates your container fresh on your next turn (worktree, recorded',
-      'mounts, granted secrets, your HOME, and /.atlas survive; ephemeral state does not), then STOP and verify',
-      'what came back. Whatever you have to redo by hand is what you forgot to record.',
+      WORKSPACE_PROFILE_DIMENSIONS,
+      '',
+      workspaceProfileSnapshot(ctx),
+      '',
+      'KEEPING IT CURRENT IS YOUR JOB TOO — not just onboarding\'s. This repo went through a bulk onboarding',
+      'pass ONCE, but that only covered what it happened to hit; you have the SAME capabilities, used',
+      'incrementally instead of all at once. When THIS job reveals a gap the profile does not yet cover — a',
+      'new tech stack, a missing secret, a cache a tool wants, a tool worth an MCP server or a skill — fix it',
+      'in the profile so every FUTURE job on this repo inherits it, instead of silently working around it.',
+      'Persistence, by kind: (a) a CLI the image does not ship (run `command -v` first — the sandbox bakes a',
+      'broad toolkit) → drop it in `~/.local/bin` (on PATH, durable); (b) a tool credential/cache → it already',
+      'persists at its DEFAULT `~/.config`/`~/.cache` path (durable per-repo HOME), no mount needed; (c) a',
+      'durable dir a tool insists on writing ELSEWHERE → write_worktree_config({ mounts }); (d) a missing',
+      'secret/key → request_secret / request_file (or derive_secret when you COMPUTE it from a key you hold);',
+      '(e) bring-up commands → write_setup_script; (f) a system `apt` package → will NOT survive a reset,',
+      '`remember` it for the base image. A broken script or missing build step is just a normal code change —',
+      'make it as part of your build. If you set up state by hand and want to confirm it survives, call',
+      'reset_sandbox({ reason }) — the box comes back fresh (worktree, recorded mounts, granted secrets, HOME,',
+      'and /.atlas survive; ephemeral state does not); whatever you must redo by hand is what you forgot to record.',
+    ].join('\n');
+  }
+
+  /**
+   * onboarding block 015 — the WORKSPACE PROFILE overview for the bring-up (bulk-pass framing). Sits right
+   * after the onboarding identity/sandbox blocks; the deep per-dimension how-to fragments (SECRETS, CONFIG,
+   * SETUP SCRIPT, MCP SERVERS, SKILLS, HOUSE STYLE, RESET) follow below.
+   */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2015, condition: isOnboarding })
+  workspaceProfileOnboarding(ctx: PromptCtx): string {
+    return [
+      WORKSPACE_PROFILE_DIMENSIONS,
+      '',
+      workspaceProfileSnapshot(ctx),
+      '',
+      'This is the FIRST, BULK pass over the profile: while you have the whole stack in front of you, set up',
+      'every dimension the repo needs so future jobs start on a hydrated, runnable box. The sections below',
+      'walk each dimension. After onboarding, the profile is maintained INCREMENTALLY by every job — you are',
+      'not the last word on it, just the first bulk pass.',
     ].join('\n');
   }
 
@@ -164,7 +207,9 @@ export class EnvironmentGroup {
       '    authenticated `gh` CLI does NOT authenticate it, so always declare that secret slot.',
       '  - Postgres / a DB MCP when the repo talks to that database; Sentry when it reports errors there.',
       '  - Linear or Jira when the team tracks work there; Slack for team comms; Playwright for UI/e2e verification.',
-      'Call propose_mcp_servers({ servers: [{ name, transport, url|command|args, headers|env, reason }] }). Declare',
+      'Call propose_mcp_servers({ servers: [{ name, transport, url|command|args, headers|env, reason }], scope? }).',
+      'scope is "repo" (this repo only, the default) or "org" (every repo in the org — for a server the whole org',
+      'benefits from, like a shared GitHub/Linear); a repo server overrides an org one of the same name. Declare',
       'a credential slot by NAME with `secret: true` (e.g. an Authorization header or a token env var) — you NEVER',
       'put a secret value here. You do NOT register servers yourself: this posts an owner-approvable proposal card;',
       'the OWNER approves it, which registers the servers on this repo. Do NOT propose the built-in SYSTEM servers',
@@ -191,6 +236,27 @@ export class EnvironmentGroup {
       'live patch is EPHEMERAL — the host rewrites the hub from the DB on the next reset, so the server breaks',
       'again and no other job benefits. Fix it once, durably, through request_secret; then reset_sandbox and',
       'verify. (If you forgot the secret slot at propose time, you can still add it this way to the live server.)',
+      'To UPDATE a server, propose_mcp_servers with the SAME name (replaces it); to REMOVE a dead one,',
+      'propose_mcp_removal({ name, scope, rationale }) (owner-approved). list_mcp_servers shows what exists.',
+    ].join('\n');
+  }
+
+  /** onboarding block 10c2 — SKILLS (propose_skill; owner-approved reusable SKILL.md). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2108.5, condition: isOnboarding })
+  skills(): string {
+    return [
+      'SKILLS — a skill is a short, reusable `SKILL.md` (like a Claude Code skill) that a build/brain/review',
+      'session on this repo loads ON DEMAND to shape how it works — e.g. "how we write migrations here", "the',
+      'house test-harness recipe", "the deploy runbook". While you have the stack mapped, decide whether a repo',
+      'would benefit from one or two SHORT, high-signal skills (do NOT invent a long speculative library). Call',
+      'propose_skill({ name, description, body, scope?, surfaces? }): `description` is the trigger blurb the model',
+      'reads to decide WHEN to load it (keep it a crisp "Use when …"); `body` is the markdown instruction; `scope`',
+      'is "repo" (this repo only, the default) or "org" (every repo in the org); `surfaces` defaults to build.',
+      'You do NOT register skills yourself — this posts an owner-approvable card; the OWNER approves it, which',
+      'writes the skill so every future build on a matching repo inherits it. Skip it entirely if nothing clearly',
+      'fits. Like MCP servers, a newly-approved skill loads on the NEXT fresh session — reset_sandbox to pick it up.',
+      'To UPDATE a skill, propose_skill with the SAME name (an owner-approved edit); to REMOVE an obsolete one,',
+      'propose_skill_removal({ name, scope, rationale }) (also owner-approved). list_skills shows what exists.',
     ].join('\n');
   }
 

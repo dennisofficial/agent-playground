@@ -72,6 +72,7 @@ import { OrganizationService } from '../org/organization.service';
 import { WorktreeSecretFileStore } from '../onboarding';
 import { McpServerStore } from '../mcp/mcp-server.store';
 import { ConventionProfileResolver } from '../conventions';
+import { WorkspaceSkillStore } from '../skills';
 import { McpProbeService } from '../mcp/mcp-probe.service';
 import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -542,6 +543,9 @@ export class WebSurfaceController {
     // House-style profiles — the owner-gated `convention-proposals/:id/approve` endpoint COMMITS a brain
     // `propose_convention_profile` here (the only place a brain-originated attach lands). @Global ConventionsModule.
     private readonly conventions: ConventionProfileResolver,
+    // Skills — the owner-gated `skill-proposals/:id/approve` endpoint COMMITS a brain `propose_skill` here
+    // (the only place a brain-originated skill write lands). @Global SkillsModule.
+    private readonly skillStore: WorkspaceSkillStore,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -1315,10 +1319,11 @@ export class WebSurfaceController {
 
   /**
    * `POST …/jobs/:jobId/mcp-proposals/:requestId/approve` — the OWNER approves a brain `propose_mcp_servers`
-   * card, committing each proposed server to `McpServerStore` on THIS thread's repo scope. This is the ONLY
-   * place a brain-originated MCP write lands: MCP mutations are an owner-only Administer action (same guard
-   * as the console `McpServersController`), and the scope is FORCED to `thread.repo_id` — never trusted from
-   * the card. Secret header/env slots commit as empty placeholders; the owner fills them afterwards via
+   * card, committing each proposed server to `McpServerStore`. This is the ONLY place a brain-originated MCP
+   * write lands: MCP mutations are an owner-only Administer action (same guard as the console
+   * `McpServersController`). The scope is the card's (`'org'` → every repo, else this thread's repo) — the
+   * brain proposes it, the owner approving here is the trust boundary. Secret header/env slots commit as
+   * empty placeholders; the owner fills them afterwards via
    * `request_secret` (mcp target). A remote server needing no secret is probed so its tool list populates
    * immediately. Idempotent (a re-approve of an already-committed card is a no-op).
    */
@@ -1344,12 +1349,35 @@ export class WebSurfaceController {
       'graphify',
       'cocoindex',
     ]);
+    // Registration scope from the card: 'org' → the '*' sentinel (every repo), else this thread's repo.
+    // The owner (this endpoint) is the trust boundary — the brain proposes the scope, the owner approves it.
+    const dbScope = card.scope === 'org' ? '*' : thread.repo_id;
+
+    // Removal proposal: delete the named servers from `dbScope` instead of registering. Owner-gated like a
+    // registration (the brain proposed it; approving here deletes). Idempotent — deleting a gone row is a no-op.
+    if (card.mode === 'remove') {
+      const removed: string[] = [];
+      for (const name of card.removeNames ?? []) {
+        if (!name || RESERVED.has(name.toLowerCase())) continue;
+        await this.mcpStore.delete(org.id, dbScope, name);
+        removed.push(name);
+      }
+      await this.store.markMcpProposalApproved(jobId, requestId, removed);
+      const rmNotice = removed.length
+        ? `The operator approved removing MCP server(s) ${removed.map((n) => `\`${n}\``).join(', ')} ${card.scope === 'org' ? 'org-wide' : 'from this repo'}. reset_sandbox to drop them from a fresh session.`
+        : 'The operator approved the MCP removal, but no servers were removed.';
+      const rmTs = this.surface.seedSystemNotification(thread.repo_id, jobId, rmNotice, {
+        orgId: org.id,
+        seedRow: { label: rmNotice, chunkKey: `seed:mcp-remove:${jobId}:${requestId}` },
+      });
+      return { ok: true, committed: removed, ts: rmTs };
+    }
+
     const committed: string[] = [];
     const needSecrets: string[] = [];
     for (const s of card.servers) {
       if (!s.name || RESERVED.has(s.name.toLowerCase())) continue;
-      // Scope FORCED to the thread's repo — the card carries no scope; a brain-authored write is repo-only.
-      await this.mcpStore.write(org.id, thread.repo_id, s.name, this.mcpProposalToInput(s));
+      await this.mcpStore.write(org.id, dbScope, s.name, this.mcpProposalToInput(s));
       committed.push(s.name);
       const secretSlots = [
         ...(s.headers ?? []).filter((h) => h.secret).map((h) => `${s.name} header:${h.name}`),
@@ -1358,11 +1386,11 @@ export class WebSurfaceController {
       needSecrets.push(...secretSlots);
       // A remote server that needs no secret can be validated now so its tool list is populated.
       if (s.transport !== 'stdio' && secretSlots.length === 0) {
-        const row = await this.mcpStore.rawRow(org.id, thread.repo_id, s.name).catch(() => null);
+        const row = await this.mcpStore.rawRow(org.id, dbScope, s.name).catch(() => null);
         if (row) {
           const result = await this.mcpProbe.validate(row);
           await this.mcpStore
-            .recordValidation(org.id, thread.repo_id, s.name, result)
+            .recordValidation(org.id, dbScope, s.name, result)
             .catch(() => undefined);
         }
       }
@@ -1371,7 +1399,7 @@ export class WebSurfaceController {
     const notice = committed.length
       ? `The operator approved the MCP proposal — registered ${committed
           .map((n) => `\`${n}\``)
-          .join(', ')} on this repo.` +
+          .join(', ')} ${card.scope === 'org' ? 'org-wide (every repo)' : 'on this repo'}.` +
         (needSecrets.length
           ? ` Fill each secret slot now via request_secret (mcp target): ${needSecrets.join('; ')}. After every slot is filled, reset_sandbox to load the server(s), then invoke a tool to verify (see MCP SERVERS).`
           : ' No secrets needed — now reset_sandbox to load the server(s) into a fresh session, then invoke one of their tools to verify it works (see MCP SERVERS).')
@@ -1451,6 +1479,48 @@ export class WebSurfaceController {
       seedRow: { label: notice, chunkKey: `seed:conv-edit-approve:${jobId}:${requestId}` },
     });
     return { ok: true, slug: card.slug, ts };
+  }
+
+  /**
+   * `POST …/jobs/:jobId/skill-proposals/:requestId/approve` — the OWNER approves a brain `propose_skill`
+   * card, WRITING the reusable SKILL.md via `WorkspaceSkillStore`. A skill shapes how every future build on
+   * a matching repo/org behaves, so it's owner-only. The write scope is the card's `scope`: `'org'` → the
+   * `'*'` sentinel (every repo), `'repo'` → this repo id. Idempotent (a re-approve is a no-op).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/skill-proposals/:requestId/approve')
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
+  async approveSkillProposal(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('requestId') requestId: string,
+  ): Promise<{ ok: boolean; name: string; ts?: string }> {
+    const thread = await this.requireThread(jobId, org.id);
+    const card = await this.store.getSkillProposalCard(jobId, requestId);
+    if (!card) throw new BadRequestException('no such skill proposal on this thread');
+    if (card.approved_at) {
+      return { ok: true, name: card.name };
+    }
+    const dbScope = card.scope === 'org' ? '*' : card.repoId;
+    if (card.mode === 'remove') {
+      await this.skillStore.delete(org.id, dbScope, card.name);
+    } else {
+      await this.skillStore.write(org.id, dbScope, card.name, {
+        description: card.description,
+        body: card.body,
+        surfaces: card.surfaces,
+      });
+    }
+    await this.store.markSkillProposalApproved(jobId, requestId);
+    const notice =
+      card.mode === 'remove'
+        ? `The operator approved removing the "${card.name}" skill (${card.scope}-scoped) — it is gone from every future build.`
+        : `The operator approved the "${card.name}" skill (${card.scope}-scoped) — it is now live. ` +
+          'It loads on the next fresh session; reset_sandbox to pick it up this job.';
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+      orgId: org.id,
+      seedRow: { label: notice, chunkKey: `seed:skill-approve:${jobId}:${requestId}` },
+    });
+    return { ok: true, name: card.name, ts };
   }
 
   /** Map a proposal-card server (non-secret defn) to the store's `McpServerInput`: secret slots become empty

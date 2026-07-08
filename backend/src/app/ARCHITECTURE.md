@@ -132,6 +132,37 @@ beyond observing + interjecting the current build turn is 🟡 limited (see §6)
 | Interject the current build turn | build transcript composer (`say`) | folded in at the next turn boundary | 🟡 in-turn interject only |
 | Pause / revert step / NL steering ("undo that step", "simplify the rest") | — | driver | ⛔ not built |
 
+## The Workspace Profile — the one provisioning area Atlas keeps current
+
+Everything a repo needs to be a **runnable, correctly-configured workspace** is one named area: the
+**Workspace Profile**. It has seven dimensions, each stored separately but conceived as one thing:
+
+| Dimension | Storage | Upkeep tool |
+|---|---|---|
+| Secret files | `org_worktree_secret_files` | `request_secret` / `request_file` / `derive_secret` |
+| Mounts | `org_worktree_mounts` | `write_worktree_config` |
+| Cache folders | mounts (`shared-rw`) + fixed durable HOME binds | `write_worktree_config` |
+| Setup / SDK installs | `repos.setup_script` | `write_setup_script` |
+| MCP servers | `mcp_servers` | `propose_mcp_servers` (owner-approved) |
+| Skills | `workspace_skills` | `propose_skill` (owner-approved reusable `SKILL.md`) |
+| House style | `convention_profiles` + `repos.convention_profile_slug` | `propose_convention_profile[_change]` (owner-approved) |
+
+The tables stay separate; the unification is at three seams:
+
+- **Read-model** — `WorkspaceProfileService` (`workspace-profile/`) composes the seven per-dimension stores
+  into one snapshot (`describe` → `render`). No storage of its own; never exposes a secret *value*.
+- **Prompt** — the snapshot is injected into the brain every turn (`ctx.settings.workspaceProfile`) by the
+  single `workspace-profile.group` (was `environment.group`), which names the area, prints the current
+  state, and lists each dimension's upkeep tool.
+- **Lifecycle** — **onboarding is the first BULK pass** over the profile (`isOnboarding` fragments +
+  `finish_onboarding`); **every job after keeps it current INCREMENTALLY** — the same upkeep tools live in
+  the shared `intake` bundle so any build fixes a gap it hits (a missing secret, a new cache, a skill worth
+  adding) so the *next* job inherits it. Same area, same tools, different framing.
+
+Skills load in-container via the SDK `plugins: [{type:'local', path}]` option (rendered to a host-owned
+`SKILL.md` dir per turn from `RunEngineArgs.skills`), independent of `settingSources: []` — so full
+filesystem-settings isolation is preserved while exactly the resolved skills are enabled.
+
 ## 7. Event intake — the untrusted firehose
 
 An automated event (CI failure, GitHub/PostHog/Sentry webhook) becomes a **job**. Four **mechanical guards**

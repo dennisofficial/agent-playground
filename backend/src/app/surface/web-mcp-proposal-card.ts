@@ -45,9 +45,21 @@ export interface WebMcpProposalCard {
   jobId: string;
   /** Stable key for this proposal (the card row's `ts`); the approve POST echoes it back. */
   requestId: string;
-  /** The repo the servers will be registered on (display only — the commit re-derives scope from the thread). */
+  /** The repo the proposal was raised on (also the write target when `scope==='repo'`). */
   repoId: string;
-  /** The proposed servers (non-secret definitions). */
+  /**
+   * Registration scope the owner approves: `'repo'` (this repo only — the default) or `'org'` (every repo in
+   * the org). Absent on legacy cards ⇒ treated as `'repo'`. Mirrors `WebSkillProposalCard.scope`.
+   */
+  scope?: 'org' | 'repo';
+  /**
+   * `register` new/updated servers (the default) or `remove` existing ones. On `remove`, `servers` is empty
+   * and `removeNames` lists the server names to delete from `scope`. Absent ⇒ `register` (legacy cards).
+   */
+  mode?: 'register' | 'remove';
+  /** On `mode:'remove'`, the server names to delete from `scope`. */
+  removeNames?: string[];
+  /** The proposed servers (non-secret definitions). Empty on a removal card. */
   servers: McpProposalServer[];
   /**
    * ISO-8601 time the OWNER approved and the servers were committed to `McpServerStore`. Its presence is the
@@ -65,6 +77,9 @@ export function webMcpProposalCard(input: {
   jobId: string;
   requestId: string;
   repoId: string;
+  scope?: 'org' | 'repo';
+  mode?: 'register' | 'remove';
+  removeNames?: string[];
   servers: McpProposalServer[];
 }): WebMcpProposalCard {
   return {
@@ -72,6 +87,9 @@ export function webMcpProposalCard(input: {
     jobId: input.jobId,
     requestId: input.requestId,
     repoId: input.repoId,
+    scope: input.scope ?? 'repo',
+    mode: input.mode ?? 'register',
+    ...(input.removeNames && input.removeNames.length ? { removeNames: input.removeNames } : {}),
     servers: input.servers,
   };
 }

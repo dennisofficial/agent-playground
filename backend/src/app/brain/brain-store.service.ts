@@ -10,6 +10,7 @@ import type {
   WebMcpProposalCard,
   WebQuestionCard,
   WebSecretInputCard,
+  WebSkillProposalCard,
 } from '../surface';
 // Direct leaf import (not the '../surface' barrel): brain-store otherwise only TYPE-imports from surface,
 // and a runtime value import of the whole barrel would add a surface→brain→brain-store→surface cycle.
@@ -1003,15 +1004,21 @@ export class BrainStoreService {
   ): Promise<{ ok: boolean }> {
     const thread = await this.jobs.findOne({ where: { id: jobId } });
     if (!thread) return { ok: false };
+    const text =
+      input.card.mode === 'remove'
+        ? `Proposed removing MCP server(s): ${(input.card.removeNames ?? [])
+            .map((n) => `\`${n}\``)
+            .join(', ')}`
+        : `Proposed ${input.card.servers.length} MCP server(s): ${input.card.servers
+            .map((s) => `\`${s.name}\``)
+            .join(', ')}`;
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
-        text: `Proposed ${input.card.servers.length} MCP server(s): ${input.card.servers
-          .map((s) => `\`${s.name}\``)
-          .join(', ')}`,
+        text,
         kind: 'card',
         ts: input.requestId,
         card: input.card as unknown as Record<string, unknown>,
@@ -1126,6 +1133,55 @@ export class BrainStoreService {
 
   /** Stamp a convention-EDIT-proposal card APPROVED (the owner upserted the profile). */
   async markConventionEditProposalApproved(jobId: string, requestId: string): Promise<void> {
+    await this.updateCardMessage(jobId, requestId, {
+      approved_at: new Date().toISOString(),
+    });
+  }
+
+  // ── skill proposals (owner-gated `propose_skill`; writes a reusable SKILL.md) ────────────────────────
+
+  /** Post an owner-approvable SKILL card (create/edit a skill's content). */
+  async openSkillProposal(
+    jobId: string,
+    input: { requestId: string; card: WebSkillProposalCard },
+  ): Promise<{ ok: boolean }> {
+    const thread = await this.jobs.findOne({ where: { id: jobId } });
+    if (!thread) return { ok: false };
+    const verb =
+      input.card.mode === 'create'
+        ? 'Proposed a new'
+        : input.card.mode === 'remove'
+          ? 'Proposed removing the'
+          : 'Proposed changes to the';
+    await this.messages.save(
+      this.messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: `${verb} "${input.card.name}" skill`,
+        kind: 'card',
+        ts: input.requestId,
+        card: input.card as unknown as Record<string, unknown>,
+      }),
+    );
+    return { ok: true };
+  }
+
+  /** Fetch one thread's skill-proposal card by id (the card's `ts`); null if absent / wrong type. */
+  async getSkillProposalCard(
+    jobId: string,
+    requestId: string,
+  ): Promise<WebSkillProposalCard | null> {
+    const row = await this.messages.findOne({
+      where: { job_id: jobId, ts: requestId, kind: 'card' },
+    });
+    const card = row?.card as WebSkillProposalCard | undefined;
+    return card?.type === 'skill_proposal_card' ? card : null;
+  }
+
+  /** Stamp a skill-proposal card APPROVED (the owner wrote the skill). */
+  async markSkillProposalApproved(jobId: string, requestId: string): Promise<void> {
     await this.updateCardMessage(jobId, requestId, {
       approved_at: new Date().toISOString(),
     });

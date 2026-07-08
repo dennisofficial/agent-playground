@@ -13,7 +13,7 @@ import { ConversationGroup } from './conversation.group';
 import { ContextGroup } from './context.group';
 import { PlanningGroup } from './planning.group';
 import { TaskListGroup } from './task-list.group';
-import { EnvironmentGroup } from './environment.group';
+import { WorkspaceProfileGroup } from './workspace-profile.group';
 import { SafetyGroup } from './safety.group';
 import { JobKindGroup } from './job-kind.group';
 import { BehavioralGroup } from './behavioral.group';
@@ -38,7 +38,7 @@ export const FRAGMENT_GROUPS = [
   ContextGroup,
   PlanningGroup,
   TaskListGroup,
-  EnvironmentGroup,
+  WorkspaceProfileGroup,
   SafetyGroup,
   JobKindGroup,
   BehavioralGroup,
@@ -63,7 +63,7 @@ export {
   ContextGroup,
   PlanningGroup,
   TaskListGroup,
-  EnvironmentGroup,
+  WorkspaceProfileGroup,
   SafetyGroup,
   JobKindGroup,
   BehavioralGroup,

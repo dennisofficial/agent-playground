@@ -43,6 +43,7 @@ import {
   webMcpProposalCard,
   webQuestionCard,
   webSecretInputCard,
+  webSkillProposalCard,
   wrapSystemNotification,
 } from '../surface';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
@@ -77,8 +78,10 @@ import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/render-plan';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
-import { McpResolver } from '../mcp';
+import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
+import { SkillResolver, WorkspaceSkillStore } from '../skills';
+import { WorkspaceProfileService } from '../workspace-profile';
 import {
   isExternalMountPath,
   isReservedContainerPath,
@@ -287,6 +290,19 @@ export class AgentSessionManager
     // @Optional so unit tests construct the manager without it (undefined → no house style injected); DI
     // (@Global ConventionsModule) supplies it live.
     @Optional() private readonly conventions?: ConventionProfileResolver,
+    // The read-model over this repo's WORKSPACE PROFILE — rendered into the brain prompt each turn so the
+    // brain sees what is already provisioned (mounts, setup, secrets, MCP, skills, house style) and can keep
+    // it current. @Optional so unit tests construct the manager without it (undefined → snapshot omitted);
+    // DI (@Global WorkspaceProfileModule) supplies it live.
+    @Optional() private readonly workspaceProfile?: WorkspaceProfileService,
+    // Resolves this repo's skills onto the turn (forwarded as `RunEngineArgs.skills`, rendered in-container
+    // as SKILL.md). @Optional (undefined → no skills forwarded); DI (@Global SkillsModule) supplies it live.
+    @Optional() private readonly skills?: SkillResolver,
+    // Owner-approved `propose_skill` commits write through this. @Optional for unit tests; DI supplies live.
+    @Optional() private readonly skillStore?: WorkspaceSkillStore,
+    // Read-only for `list_mcp_servers` (the write path is the owner-gated approve endpoint). @Optional for
+    // unit tests (undefined → the tool reports none); DI (@Global McpModule) supplies it live.
+    @Optional() private readonly mcpStore?: McpServerStore,
   ) {}
 
   /**
@@ -1827,6 +1843,18 @@ export class AgentSessionManager
     // spawns in-container gets the same envelope (Layer B).
     const repoConventions =
       (await this.conventions?.resolveForRepo(stimulus.orgId, stimulus.repoId)) ?? null;
+    // The CURRENT state of this repo's Workspace Profile, rendered for the brain prompt so it can keep the
+    // seven provisioning dimensions current (see `workspace-profile.group`). Null when the service is
+    // absent (unit tests) or the render is empty → the group prints "nothing recorded yet".
+    const workspaceProfile = this.workspaceProfile
+      ? this.workspaceProfile.render(
+          await this.workspaceProfile.describe(stimulus.orgId, stimulus.repoId),
+        )
+      : null;
+    // This repo's skills, resolved for the brain surface — forwarded on the run args so the in-container
+    // engine renders each as a SKILL.md the SDK loads (Layer B, like `userMcpServers`/`repoConventions`).
+    const skills =
+      (await this.skills?.resolveForTurn(stimulus.orgId, stimulus.repoId, 'brain')) ?? [];
     // Authenticated git for the operator-facing brain turn: resolve the repo url + org PAT (cached per
     // job) so the brain can fetch/merge/rebase/resolve-conflicts/push directly from inside the sandbox —
     // it OWNS git, not the host. Sourced from the resolved repo, never `sandbox` (a row-sourced sandbox
@@ -1841,12 +1869,13 @@ export class AgentSessionManager
       // (see prompt-service.spec — the brain is assembled purely from `@Fragment`s).
       systemPrompt: this.prompts.generate(Agent.ATLAS_MAIN, {
         jobKind: brainJob?.kind ?? null,
-        settings: { repoConventions },
+        settings: { repoConventions, workspaceProfile },
       }),
       sandboxKey,
       ...(auth ? { auth } : {}),
       ...(userMcpServers.length > 0 ? { userMcpServers } : {}),
       ...(repoConventions ? { repoConventions } : {}),
+      ...(skills.length > 0 ? { skills } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
@@ -3393,6 +3422,14 @@ export class AgentSessionManager
       write_setup_script: this.buildWriteSetupScriptTool(stimulus),
       derive_secret: this.buildDeriveSecretTool(stimulus),
       reset_sandbox: this.buildResetSandboxTool(stimulus),
+      // Skills + MCP servers are Workspace Profile dimensions like mounts/setup — maintainable INCREMENTALLY
+      // by any job, not just onboarding: list what exists + propose new/edited ones (owner-approved).
+      list_skills: this.buildListSkillsTool(stimulus),
+      propose_skill: this.buildProposeSkillTool(stimulus),
+      propose_skill_removal: this.buildProposeSkillRemovalTool(stimulus),
+      list_mcp_servers: this.buildListMcpServersTool(stimulus),
+      propose_mcp_servers: this.buildProposeMcpServersTool(stimulus),
+      propose_mcp_removal: this.buildProposeMcpRemovalTool(stimulus),
     };
 
     // Review threads get a curated, build-free subset (they review an EXISTING PR via `gh`/Read/subagents,
@@ -3419,7 +3456,6 @@ export class AgentSessionManager
       recall: tools.recall,
       remember: tools.remember,
       ...intake,
-      propose_mcp_servers: this.buildProposeMcpServersTool(stimulus),
       list_convention_profiles: this.buildListConventionProfilesTool(stimulus),
       propose_convention_profile: this.buildProposeConventionProfileTool(stimulus),
       propose_convention_profile_change: this.buildProposeConventionProfileChangeTool(stimulus),
@@ -3942,12 +3978,16 @@ export class AgentSessionManager
       if (new Set(lowerNames).size !== lowerNames.length) {
         return { ok: false, reason: 'duplicate server names in the proposal' };
       }
+      // Registration scope: 'repo' (this repo only, the default) or 'org' (every repo in the org) — mirrors
+      // propose_skill. Repo scope OVERRIDES an org server of the same name at resolve time.
+      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
       try {
         const requestId = `mcp-${randomUUID()}`;
         const card = webMcpProposalCard({
           jobId: stimulus.jobId,
           requestId,
           repoId: stimulus.repoId,
+          scope,
           servers,
         });
         const opened = await this.store.openMcpProposal(stimulus.jobId, { requestId, card });
@@ -3961,9 +4001,10 @@ export class AgentSessionManager
           requestId,
           proposed: servers.map((s) => s.name),
           message:
-            `Posted an MCP proposal card for ${servers.length} server(s). The OWNER approves it to register ` +
-            'them on this repo — you cannot register servers yourself. Stop and wait for approval. After ' +
-            'approval, use request_secret (with an mcp target) to fill each secret slot' +
+            `Posted an MCP proposal card for ${servers.length} server(s), ${scope}-scoped. The OWNER approves ` +
+            `it to register ${scope === 'org' ? 'them org-wide (every repo)' : 'them on this repo'} — you ` +
+            'cannot register servers yourself. Stop and wait for approval. After approval, use request_secret ' +
+            '(with an mcp target) to fill each secret slot' +
             (needSecrets.length ? `: ${needSecrets.join('; ')}.` : '.'),
         };
       } catch (err) {
@@ -4113,6 +4154,241 @@ export class AgentSessionManager
         this.logger.warn(
           `propose_convention_profile_change failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
         );
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `list_mcp_servers()` — the MCP servers currently registered for this org (org-wide + repo-scoped).
+   * Read-only, ungated — the brain reads it before proposing so it doesn't duplicate an existing server.
+   * NEVER returns a secret value (secret header/env slots surface as `secretKeys` names only). org comes
+   * from the closure (never tool args) — tenant safety.
+   */
+  private buildListMcpServersTool(stimulus: ChatStimulus): ToolImpl {
+    return async () => {
+      if (!this.mcpStore) return { ok: true, servers: [], message: 'MCP servers are not configured for this org.' };
+      try {
+        const servers = (await this.mcpStore.list(stimulus.orgId)).map((s) => ({
+          name: s.name,
+          scope: s.scope === 'org' ? 'org' : 'repo',
+          transport: s.transport,
+          surfaces: s.surfaces,
+          enabled: s.enabled,
+          secretKeys: s.secretKeys,
+        }));
+        return {
+          ok: true,
+          servers,
+          message: servers.length
+            ? 'Existing MCP servers — propose_mcp_servers with the SAME name to REPLACE one, or a new name to add one.'
+            : 'No MCP servers registered yet — propose_mcp_servers to add the first (owner-approved).',
+        };
+      } catch (err) {
+        this.logger.warn(`list_mcp_servers failed for org=${stimulus.orgId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `list_skills()` — the skills currently registered for this org (org-wide + repo-scoped). Read-only,
+   * ungated (like `list_convention_profiles`) — the brain reads it before proposing a new/edited one so it
+   * doesn't duplicate an existing skill. org comes from the closure (never tool args) — tenant safety.
+   */
+  private buildListSkillsTool(stimulus: ChatStimulus): ToolImpl {
+    return async () => {
+      if (!this.skillStore) return { ok: true, skills: [], message: 'Skills are not configured for this org.' };
+      try {
+        const skills = (await this.skillStore.list(stimulus.orgId)).map((s) => ({
+          name: s.name,
+          scope: s.scope === 'org' ? 'org' : 'repo',
+          description: s.description,
+          surfaces: s.surfaces,
+          enabled: s.enabled,
+        }));
+        return {
+          ok: true,
+          skills,
+          message: skills.length
+            ? 'Existing skills — propose_skill with the SAME name to EDIT one, or a new name to CREATE one.'
+            : 'No skills registered yet — propose_skill to create the first.',
+        };
+      } catch (err) {
+        this.logger.warn(`list_skills failed for org=${stimulus.orgId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `propose_skill({ name, description, body, scope?, surfaces?, rationale })` — propose CREATING or EDITING a
+   * reusable SKILL.md (a short instruction a build/brain/review session loads on demand). A skill shapes how
+   * future builds behave, so the brain NEVER writes it: this posts an owner-approvable card, and only the
+   * OWNER's approval at `…/jobs/:jobId/skill-proposals/:requestId/approve` writes it via `WorkspaceSkillStore`.
+   * `scope` is `'repo'` (this repo only, the default) or `'org'` (every repo). A `name` that already exists in
+   * that scope is an EDIT (the card shows the prior body); a new name is a CREATE. org/repo/job come from the
+   * closure (never tool args) — tenant safety.
+   */
+  private buildProposeSkillTool(stimulus: ChatStimulus): ToolImpl {
+    const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+    const SURFACES: McpSurface[] = ['brain', 'build', 'review'];
+    return async (args) => {
+      const name = String(args['name'] ?? '').trim();
+      const description = String(args['description'] ?? '').trim();
+      const body = String(args['body'] ?? '').trim();
+      const rationale = String(args['rationale'] ?? '').trim();
+      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+      const surfacesArg = Array.isArray(args['surfaces'])
+        ? (args['surfaces'] as unknown[]).map((s) => String(s)).filter((s): s is McpSurface =>
+            (SURFACES as string[]).includes(s),
+          )
+        : [];
+      const surfaces: McpSurface[] = surfacesArg.length > 0 ? surfacesArg : ['build'];
+
+      if (!NAME_RE.test(name)) {
+        return { ok: false, reason: 'name must be lowercase letters/digits/_/- (e.g. house-migrations)' };
+      }
+      if (!description) return { ok: false, reason: 'description (the "Use when …" trigger blurb) is required' };
+      if (!body) return { ok: false, reason: 'body (the SKILL.md markdown) is required' };
+      if (!rationale) return { ok: false, reason: 'rationale — why this skill helps builds here — is required' };
+      if (!this.skillStore) return { ok: false, reason: 'skills are not configured for this org' };
+      try {
+        const dbScope = scope === 'org' ? '*' : stimulus.repoId;
+        const existing = await this.skillStore.get(stimulus.orgId, dbScope, name);
+        const mode: 'create' | 'update' = existing ? 'update' : 'create';
+        const requestId = `skill-${randomUUID()}`;
+        const card = webSkillProposalCard({
+          jobId: stimulus.jobId,
+          requestId,
+          repoId: stimulus.repoId,
+          scope,
+          name,
+          description,
+          body,
+          surfaces,
+          mode,
+          ...(existing ? { priorBody: existing.body } : {}),
+          rationale,
+        });
+        const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
+        if (!opened.ok) return { ok: false, reason: 'Could not open the skill proposal (thread not found).' };
+        return {
+          ok: true,
+          requestId,
+          mode,
+          message:
+            `Posted a skill ${mode === 'create' ? 'creation' : 'change'} proposal for "${name}" (${scope}-scoped). ` +
+            'Only the OWNER can approve it — you cannot register it yourself. Once approved it loads on the next ' +
+            'fresh session (reset_sandbox to pick it up). Mention the proposal, then continue.',
+        };
+      } catch (err) {
+        this.logger.warn(
+          `propose_skill failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `propose_skill_removal({ name, scope?, rationale })` — propose DELETING a registered skill. Like
+   * `propose_skill`, the brain never deletes directly (a skill affects every future build): this posts an
+   * owner-approvable card showing what would be removed, and only the OWNER's approval at the skill-proposal
+   * approve endpoint deletes it via `WorkspaceSkillStore`. `scope` is `'repo'` (default) or `'org'` — it must
+   * match the tier the skill lives on. org/repo/job come from the closure (never tool args) — tenant safety.
+   */
+  private buildProposeSkillRemovalTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const name = String(args['name'] ?? '').trim();
+      const rationale = String(args['rationale'] ?? '').trim();
+      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+      if (!name) return { ok: false, reason: 'name (the skill to remove) is required' };
+      if (!rationale) return { ok: false, reason: 'rationale — why the skill should be removed — is required' };
+      if (!this.skillStore) return { ok: false, reason: 'skills are not configured for this org' };
+      try {
+        const dbScope = scope === 'org' ? '*' : stimulus.repoId;
+        const existing = await this.skillStore.get(stimulus.orgId, dbScope, name);
+        if (!existing) {
+          return {
+            ok: false,
+            reason: `no ${scope}-scoped skill "${name}" exists — call list_skills to see the registered skills`,
+          };
+        }
+        const requestId = `skill-${randomUUID()}`;
+        const card = webSkillProposalCard({
+          jobId: stimulus.jobId,
+          requestId,
+          repoId: stimulus.repoId,
+          scope,
+          name,
+          description: '',
+          body: '',
+          surfaces: existing.surfaces,
+          mode: 'remove',
+          priorBody: existing.body,
+          rationale,
+        });
+        const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
+        if (!opened.ok) return { ok: false, reason: 'Could not open the skill removal proposal (thread not found).' };
+        return {
+          ok: true,
+          requestId,
+          message:
+            `Posted a removal proposal for the "${name}" skill (${scope}-scoped). Only the OWNER can approve ` +
+            'the deletion — you cannot remove it yourself. Mention the proposal, then continue.',
+        };
+      } catch (err) {
+        this.logger.warn(`propose_skill_removal failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `propose_mcp_removal({ name, scope?, rationale })` — propose DELETING a registered MCP server. Owner-gated
+   * like `propose_mcp_servers`: posts a removal card; only the OWNER's approval at the mcp-proposal approve
+   * endpoint deletes it via `McpServerStore`. `scope` is `'repo'` (default) or `'org'` — the tier the server
+   * lives on. org/repo/job come from the closure (never tool args) — tenant safety.
+   */
+  private buildProposeMcpRemovalTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const name = String(args['name'] ?? '').trim();
+      const rationale = String(args['rationale'] ?? '').trim();
+      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+      if (!name) return { ok: false, reason: 'name (the MCP server to remove) is required' };
+      if (!rationale) return { ok: false, reason: 'rationale — why the server should be removed — is required' };
+      if (!this.mcpStore) return { ok: false, reason: 'MCP servers are not configured for this org' };
+      try {
+        const dbScope = scope === 'org' ? '*' : stimulus.repoId;
+        const existing = await this.mcpStore.rawRow(stimulus.orgId, dbScope, name);
+        if (!existing) {
+          return {
+            ok: false,
+            reason: `no ${scope}-scoped MCP server "${name}" exists — call list_mcp_servers to see the registered servers`,
+          };
+        }
+        const requestId = `mcp-${randomUUID()}`;
+        const card = webMcpProposalCard({
+          jobId: stimulus.jobId,
+          requestId,
+          repoId: stimulus.repoId,
+          scope,
+          mode: 'remove',
+          removeNames: [name],
+          servers: [],
+        });
+        const opened = await this.store.openMcpProposal(stimulus.jobId, { requestId, card });
+        if (!opened.ok) return { ok: false, reason: 'Could not open the MCP removal proposal (thread not found).' };
+        return {
+          ok: true,
+          requestId,
+          message:
+            `Posted a removal proposal for the "${name}" MCP server (${scope}-scoped). Only the OWNER can ` +
+            'approve the deletion — you cannot remove it yourself. Mention the proposal, then continue.',
+        };
+      } catch (err) {
+        this.logger.warn(`propose_mcp_removal failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
