@@ -84,6 +84,14 @@ export function resolveNode(
     return hasThread(job, node.slice("secplan:".length))
       ? "found"
       : "not_found";
+  // A per-Leg node (`<threadId>~leg<ordinal>`) resolves when the thread has that Leg.
+  const legRef = parseLegNode(node);
+  if (legRef) {
+    const t = job.threads.find((s) => s.id === legRef.threadId);
+    return t && (t.legs ?? []).some((l) => l.ordinal === legRef.ordinal)
+      ? "found"
+      : "not_found";
+  }
   // Bare token — a thread, a step leaf, or a review CHILD thread (a `review_lens` / `post_review` row). A
   // review child legitimately exists even before its lens has run (an empty transcript is a TranscriptView
   // empty-state, not a not-found).
@@ -98,6 +106,20 @@ export function resolveNode(
 
 function hasThread(job: PipelineJob, id: string): boolean {
   return id.length > 0 && job.threads.some((s) => s.id === id);
+}
+
+/** A per-Leg navigable node id: `<threadId>~leg<ordinal>`. Each rotated build session (Leg) is its own
+ *  left-pane node, opening the thread's lane filtered to that Leg's `meta.legOrdinal`. */
+export function legNodeId(threadId: string, ordinal: number): string {
+  return `${threadId}~leg${ordinal}`;
+}
+
+/** Parse a `<threadId>~leg<ordinal>` node back to its parts, or null if it isn't a Leg node. */
+export function parseLegNode(
+  node: string,
+): { threadId: string; ordinal: number } | null {
+  const m = /^(.+)~leg(\d+)$/.exec(node);
+  return m ? { threadId: m[1], ordinal: Number(m[2]) } : null;
 }
 
 // ── transcript lane for a node (null = not a transcript-backed node) ────────────────────────────
@@ -119,6 +141,12 @@ export function nodeLane(
   for (const s of job.threads) {
     const child = (s.children ?? []).find((c) => c.id === node);
     if (child) return child.lane;
+  }
+  // A per-Leg node → its owning thread's stable lane (the transcript is sliced to the Leg downstream).
+  const legRef = parseLegNode(node);
+  if (legRef) {
+    const t = job.threads.find((s) => s.id === legRef.threadId);
+    return t ? threadLane(t.id) : null;
   }
   // A bare thread id → its stable thread lane.
   const thread = job.threads.find((s) => s.id === node);

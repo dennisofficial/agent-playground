@@ -30,6 +30,7 @@ import {
 } from "./subagents";
 import { useLiveTurn, type LiveTurn } from "@/lib/api/job-stream";
 import { threadLane } from "./phases";
+import { parseLegNode } from "./node-registry";
 import { codexReviewLane } from "./codex-review";
 import { resolveNode } from "./node-resolution";
 import { TranscriptView } from "./conversation";
@@ -98,6 +99,12 @@ export function PhaseView({
     job?.threads
       .flatMap((s) => s.children ?? [])
       .find((c) => c.id === selectedNode) ?? null;
+  // A per-Leg node (`<threadId>~leg<ordinal>`) — a rotated build session rendered as its own thread. Resolve
+  // its owning thread; the transcript is the thread's lane sliced to this Leg's `meta.legOrdinal`.
+  const legRef = parseLegNode(selectedNode);
+  const legThread = legRef
+    ? (job?.threads.find((s) => s.id === legRef.threadId) ?? null)
+    : null;
   // A step leaf (execute folder) — find which thread owns it + its 1-based index, for the label.
   const owningSection =
     job?.threads.find((s) => s.steps.some((p) => p.id === selectedNode)) ??
@@ -326,6 +333,26 @@ export function PhaseView({
         defaultFooter={thread.defaultFooter}
         onSelectNode={onSelectNode}
         emptyText="No build activity yet — this thread hasn’t run."
+      />
+    );
+  } else if (legThread && legRef) {
+    title = `§ ${threadTitle(legThread.brief)} · Leg ${legRef.ordinal}`;
+    subtitle = "Claude · execute";
+    // One rotated session: the thread's stable lane, sliced to this Leg. Its handoff (Leg N) and continuation
+    // seed (Leg N+1) ride the same `meta.legOrdinal` tag, so they land at the tail/head of the right Leg.
+    const phaseIds = new Set(legThread.steps.map((s) => s.anchorStepId));
+    body = (
+      <TranscriptView
+        jobRef={jobRef}
+        messages={messages}
+        lane={threadLane(legThread.id)}
+        phaseIds={phaseIds}
+        legOrdinal={legRef.ordinal}
+        composer
+        readOnly
+        defaultFooter={legThread.defaultFooter}
+        onSelectNode={onSelectNode}
+        emptyText="No activity on this Leg yet."
       />
     );
   } else {

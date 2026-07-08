@@ -195,6 +195,7 @@ function makeStore(state: StoreState): {
         status: 'pending' as StepStatus,
         sessionId: null,
         batchOrdinal: null,
+        legOrdinal: 1,
         commitSha: null,
       }));
       state.steps.push(...rows);
@@ -259,11 +260,11 @@ function makeStore(state: StoreState): {
       const s = state.threads.find((x) => x.id === threadId);
       return (s as { terminal_record?: ThreadTerminalRecord | null })?.terminal_record ?? null;
     }),
-    // ── Leg rotation (context-rot mitigation) — no prior rotation + unknown occupancy in these tests, so the
-    //    driver folds no seed and never rotates. `completeLegRotation` is present for the type only. ──
+    // ── Leg rotation (context-rot mitigation) — no prior rotation in these tests, so the driver folds no seed
+    //    and rotates ONLY on a self-authored handoff. `completeLegRotation` is present for the type only. ──
     getPendingLegSeed: vi.fn(async (_anchorStepId: string) => null),
-    latestStepOccupancy: vi.fn(async (_stepId: string) => null),
     completeLegRotation: vi.fn(async () => null),
+    recordBuildSystemChunk: vi.fn(async () => undefined),
     getThreadTasks: vi.fn(async (_threadId: string) => []),
     recordActiveLeg: vi.fn(async () => undefined),
     getLegsForJob: vi.fn(async (_jobId: string) => []),
@@ -1275,6 +1276,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
         status: 'building' as StepStatus,
         sessionId: 'sess-live', // persisted at turn start → the batch is a RESUME, not a fresh start
         batchOrdinal: 1,
+        legOrdinal: 1,
         commitSha: null,
       },
     ];
@@ -1414,6 +1416,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           status: 'done',
           sessionId: 's',
           batchOrdinal: 1,
+          legOrdinal: 1,
           commitSha: null,
         },
       ],
@@ -1455,6 +1458,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           status: 'building',
           sessionId: 's',
           batchOrdinal: 1,
+          legOrdinal: 1,
           commitSha: 'abc123',
         },
       ],
@@ -3160,7 +3164,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
         buildLeg += 1;
         if (buildLeg === 1) {
           // Leg 1: the batch turn IS steerable (armed), and it exposes the handoff tool. Simulate the context
-          // filling past HARD, then the model self-authoring its handoff and YIELDING (no complete_thread).
+          // filling past the soft threshold, then the model self-authoring its handoff and YIELDING (no complete_thread).
           expect(input.steerable).toBe(true);
           expect(input.toolBridge?.tools?.['record_leg_handoff']).toBeTypeOf('function');
           input.onEvent?.({ kind: 'usage', contextTokens: 210_000, contextLimit: 1_000_000 });
@@ -3198,7 +3202,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     expect(state.job.status).toBe('done');
   });
 
-  it('SAFETY NET: a fat Leg that ignores the nudges (no self-handoff) rotates via the read-only fallback turn', async () => {
+  it('NO FORCED ROTATION: a fat Leg that is nudged but never self-hands-off finishes WITHOUT rotating (and the nudge is a visible row)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -3225,20 +3229,12 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
           await input.toolBridge.tools['report_verification']({ passed: true });
           return mkResult(input, 'gate ok');
         }
-        // The read-only FALLBACK handoff turn: mode 'review', NO tool bridge — it just returns the handoff text.
-        if (input.mode === 'review' && !input.toolBridge) {
-          return mkResult(input, 'FALLBACK HANDOFF: src/foo.ts WIP; next: finish it.');
-        }
-        capturedTasks.push(input.task);
         buildLeg += 1;
-        if (buildLeg === 1) {
-          // Leg 1 runs fat past HARD but NEVER calls record_leg_handoff and NEVER complete_thread → the
-          // post-turn safety net must author the handoff itself and rotate.
-          input.onEvent?.({ kind: 'usage', contextTokens: 205_000, contextLimit: 1_000_000 });
-          return mkResult(input, 'leg 1 ran fat, no handoff');
-        }
-        await input.toolBridge?.tools?.['complete_thread']?.({ summary: 'finished on the fresh Leg' });
-        return mkResult(input, 'leg 2 done');
+        // The one build Leg runs fat (crosses soft → the engine-local nudge fires + the driver records a visible
+        // row) but NEVER calls record_leg_handoff. Under no-forced-rotation it just finishes normally.
+        input.onEvent?.({ kind: 'usage', contextTokens: 210_000, contextLimit: 1_000_000 });
+        await input.toolBridge?.tools?.['complete_thread']?.({ summary: 'finished fat, no handoff' });
+        return mkResult(input, 'leg 1 done fat');
       },
     );
     const turn = { runTurn, canReattach: () => false, canSteer: () => false } as unknown as TurnRunnerService;
@@ -3249,12 +3245,15 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // The fallback (mode 'review', no bridge) ran, the rotation completed, and the fresh Leg carried the seed.
-    expect(modes).toContain('review');
-    expect(rot.rotations()).toBe(1);
-    expect(buildLeg).toBe(2);
-    expect(capturedTasks[1]).toContain('<session_rotated>');
-    expect(capturedTasks[1]).toContain('FALLBACK HANDOFF');
+    // No read-only fallback turn exists anymore, no rotation happened, and only ONE build Leg ran.
+    expect(modes).not.toContain('review');
+    expect(rot.rotations()).toBe(0);
+    expect(h.store.completeLegRotation).not.toHaveBeenCalled();
+    expect(buildLeg).toBe(1);
+    // …but the SOFT nudge was mirrored into the transcript as a VISIBLE per-Leg harness row.
+    expect(h.store.recordBuildSystemChunk).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'system_reminder', legOrdinal: 1, phaseId: expect.any(String) }),
+    );
     expect(state.job.status).toBe('done');
   });
 

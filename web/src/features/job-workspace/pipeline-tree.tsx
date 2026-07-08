@@ -6,6 +6,7 @@ import { cn } from "@/lib/cn";
 import { threadTitle } from "@/lib/thread-title";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { threadLane } from "./phases";
+import { legNodeId, parseLegNode } from "./node-registry";
 import { overlayLiveTasks } from "./live-tasks";
 import type {
   PipelineJob,
@@ -334,8 +335,10 @@ function ThreadFold({
   const children = s.children ?? [];
   const reviewLenses = children.filter((c) => c.kind === "review_lens");
   const postReview = children.find((c) => c.kind === "post_review") ?? null;
-  // The fold stays open while any of its review children is the selected LEFT-pane lane.
-  const childOpen = laneNode != null && children.some((c) => c.id === laneNode);
+  // The fold stays open while any of its review children — OR one of its Legs — is the selected LEFT-pane lane.
+  const childOpen =
+    laneNode != null &&
+    (children.some((c) => c.id === laneNode) || parseLegNode(laneNode)?.threadId === s.id);
   const open = selected || childOpen;
   // REALTIME: fold the thread's live lane over the durable list, so mid-turn task calls tick instantly
   // (the pipeline query only refetches at turn end). Idle lanes read a dead key — cheap store lookup.
@@ -387,7 +390,14 @@ function ThreadFold({
         ) : (
           <>
             <TasksBody tasks={tasks} done={done} total={tasks.length} />
-            {(s.legs?.length ?? 0) > 1 ? <LegsBody legs={s.legs!} /> : null}
+            {(s.legs?.length ?? 0) > 1 ? (
+              <LegsBody
+                threadId={s.id}
+                legs={s.legs!}
+                laneNode={laneNode}
+                onSelectNode={onSelectNode}
+              />
+            ) : null}
             {reviewLenses.length > 0 ? (
               <ReviewAgentsBody
                 lenses={reviewLenses}
@@ -666,28 +676,52 @@ function ReviewAgentsBody({
 }
 
 /**
- * The LEGS body (context-rot rotation) — one row per engine session ("Leg") the thread's build spanned, with
- * the structured handoff each rotated Leg authored shown as an expandable pill. Rendered only once a thread has
- * rotated at least once (2+ Legs); a never-rotated thread is a single implicit Leg and shows nothing here.
+ * The LEGS body (context-rot rotation) — one NAVIGABLE row per engine session ("Leg") the thread's build
+ * spanned. Each rotated session is treated as its own thread: clicking a Leg opens the thread's transcript
+ * sliced to that Leg (its turns, plus the handoff it authored at its tail and the continuation seed at the
+ * next Leg's head). Rendered only once a thread has rotated ≥1× (2+ Legs); a never-rotated thread shows nothing.
  */
-function LegsBody({ legs }: { legs: PipelineLeg[] }) {
+function LegsBody({
+  threadId,
+  legs,
+  laneNode,
+  onSelectNode,
+}: {
+  threadId: string;
+  legs: PipelineLeg[];
+  laneNode: string | null;
+  onSelectNode: (node: string) => void;
+}) {
   const ordered = [...legs].sort((a, b) => a.ordinal - b.ordinal);
   return (
     <div className="nav-expand mb-2 ml-[9px] flex flex-col gap-[2px]">
       <BodyHeader label="LEGS" right={String(ordered.length)} />
-      {ordered.map((leg) => (
-        <LegRow key={leg.ordinal} leg={leg} />
-      ))}
+      {ordered.map((leg) => {
+        const node = legNodeId(threadId, leg.ordinal);
+        return (
+          <LegRow
+            key={leg.ordinal}
+            leg={leg}
+            selected={laneNode === node}
+            onOpen={() => onSelectNode(node)}
+          />
+        );
+      })}
     </div>
   );
 }
 
-/** One Leg — a single-line info row (session dot · "Leg N" · peak-occupancy · status word) with the handoff it
- *  authored on rotation exposed as an expandable pill. Informational (not navigable — Legs share the thread's
- *  live lane; per-Leg transcript segmentation is a later increment). */
-function LegRow({ leg }: { leg: PipelineLeg }) {
-  const [open, setOpen] = useState(false);
-  const rotated = leg.status === "rotated";
+/** One Leg — a navigable single-line row (session dot · "Leg N" · peak-occupancy · status word). Opens the
+ *  thread's transcript filtered to this Leg (mirrors the review-child rows). */
+function LegRow({
+  leg,
+  selected,
+  onOpen,
+}: {
+  leg: PipelineLeg;
+  selected: boolean;
+  onOpen: () => void;
+}) {
   const word = leg.status === "active" ? "live" : leg.status;
   const wordColor = leg.status === "active" ? "var(--blue)" : "var(--faint)";
   const peakK =
@@ -695,42 +729,33 @@ function LegRow({ leg }: { leg: PipelineLeg }) {
       ? `${Math.round(leg.contextTokensPeak / 1000)}k`
       : null;
   return (
-    <div className="flex flex-col">
-      <button
-        type="button"
-        onClick={() => rotated && setOpen((v) => !v)}
-        disabled={!rotated}
+    <button
+      type="button"
+      onClick={onOpen}
+      className={cn(
+        "flex w-full items-center gap-2 px-1.5 py-[3px] text-left transition hover:bg-surface-2",
+        selected && "bg-surface-2",
+      )}
+    >
+      <span
+        className="ml-[3px] size-[6px] shrink-0 rounded-full"
+        style={{ background: wordColor }}
+      />
+      <span
         className={cn(
-          "flex w-full items-center gap-2 px-1.5 py-[3px] text-left transition",
-          rotated ? "hover:bg-surface-2" : "cursor-default",
+          "min-w-0 flex-1 truncate text-[11.5px]",
+          selected ? "font-semibold text-text" : "font-medium text-dim",
         )}
       >
-        {rotated ? (
-          <ChevronRight
-            className={cn("size-3 shrink-0 text-faint transition-transform", open && "rotate-90")}
-          />
-        ) : (
-          <span
-            className="ml-[3px] size-[6px] shrink-0 rounded-full"
-            style={{ background: wordColor }}
-          />
-        )}
-        <span className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-text">
-          Leg {leg.ordinal}
-        </span>
-        {peakK ? (
-          <span className="shrink-0 font-mono text-[8px] text-border-2">{peakK}</span>
-        ) : null}
-        <span className="shrink-0 text-[10px] font-medium" style={{ color: wordColor }}>
-          {word}
-        </span>
-      </button>
-      {open && leg.handoffMd ? (
-        <pre className="mx-1.5 mb-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-surface-2 px-2 py-1.5 text-[10.5px] leading-snug text-dim">
-          {leg.handoffMd}
-        </pre>
+        Leg {leg.ordinal}
+      </span>
+      {peakK ? (
+        <span className="shrink-0 font-mono text-[8px] text-border-2">{peakK}</span>
       ) : null}
-    </div>
+      <span className="shrink-0 text-[10px] font-medium" style={{ color: wordColor }}>
+        {word}
+      </span>
+    </button>
   );
 }
 

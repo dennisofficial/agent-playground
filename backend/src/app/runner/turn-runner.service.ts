@@ -63,11 +63,11 @@ export interface RunTurnInput {
    */
   steerable?: boolean;
   /**
-   * ENGINE-LOCAL Leg-rotation nudge (builder Claude batch turns): thresholds + SOFT/HARD seed prompts the
+   * ENGINE-LOCAL Leg-rotation nudge (builder Claude batch turns): threshold + SOFT/REMINDER seed prompts the
    * engine injects itself the instant its own occupancy crosses — race-free vs the post-`result` input close.
    * Forwarded verbatim into {@link RunEngineArgs.rotationNudge}. Omit for non-rotating turns.
    */
-  rotationNudge?: { softTokens: number; hardTokens: number; softText: string; hardText: string };
+  rotationNudge?: { softTokens: number; reminderDeltaTokens: number; softText: string; reminderText: string };
   /** Progress callback. */
   onEvent?: (e: EngineEvent) => void;
   signal?: AbortSignal;

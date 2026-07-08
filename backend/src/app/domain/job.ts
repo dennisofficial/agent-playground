@@ -223,6 +223,12 @@ export interface Step {
    */
   batchOrdinal: number | null;
   /**
+   * Which Leg (1..N) the anchor step's build session is currently on — incremented on each rotation. Stamped
+   * into build-turn `meta.legOrdinal` so the web slices the thread transcript per Leg (each Leg = its own
+   * thread node). Defaults to 1 for a step that has never rotated.
+   */
+  legOrdinal: number;
+  /**
    * Set on the batch ANCHOR step when its batch commits — the resumable commit marker. Non-null means the
    * batch's work is already committed, so a resume FAST-FORWARDS (marks steps done) instead of re-running
    * against an already-committed tree. The sentinel `(nothing)` records "committed, empty diff". Null on

@@ -395,6 +395,48 @@ export class DriverStoreService {
   }
 
   /**
+   * Persist a VISIBLE harness row into a BUILD thread's transcript — the driver analog of the brain's
+   * `recordSystemChunk`, tagged for the build lane. `meta.phaseId` (the anchor step id) makes the web's
+   * build-transcript filter pick it up, and `meta.legOrdinal` slices it to the right Leg (each Leg = its own
+   * thread node). Insert-once by `meta.chunkKey` so a re-drive / reattach can't duplicate it. System-authored
+   * (`author_bot_id: null`, NOT the operator, NOT Atlas). Used for the Leg-rotation nudges (`system_reminder`)
+   * and the handoff + continuation-seed rows (`system_notice`).
+   */
+  async recordBuildSystemChunk(input: {
+    jobId: string;
+    phaseId: string;
+    legOrdinal: number;
+    kind: 'system_notice' | 'system_reminder';
+    text: string;
+    chunkKey: string;
+    reminderKind?: string;
+  }): Promise<void> {
+    const dup = await this.messages
+      .createQueryBuilder('m')
+      .where('m.job_id = :jobId', { jobId: input.jobId })
+      .andWhere('m.meta @> :key::jsonb', { key: JSON.stringify({ chunkKey: input.chunkKey }) })
+      .getCount();
+    if (dup > 0) return;
+    await this.messages.save(
+      this.messages.create({
+        job_id: input.jobId,
+        author: 'System',
+        author_id: 'U-SYSTEM',
+        author_bot_id: null,
+        text: input.text,
+        kind: 'chat',
+        meta: {
+          source: input.kind,
+          phaseId: input.phaseId,
+          legOrdinal: input.legOrdinal,
+          chunkKey: input.chunkKey,
+          ...(input.reminderKind ? { reminderKind: input.reminderKind } : {}),
+        },
+      }),
+    );
+  }
+
+  /**
    * ROTATE the anchor step's build session in ONE transaction (the analog of the brain's `completeCompaction`,
    * applied to a build step). Reads the current fat session off the step, then atomically:
    *   • sets `steps.rotating_session_id` = the fat session (abandon marker + restart signal),
@@ -1209,6 +1251,7 @@ function toStep(row: StepEntity): Step {
     status: row.status as StepStatus,
     sessionId: row.session_id,
     batchOrdinal: row.batch_ordinal ?? null,
+    legOrdinal: row.leg_ordinal ?? 1,
     commitSha: row.commit_sha ?? null,
   };
 }

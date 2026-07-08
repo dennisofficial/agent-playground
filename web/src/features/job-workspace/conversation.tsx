@@ -107,6 +107,7 @@ export function TranscriptView({
   messages,
   lane = MAIN_LANE,
   phaseIds,
+  legOrdinal,
   composer = false,
   readOnly = false,
   isLoading = false,
@@ -122,6 +123,9 @@ export function TranscriptView({
   lane?: string;
   /** For a build THREAD lane: the phase anchor ids to aggregate (the `lane` still picks the live turn). */
   phaseIds?: Set<string>;
+  /** For a per-LEG view of a build thread: show only rows tagged `meta.legOrdinal === this` (untagged = Leg 1).
+   *  Each rotated session is its own navigable node; the Leg's handoff + continuation-seed rows ride this tag. */
+  legOrdinal?: number;
   /** Show the composer. On Main it's interactive; on every other lane pass `readOnly` alongside. */
   composer?: boolean;
   /** Read-only lane (not Main): the composer's input + Send are disabled, but its footer stays live. */
@@ -183,7 +187,7 @@ export function TranscriptView({
   // at turn end; it falls back to the durable `turn_meta` occupancy between turns.
   const footer = useMemo(() => {
     if (!composer) return null;
-    const base = laneFooterMeta(messages, lane, phaseIds) ?? defaultFooterAsComposer(defaultFooter);
+    const base = laneFooterMeta(messages, lane, phaseIds, legOrdinal) ?? defaultFooterAsComposer(defaultFooter);
     const liveContext =
       turnActive && typeof liveTurn?.contextTokens === "number" && liveTurn.contextLimit
         ? {
@@ -210,8 +214,8 @@ export function TranscriptView({
   // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
   const items = useMemo(
     () =>
-      buildLogItems(log, jobRef, { lane, phaseIds, onOpenPlan, onSelectNode }),
-    [log, jobRef, lane, phaseIds, onOpenPlan, onSelectNode],
+      buildLogItems(log, jobRef, { lane, phaseIds, legOrdinal, onOpenPlan, onSelectNode }),
+    [log, jobRef, lane, phaseIds, legOrdinal, onOpenPlan, onSelectNode],
   );
 
   // Unanswered question cards on the Main lane (each card's message `ts` IS its LogItem key). The operator
@@ -439,11 +443,13 @@ function buildLogItems(
     /** For a build THREAD lane (an aggregate of several phases): the anchor step ids to include. When set it
      *  supersedes the single `phase:<id>` derived from `lane` (the lane still picks the live turn). */
     phaseIds?: Set<string>;
+    /** For a per-LEG view: show only build rows tagged `meta.legOrdinal === this` (untagged rows = Leg 1). */
+    legOrdinal?: number;
     onOpenPlan?: () => void;
     onSelectNode?: (node: string) => void;
   } = {},
 ): LogItem[] {
-  const { lane = MAIN_LANE, onOpenPlan, onSelectNode } = opts;
+  const { lane = MAIN_LANE, legOrdinal, onOpenPlan, onSelectNode } = opts;
   const nodes: LogItem[] = [];
   let pending: Array<{ key: string; tool: ToolItem }> = [];
 
@@ -601,6 +607,14 @@ function buildLogItems(
     } else if (phaseSet) {
       // A build lane shows its phase(s)' blocks; a subagent spawned within it peels to its own sub-page.
       if (sub.childKeys.has(message.ts)) continue;
+      // Per-LEG slice: when a specific Leg is selected, drop rows tagged to a DIFFERENT Leg. Untagged rows
+      // (pre-legOrdinal history) default to Leg 1. Checked BEFORE the anchor branch so the Leg-1 build
+      // instruction doesn't leak into a later Leg's view.
+      if (legOrdinal != null) {
+        const lo =
+          typeof message.meta?.legOrdinal === "number" ? message.meta.legOrdinal : 1;
+        if (lo !== legOrdinal) continue;
+      }
       const pid =
         typeof message.meta?.phaseId === "string" ? message.meta.phaseId : "";
       // The synthetic build_anchor row → the phase's INPUT bubble (the instruction the engine received),
@@ -844,6 +858,7 @@ function parseLane(lane: string, phaseIds?: Set<string>): ParsedLane {
 /** The lane-tag fields the backend stamps on a `turn_meta` block (via the harness `metaTag`). */
 interface LaneMeta {
   phaseId?: string | null;
+  legOrdinal?: number | null;
   codexReviewId?: string | null;
   autofixId?: string | null;
   lensId?: string | null;
@@ -885,6 +900,7 @@ function laneFooterMeta(
   messages: JobMessage[],
   lane: string,
   phaseIds?: Set<string>,
+  legOrdinal?: number,
 ): ComposerFooter | null {
   const p = parseLane(lane, phaseIds);
   let model: string | undefined;
@@ -905,6 +921,11 @@ function laneFooterMeta(
       };
     };
     if (!laneMetaBelongs(meta, p)) continue;
+    // Per-Leg footer ring: only the selected Leg's turn_meta counts (untagged = Leg 1).
+    if (legOrdinal != null && p.phaseSet) {
+      const lo = typeof meta.legOrdinal === "number" ? meta.legOrdinal : 1;
+      if (lo !== legOrdinal) continue;
+    }
     const u = meta.usage ?? {};
     if (model === undefined && engine === undefined) {
       // First (newest) matching block wins the model/effort/engine. Prefer `contextModel` (the MAIN

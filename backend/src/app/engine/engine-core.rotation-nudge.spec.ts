@@ -1,8 +1,9 @@
 /**
- * Regression test for the Leg-rotation "Stream closed" fix. The SOFT/HARD nudge is now injected ENGINE-LOCALLY
+ * Regression test for the Leg-rotation "Stream closed" fix. The SOFT/REMINDER nudge is injected ENGINE-LOCALLY
  * the instant this turn's OWN main-agent occupancy crosses the threshold (mid-stream, input open) — instead of
  * the driver firing it host→Redis and racing the post-`result` input close (`STEER_IDLE_GRACE_MS`). This proves
- * the nudge is delivered deterministically, latches SOFT-then-HARD once each, and HARD supersedes SOFT.
+ * the nudge is delivered deterministically, fires SOFT once on the first crossing, then a REMINDER on each
+ * further +delta band, never re-firing a band. There is no hard threshold and no forced rotation.
  *
  * A spike (deleted) first showed the old bug: a steer arriving after the 350ms grace hit an already-closed
  * input stream and was lost — which is why the handoff never happened AND, with a live background task, why
@@ -71,28 +72,28 @@ async function runWithOccupancies(occupancies: number[]): Promise<string[]> {
     mode: 'execute',
     auth: { secret: 'oauth-tok' },
     steerInput: idleSteerInput,
-    rotationNudge: { softTokens: 50_000, hardTokens: 70_000, softText: 'SOFT-NUDGE', hardText: 'HARD-NUDGE' },
+    rotationNudge: { softTokens: 50_000, reminderDeltaTokens: 20_000, softText: 'SOFT-NUDGE', reminderText: 'REMINDER-NUDGE' },
   } as never);
   return injected;
 }
 
 describe('EngineCore — engine-local Leg-rotation nudge (race-free)', () => {
   it('injects SOFT once when occupancy crosses softTokens, mid-stream (never lost to the close)', async () => {
-    // Rises 20k → 55k (crosses SOFT=50k) → 60k (still < HARD, no re-fire).
+    // Rises 20k → 55k (crosses SOFT=50k) → 60k (still inside the soft band, no re-fire).
     const injected = await runWithOccupancies([20_000, 55_000, 60_000]);
     expect(injected).toEqual(['SOFT-NUDGE']);
   });
 
-  it('injects SOFT then HARD, each once, as occupancy climbs past both thresholds', async () => {
-    // 20k → 55k (SOFT) → 75k (HARD) → 90k (no re-fire).
-    const injected = await runWithOccupancies([20_000, 55_000, 75_000, 90_000]);
-    expect(injected).toEqual(['SOFT-NUDGE', 'HARD-NUDGE']);
+  it('injects SOFT then a REMINDER on each further +delta band', async () => {
+    // 20k → 55k (SOFT, band 0) → 75k (band 1 → reminder) → 95k (band 2 → reminder) → 110k (still band 2/3? no re-fire same band).
+    const injected = await runWithOccupancies([20_000, 55_000, 75_000, 95_000]);
+    expect(injected).toEqual(['SOFT-NUDGE', 'REMINDER-NUDGE', 'REMINDER-NUDGE']);
   });
 
-  it('a turn that jumps straight past HARD fires HARD only (SOFT is skipped, not replayed)', async () => {
-    // 20k → 90k (crosses HARD directly) → 95k (no re-fire).
-    const injected = await runWithOccupancies([20_000, 90_000, 95_000]);
-    expect(injected).toEqual(['HARD-NUDGE']);
+  it('first-ever fire is SOFT even when the first sample is already several bands past soft', async () => {
+    // 20k → 95k (band 2, but first → SOFT) → 130k (band 4 → reminder).
+    const injected = await runWithOccupancies([20_000, 95_000, 130_000]);
+    expect(injected).toEqual(['SOFT-NUDGE', 'REMINDER-NUDGE']);
   });
 
   it('never nudges while occupancy stays below SOFT', async () => {

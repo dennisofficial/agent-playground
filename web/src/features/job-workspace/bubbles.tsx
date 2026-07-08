@@ -438,6 +438,12 @@ function reminderLabel(kind: string | undefined): string {
       return "pipeline update";
     case "memory":
       return "memory";
+    case "context_pressure":
+      return "context pressure";
+    case "leg_handoff":
+      return "session handoff";
+    case "leg_seed":
+      return "session resumed";
     default:
       return "context added";
   }

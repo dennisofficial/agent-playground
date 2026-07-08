@@ -449,14 +449,15 @@ export interface RunEngineArgs {
   steerInput?: AsyncIterable<{ id?: string; text: string }>;
   /**
    * ENGINE-LOCAL Leg-rotation nudges (builder Claude execute turns). When set, the engine watches its OWN
-   * main-agent context occupancy and injects `softText` the first time it crosses `softTokens`, then
-   * `hardText` the first time it crosses `hardTokens` — as a `priority:'now'` steer into the LIVE turn,
-   * exactly like an operator steer but with ZERO delivery latency. This is deliberately engine-local (not a
-   * host→Redis steer) so the nudge can never race the post-`result` input close (`STEER_IDLE_GRACE_MS`): it
-   * lands mid-stream while input is open. Plain data → serialized into the turn spec so it works in-container.
-   * The driver still observes occupancy for the POST-turn rotation decision; this only owns the mid-turn seed.
+   * main-agent context occupancy and injects `softText` the first time it crosses `softTokens`, then re-injects
+   * `reminderText` every further +`reminderDeltaTokens` of growth — each as a `priority:'now'` steer into the
+   * LIVE turn, exactly like an operator steer but with ZERO delivery latency. This is deliberately engine-local
+   * (not a host→Redis steer) so the nudge can never race the post-`result` input close (`STEER_IDLE_GRACE_MS`):
+   * it lands mid-stream while input is open. Plain data → serialized into the turn spec so it works in-container.
+   * There is NO hard threshold and NO forced rotation — the nudges only ask; rotation happens when the builder
+   * calls `record_leg_handoff`. The driver observes the SAME occupancy to persist visible harness rows + peak.
    */
-  rotationNudge?: { softTokens: number; hardTokens: number; softText: string; hardText: string };
+  rotationNudge?: { softTokens: number; reminderDeltaTokens: number; softText: string; reminderText: string };
   /**
    * Fired ONCE, host-side, the instant this turn is DURABLY registered + kicked (its `active_turns` row is
    * committed and the engine is running detached) — i.e. the moment the turn becomes restart-survivable via

@@ -47,6 +47,7 @@ describe('renderBatchTask orientation injection', () => {
       status: 'pending',
       sessionId: null,
       batchOrdinal: null,
+      legOrdinal: 1,
       commitSha: null,
     },
   ];

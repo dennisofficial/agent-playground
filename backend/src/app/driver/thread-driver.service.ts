@@ -49,11 +49,9 @@ import {
   Agent,
   LEDGER_COMMIT_MESSAGE,
   renderAgentPrompt,
-  ROTATION_SYSTEM,
-  ROTATION_INSTRUCTION,
   ROTATION_PREAMBLE,
   ROTATION_SOFT_NUDGE,
-  ROTATION_HARD_NUDGE,
+  ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
 } from '../prompt-kit';
 import { isDriverExecutableKind, threadKindSpec } from '../thread-kind';
@@ -292,12 +290,11 @@ export class ThreadDriver implements JobDispatcher {
    * signals — just "read the persisted cursor, continue the function".
    */
   async resume(): Promise<void> {
-    // Complete any Leg-rotation fallback handoff turns caught mid-flight by the restart BEFORE re-driving, so
-    // a job that was mid-handoff rotates from the re-tailed summary instead of resuming its fat session and
-    // re-running the whole batch (Stage 6). Best-effort; a turn it can't re-tail falls through to the re-drive.
-    await this.reattachStrandedRotations().catch((err) =>
-      this.logger.warn(`resume: reattachStrandedRotations failed (continuing to re-drive): ${shortReason(err)}`),
-    );
+    // Leg rotation is crash-safe WITHOUT a reattach handler: rotation only ever happens on a SELF-authored
+    // handoff (`record_leg_handoff`, captured in-memory during the turn) and is committed by the ATOMIC
+    // `completeLegRotation` (abandon-marker + NULL session_id + seed in one txn). A crash before that commit
+    // simply resumes the fat session and re-nudges; a crash after re-folds the durable seed. There is no
+    // in-flight read-only fallback turn to re-tail anymore, so no Stage-6 reattach step is needed here.
     const jobs = await this.store.runningJobs();
     if (jobs.length === 0) return;
     this.logger.log(`resume: reconciling ${jobs.length} running job(s)`);
@@ -1725,8 +1722,13 @@ export class ThreadDriver implements JobDispatcher {
     const channel = route.channel ?? job.repoId;
     const lane = laneFor('builder', thread.id);
     const batchOrdinal = anchor.batchOrdinal ?? null;
+    // The Leg the anchor's build session is currently on (1-based). Stamped into every build block's
+    // `meta.legOrdinal` so the web slices this thread's transcript into one node per Leg. Bumped in the
+    // rotation loop below as the session rotates, so each Leg's turns carry its own ordinal.
+    let currentLeg = anchor.legOrdinal;
     const metaTag: Record<string, unknown> = {
       phaseId: anchor.id,
+      legOrdinal: currentLeg,
       ...(batchOrdinal != null ? { batchOrdinal } : {}),
     };
     // The instruction the engine receives — the build turn's "first message". Computed once here so it
@@ -1832,20 +1834,22 @@ export class ThreadDriver implements JobDispatcher {
         if (!result) {
           // Fresh per-Leg run state (the prior Leg's handoff/latch/peak must not leak into this one).
           rotationState.handoff = null;
-          rotationState.reached = 'none';
+          rotationState.softReached = false;
           rotationState.peakTokens = null;
           result = await this.kickBatchTurn(
             job, sandbox, thread, steps, legTask, lane, channel, metaTag, label, repo, deadline, toolBridge,
             rotationArmed ? { state: rotationState, thresholds: rotationThresholds } : null,
           );
         }
-        // After the turn ends, decide whether to rotate. Not armed / not fat / model asserted done ⇒ false.
-        const rotated =
-          rotationArmed &&
-          (await this.maybeRotateLeg(
-            job, route, sandbox, thread, anchor, lane, channel, repo, rotationState, rotationThresholds,
-          ));
+        // After the turn ends, rotate ONLY if the builder self-authored a handoff via `record_leg_handoff`.
+        // There is NO forced rotation: a fat turn that never handed off just ends (its context is reminded, not
+        // seized). Not armed / model asserted done / no handoff ⇒ false.
+        const rotated = rotationArmed && (await this.maybeRotateLeg(job, route, thread, anchor, rotationState));
         if (!rotated) break;
+        // The session rotated: the anchor is now on the next Leg — bump the tag so the fresh Leg's turns are
+        // sliced under their own thread node.
+        currentLeg += 1;
+        metaTag.legOrdinal = currentLeg;
         if (leg + 1 >= MAX_LEGS_PER_BATCH) {
           this.logger.warn(
             `leg-rotation: thread ${thread.ordinal} hit MAX_LEGS_PER_BATCH (${MAX_LEGS_PER_BATCH}) — ` +
@@ -1856,7 +1860,7 @@ export class ThreadDriver implements JobDispatcher {
           legTask = seed ? `${seed}\n\n---\n\n${baseTask}` : baseTask;
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
-          rotationState.reached = 'none';
+          rotationState.softReached = false;
           rotationState.peakTokens = null;
           result = await this.kickBatchTurn(
             job, sandbox, thread, steps, legTask, lane, channel, metaTag, label, repo, deadline, toolBridge,
@@ -2203,11 +2207,12 @@ export class ThreadDriver implements JobDispatcher {
       jobKind: job.kind,
       settings: { repoConventions },
     });
-    // Leg-rotation occupancy watch: latches SOFT then HARD as this builder session's main-agent context fills.
-    // Codex/master-review turns emit no per-call occupancy, so the watch never latches for them (positive-signal
-    // only). When ARMED (Claude builder) each crossing records the latched phase on the run state AND steers an
-    // escalating nudge into the live turn (the model self-authors its handoff via `record_leg_handoff`); when
-    // disarmed it stays observe-only (logs the crossing). See `leg-rotation-watch.ts` + the plan.
+    // Leg-rotation occupancy watch: fires SOFT once, then a REMINDER on each further +delta as this builder
+    // session's main-agent context fills. Codex/master-review turns emit no per-call occupancy, so the watch
+    // never latches for them (positive-signal only). When ARMED (Claude builder) each crossing (a) records that
+    // the session went fat and (b) persists a VISIBLE harness row into this Leg's transcript, so the operator
+    // sees the exact pressure ask; when disarmed it stays observe-only (logs the crossing). See the plan.
+    const legOrdinal = (metaTag['legOrdinal'] as number | undefined) ?? 1;
     const rotationWatch = new LegRotationWatch(rotation?.thresholds ?? resolveRotationThresholds(), (sig) => {
       this.logger.warn(
         `leg-rotation ${sig.phase.toUpperCase()} threshold crossed${rotation ? '' : ' [observe-only]'} — ` +
@@ -2215,11 +2220,23 @@ export class ThreadDriver implements JobDispatcher {
           (sig.contextLimit ? `/${sig.contextLimit}` : ''),
       );
       if (!rotation) return;
-      // The MID-TURN nudge is now injected ENGINE-LOCALLY (`RunEngineArgs.rotationNudge`, keyed off the same
-      // thresholds) so it lands like a manual steer and can never race the post-`result` input close that
-      // previously wedged the turn with "Stream closed". Here we only record the highest phase reached, which
-      // drives the POST-turn safety-net rotation decision (`maybeRotateLeg`).
-      rotation.state.reached = sig.phase; // monotonic none<soft<hard
+      // The MID-TURN nudge itself is injected ENGINE-LOCALLY (`RunEngineArgs.rotationNudge`, keyed off the same
+      // threshold) so it lands like a manual steer and can never race the post-`result` input close. Here we
+      // (a) flag that the session went fat and (b) mirror the nudge as a VISIBLE, per-Leg harness row so the
+      // operator can see it in the UI. Rotation itself only ever happens on a self-authored `record_leg_handoff`.
+      rotation.state.softReached = true;
+      const nudgeText = stripContextPressureTag(sig.phase === 'soft' ? ROTATION_SOFT_NUDGE : ROTATION_REMINDER_NUDGE);
+      void this.store
+        .recordBuildSystemChunk({
+          jobId: job.id,
+          phaseId: anchor.id,
+          legOrdinal,
+          kind: 'system_reminder',
+          text: nudgeText,
+          chunkKey: `rot-nudge:${anchor.id}:leg${legOrdinal}:${sig.phase}${sig.reminderIndex}`,
+          reminderKind: 'context_pressure',
+        })
+        .catch((err) => this.logger.debug(`rotation nudge row failed (display-only): ${shortReason(err)}`));
     });
     // Circuit breaker (#3): bound the engine turn with the shared PAUSABLE deadline (paused across a
     // `request_operator_input` human wait). On breach it both signals the SDK to abort AND hard-rejects so
@@ -2242,23 +2259,24 @@ export class ThreadDriver implements JobDispatcher {
           task,
           auth: await this.creds.engineAuth(job.orgId, engine),
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
+          skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
           // Mid-turn steering — armed for Claude builder turns so operator steers AND the engine-local
-          // Leg-rotation SOFT/HARD nudges land in the LIVE turn (`priority:'now'`). Never for Codex (no
-          // streaming-input steering there). `rotationNudge` gives the engine the thresholds + seed prompts so
+          // Leg-rotation SOFT/REMINDER nudges land in the LIVE turn (`priority:'now'`). Never for Codex (no
+          // streaming-input steering there). `rotationNudge` gives the engine the threshold + seed prompts so
           // it injects the nudge itself the instant its own occupancy crosses — race-free vs the input close.
           ...(rotation
             ? {
                 steerable: true,
                 rotationNudge: {
                   softTokens: rotation.thresholds.softTokens,
-                  hardTokens: rotation.thresholds.hardTokens,
+                  reminderDeltaTokens: rotation.thresholds.reminderDeltaTokens,
                   softText: ROTATION_SOFT_NUDGE,
-                  hardText: ROTATION_HARD_NUDGE,
+                  reminderText: ROTATION_REMINDER_NUDGE,
                 },
               }
             : {}),
@@ -2309,45 +2327,28 @@ export class ThreadDriver implements JobDispatcher {
 
   /**
    * Decide whether the Leg that just ended should ROTATE — and if so, do it (the builder analog of the brain's
-   * `runCompaction` → `completeCompaction`). Called ONLY for an armed builder turn. Rotation happens when the
-   * session filled and we have a handoff (self-authored via `record_leg_handoff`, or produced by the read-only
-   * fallback turn). On a successful rotation the fat session is abandoned, a seed is stashed on the anchor, and
-   * a fresh `build_legs` row opens — the caller re-folds the seed + kicks a fresh Leg. Returns false (no
-   * rotation) when the batch is genuinely finished, never got fat, or the handoff couldn't be produced.
+   * compaction). Called ONLY for an armed builder turn. Rotation happens ONLY when the builder SELF-authored a
+   * handoff via `record_leg_handoff` — there is no forced/fallback rotation. On a successful rotation the fat
+   * session is abandoned, a seed is stashed on the anchor, a fresh `build_legs` row opens, and the handoff +
+   * continuation-seed are persisted as VISIBLE per-Leg transcript rows — the caller re-folds the seed + kicks a
+   * fresh Leg. Returns false (no rotation) when the batch is genuinely finished or the builder never handed off.
    */
   private async maybeRotateLeg(
     job: Job,
     route: JobRoute,
-    sandbox: FeatureSandbox,
     thread: DriverThread,
     anchor: Step,
-    lane: string,
-    channel: string,
-    repo: ResolvedRepo,
     state: LegRotationRunState,
-    thresholds: LegRotationThresholds,
   ): Promise<boolean> {
     // NEVER rotate over a genuinely-finished batch: if the builder asserted `done` this turn, the work is done
     // (even if it ended fat) — let the normal outcome/gate/commit path run; the NEXT thread starts fresh anyway.
     const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
     if (term?.status === 'done') return false;
 
-    let handoff = state.handoff;
-    if (!handoff) {
-      // The builder did NOT self-author a handoff. Only rotate via the safety net if it actually hit the HARD
-      // ceiling (or the durable occupancy backstop still reads fat) — a turn that ended below HARD without
-      // handing off is just a normal end (SOFT is a nudge, not a forced stop), so don't force a rotation.
-      const occ = await this.store.latestStepOccupancy(anchor.id).catch(() => null);
-      const backstopFat = occ?.contextTokens != null && occ.contextTokens >= thresholds.hardTokens;
-      if (state.reached !== 'hard' && !backstopFat) return false;
-      // SAFETY NET: author the handoff with a read-only fallback turn against the fat session (mirrors
-      // `runCompaction`). Empty/failed ⇒ keep the fat session and skip rotation this cycle (no retry-loop).
-      this.logger.log(
-        `leg-rotation: thread ${thread.ordinal} ended fat without a self-handoff — running the fallback handoff turn`,
-      );
-      handoff = await this.runLegHandoff(job, sandbox, thread, anchor, lane, channel, repo);
-      if (!handoff) return false;
-    }
+    // No forced rotation: a fat turn that never called `record_leg_handoff` simply ends (it was reminded, not
+    // seized). Only a self-authored handoff rotates.
+    const handoff = state.handoff;
+    if (!handoff) return false;
 
     // The seed carries the preamble + handoff + the OPEN task list (the SDK's in-memory todo dies with the
     // session; the durable `threads.tasks` is folded back in so the fresh Leg continues its checklist — B5).
@@ -2365,80 +2366,48 @@ export class ThreadDriver implements JobDispatcher {
       });
     if (!res) return false; // nothing live to rotate (already rotated / raced), or the txn failed — don't loop
 
+    // Persist the closing Leg's handoff as a DURABLE FILE under `/context/generated` — NOT into the git
+    // worktree. `res.fromLeg` is the DB-accurate closing Leg (survives multi-rotation). Awaited so the file
+    // exists before the fresh Leg (which can re-read it via the read-only `/context/generated` mount) starts.
+    await this.writeLegHandoffArtifact(job, res.fromLeg, handoff);
+
     this.logger.log(
       `leg-rotation: thread ${thread.ordinal} rotated Leg ${res.fromLeg}→${res.toLeg} ` +
         `(abandoned ${res.abandonedSessionId.slice(0, 8)}; handoff ${handoff.length} chars; ` +
         `peak ${state.peakTokens ?? '?'})`,
     );
-    // Operator-visible liveness line (the rich per-Leg UI + handoff pills land in Stage 7). Best-effort.
+    // VISIBLE per-Leg rows: the handoff the closing Leg authored (tail of Leg N) and the continuation seed the
+    // fresh Leg opens with (head of Leg N+1 — "the initial prompt for the new session"). Insert-once by chunkKey
+    // so a resume re-fold can't duplicate them. Best-effort (display-only).
+    await this.store
+      .recordBuildSystemChunk({
+        jobId: job.id,
+        phaseId: anchor.id,
+        legOrdinal: res.fromLeg,
+        kind: 'system_notice',
+        text: handoff,
+        chunkKey: `rot-handoff:${anchor.id}:leg${res.fromLeg}`,
+        reminderKind: 'leg_handoff',
+      })
+      .catch((err) => this.logger.debug(`rotation handoff row failed (display-only): ${shortReason(err)}`));
+    await this.store
+      .recordBuildSystemChunk({
+        jobId: job.id,
+        phaseId: anchor.id,
+        legOrdinal: res.toLeg,
+        kind: 'system_notice',
+        text: seed,
+        chunkKey: `rot-seed:${anchor.id}:leg${res.toLeg}`,
+        reminderKind: 'leg_seed',
+      })
+      .catch((err) => this.logger.debug(`rotation seed row failed (display-only): ${shortReason(err)}`));
+    // Operator-visible liveness line on the main lane. Best-effort.
     await this.post(
       route,
       `:recycle: Rotated *${thread.brief}* to a fresh session (Leg ${res.toLeg}) — its context was filling; ` +
         `work continues from a handoff with the in-progress files intact.`,
     ).catch(() => undefined);
     return true;
-  }
-
-  /**
-   * READ-ONLY fallback handoff turn — the deterministic backstop when a fat builder ran to `result` without
-   * calling `record_leg_handoff` (single-batch threads have no intra-thread boundary, so the model may never
-   * yield mid-work). Resumes the fat anchor session (via `stepId`) with the handoff instruction, no tool bridge,
-   * `mode:'review'`, not richly streamed — structurally `kickCommitTurn`, guarded like `runCompaction`. Returns
-   * the authored handoff, or null on an empty/failed turn (the caller then keeps the fat session, skips rotation).
-   */
-  private async runLegHandoff(
-    job: Job,
-    sandbox: FeatureSandbox,
-    thread: DriverThread,
-    anchor: Step,
-    lane: string,
-    channel: string,
-    repo: ResolvedRepo,
-  ): Promise<string | null> {
-    const spec = threadKindSpec(thread.kind);
-    const deadline = new PausableDeadline(this.phaseTimeoutMs, `leg handoff "${thread.brief}"`);
-    let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
-    try {
-      result = await this.runTurnBounded(
-        {
-          jobId: job.id,
-          stepId: anchor.id, // resume the FAT builder session (about to be abandoned) to summarize it
-          sandbox,
-          engine: spec.engine,
-          // Read-only worker turn: no writes, default permission (no plan ceremony), no tool bridge, not
-          // richly streamed (internal — the handoff seeds the next Leg, it isn't operator chat).
-          mode: 'review',
-          systemPrompt: ROTATION_SYSTEM,
-          task: ROTATION_INSTRUCTION,
-          auth: await this.creds.engineAuth(job.orgId, spec.engine),
-          // Track like every turn so a restart mid-handoff can be reconciled (Stage 6 adds the reattach handler;
-          // until then an unknown-kind row is simply skipped by the brain re-attach + finalized by the watchdog).
-          turnMeta: {
-            jobId: job.id,
-            orgId: job.orgId,
-            channel,
-            lane,
-            kind: 'rotation',
-            ctx: { repoId: job.repoId, threadId: thread.id, anchorStepId: anchor.id, sessionId: anchor.sessionId },
-          },
-        },
-        `leg handoff "${thread.brief}"`,
-        deadline,
-      );
-    } catch (err) {
-      this.logger.warn(
-        `leg-rotation: fallback handoff turn failed for thread ${thread.ordinal} — keeping the fat session: ${shortReason(err)}`,
-      );
-      return null;
-    }
-    const handoff = (result.report ?? '').trim();
-    if (!handoff) {
-      this.logger.warn(
-        `leg-rotation: fallback handoff was empty for thread ${thread.ordinal} — keeping the fat session`,
-      );
-      return null;
-    }
-    return handoff;
   }
 
   /**
@@ -2455,76 +2424,19 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * RESTART SURVIVAL for Leg rotation (Stage 6). Complete any Leg-rotation FALLBACK handoff turns that were
-   * in flight when the backend restarted, BEFORE the job re-drive — so a job caught mid-handoff rotates from
-   * the re-tailed summary instead of resuming its fat session and re-running the whole batch. Run leader-only
-   * from {@link resume} (ordering mirrors the brain: reattach owned turns, THEN re-drive).
-   *
-   * The core rotation is already crash-safe WITHOUT this: `completeLegRotation` is ATOMIC (abandon-marker +
-   * NULL session_id + seed in ONE txn), so a crash either leaves the fat session intact (pre-commit → the
-   * re-drive resumes + re-rotates) or the fresh-Leg state fully set (post-commit → the re-drive re-folds the
-   * seed). This handler is the optimization that avoids re-running a fat batch when the fallback turn itself
-   * was mid-flight; a turn it can't re-tail is left for the watchdog + the re-drive's resume-and-re-rotate.
+   * Persist the closing Leg's handoff as a DURABLE FILE at `/context/generated/handoffs/leg-<N>.md` — a
+   * legible, inspectable artifact that lives OUTSIDE the git worktree (so it never becomes a dirty commit or
+   * a PR file). `/context/generated` is the host-written bucket (mounted READ-ONLY into the container), so the
+   * fresh Leg can re-read its own handoff, and it surfaces in the web's GENERATED panel. Best-effort: a write
+   * failure is logged and swallowed — it must never block the rotation (the seed still carries the handoff text).
    */
-  private async reattachStrandedRotations(): Promise<void> {
-    if (!this.turn.canReattach()) return;
-    let rows: ActiveTurnEntity[];
+  private async writeLegHandoffArtifact(job: Job, leg: number, handoff: string): Promise<void> {
     try {
-      rows = await this.turnRegistry.listRunning();
+      const generated = join(this.threadLifecycle.contextDirHost(job.id, job.orgId), 'generated');
+      await mkdir(join(generated, 'handoffs'), { recursive: true });
+      await writeFile(join(generated, 'handoffs', `leg-${leg}.md`), `${handoff}\n`, 'utf8');
     } catch (err) {
-      this.logger.warn(`leg-rotation reattach: listRunning failed: ${shortReason(err)}`);
-      return;
-    }
-    const rotations = rows.filter((r) => r.kind === 'rotation');
-    if (!rotations.length) return;
-    this.logger.log(`leg-rotation: re-attaching ${rotations.length} in-flight handoff turn(s) on boot`);
-    for (const row of rotations) {
-      await this.reattachRotationOne(row).catch((err) =>
-        this.logger.warn(`leg-rotation reattach ${row.turn_id} failed: ${shortReason(err)}`),
-      );
-    }
-  }
-
-  /** Re-attach ONE in-flight rotation (fallback handoff) turn → complete the rotation from its summary, or
-   *  leave the fat session intact if it yielded nothing. The analog of the brain's `reattachCompactionOne`. */
-  private async reattachRotationOne(row: ActiveTurnEntity): Promise<void> {
-    const ctx = (row.ctx ?? {}) as { threadId?: string; anchorStepId?: string };
-    if (!row.container_id || !ctx.threadId || !ctx.anchorStepId) {
-      this.logger.warn(
-        `leg-rotation reattach ${row.turn_id}: insufficient ctx/container — leaving for the watchdog + re-drive`,
-      );
-      return;
-    }
-    let result: Awaited<ReturnType<TurnRunnerService['reattach']>>;
-    try {
-      result = await this.turn.reattach({
-        turnId: row.turn_id,
-        containerId: row.container_id,
-        jobId: row.job_id,
-        stepId: ctx.anchorStepId, // the fat session persists back onto the anchor step (a no-op resume)
-      });
-    } catch (err) {
-      // Lost the tail (detached again / container gone) — leave it; the job re-drive resumes the fat session
-      // and re-rotates, and the watchdog reaps the stale row. Best-effort.
-      this.logger.warn(`leg-rotation reattach ${row.turn_id}: re-tail failed — deferring to re-drive: ${shortReason(err)}`);
-      return;
-    }
-    const handoff = (result.report ?? '').trim();
-    if (!handoff) {
-      this.logger.warn(`leg-rotation reattach ${row.turn_id}: empty handoff — leaving the fat session to re-drive`);
-      return;
-    }
-    const seed = await this.buildLegSeed(ctx.threadId, handoff);
-    const res = await this.store
-      .completeLegRotation({ anchorStepId: ctx.anchorStepId, handoff, seed })
-      .catch((err) => {
-        this.logger.error(`leg-rotation reattach ${row.turn_id}: completeLegRotation failed: ${err}`);
-        return null;
-      });
-    if (res) {
-      this.logger.log(
-        `leg-rotation: re-attached handoff completed rotation Leg ${res.fromLeg}→${res.toLeg} for thread=${ctx.threadId}`,
-      );
+      this.logger.debug(`leg handoff artifact write failed (display-only): ${shortReason(err)}`);
     }
   }
 
@@ -3055,6 +2967,15 @@ function renderOpenLegTasks(tasks: TaskItem[]): string {
     ...lines,
     '</carried_tasks>',
   ].join('\n');
+}
+
+/** Strip the `<context_pressure …>` wrapper off a rotation nudge so the VISIBLE transcript row shows the
+ *  clean ask (the XML framing is engine-only; the operator sees prose). Trims the outer tag lines only. */
+function stripContextPressureTag(nudge: string): string {
+  return nudge
+    .replace(/^<context_pressure[^>]*>\s*/, '')
+    .replace(/\s*<\/context_pressure>\s*$/, '')
+    .trim();
 }
 
 /** A locked step row → the `PlannedStep` view visibility/render read (title null → brief). */

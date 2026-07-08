@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  DEFAULT_ROTATION_HARD_TOKENS,
+  DEFAULT_ROTATION_REMINDER_DELTA_TOKENS,
   DEFAULT_ROTATION_SOFT_TOKENS,
   LegRotationWatch,
   type LegRotationSignal,
   resolveRotationThresholds,
 } from './leg-rotation-watch';
 
-const THRESHOLDS = { softTokens: 150_000, hardTokens: 200_000 };
+const THRESHOLDS = { softTokens: 150_000, reminderDeltaTokens: 25_000 };
 
 function watchCapturing(): { watch: LegRotationWatch; signals: LegRotationSignal[] } {
   const signals: LegRotationSignal[] = [];
@@ -21,40 +21,50 @@ describe('LegRotationWatch', () => {
     watch.observe({ contextTokens: 120_000, contextLimit: 1_000_000 });
     expect(signals).toHaveLength(0);
     watch.observe({ contextTokens: 150_000, contextLimit: 1_000_000 });
-    expect(signals).toEqual([{ phase: 'soft', contextTokens: 150_000, contextLimit: 1_000_000 }]);
-    expect(watch.reached).toBe('soft');
+    expect(signals).toEqual([
+      { phase: 'soft', reminderIndex: 0, contextTokens: 150_000, contextLimit: 1_000_000 },
+    ]);
+    expect(watch.softReached).toBe(true);
   });
 
-  it('does not re-fire SOFT while staying between soft and hard', () => {
+  it('does not re-fire while staying inside the soft band (below soft + delta)', () => {
     const { watch, signals } = watchCapturing();
-    watch.observe({ contextTokens: 160_000, contextLimit: 1_000_000 });
-    watch.observe({ contextTokens: 170_000, contextLimit: 1_000_000 });
-    watch.observe({ contextTokens: 199_999, contextLimit: 1_000_000 });
+    watch.observe({ contextTokens: 155_000, contextLimit: 1_000_000 });
+    watch.observe({ contextTokens: 165_000, contextLimit: 1_000_000 });
+    watch.observe({ contextTokens: 174_999, contextLimit: 1_000_000 });
     expect(signals).toHaveLength(1);
     expect(signals[0].phase).toBe('soft');
   });
 
-  it('escalates SOFT then HARD across samples', () => {
+  it('fires SOFT then a REMINDER on each further +delta of growth', () => {
     const { watch, signals } = watchCapturing();
-    watch.observe({ contextTokens: 155_000, contextLimit: 1_000_000 });
-    watch.observe({ contextTokens: 205_000, contextLimit: 1_000_000 });
-    expect(signals.map((s) => s.phase)).toEqual(['soft', 'hard']);
-    expect(watch.reached).toBe('hard');
+    watch.observe({ contextTokens: 155_000, contextLimit: 1_000_000 }); // soft
+    watch.observe({ contextTokens: 180_000, contextLimit: 1_000_000 }); // +delta → reminder 1
+    watch.observe({ contextTokens: 210_000, contextLimit: 1_000_000 }); // +2delta → reminder 2
+    expect(signals.map((s) => ({ phase: s.phase, reminderIndex: s.reminderIndex }))).toEqual([
+      { phase: 'soft', reminderIndex: 0 },
+      { phase: 'reminder', reminderIndex: 1 },
+      { phase: 'reminder', reminderIndex: 2 },
+    ]);
   });
 
-  it('fires HARD only (skips SOFT) when the first sample is already past the hard threshold', () => {
+  it('first-ever fire is SOFT even when the first sample is already several deltas past soft', () => {
     const { watch, signals } = watchCapturing();
-    watch.observe({ contextTokens: 250_000, contextLimit: 1_000_000 });
-    expect(signals).toEqual([{ phase: 'hard', contextTokens: 250_000, contextLimit: 1_000_000 }]);
-    expect(watch.reached).toBe('hard');
+    watch.observe({ contextTokens: 250_000, contextLimit: 1_000_000 }); // level 4, but first → soft
+    expect(signals).toEqual([
+      { phase: 'soft', reminderIndex: 0, contextTokens: 250_000, contextLimit: 1_000_000 },
+    ]);
+    // A later, higher band fires a reminder tagged with its delta-level.
+    watch.observe({ contextTokens: 280_000, contextLimit: 1_000_000 }); // level 5 → reminder 5
+    expect(signals[1]).toMatchObject({ phase: 'reminder', reminderIndex: 5 });
   });
 
-  it('does not re-fire HARD on further samples', () => {
+  it('does not re-fire the same reminder band on further samples within it', () => {
     const { watch, signals } = watchCapturing();
-    watch.observe({ contextTokens: 210_000, contextLimit: 1_000_000 });
-    watch.observe({ contextTokens: 400_000, contextLimit: 1_000_000 });
-    expect(signals).toHaveLength(1);
-    expect(signals[0].phase).toBe('hard');
+    watch.observe({ contextTokens: 155_000, contextLimit: 1_000_000 }); // soft
+    watch.observe({ contextTokens: 180_000, contextLimit: 1_000_000 }); // reminder 1
+    watch.observe({ contextTokens: 190_000, contextLimit: 1_000_000 }); // still band 1 → no fire
+    expect(signals).toHaveLength(2);
   });
 
   it('NEVER latches on unknown occupancy (Codex / master-review — contextTokens null)', () => {
@@ -64,13 +74,13 @@ describe('LegRotationWatch', () => {
     watch.observe({ contextTokens: undefined });
     watch.observe({}); // no contextTokens at all
     expect(onSignal).not.toHaveBeenCalled();
-    expect(watch.reached).toBe('none');
+    expect(watch.softReached).toBe(false);
   });
 
   it('carries a null contextLimit through when the usage event omits it', () => {
     const { watch, signals } = watchCapturing();
     watch.observe({ contextTokens: 300_000 });
-    expect(signals[0]).toEqual({ phase: 'hard', contextTokens: 300_000, contextLimit: null });
+    expect(signals[0]).toEqual({ phase: 'soft', reminderIndex: 0, contextTokens: 300_000, contextLimit: null });
   });
 });
 
@@ -78,26 +88,22 @@ describe('resolveRotationThresholds', () => {
   it('defaults when no env override is set', () => {
     expect(resolveRotationThresholds({})).toEqual({
       softTokens: DEFAULT_ROTATION_SOFT_TOKENS,
-      hardTokens: DEFAULT_ROTATION_HARD_TOKENS,
+      reminderDeltaTokens: DEFAULT_ROTATION_REMINDER_DELTA_TOKENS,
     });
   });
 
   it('honours valid env overrides', () => {
     expect(
-      resolveRotationThresholds({ ROTATION_SOFT_TOKENS: '90000', ROTATION_HARD_TOKENS: '140000' }),
-    ).toEqual({ softTokens: 90_000, hardTokens: 140_000 });
+      resolveRotationThresholds({ ROTATION_SOFT_TOKENS: '40000', ROTATION_REMINDER_DELTA_TOKENS: '8000' }),
+    ).toEqual({ softTokens: 40_000, reminderDeltaTokens: 8_000 });
   });
 
   it('falls back to defaults on non-positive / non-numeric overrides', () => {
-    expect(resolveRotationThresholds({ ROTATION_SOFT_TOKENS: '-5', ROTATION_HARD_TOKENS: 'abc' })).toEqual({
-      softTokens: DEFAULT_ROTATION_SOFT_TOKENS,
-      hardTokens: DEFAULT_ROTATION_HARD_TOKENS,
-    });
-  });
-
-  it('falls back to defaults when soft >= hard (nonsensical — soft would never fire first)', () => {
     expect(
-      resolveRotationThresholds({ ROTATION_SOFT_TOKENS: '200000', ROTATION_HARD_TOKENS: '150000' }),
-    ).toEqual({ softTokens: DEFAULT_ROTATION_SOFT_TOKENS, hardTokens: DEFAULT_ROTATION_HARD_TOKENS });
+      resolveRotationThresholds({ ROTATION_SOFT_TOKENS: '-5', ROTATION_REMINDER_DELTA_TOKENS: 'abc' }),
+    ).toEqual({
+      softTokens: DEFAULT_ROTATION_SOFT_TOKENS,
+      reminderDeltaTokens: DEFAULT_ROTATION_REMINDER_DELTA_TOKENS,
+    });
   });
 });
