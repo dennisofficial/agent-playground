@@ -191,6 +191,38 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     sub.unsubscribe();
   });
 
+  it('emittedAt rides the real SSE wire — on snapshot blocks AND on each live delta frame event', async () => {
+    const store = new LiveTurnStore();
+    const controller = makeController(store);
+
+    // A turn is already in flight before this client connects — its cumulative blocks carry emittedAt.
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hi' });
+
+    const frames: Array<Record<string, unknown>> = [];
+    const sub = controller
+      .events(REPO)
+      .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
+
+    // 1) The snapshot the controller fans (blocks: s.blocks) carries emittedAt on each block.
+    const snapshotFrame = frames.find(
+      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'snapshot',
+    );
+    const snapBlocks = (snapshotFrame!.event as { blocks: Array<{ emittedAt?: number }> }).blocks;
+    expect(typeof snapBlocks[0].emittedAt).toBe('number');
+
+    // 2) A subsequent live delta (event: f.event, forwarded verbatim) carries emittedAt inside event.
+    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: {} });
+    const deltaFrame = frames.find(
+      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'tool_use',
+    );
+    const deltaEvent = deltaFrame!.event as { emittedAt?: number };
+    expect(typeof deltaEvent.emittedAt).toBe('number');
+    // The live block's stamp is strictly after the earlier snapshot block's (monotonic across the turn).
+    expect(deltaEvent.emittedAt!).toBeGreaterThan(snapBlocks[0].emittedAt!);
+
+    sub.unsubscribe();
+  });
+
   it('a client connecting AFTER the turn ended gets no stale snapshot (durable /messages covers it)', () => {
     const store = new LiveTurnStore();
     const controller = makeController(store);
