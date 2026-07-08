@@ -3,6 +3,7 @@ import { Public } from '@workspace/auth/server';
 import { GithubNotificationSource } from './github-notification.source';
 import { runIngress, type RawBodyRequest } from './ingress-http';
 import { StimulusIntake } from '../stimulus';
+import { GithubPrStateSync } from '../driver';
 
 /**
  * `POST /ingress/github` — the GitHub webhook front door. Verification + parsing + routing live in the
@@ -22,11 +23,12 @@ export class GithubIngressController {
   constructor(
     private readonly adapter: GithubNotificationSource,
     private readonly intake: StimulusIntake,
+    private readonly prSync: GithubPrStateSync,
   ) {}
 
   @Post()
   @HttpCode(202)
   async receive(@Req() req: RawBodyRequest): Promise<Record<string, unknown>> {
-    return runIngress(this.logger, this.adapter, this.intake, req);
+    return runIngress(this.logger, this.adapter, this.intake, req, this.prSync);
   }
 }

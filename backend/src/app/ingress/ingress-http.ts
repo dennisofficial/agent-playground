@@ -13,6 +13,7 @@ import type {
   RawNotification,
 } from '../domain';
 import type { IntakeOutcome, StimulusIntake } from '../stimulus';
+import type { GithubPrStateSync } from '../driver';
 
 /** Express request shape the ingress controllers read (rawBody enabled on the Nest app). */
 export interface RawBodyRequest {
@@ -52,6 +53,7 @@ export function toRawNotification(req: RawBodyRequest): RawNotification {
  *  - accepted + admitted  → 202 { status:'accepted', stimulusId, jobId }
  *  - accepted + deduped   → 202 { status:'deduped', reason }
  *  - ignored              → 202 { status:'ignored', reason }   (verified but no action — a success)
+ *  - pr-sync              → 202 { status:'accepted' }   (silent PR-state delta — dispatched, not intaken)
  *  - rejected:bad-signature / unverifiable → 401
  *  - rejected:unroutable  → 404
  *  - rejected:malformed   → 400
@@ -61,6 +63,7 @@ export async function runIngress(
   adapter: NotificationSource,
   intake: StimulusIntake,
   req: RawBodyRequest,
+  prSync?: GithubPrStateSync,
 ): Promise<Record<string, unknown>> {
   const result: IngressResult = await adapter.handle(toRawNotification(req));
 
@@ -71,6 +74,10 @@ export async function runIngress(
   if (result.outcome === 'ignored') {
     logger.debug(`${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`);
     return { status: 'ignored', reason: result.reason };
+  }
+  if (result.outcome === 'pr-sync') {
+    if (prSync) await prSync.dispatch(result.delta);
+    return { status: 'accepted' };
   }
 
   const outcome: IntakeOutcome = await intake.intakeEvent(result.event);

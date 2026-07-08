@@ -6,6 +6,7 @@ import type {
   IngressResult,
   NotificationSource,
   ParsedEvent,
+  PrStateDelta,
   RawNotification,
 } from '../domain';
 import { ProjectRoutingService } from '../stimulus';
@@ -75,6 +76,13 @@ export class GithubNotificationSource implements NotificationSource {
       return { outcome: 'rejected', reason: 'unroutable', detail: `no atlas_project for repo ${repo}` };
     }
 
+    // The `pull_request` event drives the SILENT PR-state sync (open/merged/closed/reopened written
+    // straight to the owning job's row) — it never becomes a triage stimulus, so it branches here,
+    // before `summarizeGithubEvent` (which deliberately returns null for this event type).
+    if (eventType === 'pull_request') {
+      return this.handlePullRequest(route, body);
+    }
+
     const summary = summarizeGithubEvent(eventType, body);
     if (!summary) {
       // A verified payload we deliberately don't act on (e.g. a successful run, a push event).
@@ -91,6 +99,31 @@ export class GithubNotificationSource implements NotificationSource {
       ...(summary.correlation ? { correlation: summary.correlation } : {}),
     };
     return { outcome: 'accepted', event };
+  }
+
+  /** Parse a `pull_request` webhook into a `PrStateDelta` the silent sync applies, or ignore it. */
+  private handlePullRequest(
+    route: { orgId: string; repoId: string },
+    body: GithubWebhookBody,
+  ): IngressResult {
+    const action = body.action;
+    if (action !== 'opened' && action !== 'reopened' && action !== 'closed') {
+      return { outcome: 'ignored', reason: 'unsupported', detail: `github pull_request ${action ?? '?'} (no action)` };
+    }
+    const pr = body.pull_request;
+    if (pr?.number == null) {
+      return { outcome: 'ignored', reason: 'unsupported', detail: 'pull_request missing number' };
+    }
+    const delta: PrStateDelta = {
+      orgId: route.orgId,
+      repoId: route.repoId,
+      action,
+      prNumber: pr.number,
+      headRef: pr.head?.ref ?? '',
+      url: pr.html_url ?? '',
+      merged: pr.merged ?? false,
+    };
+    return { outcome: 'pr-sync', delta };
   }
 }
 
@@ -123,7 +156,7 @@ interface GithubWebhookBody {
     head_branch?: string;
     pull_requests?: Array<{ number?: number }>;
   };
-  pull_request?: { number?: number; head?: { ref?: string } };
+  pull_request?: { number?: number; html_url?: string; merged?: boolean; head?: { ref?: string } };
   review?: { id?: number; state?: string; body?: string | null; html_url?: string; user?: { login?: string } };
   comment?: { id?: number; body?: string | null; html_url?: string; user?: { login?: string } };
   issue?: { number?: number; pull_request?: unknown };

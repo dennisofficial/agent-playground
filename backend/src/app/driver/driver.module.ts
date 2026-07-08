@@ -35,6 +35,7 @@ import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
 import { JobLifecycleService } from './job-lifecycle.service';
+import { GithubPrStateSync } from './github-pr-state-sync.service';
 import { CredentialResolver } from '../onboarding';
 import { LIVE_VERIFICATION_JUDGE, AnthropicLiveVerificationJudge } from './live-verification-judge';
 import { WorktreeHydrator } from './worktree-hydrator.service';
@@ -93,6 +94,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     },
     ThreadDriver,
     JobLifecycleService,
+    GithubPrStateSync,
     GitStateReconciler,
     WorktreeHydrator,
     WorktreeProvisioner,
@@ -103,6 +105,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     ThreadDriver,
     JOB_DISPATCHER,
     JobLifecycleService,
+    GithubPrStateSync,
     WorktreeProvisioner,
     DriverStoreService,
     PipelineAwarenessStore,
