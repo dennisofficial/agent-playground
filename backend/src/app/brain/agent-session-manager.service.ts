@@ -2611,9 +2611,13 @@ export class AgentSessionManager
         const hasSteps = threads.some((s) => s.steps.length > 0);
 
         // Ensure there's an open scoping job (+ sandbox) so the review has specs + a container to run in.
+        // Do NOT invent a placeholder title here: in the normal full-path flow `goal`/`overview` go to
+        // `propose_plan`, not to `review_plan` (it reviews from the spec files), so both are usually empty.
+        // Passing an empty title lets `openJob` keep the thread's existing title — the authoritative rename
+        // happens later in `persistPlan` from the plan `goal` — instead of clobbering it with a phase name.
         const jobId = await this.ensureJob(
           stimulus,
-          overview || goal || 'plan review',
+          overview || goal,
           'feature',
         );
         const reviewTicket = await this.resolveReviewTicket(

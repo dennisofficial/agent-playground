@@ -115,6 +115,7 @@ export function Navigator({
   onRename,
   onDelete,
   deleting,
+  directBuild,
 }: {
   meta: JobMeta;
   pipeline: PipelineState | undefined;
@@ -139,6 +140,8 @@ export function Navigator({
   onRename?: (title: string) => void;
   onDelete?: () => void;
   deleting?: boolean;
+  /** True when the awaiting approval is a direct build — flips the approve CTA to "Approve Direct Build". */
+  directBuild?: boolean;
 }) {
   const job = pipelineJob(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
@@ -361,7 +364,11 @@ export function Navigator({
         {/* Approve — pinned as the last header item while the plan is awaiting approval. */}
         {st === "awaiting_approval" && approveValue ? (
           <div className="mt-2">
-            <NavigatorApproveButton jobRef={jobRef} value={approveValue} />
+            <NavigatorApproveButton
+              jobRef={jobRef}
+              value={approveValue}
+              directBuild={directBuild}
+            />
           </div>
         ) : null}
         {/* Ship it — the SECOND human gate, pinned the same way once the build + master review finish. */}
