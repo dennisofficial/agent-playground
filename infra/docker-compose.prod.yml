@@ -64,6 +64,11 @@ x-backend-common: &backend-common
     MCP_HUB_BUNDLE_PATH: /srv/atlas/data/engine/mcp-hub-server.mjs
     # CORS origin for the Atlas web console
     FRONTEND_HOST: https://atlas.dltechnologies.co
+    # This backend's own public origin — used to build self-referential URLs, notably the MCP OAuth
+    # redirect_uri (${BACKEND_HOST}/web/mcp/oauth/callback). MUST be the https backend host (Caddy routes it),
+    # NOT the web origin. Without it, BACKEND_HOST defaults to http://localhost:4000 and OAuth consent registers
+    # a dead redirect.
+    BACKEND_HOST: https://api.atlas.dltechnologies.co
     # NOTE: the clustering/rolling-update timings (leader poll 2s, drain grace 120s, realtime slot prefix)
     # are code constants, not env vars — see backend src (leader-election / drain / realtime services).
     NODE_ENV: production

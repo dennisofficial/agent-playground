@@ -5,9 +5,12 @@ import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   McpServerEntity,
+  type McpAuthKind,
+  type McpOAuthBlob,
   type McpSecretValues,
   type McpSurface,
   type StoredMcpConfig,
+  type StoredMcpOAuthConfig,
 } from '../persistence/entities';
 import { decryptSecret, encryptSecret, loadSecretsKey } from '../onboarding/secret-cipher';
 
@@ -32,6 +35,10 @@ export interface McpServerInput {
   env?: McpHeaderInput[];
   surfaces?: McpSurface[];
   enabled?: boolean;
+  /** `'static'` (default) or `'oauth'`. Writing does NOT touch `oauth_enc` — tokens are owned by `McpOAuthService`. */
+  authKind?: McpAuthKind;
+  /** Non-secret OAuth knobs (only meaningful when `authKind='oauth'`). */
+  oauth?: StoredMcpOAuthConfig;
 }
 
 /** A server as returned to a client — NEVER any secret value (secret slots show as `null` in `config`). */
@@ -48,6 +55,12 @@ export interface RedactedMcpServer {
   discoveredTools: string[] | null;
   lastValidatedAt: string | null;
   validationError: string | null;
+  /** `'static'` or `'oauth'`. */
+  authKind: McpAuthKind;
+  /** Only for `authKind='oauth'`: whether consent has completed (a token bundle exists). NEVER the token itself. */
+  oauthConnected: boolean;
+  /** Only for `authKind='oauth'`: whether the last resolve/refresh failed and re-consent is needed. */
+  needsReauth: boolean;
 }
 
 /**
@@ -103,6 +116,10 @@ export class McpServerStore {
       discoveredTools: r.discovered_tools,
       lastValidatedAt: r.last_validated_at ? new Date(r.last_validated_at).toISOString() : null,
       validationError: r.validation_error,
+      authKind: r.auth_kind,
+      // Cheap: a NULL check on the ciphertext column — no decrypt, no token ever leaves the store.
+      oauthConnected: r.auth_kind === 'oauth' && r.oauth_enc != null,
+      needsReauth: r.auth_kind === 'oauth' && r.validation_error != null,
     };
   }
 
@@ -149,10 +166,15 @@ export class McpServerStore {
     applyPairs(input.headers, 'headers');
     applyPairs(input.env, 'env');
 
+    // Non-secret OAuth knobs live in `config`; the tokens/DCR blob in `oauth_enc` is owned by McpOAuthService
+    // and deliberately NOT touched here (so editing e.g. the scope of a connected server keeps its tokens).
+    if (input.oauth && Object.keys(input.oauth).length > 0) config.oauth = input.oauth;
+
     const hasSecrets = !!(secrets.headers || secrets.env);
     const row =
       existing ?? this.servers.create({ org_id: orgId, scope: dbScope, name });
     row.transport = input.transport;
+    row.auth_kind = input.authKind ?? 'static';
     row.config = config;
     row.secrets_enc = hasSecrets ? encryptSecret(JSON.stringify(secrets), this.key()) : null;
     row.surfaces = input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['brain', 'build'];
@@ -234,5 +256,34 @@ export class McpServerStore {
   decryptSecrets(row: McpServerEntity): McpSecretValues {
     if (!row.secrets_enc) return {};
     return JSON.parse(decryptSecret(row.secrets_enc, this.key())) as McpSecretValues;
+  }
+
+  // ── OAuth blob (used ONLY by McpOAuthService) ─────────────────────────────────────────────────
+
+  /** Decrypt a row's `oauth_enc` into an {@link McpOAuthBlob}, or `{}` when it has none. */
+  readOAuthBlob(row: McpServerEntity): McpOAuthBlob {
+    if (!row.oauth_enc) return {};
+    return JSON.parse(decryptSecret(row.oauth_enc, this.key())) as McpOAuthBlob;
+  }
+
+  /**
+   * Encrypt + persist an {@link McpOAuthBlob} onto an EXISTING oauth server (read-modify-write of the single
+   * `oauth_enc` column; no other field touched). Optionally set/clear `validation_error` in the same write —
+   * `beginAuthorization`/`completeAuthorization` clear it, a failed refresh sets `'needs re-auth'`. Returns
+   * `false` (no throw) if the row is gone.
+   */
+  async writeOAuthBlob(
+    orgId: string,
+    dbScope: string,
+    name: string,
+    blob: McpOAuthBlob,
+    opts?: { validationError?: string | null },
+  ): Promise<boolean> {
+    const row = await this.servers.findOne({ where: { org_id: orgId, scope: dbScope, name } });
+    if (!row) return false;
+    row.oauth_enc = encryptSecret(JSON.stringify(blob), this.key());
+    if (opts && 'validationError' in opts) row.validation_error = opts.validationError ?? null;
+    await this.servers.save(row);
+    return true;
   }
 }

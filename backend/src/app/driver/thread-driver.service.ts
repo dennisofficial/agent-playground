@@ -37,7 +37,7 @@ import {
   webShipReviewCard,
 } from '../surface';
 import { CredentialResolver } from '../onboarding';
-import { McpResolver } from '../mcp';
+import { McpResolver, McpOAuthService } from '../mcp';
 import { ConventionProfileResolver, type ResolvedConventions } from '../conventions';
 import { SkillResolver } from '../skills';
 import { LeaderElectionService } from '../cluster';
@@ -183,6 +183,9 @@ export class ThreadDriver implements JobDispatcher {
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
     private readonly creds: CredentialResolver,
     private readonly mcp: McpResolver,
+    // Host-authoritative MCP OAuth: before a build drive, refresh any near-expiry OAuth tokens and, if one
+    // rotated, re-write the sandbox hub config so a long-lived warm sandbox picks up the fresh Bearer.
+    private readonly mcpOAuth: McpOAuthService,
     // This repo's skills for build turns — forwarded on `RunTurnInput.skills` (rendered in-container as
     // SKILL.md the SDK loads), resolved for the 'build' surface exactly like `userMcpServers`.
     private readonly skills: SkillResolver,
@@ -649,6 +652,7 @@ export class ThreadDriver implements JobDispatcher {
     const route = await this.store.route(job);
     const repo = await this.repos.resolve(job);
     const sandbox = await this.ensureSandbox(job);
+    await this.refreshOAuthHubIfRotated(job);
 
     this.logger.log(
       `job=${jobId} on branch ${sandbox.branch} @ ${sandbox.worktreePath}`,
@@ -2879,6 +2883,27 @@ export class ThreadDriver implements JobDispatcher {
       `job=${job.id} using thread sandbox on ${branch}${ensured.wasReset ? ' (cold re-attach)' : ''}`,
     );
     return ensured.sandbox;
+  }
+
+  /**
+   * Host-authoritative OAuth refresh for the hub: a cold/warm re-attach already bakes a fresh Bearer (the
+   * provisioner resolves through `McpResolver` → `currentAccessToken`), but a sandbox that stays WARM and keeps
+   * building past a token's ~expiry never re-provisions. So before each build drive we proactively refresh the
+   * org+repo's OAuth servers; only when a token actually rotated do we re-write the hub config (`kickMcpHubRefresh`)
+   * so the hub reconnects with the new token. Cheap no-op when the repo has no OAuth servers. Best-effort — an
+   * error here never blocks the build (a stale token surfaces later as the hub's own auth failure).
+   */
+  private async refreshOAuthHubIfRotated(job: Job): Promise<void> {
+    if (!this.sandboxes.kickMcpHubRefresh) return;
+    try {
+      const { rotated } = await this.mcpOAuth.refreshForSandbox(job.orgId, job.repoId);
+      if (!rotated) return;
+      const servers = await this.mcp.resolveForSandbox(job.orgId, job.repoId).catch(() => []);
+      await this.sandboxes.kickMcpHubRefresh({ jobId: job.id, servers });
+      this.logger.log(`job=${job.id} re-kicked mcp hub after oauth token rotation`);
+    } catch (err) {
+      this.logger.debug(`oauth hub refresh skipped (continuing): ${String(err)}`);
+    }
   }
 
   /** Summarize a thread's handoff for the next thread — a terse rule-based note built from the

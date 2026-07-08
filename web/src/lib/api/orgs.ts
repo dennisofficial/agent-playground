@@ -187,6 +187,17 @@ export function useDeleteWorktreeSecretFile(orgId: string) {
 
 export type McpTransport = "http" | "sse" | "stdio";
 export type McpSurface = "brain" | "build" | "review";
+export type McpAuthKind = "static" | "oauth";
+export type McpOAuthTokenAuthMethod =
+  | "none"
+  | "client_secret_post"
+  | "client_secret_basic";
+
+/** Non-secret OAuth knobs (only meaningful when `authKind='oauth'`). Tokens themselves are never exposed. */
+export interface McpOAuthConfig {
+  scope?: string;
+  tokenAuthMethod?: McpOAuthTokenAuthMethod;
+}
 
 /** A built-in server, shown read-only so operators know what the agent already has. */
 export interface SystemMcpServer {
@@ -207,6 +218,7 @@ export interface StoredMcpConfig {
   args?: string[];
   headers?: Record<string, string | null>;
   env?: Record<string, string | null>;
+  oauth?: McpOAuthConfig;
 }
 
 /** A user server as returned to the client — NEVER any secret value. */
@@ -223,6 +235,12 @@ export interface McpServer {
   discoveredTools: string[] | null;
   lastValidatedAt: string | null;
   validationError: string | null;
+  /** `'static'` (header/env secrets) or `'oauth'` (interactive OAuth 2.1). */
+  authKind: McpAuthKind;
+  /** OAuth only: consent has completed (a token bundle exists). Never the token itself. */
+  oauthConnected: boolean;
+  /** OAuth only: the last resolve/refresh failed — the operator must reconnect. */
+  needsReauth: boolean;
 }
 
 export interface McpServersView {
@@ -247,6 +265,8 @@ export interface SaveMcpServerBody {
   env?: McpHeaderInput[];
   surfaces?: McpSurface[];
   enabled?: boolean;
+  authKind?: McpAuthKind;
+  oauth?: McpOAuthConfig;
 }
 
 export interface McpValidateResult {
@@ -311,6 +331,21 @@ export function useValidateMcpServer(orgId: string) {
       ),
     onSuccess: () =>
       void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) }),
+  });
+}
+
+/**
+ * Owner-only: begin interactive OAuth consent for an `authKind='oauth'` server. Returns the provider authorize
+ * URL; the caller opens it (a popup) and the provider redirects the browser back to the backend callback, which
+ * completes the token exchange. The console refetches the server list when the popup posts back / closes.
+ */
+export function useStartMcpOAuth(orgId: string) {
+  return useMutation({
+    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
+      webJson<{ authorizeUrl: string }>(
+        `/orgs/${orgId}/mcp-servers/${encodeURIComponent(scope)}/${encodeURIComponent(name)}/oauth/start`,
+        { method: "POST" },
+      ),
   });
 }
 

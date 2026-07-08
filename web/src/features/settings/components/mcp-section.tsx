@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Check,
   CheckCircle2,
+  KeyRound,
   LayoutGrid,
   Link2,
   Lock,
@@ -16,13 +17,16 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Spinner } from "@/components/ui/spinner";
 import { useOrg } from "@/lib/api/me";
 import {
   useDeleteMcpServer,
   useMcpServers,
   useSaveMcpServer,
+  useStartMcpOAuth,
   useValidateMcpServer,
+  type McpAuthKind,
   type McpServer,
   type McpSurface,
   type McpTransport,
@@ -31,6 +35,7 @@ import {
   type StoredMcpConfig,
   type SystemMcpServer,
 } from "@/lib/api/orgs";
+import { qk } from "@/lib/api/query-keys";
 import { useOrgRepos } from "@/lib/api/job-queries";
 
 /**
@@ -498,6 +503,7 @@ function ServerRow({
               {server.name}
             </span>
             <TransportBadge transport={server.transport} />
+            {server.authKind === "oauth" ? <OAuthBadge server={server} /> : null}
             {isOverride ? (
               <span
                 className="flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] text-accent"
@@ -707,6 +713,8 @@ function ServerForm({
 }) {
   const save = useSaveMcpServer(orgId);
   const validate = useValidateMcpServer(orgId);
+  const startOAuth = useStartMcpOAuth(orgId);
+  const qc = useQueryClient();
 
   // Once a new server is committed (via in-form Validate), lock its name like an edit.
   const [committed, setCommitted] = useState(existing !== null);
@@ -728,11 +736,47 @@ function ServerForm({
     existing?.surfaces ?? ["brain", "build"],
   );
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
+  const [authKind, setAuthKind] = useState<McpAuthKind>(
+    existing?.authKind ?? "static",
+  );
+  const [oauthScope, setOauthScope] = useState(existing?.config.oauth?.scope ?? "");
   const [nameErr, setNameErr] = useState("");
   const [formErr, setFormErr] = useState("");
   const [valResult, setValResult] = useState<McpValidateResult | null>(null);
+  // Live consent state for the OAuth Connect flow (the popup posts back here on completion).
+  const [oauthBusy, setOauthBusy] = useState(false);
+  const [oauthMsg, setOauthMsg] = useState<{ ok: boolean; text: string } | null>(
+    null,
+  );
 
   const isRemote = transport === "http" || transport === "sse";
+  const isOAuth = isRemote && authKind === "oauth";
+
+  // Listen for the callback popup's postMessage (cross-origin in prod → the backend targets FRONTEND_HOST) so the
+  // form reflects the result and the server list refetches. A window focus re-poll covers a popup closed manually.
+  useEffect(() => {
+    if (!oauthBusy) return;
+    function onMessage(e: MessageEvent) {
+      const data = e.data as { type?: string; ok?: boolean } | null;
+      if (!data || data.type !== "atlas-mcp-oauth") return;
+      setOauthBusy(false);
+      setOauthMsg(
+        data.ok
+          ? { ok: true, text: "Connected." }
+          : { ok: false, text: "Authorization did not complete." },
+      );
+      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) });
+    }
+    function onFocus() {
+      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) });
+    }
+    window.addEventListener("message", onMessage);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [oauthBusy, orgId, qc]);
   const canSave =
     name.trim().length > 0 &&
     surfaces.length > 0 &&
@@ -771,18 +815,45 @@ function ServerForm({
         return null;
       }
       body.url = url.trim();
-      body.headers = rowsToInput(headers);
+      if (authKind === "oauth") {
+        body.authKind = "oauth";
+        const s = oauthScope.trim();
+        if (s) body.oauth = { scope: s };
+      } else {
+        body.authKind = "static";
+        body.headers = rowsToInput(headers);
+      }
     } else {
       if (!command.trim()) {
         setFormErr("Enter the command to run.");
         return null;
       }
+      body.authKind = "static";
       body.command = command.trim();
       body.args = args.map((a) => a.trim()).filter(Boolean);
       body.env = rowsToInput(env);
     }
     setFormErr("");
     return { name: n, body };
+  }
+
+  /** Save the (oauth) server, then open the provider consent popup — the callback finishes the exchange. */
+  async function onConnect() {
+    const saved = await persist();
+    if (!saved) return;
+    setOauthMsg(null);
+    try {
+      const { authorizeUrl } = await startOAuth.mutateAsync({ scope, name: saved });
+      setOauthBusy(true);
+      const popup = window.open(authorizeUrl, "atlas-mcp-oauth", "width=520,height=680");
+      if (!popup) {
+        setOauthBusy(false);
+        setOauthMsg({ ok: false, text: "Popup blocked — allow popups and retry." });
+      }
+    } catch (e) {
+      setOauthBusy(false);
+      setOauthMsg({ ok: false, text: (e as Error)?.message || "Could not start OAuth." });
+    }
   }
 
   async function persist(): Promise<string | null> {
@@ -886,7 +957,7 @@ function ServerForm({
         })}
       </div>
 
-      {/* Remote: url + headers */}
+      {/* Remote: url + auth (static headers | OAuth) */}
       {isRemote ? (
         <>
           <FormLabel className="mt-4">
@@ -899,13 +970,53 @@ function ServerForm({
             placeholder="https://mcp.example.com/sse"
             className="w-full rounded-md border border-border-2 bg-surface-2 px-3 py-2.5 font-mono text-[13px] text-text outline-none placeholder:text-faint"
           />
-          <PairEditor
-            label="Headers"
-            addLabel="Add header"
-            keyPlaceholder="Header-Name"
-            rows={headers}
-            onChange={setHeaders}
-          />
+
+          <FormLabel className="mt-4">Authentication</FormLabel>
+          <div className="flex gap-1 rounded-md border border-border-2 bg-surface-2 p-1">
+            {(
+              [
+                ["static", "Static headers"],
+                ["oauth", "OAuth"],
+              ] as [McpAuthKind, string][]
+            ).map(([k, label]) => {
+              const on = authKind === k;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setAuthKind(k)}
+                  className="flex-1 rounded-sm py-2 text-center text-[12px] font-semibold transition"
+                  style={{
+                    background: on ? "var(--surface)" : "transparent",
+                    color: on ? "var(--accent)" : "var(--dim)",
+                    boxShadow: on ? "0 1px 3px rgba(0,0,0,.08)" : undefined,
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {isOAuth ? (
+            <OAuthConnect
+              isEdit={isEdit}
+              existing={existing}
+              scope={oauthScope}
+              onScopeChange={setOauthScope}
+              busy={oauthBusy || startOAuth.isPending || save.isPending}
+              message={oauthMsg}
+              onConnect={onConnect}
+            />
+          ) : (
+            <PairEditor
+              label="Headers"
+              addLabel="Add header"
+              keyPlaceholder="Header-Name"
+              rows={headers}
+              onChange={setHeaders}
+            />
+          )}
         </>
       ) : (
         <>
@@ -1069,6 +1180,105 @@ function ServerForm({
       </div>
     </div>
   );
+}
+
+/**
+ * The OAuth branch of the server form: an optional scope, a Connect/Reconnect button that saves the server then
+ * opens the provider consent popup, and a status line. Tokens are never shown — status is derived from the
+ * redacted `oauthConnected` / `needsReauth` flags plus the live popup result.
+ */
+function OAuthConnect({
+  isEdit,
+  existing,
+  scope,
+  onScopeChange,
+  busy,
+  message,
+  onConnect,
+}: {
+  isEdit: boolean;
+  existing: McpServer | null;
+  scope: string;
+  onScopeChange: (v: string) => void;
+  busy: boolean;
+  message: { ok: boolean; text: string } | null;
+  onConnect: () => void;
+}) {
+  const connected = existing?.oauthConnected ?? false;
+  const needsReauth = existing?.needsReauth ?? false;
+  // A brand-new (uncommitted) oauth server has no row yet — the Connect button saves it first, then consents.
+  return (
+    <div className="mt-3">
+      <FormLabel>OAuth scope (optional)</FormLabel>
+      <input
+        value={scope}
+        onChange={(e) => onScopeChange(e.target.value)}
+        placeholder="e.g. read:jira-work (leave blank to use the server’s default)"
+        className="w-full rounded-md border border-border-2 bg-surface-2 px-3 py-2.5 font-mono text-[12px] text-text outline-none placeholder:text-faint"
+      />
+      <div className="mt-3 flex items-center gap-2.5">
+        <button
+          type="button"
+          onClick={onConnect}
+          disabled={busy}
+          className="flex items-center gap-1.5 rounded-md px-3.5 py-2.5 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
+          style={{ background: "var(--accent)" }}
+        >
+          {busy ? <Spinner className="h-3 w-3" /> : <KeyRound size={13} />}
+          {connected || needsReauth ? "Reconnect" : "Connect"}
+        </button>
+        <OAuthStatus
+          connected={connected}
+          needsReauth={needsReauth}
+          message={message}
+        />
+      </div>
+      {!isEdit ? (
+        <div className="mt-2 text-[11px] text-faint">
+          The server is saved first, then a provider window opens for you to authorize.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** A small status pill for an OAuth server: live popup result wins, else the persisted connected/needs-reauth. */
+function OAuthStatus({
+  connected,
+  needsReauth,
+  message,
+}: {
+  connected: boolean;
+  needsReauth: boolean;
+  message: { ok: boolean; text: string } | null;
+}) {
+  if (message) {
+    return (
+      <span
+        className={`flex items-center gap-1.5 text-[11.5px] font-semibold ${message.ok ? "text-green" : "text-red"}`}
+      >
+        {message.ok ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+        {message.text}
+      </span>
+    );
+  }
+  if (needsReauth) {
+    return (
+      <span className="flex items-center gap-1.5 text-[11.5px] font-semibold text-red">
+        <AlertCircle size={13} />
+        Needs re-auth
+      </span>
+    );
+  }
+  if (connected) {
+    return (
+      <span className="flex items-center gap-1.5 text-[11.5px] font-semibold text-green">
+        <CheckCircle2 size={13} />
+        Connected
+      </span>
+    );
+  }
+  return <span className="text-[11.5px] text-faint">Not connected</span>;
 }
 
 // ── Form building blocks ──────────────────────────────────────────────────────────────────────────
@@ -1267,6 +1477,27 @@ function TransportBadge({ transport }: { transport: McpTransport }) {
       }}
     >
       {transport}
+    </span>
+  );
+}
+
+/** A compact OAuth auth badge for a server row: shows the auth type + connection state at a glance. */
+function OAuthBadge({ server }: { server: McpServer }) {
+  const state = server.needsReauth
+    ? { hue: "red", label: "needs re-auth" }
+    : server.oauthConnected
+      ? { hue: "green", label: "connected" }
+      : { hue: "amber", label: "not connected" };
+  return (
+    <span
+      className="flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px]"
+      style={{
+        color: `var(--${state.hue})`,
+        background: `color-mix(in srgb, var(--${state.hue}) 10%, transparent)`,
+        borderColor: `color-mix(in srgb, var(--${state.hue}) 30%, transparent)`,
+      }}
+    >
+      <KeyRound size={10} /> OAuth · {state.label}
     </span>
   );
 }

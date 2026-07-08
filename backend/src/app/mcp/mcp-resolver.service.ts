@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { ResolvedMcpServer } from '../engine/engine.types';
 import type { McpServerEntity, McpSurface } from '../persistence/entities';
+import { McpOAuthService } from './mcp-oauth.service';
 import { McpServerStore } from './mcp-server.store';
 
 /**
@@ -14,7 +15,10 @@ import { McpServerStore } from './mcp-server.store';
  */
 @Injectable()
 export class McpResolver {
-  constructor(private readonly store: McpServerStore) {}
+  constructor(
+    private readonly store: McpServerStore,
+    private readonly oauth: McpOAuthService,
+  ) {}
 
   /**
    * Resolve every enabled server whose `surfaces` include `surface`, for this org + repo, with repo scope
@@ -39,7 +43,7 @@ export class McpResolver {
     }
 
     const out: ResolvedMcpServer[] = [];
-    for (const row of byName.values()) out.push(this.materialize(row));
+    for (const row of byName.values()) out.push(await this.materialize(row));
     return out;
   }
 
@@ -62,12 +66,18 @@ export class McpResolver {
     }
 
     const out: ResolvedMcpServer[] = [];
-    for (const row of byName.values()) out.push(this.materialize(row));
+    for (const row of byName.values()) out.push(await this.materialize(row));
     return out;
   }
 
-  /** Inline the decrypted secret values into a plain `ResolvedMcpServer` (the wire shape for the spec). */
-  private materialize(row: McpServerEntity): ResolvedMcpServer {
+  /**
+   * Inline the decrypted secret values into a plain `ResolvedMcpServer` (the wire shape for the spec). For an
+   * `auth_kind='oauth'` server the host-resolved (refreshed-if-needed) access token is added as an
+   * `Authorization: Bearer …` header — so the in-sandbox hub connects with it exactly like a static header and
+   * needs no OAuth code. A server whose token can't be resolved (needs re-auth) simply carries no Authorization
+   * header; the hub's `tools/list` then surfaces the auth failure and the console shows "needs re-auth".
+   */
+  private async materialize(row: McpServerEntity): Promise<ResolvedMcpServer> {
     const secrets = this.store.decryptSecrets(row);
     const server: ResolvedMcpServer = { name: row.name, transport: row.transport };
 
@@ -80,6 +90,10 @@ export class McpResolver {
       if (row.config.url) server.url = row.config.url;
       const headers = this.inline(row.config.headers, secrets.headers);
       if (headers) server.headers = headers;
+      if (row.auth_kind === 'oauth') {
+        const token = await this.oauth.currentAccessToken(row);
+        if (token) (server.headers ??= {})['Authorization'] = `Bearer ${token}`;
+      }
     }
     return server;
   }

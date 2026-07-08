@@ -3,6 +3,7 @@ import type { EnvService } from '@core/config/env/env.service';
 import type { Repository } from 'typeorm';
 import type { McpServerEntity } from '../persistence/entities';
 import { McpResolver } from './mcp-resolver.service';
+import { McpOAuthService } from './mcp-oauth.service';
 import { McpServerStore } from './mcp-server.store';
 
 const KEY = 'b'.repeat(64);
@@ -42,7 +43,8 @@ function make(): { resolver: McpResolver; store: McpServerStore } {
   const repo = new FakeRepo();
   const env = { get: (k: string) => (k === 'SECRETS_ENCRYPTION_KEY' ? KEY : undefined) } as EnvService;
   const store = new McpServerStore(repo as unknown as Repository<McpServerEntity>, env);
-  return { resolver: new McpResolver(store), store };
+  const oauth = new McpOAuthService(store, env);
+  return { resolver: new McpResolver(store, oauth), store };
 }
 
 describe('McpResolver.resolveForTurn', () => {
@@ -100,6 +102,31 @@ describe('McpResolver.resolveForTurn', () => {
     expect(s.headers).toEqual({ Authorization: 'Bearer sk-123', 'X-Env': 'prod' });
     expect(s.transport).toBe('http');
     expect(s.command).toBeUndefined();
+  });
+
+  it('inlines the OAuth access token as a Bearer header for an oauth server', async () => {
+    await store.write('org1', '*', 'jira', {
+      transport: 'sse',
+      url: 'https://mcp.atlassian.com/v1/sse',
+      authKind: 'oauth',
+    });
+    await store.writeOAuthBlob('org1', '*', 'jira', {
+      tokens: { access_token: 'at-xyz', refresh_token: 'rt', expires_in: 3600 },
+      obtainedAt: Date.now(),
+    });
+    const [s] = await resolver.resolveForTurn('org1', 'repo-1', 'brain');
+    expect(s.transport).toBe('sse');
+    expect(s.headers).toEqual({ Authorization: 'Bearer at-xyz' });
+  });
+
+  it('omits the Authorization header for an oauth server that is not yet connected', async () => {
+    await store.write('org1', '*', 'jira2', {
+      transport: 'sse',
+      url: 'https://mcp.atlassian.com/v1/sse',
+      authKind: 'oauth',
+    });
+    const [s] = await resolver.resolveForTurn('org1', 'repo-1', 'brain');
+    expect(s.headers).toBeUndefined();
   });
 
   it('inlines decrypted secret env values for a stdio server', async () => {
