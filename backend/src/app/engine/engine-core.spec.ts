@@ -698,13 +698,16 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       auth: { secret: 'tok' },
     });
     const opts = captured.options!;
-    // Auto-approve: safe reads + subagent spawning + the task tools (live task list) + web. Writes/Bash
-    // still fall through to canUseTool.
+    // Auto-approve: safe reads + subagent spawning + subagent management (nudge/peek/stop) + the task
+    // tools (live task list) + web. Writes/Bash still fall through to canUseTool.
     expect(opts.allowedTools).toEqual([
       'Read',
       'Glob',
       'Grep',
       'Task',
+      'SendMessage',
+      'TaskOutput',
+      'TaskStop',
       'TaskCreate',
       'TaskUpdate',
       'TaskList',

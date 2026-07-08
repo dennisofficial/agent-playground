@@ -225,7 +225,19 @@ const CONTEXT7_TOOLS = context7Enabled() ? qualifyContext7ToolNames() : [];
 // derives the per-thread checklist from these calls (see web `thread-todos.ts`). `tools` is an allowlist, so
 // they must be named even though task-mode is default-on. They have no FS/git side effects.
 const TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet'];
-const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'Task', ...TASK_TOOLS, ...WEB_TOOLS];
+// Subagent-management tools (SDK 0.3.x). Once a subagent is spawned with a `name` it stays ADDRESSABLE, so
+// the orchestrator's only recovery from a stall/failure is no longer a fresh `Task` that starts from zero:
+//   • SendMessage({to}) — nudge/continue an existing agent WITH ITS ACCUMULATED CONTEXT INTACT (the whole
+//     point: a stalled or transiently-failed subagent — e.g. an API 500 — is recovered by nudging, not by
+//     throwing away everything it learned and respawning);
+//   • TaskOutput({task_id}) — peek a running background agent without blocking;
+//   • TaskStop({task_id}) — cleanly abandon a truly-wedged one before falling back to a respawn.
+// `tools` is a RESTRICTING allowlist, so these must be named for the model to call them at all; auto-approved
+// below so nudging/peeking/stopping never stalls on a permission prompt (like `Task` itself). Deliberately
+// NOT given to REVIEW_TOOLS (a review turn shouldn't fan out) nor to the subagents' own `tools:` arrays
+// (subagents don't recurse).
+const SUBAGENT_MGMT_TOOLS = ['SendMessage', 'TaskOutput', 'TaskStop'];
+const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'Task', ...SUBAGENT_MGMT_TOOLS, ...TASK_TOOLS, ...WEB_TOOLS];
 // A plan turn adds ExitPlanMode — native plan mode's turn-ender and the one place the FULL plan text
 // reaches canUseTool headlessly (the CLI auto-writes the plan file, then calls ExitPlanMode with the
 // plan in its input).
@@ -237,7 +249,7 @@ const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS];
 // boundary is re-applied. Context7 docs tools (read-only, gated off by default) auto-approve too so the
 // `docs` subagent never stalls on a permission prompt for them.
 const AUTO_APPROVE = [
-  'Read', 'Glob', 'Grep', 'Task', ...TASK_TOOLS, ...WEB_TOOLS, ...CONTEXT7_TOOLS,
+  'Read', 'Glob', 'Grep', 'Task', ...SUBAGENT_MGMT_TOOLS, ...TASK_TOOLS, ...WEB_TOOLS, ...CONTEXT7_TOOLS,
 ];
 
 // LSP navigation/rename (`atlas-lsp-ts`, registered per-turn — see sandbox/image/lsp-bridge-options.ts).

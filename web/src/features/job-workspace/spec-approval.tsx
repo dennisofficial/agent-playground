@@ -212,60 +212,6 @@ export function PersistentApprovalBar({
   );
 }
 
-// ── Component 3 — Navigator Ship Callout ───────────────────────────────────────────────────────────
-/**
- * The ship-review counterpart of {@link NavigatorApprovalCallout} — sits above the OUTPUTS region (where
- * the diff/artifacts already live). Title row ("Build reviewed — ready to ship") + a full-width green
- * "Ship it" button.
- */
-export function NavigatorShipCallout({
-  jobRef,
-  value,
-}: {
-  jobRef: JobRef;
-  value: string;
-}) {
-  const { submit, pending, approved, error } = useApproveShip(jobRef, value);
-  return (
-    <div
-      className="mx-1.5 mb-3 rounded-lg border"
-      style={{
-        borderColor: "var(--accent-line)",
-        background: "var(--accent-soft)",
-        padding: "10px 11px",
-      }}
-    >
-      <div className="flex items-center gap-1.5">
-        <ClipboardCheck
-          size={11}
-          strokeWidth={2}
-          style={{ color: "var(--accent)" }}
-          className="shrink-0"
-        />
-        <span
-          className="text-[11px] font-bold"
-          style={{ color: "var(--accent)" }}
-        >
-          Build reviewed — ready to ship
-        </span>
-      </div>
-      <ShipButton
-        onClick={submit}
-        pending={pending}
-        approved={approved}
-        className="mt-[9px] w-full justify-center text-[11px]"
-        style={{ borderRadius: "7px", padding: "7px 0" }}
-        iconSize={12}
-      />
-      {error ? (
-        <p className="mt-1.5 text-[10px] text-red">
-          Couldn’t ship — try again.
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 // ── Navigator header ship button (just the button) ─────────────────────────────────────────────────
 /** The bare full-width green "Ship it" button — pinned as the LAST item in the navigator's sticky
  *  header, exactly like {@link NavigatorApproveButton} does for the plan gate. */

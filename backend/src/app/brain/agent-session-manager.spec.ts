@@ -82,6 +82,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // Milestone-compaction gate reads brain occupancy; a lean session ⇒ skip the compaction turn (no-op here).
     latestBrainOccupancy: vi.fn().mockResolvedValue({ contextTokens: 0, contextLimit: 1_000_000 }),
     // Durable human-input gate (ask_question lifecycle, per-card — stacking is allowed, no single-slot).
+    nextQuestionId: vi.fn().mockResolvedValue('q1'),
     openQuestion: vi.fn().mockResolvedValue({ ok: true }),
     getQuestionCard: vi.fn().mockResolvedValue(null),
     markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
@@ -284,6 +285,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       contextLimit: 1_000_000,
     });
     // Human-input gate defaults: opening succeeds, no question currently open.
+    (mockStore.nextQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q1');
     (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
     (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     // Secure secret-request + MCP-proposal gates default to "opened ok" (resetAllMocks wiped the inline defaults).
@@ -700,8 +702,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // The tool returns the open-PR instructions for the brain to act on in-turn (host no longer opens it).
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     expect((result as { message: string }).message).toContain('gh pr create');
-    // The ledger is stamped later (on PR discovery by the reconciler), NOT synchronously here.
-    expect(mockStore.markLedgerPromoted).not.toHaveBeenCalled();
+    // The direct path stamps the ledger-promotion spine COMPLETE inline (the brain already ran
+    // promote_decisions and preShip committed it), so the boot backstop never re-selects this shipped
+    // row and re-fires a redundant promote + open-PR turn against the already-open PR.
+    expect(mockStore.markLedgerPromoted).toHaveBeenCalledWith(FAKE_JOB_ID);
   });
 
   it('(c) finalize_build: a leak-scan block returns a hard failure (brain must clean the branch)', async () => {
