@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { ArrowRight, FileText, PanelRight } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -33,6 +33,7 @@ import { threadLane } from "./phases";
 import { codexReviewLane } from "./codex-review";
 import { resolveNode } from "./node-resolution";
 import { TranscriptView } from "./conversation";
+import { Composer, type ComposerFooter } from "./composer";
 import { DetailTopBar } from "./detail-top-bar";
 import { ServiceLogView, serviceHeaderSubtitle } from "./service-log-view";
 import { TicketsRaisedPane } from "./tickets-raised-pane";
@@ -216,6 +217,7 @@ export function PhaseView({
       : parentId;
     body = (
       <SubagentView
+        jobRef={jobRef}
         messages={messages}
         liveTurn={liveTurn ?? null}
         parentId={parentId}
@@ -378,10 +380,12 @@ export function PhaseView({
  * Read-only: the operator steers the brain, not the subagent.
  */
 function SubagentView({
+  jobRef,
   messages,
   liveTurn,
   parentId,
 }: {
+  jobRef: JobRef;
   messages: JobMessage[];
   liveTurn: LiveTurn | null;
   parentId: string;
@@ -406,6 +410,22 @@ function SubagentView({
   const active = Boolean(liveTurn?.active && summary?.running);
   const model = summary ? subagentModel(summary.type) : undefined;
 
+  // The read-only footer bar (reused Composer, `subagent` variant): this subagent's OWN model + context ring.
+  // Prefer LIVE occupancy (from `subUsage[parentId]`, while running) over the durable summary (post-turn),
+  // mirroring the subagent card's enrichment in bubbles.tsx.
+  const su = liveTurn?.subUsage?.[parentId];
+  const ctxTokens = su?.contextTokens ?? summary?.contextTokens;
+  const ctxLimit = su?.contextLimit ?? summary?.contextLimit;
+  const ctxModel = su?.contextModel ?? summary?.contextModel;
+  const footer: ComposerFooter = {
+    model: ctxModel ?? subagentModel(summary?.type ?? ""),
+    context:
+      typeof ctxTokens === "number" && typeof ctxLimit === "number" && ctxLimit > 0
+        ? { tokens: ctxTokens, limit: ctxLimit, model: ctxModel }
+        : null,
+  };
+  const [composerHeight, setComposerHeight] = useState(72);
+
   // Tail-follow this run's transcript while it streams — same behavior as the conversation. The stream
   // signature folds in growing text so it keeps following token-by-token, not just on block boundaries.
   const streamSig = blocks.reduce(
@@ -426,7 +446,6 @@ function SubagentView({
             {summary ? <Chip>{summary.type}</Chip> : null}
             {summary?.background ? <Chip>background</Chip> : null}
             {model ? <Chip>{model}</Chip> : null}
-            <Chip>read-only</Chip>
           </div>
 
           {/* The Task prompt that kicked the run off — rendered as the operator's "user message" to the
@@ -453,16 +472,22 @@ function SubagentView({
               </span>
             </div>
           ) : null}
-          <p className="pt-1 font-mono text-[10px] text-faint">
-            read-only view of the subagent — you’re not steering it here
-          </p>
           <div ref={tail.endRef} />
+          {/* Reserve space so the last transcript lines clear the absolute footer bar below. */}
+          <div className="shrink-0" style={{ height: composerHeight }} aria-hidden />
         </div>
       </div>
+      {/* Read-only footer bar — the reused Composer in `subagent` variant (no input/send; model + ring). */}
+      <Composer
+        variant="subagent"
+        jobRef={jobRef}
+        footer={footer}
+        onHeightChange={setComposerHeight}
+      />
       {tail.showJump ? (
         <JumpToLatestButton
           onClick={tail.jumpToLatest}
-          style={{ bottom: 16 }}
+          style={{ bottom: composerHeight + 8 }}
         />
       ) : null}
     </div>
@@ -1238,6 +1263,7 @@ export function SubagentPane({
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         <SubagentView
+          jobRef={jobRef}
           messages={messages}
           liveTurn={liveTurn ?? null}
           parentId={parentId}

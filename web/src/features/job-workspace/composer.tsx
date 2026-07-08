@@ -55,10 +55,12 @@ export function Composer({
   onHeightChange,
   footer,
   readOnly = false,
+  variant = "composer",
 }: {
   jobRef: JobRef;
-  /** The attachment tray API, owned by {@link TranscriptView} so a pane-wide file drop feeds the same tray. */
-  attach: AttachmentsApi;
+  /** The attachment tray API, owned by {@link TranscriptView} so a pane-wide file drop feeds the same tray.
+   *  Optional: the `subagent` variant has no input/attach, so callers there omit it. */
+  attach?: AttachmentsApi;
   placeholder?: string;
   /** Reports the composer overlay's rendered height so the transcript can reserve matching space. */
   onHeightChange?: (height: number) => void;
@@ -66,33 +68,43 @@ export function Composer({
   footer?: ComposerFooter | null;
   /** Read-only lane (not Main): disable the input + Send, keep the footer live. */
   readOnly?: boolean;
+  /**
+   * `"composer"` (default) — the full interactive/read-only composer (input row + footer). `"subagent"` —
+   * a FOOTER-ONLY bar for a subagent's read-only detail pane: no input, no Send/attach; the left shows a
+   * static "read-only sub-agent" label instead of the Plan pill + ＋, the right keeps model + context ring.
+   */
+  variant?: "composer" | "subagent";
 }) {
+  // Footer-only mode for a subagent's read-only detail pane (no input/attach/send).
+  const isSubagent = variant === "subagent";
   const say = useSay(jobRef);
   const sayWithAttachments = useSayWithAttachments(jobRef);
   const stop = useStop(jobRef);
   const sendReviewComments = useSendReviewComments(jobRef);
   const { comments, clearComments } = useReviewComments();
   const [text, setText] = useState("");
+  // `attach` is absent in the subagent variant. Default `attachments` to `[]` so the pre-return computations
+  // (showStop, button-disabled) stay safe; the fn refs are only invoked from input handlers that don't render.
   const {
-    attachments,
+    attachments = [],
     error: attachError,
     add: addFiles,
     remove: removeAttachment,
     clear: clearAttachments,
     addPastedImages,
-  } = attach;
+  } = attach ?? ({} as Partial<AttachmentsApi>);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
-    if (e.target.files) addFiles(Array.from(e.target.files));
+    if (e.target.files) addFiles?.(Array.from(e.target.files));
     e.target.value = ""; // allow re-picking the same file
   }
 
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     if (readOnly) return;
-    if (addPastedImages(e)) e.preventDefault();
+    if (addPastedImages?.(e)) e.preventDefault();
   }
 
   // Is the brain's turn live? Same reconciliation the transcript uses: the SSE live turn, self-healed by the
@@ -152,7 +164,7 @@ export function Composer({
       // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
       // URLs; they're freed on composer unmount (the hook's createdUrlsRef backstop).
       sayWithAttachments.mutate({ text: trimmed, attachments });
-      clearAttachments();
+      clearAttachments?.();
       setText("");
       return;
     }
@@ -180,7 +192,7 @@ export function Composer({
       }}
     >
       <div className="pointer-events-auto mx-auto max-w-[880px]">
-        {readOnly ? null : <CommentTray />}
+        {readOnly || isSubagent ? null : <CommentTray />}
         <div
           className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
           style={{
@@ -188,16 +200,17 @@ export function Composer({
               "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
           }}
         >
-          {!readOnly ? (
+          {!readOnly && !isSubagent ? (
             <AttachmentTray
               attachments={attachments}
-              onRemove={removeAttachment}
+              onRemove={removeAttachment ?? (() => {})}
               className="mb-2"
             />
           ) : null}
-          {!readOnly && attachError ? (
+          {!readOnly && !isSubagent && attachError ? (
             <div className="mb-2 text-[11px] text-red">{attachError}</div>
           ) : null}
+          {isSubagent ? null : (
           <div className={`flex items-start gap-2.5${readOnly ? " opacity-60" : ""}`}>
             <textarea
               ref={textareaRef}
@@ -248,32 +261,42 @@ export function Composer({
               </button>
             )}
           </div>
+          )}
 
-          <div className="mt-2.5 flex items-center gap-2">
-            {/* Plan pill: static design affordance (not wired). The ＋ beside it IS wired (attach/paste). */}
-            <span
-              className={`flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text${readOnly ? " opacity-60" : ""}`}
-            >
-              Plan <ChevronDown size={11} strokeWidth={2.6} />
-            </span>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={readOnly}
-              className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim transition hover:bg-surface-2 hover:text-text${readOnly ? " opacity-60" : ""}`}
-              aria-label="Attach files"
-              title="Attach files or images"
-            >
-              <Plus size={16} strokeWidth={2.2} />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,.pdf,.txt,.md,.markdown,.json,.csv,.log,.xml,.yaml,.yml,.html,.htm,.css,.js,.ts,.tsx"
-              className="hidden"
-              onChange={onPick}
-            />
+          <div className={`${isSubagent ? "" : "mt-2.5 "}flex items-center gap-2`}>
+            {isSubagent ? (
+              // Subagent read-only pane: a static label where the Plan pill + ＋ normally sit.
+              <span className="font-mono text-[11px] text-faint">
+                read-only sub-agent
+              </span>
+            ) : (
+              <>
+                {/* Plan pill: static design affordance (not wired). The ＋ beside it IS wired (attach/paste). */}
+                <span
+                  className={`flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text${readOnly ? " opacity-60" : ""}`}
+                >
+                  Plan <ChevronDown size={11} strokeWidth={2.6} />
+                </span>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={readOnly}
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim transition hover:bg-surface-2 hover:text-text${readOnly ? " opacity-60" : ""}`}
+                  aria-label="Attach files"
+                  title="Attach files or images"
+                >
+                  <Plus size={16} strokeWidth={2.2} />
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.txt,.md,.markdown,.json,.csv,.log,.xml,.yaml,.yml,.html,.htm,.css,.js,.ts,.tsx"
+                  className="hidden"
+                  onChange={onPick}
+                />
+              </>
+            )}
             <div className="flex-1" />
             {/* Live: the model · effort the lane's latest turn ran on (threads `turn_meta.usage`). */}
             {modelLabel ? (
