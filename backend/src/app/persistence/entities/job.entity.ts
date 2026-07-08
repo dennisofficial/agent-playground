@@ -103,9 +103,20 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   kind!: string | null;
 
-  // 'open' | 'planning' | 'awaiting_approval' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled'
+  // 'open' | 'planning' | 'awaiting_approval' | 'running' | 'awaiting_ship_review' | 'paused' | 'done' | 'failed' | 'cancelled'
   @Column({ type: 'text', default: 'open' })
   status!: string;
+
+  /**
+   * The SHIP-REVIEW gate marker — stamped by the ship-review approval click (the "Ship it" button), null
+   * otherwise. The driver's ship gate (between master review finishing and opening the PR) reads this to
+   * tell "just parked, waiting on the operator" (null → flip to `awaiting_ship_review` and stop) from
+   * "operator approved, proceed" (set → fall through to `finalizeBuild`). CLEARED when a NEW build cycle is
+   * dispatched (a fresh plan approval) so the next ship re-gates; a re-drive after ship-approval preserves
+   * it. Only driver builds (feature/bugfix) gate; see the `awaiting_ship_review` status.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  ship_review_approved_at!: Date | null;
 
   /**
    * Whether a live conversational (brain) turn is streaming RIGHT NOW. Toggled around `runChatTurn`

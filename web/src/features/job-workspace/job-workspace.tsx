@@ -26,6 +26,7 @@ import { ROUTES } from "@/lib/routes";
 import { pipelineJob, type JobRef } from "@/lib/api/job-api";
 import {
   APPROVE_ACTION_ID,
+  SHIP_ACTION_ID,
   type JobKind,
   type JobStatus,
   type PipelineJob,
@@ -36,7 +37,7 @@ import { Navigator, type JobMeta } from "./navigator";
 import { Conversation } from "./conversation";
 import { MarkdownActionsProvider } from "./markdown";
 import { PhaseView, EmptyPane, SubagentPane } from "./step-view";
-import { PersistentApprovalBar } from "./spec-approval";
+import { PersistentApprovalBar, PersistentShipBar } from "./spec-approval";
 import { useSelectedNode } from "./use-selected-node";
 import { ReviewCommentsProvider } from "./review-comments";
 import { SelectionCommentPopover } from "./selection-comment-popover";
@@ -123,10 +124,21 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       ? "triaging"
       : "planning";
 
+  // The LAST plan-approval card in the log (kind `plan`/`direct`/undefined — never the ship-review card,
+  // which is a distinct gate with its own finder below). Also feeds the "plan" detail-pane doc viewer.
   const approvalCard = useMemo<WebApprovalCard | null>(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const card = messages[i].card;
-      if (card?.type === "approval_card") return card;
+      if (card?.type === "approval_card" && card.kind !== "ship") return card;
+    }
+    return null;
+  }, [messages]);
+
+  // The LAST ship-review card in the log (kind `ship`) — posted once the build + master review finish.
+  const shipCard = useMemo<WebApprovalCard | null>(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const card = messages[i].card;
+      if (card?.type === "approval_card" && card.kind === "ship") return card;
     }
     return null;
   }, [messages]);
@@ -153,6 +165,22 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   }, [approvalCard, job, status]);
   const awaitingApproval =
     status === "awaiting_approval" && Boolean(approveValue);
+
+  // The ship-review gate's surfaces render the same way, off the ship card's own `{ jobId }` value —
+  // reconstructed from the job alone when no `approval_card` message is in the log yet (a job can reach
+  // `awaiting_ship_review` before that durable card lands).
+  const shipValue = useMemo<string>(() => {
+    const fromCard = shipCard?.actions.find(
+      (a) => a.actionId === SHIP_ACTION_ID,
+    )?.value;
+    if (fromCard) return fromCard;
+    if (job && status === "awaiting_ship_review") {
+      return JSON.stringify({ jobId: job.jobId });
+    }
+    return "";
+  }, [shipCard, job, status]);
+  const awaitingShip =
+    status === "awaiting_ship_review" && Boolean(shipValue);
   const specCount = context?.specs?.length ?? 0;
   const stepCount =
     job?.threads.reduce((n, t) => n + (t.steps?.length ?? 0), 0) ?? 0;
@@ -190,6 +218,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
             detailNode={detailNode}
             jobRef={ref}
             approveValue={awaitingApproval ? approveValue : ""}
+            shipValue={awaitingShip ? shipValue : ""}
             onConversation={onConversation}
             onSelectNode={onSelectNode}
             onRename={onRename}
@@ -292,6 +321,8 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
                   specCount={specCount}
                   stepCount={stepCount}
                 />
+              ) : awaitingShip ? (
+                <PersistentShipBar jobRef={ref} value={shipValue} />
               ) : null}
             </Panel>
           </Group>

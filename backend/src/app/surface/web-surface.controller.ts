@@ -42,6 +42,7 @@ import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
+  SHIP_ACTION_ID,
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
 import {
@@ -95,6 +96,9 @@ const VALID_ACTION_IDS = new Set([
   APPROVE_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   DENY_ACTION_ID,
+  // The ship-review gate's "Ship it" button — same endpoint, but the `approval$` bridge routes it to the
+  // driver's ship-resume instead of a plan verdict (see WebSurfaceModule).
+  SHIP_ACTION_ID,
 ]);
 /** Author fields for an operator-authored web message — the REAL signed-in user (display name falls back
  *  to email), so the brain's `<user name=…>` attribution names the actual person, not a generic "Operator".

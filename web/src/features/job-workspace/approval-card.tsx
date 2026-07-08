@@ -16,6 +16,7 @@ import {
   DENY_ACTION_ID,
   type ApprovalActionId,
   type WebApprovalCard,
+  type WebCardAction,
   type WebVerdictCard,
 } from "@/lib/api/types";
 
@@ -41,6 +42,13 @@ export function ApprovalCardView({
   jobRef: JobRef;
   onOpenPlan?: () => void;
 }) {
+  // The ship-review gate reuses this same `approval_card` payload (discriminated by `kind: 'ship'`) but
+  // is a much smaller card — a title/summary + a single "Ship it" button, rendered generically off
+  // `card.actions` (never a hardcoded action id, so the card doesn't drift from whatever the backend sends).
+  if (card.kind === "ship") {
+    return <ShipCardView card={card} jobRef={jobRef} />;
+  }
+
   const value =
     card.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ??
     card.actions[0]?.value ??
@@ -120,6 +128,86 @@ export function ApprovalCardView({
       <div className="border-t border-border bg-surface-2 px-4 py-3">
         <VerdictButtons jobRef={jobRef} value={value} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * The inline ship-review card — the SECOND human gate (after the plan-approval card above), posted once
+ * the build + master review finish. Just a title/summary and a single "Ship it" button; there is no
+ * "Deny"/"Request changes" — declining is done via prose in chat, same as the plan gate.
+ */
+function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef }) {
+  return (
+    <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
+      <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <ClipboardCheck size={15} className="text-accent" />
+        <span className="text-[13px] font-semibold text-text">
+          {card.title}
+        </span>
+        <div className="flex-1" />
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-mono text-[9.5px]"
+          style={{
+            color: "var(--purple)",
+            borderColor: "color-mix(in srgb, var(--purple) 38%, transparent)",
+          }}
+        >
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{ background: "var(--purple)" }}
+          />
+          awaiting ship
+        </span>
+      </div>
+
+      {card.summary ? (
+        <div className="px-4 py-3">
+          <Markdown>{card.summary}</Markdown>
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2 border-t border-border bg-surface-2 px-4 py-3">
+        {card.actions.map((action) => (
+          <ShipActionButton key={action.actionId} jobRef={jobRef} action={action} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** One ship-card action button — POSTs the verdict endpoint with the card action's OWN `actionId`/`value`
+ *  (never a hardcoded constant), so the card renders generically off whatever `actions` the backend sends. */
+function ShipActionButton({
+  jobRef,
+  action,
+}: {
+  jobRef: JobRef;
+  action: WebCardAction;
+}) {
+  const approve = useApprove(jobRef);
+  return (
+    <div className="flex flex-col gap-2">
+      <Button
+        size="sm"
+        variant={action.style === "danger" ? "danger" : "primary"}
+        loading={approve.isPending}
+        loadingText="Shipping…"
+        onClick={() =>
+          approve.mutate({
+            actionId: action.actionId,
+            value: action.value,
+            ruledBy: RULED_BY,
+          })
+        }
+      >
+        {action.label}
+      </Button>
+      {approve.isError ? (
+        <p className="text-[11.5px] text-red">
+          Could not ship. Try again.
+        </p>
+      ) : null}
     </div>
   );
 }

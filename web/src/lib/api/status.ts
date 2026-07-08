@@ -30,6 +30,13 @@ export const STATUS_META: Record<JobStatus, StatusMeta> = {
     color: "var(--slate)",
     pulse: false,
   },
+  // The SECOND human gate — the build + master review are done; the operator just needs to eyeball the
+  // diff and click "Ship it". Same restrained slate as every other "needs you" gate.
+  awaiting_ship_review: {
+    label: "Ready to ship",
+    color: "var(--slate)",
+    pulse: false,
+  },
   done: { label: "Done", color: "var(--green)", pulse: false },
   triaging: { label: "Triaging", color: "var(--slate)", pulse: true },
   paused: { label: "Paused", color: "var(--faint)", pulse: false },
@@ -63,6 +70,8 @@ export function toJobStatus(status: WireJobStatus): JobStatus {
       return "plan_review";
     case "awaiting_approval":
       return "awaiting_approval";
+    case "awaiting_ship_review":
+      return "awaiting_ship_review";
     case "done":
       return "done";
     case "paused":

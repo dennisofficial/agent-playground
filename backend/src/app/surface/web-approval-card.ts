@@ -9,7 +9,12 @@
  */
 
 import type { DecisionApprovalCard, ApprovalDecision } from './approval-blocks';
-import { APPROVE_ACTION_ID, DENY_ACTION_ID, VIEW_PLAN_ACTION_ID } from './approval-blocks';
+import {
+  APPROVE_ACTION_ID,
+  DENY_ACTION_ID,
+  SHIP_ACTION_ID,
+  VIEW_PLAN_ACTION_ID,
+} from './approval-blocks';
 
 /** A single action button in the web card. */
 export interface WebCardAction {
@@ -28,8 +33,13 @@ export interface WebApprovalCard {
   type: 'approval_card';
   jobId: string;
   decisionRecordId?: string;
-  /** `plan` (full ceremony) or `direct` (fast path) — the web labels the list "Sections" vs "Changes". */
-  kind?: 'plan' | 'direct';
+  /**
+   * Which gate the card is for:
+   * - `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval (Approve/Deny buttons).
+   * - `ship` — the ship-review gate (a single "Ship it" button; `threads`/`decisions` empty).
+   * The web labels the list "Sections" vs "Changes"; a `ship` card renders just the ship action.
+   */
+  kind?: 'plan' | 'direct' | 'ship';
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -96,6 +106,37 @@ export function webApprovalCard(card: DecisionApprovalCard): WebApprovalCard {
     threads: card.threads,
     ...(card.planUrl ? { planUrl: card.planUrl } : {}),
     actions,
+  };
+}
+
+/**
+ * Build the SHIP-REVIEW gate card — the terminal human gate. A single "Ship it" primary button whose
+ * `value` carries only `{ jobId }` (no decision record: the click just resumes the driver, it doesn't
+ * re-rule anything). Reuses the `approval_card` payload type (so the web's inline card renderer needs no
+ * new branch — it renders `actions` generically), discriminated by `kind: 'ship'`.
+ */
+export function webShipReviewCard(input: {
+  jobId: string;
+  title: string;
+  summary: string;
+}): WebApprovalCard {
+  const value = JSON.stringify({ jobId: input.jobId });
+  return {
+    type: 'approval_card',
+    jobId: input.jobId,
+    kind: 'ship',
+    title: input.title,
+    summary: input.summary,
+    decisions: [],
+    threads: [],
+    actions: [
+      {
+        actionId: SHIP_ACTION_ID,
+        label: 'Ship it',
+        style: 'primary',
+        value,
+      },
+    ],
   };
 }
 

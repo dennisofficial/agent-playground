@@ -102,6 +102,21 @@ function makeStore(state: StoreState): {
       state.job.prUrl = prUrl;
       state.job.status = 'done';
     }),
+    // ── ship-review gate fakes ───────────────────────────────────────────────────────────────────────
+    parkForShipReview: vi.fn(async (_id: string) => {
+      if (state.job.status !== 'running') return false;
+      state.job.status = 'awaiting_ship_review';
+      return true;
+    }),
+    approveShip: vi.fn(async (_id: string) => {
+      if (state.job.status !== 'awaiting_ship_review') return false;
+      state.job.shipReviewApprovedAt = new Date();
+      state.job.status = 'running';
+      return true;
+    }),
+    clearShipApproval: vi.fn(async (_id: string) => {
+      state.job.shipReviewApprovedAt = null;
+    }),
     // Decision-ledger promotion spine (no-op fakes — the ledger turn itself is stubbed via ModuleRef).
     claimLedgerPromotion: vi.fn(async () => true),
     setLedgerPromotionStatus: vi.fn(async () => undefined),
@@ -672,6 +687,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     currentBranch: null,
     prUrl: null,
     prNumber: null,
+    shipReviewApprovedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -729,6 +745,11 @@ function assemble(
     turn?: TurnRunnerService;
     turnRegistry?: Pick<import('../sandbox/turn-registry.service').TurnRegistry, 'listRunning'>;
     judge?: LiveVerificationJudge & { calls: number };
+    /** SHIP-REVIEW GATE: feature/bugfix builds now PARK before the PR (awaiting the operator's "Ship it").
+     *  Default true → the harness auto-clicks "Ship it" the instant the gate parks, so the many
+     *  build→ship pipeline tests still reach `done` without each re-encoding the gate. The dedicated
+     *  ship-gate tests pass `false` to assert the park + drive the approval by hand. */
+    autoShipApprove?: boolean;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -925,6 +946,21 @@ function assemble(
     judge,
     taskSink,
   );
+  // SHIP-REVIEW GATE auto-approve: unless a test opts out, simulate the operator clicking "Ship it" the
+  // instant the gate parks — so the build→ship pipeline tests keep reaching `done`. The re-drive fast-
+  // forwards the already-`done` threads (no re-execute/re-materialize) and ships.
+  if (opts.autoShipApprove !== false) {
+    (store.parkForShipReview as ReturnType<typeof vi.fn>).mockImplementation(async (jobId: string) => {
+      if (state.job.status !== 'running') return false;
+      state.job.status = 'awaiting_ship_review';
+      // Fire the "Ship it" on a MACROtask (not a microtask): the parking drive must fully unwind and clear
+      // its `active` guard first, else the re-drive is dropped as a duplicate and the job wedges at running.
+      setTimeout(() => {
+        void driver.resolveShipApprovalDurably(jobId, 'auto-test');
+      }, 0);
+      return true;
+    });
+  }
   return {
     driver,
     store,
@@ -1235,7 +1271,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       (s) =>
         ['chat', 'thinking', 'tool'].includes(s.block.kind) &&
         s.block.meta?.prReviewId == null &&
-        s.block.meta?.shipId == null,
+        s.block.meta?.shipId == null &&
+        // Operator-facing system notices (e.g. the ship-review "Shipping…" notice) are not build
+        // transcript — they carry no phaseId, like the halt cards.
+        s.block.meta?.source !== 'system_operator',
     );
     expect(transcript.length).toBeGreaterThan(0);
     expect(
@@ -2908,6 +2947,80 @@ async function flushUntil(pred: () => boolean, cap = 300): Promise<void> {
     await new Promise((r) => setTimeout(r, 0));
   }
 }
+
+// ── ship-review gate: park a reviewed build for the operator's "Ship it" before opening the PR ──────
+
+describe('ThreadDriver — ship-review gate (human approval before the PR)', () => {
+  function baseState(job = makeJob({ shipReviewApprovedAt: null })): StoreState {
+    return {
+      job,
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+  }
+
+  it('parks a feature build at awaiting_ship_review after the threads finish — no PR yet', async () => {
+    const state = baseState();
+    const h = assemble(state, { autoShipApprove: false });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+
+    expect(state.job.status).toBe('awaiting_ship_review');
+    expect(h.store.parkForShipReview).toHaveBeenCalled();
+    // The build fully ran (all threads done) but NOTHING shipped — no PR seed, job not done.
+    expect(state.threads.every((s) => s.status === 'done')).toBe(true);
+    expect(h.shipSeeds).toHaveLength(0);
+    expect(state.job.prUrl).toBeNull();
+  });
+
+  it('ships once the operator approves — resolveShipApprovalDurably re-drives to the PR', async () => {
+    const state = baseState();
+    const h = assemble(state, { autoShipApprove: false });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+
+    const acted = await h.driver.resolveShipApprovalDurably(state.job.id, 'dennis');
+    expect(acted).toBe(true);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
+    expect(h.shipSeeds).toEqual([
+      { jobId: state.job.id, branch: 'atlas/feature-job-abcd' },
+    ]);
+    // The re-drive fast-forwarded the already-done threads — it did NOT re-execute or re-review them.
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2);
+    expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(2);
+  });
+
+  it('a second (stale/double) ship approval is a no-op once the job has shipped', async () => {
+    const state = baseState();
+    const h = assemble(state, { autoShipApprove: false });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+    await h.driver.resolveShipApprovalDurably(state.job.id, 'dennis');
+    await flushUntil(() => state.job.status === 'done');
+
+    const again = await h.driver.resolveShipApprovalDurably(state.job.id, 'dennis');
+    expect(again).toBe(false);
+  });
+
+  it('does NOT gate an event-kind build — it ships straight through', async () => {
+    const state = baseState(makeJob({ kind: 'event', shipReviewApprovedAt: null }));
+    const h = assemble(state, { autoShipApprove: false });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(h.store.parkForShipReview).not.toHaveBeenCalled();
+    expect(h.shipSeeds).toHaveLength(1);
+  });
+});
 
 // ── 401 auth recovery: pause (not fail) + ping-to-resume the SAME session, durable ─────────────────
 

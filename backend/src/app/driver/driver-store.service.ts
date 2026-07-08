@@ -226,6 +226,69 @@ export class DriverStoreService {
     await this.jobs.update({ id: jobId }, { current_branch: branch });
   }
 
+  // ── ship-review gate (the terminal human gate: reviewed diff → operator clicks "Ship it" → PR) ────────
+
+  /**
+   * PARK the job at the ship-review gate in one txn: flip `running → awaiting_ship_review` and post the
+   * durable "Ship it" card. The status flip is CONDITIONAL on `running`, so it's the single-park guard — a
+   * concurrent drive (or a re-drive) that finds the job already parked affects 0 rows and skips the card,
+   * returning false. Returns whether THIS caller parked it.
+   */
+  async parkForShipReview(
+    jobId: string,
+    card: Record<string, unknown>,
+    summary: string,
+  ): Promise<boolean> {
+    return this.dataSource.transaction(async (m) => {
+      const res = await m
+        .getRepository(JobEntity)
+        .createQueryBuilder()
+        .update(JobEntity)
+        .set({ status: 'awaiting_ship_review' })
+        .where('id = :jobId', { jobId })
+        .andWhere("status = 'running'")
+        .execute();
+      if ((res.affected ?? 0) === 0) return false;
+      const messages = m.getRepository(MessageEntity);
+      await messages.save(
+        messages.create({
+          job_id: jobId,
+          author: 'Atlas',
+          author_id: 'atlas',
+          author_bot_id: 'atlas',
+          text: summary,
+          kind: 'card',
+          ts: `ship-review:${jobId}`,
+          card,
+        }),
+      );
+      return true;
+    });
+  }
+
+  /**
+   * Record the ship-review APPROVAL (the "Ship it" click): stamp `ship_review_approved_at` and flip
+   * `awaiting_ship_review → running` so the driver re-drives and re-reaches `finalizeBuild`. CONDITIONAL on
+   * `awaiting_ship_review` — the idempotency guard, so a stale/double click (or one racing the live path) is
+   * a no-op. Returns whether it acted.
+   */
+  async approveShip(jobId: string): Promise<boolean> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ ship_review_approved_at: () => 'now()', status: 'running' })
+      .where('id = :jobId', { jobId })
+      .andWhere("status = 'awaiting_ship_review'")
+      .execute();
+    return (res.affected ?? 0) > 0;
+  }
+
+  /** Clear the ship-review approval marker so the NEXT build cycle re-gates. Called when a fresh build is
+   *  dispatched (a new plan approval) — a re-drive after ship-approval must NOT clear it. */
+  async clearShipApproval(jobId: string): Promise<void> {
+    await this.jobs.update({ id: jobId }, { ship_review_approved_at: null });
+  }
+
   /** Record the opened PR (url + number) + flip the thread to its terminal `done`. */
   async setPrReady(
     jobId: string,
@@ -1104,6 +1167,7 @@ function toJob(row: JobEntity): Job {
     currentBranch: row.current_branch,
     prUrl: row.pr_url,
     prNumber: row.pr_number,
+    shipReviewApprovedAt: row.ship_review_approved_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

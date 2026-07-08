@@ -30,6 +30,7 @@ describe('deriveNeedsYou', () => {
 
   it('is true when idle and waiting on the operator', () => {
     expect(deriveNeedsYou('awaiting_approval', false, false)).toBe(true);
+    expect(deriveNeedsYou('awaiting_ship_review', false, false)).toBe(true); // parked at the ship gate
     expect(deriveNeedsYou('paused', false, false)).toBe(true);
     expect(deriveNeedsYou('planning', false, false)).toBe(true); // grilling, between turns
     expect(deriveNeedsYou('open', false, false)).toBe(true);

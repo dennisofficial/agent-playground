@@ -1,4 +1,5 @@
 import { Module, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
@@ -10,6 +11,7 @@ import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
+  SHIP_ACTION_ID,
 } from './approval-blocks';
 import { parseWebApprovalMeta } from './web-approval-card';
 import { WebSurfaceController } from './web-surface.controller';
@@ -52,12 +54,22 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
     private readonly surface: WebSurface,
     private readonly approvals: DecisionApprovalService,
     private readonly asm: AgentSessionManager,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   onApplicationBootstrap(): void {
     this.approvalSub = this.surface.approval$.subscribe(({ actionId, value, ruledBy, note }) => {
       const meta = parseWebApprovalMeta(value);
       if (!meta) return;
+
+      // SHIP-REVIEW gate: not a plan verdict — resume the driver so it re-reaches `finalizeBuild` and ships.
+      // Resolved lazily via ModuleRef (the surface must not import the driver — that would form a cycle,
+      // DriverModule already depends on the surface for CHAT_SURFACE). Idempotent: `resolveShipApprovalDurably`
+      // only acts while the job is `awaiting_ship_review`, so a stale/double click is a no-op.
+      if (actionId === SHIP_ACTION_ID) {
+        void resolveShipApproval(this.moduleRef, meta.jobId, ruledBy).catch(() => undefined);
+        return;
+      }
 
       const verdict = actionIdToVerdict(actionId);
       if (!verdict) return;
@@ -76,6 +88,22 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
   onApplicationShutdown(): void {
     this.approvalSub?.unsubscribe();
   }
+}
+
+/**
+ * Resume a ship-review gate approval. Lazily imports {@link ThreadDriver} (a dynamic import keeps the
+ * surface⇄driver dependency out of module load — mirrors how the driver resolves the brain) and resolves
+ * it from the app-wide DI graph. `resolveShipApprovalDurably` is itself idempotent (acts only while the
+ * job is `awaiting_ship_review`), so a stale/double click is a safe no-op.
+ */
+async function resolveShipApproval(
+  moduleRef: ModuleRef,
+  jobId: string,
+  ruledBy: string,
+): Promise<void> {
+  const { ThreadDriver } = await import('../driver/thread-driver.service.js');
+  const driver = moduleRef.get(ThreadDriver, { strict: false });
+  await driver.resolveShipApprovalDurably(jobId, ruledBy);
 }
 
 function actionIdToVerdict(actionId: string): ApprovalVerdict | undefined {

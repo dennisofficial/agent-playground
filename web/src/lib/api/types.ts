@@ -51,6 +51,10 @@ export const APPROVE_ACTION_ID = "atlas_approval:approve";
 export const REQUEST_CHANGES_ACTION_ID = "atlas_approval:request_changes";
 export const DENY_ACTION_ID = "atlas_approval:deny";
 export const VIEW_PLAN_ACTION_ID = "atlas_approval:view_plan";
+/** The SHIP-REVIEW gate's "Ship it" button — the SECOND human gate (after {@link APPROVE_ACTION_ID} at the
+ *  plan stage), clicked while the job is `awaiting_ship_review`. POSTs to the SAME `/approve` endpoint with
+ *  a `value` of just `{ jobId }` (no decision record — nothing to re-rule, just resume the build). */
+export const SHIP_ACTION_ID = "atlas_approval:ship";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
@@ -79,8 +83,11 @@ export interface WebApprovalCard {
   type: "approval_card";
   jobId: string;
   decisionRecordId?: string;
-  /** `plan` (full ceremony) or `direct` (fast path) — labels the list "Sections" vs "Changes". */
-  kind?: "plan" | "direct";
+  /**
+   * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
+   * vs "Changes". `ship` — the ship-review gate (a single "Ship it" button; `threads`/`decisions` empty).
+   */
+  kind?: "plan" | "direct" | "ship";
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -518,6 +525,7 @@ export type JobStatus =
   | "planning"
   | "plan_review"
   | "awaiting_approval"
+  | "awaiting_ship_review"
   | "done"
   | "triaging"
   | "paused"

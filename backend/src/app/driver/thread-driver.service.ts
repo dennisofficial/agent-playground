@@ -34,6 +34,7 @@ import {
   TASK_EVENT_SINK,
   type TaskEventSink,
   laneFor,
+  webShipReviewCard,
 } from '../surface';
 import { CredentialResolver } from '../onboarding';
 import { McpResolver } from '../mcp';
@@ -280,6 +281,9 @@ export class ThreadDriver implements JobDispatcher {
     this.logger.log(
       `dispatch thread=${job.id} kind=${job.kind} title="${job.title}"`,
     );
+    // A fresh build cycle (a new plan approval) — clear any prior ship-review approval so this build's ship
+    // re-gates. A re-drive AFTER ship-approval goes through `drive()` directly (not `dispatch`), preserving it.
+    await this.store.clearShipApproval(job.id).catch(() => undefined);
     void this.drive(job.id).catch((err) => {
       this.logger.error(
         `drive job=${job.id} crashed: ${err instanceof Error ? err.stack : err}`,
@@ -724,7 +728,75 @@ export class ThreadDriver implements JobDispatcher {
       );
       return;
     }
+    // SHIP-REVIEW GATE (the terminal human gate): for driver builds (feature/bugfix), all builders +
+    // master review are now `done` but nothing is committed-for-ship/pushed/PR'd yet. Park and wait for the
+    // operator to eyeball the diff and click "Ship it" before opening the PR. `job` was loaded at the top of
+    // runJob, so `shipReviewApprovedAt` reflects the click that re-drove us: null → park + return (no ship);
+    // set → fall through and ship. `resolveShipApprovalDurably` flips back to `running` + re-drives, so this
+    // re-reaches finalizeBuild (the done threads fast-forward). Other kinds ship straight through as before.
+    if (shipGateApplies(job) && job.shipReviewApprovedAt == null) {
+      await this.parkForShipReview(job, route);
+      return;
+    }
     await this.finalizeBuild(job, record, route, repo, sandbox);
+  }
+
+  /**
+   * Park the job at the ship-review gate: flip `running → awaiting_ship_review` + post the durable "Ship it"
+   * card (one txn, single-park-guarded in the store), then a live notice + a passive brain milestone. A
+   * concurrent drive that already parked it makes this a no-op (store returns false).
+   */
+  private async parkForShipReview(job: Job, route: JobRoute): Promise<void> {
+    const title = job.title ?? 'this build';
+    const summary =
+      'All threads built and master review passed. Review the diff, then click **Ship it** to open the PR.';
+    const card = webShipReviewCard({ jobId: job.id, title, summary });
+    const parked = await this.store.parkForShipReview(
+      job.id,
+      card as unknown as Record<string, unknown>,
+      summary,
+    );
+    if (!parked) return;
+    this.logger.log(`job=${job.id} parked at ship-review gate — awaiting operator "Ship it"`);
+    await this.post(
+      route,
+      `:mag: Build reviewed — ready to ship *${title}*. Review the diff, then click *Ship it* to open the PR.`,
+    ).catch(() => undefined);
+    await this.recordMilestone(
+      job.id,
+      `ship-review:${job.id}`,
+      'The build finished and passed master review; it is parked awaiting your ship-review approval before the PR opens.',
+    ).catch(() => undefined);
+  }
+
+  /**
+   * SHIP-REVIEW APPROVAL (the "Ship it" click, routed here by the web surface bridge). Stamp the approval
+   * marker + flip `awaiting_ship_review → running` (idempotent in the store — acts only while parked, so a
+   * stale/double click is a no-op), then re-drive: `runJob` fast-forwards the `done` threads, re-reaches the
+   * gate with the marker now set, and ships. Returns whether it acted.
+   */
+  async resolveShipApprovalDurably(jobId: string, ruledBy: string): Promise<boolean> {
+    const acted = await this.store.approveShip(jobId);
+    if (!acted) {
+      this.logger.warn(
+        `ship approval for job=${jobId} by ${ruledBy}: not awaiting ship review — no-op`,
+      );
+      return false;
+    }
+    this.logger.log(`ship approval for job=${jobId} by ${ruledBy} — re-driving to ship`);
+    await this.blockSink
+      .appendBlock(jobId, {
+        kind: 'chat',
+        text: ':rocket: Shipping — opening the pull request.',
+        meta: { source: 'system_operator' },
+      })
+      .catch(() => undefined);
+    void this.drive(jobId).catch((err) =>
+      this.logger.error(
+        `ship-approve drive job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
+      ),
+    );
+    return true;
   }
 
   /**
@@ -3231,6 +3303,13 @@ export function extractOrientation(text: string | undefined): string | null {
 
 function sandboxKey(sandbox: FeatureSandbox): string {
   return `${sandbox.repoId}--${sandbox.branch}`;
+}
+
+/** The ship-review gate applies only to the driver builds the operator drives to a PR — `feature` + `bugfix`.
+ *  Other kinds ship straight through: `onboarding` never PRs, `review` reviews an external PR (never builds),
+ *  and an `event`-seeded build is an autonomous CI/notification response the operator isn't gating by hand. */
+function shipGateApplies(job: Job): boolean {
+  return job.kind === 'feature' || job.kind === 'bugfix';
 }
 
 /** Pull the engine's flagged off-spec deviations out of a step report ('DEVIATION:' lines, #7). */

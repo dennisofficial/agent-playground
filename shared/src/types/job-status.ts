@@ -17,6 +17,10 @@ export type JobStatus =
   // operator gate is `awaiting_approval`, reached only when Atlas calls `finalize_plan`.
   | 'awaiting_approval' // decision record + track list posted; waiting on the operator
   | 'running' // tracks executing
+  | 'awaiting_ship_review' // all builders + master review finished; the reviewed diff is parked waiting on
+  // the operator to eyeball it and click "Ship it" before the PR is opened. The SECOND human gate (after
+  // `awaiting_approval` at the plan stage) — a needs-you state. Only driver builds (feature/bugfix) reach
+  // it; the direct-build fast path and `review` jobs never do. Approval flips back to `running` + re-drives.
   | 'paused' // a turn hit a credential/401 error; the live session is saved, waiting on a re-ping to
   // resume (NOT auto-resumed on boot — it would just 401 again). Durable: the unfinished step keeps its
   // `session_id`, so a ping continues the SAME session instead of starting from scratch.

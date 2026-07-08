@@ -1673,6 +1673,7 @@ function toThread(row: JobEntity): Job {
     currentBranch: row.current_branch,
     prUrl: row.pr_url,
     prNumber: row.pr_number,
+    shipReviewApprovedAt: row.ship_review_approved_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

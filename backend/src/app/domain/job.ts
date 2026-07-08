@@ -99,6 +99,10 @@ export interface Job {
   prUrl: string | null;
   /** The opened PR number — what the merge poll queries GitHub with (null until opened). */
   prNumber: number | null;
+  /** The ship-review gate marker: set when the operator clicked "Ship it", null otherwise. The driver's
+   *  ship gate reads it to distinguish "just parked" (null → park at `awaiting_ship_review`) from
+   *  "approved, proceed" (set → ship). Cleared when a new build is dispatched. See {@link JobStatus}. */
+  shipReviewApprovedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

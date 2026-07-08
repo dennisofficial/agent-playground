@@ -106,6 +106,8 @@ const STATUS_SHAPE: Record<
   plan_review: "reviewing",
   running: "working",
   awaiting_approval: "waiting",
+  // The ship-review gate — the second "your move" bullseye, same shape as the plan-approval gate.
+  awaiting_ship_review: "waiting",
   paused: "paused",
   failed: "failed",
   done: "done",

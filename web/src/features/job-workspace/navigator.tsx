@@ -38,7 +38,11 @@ import {
   haltThreadIdx,
 } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
-import { NavigatorApproveButton } from "./spec-approval";
+import {
+  NavigatorApproveButton,
+  NavigatorShipButton,
+  NavigatorShipCallout,
+} from "./spec-approval";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
@@ -105,6 +109,7 @@ export function Navigator({
   detailNode,
   jobRef,
   approveValue,
+  shipValue,
   onConversation,
   onSelectNode,
   onRename,
@@ -125,6 +130,9 @@ export function Navigator({
   /** The approval card's verbatim approve `value`, when the job is awaiting approval (else ''). Drives
    *  the navigator approval callout. */
   approveValue: string;
+  /** The ship card's verbatim `{ jobId }` value, when the job is awaiting ship review (else ''). Drives
+   *  the navigator ship button + callout. */
+  shipValue: string;
   /** Clears the detail-pane selection (the Main lane / the state banners' recovery actions). */
   onConversation: () => void;
   onSelectNode: (node: string) => void;
@@ -150,6 +158,7 @@ export function Navigator({
     !hasPr &&
     meta.status !== "done" &&
     meta.status !== "running" &&
+    meta.status !== "awaiting_ship_review" &&
     meta.status !== "paused" &&
     meta.status !== "failed";
   const [editing, setEditing] = useState(false);
@@ -355,6 +364,12 @@ export function Navigator({
             <NavigatorApproveButton jobRef={jobRef} value={approveValue} />
           </div>
         ) : null}
+        {/* Ship it — the SECOND human gate, pinned the same way once the build + master review finish. */}
+        {st === "awaiting_ship_review" && shipValue ? (
+          <div className="mt-2">
+            <NavigatorShipButton jobRef={jobRef} value={shipValue} />
+          </div>
+        ) : null}
       </div>
 
       {/* ── scroll body — the constant skeleton (THREADS · OUTPUTS · PORTS). No horizontal padding: rows
@@ -398,6 +413,12 @@ export function Navigator({
 
         {/* The whole-diff master review is now just another thread in the THREADS list above (rendered
             "Master review", no pinned region) — see the master-review-as-thread change. */}
+
+        {/* Ship-review callout — pinned above OUTPUTS (the diff/artifacts region it's about), mirroring
+            where the plan-approval callout is meant to sit above SPECS. */}
+        {st === "awaiting_ship_review" && shipValue ? (
+          <NavigatorShipCallout jobRef={jobRef} value={shipValue} />
+        ) : null}
 
         {/* OUTPUTS — specs / artifacts / generated, merged. Open in the RIGHT pane (blue highlight). */}
         <OutputsRegion
