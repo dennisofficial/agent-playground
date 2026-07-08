@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import type { PrStateDelta } from '../domain';
@@ -17,8 +17,6 @@ import { JobLifecycleService } from './job-lifecycle.service';
  */
 @Injectable()
 export class GithubPrStateSync {
-  private readonly logger = new Logger(GithubPrStateSync.name);
-
   constructor(
     private readonly lifecycle: JobLifecycleService,
     private readonly driverStore: DriverStoreService,
