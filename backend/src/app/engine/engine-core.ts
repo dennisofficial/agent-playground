@@ -767,6 +767,29 @@ export class EngineCore {
                 }
               }
             }
+          } else {
+            // SUBAGENT round-trip (parent set): emit ITS OWN occupancy tagged with the spawning Task id, so
+            // the subagent card renders its own context ring + real model. Kept strictly separate from the
+            // main-agent `contextTokens`/`contextModel` above — a subagent must NEVER overwrite the
+            // orchestrator's ring or the turn's `usage.contextModel`. Live-only, like the main-agent emit.
+            const samsg = (message as { message?: { model?: string; usage?: {
+              input_tokens?: number;
+              cache_read_input_tokens?: number;
+              cache_creation_input_tokens?: number;
+            } } }).message;
+            const scu = samsg?.usage;
+            if (scu) {
+              const subTokens =
+                (scu.input_tokens ?? 0) + (scu.cache_read_input_tokens ?? 0) + (scu.cache_creation_input_tokens ?? 0);
+              const subModel = samsg?.model;
+              onEvent?.({
+                kind: 'usage',
+                parentToolUseId: parent,
+                contextTokens: subTokens,
+                ...(subModel ? { contextModel: subModel } : {}),
+                contextLimit: resolveContextLimit(subModel),
+              });
+            }
           }
           for (const block of message.message.content as Array<{
             type: string;
@@ -1215,7 +1238,12 @@ export function extractClaudeUsage(
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
   const inputTokens = (u.input_tokens ?? 0) + cacheRead + cacheWrite;
-  const usedModel = (modelUsage ? Object.keys(modelUsage)[0] : undefined) ?? model;
+  // The turn's PRIMARY (orchestrator) model. Prefer the model we invoked the SDK with — it's the main
+  // agent's model by construction, guaranteed present. NOT `Object.keys(modelUsage)[0]`: modelUsage is the
+  // whole-turn billing rollup (orchestrator + subagents + SDK-internal helper calls) and object-key order
+  // isn't guaranteed, so a subagent/internal model (e.g. a Haiku housekeeping call) could sort first and
+  // mislabel the turn. modelUsage stays the authoritative per-model breakdown below; this is only the label.
+  const usedModel = model ?? (modelUsage ? Object.keys(modelUsage)[0] : undefined);
   return {
     inputTokens,
     ...(u.output_tokens !== undefined ? { outputTokens: u.output_tokens } : {}),

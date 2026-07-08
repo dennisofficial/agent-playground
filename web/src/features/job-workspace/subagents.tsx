@@ -4,6 +4,8 @@ import { useState } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
 import type { JobMessage } from "@/lib/api/job-api";
 import type { LiveBlock } from "@/lib/api/job-stream";
+import { formatModelLabel } from "@/lib/format";
+import { ContextMeter } from "./context-meter";
 
 /**
  * Subagent (Task) activity is peeled OUT of the main conversation and rendered as its own node/sub-page.
@@ -74,6 +76,15 @@ export interface SubagentSummary {
   toolCount: number;
   /** A one-line gist (the Task `description`, else the first line of its prompt). */
   summary: string;
+  /**
+   * The subagent's OWN live context occupancy + model, from a `parentToolUseId`-tagged `usage` frame (see
+   * `LiveTurn.subUsage`). Optional: absent until the subagent's first round-trip reports usage, and absent
+   * entirely for durable/reloaded cards until Part 2d persists it. `contextModel` is the raw model id (fed
+   * to `formatModelLabel`); the card falls back to the static type→model map when it's missing.
+   */
+  contextTokens?: number;
+  contextLimit?: number;
+  contextModel?: string;
 }
 
 const firstLine = (v: unknown): string =>
@@ -119,6 +130,9 @@ export function indexDurableSubagents(
     anchorKeys.add(m.ts);
     const input = (m.meta?.input ?? {}) as Record<string, unknown>;
     const kids = childrenById.get(id) ?? [];
+    // The subagent's last durable occupancy, stamped onto its anchor Task block by the turn harness
+    // (`subContext*`). Absent for pre-2d turns / a subagent that never reported usage → no ring.
+    const meta = (m.meta ?? {}) as Record<string, unknown>;
     summaryById.set(id, {
       parentId: id,
       type: String(input.subagent_type ?? "agent"),
@@ -126,6 +140,15 @@ export function indexDurableSubagents(
       running: m.meta?.result == null,
       toolCount: kids.filter((k) => k.kind === "tool").length,
       summary: String(input.description || firstLine(input.prompt)),
+      ...(typeof meta.subContextTokens === "number"
+        ? { contextTokens: meta.subContextTokens }
+        : {}),
+      ...(typeof meta.subContextLimit === "number"
+        ? { contextLimit: meta.subContextLimit }
+        : {}),
+      ...(typeof meta.subContextModel === "string"
+        ? { contextModel: meta.subContextModel }
+        : {}),
     });
   }
   return { childKeys, anchorKeys, summaryById, childrenById };
@@ -264,7 +287,12 @@ export function SubagentCard({
   onOpen: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const model = subagentModel(summary.type);
+  // Prefer the subagent's REAL model (from its own `usage` frame) over the static type→model guess.
+  const model = formatModelLabel(summary.contextModel) ?? subagentModel(summary.type);
+  const hasRing =
+    typeof summary.contextTokens === "number" &&
+    typeof summary.contextLimit === "number" &&
+    summary.contextLimit > 0;
   return (
     <div
       className="anim-fadeUp my-px rounded-[10px] border"
@@ -316,6 +344,14 @@ export function SubagentCard({
             {model ? ` · ${model}` : ""}
           </span>
         </div>
+        {hasRing ? (
+          <ContextMeter
+            tokens={summary.contextTokens!}
+            limit={summary.contextLimit!}
+            model={summary.contextModel}
+            size={15}
+          />
+        ) : null}
         <button
           type="button"
           onClick={onOpen}

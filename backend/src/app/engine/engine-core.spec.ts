@@ -957,4 +957,22 @@ describe('extractClaudeUsage — per-model breakdown', () => {
     const usage = extractClaudeUsage({ usage: { input_tokens: 10, output_tokens: 2 } }, 'claude-opus-4-8');
     expect(usage?.modelUsage).toBeUndefined();
   });
+
+  it('labels usage.model with the INVOKED orchestrator model, not the first modelUsage key', () => {
+    // A whole-turn billing rollup where a helper (Haiku, e.g. an SDK-internal housekeeping call) sorts
+    // FIRST. The turn's primary model must still be the orchestrator we invoked — never modelUsage[0].
+    const usage = extractClaudeUsage(
+      {
+        usage: { input_tokens: 100, output_tokens: 20 },
+        modelUsage: {
+          'claude-haiku-4-5': { inputTokens: 5, outputTokens: 5 },
+          'claude-opus-4-8': { inputTokens: 90, outputTokens: 15 },
+        },
+      },
+      'opus',
+    );
+    expect(usage?.model).toBe('opus');
+    // modelUsage is untouched — the full per-model breakdown (incl. the Haiku helper) still survives.
+    expect(Object.keys(usage?.modelUsage ?? {})).toEqual(['claude-haiku-4-5', 'claude-opus-4-8']);
+  });
 });

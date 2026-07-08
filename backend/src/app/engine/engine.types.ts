@@ -89,13 +89,21 @@ export type EngineEvent =
       structuredPatch?: StructuredPatchHunk[];
     }
   /**
-   * LIVE context-window occupancy — emitted mid-turn each time the MAIN agent produces an assistant message
-   * (i.e. every model round-trip), so the composer's context ring updates DURING a long turn instead of only
-   * at `finish`. Live-only: NOT persisted as a durable block (the turn-end `turn_meta` stays authoritative);
-   * `contextLimit` is resolved engine-side so the client renders the ring without its own model→window map.
-   * Claude-only — the Codex SDK surfaces no per-call token counts before its turn end.
+   * LIVE context-window occupancy — emitted mid-turn each time an agent produces an assistant message (i.e.
+   * every model round-trip), so a context ring updates DURING a long turn instead of only at `finish`.
+   * `parentToolUseId` UNSET = the MAIN agent (drives the composer's own ring); SET = a subagent's own
+   * occupancy, keyed by its spawning Task id (drives that subagent card's ring). Live-only: NOT persisted as
+   * a durable block (the turn-end `turn_meta` stays authoritative); `contextLimit` is resolved engine-side so
+   * the client renders the ring without its own model→window map. Claude-only — the Codex SDK surfaces no
+   * per-call token counts before its turn end.
    */
-  | { kind: 'usage'; contextTokens: number; contextModel?: string; contextLimit: number };
+  | {
+      kind: 'usage';
+      parentToolUseId?: string;
+      contextTokens: number;
+      contextModel?: string;
+      contextLimit: number;
+    };
 
 /**
  * One model's slice of a turn's usage — the SDK's per-model breakdown (Claude only; absent for Codex).

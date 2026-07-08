@@ -72,6 +72,15 @@ export interface LiveTurn {
   contextTokens?: number;
   contextModel?: string;
   contextLimit?: number;
+  /**
+   * Per-SUBAGENT live occupancy, keyed by the subagent's spawning Task id (`parentToolUseId`). Each running
+   * subagent reports its OWN context ring separately from the main-agent ring above — a `usage` frame that
+   * carries `parentToolUseId` lands here instead of the top-level fields. Consumed by `SubagentCard`.
+   */
+  subUsage?: Record<
+    string,
+    { contextTokens: number; contextModel?: string; contextLimit: number }
+  >;
 }
 
 type StreamPayload = {
@@ -269,9 +278,42 @@ class ThreadStreamStore {
         }
         break;
       }
-      case "usage":
+      case "usage": {
         // LIVE context occupancy — update the ring values, keep blocks untouched. Preferred over the durable
-        // turn_meta by the composer footer while the turn is active.
+        // turn_meta by the composer footer while the turn is active. A `usage` frame tagged with
+        // `parentToolUseId` is a SUBAGENT's own occupancy → route it into `subUsage[parentId]` and leave the
+        // main-agent ring untouched; an untagged frame updates the main-agent ring.
+        const subPid = ev.parentToolUseId;
+        if (typeof subPid === "string") {
+          this.map.set(key, {
+            blocks,
+            active: true,
+            lastSeq: seq,
+            startedAt: cur?.startedAt,
+            contextTokens: cur?.contextTokens,
+            contextModel: cur?.contextModel,
+            contextLimit: cur?.contextLimit,
+            subUsage: {
+              ...cur?.subUsage,
+              [subPid]: {
+                contextTokens:
+                  typeof ev.contextTokens === "number"
+                    ? ev.contextTokens
+                    : (cur?.subUsage?.[subPid]?.contextTokens ?? 0),
+                contextModel:
+                  typeof ev.contextModel === "string"
+                    ? ev.contextModel
+                    : cur?.subUsage?.[subPid]?.contextModel,
+                contextLimit:
+                  typeof ev.contextLimit === "number"
+                    ? ev.contextLimit
+                    : (cur?.subUsage?.[subPid]?.contextLimit ?? 0),
+              },
+            },
+          });
+          this.notify(key);
+          return;
+        }
         this.map.set(key, {
           blocks,
           active: true,
@@ -283,9 +325,11 @@ class ThreadStreamStore {
             typeof ev.contextModel === "string" ? ev.contextModel : cur?.contextModel,
           contextLimit:
             typeof ev.contextLimit === "number" ? ev.contextLimit : cur?.contextLimit,
+          subUsage: cur?.subUsage,
         });
         this.notify(key);
         return;
+      }
       default:
         // session / result — advance seq but don't change rendered blocks.
         this.map.set(key, {
@@ -296,6 +340,7 @@ class ThreadStreamStore {
           contextTokens: cur?.contextTokens,
           contextModel: cur?.contextModel,
           contextLimit: cur?.contextLimit,
+          subUsage: cur?.subUsage,
         });
         this.notify(key);
         return;
@@ -310,6 +355,7 @@ class ThreadStreamStore {
       contextTokens: cur?.contextTokens,
       contextModel: cur?.contextModel,
       contextLimit: cur?.contextLimit,
+      subUsage: cur?.subUsage,
     });
     this.notify(key);
   }

@@ -58,6 +58,26 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(live.snapshot('R', 'T', 'phase:s1')).toBeNull();
   });
 
+  it('usage: a subagent-tagged occupancy stamps its anchor Task block; a main-agent one does not', async () => {
+    const { persisted, factory } = setup();
+    const h = factory.create({ jobId: 'T', channel: 'R', lane: 'main' });
+    // The orchestrator spawns a subagent (the Task anchor, meta.id === 'task-1').
+    h.onEvent({ kind: 'tool_use', id: 'task-1', name: 'Task', input: { subagent_type: 'explore' } });
+    // Two subagent round-trips report their OWN occupancy — the LAST wins on the durable anchor.
+    h.onEvent({ kind: 'usage', parentToolUseId: 'task-1', contextTokens: 5_000, contextModel: 'claude-sonnet-5', contextLimit: 1_000_000 });
+    h.onEvent({ kind: 'usage', parentToolUseId: 'task-1', contextTokens: 9_000, contextModel: 'claude-sonnet-5', contextLimit: 1_000_000 });
+    // A main-agent (untagged) usage frame must NOT stamp any tool block.
+    h.onEvent({ kind: 'usage', contextTokens: 42_000, contextModel: 'claude-opus-4-8', contextLimit: 1_000_000 });
+    await h.finish('done');
+
+    const anchor = persisted.find((p) => p.block.kind === 'tool' && p.block.meta?.id === 'task-1')!;
+    expect(anchor.block.meta).toMatchObject({
+      subContextTokens: 9_000,
+      subContextLimit: 1_000_000,
+      subContextModel: 'claude-sonnet-5',
+    });
+  });
+
   it('emitPrompt: persists an agent_prompt block tagged with the lane metaTag + promptKey, and dedups by key', async () => {
     const { persisted, factory } = setup();
     const h = factory.create({ jobId: 'T', channel: 'R', lane: 'codex-review:T', metaTag: { codexReviewId: 'T' } });

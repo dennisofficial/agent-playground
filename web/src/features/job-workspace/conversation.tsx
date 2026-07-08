@@ -907,8 +907,10 @@ function laneFooterMeta(
     if (!laneMetaBelongs(meta, p)) continue;
     const u = meta.usage ?? {};
     if (model === undefined && engine === undefined) {
-      // First (newest) matching block wins the model/effort/engine.
-      model = u.model ?? u.contextModel;
+      // First (newest) matching block wins the model/effort/engine. Prefer `contextModel` (the MAIN
+      // agent's own model, from parent-unset messages) over `model` — mirrors the ring (line ~945) and
+      // heals older rows whose `usage.model` recorded a whole-turn billing key (e.g. a Haiku helper).
+      model = u.contextModel ?? u.model;
       effort = u.reasoningEffort;
       engine = u.engine;
     }

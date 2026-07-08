@@ -375,8 +375,29 @@ export class TurnHarnessFactory {
             }
             break;
           }
+          case 'usage': {
+            // A subagent-tagged occupancy (`parentToolUseId` set) — stamp the LATEST onto the subagent's
+            // durable anchor (its spawning Task block, `meta.id === parentToolUseId`) so a reloaded card
+            // still shows its context ring + real model after the turn ends. Untagged (main-agent) usage
+            // stays live-only — the turn-end `turn_meta` already carries the orchestrator's occupancy.
+            if (e.parentToolUseId) {
+              for (let i = blocks.length - 1; i >= 0; i--) {
+                const b = blocks[i];
+                if (b.kind === 'tool' && b.meta?.id === e.parentToolUseId) {
+                  b.meta = {
+                    ...b.meta,
+                    subContextTokens: e.contextTokens,
+                    subContextLimit: e.contextLimit,
+                    ...(e.contextModel ? { subContextModel: e.contextModel } : {}),
+                  };
+                  break;
+                }
+              }
+            }
+            break;
+          }
           default:
-            break; // session / result / *_delta / usage — live-only, not part of the durable transcript
+            break; // session / result / *_delta — live-only, not part of the durable transcript
         }
       },
 

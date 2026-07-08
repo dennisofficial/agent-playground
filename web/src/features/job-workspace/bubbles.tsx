@@ -233,9 +233,20 @@ export function LiveTurnView({
     if (sub.childKeys.has(b.key)) continue;
     if (b.kind === "tool" && b.toolId && sub.anchorKeys.has(b.key)) {
       flush();
-      const summary = sub.summaryById.get(b.toolId);
-      if (summary) {
-        const parentId = summary.parentId;
+      const base = sub.summaryById.get(b.toolId);
+      if (base) {
+        const parentId = base.parentId;
+        // Merge this subagent's OWN live occupancy (from the `parentToolUseId`-tagged `usage` frames) so
+        // its card renders its own context ring + real model.
+        const su = turn.subUsage?.[parentId];
+        const summary = su
+          ? {
+              ...base,
+              contextTokens: su.contextTokens,
+              contextLimit: su.contextLimit,
+              contextModel: su.contextModel,
+            }
+          : base;
         items.push({
           key: b.key,
           node: (
@@ -572,60 +583,9 @@ export function TurnMetaDivider({ message }: { message: JobMessage }) {
   );
 }
 
-/**
- * A context-window occupancy ring (Claude-Code style) — a small SVG arc + center %. `tokens` is the last
- * turn's input-token count (≈ what's resident in context); `limit` is the model's window. Turns amber/red
- * as it fills. The model/limit come from the latest `turn_meta` block, so it threads whatever model ran.
- */
-export function ContextMeter({
-  tokens,
-  limit,
-  model,
-}: {
-  tokens: number;
-  limit: number;
-  model?: string;
-}) {
-  const pct = limit > 0 ? Math.min(1, Math.max(0, tokens / limit)) : 0;
-  const r = 7;
-  const circ = 2 * Math.PI * r;
-  const stroke =
-    pct >= 0.9
-      ? "var(--red)"
-      : pct >= 0.7
-        ? "var(--accent-2)"
-        : "var(--accent)";
-  return (
-    <div
-      className="flex items-center gap-1.5 px-1"
-      title={`Context · ${formatTokens(tokens)} / ${formatTokens(limit)} (${Math.round(pct * 100)}%)${model ? ` · ${model}` : ""}`}
-    >
-      <svg width="17" height="17" viewBox="0 0 18 18" className="-rotate-90">
-        <circle
-          cx="9"
-          cy="9"
-          r={r}
-          fill="none"
-          stroke="var(--border)"
-          strokeWidth="2.2"
-        />
-        <circle
-          cx="9"
-          cy="9"
-          r={r}
-          fill="none"
-          stroke={stroke}
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeDasharray={`${circ * pct} ${circ}`}
-        />
-      </svg>
-      <span className="font-mono text-[10px] tabular-nums text-dim">
-        {Math.round(pct * 100)}%
-      </span>
-    </div>
-  );
-}
+// `ContextMeter` moved to ./context-meter (so `subagents.tsx` can reuse it without a bubbles↔subagents
+// import cycle). Re-exported here for existing consumers (e.g. composer.tsx imports it from ./bubbles).
+export { ContextMeter } from "./context-meter";
 
 /**
  * The "Atlas is working…" indicator. When a live `turn` is supplied it renders a rich, Claude-Code-style
