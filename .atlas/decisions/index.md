@@ -5,6 +5,12 @@ it is regenerated on every promotion. Edit an individual decision file to propos
 
 | id | decision | status |
 |----|----------|--------|
+| [needs-you-halted-axis](needs-you-halted-axis.md) | Turn-stopping errors surface via a persisted `halted` flag, not by mutating job.status | proposed |
+| [harness-projections-live-in-context-generated](harness-projections-live-in-context-generated.md) | Non-committed harness projections live in /context/generated, never the git worktree | proposed |
+| [subagent-recovery-nudge-before-respawn](subagent-recovery-nudge-before-respawn.md) | Orchestrators nudge stalled/failed subagents instead of respawning | proposed |
+| [ship-gate-driver-builds-only](ship-gate-driver-builds-only.md) | The ship-review gate and driver ship path apply to DRIVER builds only, never brain-owned direct builds | proposed |
+| [sandbox-submodule-repos-full-clone](sandbox-submodule-repos-full-clone.md) | Submodule repos get full-clone sandboxes, not linked worktrees | proposed |
+| [live-turn-time-ordered-render](live-turn-time-ordered-render.md) | Live turn renders as one time-ordered stream; live blocks carry server emittedAt | proposed |
 | [streaming-turn-input-close-gate](streaming-turn-input-close-gate.md) | Streaming turns close their input/control channel only on a genuinely-completed result | proposed |
 
 _Last regenerated: 2026-07-08T21:55:29.298Z_

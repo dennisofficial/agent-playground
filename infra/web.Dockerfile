@@ -15,6 +15,7 @@
 ARG PNPM_VERSION=11.1.2
 ARG NODE_IMAGE=node:22-bookworm-slim
 ARG NEXT_PUBLIC_HTTP_URL=https://api.atlas.dltechnologies.co
+ARG NEXT_PUBLIC_GIT_SHA=dev
 
 # ─── base ───────────────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS base
@@ -46,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG NEXT_PUBLIC_HTTP_URL
+ARG NEXT_PUBLIC_GIT_SHA
 
 COPY . .
 
@@ -63,6 +65,7 @@ RUN pnpm --filter @workspace/auth run build
 # next build reads NEXT_PUBLIC_* at build time and embeds them in the JS bundle.
 # NODE_ENV=production suppresses dev warnings in the build output.
 ENV NEXT_PUBLIC_HTTP_URL=${NEXT_PUBLIC_HTTP_URL}
+ENV NEXT_PUBLIC_GIT_SHA=${NEXT_PUBLIC_GIT_SHA}
 ENV NODE_ENV=production
 
 RUN pnpm --filter web run build

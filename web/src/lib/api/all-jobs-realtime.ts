@@ -24,6 +24,8 @@ interface RealtimeRow {
   kind?: string | null;
   status: string;
   needsYou: boolean;
+  /** An unresolved turn-failure box is outstanding — drives the sidebar failed-style ✕ glyph. */
+  halted: boolean;
   orgId: string;
   repoId: string;
   /** The OBSERVED live branch — a change (agent `git checkout`) invalidates the open thread's pipeline so
@@ -86,6 +88,7 @@ export function useAllJobsRealtime(): void {
           kind: row.kind ? toJobKind(row.kind as WireJobKind) : next[idx].kind,
           status: nextStatus,
           needsYou: row.needsYou,
+          halted: row.halted,
           // The flat WAL row carries no PR url — preserve the enriched one from the fetched row so a
           // live conflict→ready→merged transition re-glyphs without dropping the click-through link.
           pr: row.prState
