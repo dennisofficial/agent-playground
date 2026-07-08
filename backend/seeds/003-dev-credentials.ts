@@ -55,7 +55,13 @@ export default (async (ds) => {
       creds.create({ org_id: orgId, scope: '*' });
 
     // Four static creds: overwrite straight from the file when provided.
-    if (anthropicApiKey) row.anthropic_api_key_enc = encryptSecret(anthropicApiKey, key);
+    if (anthropicApiKey) {
+      row.anthropic_api_key_enc = encryptSecret(anthropicApiKey, key);
+      // Stamp the key as validated so the onboarding checklist's `llmKey` step (which requires
+      // `hasAnthropic && llm_validated_at`) passes — a seeded dev key is trusted, exactly as the
+      // real validate flow stamps it. Without this the org shows "finish org setup" despite the key.
+      row.llm_validated_at = new Date();
+    }
     if (openaiApiKey) row.openai_api_key_enc = encryptSecret(openaiApiKey, key);
     if (githubPat) row.github_pat_enc = encryptSecret(githubPat, key);
     if (claudeOauthToken) row.claude_oauth_token_enc = encryptSecret(claudeOauthToken, key);
