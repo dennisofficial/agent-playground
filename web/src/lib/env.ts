@@ -35,11 +35,15 @@ export const env = createEnv({
     NEXT_PUBLIC_APP_ENV: z.enum(EAppEnv).default(EAppEnv.LOCAL),
     // Where the Atlas standalone HTTP app (ATLAS_SURFACE=web) listens — the browser hits it directly.
     NEXT_PUBLIC_HTTP_URL: z.url().default("http://localhost:4002"),
+    // Short git SHA of the running web build (e.g. "sha-abc1234"), baked in at `next build` time from the
+    // CI image tag. Defaults to "dev" for local/un-tagged builds.
+    NEXT_PUBLIC_GIT_SHA: z.string().default("dev"),
   },
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
     BUILD_ID: process.env.BUILD_ID,
     NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV,
     NEXT_PUBLIC_HTTP_URL: process.env.NEXT_PUBLIC_HTTP_URL,
+    NEXT_PUBLIC_GIT_SHA: process.env.NEXT_PUBLIC_GIT_SHA,
   },
 });
