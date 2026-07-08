@@ -1539,19 +1539,56 @@ export class BrainStoreService {
     };
   }
 
-  /** Mark a decision record approved + flip its thread to `running` (the dispatch precondition). */
+  /**
+   * Approve a decision record ATOMICALLY: a single guarded UPDATE requires the job to still be
+   * `awaiting_approval` AND still pointing at the CLICKED record (the version pin), so a withdrawn,
+   * re-proposed (superseded), or already-approved job fails the guard — returns `null` rather than
+   * approving the wrong plan. On success, stamps the record `approved` and flips the job to `running`
+   * in the same transaction.
+   */
   async approve(
     jobId: string,
-    decisionRecordId: string,
+    clickedDecisionRecordId: string,
     approvedBy: string,
-  ): Promise<Job> {
-    const now = new Date();
-    await this.records.update(
-      { id: decisionRecordId },
-      { status: 'approved', approved_by: approvedBy, approved_at: now },
-    );
-    await this.jobs.update({ id: jobId }, { status: 'running' });
-    return this.loadJob(jobId);
+  ): Promise<Job | null> {
+    return this.dataSource.transaction(async (m) => {
+      const now = new Date();
+      const jobRes = await m.getRepository(JobEntity).update(
+        { id: jobId, status: 'awaiting_approval', decision_record_id: clickedDecisionRecordId },
+        { status: 'running' },
+      );
+      if ((jobRes.affected ?? 0) !== 1) return null;
+      await m.getRepository(DecisionRecordEntity).update(
+        { id: clickedDecisionRecordId },
+        { status: 'approved', approved_by: approvedBy, approved_at: now },
+      );
+      // Read the flipped row through the TRANSACTION manager (not this.loadJob, which reads on a
+      // separate pooled connection and can't see the uncommitted 'running' write) so the returned Job
+      // reflects the just-committed status.
+      const row = await m.getRepository(JobEntity).findOneOrFail({ where: { id: jobId } });
+      return toThread(row);
+    });
+  }
+
+  /**
+   * Retract a pending proposal ATOMICALLY: flip awaiting_approval → planning and supersede the draft
+   * decision record, but ONLY while the job is still awaiting approval (so it can't race the operator's
+   * approve click — exactly one of {withdraw, approve} wins). Returns { withdrawn:false } when there is
+   * no pending proposal (job not awaiting_approval).
+   */
+  async withdrawPlan(jobId: string, reason?: string): Promise<{ withdrawn: boolean }> {
+    return this.dataSource.transaction(async (m) => {
+      const res = await m.getRepository(JobEntity).update(
+        { id: jobId, status: 'awaiting_approval' },
+        { status: 'planning' },
+      );
+      if ((res.affected ?? 0) !== 1) return { withdrawn: false };
+      await m.getRepository(DecisionRecordEntity).update(
+        { job_id: jobId, status: 'draft' },
+        { status: 'superseded' },
+      );
+      return { withdrawn: true };
+    });
   }
 
   /** Flip a thread back to `planning` (a rejected / change-requested plan returns to the grill). */

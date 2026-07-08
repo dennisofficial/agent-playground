@@ -28,6 +28,8 @@ export interface ApprovalResolution {
   ruledBy: string;
   /** Optional free-text accompanying the verdict (e.g. the change request). */
   note?: string;
+  /** The decision record the operator actually clicked (the version pin). */
+  clickedDecisionRecordId?: string;
 }
 
 /** A live approval — the card is posted, the gate awaits a human verdict. */
@@ -149,6 +151,7 @@ export class DecisionApprovalService implements OnModuleDestroy {
     verdict: ApprovalVerdict,
     ruledBy: string,
     note?: string,
+    clickedDecisionRecordId?: string,
   ): boolean {
     const state = this.pending.get(jobId);
     if (!state || state.resolved) return false;
@@ -157,6 +160,7 @@ export class DecisionApprovalService implements OnModuleDestroy {
       verdict,
       ruledBy,
       ...(note ? { note } : {}),
+      ...(clickedDecisionRecordId ? { clickedDecisionRecordId } : {}),
     };
     this.logger.log(`approval for job ${jobId} ruled "${verdict}" by ${ruledBy}`);
     state.resolve(resolution);

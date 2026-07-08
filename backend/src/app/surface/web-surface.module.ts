@@ -74,13 +74,15 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
       const verdict = actionIdToVerdict(actionId);
       if (!verdict) return;
 
-      const resolved = this.approvals.resolve(meta.jobId, verdict, ruledBy, note);
+      const resolved = this.approvals.resolve(meta.jobId, verdict, ruledBy, note, meta.decisionRecordId);
       if (!resolved) {
         // No LIVE in-memory handle. Either a genuinely stale/double click, OR the in-memory pending map
         // was dropped by a restart while the thread stayed durably `awaiting_approval` (the documented
         // durability gap). Fall back to the restart-safe durable resolver, which acts only if the job is
         // still awaiting — so a true stale click remains a no-op. Fire-and-forget; errors are logged.
-        void this.asm.resolveApprovalDurably(meta.jobId, verdict, ruledBy, note).catch(() => undefined);
+        void this.asm
+          .resolveApprovalDurably(meta.jobId, verdict, ruledBy, note, meta.decisionRecordId)
+          .catch(() => undefined);
       }
     });
   }

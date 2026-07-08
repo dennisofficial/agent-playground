@@ -605,6 +605,121 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     );
     expect(Number(dupCount[0].n)).toBe(1);
   }, 30_000);
+
+  it('withdrawPlan on an awaiting job atomically flips it back to planning and supersedes the draft record', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-withdraw-it');
+    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'withdraw me', kind: 'feature' });
+    const { decisionRecordId } = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'withdraw me',
+      kind: 'feature',
+      overview: 'overview',
+      decisions: [],
+      threadTitles: ['backend'],
+    });
+    expect(await jobStatus(dataSource, jobId)).toBe('awaiting_approval');
+
+    expect(await store.withdrawPlan(jobId, 'pivoting')).toEqual({ withdrawn: true });
+
+    expect(await jobStatus(dataSource, jobId)).toBe('planning');
+    expect(await recordStatus(dataSource, decisionRecordId)).toBe('superseded');
+  }, 30_000);
+
+  it('withdrawPlan on a job that is NOT awaiting approval is a no-op ({withdrawn:false}), status unchanged', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-withdraw2-it');
+    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'not awaiting', kind: 'feature' });
+    expect(await jobStatus(dataSource, jobId)).toBe('planning'); // openJob leaves it in planning, not awaiting
+
+    expect(await store.withdrawPlan(jobId, 'nothing to withdraw')).toEqual({ withdrawn: false });
+
+    expect(await jobStatus(dataSource, jobId)).toBe('planning'); // unchanged
+  }, 30_000);
+
+  it('RACE: withdrawPlan wins over a stale approve — approve(jobId, recId, approvedBy) returns null once withdrawn', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-race-it');
+    const approverId = await seedApprover(dataSource);
+    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'race', kind: 'feature' });
+    const { decisionRecordId } = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'race',
+      kind: 'feature',
+      overview: 'overview',
+      decisions: [],
+      threadTitles: ['backend'],
+    });
+
+    expect(await store.withdrawPlan(jobId, 'pivoting')).toEqual({ withdrawn: true });
+
+    // The operator's approve click races in AFTER the withdraw — the guard (status='awaiting_approval')
+    // already failed, so it must approve NOTHING.
+    expect(await store.approve(jobId, decisionRecordId, approverId)).toBeNull();
+    expect(await jobStatus(dataSource, jobId)).toBe('planning');
+    expect(await recordStatus(dataSource, decisionRecordId)).toBe('superseded');
+  }, 30_000);
+
+  it('HAPPY PATH: approve(jobId, recId, approvedBy) atomically flips the job to running and stamps the record approved', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-happy-it');
+    const approverId = await seedApprover(dataSource);
+    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'happy path', kind: 'feature' });
+    const { decisionRecordId } = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'happy path',
+      kind: 'feature',
+      overview: 'overview',
+      decisions: [],
+      threadTitles: ['backend'],
+    });
+
+    const running = await store.approve(jobId, decisionRecordId, approverId);
+
+    expect(running?.status).toBe('running');
+    expect(await recordStatus(dataSource, decisionRecordId)).toBe('approved');
+  }, 30_000);
+
+  it('VERSION PIN: a stale approve on the superseded R1 record fails the guard; approve on the current R2 record succeeds (the exact stale-card scenario)', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-versionpin-it');
+    const approverId = await seedApprover(dataSource);
+    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'version pin v1', kind: 'feature' });
+    const r1 = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'version pin v1',
+      kind: 'feature',
+      overview: 'overview v1',
+      decisions: [],
+      threadTitles: ['backend'],
+    });
+    // Re-propose — R2 supersedes R1 (still one job row, decision_record_id now points at R2).
+    const r2 = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'version pin v2',
+      kind: 'feature',
+      overview: 'overview v2',
+      decisions: [],
+      threadTitles: ['backend v2'],
+    });
+    expect(r2.decisionRecordId).not.toBe(r1.decisionRecordId);
+
+    // A stale click on the R1 card: the job is still awaiting_approval, but decision_record_id now points
+    // at R2, so the guard on R1 fails → null, and nothing about the job changes.
+    expect(await store.approve(jobId, r1.decisionRecordId, approverId)).toBeNull();
+    expect(await jobStatus(dataSource, jobId)).toBe('awaiting_approval'); // still pointing at R2
+    expect(await recordStatus(dataSource, r1.decisionRecordId)).toBe('superseded');
+
+    // The CURRENT card (R2) approves cleanly.
+    const running = await store.approve(jobId, r2.decisionRecordId, approverId);
+    expect(running?.status).toBe('running');
+    expect(await recordStatus(dataSource, r2.decisionRecordId)).toBe('approved');
+  }, 30_000);
 });
 
 async function openCount(ds: DataSource, jobId: string): Promise<number> {
@@ -701,10 +816,60 @@ async function draftCount(ds: DataSource, jobId: string): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
+/** The job row's current status (reuses `loadThreadRow`'s underlying query, narrowed to just the field). */
+async function jobStatus(ds: DataSource, jobId: string): Promise<string | null> {
+  return (await loadThreadRow(ds, jobId))?.status ?? null;
+}
+
+/** The sentinel approver's email — `decision_records.approved_by` FK's into `users`, so approve() tests
+ *  need a real user row (a plain string like 'user' fails the uuid column outright). */
+const APPROVER_EMAIL = 'brainstore-approver-it@test.local';
+
+/** Seed (idempotently) the sentinel operator user that `approve()` tests stamp as the approver. */
+async function seedApprover(ds: DataSource): Promise<string> {
+  const [row]: Array<{ id: string }> = await ds.query(
+    `INSERT INTO users (email, password_hash, name, role)
+       VALUES ($1, 'x', 'BrainStore IT Approver', 'operator')
+       ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+    [APPROVER_EMAIL],
+  );
+  return row.id;
+}
+
+/** Seed an org (idempotent) + a repo (on a distinct slug) + a bare job row for the approval-path tests. */
+async function seedJob(
+  ds: DataSource,
+  orgId: string,
+  repoSlug: string,
+): Promise<{ jobId: string; repoId: string }> {
+  await ds.query(
+    `INSERT INTO organizations (id, name, slug, status)
+       VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
+       ON CONFLICT (id) DO NOTHING`,
+    [orgId],
+  );
+  const [repoRow]: Array<{ id: string }> = await ds.query(
+    `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+       VALUES ($1, $2, 'BrainStore Repo', 'https://github.com/acme/brainstore.git', 'main', true)
+       ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+    [orgId, repoSlug],
+  );
+  const repoId = repoRow.id;
+  const [jobRow]: Array<{ id: string }> = await ds.query(
+    `INSERT INTO jobs (org_id, repo_id, origin, title)
+       VALUES ($1, $2, 'chat', $3) RETURNING id`,
+    [orgId, repoId, repoSlug],
+  );
+  return { jobId: jobRow.id, repoId };
+}
+
 /** Delete every row this test's synthetic tenant owns (FK cascade from jobs/org does the rest). */
 async function purge(ds: DataSource): Promise<void> {
   const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
   await q(`DELETE FROM jobs WHERE org_id = $1`);
   await q(`DELETE FROM repos WHERE org_id = $1`);
+  await ds.query(`DELETE FROM users WHERE email = $1`, [APPROVER_EMAIL]).catch(() => undefined);
   await q(`DELETE FROM organizations WHERE id = $1`);
 }
