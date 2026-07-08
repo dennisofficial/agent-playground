@@ -8,7 +8,8 @@
 #   - rclone installed and configured on the host (rclone config).
 #   - TODO: set RCLONE_REMOTE below to your rclone remote + bucket path
 #     (e.g. "ovh-swift:atlas-backups" for OVH Object Storage).
-#   - SECRETS_ENV points at /srv/atlas/secrets/atlas.env (for POSTGRES_* vars).
+#   - /srv/atlas/.env holds POSTGRES_USER/POSTGRES_DB (the box's plaintext Postgres
+#     store — same file docker compose reads for ${POSTGRES_*}; see infra/.env.compose.example).
 #
 # Retention:
 #   - 7 daily backups (kept in daily/)
@@ -25,7 +26,10 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────────────
-SECRETS_ENV="/srv/atlas/secrets/atlas.env"
+# Postgres creds come from /srv/atlas/.env (the box's plaintext store that docker
+# compose also reads for ${POSTGRES_*}), NOT atlas.env — atlas.env is the backend's
+# env_file and deliberately holds no POSTGRES_*. See infra/.env.compose.example.
+COMPOSE_ENV="/srv/atlas/.env"
 BACKUP_DIR="/srv/atlas/backups"
 # TODO: replace with your actual rclone remote and bucket path.
 RCLONE_REMOTE="ovh-swift:atlas-backups"  # TODO: configure rclone remote
@@ -36,10 +40,10 @@ WEEKLY_KEEP=4
 
 # ── Load postgres credentials ────────────────────────────────────────────────────
 # shellcheck disable=SC1090
-set -a; source "$SECRETS_ENV"; set +a
+set -a; source "$COMPOSE_ENV"; set +a
 
-POSTGRES_USER="${POSTGRES_USER:?POSTGRES_USER not set in $SECRETS_ENV}"
-POSTGRES_DB="${POSTGRES_DB:?POSTGRES_DB not set in $SECRETS_ENV}"
+POSTGRES_USER="${POSTGRES_USER:?POSTGRES_USER not set in $COMPOSE_ENV}"
+POSTGRES_DB="${POSTGRES_DB:?POSTGRES_DB not set in $COMPOSE_ENV}"
 
 # ── Filenames ────────────────────────────────────────────────────────────────────
 TIMESTAMP="$(date -u '+%Y%m%dT%H%M%SZ')"

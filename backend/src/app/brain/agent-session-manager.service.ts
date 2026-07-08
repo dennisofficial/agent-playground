@@ -3072,6 +3072,22 @@ export class AgentSessionManager
           };
         }
 
+        // STAMP the ledger-promotion spine COMPLETE inline. On the direct path the brain runs
+        // `promote_decisions` before `finalize_build`, and `preShip` just committed those files — so promotion
+        // is already done. Stamping here (mirrors the driver path's `markLedgerPromoted` in
+        // `ThreadDriver.finalizeBuild`) stops the boot backstop `threadsAwaitingLedgerPromotion` from
+        // re-selecting this shipped row and re-firing a redundant promote + open-PR turn against the
+        // already-open PR. Safe before the inline PR-open resolves: the backstop only ever acts on `pr_url`-set
+        // rows, and `setPrReady`'s partial update preserves this status. Fail-soft — a failed stamp only means
+        // the (idempotent) backstop would still re-fire.
+        await this.store
+          .markLedgerPromoted(jobId)
+          .catch((err) =>
+            this.logger.warn(
+              `markLedgerPromoted failed for direct build=${jobId} (harmless — boot backstop would re-fire): ${err}`,
+            ),
+          );
+
         return {
           ok: true,
           jobId,
