@@ -32,6 +32,15 @@ export interface SkillInstallInput {
   surfaces?: McpSurface[];
 }
 
+/** One row of a {@link SkillInstallerService.preview} dry-run — the REAL name/description that would be
+ *  vendored (resolved from the source SKILL.md frontmatter, not a caller guess) + whether it would
+ *  overwrite an existing skill of the same name in the target scope. */
+export interface SkillPreviewRow {
+  name: string;
+  description: string;
+  overwrites: boolean;
+}
+
 /**
  * Installs skills from a git repo into the central host skills store (§3 of the skills-redesign plan).
  * Shallow-clones `sourceUrl@ref` to a scratch temp dir, vendors (copies — never a submodule) either ONE
@@ -88,6 +97,47 @@ export class SkillInstallerService {
     } finally {
       await rm(tmpDir, { recursive: true, force: true }).catch((err) =>
         this.logger.warn(`failed to clean up scratch clone ${tmpDir}: ${err}`),
+      );
+    }
+  }
+
+  /**
+   * Read-only dry-run of a SINGLE-skill install — clones, reads the source `SKILL.md` frontmatter for the
+   * REAL name + description that `install` would vendor, and checks whether that name already exists in the
+   * target scope (would be overwritten). Rejects a marketplace-root subpath: the brain's
+   * `propose_skill_install` is single-skill only, so the owner's approve card is exactly 1:1 with what
+   * lands. Whole-marketplace installs stay on the owner-console `POST /skills/install` path. Writes nothing.
+   */
+  async preview(input: SkillInstallInput): Promise<SkillPreviewRow[]> {
+    const token = await this.resolveToken(input.sourceUrl, input.orgId);
+    const { ref } = await this.git.resolveRemoteRef(input.sourceUrl, input.ref, token);
+    const tmpDir = await mkdtemp(join(tmpdir(), 'atlas-skill-preview-'));
+    try {
+      await this.git.shallowCloneToPath(input.sourceUrl, ref, tmpDir, token);
+      const root = input.subpath ? join(tmpDir, input.subpath) : tmpDir;
+      if (!existsSync(root)) {
+        throw new BadRequestException(`subpath '${input.subpath}' not found in ${input.sourceUrl}@${ref}`);
+      }
+      if (existsSync(join(root, '.claude-plugin', 'marketplace.json'))) {
+        throw new BadRequestException(
+          `'${input.subpath ?? '/'}' is a marketplace root — point subpath at a single skill dir (one SKILL.md); ` +
+            'whole-marketplace installs are owner-console only',
+        );
+      }
+      if (!existsSync(join(root, 'SKILL.md'))) {
+        throw new BadRequestException(
+          `no SKILL.md at '${input.subpath ?? '/'}' in ${input.sourceUrl}@${ref} — not a single skill dir`,
+        );
+      }
+      const frontmatter = parseSkillFrontmatter(readFileSync(join(root, 'SKILL.md'), 'utf8'));
+      const name = sanitizeName(frontmatter.name ?? basename(root));
+      const description =
+        frontmatter.description ?? `Installed from ${input.sourceUrl}${input.subpath ? `/${input.subpath}` : ''}`;
+      const existing = await this.store.get(input.orgId, input.scope, name);
+      return [{ name, description, overwrites: Boolean(existing) }];
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true }).catch((err) =>
+        this.logger.warn(`failed to clean up preview clone ${tmpDir}: ${err}`),
       );
     }
   }

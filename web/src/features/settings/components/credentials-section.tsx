@@ -308,8 +308,10 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
                   <strong>Fine-grained</strong> — grant the repos{" "}
                   <Code>Contents: Read and write</Code>,{" "}
                   <Code>Pull requests: Read and write</Code>,{" "}
-                  <Code>Commit statuses: Read</Code> and{" "}
-                  <Code>Checks: Read</Code>.
+                  <Code>Commit statuses: Read</Code>,{" "}
+                  <Code>Checks: Read</Code> and{" "}
+                  <Code>Webhooks: Read and write</Code> (the last enables
+                  real-time PR / CI sync).
                 </p>
                 <p>
                   Paste the <Code>ghp_…</Code> or <Code>github_pat_…</Code>{" "}

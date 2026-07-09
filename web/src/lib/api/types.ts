@@ -7,7 +7,7 @@
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
-import type { JobStatus as WireJobStatus } from "@workspace/shared";
+import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
@@ -15,6 +15,8 @@ import type { JobStatus as WireJobStatus } from "@workspace/shared";
  * backend's `JobStatus`. (The web's own UI-presentation `JobStatus` — below — is a separate type.)
  */
 export type { WireJobStatus };
+/** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
+export type { WireJobHalt };
 
 export type WireJobKind =
   | "feature"
@@ -275,6 +277,36 @@ export interface WebTicketCard {
   originDecisionSummary: string | null;
 }
 
+/**
+ * An owner-approvable SKILL proposal the brain posts. `install` = reuse a maintained skill from a git
+ * marketplace (`installPreview` shows the exact resolved skill + any overwrite); `create` = a skill the brain
+ * AUTHORED as real files (`preview` shows SKILL.md + the file tree); `remove` = delete a registered skill.
+ * The OWNER approves at `…/jobs/:jobId/skill-proposals/:requestId/approve`. Mirrors the backend card.
+ */
+export interface WebSkillProposalCard {
+  type: "skill_proposal_card";
+  jobId: string;
+  requestId: string;
+  repoId: string;
+  scope: "org" | "repo";
+  name: string;
+  description: string;
+  surfaces: ("brain" | "build" | "review")[];
+  mode: "create" | "install" | "remove";
+  rationale: string;
+  stagingPath?: string;
+  preview?: { skillMd: string; files: string[] };
+  sourceUrl?: string;
+  sourceRef?: string;
+  sourceSubpath?: string;
+  installPreview?: {
+    rows: { name: string; description: string; overwrites: boolean }[];
+  };
+  priorBody?: string;
+  approved_at?: string;
+  dismissed_at?: string;
+}
+
 export type WebCard =
   | WebApprovalCard
   | WebVerdictCard
@@ -284,6 +316,7 @@ export type WebCard =
   | WebReviewCommentsCard
   | WebAttachmentsCard
   | WebMcpProposalCard
+  | WebSkillProposalCard
   | WebTicketCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
@@ -416,6 +449,7 @@ export interface PipelineJob {
   title: string;
   kind: WireJobKind;
   status: WireJobStatus;
+  halt: WireJobHalt | null;
   decisionRecordId: string | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
@@ -528,8 +562,7 @@ export type JobStatus =
   | "awaiting_ship_review"
   | "done"
   | "triaging"
-  | "paused"
-  | "failed"
+  | "cancelled"
   | "deleting";
 
 /** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job;

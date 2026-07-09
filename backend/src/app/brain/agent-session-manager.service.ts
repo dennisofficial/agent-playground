@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -19,6 +20,7 @@ import type {
   EventStimulus,
   Job,
   JobKind,
+  JobStatus,
   SeedRow,
 } from '../domain';
 import { MemoryStore } from '../memory';
@@ -75,11 +77,22 @@ import {
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/render-plan';
+import {
+  LIVE_VERIFICATION_JUDGE,
+  type LiveVerificationJudge,
+  type LiveVerificationVerdict,
+} from '../driver/live-verification-judge';
+import {
+  NON_RUNTIME_FILE_RE,
+  renderLockedDecisionsSummary,
+  renderTerminalRecordSummary,
+  type VerificationEvidence,
+} from '../driver/live-verification-support';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
-import { SkillFileWriter, SkillResolver, WorkspaceSkillStore } from '../skills';
+import { SkillFileWriter, SkillInstallerService, SkillResolver, WorkspaceSkillStore } from '../skills';
 import { WorkspaceProfileService, detectRepoManifests } from '../workspace-profile';
 import {
   isExternalMountPath,
@@ -94,6 +107,7 @@ import { TicketService } from '../tickets';
 import type {
   TicketKind,
   TicketPriority,
+  TicketSimilarItem,
   TicketStatus,
 } from '../domain/ticket';
 import {
@@ -207,12 +221,17 @@ export class AgentSessionManager
   private static readonly MAX_BENIGN_ABORT_REDRIVES = 2;
 
   // ── reset_sandbox bookkeeping (all keyed `orgId:jobId`, in-memory, per-process) ─────────────────
-  /** "Tear down before the verify turn": set by the `reset_sandbox` tool, consumed by the turn tail. */
-  private readonly resetRequests = new Map<string, { reason: string }>();
+  /** "Tear down before the verify turn": set by the `reset_sandbox` tool, consumed by the turn tail. `hard`
+   *  ⇒ a from-scratch worktree + container re-provision (vs the default container-only reset). */
+  private readonly resetRequests = new Map<string, { reason: string; hard?: boolean }>();
   /** After a teardown, the verify framing is owed to the FIRST cold-attached turn (operator or synthetic). */
   private readonly pendingResetVerify = new Set<string>();
   /** Consecutive autonomous resets — incremented by the tool, cleared ONLY on an operator turn (loop guard). */
   private readonly consecutiveResets = new Map<string, number>();
+  /** Two-call confirm for `reset_sandbox({ hard:true })`: the FIRST hard call arms this (returns a notice of
+   *  what happens / what's lost, does NOT reset); the SECOND actually queues the hard reset. Cleared on any
+   *  operator turn, so a stale arm can't fire a later reset the operator didn't just ask for. */
+  private readonly pendingHardReset = new Set<string>();
   /** Set by `finalize_build` when a direct-build ship is committed and about to open its PR inline; consumed
    *  by the turn-end latch in `runChatTurn` (records the PR + flips done promptly). */
   private readonly directBuildShipPending = new Map<string, boolean>();
@@ -280,6 +299,10 @@ export class AgentSessionManager
     // The shared send seam — the brain registers its `main`-lane transport (the durable steer/fresh-turn
     // pump) so a generic caller can `postToThread(laneFor('main', jobId), …)` without knowing it's the brain.
     private readonly threadInput: ThreadInputService,
+    // ADR-0005 live-verification judge — the SAME port the driver's per-thread gate uses (shared @Global
+    // LiveVerificationModule). Gates the direct-build `finalize_build` ship: a runtime diff must be exercised
+    // live (curl / drive / run), not merely typechecked, before the PR opens.
+    @Inject(LIVE_VERIFICATION_JUDGE) private readonly liveVerificationJudge: LiveVerificationJudge,
     // Durable per-model usage/cost analytics (best-effort) for brain + compaction turns. @Optional so
     // unit tests can construct the manager without wiring analytics; DI (@Global) supplies it live.
     @Optional() private readonly usageProjector?: TurnUsageProjector,
@@ -304,6 +327,9 @@ export class AgentSessionManager
     // Reads a skill's current SKILL.md body for `propose_skill`'s `priorBody` (the registry row carries no
     // content). @Optional for unit tests; DI (@Global SkillsModule) supplies it live.
     @Optional() private readonly skillFiles?: SkillFileWriter,
+    // Dry-run PREVIEW of a `propose_skill_install` source (resolve the real name + overwrite conflict) — the
+    // approval install path lives in the controller. @Optional for unit tests; DI (@Global SkillsModule) live.
+    @Optional() private readonly skillInstaller?: SkillInstallerService,
     // Read-only for `list_mcp_servers` (the write path is the owner-gated approve endpoint). @Optional for
     // unit tests (undefined → the tool reports none); DI (@Global McpModule) supplies it live.
     @Optional() private readonly mcpStore?: McpServerStore,
@@ -1444,8 +1470,13 @@ export class AgentSessionManager
   ): Promise<void> {
     const resetKey = `${stimulus.orgId}:${stimulus.jobId}`;
     // A real operator turn breaks any autonomous reset→verify→reset spiral — clear the loop counter so
-    // operator-driven resets never trip the guard (only unattended self-resets accumulate).
-    if (isOperatorAuthored(stimulus)) this.consecutiveResets.delete(resetKey);
+    // operator-driven resets never trip the guard (only unattended self-resets accumulate). Also disarm any
+    // pending hard-reset confirm: the two `hard:true` calls must be consecutive within one autonomous stretch,
+    // never split across an operator message that might have changed the intent.
+    if (isOperatorAuthored(stimulus)) {
+      this.consecutiveResets.delete(resetKey);
+      this.pendingHardReset.delete(resetKey);
+    }
     // Reset-verify continuation no-op: the verify instruction rides the reset-notice, consumed by whichever
     // turn cold-attaches FIRST. If an earlier turn (e.g. a queued operator message) already consumed it,
     // this synthetic wake has nothing to do — drop it rather than run a redundant turn on the warm box.
@@ -2154,14 +2185,19 @@ export class AgentSessionManager
     const req = this.resetRequests.get(key);
     if (!req) return;
     this.resetRequests.delete(key);
-    this.logger.log(`reset_sandbox: honoring reset for thread=${stimulus.jobId} (reason: ${req.reason}) — tearing down`);
+    this.logger.log(
+      `reset_sandbox: honoring ${req.hard ? 'HARD ' : ''}reset for thread=${stimulus.jobId} (reason: ${req.reason}) — tearing down`,
+    );
 
-    const res = await this.lifecycle
-      .resetContainer(stimulus.jobId, stimulus.orgId)
-      .catch((err) => {
-        this.logger.warn(`reset_sandbox teardown failed for thread=${stimulus.jobId}: ${err}`);
-        return { reset: false, reason: 'no-container' } as const;
-      });
+    // HARD reset re-provisions the whole sandbox (worktree + container, session preserved); the default reset
+    // recreates only the container. Both keep `session_id`, so the fresh box resumes the same brain session.
+    const res = await (req.hard
+      ? this.lifecycle.hardResetSandbox(stimulus.jobId, stimulus.orgId)
+      : this.lifecycle.resetContainer(stimulus.jobId, stimulus.orgId)
+    ).catch((err) => {
+      this.logger.warn(`reset_sandbox ${req.hard ? 'hard-' : ''}teardown failed for thread=${stimulus.jobId}: ${err}`);
+      return { reset: false, reason: 'no-container' } as const;
+    });
 
     if (!res.reset) {
       this.logger.log(`reset_sandbox: skipped for thread=${stimulus.jobId} — ${res.reason}`);
@@ -2284,11 +2320,40 @@ export class AgentSessionManager
     // `report_verification` before `finalize_build` will ship. Reset per turn (this closure is rebuilt fresh
     // at turn start / boot re-attach — see `buildTools` call sites), so a later turn must re-verify.
     let directBuildVerified = false;
+    // The STRUCTURED live-verification evidence the brain reports alongside `passed` — the substance the
+    // ADR-0005 judge grades in `finalize_build` (a bare boolean gives it nothing to judge). Mirrors the
+    // driver's `complete_thread` `verification[]` shape. Turn-local (reset with `directBuildVerified`).
+    let directBuildVerification: VerificationEvidence[] = [];
 
     const tools: Record<string, ToolImpl> = {
       report_verification: async (args) => {
         const passed = args['passed'] === true;
         directBuildVerified = passed;
+        // Coerce `verification` with the SAME tolerant logic as the driver's `complete_thread`
+        // (`thread-driver.service.ts`): an array of {kind,command,exitCode,outputTail} (filtered on a real
+        // command), OR a free-text string collapsed into one `reported` entry — never silently drop evidence.
+        directBuildVerification = Array.isArray(args['verification'])
+          ? (args['verification'] as unknown[])
+              .map((e) => {
+                const o = (e ?? {}) as Record<string, unknown>;
+                return {
+                  kind: String(o['kind'] ?? '').trim(),
+                  command: String(o['command'] ?? '').trim(),
+                  exitCode: Number.isFinite(Number(o['exitCode'])) ? Number(o['exitCode']) : -1,
+                  outputTail: String(o['outputTail'] ?? '').slice(0, 2000),
+                };
+              })
+              .filter((v) => v.command)
+          : typeof args['verification'] === 'string' && args['verification'].trim()
+            ? [
+                {
+                  kind: 'reported',
+                  command: '(see outputTail)',
+                  exitCode: 0,
+                  outputTail: (args['verification'] as string).trim().slice(0, 2000),
+                },
+              ]
+            : [];
         if (passed) return { ok: true };
         const remaining = Array.isArray(args['remaining'])
           ? (args['remaining'] as unknown[]).map((x) => String(x).trim()).filter(Boolean)
@@ -2415,6 +2480,30 @@ export class AgentSessionManager
           message:
             'Question withdrawn — the operator no longer sees it as awaiting an answer. Re-ask a reworded ' +
             'version with ask_question if you still need the input.',
+        };
+      },
+
+      withdraw_plan: async (args) => {
+        const reason = String(args['reason'] ?? '').trim();
+        const res = await this.store.withdrawPlan(stimulus.jobId, reason || undefined);
+        if (!res.withdrawn) {
+          return {
+            ok: false,
+            message:
+              'No plan is currently awaiting the operator’s approval — nothing to withdraw. ' +
+              '(If it was already approved or denied, work from that instead.)',
+          };
+        }
+        this.approvals.cancel(stimulus.jobId, reason || 'plan withdrawn by Atlas');
+        await this.store.appendAtlasMessage(
+          stimulus.jobId,
+          `Withdrew the plan from approval${reason ? `: ${reason}` : ''}. Still working — I’ll re-propose when ready.`,
+        );
+        return {
+          ok: true,
+          message:
+            'Plan withdrawn — the approve button is cleared and the job is back in planning. ' +
+            'Re-propose with propose_plan when the plan is ready.',
         };
       },
 
@@ -2644,27 +2733,6 @@ export class AgentSessionManager
         // plan straight to `awaiting_approval` and posts the approval card — the operator is the FINAL gate.
         // GATED on a review having RUN for THIS plan version (mandatory-run, advisory-to-pass).
 
-        // REATTACH IDEMPOTENCY (durable): a host death mid-propose_plan (before the tool reply was acked)
-        // makes claimStale RE-RUN this tool on reboot. persistPlan already flipped the job to
-        // `awaiting_approval` on the first run, so short-circuit here — do NOT persist a second decision
-        // record or post a second approval card. The durable status is the dedup key (the in-memory pending
-        // map is gone after a restart, so the check must live on the persisted job, not the handle).
-        const existing = await this.store
-          .loadJob(stimulus.jobId)
-          .catch(() => null);
-        if (
-          existing &&
-          existing.status === 'awaiting_approval' &&
-          existing.decisionRecordId
-        ) {
-          return {
-            ok: true,
-            jobId: existing.id,
-            decisionRecordId: existing.decisionRecordId,
-            message: 'This plan is already awaiting the operator’s approval.',
-          };
-        }
-
         const overview = String(args['overview'] ?? '').trim();
         // The one-line goal — the SAME text Atlas writes as plan.md's `# <H1>`. Becomes the thread title
         // (durable + live `thread_meta` frame, repainted inside requestApprovalAndAct).
@@ -2716,6 +2784,14 @@ export class AgentSessionManager
               'again (the reviewed version no longer matches).',
           };
         }
+
+        // REATTACH IDEMPOTENCY (durable) + clean re-propose: if a proposal is already pending, durably
+        // retract it (flip → planning, supersede the draft) BEFORE persisting the new one — so a re-run
+        // (host death mid-propose) or a deliberate revise-and-repropose always ends with exactly ONE
+        // pending proposal, never a no-op and never an orphaned live handle. Run this ONLY after all
+        // validation/gates above have passed, so a rejected re-propose never retracts an approvable card.
+        const prep = await this.prepareRepropose(stimulus.jobId);
+        if (prep.refuse) return { ok: false, reason: prep.refuse };
 
         // Persist STRAIGHT to `awaiting_approval` (no `plan_review`): persistPlan supersedes drafts + titles
         // in one transaction. `thread_meta` repaint happens inside requestApprovalAndAct (single source).
@@ -2781,10 +2857,10 @@ export class AgentSessionManager
             reason: 'No job on this thread — call submit_plan first',
           };
         }
-        if (job.status !== 'running') {
+        if (job.status !== 'running' || job.halt != null) {
           return {
             ok: false,
-            reason: `Job ${job.id} is in status '${job.status}' — only 'running' (approved) jobs can be dispatched`,
+            reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ` and halted (${job.halt.kind})` : ''} — only 'running' (approved), un-halted jobs can be dispatched`,
           };
         }
         await this.dispatcher.dispatch(job);
@@ -2873,6 +2949,7 @@ export class AgentSessionManager
             reason: 'summary is required (what you will change, directly)',
           };
         }
+
         const changeOutline = Array.isArray(args['changeOutline'])
           ? args['changeOutline'].map((c) => String(c).trim()).filter(Boolean)
           : [];
@@ -2908,6 +2985,12 @@ export class AgentSessionManager
               `Lock it with the operator first, or use submit_plan for the full ceremony.`,
           };
         }
+
+        // Clean re-propose: durably retract any pending proposal (flip → planning, supersede the draft)
+        // ONLY after the always-ask safety gate has passed — so an uncovered always-ask class refuses
+        // WITHOUT first destroying an approvable card, always ending with exactly ONE pending proposal.
+        const prep = await this.prepareRepropose(stimulus.jobId);
+        if (prep.refuse) return { ok: false, reason: prep.refuse };
 
         // Persist a MINIMAL record (overview = summary, any locked decisions, NO threads) and post the
         // lightweight approval card. The build runs only after approval (kind: 'direct').
@@ -2993,41 +3076,108 @@ export class AgentSessionManager
         } | null;
         const repo = await this.repos.resolve(job);
 
-        // HOST PRE-SHIP GATE only (commit + no-token + leak-scan). We are ALREADY inside this brain turn, so
-        // we cannot seed a nested open-PR turn (that is the driver/boot ship path). Once the branch is clean,
-        // hand `shipOpenPrBody` back as the tool result so the brain — still in THIS turn — reconciles,
-        // pushes, and opens the PR itself. The git-state reconciler then records `pr_url` + flips the job
-        // `done` on discovery.
-        const pre = await this.ship.preShip(
-          job,
-          repo,
-          sandbox,
-          `Atlas direct build — ${job.title ?? 'change'}`,
-          (m) => this.say(stimulus, m),
+        // ADR-0005 LIVE-VERIFICATION GATE (direct-build analog of the driver's `complete_thread` gate). A
+        // direct build that touched a runtime surface must have been EXERCISED LIVE (curl / drive / run),
+        // not just typechecked — the judge grades the structured evidence the brain reported via
+        // `report_verification`. Runs BEFORE `preShip`, mirroring the driver's pre-persist gate; the base ref
+        // is `origin/<default>` (same ref preShip's leak-scan uses), and `changedFileNames` unions untracked
+        // files so the brain's still-uncommitted direct-build changes are seen pre-commit. On a
+        // touched-but-inadequate verdict this REFUSES the tool (synchronous, mid-turn) — the brain reads the
+        // reason, does the live run, and calls `finalize_build` again. Fail-closed + always-on (mirrors the
+        // driver: no key / malformed / throw → touched-but-unverified), no rollout dial.
+        const changedFiles = await this.git.changedFileNames(
+          sandbox.worktreePath,
+          `origin/${repo.defaultBranch}`,
         );
+        const nonRuntime =
+          changedFiles.length === 0 || changedFiles.every((f) => NON_RUNTIME_FILE_RE.test(f));
+        let verdict: LiveVerificationVerdict | undefined;
+        if (!nonRuntime) {
+          verdict = await this.liveVerificationJudge
+            .judge({
+              terminalRecordSummary: renderTerminalRecordSummary({
+                summary: rec?.overview ?? job.title ?? 'direct build',
+                verification: directBuildVerification,
+              }),
+              changedFiles,
+              lockedDecisionsSummary: renderLockedDecisionsSummary(
+                rec ? { decisions: rec.decisions } : null,
+              ),
+              orgId: stimulus.orgId,
+            })
+            .catch(() => undefined);
+        }
+        const effective: LiveVerificationVerdict = nonRuntime
+          ? {
+              runtimeSurfaceTouched: false,
+              liveVerificationAdequate: true,
+              reason: 'non-runtime file set (pre-filter)',
+            }
+          : (verdict ?? {
+              runtimeSurfaceTouched: true,
+              liveVerificationAdequate: false,
+              reason: 'live-verification judge unavailable',
+            });
+        // Persist on BOTH paths (pass + refusal) so direct-build verdicts are queryable — the observability
+        // hook the prod audit needs. Best-effort; a write failure must never wedge the ship turn.
+        await this.store
+          .recordDirectBuildVerification(jobId, { verdict: effective, at: new Date().toISOString() })
+          .catch((err) => this.logger.debug(`recordDirectBuildVerification failed: ${err}`));
+        if (effective.runtimeSurfaceTouched && !effective.liveVerificationAdequate) {
+          let detail = [effective.reason, effective.missingChecks].filter(Boolean).join(' — ');
+          // Distinguish "no key configured" from a generic judge failure so the operator isn't left guessing
+          // (mirrors the driver gate). Only when the judge was actually consulted (runtime diff) but returned
+          // nothing.
+          if (!nonRuntime && !verdict) {
+            const hasKey = await this.creds.anthropicKey(stimulus.orgId).catch(() => undefined);
+            if (!hasKey) {
+              detail = `no Anthropic API key configured for the live-verification judge — configure one. (${detail})`;
+            }
+          }
+          await this.store.appendSystemEvent(
+            jobId,
+            `Live-verification gate blocked the direct-build ship — ${detail}`,
+          );
+          return {
+            ok: false,
+            jobId,
+            reason:
+              `Live validation inadequate — ${detail}. Actually exercise the changed runtime surface ` +
+              `(curl the endpoint / drive the UI / run the CLI), re-report_verification with the captured ` +
+              `evidence, then finalize_build again.`,
+          };
+        }
+
+        // HOST PRE-SHIP GATE only (no-token + leak-scan — the host NEVER commits). We are ALREADY inside this
+        // brain turn, so we cannot seed a nested open-PR turn (that is the driver/boot ship path). Hand
+        // `shipOpenPrBody` back as the tool result so the brain — still in THIS turn — commits anything
+        // uncommitted, reconciles, pushes, and opens the PR itself. The git-state reconciler then records
+        // `pr_url` + flips the job `done` on discovery, and `latchDirectBuildAtTurnEnd` latches the PR the
+        // moment the turn completes.
+        const pre = await this.ship.preShip(job, repo, sandbox, (m) => this.say(stimulus, m));
 
         if (!pre.ok) {
           if (pre.reason === 'leak-scan') {
-            // Hard security block — a hydrated secret/seed path was committed on the branch. NOT ok: the
-            // brain must clean the branch history before it can ship.
+            // Hard security block — a hydrated secret/seed path is on the branch (committed OR staged in the
+            // working tree). NOT ok: the brain must clean it before it can ship.
             return {
               ok: false,
               jobId,
               reason:
-                `PR blocked by the pre-ship security scan — a managed secret/seed file was committed on ` +
+                `PR blocked by the pre-ship security scan — a managed secret/seed file is on ` +
                 `this branch: ${pre.leaked.join(', ')}. Remove it from the branch history and retry.`,
             };
           }
           return {
             ok: true,
             jobId,
-            message: 'Committed, but no GitHub token is configured — PR not opened.',
+            message: 'No GitHub token is configured — PR not opened. Commit your work; connect a token to ship.',
           };
         }
 
-        // The brain opens the PR inline later in THIS turn; flag the job so the turn-end latch records the
-        // PR + flips running→done the moment the turn completes (decision d3), rather than waiting on the
-        // 30-min reconciler. A latch miss leaves the job running for the reconciler backstop.
+        // The brain opens the PR inline later in THIS turn; flag the job so the turn-end latch
+        // (`latchDirectBuildAtTurnEnd`) records the PR + flips running→done the moment the turn completes,
+        // rather than waiting on the reconciler. A latch miss leaves the job for the boot backstop.
         this.directBuildShipPending.set(jobId, true);
         return {
           ok: true,
@@ -3113,6 +3263,39 @@ export class AgentSessionManager
         if (args['kind'] != null && !kind)
           return { ok: false, reason: `invalid kind: ${String(args['kind'])}` };
 
+        const body = optStr(args['body']);
+
+        // Semantic dedup: unless the model has explicitly confirmed, surface any near-duplicate tickets
+        // already on this board and STOP — so we don't file a second "same bug, one word off" ticket (the
+        // #6/#7 case). The model then either update_ticket's the existing one, skips, or re-calls
+        // create_ticket with confirm:true. Fail-soft: no embedding key → no matches → proceeds to create.
+        const confirm = args['confirm'] === true;
+        let precomputedEmbedding: number[] | undefined;
+        if (!confirm) {
+          const sim = await this.tickets
+            .findSimilar({ orgId: stimulus.orgId, repoId: stimulus.repoId, title, body })
+            .catch(() => ({ queryVector: null, matches: [] as TicketSimilarItem[] }));
+          if (sim.matches.length > 0) {
+            return {
+              ok: false,
+              needsConfirmation: true,
+              similar: sim.matches.map((m) => ({
+                number: m.number,
+                title: m.title,
+                status: m.status,
+                kind: m.kind,
+                similarity: Math.round(m.sim * 100) / 100,
+              })),
+              message:
+                `Found ${sim.matches.length} possibly-related ticket(s) already on this board (see \`similar\`). ` +
+                `If one already covers this, update_ticket that one (or just skip) instead of filing a duplicate. ` +
+                `If this is genuinely new, call create_ticket again with confirm:true.`,
+            };
+          }
+          // No duplicates — reuse the vector we just computed so create() doesn't embed the same text twice.
+          precomputedEmbedding = sim.queryVector ?? undefined;
+        }
+
         // Stamp provenance from THIS thread + its locked decision (if any) — closure-derived, not args.
         const job = await this.store
           .loadJob(stimulus.jobId)
@@ -3122,13 +3305,14 @@ export class AgentSessionManager
             orgId: stimulus.orgId,
             repoId: stimulus.repoId,
             title,
-            body: optStr(args['body']),
+            body,
             status,
             priority,
             kind,
             originThreadId: stimulus.jobId,
             originDecisionRecordId: job?.decisionRecordId ?? null,
             dependsOn: strArray(args['dependsOn']),
+            embedding: precomputedEmbedding,
           });
           // Relay the capture to the operator's live view — a durable callout card on this job's
           // conversation. Best-effort: the ticket is already captured, so a transcript-write hiccup must
@@ -3311,6 +3495,7 @@ export class AgentSessionManager
       // by any job, not just onboarding: list what exists + propose new/edited ones (owner-approved).
       list_skills: this.buildListSkillsTool(stimulus),
       propose_skill: this.buildProposeSkillTool(stimulus),
+      propose_skill_install: this.buildProposeSkillInstallTool(stimulus),
       request_skill_edit_access: this.buildRequestSkillEditAccessTool(stimulus),
       propose_skill_removal: this.buildProposeSkillRemovalTool(stimulus),
       list_mcp_servers: this.buildListMcpServersTool(stimulus),
@@ -4123,39 +4308,35 @@ export class AgentSessionManager
   }
 
   /**
-   * `propose_skill({ name, description, body, scope?, surfaces?, rationale })` — propose CREATING a new
-   * reusable SKILL.md (a short instruction a build/brain/review session loads on demand). CREATE-ONLY: a
-   * `name` that already exists in that scope is refused — a skill shapes how every future build behaves, so
-   * once it exists the brain never blanket-replaces its body; it calls `request_skill_edit_access` and edits
-   * it granularly via `Edit`/`Write` instead (multi-file capable, no re-pasting the whole file for a small
-   * change). The brain never writes a NEW skill directly either: this posts an owner-approvable card, and
-   * only the OWNER's approval at `…/jobs/:jobId/skill-proposals/:requestId/approve` writes it via
-   * `WorkspaceSkillStore`. `scope` is `'repo'` (this repo only, the default) or `'org'` (every repo).
-   * org/repo/job come from the closure (never tool args) — tenant safety.
+   * `propose_skill({ name, description, scope?, rationale })` — SUBMIT a skill the brain AUTHORED as real
+   * files (via its built-in `run-skill-generator` skill) under `/context/skill-drafts/<name>/` for owner
+   * approval. NO `body` — a skill is a multi-file dir (SKILL.md + references/scripts/assets), authored with
+   * `Read`/`Write`/`Edit` in the writable `/context` scratch area, NOT crammed into a tool arg. This tool
+   * FREEZES that draft into an immutable request-scoped staging dir (the brain cannot mutate it after) and
+   * posts an owner-approvable card with a preview; only the OWNER's approval at
+   * `…/jobs/:jobId/skill-proposals/:requestId/approve` vendors the frozen copy into the store and removes the
+   * draft. CREATE-ONLY: a `name` that already exists is refused — to change one, `request_skill_edit_access`
+   * and Edit/Write it in place. `scope` is `'repo'` (default) or `'org'`. All lanes (brain/build/review) get
+   * the skill — on-demand description-match already gates loading, so there is no per-lane knob. org/repo/job
+   * come from the closure (never tool args) — tenant safety.
    */
   private buildProposeSkillTool(stimulus: ChatStimulus): ToolImpl {
     const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-    const SURFACES: McpSurface[] = ['brain', 'build', 'review'];
+    const ALL_SURFACES: McpSurface[] = ['brain', 'build', 'review'];
     return async (args) => {
       const name = String(args['name'] ?? '').trim();
       const description = String(args['description'] ?? '').trim();
-      const body = String(args['body'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
       const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
-      const surfacesArg = Array.isArray(args['surfaces'])
-        ? (args['surfaces'] as unknown[]).map((s) => String(s)).filter((s): s is McpSurface =>
-            (SURFACES as string[]).includes(s),
-          )
-        : [];
-      const surfaces: McpSurface[] = surfacesArg.length > 0 ? surfacesArg : ['build'];
 
       if (!NAME_RE.test(name)) {
         return { ok: false, reason: 'name must be lowercase letters/digits/_/- (e.g. house-migrations)' };
       }
       if (!description) return { ok: false, reason: 'description (the "Use when …" trigger blurb) is required' };
-      if (!body) return { ok: false, reason: 'body (the SKILL.md markdown) is required' };
       if (!rationale) return { ok: false, reason: 'rationale — why this skill helps builds here — is required' };
-      if (!this.skillStore) return { ok: false, reason: 'skills are not configured for this org' };
+      if (!this.skillStore || !this.skillFiles) {
+        return { ok: false, reason: 'skills are not configured for this org' };
+      }
       try {
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
         const existing = await this.skillStore.get(stimulus.orgId, dbScope, name);
@@ -4168,7 +4349,21 @@ export class AgentSessionManager
               'then Edit/Write its files directly.',
           };
         }
+        // The brain authors the skill as real files here first (with its built-in run-skill-generator).
+        const draftDir = join(this.lifecycle.contextDirHost(stimulus.jobId, stimulus.orgId), 'skill-drafts', name);
+        if (!existsSync(join(draftDir, 'SKILL.md'))) {
+          return {
+            ok: false,
+            reason:
+              `no authored skill found at /context/skill-drafts/${name}/SKILL.md. Author it FIRST — use your ` +
+              'built-in run-skill-generator skill to scaffold and write the folder (SKILL.md + any ' +
+              'references/scripts) under /context/skill-drafts/' + name + '/, then call propose_skill again.',
+          };
+        }
         const requestId = `skill-${randomUUID()}`;
+        // Freeze exactly what exists now — approval vendors this immutable copy, not the still-writable draft.
+        const stagingPath = this.skillFiles.freezeDraft(draftDir, stimulus.orgId, requestId);
+        const preview = this.skillFiles.previewDir(stagingPath) ?? undefined;
         const card = webSkillProposalCard({
           jobId: stimulus.jobId,
           requestId,
@@ -4176,26 +4371,100 @@ export class AgentSessionManager
           scope,
           name,
           description,
-          body,
-          surfaces,
+          surfaces: ALL_SURFACES,
           mode: 'create',
           rationale,
+          stagingPath,
+          preview,
         });
         const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
-        if (!opened.ok) return { ok: false, reason: 'Could not open the skill proposal (thread not found).' };
+        if (!opened.ok) {
+          this.skillFiles.removeStaging(stimulus.orgId, requestId);
+          return { ok: false, reason: 'Could not open the skill proposal (thread not found).' };
+        }
         return {
           ok: true,
           requestId,
           mode: 'create',
           message:
-            `Posted a skill creation proposal for "${name}" (${scope}-scoped). Only the OWNER can approve it ` +
-            '— you cannot register it yourself. Once approved it loads on the next fresh session ' +
+            `Posted a skill creation proposal for "${name}" (${scope}-scoped) from your authored files. Only the ` +
+            'OWNER can approve it — you cannot register it yourself. On approval it moves into the durable skill ' +
+            'store (every future job inherits it) and the draft is removed; it loads on the next fresh session ' +
             '(reset_sandbox to pick it up). Mention the proposal, then continue.',
         };
       } catch (err) {
         this.logger.warn(
           `propose_skill failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
         );
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `propose_skill_install({ sourceUrl, ref?, subpath?, scope?, rationale })` — propose INSTALLING a
+   * maintained skill from a git marketplace (e.g. `github.com/anthropics/skills`,
+   * `github.com/agents-inc/skills`) instead of authoring one from stale memory. SINGLE-skill only: `subpath`
+   * MUST point at one skill dir (a `SKILL.md`), not a marketplace root. The tool DRY-RUNS the source
+   * (`SkillInstallerService.preview`) to resolve the REAL frontmatter name/description and detect an overwrite
+   * conflict, so the owner's card shows exactly what will land. The brain never installs directly — only the
+   * OWNER's approval routes to `SkillInstallerService.install` (`provenance:'git'`, auto-updating). `scope` is
+   * `'repo'` (default) or `'org'`. org/repo/job come from the closure (never tool args) — tenant safety.
+   */
+  private buildProposeSkillInstallTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const sourceUrl = String(args['sourceUrl'] ?? '').trim();
+      const ref = String(args['ref'] ?? '').trim() || undefined;
+      const subpath = String(args['subpath'] ?? '').trim() || undefined;
+      const rationale = String(args['rationale'] ?? '').trim();
+      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+
+      if (!/^https:\/\/\S+$/.test(sourceUrl)) {
+        return { ok: false, reason: 'sourceUrl must be an https git URL (e.g. https://github.com/anthropics/skills)' };
+      }
+      if (!rationale) return { ok: false, reason: 'rationale — why this skill helps builds here — is required' };
+      if (!this.skillStore || !this.skillInstaller) {
+        return { ok: false, reason: 'skills are not configured for this org' };
+      }
+      try {
+        const dbScope = scope === 'org' ? '*' : stimulus.repoId;
+        let rows;
+        try {
+          rows = await this.skillInstaller.preview({ orgId: stimulus.orgId, scope: dbScope, sourceUrl, ref, subpath });
+        } catch (err) {
+          return { ok: false, reason: `could not resolve that skill source: ${errText(err)}` };
+        }
+        const resolved = rows[0];
+        if (!resolved) return { ok: false, reason: 'that source resolved no installable skill' };
+        const requestId = `skill-${randomUUID()}`;
+        const card = webSkillProposalCard({
+          jobId: stimulus.jobId,
+          requestId,
+          repoId: stimulus.repoId,
+          scope,
+          name: resolved.name,
+          description: resolved.description,
+          surfaces: ['brain', 'build', 'review'],
+          mode: 'install',
+          rationale,
+          sourceUrl,
+          sourceRef: ref,
+          sourceSubpath: subpath,
+          installPreview: { rows },
+        });
+        const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
+        if (!opened.ok) return { ok: false, reason: 'Could not open the skill install proposal (thread not found).' };
+        return {
+          ok: true,
+          requestId,
+          mode: 'install',
+          message:
+            `Posted an install proposal for the "${resolved.name}" skill (${scope}-scoped)${resolved.overwrites ? ' — NOTE it would overwrite an existing skill of that name' : ''}. ` +
+            'Only the OWNER can approve it. On approval it installs from git (kept up to date) and loads on the ' +
+            'next fresh session (reset_sandbox to pick it up). Mention the proposal, then continue.',
+        };
+      } catch (err) {
+        this.logger.warn(`propose_skill_install failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
@@ -4300,7 +4569,6 @@ export class AgentSessionManager
           scope,
           name,
           description: '',
-          body: '',
           surfaces: existing.surfaces,
           mode: 'remove',
           priorBody: this.skillFiles?.readSkillBody(stimulus.orgId, dbScope, name),
@@ -4372,17 +4640,72 @@ export class AgentSessionManager
   }
 
   /**
-   * `reset_sandbox({ reason })` — recreate this thread's sandbox container from scratch, so Atlas can PROVE
-   * its environment cold-boots from durable inputs (worktree + recorded mounts + granted secrets + the
-   * durable HOME + `/.atlas`) instead of ephemeral container state it built by hand. It does NOT tear down
-   * synchronously (that would kill the engine process running this very call); it flags the reset, and the
-   * turn tail (`maybeHonorSandboxReset`) tears down + kicks a fresh-container verify turn once Atlas stops.
-   * A soft loop guard refuses a 4th consecutive unattended reset so a broken setup can't spin forever.
+   * `reset_sandbox({ reason, hard? })` — recreate this thread's sandbox so Atlas can PROVE it cold-boots from
+   * durable inputs (worktree + recorded mounts + granted secrets + the durable HOME + `/.atlas`) instead of
+   * ephemeral container state it built by hand.
+   *   • DEFAULT (soft): recreate just the CONTAINER; the durable worktree + session survive.
+   *   • `hard:true`: recreate the WHOLE sandbox FROM SCRATCH — a fresh worktree AND container, as if the job
+   *     were just created — while KEEPING the coding session (history resumes) and the `/context` +
+   *     `/playground` mounts. TWO-CALL CONFIRM: the first `hard` call returns a notice of what happens / what
+   *     is lost and does NOT reset; the second actually queues it. REFUSES on a dirty tree / unpushed commits
+   *     (the host never commits, so it cannot rescue that work — commit + push first).
+   * It does NOT tear down synchronously (that would kill the engine process running this very call); it flags
+   * the reset, and the turn tail (`maybeHonorSandboxReset`) tears down + kicks a fresh verify turn once Atlas
+   * stops. A soft loop guard refuses a 4th consecutive unattended reset so a broken setup can't spin forever.
    */
   private buildResetSandboxTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
       const key = `${stimulus.orgId}:${stimulus.jobId}`;
       const reason = String(args['reason'] ?? '').trim() || 'no reason given';
+      const hard = args['hard'] === true;
+
+      if (hard) {
+        // Refusal gate — the host will NOT commit to rescue work, so a hard reset must not be armed over a
+        // dirty tree or a full clone with unpushed commits. Checked on BOTH calls (state may have changed).
+        const sandbox = await this.lifecycle
+          .findSandbox(stimulus.jobId, stimulus.orgId)
+          .catch(() => null);
+        if (!sandbox) {
+          this.pendingHardReset.delete(key);
+          return { ok: false, reason: 'No sandbox for this job yet — nothing to hard-reset.' };
+        }
+        const dirty = await this.git.hasChanges(sandbox.worktreePath).catch(() => true);
+        const safe = dirty
+          ? false
+          : await this.git.worktreeSafeToRecut(sandbox.worktreePath, sandbox.branch).catch(() => false);
+        if (!safe) {
+          this.pendingHardReset.delete(key);
+          return {
+            ok: false,
+            reason:
+              'Hard reset refused: this checkout has work that a from-scratch re-cut would DESTROY ' +
+              `(${dirty ? 'uncommitted changes in the working tree' : 'commits not yet pushed to origin'}). ` +
+              'The host never commits on your behalf — commit and `git push` everything you want to keep, then ' +
+              'call `reset_sandbox({ hard:true })` again.',
+          };
+        }
+
+        // FIRST hard call: arm + describe. No reset yet, no loop-counter tick (nothing was torn down).
+        if (!this.pendingHardReset.has(key)) {
+          this.pendingHardReset.add(key);
+          return {
+            ok: true,
+            willReset: false,
+            confirmRequired: true,
+            message:
+              'HARD RESET — this recreates your sandbox FROM SCRATCH on your next turn: the worktree is ' +
+              'deleted and re-cut fresh from the branch, and the container is rebuilt. PRESERVED: your coding ' +
+              'session (history resumes), and the `/context` + `/playground` mounts. LOST: anything only in ' +
+              'the running container (installed packages, running services, scratch files outside those ' +
+              'mounts) — it all re-derives from durable config on the fresh box. Your git work is safe (the ' +
+              'tree is clean and pushed). To proceed, call `reset_sandbox({ hard:true })` ONCE MORE; otherwise ' +
+              'do nothing and it will not reset.',
+          };
+        }
+        // SECOND hard call: confirmed — fall through to arm the actual reset (marked `hard`).
+        this.pendingHardReset.delete(key);
+      }
+
       const priorResets = this.consecutiveResets.get(key) ?? 0;
       if (priorResets >= RESET_LOOP_CAP) {
         return {
@@ -4391,7 +4714,7 @@ export class AgentSessionManager
         };
       }
       this.consecutiveResets.set(key, priorResets + 1);
-      this.resetRequests.set(key, { reason });
+      this.resetRequests.set(key, { reason, ...(hard ? { hard: true } : {}) });
       // Post the operator-visible cue HERE (mid-turn) rather than in the tail: `appendSystemEvent` only
       // surfaces on the next `/messages` reconcile (turn boundary), and the tail runs AFTER this turn's
       // `streamer.finish` already fired turn_end — so a tail-posted pill would miss this turn's reconcile
@@ -4400,14 +4723,17 @@ export class AgentSessionManager
       await this.store
         .appendSystemEvent(
           stimulus.jobId,
-          `🔄 Sandbox reset requested (${reason}) — the container will be recreated from scratch on the next turn, then Atlas verifies the environment cold-boots from durable config.`,
+          hard
+            ? `🔄 HARD reset requested (${reason}) — the worktree + container will be recreated from scratch on the next turn (session preserved), then Atlas verifies the environment cold-boots.`
+            : `🔄 Sandbox reset requested (${reason}) — the container will be recreated from scratch on the next turn, then Atlas verifies the environment cold-boots from durable config.`,
         )
         .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
       return {
         ok: true,
         willReset: true,
-        message:
-          'Your sandbox will be recreated fresh on your next turn — stop here now. Once it is back you will be prompted to verify the environment cold-boots and record anything that was lost.',
+        message: hard
+          ? 'Your sandbox will be recreated FROM SCRATCH (fresh worktree + container, session preserved) on your next turn — stop here now. Once it is back you will be prompted to verify the stack cold-boots and record anything that was lost.'
+          : 'Your sandbox will be recreated fresh on your next turn — stop here now. Once it is back you will be prompted to verify the environment cold-boots and record anything that was lost.',
       };
     };
   }
@@ -4481,15 +4807,12 @@ export class AgentSessionManager
         // pr_url/pr_number on the thread → flips it done).
         const job = await this.store.loadJob(stimulus.jobId);
         const repo = await this.repos.resolve(job);
-        // HOST PRE-SHIP GATE only. `finish_onboarding` runs INSIDE this brain turn, so (like `finalize_build`)
-        // it cannot seed a nested open-PR turn — it commits + leak-scans host-side, then hands `shipOpenPrBody`
-        // back so the brain opens the PR itself in THIS turn. The git-state reconciler records the PR later.
-        const pre = await this.ship.preShip(
-          job,
-          repo,
-          sandbox,
-          'Atlas: onboarding — environment setup',
-          (m) => this.store.appendSystemEvent(stimulus.jobId, m),
+        // HOST PRE-SHIP GATE only (no-token + leak-scan — the host NEVER commits). `finish_onboarding` runs
+        // INSIDE this brain turn, so (like `finalize_build`) it cannot seed a nested open-PR turn — it
+        // leak-scans host-side, then hands `shipOpenPrBody` back so the brain commits its env-setup changes and
+        // opens the PR itself in THIS turn. The git-state reconciler records the PR later.
+        const pre = await this.ship.preShip(job, repo, sandbox, (m) =>
+          this.store.appendSystemEvent(stimulus.jobId, m),
         );
         if (!pre.ok) {
           if (pre.reason === 'leak-scan') {
@@ -4635,6 +4958,37 @@ export class AgentSessionManager
   // ── Approval flow ──────────────────────────────────────────────────────────────────────────────
 
   /**
+   * Prepare a (re)proposal: refuse if the job already moved past the gate; if a proposal is pending,
+   * durably retract it (flip → planning, supersede the draft) BEFORE returning, then drop the live handle.
+   * Returns a refusal reason to bail with, or null to proceed. After this returns null the job is in
+   * 'planning'/'open', so no in-flight click can approve the old plan.
+   */
+  private async prepareRepropose(jobId: string): Promise<{ refuse?: string }> {
+    const existing = await this.store.loadJob(jobId).catch(() => null);
+    if (!existing) return {};
+    // Statuses past the approval gate (post-`awaiting_approval`) — never (re)propose over these. A build
+    // FAILURE is now the orthogonal `halt` axis (JobStatus has no 'failed'/'paused'); a failed/paused job
+    // keeps its phase (typically 'running'), so it's still caught here.
+    const pastGate: JobStatus[] = ['running', 'awaiting_ship_review', 'done', 'cancelled', 'deleting'];
+    if (pastGate.includes(existing.status)) {
+      return { refuse: `This job is already '${existing.status}' — can’t (re)propose a plan for it.` };
+    }
+    if (existing.status === 'awaiting_approval' && existing.decisionRecordId) {
+      const res = await this.store.withdrawPlan(jobId, 'superseded by a re-proposed plan');
+      if (!res.withdrawn) {
+        const now = await this.store.loadJob(jobId).catch(() => null);
+        return {
+          refuse:
+            `This job just moved to '${now?.status ?? 'a non-planning state'}' (an approval or cancel raced ` +
+            `in) — nothing was changed. Re-check the state before proposing again.`,
+        };
+      }
+      this.approvals.cancel(jobId, 'superseded by a re-proposed plan');
+    }
+    return {};
+  }
+
+  /**
    * Post the approval card and act on the verdict — mirrors the old `ConversationalBrainService`
    * flow but without blocking the session turn on it.
    */
@@ -4698,11 +5052,18 @@ export class AgentSessionManager
     resolution: ApprovalResolution,
   ): Promise<void> {
     if (resolution.verdict === 'approve') {
-      const running = await this.store.approve(
-        job.id,
-        decisionRecordId,
-        resolution.ruledBy,
-      );
+      // Prefer the record the OPERATOR clicked (the version pin); fall back to the handle's closure
+      // record when a caller didn't supply one (e.g. a test, or a client that omitted decisionRecordId).
+      const recId = resolution.clickedDecisionRecordId ?? decisionRecordId;
+      const running = await this.store.approve(job.id, recId, resolution.ruledBy);
+      if (!running) {
+        await this.say(
+          stimulus,
+          'That plan was withdrawn or updated since you clicked — nothing was approved. ' +
+            'Re-propose the current version and approve that.',
+        );
+        return;
+      }
       if (isDirect) {
         // FAST PATH: the brain implements it ITSELF in an autonomous in-sandbox turn (no driver).
         await this.store.appendAtlasMessage(
@@ -4776,6 +5137,7 @@ export class AgentSessionManager
     verdict: ApprovalVerdict,
     ruledBy: string,
     note?: string,
+    clickedDecisionRecordId?: string,
   ): Promise<boolean> {
     const job = await this.store.loadJob(jobId).catch(() => null);
     if (!job || job.status !== 'awaiting_approval' || !job.decisionRecordId)
@@ -4804,6 +5166,7 @@ export class AgentSessionManager
         verdict,
         ruledBy,
         ...(note ? { note } : {}),
+        ...(clickedDecisionRecordId ? { clickedDecisionRecordId } : {}),
       },
     );
     return true;
@@ -5148,10 +5511,16 @@ export class AgentSessionManager
     const instruction =
       'The direct-build plan was APPROVED. Implement the change now, directly, in the repo ' +
       '(`/workspace`) — follow the spec/notes you wrote under `/context`. When the change is complete, ' +
-      'run `mcp__atlas-lsp-ts__diagnostics` on the files you changed and the repo\'s own typecheck, fix ' +
-      'anything they find, then call `report_verification({ passed: true })` — `finalize_build` refuses ' +
-      'to ship until you have. Only then call `finalize_build` to commit, review, and open the PR. Do NOT ' +
-      'call submit_plan or start_direct_build again.';
+      'run `mcp__atlas-lsp-ts__diagnostics` on the files you changed and the repo\'s own typecheck, and fix ' +
+      'anything they find. Then — if your change touched a runtime surface (an HTTP endpoint/route, a UI ' +
+      'page/component, a CLI entry point, or a background job) — ACTUALLY EXERCISE IT LIVE: boot the process ' +
+      'and curl the endpoint / drive the UI / run the CLI for real. Typecheck, build, lint, and the test ' +
+      'suite are NOT live verification on their own. Report what you ran with ' +
+      '`report_verification({ passed: true, verification: [{ kind, command, exitCode, outputTail }, …] })` — ' +
+      'capture the real command, its exit code, and a tail of its output. `finalize_build` now runs a ' +
+      'live-verification judge over that evidence and REFUSES to ship a runtime change you only typechecked. ' +
+      'Only then call `finalize_build` to commit, review, and open the PR. Do NOT call submit_plan or ' +
+      'start_direct_build again.';
     const synthetic: ChatStimulus = {
       ...stimulus,
       id: randomUUID(),

@@ -9,6 +9,7 @@ import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { EngineRunnerPort } from '../engine/engine.types';
 import type { BuildShipService } from '../driver/build-ship.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
+import type { LiveVerificationJudge } from '../driver/live-verification-judge';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import type { TicketService } from '../tickets';
 import type { DecisionClassifier } from '../decision-gate';
@@ -67,6 +68,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
     hasRecentSystemOperatorNotice: vi.fn().mockResolvedValue(false),
     approve: vi.fn(),
+    withdrawPlan: vi.fn(),
     cancel: vi.fn(),
     reopenPlanning: vi.fn(),
     loadJob: vi.fn(),
@@ -107,6 +109,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     loadDecisionRecord: vi.fn(),
     appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
     threadTicketId: vi.fn().mockResolvedValue(null),
+    // ADR-0005 direct-build live-verification verdict (persisted on both pass + refusal paths).
+    recordDirectBuildVerification: vi.fn().mockResolvedValue(undefined),
     // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
     setTurnActive: vi.fn().mockResolvedValue(undefined),
     setHalted: vi.fn().mockResolvedValue(undefined),
@@ -131,6 +135,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
   const mockApprovals = {
     request: vi.fn(),
+    cancel: vi.fn(),
   } as unknown as DecisionApprovalService;
 
   const mockLifecycle = {
@@ -156,7 +161,19 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // The brain turn observes the live branch (detached HEAD → null); default to null so no live-branch
     // backstop fires in these streaming/tool tests.
     currentBranch: vi.fn().mockResolvedValue(null),
+    // Hard-reset safety guard: a clean, pushed tree is safe to re-cut by default.
+    worktreeSafeToRecut: vi.fn().mockResolvedValue(true),
+    // ADR-0005 direct-build gate reads the changed files (vs origin/<default>) to decide runtime-touch.
+    // Default: empty → the pre-filter passes without consulting the judge (keeps all existing ship tests green).
+    changedFileNames: vi.fn().mockResolvedValue([]),
   } as unknown as LocalGitService;
+
+  // ADR-0005 live-verification judge — a mutable stub so gate tests set the verdict per case. Default
+  // (undefined) never matters for non-gate tests: their empty changed-file set short-circuits the pre-filter
+  // before the judge is consulted.
+  const mockJudge = {
+    judge: vi.fn().mockResolvedValue(undefined),
+  } as unknown as LiveVerificationJudge & { judge: ReturnType<typeof vi.fn> };
 
   const mockDockerRunner = {} as unknown as EngineRunnerPort;
 
@@ -297,6 +314,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // — propose_plan chains `.catch` on it. review() defaults clean; the propose_plan gate defaults to "a
     // review has run for the current specs" (a terminal row) so propose is allowed unless a test overrides.
     (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    // ADR-0005 direct-build gate defaults (resetAllMocks wiped the declared resolves): an empty changed-file
+    // set → pre-filter passes without the judge; persistence is a resolved no-op; the judge returns undefined
+    // unless a gate test overrides it.
+    (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockStore.recordDirectBuildVerification as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.threadTicketId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
       status: 'complete',
@@ -367,7 +390,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockRepos,
       mockAwareness,
       {} as unknown as TicketService,
-      { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
+      {
+        engineAuth: async () => undefined,
+        openaiKey: async () => undefined,
+        // The direct-build gate consults this only to phrase a "no key" refusal; default → no key configured.
+        anthropicKey: async () => undefined,
+      } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
       {
         getState: () => 'leader',
@@ -381,6 +409,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockGit,
       { generate: () => 'SYSTEM PROMPT' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      mockJudge, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
   });
 
@@ -487,12 +516,21 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
   });
 
-  it('propose_plan: idempotent — already awaiting_approval short-circuits (no second persist/card)', async () => {
+  it('propose_plan: re-proposing over an already-pending plan durably WITHDRAWS it first (no hard no-op, no orphaned handle)', async () => {
+    // The old hard idempotency short-circuit is gone: `prepareRepropose` now durably retracts the
+    // pending proposal (atomic flip + supersede) and drops its live handle BEFORE persisting the fresh
+    // one, so re-proposing always ends with exactly one pending card — never a silent no-op.
     const tools = manager.buildTools(fakeStimulus);
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: FAKE_JOB_ID,
       status: 'awaiting_approval',
       decisionRecordId: FAKE_RECORD_ID,
+    });
+    (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: true });
+    (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'o',
+      decisions: [],
+      threadTitles: ['S'],
     });
 
     const result = await tools['propose_plan']({
@@ -501,9 +539,33 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       threads: [{ title: 'S', type: 'backend' }],
     });
 
+    expect(mockStore.withdrawPlan).toHaveBeenCalledWith(THREAD_ID, expect.any(String));
+    expect(mockApprovals.cancel).toHaveBeenCalledWith(THREAD_ID, expect.any(String));
+    expect(mockPlanReview.reviewForCurrentSpecs).toHaveBeenCalled();
+    expect(mockStore.persistPlan).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ ok: true, decisionRecordId: FAKE_RECORD_ID });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockApprovals.request).toHaveBeenCalledOnce();
+  });
+
+  it('propose_plan: prepareRepropose REFUSES (no persist, no card) when withdrawPlan loses the race (an approval/cancel landed first)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'awaiting_approval',
+      decisionRecordId: FAKE_RECORD_ID,
+    });
+    (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: false });
+
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'o',
+      threads: [{ title: 'S', type: 'backend' }],
+    });
+
+    expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
-    expect(mockPlanReview.reviewForCurrentSpecs).not.toHaveBeenCalled();
+    expect(mockApprovals.cancel).not.toHaveBeenCalled();
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
@@ -745,6 +807,148 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.preShip).not.toHaveBeenCalled();
   });
 
+  // ADR-0005 live-verification gate on the DIRECT-BUILD ship path — the brain-owned analog of the driver's
+  // `complete_thread` gate (`thread-driver.service.spec.ts`). `finalize_build` runs the SAME judge port over
+  // the changed files + the structured evidence reported via `report_verification`, and REFUSES the tool
+  // (mid-turn, no halt machinery) on a touched-but-inadequate verdict. Always-on, fail-closed, no dial.
+  describe('(c) finalize_build — ADR-0005 live-verification gate', () => {
+    // Stand up an APPROVED (running) direct build ready to ship, with a sandbox + resolved repo + a
+    // reported verification pass. Tests vary the changed files + the judge verdict.
+    const armReadyToFinalize = () => {
+      (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: FAKE_JOB_ID,
+        status: 'running',
+        title: 'Add a /health endpoint',
+        repoId: PROJECT_ID,
+        orgId: TEAM_ID,
+      });
+      (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'sbx-1',
+        worktreePath: '/w/feat',
+        branch: 'atlas/health',
+      });
+      (mockDriverStore.getDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+        overview: 'Add a health endpoint',
+        decisions: [],
+      });
+      (mockRepos.resolve as ReturnType<typeof vi.fn>).mockResolvedValue({
+        owner: 'o',
+        repo: 'r',
+        defaultBranch: 'main',
+        token: 't',
+      });
+      (mockShip.preShip as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
+    };
+
+    it('touched + adequate → ships (judge consulted with the changed files, preShip runs, verdict persisted)', async () => {
+      const tools = manager.buildTools(fakeStimulus);
+      armReadyToFinalize();
+      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
+        'src/app/api/health.controller.ts',
+      ]);
+      (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue({
+        runtimeSurfaceTouched: true,
+        liveVerificationAdequate: true,
+        reason: 'curl /health → 200',
+      });
+
+      await tools['report_verification']({
+        passed: true,
+        verification: [{ kind: 'curl', command: 'curl localhost:3000/health', exitCode: 0, outputTail: '200 OK' }],
+      });
+      const result = await tools['finalize_build']({});
+
+      // The judge saw exactly what git reported as changed (the diff-fed regression).
+      expect(mockJudge.judge).toHaveBeenCalledOnce();
+      expect((mockJudge.judge as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+        changedFiles: ['src/app/api/health.controller.ts'],
+      });
+      // Adequate → falls through to preShip and hands the open-PR instructions back.
+      expect(mockShip.preShip).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
+      expect((result as { message: string }).message).toContain('gh pr create');
+      // Verdict persisted on the PASS path too (the observability hook).
+      expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        expect.objectContaining({
+          verdict: expect.objectContaining({ runtimeSurfaceTouched: true, liveVerificationAdequate: true }),
+        }),
+      );
+    });
+
+    it('touched + INADEQUATE → REFUSES the tool (no preShip), names the missing checks, persists the verdict', async () => {
+      const tools = manager.buildTools(fakeStimulus);
+      armReadyToFinalize();
+      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
+        'src/app/api/health.controller.ts',
+      ]);
+      (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue({
+        runtimeSurfaceTouched: true,
+        liveVerificationAdequate: false,
+        reason: 'only typechecked',
+        missingChecks: 'curl the /health endpoint against a running server',
+      });
+
+      // The brain claims passed but never actually exercised the endpoint.
+      await tools['report_verification']({ passed: true });
+      const result = await tools['finalize_build']({});
+
+      expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
+      expect((result as { reason: string }).reason).toContain('Live validation inadequate');
+      expect((result as { reason: string }).reason).toContain('curl the /health endpoint');
+      // Refusal is BEFORE the host ship gate — no preShip, no PR.
+      expect(mockShip.preShip).not.toHaveBeenCalled();
+      // Verdict persisted on the REFUSE path (the whole point of the audit hook) + a quiet pill.
+      expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        expect.objectContaining({
+          verdict: expect.objectContaining({ liveVerificationAdequate: false }),
+        }),
+      );
+      expect(mockStore.appendSystemEvent).toHaveBeenCalled();
+    });
+
+    it('docs-only diff → pre-filter SKIPS the judge entirely and ships', async () => {
+      const tools = manager.buildTools(fakeStimulus);
+      armReadyToFinalize();
+      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
+        'docs/health.md',
+        'README.md',
+      ]);
+
+      await tools['report_verification']({ passed: true });
+      const result = await tools['finalize_build']({});
+
+      expect(mockJudge.judge).not.toHaveBeenCalled();
+      expect(mockShip.preShip).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
+      // Pre-filter verdict is a non-runtime pass.
+      expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        expect.objectContaining({
+          verdict: expect.objectContaining({ runtimeSurfaceTouched: false, liveVerificationAdequate: true }),
+        }),
+      );
+    });
+
+    it('judge UNAVAILABLE (undefined) on a runtime diff → conservative refusal, never a silent ship', async () => {
+      const tools = manager.buildTools(fakeStimulus);
+      armReadyToFinalize();
+      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
+        'src/app/api/health.controller.ts',
+      ]);
+      (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue(undefined); // no key / malformed
+
+      await tools['report_verification']({ passed: true });
+      const result = await tools['finalize_build']({});
+
+      expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
+      // The mocked CredentialResolver reports no anthropic key → the refusal calls that out.
+      expect((result as { reason: string }).reason).toContain('no Anthropic API key');
+      expect(mockShip.preShip).not.toHaveBeenCalled();
+    });
+  });
+
   it('write_workspace_config UPSERTS mounts straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
     // What the ceremony (or an earlier amendment) already recorded, per the config store.
     (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -970,12 +1174,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(mockLifecycle.markRepoOnboarded).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
-    // preShip is called positionally (job, repo, sandbox, commitMessage, notify) with the reframed message.
+    // preShip is called positionally (job, repo, sandbox, notify) — no commit message: the host no longer
+    // commits, so the brain commits its env-setup changes itself in the inline open-PR turn.
     expect(mockShip.preShip).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       expect.anything(),
-      'Atlas: onboarding — environment setup',
       expect.anything(),
     );
     // prOpened is false at return (the PR opens inline afterward), and the message tells the brain to open it.
@@ -1125,6 +1329,35 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.withdrawQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: false });
     const raced = await tools['withdraw_question']({ questionId: 'q-123' });
     expect(raced).toMatchObject({ ok: false });
+  });
+
+  it('(e4) buildTools() exposes withdraw_plan', () => {
+    const tools = manager.buildTools(fakeStimulus);
+    expect(tools['withdraw_plan']).toBeDefined();
+  });
+
+  it('(e5) withdraw_plan retracts a pending proposal — cancels the live handle + posts the notice; a non-awaiting job is a no-op', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+
+    // Happy path: the store won the guarded flip → cancel the live handle + append the durable notice.
+    (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: true });
+    const ok = await tools['withdraw_plan']({ reason: 'pivoting' });
+    expect(mockStore.withdrawPlan).toHaveBeenCalledWith(THREAD_ID, 'pivoting');
+    expect(ok).toMatchObject({ ok: true });
+    expect(mockApprovals.cancel as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      THREAD_ID,
+      expect.any(String),
+    );
+    expect(mockStore.appendAtlasMessage).toHaveBeenCalledWith(THREAD_ID, expect.any(String));
+
+    // No pending proposal → the store guard reports no winner → {ok:false}, no cancel/appendAtlasMessage.
+    (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: false });
+    (mockApprovals.cancel as ReturnType<typeof vi.fn>).mockClear();
+    (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockClear();
+    const notPending = await tools['withdraw_plan']({});
+    expect(notPending).toMatchObject({ ok: false });
+    expect(mockApprovals.cancel).not.toHaveBeenCalled();
+    expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
   });
 
   it('(f) create_decision attaches the most-recently-answered question and returns the resolved decision + id', async () => {
@@ -1463,6 +1696,99 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
   });
 
+  it('(d4) actOnApprovalVerdict: store.approve returning null (withdrawn/superseded/stale click) posts the "withdrawn or updated" notice and does NOT dispatch', async () => {
+    const job = { id: FAKE_JOB_ID, kind: 'feature', title: 'rate limiting' };
+    (mockStore.approve as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+    (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+      jobId: FAKE_JOB_ID,
+      verdict: Promise.resolve({ verdict: 'approve', ruledBy: 'U-OP' }),
+    });
+
+    await manager.requestApprovalAndAct(
+      fakeStimulus,
+      job as never,
+      FAKE_RECORD_ID,
+      {
+        jobId: FAKE_JOB_ID,
+        decisionRecordId: FAKE_RECORD_ID,
+        title: 'rate limiting',
+        summary: 'x',
+        decisions: [],
+        threads: [],
+      } as never,
+    );
+
+    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(mockSurface.post as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      'C',
+      expect.stringContaining('withdrawn or updated'),
+      expect.anything(),
+    );
+  });
+
+  it("(d5) actOnApprovalVerdict prefers resolution.clickedDecisionRecordId (the version pin) over the handle's closure decisionRecordId for store.approve", async () => {
+    const runningJob = { id: FAKE_JOB_ID, kind: 'feature', title: 'rate limiting' };
+    (mockStore.approve as ReturnType<typeof vi.fn>).mockResolvedValue(runningJob);
+    (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+    (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+      jobId: FAKE_JOB_ID,
+      verdict: Promise.resolve({
+        verdict: 'approve',
+        ruledBy: 'U-OP',
+        clickedDecisionRecordId: 'rec-CLICKED',
+      }),
+    });
+
+    await manager.requestApprovalAndAct(
+      fakeStimulus,
+      runningJob as never,
+      FAKE_RECORD_ID, // the handle's closure record — must be IGNORED in favor of the clicked one
+      {
+        jobId: FAKE_JOB_ID,
+        decisionRecordId: FAKE_RECORD_ID,
+        title: 'rate limiting',
+        summary: 'x',
+        decisions: [],
+        threads: [],
+      } as never,
+    );
+
+    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, 'rec-CLICKED', 'U-OP');
+  });
+
+  type PrepareRepropose = { prepareRepropose(jobId: string): Promise<{ refuse?: string }> };
+
+  it('(d6) prepareRepropose refuses a job already past the approval gate, without touching withdrawPlan', async () => {
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'running',
+    });
+
+    const result = await (manager as unknown as PrepareRepropose).prepareRepropose(FAKE_JOB_ID);
+
+    expect(result.refuse).toEqual(expect.any(String));
+    expect(mockStore.withdrawPlan).not.toHaveBeenCalled();
+  });
+
+  it('(d7) prepareRepropose on an awaiting_approval job durably withdraws BEFORE dropping the live handle (order matters — closes the click window)', async () => {
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'awaiting_approval',
+      decisionRecordId: FAKE_RECORD_ID,
+    });
+    (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: true });
+
+    const result = await (manager as unknown as PrepareRepropose).prepareRepropose(FAKE_JOB_ID);
+
+    expect(result.refuse).toBeUndefined();
+    expect(mockStore.withdrawPlan).toHaveBeenCalledWith(FAKE_JOB_ID, expect.any(String));
+    expect(mockApprovals.cancel).toHaveBeenCalledWith(FAKE_JOB_ID, expect.any(String));
+    const withdrawOrder = (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const cancelOrder = (mockApprovals.cancel as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    expect(withdrawOrder).toBeLessThan(cancelOrder);
+  });
+
   // ── ADR 0004 Phase 3 — retry_thread tool + notifyThreadHalted wake ───────────────────────────────
   describe('ADR 0004 Phase 3 — halt wake + bounded fix', () => {
     const fn = (m: unknown) => m as ReturnType<typeof vi.fn>;
@@ -1572,6 +1898,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     wasReset?: boolean;
     sessionId?: string | null;
     resetContainer?: ReturnType<typeof vi.fn>;
+    hardResetSandbox?: ReturnType<typeof vi.fn>;
     /** A live brain turn `runningBrainTurn` returns (drives the steer-into-live path); default none. */
     runningBrainTurn?: { turn_id: string } | null;
     /** The engine runner's `steer` mock (present → `steerIntoLiveBrainTurn` can fire). */
@@ -1606,7 +1933,13 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         .fn()
         .mockResolvedValue({ sandbox: { worktreePath: '/wt', containerId: 'c1' }, wasReset: opts.wasReset ?? false }),
       resetContainer: opts.resetContainer ?? vi.fn().mockResolvedValue({ reset: true }),
+      hardResetSandbox: opts.hardResetSandbox ?? vi.fn().mockResolvedValue({ reset: true }),
     } as unknown as JobLifecycleService;
+    const git = {
+      hasChanges: vi.fn().mockResolvedValue(false),
+      currentBranch: vi.fn().mockResolvedValue(null),
+      worktreeSafeToRecut: vi.fn().mockResolvedValue(true),
+    } as unknown as LocalGitService;
     const surface = {
       post: vi.fn().mockResolvedValue('ts'),
       name: 'web',
@@ -1688,11 +2021,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         listMounts: async () => [],
         upsertMount: async () => undefined,
       } as unknown as WorkspaceConfigStore,
-      { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
+      git,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
-    return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
+    return { manager, store, lifecycle, git, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
   }
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
@@ -2287,6 +2621,74 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       expect(resetContainer).not.toHaveBeenCalled();
     });
 
+    // ── hard reset ({ hard:true }) — two-call confirm + dirty/unpushed refusal ──────────────────────
+    const resetReq = (m: AgentSessionManager) =>
+      (m as unknown as { resetRequests: Map<string, { reason: string; hard?: boolean }> }).resetRequests;
+    const pendingHard = (m: AgentSessionManager) =>
+      (m as unknown as { pendingHardReset: Set<string> }).pendingHardReset;
+
+    it('hard reset: FIRST call arms + returns a notice and does NOT queue the reset', async () => {
+      const { manager } = makeManager({ findSandbox: { branch: 'atlas/feature', worktreePath: '/wt' } });
+      const res = (await manager.buildTools(stimulus).reset_sandbox({ reason: 'prove stack', hard: true })) as Record<
+        string,
+        unknown
+      >;
+      expect(res).toMatchObject({ ok: true, willReset: false, confirmRequired: true });
+      expect(String(res.message)).toMatch(/HARD RESET/);
+      // Armed but NOT queued — nothing for the tail to honor yet.
+      expect(pendingHard(manager).has(KEY)).toBe(true);
+      expect(resetReq(manager).has(KEY)).toBe(false);
+    });
+
+    it('hard reset: SECOND call queues the reset marked `hard` and disarms the confirm', async () => {
+      const { manager } = makeManager({ findSandbox: { branch: 'atlas/feature', worktreePath: '/wt' } });
+      const tool = manager.buildTools(stimulus).reset_sandbox;
+      await tool({ reason: 'prove stack', hard: true }); // arm
+      const res = (await tool({ reason: 'prove stack', hard: true })) as Record<string, unknown>;
+      expect(res).toMatchObject({ ok: true, willReset: true });
+      expect(resetReq(manager).get(KEY)).toEqual({ reason: 'prove stack', hard: true });
+      expect(pendingHard(manager).has(KEY)).toBe(false);
+    });
+
+    it('hard reset: REFUSES on a dirty tree (host never commits to rescue work)', async () => {
+      const { manager, git } = makeManager({ findSandbox: { branch: 'atlas/feature', worktreePath: '/wt' } });
+      (git.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      const res = (await manager.buildTools(stimulus).reset_sandbox({ reason: 'x', hard: true })) as Record<
+        string,
+        unknown
+      >;
+      expect(res.ok).toBe(false);
+      expect(String(res.reason)).toMatch(/uncommitted changes/);
+      expect(pendingHard(manager).has(KEY)).toBe(false); // not armed
+    });
+
+    it('hard reset: REFUSES a full clone with unpushed commits (would be lost on re-cut)', async () => {
+      const { manager, git } = makeManager({ findSandbox: { branch: 'atlas/feature', worktreePath: '/wt' } });
+      (git.worktreeSafeToRecut as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+      const res = (await manager.buildTools(stimulus).reset_sandbox({ reason: 'x', hard: true })) as Record<
+        string,
+        unknown
+      >;
+      expect(res.ok).toBe(false);
+      expect(String(res.reason)).toMatch(/not yet pushed/);
+    });
+
+    it('the turn tail honors a HARD reset via hardResetSandbox (not resetContainer)', async () => {
+      const hardResetSandbox = vi.fn().mockResolvedValue({ reset: true });
+      const resetContainer = vi.fn();
+      const { manager, lifecycle } = makeManager({ hardResetSandbox, resetContainer });
+      resetReq(manager).set(KEY, { reason: 'prove stack', hard: true });
+      vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+
+      await (manager as unknown as { maybeHonorSandboxReset: (s: ChatStimulus) => Promise<void> }).maybeHonorSandboxReset(
+        stimulus,
+      );
+
+      expect(lifecycle.hardResetSandbox as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(THREAD_ID, TEAM_ID);
+      expect(lifecycle.resetContainer as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+      expect((manager as unknown as { pendingResetVerify: Set<string> }).pendingResetVerify.has(KEY)).toBe(true);
+    });
+
     it('folds the verify instruction into the reset-notice on the FIRST cold-attached turn (e.g. a queued operator turn)', async () => {
       const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
       const { manager, dockerRunner } = makeManager({ run, wasReset: true, sessionId: 'sess-prior' });
@@ -2401,9 +2803,10 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         listMounts: async () => [],
         upsertMount: async () => undefined,
       } as unknown as WorkspaceConfigStore,
-      { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
+      { hasChanges: async () => false, currentBranch: async () => null, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
     return { manager, store };
   }
@@ -2550,9 +2953,10 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
         read: async () => null,
       } as unknown as WorkspaceSecretFileStore,
       { listMounts: async () => [], upsertMount: async () => undefined } as unknown as WorkspaceConfigStore,
-      { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
+      { hasChanges: async () => false, currentBranch: async () => null, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
     return { manager, store, lifecycle, ship, repos };
   }
@@ -2651,6 +3055,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 14 … 28 (incl. secretStore, configStore, mcp, git)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
     return { manager, stimulusRows };
   }
@@ -2759,6 +3164,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert, inert, inert, inert, // turnRecovery…git (26)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
     return { manager, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
   }
@@ -2959,6 +3365,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, inert, inert, inert, // turnRecovery…git (26)
         { generate: () => 'SYSTEM' } as never, // prompts (28)
         { register: () => undefined } as never, // threadInput (29)
+        { judge: async () => undefined } as never, // liveVerificationJudge (30)
       );
       // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
       const handleChatTurn = vi

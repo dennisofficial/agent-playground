@@ -43,10 +43,10 @@ export class GithubNotificationSource implements NotificationSource {
   ) {}
 
   /**
-   * `/ingress/github` front door — work-events→job intake ONLY. Verifies + routes the request, then
-   * summarizes it into a triage stimulus. `pull_request` is deliberately not actionable here
-   * (`summarizeGithubEvent` returns null for it) — that event drives the silent PR-state sync via
-   * `handlePrWebhook` instead, never this method.
+   * `/webhooks/github/events` front door — WORK-EVENTS intake ONLY. Verifies + routes the request, then
+   * summarizes it into a triage stimulus (routed to the owning job by `StimulusIntake`). `pull_request`
+   * is deliberately not actionable here (`summarizeGithubEvent` returns null for it) — that event drives
+   * the silent PR-state sync via `handlePrWebhook` instead, never this method.
    */
   async handle(raw: RawNotification): Promise<IngressResult> {
     const g = await this.verifyAndRoute(raw);
@@ -72,7 +72,7 @@ export class GithubNotificationSource implements NotificationSource {
   }
 
   /**
-   * `/webhooks/github` front door — silent PR-state sync ONLY. Verifies + routes the request same as
+   * `/webhooks/github/state` front door — silent PR-state sync ONLY. Verifies + routes the request same as
    * `handle`, but only ever parses `pull_request` events into a `PrStateDelta`; every other verified
    * event type is ignored (this endpoint never feeds `StimulusIntake`).
    */
@@ -166,6 +166,7 @@ interface GithubWebhookBody {
     status?: string;
     html_url?: string;
     head_branch?: string;
+    head_sha?: string;
     pull_requests?: Array<{ number?: number }>;
   };
   check_run?: {
@@ -174,6 +175,7 @@ interface GithubWebhookBody {
     conclusion?: string;
     status?: string;
     html_url?: string;
+    head_sha?: string;
     check_suite?: { head_branch?: string };
     pull_requests?: Array<{ number?: number }>;
   };
@@ -182,6 +184,7 @@ interface GithubWebhookBody {
     conclusion?: string;
     status?: string;
     head_branch?: string;
+    head_sha?: string;
     pull_requests?: Array<{ number?: number }>;
   };
   pull_request?: { number?: number; html_url?: string; merged?: boolean; head?: { ref?: string } };
@@ -301,22 +304,31 @@ function summarizeGithubEvent(
 }
 
 /**
- * Derive the collapse key. Prefer the gateway's grouping id (run id) so REDELIVERIES of the same
- * failure dedupe; fall back to the per-delivery id when none is present (still unique-per-event).
+ * Derive the collapse key so ONE logical failure = one job, not one-per-webhook.
+ *
+ * CI events fan out: a single failing commit emits `workflow_run` + `check_suite` + N×`check_run`,
+ * all sharing a `head_sha`. Keying CI events on `ci:<head_sha>` (NOT the per-event-type run id) folds
+ * that whole fan-out — and any re-run/redelivery on the same commit — onto a single seeded/attached
+ * job. Without this, each event type dedupes only against itself and seeds its own job.
+ *
+ * Non-CI events (review/comment) stay keyed on their unique per-item id (one message per review or
+ * comment). Fall back to the per-item id (fixing the old `check_suite.conclusion` key, which carried
+ * no run identity), then the per-delivery id, when no `head_sha` is present.
  */
 function deriveDedupeKey(
   eventType: string,
   body: GithubWebhookBody,
   deliveryId: string | undefined,
 ): string {
-  // Prefer a stable per-item grouping id so redeliveries of the SAME item collapse. Review/comment
-  // ids are unique per item (one delivered message per review or comment); run ids collapse CI retries.
+  const ciSha =
+    body.workflow_run?.head_sha ?? body.check_run?.head_sha ?? body.check_suite?.head_sha;
+  if (ciSha) return `ci:${ciSha}`;
   const groupId =
     body.workflow_run?.id ??
     body.check_run?.id ??
+    body.check_suite?.id ??
     body.review?.id ??
-    body.comment?.id ??
-    body.check_suite?.conclusion;
+    body.comment?.id;
   if (groupId !== undefined && groupId !== null) return `${eventType}:${groupId}`;
   return `delivery:${deliveryId ?? 'unknown'}`;
 }

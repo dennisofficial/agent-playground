@@ -11,6 +11,7 @@ import type {
   ThreadStatus,
   Job,
   JobStatus,
+  JobHalt,
 } from '../domain';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -203,14 +204,26 @@ export class DriverStoreService {
     );
   }
 
-  /** Every thread currently in `running` — the boot-reconciliation worklist. */
+  /** Every thread `running` AND not halted — the boot-reconciliation worklist. The `halt IS NULL` filter is
+   *  the primary boot guard: a halted-but-`running` job must not be auto-re-driven (only retry/resume can). */
   async runningJobs(): Promise<Job[]> {
-    const rows = await this.jobs.find({ where: { status: 'running' } });
+    const rows = await this.jobs.find({ where: { status: 'running', halt: IsNull() } });
     return rows.map(toJob);
   }
 
   async setJobStatus(jobId: string, status: JobStatus): Promise<void> {
     await this.jobs.update({ id: jobId }, { status });
+  }
+
+  /** Record a phase-preserving job HALT (see {@link JobHalt}) — the status/phase is left untouched. Named
+   *  JOB-level to stay distinct from {@link clearHalt} (the per-thread halt table). */
+  async setJobHalt(jobId: string, halt: JobHalt): Promise<void> {
+    await this.jobs.update({ id: jobId }, { halt });
+  }
+
+  /** Clear the phase-preserving job halt on operator re-engagement / a brain re-drive. */
+  async clearJobHalt(jobId: string): Promise<void> {
+    await this.jobs.update({ id: jobId }, { halt: null });
   }
 
   /** Record the feature branch all threads stack on (set once, when the sandbox is cut). */
@@ -981,6 +994,7 @@ export class DriverStoreService {
       title: thread.title,
       kind: thread.kind,
       status: thread.status,
+      halt: thread.halt ?? null,
       // The plan-review (Codex) thread's presence + live status — the navigator renders a dedicated row that
       // opens the `codex-review:<jobId>` lane. Null when no review has run.
       planReview,
@@ -1121,6 +1135,7 @@ function toJob(row: JobEntity): Job {
     baseBranch: row.base_branch,
     kind: row.kind as Job['kind'],
     status: row.status as JobStatus,
+    halt: row.halt ?? null,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
     currentBranch: row.current_branch,

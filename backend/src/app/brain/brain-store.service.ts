@@ -1337,6 +1337,20 @@ export class BrainStoreService {
   }
 
   /**
+   * Persist the ADR-0005 live-verification verdict for this job's DIRECT-BUILD ship (the brain's
+   * `finalize_build` gate). Written on BOTH the pass and the refusal path so direct-build verdicts are
+   * queryable (`jobs.direct_build_verification`) — the observability hook the prod audit needs. Overwrites
+   * on retry (the last `finalize_build` attempt wins). Best-effort — a write failure must never break the
+   * ship turn (the caller decides how to handle it).
+   */
+  async recordDirectBuildVerification(
+    jobId: string,
+    payload: JobEntity['direct_build_verification'],
+  ): Promise<void> {
+    await this.jobs.update({ id: jobId }, { direct_build_verification: payload });
+  }
+
+  /**
    * The threads with a `turn_active` flag still set — i.e. a conversational turn was streaming when the
    * process died. Captured on boot BEFORE {@link resetAllTurnActive} clears the flags, so crash recovery
    * knows which threads have a possibly-orphaned engine still finishing in the container (to watch them to
@@ -1618,19 +1632,59 @@ export class BrainStoreService {
     };
   }
 
-  /** Mark a decision record approved + flip its thread to `running` (the dispatch precondition). */
+  /**
+   * Approve a decision record ATOMICALLY: a single guarded UPDATE requires the job to still be
+   * `awaiting_approval` AND still pointing at the CLICKED record (the version pin), so a withdrawn,
+   * re-proposed (superseded), or already-approved job fails the guard — returns `null` rather than
+   * approving the wrong plan. On success, stamps the record `approved` and flips the job to `running`
+   * in the same transaction.
+   */
   async approve(
     jobId: string,
-    decisionRecordId: string,
+    clickedDecisionRecordId: string,
     approvedBy: string,
-  ): Promise<Job> {
-    const now = new Date();
-    await this.records.update(
-      { id: decisionRecordId },
-      { status: 'approved', approved_by: approvedBy, approved_at: now },
-    );
-    await this.jobs.update({ id: jobId }, { status: 'running' });
-    return this.loadJob(jobId);
+  ): Promise<Job | null> {
+    return this.dataSource.transaction(async (m) => {
+      const now = new Date();
+      // A freshly approved plan is an explicit operator action that supersedes any stale halt, so the
+      // dispatch that follows isn't refused by the halt-invariant guard (halt is cleared here, at the
+      // operator transition, never inside dispatch()).
+      const jobRes = await m.getRepository(JobEntity).update(
+        { id: jobId, status: 'awaiting_approval', decision_record_id: clickedDecisionRecordId },
+        { status: 'running', halt: null },
+      );
+      if ((jobRes.affected ?? 0) !== 1) return null;
+      await m.getRepository(DecisionRecordEntity).update(
+        { id: clickedDecisionRecordId },
+        { status: 'approved', approved_by: approvedBy, approved_at: now },
+      );
+      // Read the flipped row through the TRANSACTION manager (not this.loadJob, which reads on a
+      // separate pooled connection and can't see the uncommitted 'running' write) so the returned Job
+      // reflects the just-committed status.
+      const row = await m.getRepository(JobEntity).findOneOrFail({ where: { id: jobId } });
+      return toThread(row);
+    });
+  }
+
+  /**
+   * Retract a pending proposal ATOMICALLY: flip awaiting_approval → planning and supersede the draft
+   * decision record, but ONLY while the job is still awaiting approval (so it can't race the operator's
+   * approve click — exactly one of {withdraw, approve} wins). Returns { withdrawn:false } when there is
+   * no pending proposal (job not awaiting_approval).
+   */
+  async withdrawPlan(jobId: string, reason?: string): Promise<{ withdrawn: boolean }> {
+    return this.dataSource.transaction(async (m) => {
+      const res = await m.getRepository(JobEntity).update(
+        { id: jobId, status: 'awaiting_approval' },
+        { status: 'planning' },
+      );
+      if ((res.affected ?? 0) !== 1) return { withdrawn: false };
+      await m.getRepository(DecisionRecordEntity).update(
+        { job_id: jobId, status: 'draft' },
+        { status: 'superseded' },
+      );
+      return { withdrawn: true };
+    });
   }
 
   /** Flip a thread back to `planning` (a rejected / change-requested plan returns to the grill). */
@@ -1706,6 +1760,7 @@ function toThread(row: JobEntity): Job {
     baseBranch: row.base_branch,
     kind: row.kind as JobKind | null,
     status: row.status as Job['status'],
+    halt: row.halt ?? null,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
     currentBranch: row.current_branch,

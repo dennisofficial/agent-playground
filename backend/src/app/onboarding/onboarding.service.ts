@@ -543,11 +543,14 @@ export class OnboardingService {
   }
 
   /**
-   * Best-effort per-repo webhook registration: ensure the two GitHub hooks (event→job intake at
-   * /ingress/github, silent PR-state sync at /webhooks/github) exist with the backend's secret + full
-   * event set. Skipped (debug-log, no warning) when the backend isn't publicly reachable — local runs
-   * rely on the 30-min poll. NEVER throws (fire-and-forget by every caller). On a missing admin:repo_hook
-   * scope, records a non-fatal `webhook_warning` on the repo row so the operator can add the scope.
+   * Best-effort per-repo webhook registration: ensure the two GitHub hooks (WORK-EVENTS intake at
+   * /webhooks/github/events, silent PR-state sync at /webhooks/github/state) exist with the backend's
+   * secret + full event set, and PRUNE any stale Atlas hooks at retired URLs (e.g. the old /ingress/github
+   * + /webhooks/github doors from before the rename). Skipped (debug-log, no warning) when the backend
+   * isn't publicly reachable — local runs rely on the 30-min poll. NEVER throws (fire-and-forget by every
+   * caller). When the token lacks webhook permission (classic: repo/admin:repo_hook · fine-grained:
+   * Webhooks: Read and write), records a non-fatal `webhook_warning` on the repo row so the operator can
+   * grant it.
    */
   private async ensureRepoWebhook(orgId: string, repo: RepoEntity): Promise<void> {
     const base = publicBackendBase(this.env);
@@ -572,8 +575,8 @@ export class OnboardingService {
     }
 
     const targets = [
-      { url: `${base}/ingress/github`, events: WORK_EVENTS },
-      { url: `${base}/webhooks/github`, events: STATE_EVENTS },
+      { url: `${base}/webhooks/github/events`, events: WORK_EVENTS },
+      { url: `${base}/webhooks/github/state`, events: STATE_EVENTS },
     ];
     let anyNoScope = false;
     let allOk = true;
@@ -589,6 +592,21 @@ export class OnboardingService {
       if (outcome !== 'created' && outcome !== 'updated') allOk = false;
     }
 
+    // Prune stale Atlas hooks at retired URLs (e.g. the pre-rename /ingress/github + /webhooks/github),
+    // scoped to our backend base so third-party hooks are untouched. Idempotent — a no-op once converged.
+    const pruned = await this.pr
+      .pruneWebhooksExcept(token, {
+        owner: parsed.owner,
+        repo: parsed.repo,
+        urlPrefix: `${base}/`,
+        keepUrls: targets.map((t) => t.url),
+      })
+      .catch((err) => {
+        this.logger.warn(`webhook prune error for ${repo.slug}: ${err}`);
+        return 0;
+      });
+    if (pruned > 0) this.logger.log(`pruned ${pruned} stale Atlas webhook(s) for ${repo.slug}`);
+
     // Persist/clear the operator-facing warning. On a transient 'error' (neither no-scope nor all-ok) we
     // leave the column untouched so a real prior no-scope warning isn't wiped by a flaky call.
     if (anyNoScope) {
@@ -596,7 +614,9 @@ export class OnboardingService {
         { id: repo.id },
         {
           webhook_warning:
-            'The org GitHub token lacks the admin:repo_hook scope — Atlas could not register the real-time delivery webhook. PR state still syncs via the 30-minute poll; add admin:repo_hook to enable real-time sync.',
+            "The org GitHub token lacks webhook permission — Atlas could not register the real-time delivery webhook. " +
+            'Classic tokens need the "repo" (or "admin:repo_hook") scope; fine-grained tokens need "Webhooks: Read and write" on the repo. ' +
+            'PR state still syncs via the 30-minute poll; grant the permission to enable real-time sync.',
         },
       );
     } else if (allOk) {

@@ -3,8 +3,12 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { TicketKind, TicketPriority } from "@/lib/api/tickets-api";
-import { kindColor, priorityColor } from "./ticket-helpers";
+import type {
+  TicketKind,
+  TicketPriority,
+  TicketSimilarRow,
+} from "@/lib/api/tickets-api";
+import { cap, kindColor, priorityColor, statusColor } from "./ticket-helpers";
 
 export interface TicketFormValue {
   title: string;
@@ -40,6 +44,8 @@ export function TicketFormModal({
   busy,
   onSubmit,
   onClose,
+  onCheckSimilar,
+  onOpenSimilar,
 }: {
   mode: "create" | "edit";
   number?: number;
@@ -48,6 +54,17 @@ export function TicketFormModal({
   busy?: boolean;
   onSubmit: (value: TicketFormValue) => void;
   onClose: () => void;
+  /**
+   * Semantic dedup check (create mode). The first "Create" click runs it; if it returns matches, they're
+   * shown and the button becomes "Create anyway" (a second click actually files the ticket). Omit to
+   * disable the check. Editing the title/description clears the shown matches so they're re-checked.
+   */
+  onCheckSimilar?: (value: {
+    title: string;
+    body: string;
+  }) => Promise<TicketSimilarRow[]>;
+  /** Open a surfaced related ticket (closes this modal, opens that ticket's drawer). */
+  onOpenSimilar?: (ticketId: string) => void;
 }) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [body, setBody] = useState(initial?.body ?? "");
@@ -55,6 +72,9 @@ export function TicketFormModal({
     initial?.priority ?? "",
   );
   const [kind, setKind] = useState<TicketKind | "">(initial?.kind ?? "");
+  // Dedup state (create mode): `similar === null` = not yet checked; `[]`/rows = checked (rows shown).
+  const [similar, setSimilar] = useState<TicketSimilarRow[] | null>(null);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -64,10 +84,45 @@ export function TicketFormModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const canSubmit = title.trim().length > 0 && !busy;
-  const submit = () => {
-    if (!canSubmit) return;
+  const canSubmit = title.trim().length > 0 && !busy && !checking;
+  // Whether matches were surfaced and not yet dismissed by an edit — drives the "Create anyway" label.
+  const showingSimilar = mode === "create" && !!similar && similar.length > 0;
+
+  const doSubmit = () =>
     onSubmit({ title: title.trim(), body: body.trim(), priority, kind });
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    // Edit mode, no checker, or matches already surfaced → file it. Otherwise run the dedup check first.
+    if (mode !== "create" || !onCheckSimilar || similar !== null) {
+      doSubmit();
+      return;
+    }
+    setChecking(true);
+    try {
+      const matches = await onCheckSimilar({
+        title: title.trim(),
+        body: body.trim(),
+      });
+      setSimilar(matches);
+      if (matches.length === 0) doSubmit(); // nothing related → create straight away
+    } catch {
+      // Fail-soft: a dedup-check error must never block ticket creation.
+      setSimilar([]);
+      doSubmit();
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  // Any edit to the dedup inputs invalidates surfaced matches → re-check on the next Create click.
+  const changeTitle = (v: string) => {
+    setTitle(v);
+    if (similar !== null) setSimilar(null);
+  };
+  const changeBody = (v: string) => {
+    setBody(v);
+    if (similar !== null) setSimilar(null);
   };
 
   return (
@@ -102,9 +157,9 @@ export function TicketFormModal({
             <input
               autoFocus
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => changeTitle(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") submit();
+                if (e.key === "Enter") void submit();
               }}
               placeholder="What needs doing?"
               className="h-[38px] w-full rounded-md border border-border bg-surface px-3 text-[13px] text-text outline-none transition focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
@@ -114,7 +169,7 @@ export function TicketFormModal({
           <Labeled label="Description" hint="· markdown context for Atlas">
             <textarea
               value={body}
-              onChange={(e) => setBody(e.target.value)}
+              onChange={(e) => changeBody(e.target.value)}
               placeholder="Context, acceptance criteria, links…"
               className="h-[104px] w-full resize-none rounded-md border border-border bg-surface px-3 py-2.5 text-[12.5px] leading-relaxed text-text outline-none transition focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
             />
@@ -150,6 +205,10 @@ export function TicketFormModal({
               </div>
             </div>
           </div>
+
+          {showingSimilar ? (
+            <SimilarPanel rows={similar!} onOpen={onOpenSimilar} />
+          ) : null}
         </div>
 
         <div
@@ -157,9 +216,11 @@ export function TicketFormModal({
           style={{ background: "var(--surface-2)" }}
         >
           <div className="font-mono text-[9.5px] text-faint">
-            {mode === "create"
-              ? `Lands in the backlog · #${nextNumber ?? "—"} · captured by you`
-              : "Editing metadata · status is driven by Atlas & jobs"}
+            {mode !== "create"
+              ? "Editing metadata · status is driven by Atlas & jobs"
+              : showingSimilar
+                ? `${similar!.length} possible duplicate${similar!.length === 1 ? "" : "s"} — review above`
+                : `Lands in the backlog · #${nextNumber ?? "—"} · captured by you`}
           </div>
           <div className="flex-1" />
           <button
@@ -172,13 +233,14 @@ export function TicketFormModal({
           <button
             type="button"
             disabled={!canSubmit}
-            onClick={submit}
+            onClick={() => void submit()}
             className="grid h-[34px] place-items-center rounded-md px-[18px] text-[12px] font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed"
             style={
               canSubmit
                 ? {
-                    background:
-                      "linear-gradient(145deg, var(--accent), var(--accent-2))",
+                    background: showingSimilar
+                      ? "linear-gradient(145deg, var(--amber, #b45309), var(--accent-2))"
+                      : "linear-gradient(145deg, var(--accent), var(--accent-2))",
                   }
                 : {
                     background: "var(--surface-3)",
@@ -187,7 +249,13 @@ export function TicketFormModal({
                   }
             }
           >
-            {mode === "edit" ? "Save changes" : "Create ticket"}
+            {mode === "edit"
+              ? "Save changes"
+              : checking
+                ? "Checking…"
+                : showingSimilar
+                  ? "Create anyway"
+                  : "Create ticket"}
           </button>
         </div>
       </div>
@@ -240,6 +308,71 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="mb-[7px] text-[11px] font-semibold text-dim">
       {children}
+    </div>
+  );
+}
+
+/**
+ * The dedup panel: tickets already on the board that look like near-duplicates of what's being typed.
+ * Shown after the first "Create" click when the semantic check returns matches — the operator can open
+ * one (to update it instead) or proceed via "Create anyway".
+ */
+function SimilarPanel({
+  rows,
+  onOpen,
+}: {
+  rows: TicketSimilarRow[];
+  onOpen?: (ticketId: string) => void;
+}) {
+  return (
+    <div
+      className="rounded-md border px-3 py-2.5"
+      style={{
+        borderColor: "var(--amber-line, var(--border-2))",
+        background: "var(--amber-soft, var(--surface-2))",
+      }}
+    >
+      <div className="mb-2 flex items-center gap-1.5">
+        <span className="text-[11px] font-semibold text-text">
+          One of these may already cover this
+        </span>
+        <span className="font-mono text-[9px] text-faint">
+          · {rows.length} related
+        </span>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {rows.map((r) => (
+          <button
+            key={r.id}
+            type="button"
+            onClick={() => onOpen?.(r.id)}
+            className="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-left transition hover:border-border-2"
+          >
+            <span className="font-mono text-[10px] text-faint">#{r.number}</span>
+            {r.kind ? (
+              <span
+                className="rounded-[3px] border border-border-2 px-1 py-px font-mono text-[8px] font-bold tracking-[0.07em]"
+                style={{ color: kindColor(r.kind) }}
+              >
+                {r.kind.toUpperCase()}
+              </span>
+            ) : null}
+            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-text">
+              {r.title}
+            </span>
+            <span
+              className="rounded-full px-1.5 py-px font-mono text-[8.5px] font-semibold"
+              style={{ color: statusColor(r.status) }}
+              title={cap(r.status)}
+            >
+              {r.status}
+            </span>
+            <span className="font-mono text-[9px] text-faint">
+              {Math.round(r.sim * 100)}%
+            </span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

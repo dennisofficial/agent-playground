@@ -307,6 +307,18 @@ export function approveMcpProposal(
   });
 }
 
+// ── Skill-proposal approval (owner-only) ───────────────────────────────────────────────────────────
+/** Approve a brain skill proposal — installs (git) / vendors the authored draft / removes, per the card's
+ *  mode (owner-only on the server). */
+export function approveSkillProposal(
+  ref: JobRef,
+  requestId: string,
+): Promise<{ ok: boolean; name: string; ts?: string }> {
+  return webJson(threadPath(ref, `/skill-proposals/${requestId}/approve`), {
+    method: "POST",
+  });
+}
+
 // ── Secure file upload (repo onboarding) ─────────────────────────────────────────────────────────
 export interface ProvideFileBody {
   /** The file-request card's id (its message ts). */
@@ -421,6 +433,8 @@ export interface RepoView {
   onboardingThreadId: string | null;
   /** When onboarding completed (workspace config live), ISO; null until then — drives "Set up" vs "Re-run". */
   onboardedAt: string | null;
+  /** Non-fatal webhook-registration warning (e.g. token lacks the webhook scope), or null when hooks are healthy. */
+  webhookWarning: string | null;
 }
 
 export function fetchOrgRepos(orgId: string): Promise<RepoView[]> {

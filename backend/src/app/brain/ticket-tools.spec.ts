@@ -24,6 +24,11 @@ function makeManager(tickets: Partial<TicketService>) {
     loadJob: vi.fn().mockResolvedValue({ id: 'thread-REAL', decisionRecordId: 'dr-1', baseBranch: 'main' }),
     appendTicketCard: vi.fn().mockResolvedValue(undefined),
   };
+  // Default the dedup check to "no near-duplicates" so create_ticket proceeds unless a test overrides it.
+  const ticketsSvc = {
+    findSimilar: vi.fn().mockResolvedValue({ queryVector: null, matches: [] }),
+    ...tickets,
+  } as Partial<TicketService>;
   const manager = new AgentSessionManager(
     store as never, // store (loadJob)
     {} as never, // driverStore
@@ -43,7 +48,7 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // ship
     {} as never, // repos
     {} as never, // awareness
-    tickets as TicketService,
+    ticketsSvc as TicketService,
     { engineAuth: async () => undefined } as never, // creds
     { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
     {
@@ -58,6 +63,7 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // git
     { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
     {} as never, // threadInput
+    { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
   );
   return { manager, store };
 }
@@ -129,6 +135,57 @@ describe('brain ticket tools — closure scoping', () => {
     const res = (await qualified('create_ticket', tools)({ title: 'x', status: 'doing' })) as { ok: boolean };
     expect(res.ok).toBe(false);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('create_ticket surfaces near-duplicates and does NOT create when unconfirmed', async () => {
+    const create = vi.fn();
+    const findSimilar = vi.fn().mockResolvedValue({
+      queryVector: [0.1, 0.2],
+      matches: [
+        { id: 't-6', number: 6, title: 'Verification gate loses verdict', status: 'backlog', kind: 'bug', priority: 'high', sim: 0.96 },
+      ],
+    });
+    const { manager } = makeManager({ create, findSimilar });
+    const tools = manager.buildTools(STIMULUS) as never as Record<string, (a: Record<string, unknown>) => Promise<unknown>>;
+
+    const res = (await qualified('create_ticket', tools)({
+      title: 'Verification gate loses the verdict',
+    })) as { ok: boolean; needsConfirmation?: boolean; similar?: Array<{ number: number }> };
+
+    expect(res.ok).toBe(false);
+    expect(res.needsConfirmation).toBe(true);
+    expect(res.similar).toEqual([
+      expect.objectContaining({ number: 6, title: 'Verification gate loses verdict', similarity: 0.96 }),
+    ]);
+    expect(findSimilar).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: 'org-REAL', repoId: 'repo-REAL', title: 'Verification gate loses the verdict' }),
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('create_ticket with confirm:true skips the dedup check and files the ticket', async () => {
+    const create = vi.fn().mockResolvedValue({ id: 't-7', number: 7, title: 'dup' });
+    const findSimilar = vi.fn();
+    const { manager } = makeManager({ create, findSimilar });
+    const tools = manager.buildTools(STIMULUS) as never as Record<string, (a: Record<string, unknown>) => Promise<unknown>>;
+
+    const res = (await qualified('create_ticket', tools)({ title: 'dup', confirm: true })) as { ok: boolean; number?: number };
+
+    expect(res.ok).toBe(true);
+    expect(res.number).toBe(7);
+    expect(findSimilar).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('create_ticket reuses the query vector as the ticket embedding when there are no duplicates', async () => {
+    const create = vi.fn().mockResolvedValue({ id: 't-8', number: 8, title: 'unique' });
+    const findSimilar = vi.fn().mockResolvedValue({ queryVector: [0.3, 0.4], matches: [] });
+    const { manager } = makeManager({ create, findSimilar });
+    const tools = manager.buildTools(STIMULUS) as never as Record<string, (a: Record<string, unknown>) => Promise<unknown>>;
+
+    await qualified('create_ticket', tools)({ title: 'unique' });
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ embedding: [0.3, 0.4] }));
   });
 
   it('list_tickets / promote_ticket pass the stimulus scope', async () => {

@@ -7,7 +7,7 @@ import { qk } from "./query-keys";
 import { subscribeSse, type SseHandle } from "./sse-manager";
 import { uiStatus, type InboxThread } from "./inbox";
 import { toJobKind } from "./status";
-import type { WireJobKind, PrState } from "./types";
+import type { WireJobKind, WireJobHalt, PrState } from "./types";
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
@@ -35,6 +35,8 @@ interface RealtimeRow {
   prState?: string | null;
   /** GitHub mergeable_state ('dirty' = conflict); refines the open-PR glyph. */
   prMergeable?: string | null;
+  /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
+  halt?: WireJobHalt | null;
 }
 
 /** A pg-realtime delta (mirrors the backend `RowDelta`), plus the `disabled` control frame. */
@@ -45,6 +47,13 @@ type RowDelta =
   | { kind: "remove"; pk: string }
   // Sent by the backend when realtime is unavailable — we close and rely on polling (no reconnect storm).
   | { kind: "disabled" };
+
+function sameHalt(
+  a: WireJobHalt | null,
+  b: WireJobHalt | null,
+): boolean {
+  return a?.kind === b?.kind && a?.reason === b?.reason && a?.at === b?.at;
+}
 
 /**
  * ONE cross-org realtime subscription for the whole shell — mounted once (in `AppChrome`), not per open
@@ -70,17 +79,21 @@ export function useAllJobsRealtime(): void {
     const patchUpdate = (row: RealtimeRow) => {
       let found = false;
       let statusChanged = false;
+      let haltChanged = false;
       const nextStatus = uiStatus(row.status, row.origin);
       const nextBranch = row.currentBranch ?? null;
       const prevBranch = lastBranchByJob.get(row.jobId);
       const branchChanged = prevBranch !== undefined && prevBranch !== nextBranch;
       lastBranchByJob.set(row.jobId, nextBranch);
+      const nextHalt = "halt" in row ? (row.halt ?? null) : undefined;
       qc.setQueryData<InboxThread[]>(qk.allJobs(), (prev) => {
         if (!prev) return prev;
         const idx = prev.findIndex((t) => t.id === row.jobId);
         if (idx === -1) return prev;
         found = true;
         statusChanged = prev[idx].status !== nextStatus;
+        const halt = nextHalt === undefined ? prev[idx].halt : nextHalt;
+        haltChanged = !sameHalt(prev[idx].halt, halt);
         const next = [...prev];
         next[idx] = {
           ...next[idx],
@@ -98,6 +111,7 @@ export function useAllJobsRealtime(): void {
                 url: next[idx].pr?.url ?? null,
               }
             : null,
+          halt,
         };
         return next;
       });
@@ -105,17 +119,16 @@ export function useAllJobsRealtime(): void {
         invalidate(); // a thread we don't have cached yet → refetch the enriched list
         return;
       }
-      // A status transition (e.g. approve → running, → building, cancelled) means the OPEN thread's
-      // detail pane is stale: the WAL row updates the sidebar in place above, but the pipeline/message
-      // queries are keyed per-thread and only THIS stream carries the (race-free, commit-driven) signal
-      // that they changed. Invalidate them so an open thread's approve bar / phase states go live too;
-      // for any non-open thread these are unobserved queries, so this just marks them stale (no fetch).
-      if (statusChanged || branchChanged) {
+      // A status transition (e.g. approve → running, → building, cancelled), branch switch, or HALT change
+      // means the OPEN thread's detail pane is stale. Halt is intentionally orthogonal to status, so without
+      // the explicit haltChanged gate a failed/paused build could update the sidebar but leave the workspace
+      // banner and pipeline tree stale until a later refetch.
+      if (statusChanged || branchChanged || haltChanged) {
         const ref = { orgId: row.orgId, repoId: row.repoId, jobId: row.jobId };
         // The pipeline carries the branch fields the drift badge reads — refresh on either a status flip or
-        // a live branch switch. Messages only change with status, so keep them gated on statusChanged.
+        // a live branch switch. Halt writes also append a durable operator message, so refresh both surfaces.
         void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-        if (statusChanged) {
+        if (statusChanged || haltChanged) {
           void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
         }
       }

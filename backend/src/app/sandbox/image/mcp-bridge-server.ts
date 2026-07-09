@@ -24,16 +24,50 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
-
-/** Reply frame shape the host writes on `turn:{T}:replies` (mirrors engine-entrypoint's HostFrame). */
-type HostFrame =
-  | { t: 'tool_response'; id: string; result: unknown }
-  | { t: 'tool_error'; id: string; message: string };
+import { ToolBridgeReader } from './tool-bridge-reader';
 
 /** JSON-schema descriptions for the host bridge tools a Codex writer thread uses, so the model fills the
  *  right fields. The MCP server forwards the WHOLE arguments object as the `tool_request` `args`, which is
  *  exactly what the host handlers read (`args['summary']`, etc.). Unknown tools get a permissive schema. */
 const TOOL_SCHEMAS: Record<string, { description: string; inputSchema: Record<string, unknown> }> = {
+  report_verification: {
+    description:
+      'Report the verification you ran for a DIRECT BUILD before shipping. Pass passed:true only once ' +
+      'diagnostics + the repo typecheck are clean AND — if you touched a runtime surface (HTTP endpoint, UI ' +
+      'page/component, CLI entry point, or background job) — you have ACTUALLY EXERCISED IT LIVE (booted the ' +
+      'process and curled the endpoint / drove the UI / ran the CLI for real). Include that live evidence in ' +
+      '`verification` (the real command, its exit code, a tail of its output). finalize_build runs a ' +
+      'live-verification judge over this evidence and refuses to ship a runtime change you only typechecked. ' +
+      'If you cannot get things clean, pass passed:false with `remaining` listing the specific errors.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        passed: { type: 'boolean', description: 'true only when checks are clean AND live-exercised (if runtime).' },
+        remaining: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'When passed:false — the specific remaining errors (file:line — message).',
+        },
+        verification: {
+          type: 'array',
+          description:
+            'Live-verification evidence — the real commands you ran and their results (curl / UI drive / CLI ' +
+            'run, plus diagnostics/typecheck). Typecheck/build/lint/tests alone are NOT live verification.',
+          items: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string' },
+              command: { type: 'string' },
+              exitCode: { type: 'number' },
+              outputTail: { type: 'string' },
+            },
+          },
+        },
+      },
+      required: ['passed'],
+      additionalProperties: true,
+    },
+  },
   complete_thread: {
     description:
       'Assert this thread is DONE. Call exactly once when the work is complete and verified. Provide a ' +
@@ -74,6 +108,29 @@ const TOOL_SCHEMAS: Record<string, { description: string; inputSchema: Record<st
         detail: { type: 'string', description: 'Specifically what blocks you and what you need.' },
       },
       required: ['reason', 'detail'],
+      additionalProperties: true,
+    },
+  },
+  reset_sandbox: {
+    description:
+      'Recreate this job’s sandbox so you can PROVE it cold-boots from durable config. Default: recreates the ' +
+      'CONTAINER only (worktree + session survive). `hard:true`: recreates the WHOLE sandbox from scratch — ' +
+      'fresh worktree AND container, as if the job just started — while keeping your coding session (history ' +
+      'resumes) and the /context + /playground mounts. A hard reset is a TWO-CALL CONFIRM: the first call ' +
+      'describes what happens / what is lost and does nothing; call it again to actually reset. It REFUSES on ' +
+      'a dirty tree or unpushed commits (the host never commits for you — commit + push first). The reset ' +
+      'happens on your NEXT turn — call it, then STOP.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string', description: 'Why you are resetting (shown to the operator).' },
+        hard: {
+          type: 'boolean',
+          description:
+            'true = full from-scratch worktree + container re-provision (two-call confirm; refuses on a dirty/unpushed tree). Omit/false = container-only reset.',
+        },
+      },
+      required: ['reason'],
       additionalProperties: true,
     },
   },
@@ -137,42 +194,33 @@ async function main(): Promise<void> {
   const repliesKey = `turn:${turnId}:replies`;
 
   const pub = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
-  const sub = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
   await pub.connect();
-  await sub.connect();
 
-  // Reply reader: a blocking read on the replies stream (its own connection), resolving pending calls by
-  // id. Reads from '0-0' — the stream is fresh per turn, so there are no stale replies to skip.
-  const pending = new Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>();
-  let stop = false;
-  void (async () => {
-    let lastId = '0-0';
-    while (!stop) {
-      const r = (await sub.xread('BLOCK', 1000, 'STREAMS', repliesKey, lastId)) as
-        | Array<[string, Array<[string, string[]]>]>
-        | null;
-      if (!r) continue;
-      for (const [, entries] of r) {
-        for (const [eid, f] of entries) {
-          lastId = eid;
-          const di = f.indexOf('data');
-          if (di < 0) continue;
-          const frame = JSON.parse(f[di + 1]) as HostFrame;
-          const entry = pending.get(frame.id);
-          if (!entry) continue;
-          pending.delete(frame.id);
-          if (frame.t === 'tool_response') entry.resolve(frame.result);
-          else entry.reject(new Error(frame.message));
-        }
-      }
-    }
-  })().catch(() => undefined);
+  // Reply reader: a blocking read on the replies stream (its own connection(s) — a blocking read can't
+  // share `pub`), resolving pending calls by id. Reads from '0-0' — the stream is fresh per turn, so
+  // there are no stale replies to skip. `makeSub` also assigns the outer `sub` so stdin-close cleanup
+  // always disconnects whichever connection is CURRENT (the reader swaps it internally on a stall-reset).
+  let sub: Redis | undefined;
+  const reader = new ToolBridgeReader({
+    repliesKey,
+    makeSub: () => {
+      sub = new Redis(redisUrl, { lazyConnect: false, maxRetriesPerRequest: null });
+      return sub;
+    },
+    log: (m) => process.stderr.write(`[mcp-bridge-server] ${m}\n`),
+  });
+  reader.start();
 
   const callHostTool = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
     const id = randomUUID();
-    const result = new Promise<unknown>((resolve, reject) => pending.set(id, { resolve, reject }));
-    await pub.xadd(toolsKey, '*', 'data', JSON.stringify({ t: 'tool_request', id, name, args }));
-    return result;
+    const p = reader.register(id);
+    try {
+      await pub.xadd(toolsKey, '*', 'data', JSON.stringify({ t: 'tool_request', id, name, args }));
+    } catch (err) {
+      reader.cancel(id);
+      throw err;
+    }
+    return p;
   };
 
   const server = new Server({ name: 'atlasbridge', version: '1.0.0' }, { capabilities: { tools: {} } });
@@ -201,9 +249,9 @@ async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
   // Keep the process alive; codex terminates it when the turn ends. Clean up on stdin close.
   process.stdin.on('close', () => {
-    stop = true;
+    reader.stopReader();
     pub.disconnect();
-    sub.disconnect();
+    sub?.disconnect();
     process.exit(0);
   });
 }

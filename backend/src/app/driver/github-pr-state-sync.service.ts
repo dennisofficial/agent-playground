@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import type { PrStateDelta } from '../domain';
@@ -17,6 +17,8 @@ import { JobLifecycleService } from './job-lifecycle.service';
  */
 @Injectable()
 export class GithubPrStateSync {
+  private readonly logger = new Logger(GithubPrStateSync.name);
+
   constructor(
     private readonly lifecycle: JobLifecycleService,
     private readonly driverStore: DriverStoreService,
@@ -38,18 +40,30 @@ export class GithubPrStateSync {
   /** A PR opened for a job's branch — record it (idempotent: a job that already has a pr_number is left alone). */
   async onPrOpened(orgId: string, repoId: string, headRef: string, url: string, number: number): Promise<void> {
     const job = await this.stimStore.findOwningJobByBranch(orgId, repoId, headRef);
-    if (job && job.pr_number == null) await this.driverStore.setPrReady(job.id, url, number);
+    if (!job) {
+      this.logger.debug(`pr #${number} opened — no owning job for branch "${headRef}" in ${repoId} (ignored)`);
+      return;
+    }
+    if (job.pr_number == null) await this.driverStore.setPrReady(job.id, url, number);
   }
 
   /** A PR merged or closed-without-merge — apply the terminal state via the shared apply-logic. */
   async onPrClosed(orgId: string, repoId: string, number: number, merged: boolean): Promise<void> {
     const job = await this.stimStore.findOwningJobByPrNumber(orgId, repoId, number);
-    if (job) await this.lifecycle.applyGithubPrState(job, merged ? 'merged' : 'closed');
+    if (!job) {
+      this.logger.debug(`pr #${number} ${merged ? 'merged' : 'closed'} — no owning job in ${repoId} (ignored)`);
+      return;
+    }
+    await this.lifecycle.applyGithubPrState(job, merged ? 'merged' : 'closed');
   }
 
   /** A previously-closed PR reopened — flip `pr_state` back to `open`; the job's `status` stays `done`. */
   async onPrReopened(orgId: string, repoId: string, number: number): Promise<void> {
     const job = await this.stimStore.findOwningJobByPrNumber(orgId, repoId, number);
-    if (job) await this.jobs.update({ id: job.id }, { pr_state: 'open' });
+    if (!job) {
+      this.logger.debug(`pr #${number} reopened — no owning job in ${repoId} (ignored)`);
+      return;
+    }
+    await this.jobs.update({ id: job.id }, { pr_state: 'open' });
   }
 }

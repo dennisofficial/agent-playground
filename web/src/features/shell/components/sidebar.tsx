@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronRight, LayoutGrid, Plus, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { env } from "@/lib/env";
@@ -10,6 +10,11 @@ import { ROUTES, threadHref } from "@/lib/routes";
 import { useOrgs, type OrgSummary } from "@/lib/api/me";
 import { useAllJobs, type InboxThread } from "@/lib/api/inbox";
 import { useAllRepos } from "@/lib/api/tickets-queries";
+import {
+  groupThreadsBySection,
+  SECTION_LABEL,
+  type JobSection,
+} from "@/lib/api/job-section";
 import { PrStatusIcon, StatusPie } from "@/components/ui/badges";
 import { AccountMenu } from "./account-menu";
 
@@ -36,6 +41,21 @@ import { AccountMenu } from "./account-menu";
  */
 
 const repoKeyOf = (orgId: string, repoId: string) => `${orgId}:${repoId}`;
+
+// Section collapse is global (collapsing "Merged" collapses it in every repo) and persists across
+// reloads; the repo/org collapse above it does not. Default: everything expanded except Merged.
+const COLLAPSED_SECTIONS_KEY = "atlas.sidebar.collapsedSections";
+const DEFAULT_COLLAPSED_SECTIONS: JobSection[] = ["merged"];
+
+function loadCollapsedSections(): Set<JobSection> {
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_SECTIONS_KEY);
+    if (!raw) return new Set(DEFAULT_COLLAPSED_SECTIONS);
+    return new Set(JSON.parse(raw) as JobSection[]);
+  } catch {
+    return new Set(DEFAULT_COLLAPSED_SECTIONS);
+  }
+}
 
 /** The per-repo view-model the tree renders. */
 interface RepoVM {
@@ -115,8 +135,31 @@ export function Sidebar() {
   // Per-org idle-repos disclosure. Undefined = use the default (expanded only when no active repos).
   const [idleOpen, setIdleOpen] = useState<Record<string, boolean>>({});
 
+  // Seeded with the SSR-safe default, then hydrated from localStorage on mount (avoids a hydration
+  // mismatch — the server never knows the browser's stored collapse state).
+  const [collapsedSections, setCollapsedSections] = useState<Set<JobSection>>(
+    () => new Set(DEFAULT_COLLAPSED_SECTIONS),
+  );
+  useEffect(() => {
+    setCollapsedSections(loadCollapsedSections());
+  }, []);
+
   const toggleRepo = (key: string) =>
     setCollapsedRepos((c) => ({ ...c, [key]: !c[key] }));
+
+  const isSectionCollapsed = (section: JobSection) =>
+    collapsedSections.has(section);
+  const toggleSection = (section: JobSection) =>
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      window.localStorage.setItem(
+        COLLAPSED_SECTIONS_KEY,
+        JSON.stringify([...next]),
+      );
+      return next;
+    });
 
   const buildRepoVM = (
     orgId: string,
@@ -225,6 +268,8 @@ export function Sidebar() {
               onToggleIdle={() =>
                 setIdleOpen((m) => ({ ...m, [vm.org.id]: !vm.idleExpanded }))
               }
+              isSectionCollapsed={isSectionCollapsed}
+              onToggleSection={toggleSection}
             />
           ))
         )}
@@ -253,6 +298,8 @@ function OrgSection({
   onToggleOrg,
   onToggleRepo,
   onToggleIdle,
+  isSectionCollapsed,
+  onToggleSection,
 }: {
   vm: OrgVM;
   pathname: string;
@@ -261,6 +308,8 @@ function OrgSection({
   onToggleOrg: () => void;
   onToggleRepo: (key: string) => void;
   onToggleIdle: () => void;
+  isSectionCollapsed: (section: JobSection) => boolean;
+  onToggleSection: (section: JobSection) => void;
 }) {
   const { org, collapsed } = vm;
   const expanded = !collapsed;
@@ -374,6 +423,8 @@ function OrgSection({
                   pathname={pathname}
                   onToggle={() => onToggleRepo(repo.key)}
                   divided={i > 0}
+                  isSectionCollapsed={isSectionCollapsed}
+                  onToggleSection={onToggleSection}
                 />
               ))}
 
@@ -411,6 +462,8 @@ function OrgSection({
                           pathname={pathname}
                           onToggle={() => onToggleRepo(repo.key)}
                           divided={i > 0}
+                          isSectionCollapsed={isSectionCollapsed}
+                          onToggleSection={onToggleSection}
                         />
                       ))
                     : null}
@@ -428,6 +481,8 @@ function OrgSection({
                 pathname={pathname}
                 onToggle={() => onToggleRepo(repo.key)}
                 divided={i > 0}
+                isSectionCollapsed={isSectionCollapsed}
+                onToggleSection={onToggleSection}
               />
             ))
           )}
@@ -447,6 +502,8 @@ function RepoGroup({
   pathname,
   onToggle,
   divided,
+  isSectionCollapsed,
+  onToggleSection,
 }: {
   orgId: string;
   repo: RepoVM;
@@ -454,6 +511,8 @@ function RepoGroup({
   pathname: string;
   onToggle: () => void;
   divided: boolean;
+  isSectionCollapsed: (section: JobSection) => boolean;
+  onToggleSection: (section: JobSection) => void;
 }) {
   const iconBtn =
     "grid h-[18px] w-[18px] flex-none place-items-center rounded-[4px] transition";
@@ -530,19 +589,102 @@ function RepoGroup({
             </Link>
           )
         ) : (
-          repo.threads.map((t) => (
-            <ThreadRow
-              key={t.id}
-              thread={t}
-              orgId={orgId}
-              active={
-                pathname ===
-                threadHref({ orgId, repoId: repo.repoId, jobId: t.id })
-              }
-            />
+          groupThreadsBySection(repo.threads).map(({ section, threads }) => (
+            <SidebarSection
+              key={section}
+              section={section}
+              count={threads.length}
+              collapsed={isSectionCollapsed(section)}
+              onToggle={() => onToggleSection(section)}
+              anyNeedsYou={threads.some((t) => t.needsYou)}
+            >
+              {threads.map((t) => (
+                <ThreadRow
+                  key={t.id}
+                  thread={t}
+                  orgId={orgId}
+                  active={
+                    pathname ===
+                    threadHref({ orgId, repoId: repo.repoId, jobId: t.id })
+                  }
+                />
+              ))}
+            </SidebarSection>
           ))
         )
       ) : null}
+    </div>
+  );
+}
+
+/** The fixed swatch/label color per {@link JobSection} (matches the sidebar-redesign mockup palette). */
+const SECTION_COLOR: Record<JobSection, string> = {
+  planning: "var(--blue)",
+  awaiting: "var(--slate)",
+  building: "var(--accent)",
+  done: "var(--green)",
+  pr_open: "var(--green)",
+  merged: "var(--purple)",
+};
+
+/** A collapsible status-derived section header (label + live count + chevron) over its thread rows.
+ *  Collapse state is owned by the caller (persisted globally per section, see `Sidebar`). */
+function SidebarSection({
+  section,
+  count,
+  collapsed,
+  onToggle,
+  anyNeedsYou,
+  children,
+}: {
+  section: JobSection;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  anyNeedsYou: boolean;
+  children: React.ReactNode;
+}) {
+  const color = SECTION_COLOR[section];
+  return (
+    <div className="pb-[3px]">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-[7px] rounded-[4px] px-[3px] pb-[3px] pt-[7px] text-left"
+        aria-expanded={!collapsed}
+      >
+        <span
+          className="h-[7px] w-[7px] flex-none rounded-[2px]"
+          style={{ background: color }}
+          aria-hidden
+        />
+        <span
+          className="font-mono text-[9.5px] font-bold uppercase tracking-[0.07em]"
+          style={{ color }}
+        >
+          {SECTION_LABEL[section]}
+        </span>
+        <span className="rounded-full bg-surface-2 px-[5px] font-mono text-[9px] text-faint">
+          {count}
+        </span>
+        {collapsed && anyNeedsYou ? (
+          <span
+            className="h-1.5 w-1.5 flex-none rounded-full"
+            style={{ background: "var(--accent)" }}
+            title="Jobs need your attention"
+            aria-hidden
+          />
+        ) : null}
+        <ChevronRight
+          size={9}
+          strokeWidth={2.5}
+          className={cn(
+            "ml-auto flex-none text-faint transition-transform",
+            !collapsed && "rotate-90",
+          )}
+        />
+      </button>
+      {collapsed ? null : children}
     </div>
   );
 }
@@ -574,10 +716,10 @@ function ThreadRow({
           : undefined
       }
     >
-      <span className="mt-px flex-none">
-        {/* A halted thread (a turn-stopping error is outstanding) shows the failed ✕ over everything —
-            it needs attention above its PR glyph. Otherwise, once a PR exists the leaf shows its PR
-            status (GitHub color convention); until then, the build-lifecycle status pie. */}
+      <span className="relative mt-px flex-none">
+        {/* A halted thread (an unresolved turn-stopping error) shows the failed ✕ over everything — it
+            needs attention above its PR glyph. Otherwise, once a PR exists the leaf shows its PR status
+            (GitHub color convention); until then, the build-lifecycle status pie. */}
         {thread.halted ? (
           <StatusPie status={thread.status} halted size={14} />
         ) : thread.pr ? (
@@ -585,6 +727,14 @@ function ThreadRow({
         ) : (
           <StatusPie status={thread.status} size={14} />
         )}
+        {thread.halt ? (
+          <span
+            className="absolute -bottom-px -right-0.5 h-[7px] w-[7px] rounded-full border-[1.5px] border-panel"
+            style={{ background: "var(--red)" }}
+            title={`Halted — ${thread.halt.reason}`}
+            aria-label="Halted"
+          />
+        ) : null}
       </span>
       <span className="min-w-0 flex-1">
         <span className="line-clamp-2 text-[12px] font-normal leading-[1.32] text-text">
