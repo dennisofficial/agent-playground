@@ -2712,13 +2712,6 @@ export class AgentSessionManager
         // plan straight to `awaiting_approval` and posts the approval card — the operator is the FINAL gate.
         // GATED on a review having RUN for THIS plan version (mandatory-run, advisory-to-pass).
 
-        // REATTACH IDEMPOTENCY (durable) + clean re-propose: if a proposal is already pending, durably
-        // retract it (flip → planning, supersede the draft) BEFORE persisting the new one — so a re-run
-        // (host death mid-propose) or a deliberate revise-and-repropose always ends with exactly ONE
-        // pending proposal, never a no-op and never an orphaned live handle.
-        const prep = await this.prepareRepropose(stimulus.jobId);
-        if (prep.refuse) return { ok: false, reason: prep.refuse };
-
         const overview = String(args['overview'] ?? '').trim();
         // The one-line goal — the SAME text Atlas writes as plan.md's `# <H1>`. Becomes the thread title
         // (durable + live `thread_meta` frame, repainted inside requestApprovalAndAct).
@@ -2770,6 +2763,14 @@ export class AgentSessionManager
               'again (the reviewed version no longer matches).',
           };
         }
+
+        // REATTACH IDEMPOTENCY (durable) + clean re-propose: if a proposal is already pending, durably
+        // retract it (flip → planning, supersede the draft) BEFORE persisting the new one — so a re-run
+        // (host death mid-propose) or a deliberate revise-and-repropose always ends with exactly ONE
+        // pending proposal, never a no-op and never an orphaned live handle. Run this ONLY after all
+        // validation/gates above have passed, so a rejected re-propose never retracts an approvable card.
+        const prep = await this.prepareRepropose(stimulus.jobId);
+        if (prep.refuse) return { ok: false, reason: prep.refuse };
 
         // Persist STRAIGHT to `awaiting_approval` (no `plan_review`): persistPlan supersedes drafts + titles
         // in one transaction. `thread_meta` repaint happens inside requestApprovalAndAct (single source).
@@ -2927,8 +2928,6 @@ export class AgentSessionManager
             reason: 'summary is required (what you will change, directly)',
           };
         }
-        const prep = await this.prepareRepropose(stimulus.jobId);
-        if (prep.refuse) return { ok: false, reason: prep.refuse };
 
         const changeOutline = Array.isArray(args['changeOutline'])
           ? args['changeOutline'].map((c) => String(c).trim()).filter(Boolean)
@@ -2965,6 +2964,12 @@ export class AgentSessionManager
               `Lock it with the operator first, or use submit_plan for the full ceremony.`,
           };
         }
+
+        // Clean re-propose: durably retract any pending proposal (flip → planning, supersede the draft)
+        // ONLY after the always-ask safety gate has passed — so an uncovered always-ask class refuses
+        // WITHOUT first destroying an approvable card, always ending with exactly ONE pending proposal.
+        const prep = await this.prepareRepropose(stimulus.jobId);
+        if (prep.refuse) return { ok: false, reason: prep.refuse };
 
         // Persist a MINIMAL record (overview = summary, any locked decisions, NO threads) and post the
         // lightweight approval card. The build runs only after approval (kind: 'direct').
