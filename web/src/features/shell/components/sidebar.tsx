@@ -712,7 +712,8 @@ function ThreadRow({
         active
           ? {
               background: "var(--accent-soft)",
-              border: "1px solid var(--accent-line)",
+              outline: "1px solid var(--accent-line)",
+              outlineOffset: "-1px",
             }
           : undefined
       }
