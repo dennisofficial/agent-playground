@@ -57,6 +57,8 @@ describe('workspace-profile.group — the named provisioning umbrella', () => {
 
   it('surfaces org vs repo scope for skills + MCP in a NORMAL job (not just onboarding)', () => {
     const normal = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    expect(normal).toContain('the skill tools (propose_skill_install / propose_skill / propose_skill_removal)');
+    expect(normal).toContain('propose_mcp_servers each take scope:"repo"');
     expect(normal).toContain('scope:"org"');
     // The anti-pattern the fix targets: a normal job must not be steered to decline org-wide requests.
     expect(normal).toContain('never decline an org-wide request');

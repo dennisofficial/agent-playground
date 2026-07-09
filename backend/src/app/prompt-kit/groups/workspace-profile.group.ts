@@ -14,8 +14,8 @@ import type { PromptCtx } from '../prompt-ctx';
 
 /** The named area + its seven dimensions and the upkeep tool for each. Shared by both framings. */
 const WORKSPACE_PROFILE_DIMENSIONS = [
-  'THE WORKSPACE PROFILE — the durable, per-repo provisioning that turns a bare checkout into a runnable,',
-  'correctly-configured workspace. It is ONE area with SEVEN dimensions, each with its own upkeep tool:',
+  'THE WORKSPACE PROFILE — the durable provisioning for this repo, or for the org when scope:"org" is requested,',
+  'that turns a bare checkout into a runnable, correctly-configured workspace. It is ONE area with SEVEN dimensions, each with its own upkeep tool:',
   '  1. Secret files   — request_secret / request_file (or derive_secret for a self-computed value)',
   '  2. Mounts         — write_workspace_config({ mounts }) — durable dirs a tool writes outside your HOME',
   '  3. Cache folders  — write_workspace_config (a shared-rw mount); most caches already persist under HOME',
