@@ -6,7 +6,7 @@ import {
   GithubNotificationSource,
   verifyGithubSignature,
 } from './github-notification.source';
-import type { RawNotification } from '../domain';
+import type { CiSyncDelta, RawNotification } from '../domain';
 
 const SECRET = 'gh-webhook-secret';
 
@@ -352,5 +352,63 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
       raw(synced, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }),
     );
     expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
+  });
+});
+
+describe('GithubNotificationSource.handleWorkEvent', () => {
+  it('on a check_run payload returns a non-null CI delta AND the same triage as handle() on the same payload', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      repository: { full_name: 'Acme/Web' },
+      check_run: {
+        id: 7,
+        name: 'Typecheck',
+        status: 'completed',
+        conclusion: 'failure',
+        html_url: 'http://x',
+        check_suite: { head_branch: 'feat/a1b2c3d4' },
+        pull_requests: [{ number: 12 }],
+      },
+    };
+    const headers = {
+      'x-hub-signature-256': sign(JSON.stringify(payload)),
+      'x-github-event': 'check_run',
+      'x-github-delivery': 'd-1',
+    };
+
+    const { triage, ci } = await src.handleWorkEvent(raw(payload, headers));
+    const directTriage = await src.handle(raw(payload, headers));
+
+    expect(triage).toEqual(directTriage);
+    expect(ci).toEqual<CiSyncDelta>({ orgId: 'T1', repoId: 'web', prNumber: 12, branch: 'feat/a1b2c3d4' });
+  });
+
+  it('returns ci: null for a pull_request payload (not a CI event type)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      action: 'opened',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: { number: 5, html_url: 'http://pr/5', merged: false, head: { ref: 'feat/x' } },
+    };
+    const headers = {
+      'x-hub-signature-256': sign(JSON.stringify(payload)),
+      'x-github-event': 'pull_request',
+    };
+
+    const { ci } = await src.handleWorkEvent(raw(payload, headers));
+    expect(ci).toBeNull();
+  });
+
+  it('returns ci: null for a push payload (not a supported CI event type)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = { repository: { full_name: 'Acme/Web' } };
+    const headers = {
+      'x-hub-signature-256': sign(JSON.stringify(payload)),
+      'x-github-event': 'push',
+    };
+
+    const { ci, triage } = await src.handleWorkEvent(raw(payload, headers));
+    expect(ci).toBeNull();
+    expect(triage).toMatchObject({ outcome: 'ignored' });
   });
 });

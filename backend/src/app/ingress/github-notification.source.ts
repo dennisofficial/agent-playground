@@ -2,6 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
+  CiSyncDelta,
   EventSeverity,
   IngressResult,
   NotificationSource,
@@ -51,7 +52,27 @@ export class GithubNotificationSource implements NotificationSource {
   async handle(raw: RawNotification): Promise<IngressResult> {
     const g = await this.verifyAndRoute(raw);
     if ('outcome' in g) return g;
+    return this.buildTriage(g, raw);
+  }
 
+  /**
+   * The same work-events front door as `handle`, but also correlates the payload into a `CiSyncDelta`
+   * for the silent CI-status sync — non-null ONLY for the three CI event types. The two are computed
+   * from the SAME verified/routed payload so they can never disagree.
+   */
+  async handleWorkEvent(raw: RawNotification): Promise<{ triage: IngressResult; ci: CiSyncDelta | null }> {
+    const g = await this.verifyAndRoute(raw);
+    if ('outcome' in g) return { triage: g, ci: null };
+    const triage = this.buildTriage(g, raw);
+    const ci = parseCiDelta(g.eventType, g.route, g.body);
+    return { triage, ci };
+  }
+
+  /** Build the work-events triage result from an already verified+routed payload. */
+  private buildTriage(
+    g: { eventType: string; body: GithubWebhookBody; route: { orgId: string; repoId: string } },
+    raw: RawNotification,
+  ): IngressResult {
     const summary = summarizeGithubEvent(g.eventType, g.body);
     if (!summary) {
       // A verified payload we deliberately don't act on (e.g. a successful run, a push event, a
@@ -301,6 +322,30 @@ function summarizeGithubEvent(
     };
   }
   return null;
+}
+
+/**
+ * Correlation delta for the silent CI-status sync — non-null ONLY for the three CI event types. We do
+ * NOT gate on conclusion/status: recompute on ANY CI event (queued/in_progress included) so "running" is
+ * caught, not only terminal states. Carries only correlation keys (never the webhook's own head_sha).
+ */
+function parseCiDelta(
+  eventType: string,
+  route: { orgId: string; repoId: string },
+  body: GithubWebhookBody,
+): CiSyncDelta | null {
+  if (eventType !== 'workflow_run' && eventType !== 'check_run' && eventType !== 'check_suite') return null;
+  const prNumber =
+    body.workflow_run?.pull_requests?.[0]?.number ??
+    body.check_run?.pull_requests?.[0]?.number ??
+    body.check_suite?.pull_requests?.[0]?.number ??
+    null;
+  const branch =
+    body.workflow_run?.head_branch ??
+    body.check_run?.check_suite?.head_branch ??
+    body.check_suite?.head_branch ??
+    null;
+  return { orgId: route.orgId, repoId: route.repoId, prNumber, branch };
 }
 
 /**

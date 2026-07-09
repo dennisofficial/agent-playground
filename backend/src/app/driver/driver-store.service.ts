@@ -1006,6 +1006,9 @@ export class DriverStoreService {
       // instead of hardcoding "open" (it would otherwise show a stale green "open" after a merge/close).
       prState: thread.pr_state,
       prMergeable: thread.pr_mergeable,
+      // The observed CI/CD aggregate for the PR head (`success|failure|pending|null`) — drives the
+      // navigator PR-row CI glyph, kept fresh by the webhook CI-sync + the 30-min reconciler backstop.
+      ciStatus: thread.ci_status,
       featureBranch: thread.feature_branch,
       // The OBSERVED live branch (what the agent's HEAD is actually on) — drives the navigator drift badge
       // when it diverges from the host-named featureBranch. Null until first sampled / on detached HEAD.
