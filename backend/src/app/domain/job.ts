@@ -38,7 +38,8 @@ export type ThreadOrigin = 'chat' | 'event' | 'control';
  * `turn_active` set; the gate still wins).
  *
  * `halted` is the fourth axis: `status` is now the pure build PHASE, so failure/pause lives on the
- * separate `halt` field. A halted job (a build failure, a credential/budget block, or an incomplete turn)
+ * separate `halt` field (a build failure, a credential/budget block, or an incomplete turn), and a
+ * chat-turn failure sets the orthogonal `halted` flag without ever touching `status`. A halted job
  * always needs the operator regardless of the phase it halted in — this is what the old `failed`/`paused`
  * status values used to signal before the phase and the halt were split apart.
  *
@@ -55,6 +56,8 @@ export function deriveNeedsYou(
   // MUST precede the question gate below (which otherwise overrides every other axis).
   if (status === 'deleting') return false;
   if (awaitingQuestion) return true;
+  // A halted thread — a chat-turn failure box outstanding, or a phase-preserving build `halt` — needs the
+  // operator even when its `status` is still `running`/`plan_review`; neither ever flips `status`.
   if (halted) return true;
   if (turnActive) return false;
   return (

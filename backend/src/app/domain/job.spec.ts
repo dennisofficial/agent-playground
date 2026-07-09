@@ -67,4 +67,11 @@ describe('deriveNeedsYou', () => {
     expect(deriveNeedsYou('deleting', true, true, false)).toBe(false);
     expect(deriveNeedsYou('deleting', false, false, true)).toBe(false);
   });
+
+  it('halted signals needs-you even when actively working (running/plan_review)', () => {
+    expect(deriveNeedsYou('running', false, false, true)).toBe(true);
+    expect(deriveNeedsYou('running', true, false, true)).toBe(true); // even mid-turn
+    expect(deriveNeedsYou('planning', false, false, true)).toBe(true);
+    expect(deriveNeedsYou('plan_review', false, false, true)).toBe(true);
+  });
 });

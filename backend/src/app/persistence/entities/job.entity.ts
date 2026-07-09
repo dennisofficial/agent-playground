@@ -130,6 +130,16 @@ export class JobEntity extends TimestampedEntity {
   turn_active!: boolean;
 
   /**
+   * Whether an unresolved TURN-FAILURE operator box is outstanding (a stop-the-world engine error the
+   * operator must Resume or reply past). A SEPARATE axis from `status`/`turn_active`: chat-turn failures
+   * never touch `status`, so this is what makes a stopped thread render as errored. Set in
+   * `saySystemOperator`, cleared when the next turn starts (`runChatTurn`). UNLIKE `turn_active` it is NOT
+   * reset on boot — a real unresolved error must survive a process restart.
+   */
+  @Column({ type: 'boolean', default: false })
+  halted!: boolean;
+
+  /**
    * The durable HUMAN-INPUT GATE: how many `ask_question` cards on this thread are still awaiting an
    * operator answer. Each card carries its OWN lifecycle (`answer`/`answeredAt`/`deliveredAt`) — there is
    * NO single-slot pointer, so the brain may have several questions open at once, answerable in any order.
@@ -146,7 +156,7 @@ export class JobEntity extends TimestampedEntity {
    * operator value for, or null. Kept SEPARATE so the two human-input lanes don't collide and so secret
    * delivery keeps its own crash-safe lifecycle (still single-slot — at most one secret request at a time). Set
    * atomically with the secret card by `request_secret` (`BrainStoreService.openSecretRequest`). The value
-   * itself NEVER lands here or in the transcript — it goes straight to the encrypted `WorktreeSecretFileStore`
+   * itself NEVER lands here or in the transcript — it goes straight to the encrypted `WorkspaceSecretFileStore`
    * via the `provide-secret` endpoint, which stamps the card `provided_at`; this gate is cleared only once
    * the masked-confirmation delivery turn succeeds (so a crash mid-delivery re-delivers on boot).
    */

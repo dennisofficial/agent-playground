@@ -1,4 +1,6 @@
 import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ModuleRef } from '@nestjs/core';
 import { EngineAuthError } from '../engine';
@@ -759,6 +761,12 @@ function assemble(
      *  build→ship pipeline tests still reach `done` without each re-encoding the gate. The dedicated
      *  ship-gate tests pass `false` to assert the park + drive the approval by hand. */
     autoShipApprove?: boolean;
+    /** Point the host-owned context bucket (`contextDirHost`) at a REAL dir so a test can assert the
+     *  on-disk halt-trail write (`<ctx>/generated/threads/<name>/completion.md`). Defaults to `/ctx`. */
+    contextDirHost?: string;
+    /** Point the thread sandbox's worktree at a REAL dir so a test can assert NOTHING is written under
+     *  `<worktree>/.atlas/threads/` (the halt-trail relocation regression guard). */
+    worktreePath?: string;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -919,7 +927,7 @@ function assemble(
         sandbox: {
           repoId: 'proj',
           branch: 'atlas/feature-job-abcd',
-          worktreePath: '/wt/atlas/feature-job-abcd',
+          worktreePath: opts.worktreePath ?? '/wt/atlas/feature-job-abcd',
           gitUrl: REPO.gitUrl,
           token: 'ghtok',
         },
@@ -927,6 +935,10 @@ function assemble(
       }),
       findSandbox: async () => null,
       recordPr: async () => undefined,
+      // The host-owned context bucket root — where the driver renders `/context/generated` projections
+      // (deviations.md, and the relocated halt-trail completion.md). Defaults to `/ctx`; a test can repoint
+      // it at a real temp dir to assert the on-disk write.
+      contextDirHost: (_jobId: string, _orgId: string) => opts.contextDirHost ?? '/ctx',
     } as unknown as import('./job-lifecycle.service').JobLifecycleService,
     // BuildShipService: the real terminal "ship" over the same git/pr/store fakes, so the leak-scan/latch
     // assertions hold. The open-PR step is now a SEEDED BRAIN TURN resolved via `brainModuleRef` (no separate
@@ -1608,6 +1620,43 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       h.posts.some((p) => p.includes('without asserting completion')),
     ).toBe(true); // a durable halt card, never a silent dead-end
     expect(h.store.materializeReviewChildren).not.toHaveBeenCalled(); // review skipped on a halt
+  });
+
+  it('writes the halt trail to /context/generated (host-owned), NOT the git worktree (ADR 0004 relocation)', async () => {
+    const ctxDir = mkdtempSync(join(tmpdir(), 'atlas-ctx-'));
+    const worktreeDir = mkdtempSync(join(tmpdir(), 'atlas-wt-'));
+    try {
+      const state: StoreState = {
+        job: makeJob(),
+        record: makeRecord(),
+        threads: [thread('sec-be', 10, 'Backend')],
+        steps: [],
+        route: { channel: 'C1', threadTs: 't1' },
+        operatorInputCards: [],
+      };
+      // A clean-but-incomplete turn halts the build (ADR 0004), driving the completion.md write.
+      const { turn } = makeTurn({ completeThread: false });
+      const h = assemble(state, { turn, contextDirHost: ctxDir, worktreePath: worktreeDir });
+
+      await h.driver.dispatch(state.job);
+      // The trail is rendered under `<contextDirHost>/generated/threads/<ordinal>-<slug>/` — here `010-backend`.
+      const trail = join(ctxDir, 'generated', 'threads', '010-backend', 'completion.md');
+      // Wait for CONTENT, not just the file's existence: writeCompletionMd is fire-and-forget and
+      // writeFile creates the (empty) file before the content lands, so an existence-only wait can read
+      // '' and flake (observed in CI). Waiting for non-empty content makes the assertions deterministic.
+      await flushUntil(
+        () => existsSync(trail) && readFileSync(trail, 'utf8').length > 0,
+      );
+
+      expect(existsSync(trail)).toBe(true);
+      expect(readFileSync(trail, 'utf8')).toContain('# Thread halted: Backend');
+
+      // Regression guard (the whole point): nothing is written into the git worktree.
+      expect(existsSync(join(worktreeDir, '.atlas'))).toBe(false);
+    } finally {
+      rmSync(ctxDir, { recursive: true, force: true });
+      rmSync(worktreeDir, { recursive: true, force: true });
+    }
   });
 
   it('SILENTLY RETRIES a transient infra blip and completes — never surfaces a phantom "failed" (ADR 0004)', async () => {
@@ -2711,6 +2760,115 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.job.status).toBe('done');
   });
 
+  it('a REATTACHED diagnostics done-gate recovers its report_verification verdict from the replayed events log (never falsely halts)', async () => {
+    // REGRESSION: the gate verdict lives only in an in-process closure fed by the consume-once/acked
+    // tools-bridge channel. When the gate turn engine-detaches AFTER `report_verification({passed:true})` and
+    // is REATTACHED on the next boot, that channel does NOT redeliver the call — but the authoritative events
+    // log IS replayed. The driver must recover the verdict from the replayed `tool_use` event; otherwise it
+    // falsely halts with "…without calling report_verification" and burns the brain's retry budget.
+    const steps: Step[] = [
+      {
+        id: 'sec-be-ph0',
+        threadId: 'sec-be',
+        jobId: 'job-abcdef12',
+        ordinal: 10,
+        title: 'Backend',
+        brief: 'Backend',
+        stage: 'build' as const,
+        status: 'building' as StepStatus,
+        sessionId: 'sess-live', // persisted → gate's `canReattach() && anchor.sessionId` reattach lookup fires
+        batchOrdinal: 1,
+        legOrdinal: 1,
+        commitSha: null,
+      },
+    ];
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps,
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+
+    // The batch turn completes normally; the GATE turn is served via `reattach` (a live gate row exists).
+    const runTurn = vi.fn(
+      async (input: {
+        mode: string;
+        stepId?: string | null;
+        jobId: string;
+        toolBridge?: ToolBridgeOptions;
+      }) => {
+        await input.toolBridge?.tools?.['complete_thread']?.({ summary: 'built the backend' });
+        return {
+          report: 'built',
+          session: {
+            id: 'sess-live', jobId: input.jobId, stepId: input.stepId ?? null,
+            engine: 'claude' as const, mode: input.mode as 'plan' | 'execute' | 'review',
+            branch: 'b', worktreePath: '/wt/b',
+          },
+        };
+      },
+    );
+    // The reattach REPLAYS the pre-detach `report_verification` tool_use (main agent, qualified MCP name) but
+    // deliberately does NOT drive `toolBridge.tools.report_verification` itself — mirroring the acked channel
+    // that never redelivers. So the ONLY way the verdict can be recovered (and the job reach `done`) is the
+    // fix replay-driving the handler from this event.
+    const reattach = vi.fn(async (input: Parameters<TurnRunnerService['reattach']>[0]) => {
+      input.onEvent?.({
+        kind: 'tool_use',
+        id: 'rv-1',
+        name: 'mcp__atlas-host-bridge__report_verification',
+        input: { passed: true },
+      });
+      return {
+        report: 'gate resumed',
+        session: {
+          id: 'sess-live', jobId: input.jobId, stepId: input.stepId ?? null,
+          engine: 'claude' as const, mode: 'execute' as const, branch: 'b', worktreePath: '/wt/b',
+        },
+      };
+    });
+    const turn = { runTurn, reattach, canReattach: () => true } as unknown as TurnRunnerService;
+
+    // A live GATE row (kind:'gate') keyed on the anchor — the gate's `findReattachableTurn(...,'gate')` finds
+    // it; the batch's `findReattachableTurn(...,'step')` does NOT (kind mismatch), so the batch runs fresh.
+    const listRunning = vi.fn(async () => [
+      {
+        turn_id: 'gate-turn-live',
+        job_id: 'job-abcdef12',
+        org_id: 'T1',
+        channel: 'C1',
+        lane: 'thread:sec-be',
+        kind: 'gate',
+        container_id: 'ctr-gate',
+        status: 'running',
+        ctx: { anchorStepId: 'sec-be-ph0' },
+      },
+    ]);
+    const judge: LiveVerificationJudge & { calls: number } = {
+      calls: 0,
+      async judge() {
+        return { runtimeSurfaceTouched: false, liveVerificationAdequate: true, reason: 'n/a' };
+      },
+    };
+
+    const h = assemble(state, { turn, judge, turnRegistry: { listRunning } as never });
+    stubChangedFileNames(h.git, async () => ['src/routes/x.ts']); // a changed .ts → the done-gate kicks
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // The gate went through the REATTACH path (not a fresh runTurn); the verdict was recovered SOLELY from
+    // the replayed `tool_use` event (the mock never drove the bridge tool itself).
+    expect(reattach).toHaveBeenCalledTimes(1);
+    expect(reattach.mock.calls[0][0]).toMatchObject({ turnId: 'gate-turn-live', containerId: 'ctr-gate' });
+    // No false halt: the thread verified + committed and the job shipped.
+    const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }).terminal_record;
+    expect(term?.status).toBe('done');
+    expect(state.job.status).toBe('done');
+  });
+
   it('a plain re-drive of a BLOCKED thread RE-HALTS (never re-runs the orchestrator) and re-wakes the brain', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -3032,6 +3190,41 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
 
     expect(h.store.parkForShipReview).not.toHaveBeenCalled();
     expect(h.shipSeeds).toHaveLength(1);
+  });
+
+  it('does NOT gate or ship a brain-owned DIRECT build (no driver-executable threads) — the driver yields', async () => {
+    // A direct build persists ONLY a render-only `main` thread (zero builder/master_review), implements and
+    // opens its own PR via `finalize_build` — the driver never ships it. A reconciler re-drive (boot
+    // `resume()`, `retry`) of the still-`running` job sends it through `runJob`; the guard must yield rather
+    // than fall through the empty thread loop to the ship gate (which would wrongly PARK it at
+    // awaiting_ship_review + post a bogus "Ship it" card) or re-ship it. `dispatch` stands in for any
+    // `drive()` entry point here (the guard sits in `runJob`, shared by all of them).
+    const mainThread: DriverThread = {
+      id: 'main-1',
+      jobId: 'job-abcdef12',
+      orgId: 'T1',
+      ordinal: 0,
+      brief: 'Main',
+      plan: null,
+      orientation: null,
+      handoffIn: null,
+      handoffOut: null,
+      status: 'pending',
+      kind: 'main',
+      parentThreadId: null,
+      startSha: null,
+    };
+    const state = baseState();
+    state.threads = [mainThread];
+    const h = assemble(state, { autoShipApprove: false });
+
+    await h.driver.dispatch(state.job);
+    await flush();
+
+    expect(h.store.parkForShipReview).not.toHaveBeenCalled();
+    expect(h.shipSeeds).toHaveLength(0);
+    expect(state.job.status).toBe('running');
+    expect(state.job.prUrl).toBeNull();
   });
 });
 

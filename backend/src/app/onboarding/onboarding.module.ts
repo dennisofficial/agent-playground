@@ -7,8 +7,8 @@ import {
   DecisionRecordEntity,
   OrganizationEntity,
   OrgCredentialsEntity,
-  OrgWorktreeSecretFileEntity,
-  OrgWorktreeMountEntity,
+  OrgWorkspaceSecretFileEntity,
+  OrgWorkspaceMountEntity,
   RepoEntity,
   StimulusEntity,
   JobEntity,
@@ -21,9 +21,9 @@ import { OnboardingController } from './onboarding.controller';
 import { OnboardingService } from './onboarding.service';
 import { RepoController } from './repo.controller';
 import { TenantCredentialStore } from './tenant-credential.store';
-import { WorktreeSecretFileStore } from './worktree-secret.store';
-import { WorktreeConfigStore } from './worktree-config.store';
-import { WorktreeSecretsController } from './worktree-secrets.controller';
+import { WorkspaceSecretFileStore } from './workspace-secret.store';
+import { WorkspaceConfigStore } from './workspace-config.store';
+import { WorkspaceSecretsController } from './workspace-secrets.controller';
 
 /**
  * The ONBOARDING layer — the per-tenant credential store + the `CredentialResolver` seam every other
@@ -41,8 +41,8 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
     TypeOrmModule.forFeature(
       [
         OrgCredentialsEntity,
-        OrgWorktreeSecretFileEntity,
-        OrgWorktreeMountEntity,
+        OrgWorkspaceSecretFileEntity,
+        OrgWorkspaceMountEntity,
         OrganizationEntity,
         RepoEntity,
         JobEntity,
@@ -55,14 +55,14 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
   ],
   controllers: [
     OrgCredentialsController,
-    WorktreeSecretsController,
+    WorkspaceSecretsController,
     RepoController,
     OnboardingController,
   ],
   providers: [
     TenantCredentialStore,
-    WorktreeSecretFileStore,
-    WorktreeConfigStore,
+    WorkspaceSecretFileStore,
+    WorkspaceConfigStore,
     CredentialResolver,
     OnboardingService,
     AuthRefreshSinkService,
@@ -70,8 +70,8 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
   ],
   exports: [
     TenantCredentialStore,
-    WorktreeSecretFileStore,
-    WorktreeConfigStore,
+    WorkspaceSecretFileStore,
+    WorkspaceConfigStore,
     CredentialResolver,
     OnboardingService,
     AUTH_REFRESH_SINK,

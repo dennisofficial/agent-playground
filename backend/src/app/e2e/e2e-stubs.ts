@@ -37,16 +37,27 @@ export class FakeClassifierLlm implements ClassifierLlm {
     description: string;
     context?: string;
     recordSummary: string;
-  }): Promise<{ verdict: 'ask' | 'proceed'; decisionClass?: string; reason: string } | undefined> {
+  }): Promise<
+    | { verdict: 'ask' | 'proceed'; decisionClass?: string; reason: string }
+    | undefined
+  > {
     const text = `${input.description} ${input.context ?? ''}`.toLowerCase();
-    if (/delete|drop|destroy|production|prod\b|database|wipe|truncate|irreversible/.test(text)) {
+    if (
+      /delete|drop|destroy|production|prod\b|database|wipe|truncate|irreversible/.test(
+        text,
+      )
+    ) {
       return {
         verdict: 'ask',
         decisionClass: 'one_way_door',
-        reason: '(e2e fake) destructive / one-way-door action — must ask a human first.',
+        reason:
+          '(e2e fake) destructive / one-way-door action — must ask a human first.',
       };
     }
-    return { verdict: 'proceed', reason: '(e2e fake) internal/never-ask call — safe to proceed.' };
+    return {
+      verdict: 'proceed',
+      reason: '(e2e fake) internal/never-ask call — safe to proceed.',
+    };
   }
 }
 
@@ -60,7 +71,9 @@ export class FakeEngineRunner {
   private readonly logger = new Logger('FakeEngineRunner');
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
-    this.logger.debug(`fake engine: ${args.engine} mode=${args.mode} cwd=${args.cwd}`);
+    this.logger.debug(
+      `fake engine: ${args.engine} mode=${args.mode} cwd=${args.cwd}`,
+    );
     const sessionId = randomUUID().slice(0, 12);
     if (args.mode === 'plan') {
       return {
@@ -74,12 +87,16 @@ export class FakeEngineRunner {
     }
     if (args.mode === 'investigate') {
       return {
-        result: '(e2e fake) repo digest: TypeScript/NestJS service; tooling: pnpm test + typecheck.',
+        result:
+          '(e2e fake) repo digest: TypeScript/NestJS service; tooling: pnpm test + typecheck.',
         sessionId,
       };
     }
     // execute — a deterministic no-op "did the work" report (git is faked, no real file needed offline).
-    return { result: '(e2e fake) execute turn complete — change applied.', sessionId };
+    return {
+      result: '(e2e fake) execute turn complete — change applied.',
+      sessionId,
+    };
   }
 }
 
@@ -112,7 +129,10 @@ export class FakeLocalGitService {
     };
   }
 
-  async createFeatureSandbox(repo: ProjectRepo, branch: string): Promise<FeatureSandbox> {
+  async createFeatureSandbox(
+    repo: ProjectRepo,
+    branch: string,
+  ): Promise<FeatureSandbox> {
     return {
       repoId: repo.repoId,
       branch,
@@ -123,7 +143,10 @@ export class FakeLocalGitService {
   }
 
   /** Per-thread base worktree (what `JobLifecycleService.provisionSandbox` cuts at thread create). */
-  async createBaseWorktree(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
+  async createBaseWorktree(
+    repo: ProjectRepo,
+    jobId: string,
+  ): Promise<FeatureSandbox> {
     return {
       repoId: repo.repoId,
       branch: repo.defaultBranch,
@@ -134,7 +157,11 @@ export class FakeLocalGitService {
   }
 
   /** Switch the worktree to the thread's feature branch (no real git — just relabels the handle). */
-  async switchBranch(sandbox: FeatureSandbox, _repo: ProjectRepo, branch: string): Promise<FeatureSandbox> {
+  async switchBranch(
+    sandbox: FeatureSandbox,
+    _repo: ProjectRepo,
+    branch: string,
+  ): Promise<FeatureSandbox> {
     return { ...sandbox, branch };
   }
 
@@ -146,7 +173,19 @@ export class FakeLocalGitService {
     return null;
   }
 
-  /** Provision-path no-ops (real impls touch git/cache/submodules; nothing to do in the fake). */
+  /** Provision-path no-ops (real impls touch git/cache/submodules; nothing to do in the fake). The fake
+   *  repo never carries a `.gitmodules`, so it always takes the plain-worktree path, never full-clone. */
+  async hasSubmodules(): Promise<boolean> {
+    return false;
+  }
+
+  async createBaseClone(
+    repo: ProjectRepo,
+    jobId: string,
+  ): Promise<FeatureSandbox> {
+    return this.createBaseWorktree(repo, jobId);
+  }
+
   async ensureSubmodules(): Promise<void> {
     // no-op
   }
@@ -206,7 +245,10 @@ export class FakeGithubPrService {
   private readonly byHead = new Map<string, { url: string; number: number }>();
   readonly opened: Array<{ args: OpenPullRequestArgs; url: string }> = [];
 
-  async openPullRequest(_token: string, args: OpenPullRequestArgs): Promise<PullRequestResult> {
+  async openPullRequest(
+    _token: string,
+    args: OpenPullRequestArgs,
+  ): Promise<PullRequestResult> {
     this.prSeq += 1;
     const url = `https://github.com/${args.owner}/${args.repo}/pull/${9000 + this.prSeq}`;
     this.opened.push({ args, url });
@@ -231,7 +273,11 @@ export class FakeGithubPrService {
       };
       this.byHead.set(args.head, pr);
       this.opened.push({
-        args: { owner: args.owner, repo: args.repo, head: args.head } as unknown as OpenPullRequestArgs,
+        args: {
+          owner: args.owner,
+          repo: args.repo,
+          head: args.head,
+        } as unknown as OpenPullRequestArgs,
         url: pr.url,
       });
     }

@@ -19,7 +19,7 @@ export type SandboxMilestoneStage = 'image_build' | 'container_create';
  * `per-thread` = its own host dir (no cross-thread write contention); `shared-ro` = one immutable host
  * dir mounted read-only into every thread; `shared-rw` = one PER-REPO host dir mounted read-write across
  * all of a repo's sandboxes (persistent auth STATE like `.gcloud` — the rare concurrent-refresh race is
- * accepted; see sandbox/container-paths.ts and onboarding/worktree-config.store.ts).
+ * accepted; see sandbox/container-paths.ts and onboarding/workspace-config.store.ts).
  */
 export interface SandboxMount {
   /**

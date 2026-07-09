@@ -21,6 +21,9 @@ import {
   EngineAuthError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
+  type EngineEvent,
+  type EngineHomeKey,
+  type EngineHomeType,
   type ToolBridgeOptions,
   type ToolImpl,
 } from '../engine';
@@ -44,6 +47,7 @@ import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
+import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import type { ActiveTurnEntity, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
@@ -702,6 +706,19 @@ export class ThreadDriver implements JobDispatcher {
     // CHILDREN of their builder, never entered here. `threadsForJob` returns every row, so this gate is what
     // keeps the non-executable rows out of the section loop once they exist.
     const executable = allSections.filter((s) => isDriverExecutableKind(s.kind));
+    // DIRECT-BUILD / NON-DRIVER GUARD: a job with NO driver-executable threads (`builder`/`master_review`) is
+    // not a driver build — it's a brain-owned DIRECT build (only a render-only `main` thread), which implements
+    // and opens its OWN PR via the `finalize_build` tool. The driver must not touch it: a reconciler re-drive
+    // (boot `resume()`, `retry`, etc.) of a still-`running` direct build would otherwise fall through the empty
+    // thread loop to the SHIP GATE and wrongly PARK it at `awaiting_ship_review` (a spurious "Ship it" card) —
+    // or, past the gate, re-ship it. Every legitimately-dispatched driver build always carries >=1 builder + a
+    // master_review, so this only ever short-circuits brain-owned jobs the driver has nothing to build/ship for.
+    if (executable.length === 0) {
+      this.logger.log(
+        `job=${jobId} has no driver-executable threads (brain-owned/direct build) — driver yielding, nothing to build or ship`,
+      );
+      return;
+    }
     // Cap the BUILDER lanes at MAX_SECTIONS, but NEVER drop the master-review thread (it rides on top of the
     // builders and must always run last) — partition by kind, cap the builders, re-append the review last.
     const featureSections = executable.filter((s) => s.kind === 'builder');
@@ -754,7 +771,7 @@ export class ThreadDriver implements JobDispatcher {
         // HALT the build (ADR 0004): an unfinished thread must not ship. Relay a durable card, flip the job
         // to a needs-you state, record the owed brain wake + trail, and SKIP finalizeBuild — no PR on an
         // unfinished build. The brain wake fires from `drive()` once the job leaves the active window.
-        await this.haltJob(job, route, thread, res.outcome, sandbox);
+        await this.haltJob(job, route, thread, res.outcome);
         return;
       }
       handoff = res.handoff;
@@ -852,7 +869,6 @@ export class ThreadDriver implements JobDispatcher {
     route: JobRoute,
     thread: DriverThread,
     outcome: ThreadOutcome,
-    sandbox: FeatureSandbox,
   ): Promise<void> {
     const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
     const haltOutcome = outcome as 'blocked' | 'incomplete' | 'failed';
@@ -930,23 +946,29 @@ export class ThreadDriver implements JobDispatcher {
           ),
         );
     }
-    await this.writeCompletionMd(sandbox, thread, haltOutcome, term).catch((e) =>
+    await this.writeCompletionMd(job, thread, haltOutcome, term).catch((e) =>
       this.logger.warn(`could not write completion.md for thread=${thread.id}: ${e}`),
     );
   }
 
-  /** Render + write the durable halt trail to `<worktree>/.atlas/threads/<ordinal>-<slug>/completion.md`
-   *  (files-as-store, mirroring the decision ledger's plain `mkdir`+`writeFile`). A LIVE worktree artifact
-   *  the brain/operator read on the wake — NOT committed (the halted batch is un-committed + resumable; the
-   *  DB `terminal_record` is the durable source, this is its human-readable projection). Best-effort; never
-   *  blocks the halt. */
+  /** Render + write the durable halt trail to `<contextDirHost>/generated/threads/<ordinal>-<slug>/completion.md`
+   *  (host-written projection like the other `/context/generated` renders — `decision-record.md`,
+   *  `deviations.md` — read-only in-sandbox and surfaced in the operator UI; NOT the committed
+   *  `.atlas/decisions/` ledger, so it never lands in the git worktree). NOT committed (the halted batch is
+   *  un-committed + resumable; the DB `terminal_record` is the durable source, this is its human-readable
+   *  projection). Best-effort; never blocks the halt. */
   private async writeCompletionMd(
-    sandbox: FeatureSandbox,
+    job: Job,
     thread: DriverThread,
     outcome: 'blocked' | 'incomplete' | 'failed',
     term: ThreadTerminalRecord | null,
   ): Promise<void> {
-    const dir = join(sandbox.worktreePath, '.atlas', 'threads', threadDirName(thread));
+    const dir = join(
+      this.threadLifecycle.contextDirHost(job.id, job.orgId),
+      'generated',
+      'threads',
+      threadDirName(thread),
+    );
     await mkdir(dir, { recursive: true });
     await writeFile(
       join(dir, 'completion.md'),
@@ -1146,7 +1168,7 @@ export class ThreadDriver implements JobDispatcher {
     // The shared review context — derive the diff ONCE and share it across every lens + the fix turn.
     const baseCtx: AutoFixContext = {
       worktreePath: sandbox.worktreePath,
-      sandboxKey: sandboxKey(sandbox),
+      sandboxKey: jobHomeKey(job, 'autofix'),
       ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
       intent: `${record?.overview ?? ''}\n\nSection: ${thread.brief}`.trim(),
       label: thread.brief,
@@ -2175,6 +2197,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id, // resumes the writer's persisted session — same conversation as its build turn
           sandbox,
@@ -2373,6 +2396,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id,
           sandbox,
@@ -2694,7 +2718,10 @@ export class ThreadDriver implements JobDispatcher {
       if (verdict?.passed) return { passed: true };
       priorErrors = verdict?.remaining?.length
         ? verdict.remaining
-        : ['the orchestrator ended the turn without calling report_verification'];
+        : [
+            'no report_verification verdict was recorded for this gate turn' +
+              ' (the orchestrator ended the turn without calling it, or its verdict could not be recovered on resume)',
+          ];
     }
     return { passed: false, detail: priorErrors.join('\n') || 'verification gate exhausted its budget' };
   }
@@ -2719,7 +2746,10 @@ export class ThreadDriver implements JobDispatcher {
         containerId: row.container_id!,
         jobId: job.id,
         stepId: anchorStepId,
-        onEvent: (e) => harness.onEvent(e),
+        onEvent: (e) => {
+          harness.onEvent(e);
+          this.recoverGateVerdictFromReplay(e, toolBridge);
+        },
         toolBridge,
       });
       await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
@@ -2731,6 +2761,24 @@ export class ThreadDriver implements JobDispatcher {
       this.logger.warn(`re-attach gate turn ${row.turn_id} failed; re-running the iteration: ${err}`);
       return null;
     }
+  }
+
+  /** Recover the gate verdict from the REPLAYED events log on a gate reattach. The gate's verdict lives only
+   *  in an in-process closure driven by the tools-bridge channel, which is consumed-once + acked — so a
+   *  `report_verification` call made before an engine-detach is NOT redelivered on reattach, and the gate
+   *  would falsely halt with "…without calling report_verification" even though the call demonstrably
+   *  happened. But the authoritative events log IS replayed from the start on reattach (to rebuild the
+   *  transcript), so the call's `tool_use` event still arrives here — drive the matching bridge handler with
+   *  it to restore the verdict. Guarded to the MAIN agent (a subagent's `tool_use` must not drive the gate).
+   *  Safe ONLY because the gate's sole bridged tool (`report_verification`) is pure — do NOT reuse this on a
+   *  batch reattach, whose tools have real side effects a genuinely-pending live redelivery must own. */
+  private recoverGateVerdictFromReplay(e: EngineEvent, toolBridge: ToolBridgeOptions): void {
+    if (e.kind !== 'tool_use' || e.parentToolUseId) return;
+    const prefix = `mcp__${BRIDGE_SERVER_NAME}__`;
+    const bareName = e.name.startsWith(prefix) ? e.name.slice(prefix.length) : e.name;
+    const impl = toolBridge.tools[bareName];
+    if (!impl) return;
+    void impl((e.input as Record<string, unknown> | undefined) ?? {});
   }
 
   /** KICK a fresh gate-iteration turn — resumes the orchestrator's persisted session (via `stepId`) with the
@@ -2761,6 +2809,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id, // resumes the persisted engine session — same conversation as the build turn
           sandbox,
@@ -3192,7 +3241,7 @@ export const COMMIT_AND_PUSH_INSTRUCTION =
   ` without committing, your work is treated as unfinished.`;
 
 /**
- * Render the durable halt trail for `.atlas/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
+ * Render the durable halt trail for `/context/generated/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
  * — every section is guarded on presence and tails are already length-capped in the record. The brain reads
  * this on its wake turn (alongside the fenced record in the wake body) to triage the halt.
  */
@@ -3372,8 +3421,10 @@ export function extractOrientation(text: string | undefined): string | null {
   return body.length > 1500 ? `${body.slice(0, 1500)}…` : body;
 }
 
-function sandboxKey(sandbox: FeatureSandbox): string {
-  return `${sandbox.repoId}--${sandbox.branch}`;
+/** A job's engine-home key for a given surface `type` — STABLE across every thread/step/lens of the job (all
+ *  its turns of that type share the job's own nested engine home), keyed by (org,repo,job), never per-branch. */
+function jobHomeKey(job: Job, type: EngineHomeType): EngineHomeKey {
+  return { orgId: job.orgId, repoId: job.repoId, jobId: job.id, type };
 }
 
 /** The ship-review gate applies only to the driver builds the operator drives to a PR — `feature` + `bugfix`.

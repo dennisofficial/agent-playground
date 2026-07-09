@@ -189,4 +189,40 @@ describe('McpServerStore', () => {
       expect(await store.setSecret('org1', 'repo-1', 'missing', 'headers', 'X', 'v')).toBe(false);
     });
   });
+
+  describe('unfilledSecretSlots', () => {
+    it('reports a declared-but-empty secret slot as unfilled, by slot name only', async () => {
+      await store.write('org1', 'repo-1', 'github', {
+        transport: 'http',
+        url: 'https://api.githubcopilot.com/mcp/',
+        headers: [{ name: 'Authorization', value: '', secret: true }], // declared, no value
+      });
+      const gaps = await store.unfilledSecretSlots('org1', 'repo-1');
+      expect(gaps).toEqual([{ name: 'github', scope: 'repo-1', slots: ['header:Authorization'] }]);
+    });
+
+    it('does not report a slot once its value is filled', async () => {
+      await store.write('org1', 'repo-1', 'github', {
+        transport: 'http',
+        url: 'https://x',
+        headers: [{ name: 'Authorization', value: 'Bearer tok', secret: true }],
+      });
+      expect(await store.unfilledSecretSlots('org1', 'repo-1')).toEqual([]);
+    });
+
+    it('ignores non-secret headers and disabled servers', async () => {
+      await store.write('org1', 'repo-1', 'plain', {
+        transport: 'http',
+        url: 'https://x',
+        headers: [{ name: 'X-Env', value: 'prod' }], // non-secret → never a gap
+      });
+      await store.write('org1', 'repo-1', 'off', {
+        transport: 'http',
+        url: 'https://x',
+        headers: [{ name: 'Authorization', value: '', secret: true }],
+        enabled: false,
+      });
+      expect(await store.unfilledSecretSlots('org1', 'repo-1')).toEqual([]);
+    });
+  });
 });

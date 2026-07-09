@@ -11,12 +11,21 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import {
+  TypeOrmModule,
+  getDataSourceToken,
+  getRepositoryToken,
+} from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ENTITIES, StepEntity, ThreadEntity, JobEntity } from '../persistence/entities';
+import {
+  ENTITIES,
+  StepEntity,
+  ThreadEntity,
+  JobEntity,
+} from '../persistence/entities';
 import { DriverStoreService } from './driver-store.service';
 
 const ORG_ID = '21111111-1111-4111-8111-111111111111';
@@ -144,8 +153,19 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         id: string;
         hasPlan: boolean;
         status: string;
-        children: Array<{ id: string; kind: string; status: string; lensId?: string; lane: string }>;
-        steps: Array<{ ordinal: number; title: string | null; stage: string; status: string }>;
+        children: Array<{
+          id: string;
+          kind: string;
+          status: string;
+          lensId?: string;
+          lane: string;
+        }>;
+        steps: Array<{
+          ordinal: number;
+          title: string | null;
+          stage: string;
+          status: string;
+        }>;
       }>;
     };
 
@@ -161,12 +181,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     // Review children are data-driven. With no materialized child rows yet (an un-reviewed / executing
     // builder), getPipelineState SYNTHESIZES the review set from the thread-kind registry so the rows + their
     // transcript lanes stay visible — the default lenses + the post-review fix, queued at `pending`.
-    expect(sec.children.filter((c) => c.kind === 'review_lens').map((c) => c.lensId)).toEqual([
-      'best_practices',
-      'correctness',
-      'consistency',
-      'minimalism',
-    ]);
+    expect(
+      sec.children.filter((c) => c.kind === 'review_lens').map((c) => c.lensId),
+    ).toEqual(['best_practices', 'correctness', 'consistency', 'minimalism']);
     expect(sec.children.find((c) => c.kind === 'post_review')).toBeTruthy();
     expect(sec.children.every((c) => c.status === 'pending')).toBe(true);
     // Each synthesized child carries its real transcript lane (where the historical review turns live).
@@ -202,10 +219,18 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
 
     const childSpecs = [
-      { kind: 'review_lens', brief: 'BP', config: { lensId: 'best_practices' } },
+      {
+        kind: 'review_lens',
+        brief: 'BP',
+        config: { lensId: 'best_practices' },
+      },
       { kind: 'review_lens', brief: 'C', config: { lensId: 'correctness' } },
       { kind: 'review_lens', brief: 'Cs', config: { lensId: 'consistency' } },
-      { kind: 'post_review', brief: 'Post-review fixes', config: { minSeverity: 'medium' } },
+      {
+        kind: 'post_review',
+        brief: 'Post-review fixes',
+        config: { minSeverity: 'medium' },
+      },
     ];
     const children = await store.materializeReviewChildren(
       { id: thread.id, jobId: job.id, orgId: ORG_ID },
@@ -218,7 +243,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       { id: thread.id, jobId: job.id, orgId: ORG_ID },
       childSpecs,
     );
-    expect(again.map((c) => c.id).sort()).toEqual(children.map((c) => c.id).sort());
+    expect(again.map((c) => c.id).sort()).toEqual(
+      children.map((c) => c.id).sort(),
+    );
 
     const lenses = children.filter((c) => c.kind === 'review_lens');
     const finding = (severity: 'low' | 'medium' | 'high') => ({
@@ -238,7 +265,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         await store.setThreadStatus(lenses[0].id, 'done');
       })(),
       (async () => {
-        await store.setThreadReviewFindings(lenses[1].id, [finding('low'), finding('medium')]);
+        await store.setThreadReviewFindings(lenses[1].id, [
+          finding('low'),
+          finding('medium'),
+        ]);
         await store.setThreadStatus(lenses[1].id, 'done');
       })(),
     ]);
@@ -258,21 +288,33 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     };
     // The child rows are NOT top-level threads (they nest under their builder as `children`).
     expect(state.threads).toHaveLength(1);
-    const lensRows = state.threads[0].children.filter((c) => c.kind === 'review_lens');
+    const lensRows = state.threads[0].children.filter(
+      (c) => c.kind === 'review_lens',
+    );
     const byLens = new Map(lensRows.map((c) => [c.lensId, c]));
     // Each lens landed its own status + findings on its own row (no shared array → no lost update).
-    expect(byLens.get('best_practices')).toMatchObject({ status: 'done', findings: 1 });
-    expect(byLens.get('correctness')).toMatchObject({ status: 'done', findings: 2 });
+    expect(byLens.get('best_practices')).toMatchObject({
+      status: 'done',
+      findings: 1,
+    });
+    expect(byLens.get('correctness')).toMatchObject({
+      status: 'done',
+      findings: 2,
+    });
     expect(byLens.get('consistency')?.status).toBe('executing');
     // Each lens carries its own streaming lane; the post_review child rides the fix lane.
-    expect(byLens.get('best_practices')?.lane).toBe(`autofix:${thread.id}:best_practices`);
-    expect(state.threads[0].children.find((c) => c.kind === 'post_review')?.lane).toBe(
-      `autofix:${thread.id}:fix`,
+    expect(byLens.get('best_practices')?.lane).toBe(
+      `autofix:${thread.id}:best_practices`,
     );
+    expect(
+      state.threads[0].children.find((c) => c.kind === 'post_review')?.lane,
+    ).toBe(`autofix:${thread.id}:fix`);
 
     // reviewChildren reads the full findings back off each lens row (post_review's source of truth).
     const fresh = await store.reviewChildren(thread.id);
-    const bp = fresh.find((c) => (c.config as { lensId?: string }).lensId === 'best_practices');
+    const bp = fresh.find(
+      (c) => (c.config as { lensId?: string }).lensId === 'best_practices',
+    );
     expect(bp?.reviewFindings).toHaveLength(1);
     expect(fresh.find((c) => c.kind === 'post_review')).toBeTruthy();
   });
@@ -310,11 +352,17 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     // Simulate what the harness's fold does — a direct read-modify-write of the thread's jsonb column.
     await threads.update(
       { id: thread.id },
-      { tasks: [{ id: 't1', subject: 'Write the migration', status: 'in_progress' }] },
+      {
+        tasks: [
+          { id: 't1', subject: 'Write the migration', status: 'in_progress' },
+        ],
+      },
     );
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
-      threads: Array<{ tasks: Array<{ id: string; subject: string; status: string }> }>;
+      threads: Array<{
+        tasks: Array<{ id: string; subject: string; status: string }>;
+      }>;
     };
     expect(state.threads[0].tasks).toEqual([
       { id: 't1', subject: 'Write the migration', status: 'in_progress' },
@@ -349,9 +397,14 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(before[0].orientation).toBeNull();
 
     // The plan turn captured a cheat-sheet → persisted so a resume (which skips re-planning) still has it.
-    await store.setThreadOrientation(thread.id, 'Monorepo — verify: pnpm -C backend test:unit');
+    await store.setThreadOrientation(
+      thread.id,
+      'Monorepo — verify: pnpm -C backend test:unit',
+    );
     const after = await store.threadsForJob(job.id);
-    expect(after[0].orientation).toBe('Monorepo — verify: pnpm -C backend test:unit');
+    expect(after[0].orientation).toBe(
+      'Monorepo — verify: pnpm -C backend test:unit',
+    );
   });
 
   it('still reports `no_job` for a thread that has not entered the build lifecycle', async () => {
@@ -433,10 +486,19 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
 
   it('claimHaltFixAttempt is a CAS bounded by the cap (increments up to cap, then refuses)', async () => {
     const { threadId } = await seedJobThread();
-    expect(await store.claimHaltFixAttempt(threadId, 2)).toEqual({ ok: true, used: 1 });
-    expect(await store.claimHaltFixAttempt(threadId, 2)).toEqual({ ok: true, used: 2 });
+    expect(await store.claimHaltFixAttempt(threadId, 2)).toEqual({
+      ok: true,
+      used: 1,
+    });
+    expect(await store.claimHaltFixAttempt(threadId, 2)).toEqual({
+      ok: true,
+      used: 2,
+    });
     // At the cap → refused, budget unchanged.
-    expect(await store.claimHaltFixAttempt(threadId, 2)).toEqual({ ok: false, used: 2 });
+    expect(await store.claimHaltFixAttempt(threadId, 2)).toEqual({
+      ok: false,
+      used: 2,
+    });
   });
 
   it('two concurrent claims at the cap boundary — exactly one succeeds (row-level CAS)', async () => {
@@ -497,7 +559,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(step?.commit_sha).toBeNull(); // untouched
 
     // The seed reads back for the driver-side fold.
-    expect(await store.getPendingLegSeed(anchorStepId)).toBe('SEED PREAMBLE + HANDOFF BODY');
+    expect(await store.getPendingLegSeed(anchorStepId)).toBe(
+      'SEED PREAMBLE + HANDOFF BODY',
+    );
 
     // The Leg projection: leg 1 closed (rotated + handoff + peak + ended_at), leg 2 opened (active).
     const legs = await store.getLegs(threadId);
@@ -515,7 +579,11 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
 
   it('completeLegRotation is a no-op (returns null) when there is no live session to rotate', async () => {
     const { threadId, anchorStepId } = await seedJobThreadStep(null);
-    const res = await store.completeLegRotation({ anchorStepId, handoff: 'x', seed: 'y' });
+    const res = await store.completeLegRotation({
+      anchorStepId,
+      handoff: 'x',
+      seed: 'y',
+    });
     expect(res).toBeNull();
     const step = await steps.findOne({ where: { id: anchorStepId } });
     expect(step?.leg_ordinal).toBe(1); // unchanged

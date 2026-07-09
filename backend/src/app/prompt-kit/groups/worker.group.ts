@@ -18,6 +18,7 @@ import {
   MONOREPO_VERIFY_HINT,
   PLAYGROUND_NOTE,
   SPIKE_FIRST_NOTE,
+  SUBAGENT_NUDGE_NOTE,
   TASK_LIST_NOTE,
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
@@ -74,7 +75,9 @@ const ORCHESTRATOR_SUBAGENTS_NOTE =
   'helpers: `explore` (trace the code/own docs), `docs` (external library docs), `review` (a second ' +
   'pass on a diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw ' +
   'logs), `validate` (LIVE end-to-end validation — boots the change, exercises it as a caller would, and ' +
-  'leaves the evidence bundle in `/context/artifacts/`).';
+  'leaves the evidence bundle in `/context/artifacts/`).' +
+  ' ' +
+  SUBAGENT_NUDGE_NOTE;
 
 @FragmentGroup()
 export class WorkerGroup {

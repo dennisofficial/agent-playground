@@ -2,7 +2,7 @@
  * Web SECRET-INPUT card payload — the secure request the repo-onboarding brain poses via the
  * `request_secret` tool when it needs an env-file secret value (e.g. `DATABASE_URL`). The web client
  * renders a masked password field + submit; the operator's value is POSTed to
- * `…/threads/:jobId/provide-secret`, which writes it straight to the encrypted `WorktreeSecretFileStore`
+ * `…/threads/:jobId/provide-secret`, which writes it straight to the encrypted `WorkspaceSecretFileStore`
  * and creates the owner grant. The value is therefore NEVER part of this card, the transcript, or any
  * brain tool I/O — the card holds only the request metadata + lifecycle timestamps, and once provided the
  * client renders a compact "✓ NAME provided" state.
@@ -40,7 +40,7 @@ export interface WebSecretInputCard {
   deliver_to?: string;
   /**
    * MCP-TARGET mode: the value is a credential for a user-defined MCP server (a header/env slot), not a
-   * worktree secret. When set, `provide-secret` writes the value into `mcp_servers.secrets_enc` (via
+   * workspace secret. When set, `provide-secret` writes the value into `mcp_servers.secrets_enc` (via
    * `McpServerStore.setSecret`) instead of the worktree store, and does NOT grant/rehydrate (MCP secrets are
    * resolved per-turn by `McpResolver`). `path` is absent for an MCP target. The scope is NOT carried here —
    * it is re-derived from the thread's repo at commit (never trust a card-supplied scope). Value-free like

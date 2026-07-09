@@ -84,6 +84,7 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     { validate: m.validate } as never, // mcpProbe
     {} as never, // conventions (ConventionProfileResolver)
     {} as never, // skillStore (WorkspaceSkillStore)
+    {} as never, // skillFiles (SkillFileWriter)
   );
   return { controller, m };
 }

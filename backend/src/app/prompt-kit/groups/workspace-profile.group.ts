@@ -17,8 +17,8 @@ const WORKSPACE_PROFILE_DIMENSIONS = [
   'THE WORKSPACE PROFILE — the durable, per-repo provisioning that turns a bare checkout into a runnable,',
   'correctly-configured workspace. It is ONE area with SEVEN dimensions, each with its own upkeep tool:',
   '  1. Secret files   — request_secret / request_file (or derive_secret for a self-computed value)',
-  '  2. Mounts         — write_worktree_config({ mounts }) — durable dirs a tool writes outside your HOME',
-  '  3. Cache folders  — write_worktree_config (a shared-rw mount); most caches already persist under HOME',
+  '  2. Mounts         — write_workspace_config({ mounts }) — durable dirs a tool writes outside your HOME',
+  '  3. Cache folders  — write_workspace_config (a shared-rw mount); most caches already persist under HOME',
   '  4. Setup script   — write_setup_script — the idempotent bring-up commands a cold sandbox needs',
   '  5. MCP servers    — propose_mcp_servers (owner-approved)',
   '  6. Skills         — propose_skill (owner-approved reusable SKILL.md)',
@@ -47,15 +47,14 @@ export class WorkspaceProfileGroup {
       '',
       workspaceProfileSnapshot(ctx),
       '',
-      'KEEPING IT CURRENT IS YOUR JOB TOO — not just onboarding\'s. This repo went through a bulk onboarding',
-      'pass ONCE, but that only covered what it happened to hit; you have the SAME capabilities, used',
-      'incrementally instead of all at once. When THIS job reveals a gap the profile does not yet cover — a',
-      'new tech stack, a missing secret, a cache a tool wants, a tool worth an MCP server or a skill — fix it',
-      'in the profile so every FUTURE job on this repo inherits it, instead of silently working around it.',
+      'KEEPING IT CURRENT IS YOUR JOB TOO — onboarding did a bulk pass ONCE; when THIS job hits a gap it did',
+      'not cover (a new stack, a missing secret, a cache, a tool worth an MCP server or skill), fix it in the',
+      'profile with the SAME tools so every FUTURE job inherits it instead of silently working around it. Any',
+      'gap the host can detect (e.g. an unfilled MCP secret slot) is flagged inline above as PROFILE GAPS.',
       'Persistence, by kind: (a) a CLI the image does not ship (run `command -v` first — the sandbox bakes a',
       'broad toolkit) → drop it in `~/.local/bin` (on PATH, durable); (b) a tool credential/cache → it already',
       'persists at its DEFAULT `~/.config`/`~/.cache` path (durable per-repo HOME), no mount needed; (c) a',
-      'durable dir a tool insists on writing ELSEWHERE → write_worktree_config({ mounts }); (d) a missing',
+      'durable dir a tool insists on writing ELSEWHERE → write_workspace_config({ mounts }); (d) a missing',
       'secret/key → request_secret / request_file (or derive_secret when you COMPUTE it from a key you hold);',
       '(e) bring-up commands → write_setup_script; (f) a system `apt` package → will NOT survive a reset,',
       '`remember` it for the base image. A broken script or missing build step is just a normal code change —',
@@ -141,7 +140,7 @@ export class WorkspaceProfileGroup {
       '     read query) as part of proving green. The token in `~/.config/gcloud` persists, so future jobs are',
       '     already logged in — re-run the login only when a reauth error says the session expired.',
       'Only if a tool INSISTS on writing its state OUTSIDE your HOME do you need a mount — record its absolute',
-      'path as a `shared-rw` external mount via write_worktree_config (lands there directly, outside /workspace).',
+      'path as a `shared-rw` external mount via write_workspace_config (lands there directly, outside /workspace).',
     ].join('\n');
   }
 
@@ -159,11 +158,11 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10 — CONFIG (write_worktree_config mounts). */
+  /** onboarding block 10 — CONFIG (write_workspace_config mounts). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2100, condition: isOnboarding })
   config(): string {
     return [
-      'CONFIG — non-secret provisioning is DB-backed via write_worktree_config({ mounts }) (no file, no PR).',
+      'CONFIG — non-secret provisioning is DB-backed via write_workspace_config({ mounts }) (no file, no PR).',
       'For most credential/cache state you need NO mount at all — it already lives under your durable HOME',
       '(`~/.config`, `~/.cache`, `~/.local`). Use a mount only for a durable dir a tool writes ELSEWHERE:',
       '  - mounts: a path may be WORKTREE-RELATIVE (lands at /workspace/<path> — e.g. a repo whose own `.envrc`',
@@ -213,7 +212,7 @@ export class WorkspaceProfileGroup {
       'a credential slot by NAME with `secret: true` (e.g. an Authorization header or a token env var) — you NEVER',
       'put a secret value here. You do NOT register servers yourself: this posts an owner-approvable proposal card;',
       'the OWNER approves it, which registers the servers on this repo. Do NOT propose the built-in SYSTEM servers',
-      '(context7, atlas-lsp-ts, graphify, cocoindex) — they are already provided. After the owner approves, for',
+      '(context7, atlas-lsp-ts) — they are already provided. After the owner approves, for',
       'each `secret: true` slot call request_secret({ description, mcp: { server, slot, key } }) — the operator',
       'enters the credential through the same secure field (it goes ENCRYPTED straight into the MCP server and',
       'activates it; you see only a masked confirmation). Keep this proportionate — a couple of well-chosen',
@@ -255,7 +254,12 @@ export class WorkspaceProfileGroup {
       'You do NOT register skills yourself — this posts an owner-approvable card; the OWNER approves it, which',
       'writes the skill so every future build on a matching repo inherits it. Skip it entirely if nothing clearly',
       'fits. Like MCP servers, a newly-approved skill loads on the NEXT fresh session — reset_sandbox to pick it up.',
-      'To UPDATE a skill, propose_skill with the SAME name (an owner-approved edit); to REMOVE an obsolete one,',
+      'propose_skill only CREATES — it refuses if the name already exists. Skills are real, possibly multi-file',
+      'directories (SKILL.md + references/scripts/assets) that stay READ-ONLY once created: to edit one, call',
+      'request_skill_edit_access({ skill, rationale }) and wait for the owner to grant it, then Edit/Write its',
+      'files directly (granular, no re-pasting the whole body). If the skill is installed from git, approval',
+      'forks it to a local custom copy first (the original stays clean and keeps auto-updating) and the grant',
+      'applies to the fork — the confirmation names the exact skill to edit. To REMOVE an obsolete skill,',
       'propose_skill_removal({ name, scope, rationale }) (also owner-approved). list_skills shows what exists.',
     ].join('\n');
   }
@@ -288,7 +292,7 @@ export class WorkspaceProfileGroup {
       'then STOP. On your next turn the box is fresh — the worktree, recorded mounts, granted secrets, your',
       'durable HOME (~/.config, ~/.local/bin), and /.atlas survive; everything else is gone. Re-run setup and see',
       'what broke: whatever you have to re-do by hand is exactly what you forgot to record (fix it via',
-      'write_setup_script for bring-up commands, or write_worktree_config / request_secret / derive_secret for',
+      'write_setup_script for bring-up commands, or write_workspace_config / request_secret / derive_secret for',
       'durable state, then reset again to confirm). This is the strongest evidence onboarding is DURABLE, not',
       'just working now.',
     ].join('\n');
