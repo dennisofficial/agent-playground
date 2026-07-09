@@ -82,11 +82,14 @@ them (you observe them, and can interject the current build turn).
 
 **Job brain — the host tools** (`agent-session-manager.service.ts` `buildTools`). ~15 tools, grouped:
 - *read/plan:* `get_pipeline_state`, `get_decision_record`, `submit_plan`, `finalize_plan`, `dispatch_build`
-- *decisions/questions:* `create_decision`, `ask_question`, `answer`
+- *decisions/questions:* `create_decision`, `ask_question`, `answer`, `promote_adr`
 - *memory:* `recall`, `remember`
 - *spin-off / intake:* `create_job` (a NEW independent job on this repo — own base branch, starts scoping),
   `create_ticket` (a note for LATER, no work starts), `request_secret` (onboarding)
 - *fast path:* `start_direct_build` (a small localized change the brain implements itself, lightweight approval)
+
+Atlas-promoted ADRs live in the target repo's `.atlas/adr/` directory and ride the build PR; that is distinct
+from this codebase's own hand-authored `docs/adr/` records.
 
 The brain is genuinely continuous: each turn resumes the same `session_id`, so it remembers the grilling,
 the locked decision record, and the plan across turns and host restarts. `submit_plan` does NOT build — it

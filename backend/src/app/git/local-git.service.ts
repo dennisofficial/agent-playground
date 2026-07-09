@@ -425,7 +425,7 @@ export class LocalGitService {
    * writer's behalf — builders / fix-it / master-review each commit + push their own work, and the host only
    * READS `git rev-parse HEAD`. `commitAll` survives ONLY for the terminal/fast ship paths that write in the
    * BRAIN's own session and commit at ship time (`BuildShipService` `commitMessage`: direct-build, onboarding
-   * env setup). The hydrated-secret leak-scan that used to live here has moved to
+   * env setup, the ADR commit). The hydrated-secret leak-scan that used to live here has moved to
    * {@link scanBranchForForbidden}, run once as a HARD pre-ship gate before the PR opens — so no host commit
    * carries a per-commit secret check anymore.
    */

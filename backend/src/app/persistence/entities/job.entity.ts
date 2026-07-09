@@ -250,4 +250,24 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', default: [] })
   pending_decisions!: Decision[];
+
+  /**
+   * DURABLE ADR PROMOTION SPINE — the lifecycle marker for promoting this thread's durable decisions into
+   * the committed `.atlas/adr/` ADR store at ship time. SEPARATE from
+   * {@link adr_promoted_at} on purpose: a single field can't both CLAIM the work and PROVE it
+   * finished (a crash after claim, before the ADR commit, would look done forever). Mirrors the
+   * `plan_reviews` spine (status + a completion timestamp). Values: `pending | running | complete |
+   * failed`; null = never started. Claimed atomically (null/pending/failed → `running`); the resumable
+   * driver (`finalizeBuild`) + a fail-soft boot backstop re-run anything stuck in `running`.
+   */
+  @Column({ type: 'text', nullable: true })
+  adr_promotion_status!: string | null;
+
+  /**
+   * Stamped ONLY after the promotion turn AND the ADR commit both succeed — the proof-of-completion
+   * half of the spine (see {@link adr_promotion_status}). Null until then; its presence is what tells
+   * recovery the ADR store is already written so it must not re-run.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  adr_promoted_at!: Date | null;
 }

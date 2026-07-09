@@ -8,6 +8,8 @@ import type { MemoryStore } from '../memory';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { EngineRunnerPort } from '../engine/engine.types';
 import type { BuildShipService } from '../driver/build-ship.service';
+import { AdrService } from './adr.service';
+import type { RepoAdrManifestService } from './repo-adr-manifest.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import type { TicketService } from '../tickets';
@@ -105,6 +107,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     loadDecisionRecord: vi.fn(),
     appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
     threadTicketId: vi.fn().mockResolvedValue(null),
+    // Direct-build finalize stamps the ADR promotion complete after ship.
+    markAdrPromoted: vi.fn().mockResolvedValue(undefined),
     // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
     setTurnActive: vi.fn().mockResolvedValue(undefined),
     resetAllTurnActive: vi.fn().mockResolvedValue(0),
@@ -304,6 +308,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       specHash: null,
     });
     (mockPlanReview.findRunningReviews as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockStore.markAdrPromoted as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     // persistPlan returns the canonical shape BrainStoreService returns.
     (mockStore.persistPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -371,6 +376,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         onPromote: () => ({ unsubscribe() {} }),
         onDemote: () => ({ unsubscribe() {} }),
       } as never, // election
+      new AdrService(),
+      {
+        recordPromoted: async () => undefined,
+        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
+        reposWithGit: async () => [],
+      } as unknown as RepoAdrManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
       mockSecretStore,
       mockConfigStore,
@@ -689,6 +700,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // The tool returns the open-PR instructions for the brain to act on in-turn (host no longer opens it).
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     expect((result as { message: string }).message).toContain('gh pr create');
+    // The direct path stamps the ADR-promotion spine COMPLETE inline (the brain already ran
+    // promote_adr and preShip committed it), so the boot backstop never re-selects this shipped
+    // row and re-fires a redundant promote + open-PR turn against the already-open PR.
+    expect(mockStore.markAdrPromoted).toHaveBeenCalledWith(FAKE_JOB_ID);
   });
 
   it('(c) finalize_build: a leak-scan block returns a hard failure (brain must clean the branch)', async () => {
@@ -723,6 +738,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.preShip).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
     expect((result as { reason: string }).reason).toContain('.env.keys');
+    expect(mockStore.markAdrPromoted).not.toHaveBeenCalled();
   });
 
   it('(c) finalize_build: refuses a non-running job (no ship)', async () => {
@@ -1659,6 +1675,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         onPromote: () => ({ unsubscribe() {} }),
         onDemote: () => ({ unsubscribe() {} }),
       } as never, // election
+      new AdrService(),
+      {
+        recordPromoted: async () => undefined,
+        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
+        reposWithGit: async () => [],
+      } as unknown as RepoAdrManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
       {
         write: async () => undefined,
@@ -2354,6 +2376,12 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         onPromote: () => ({ unsubscribe() {} }),
         onDemote: () => ({ unsubscribe() {} }),
       } as never, // election
+      new AdrService(),
+      {
+        recordPromoted: async () => undefined,
+        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
+        reposWithGit: async () => [],
+      } as unknown as RepoAdrManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
       {
         write: async () => undefined,
@@ -2552,7 +2580,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
       inert, // mcp (McpResolver, 21)
       election, // election (22)
-      inert, inert, inert, inert, // turnRecovery…git (26)
+      inert, inert, inert, inert, inert, inert, // adr…git (27)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
@@ -2752,7 +2780,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
         inert, // mcp (McpResolver, 21)
         election, // election (22)
-        inert, inert, inert, inert, // turnRecovery…git (26)
+        inert, inert, inert, inert, inert, inert, // adr…git (27)
         { generate: () => 'SYSTEM' } as never, // prompts (28)
         { register: () => undefined } as never, // threadInput (29)
       );

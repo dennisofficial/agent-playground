@@ -308,6 +308,47 @@ export class DriverStoreService {
     );
   }
 
+  // ── ADR promotion spine ──────────────────────────────────────────────────────────
+  // Two markers (mirrors the plan_reviews spine): a CLAIM (`adr_promotion_status`) and the
+  // proof-of-completion (`adr_promoted_at`, stamped only after the promotion turn AND the commit).
+
+  /**
+   * Atomically CLAIM the ADR promotion: `null | pending | failed` → `running`. Returns true when THIS
+   * caller won the claim (so the boot backstop can't race a live driver run). A row already `running` or
+   * `complete` is NOT re-claimed here — but the resumable `finalizeBuild` re-runs `running` idempotently.
+   */
+  async claimAdrPromotion(jobId: string): Promise<boolean> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ adr_promotion_status: 'running' })
+      .where('id = :id', { id: jobId })
+      .andWhere(
+        "(adr_promotion_status IS NULL OR adr_promotion_status IN ('pending', 'failed'))",
+      )
+      .execute();
+    return (res.affected ?? 0) > 0;
+  }
+
+  /** Set the promotion lifecycle status (e.g. `failed` on a caught promotion error, retried later). */
+  async setAdrPromotionStatus(
+    jobId: string,
+    status: string,
+  ): Promise<void> {
+    await this.jobs.update(
+      { id: jobId },
+      { adr_promotion_status: status },
+    );
+  }
+
+  /** Mark the ADR promotion COMPLETE — stamped ONLY after the promotion turn AND the commit succeed. */
+  async markAdrPromoted(jobId: string): Promise<void> {
+    await this.jobs.update(
+      { id: jobId },
+      { adr_promotion_status: 'complete', adr_promoted_at: new Date() },
+    );
+  }
+
   // ── decision record ────────────────────────────────────────────────────────────────────────────
 
   /** The locked decision record for a thread — the planner + gate's grounding. Null if none. */

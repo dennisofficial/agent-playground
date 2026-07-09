@@ -70,10 +70,10 @@ export class ConventionsGroup {
       '  - A genuine HOUSE-STYLE change (it should apply to every repo on this profile) → call',
       '    propose_convention_profile_change({ slug, body, rationale }) — it posts an OWNER-approved proposal;',
       '    keep building to the CURRENT style until/unless the owner approves.',
-      '  - A durable fact specific to THIS repo only → store it in repo memory via `remember`, NOT in the',
-      '    shared profile.',
+      '  - A decision specific to THIS repo only → record it in the `.atlas/adr/` ADR store (it ships in the PR),',
+      '    NOT in the shared profile.',
       'Be judicious: propose a profile change only for a real, cross-cutting improvement — do not nag on routine',
-      'builds. When unsure whether it is house-style vs repo-specific, prefer repo memory.',
+      'builds. When unsure whether it is house-style vs repo-specific, prefer the repo ADR store.',
     ].join('\n');
   }
 }

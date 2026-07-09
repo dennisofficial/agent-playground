@@ -29,4 +29,5 @@ export * from './preview';
 // ── The SECOND category: self-contained, host-initiated one-shot turns (NOT assembled, NOT `Agent`s). ──
 export * from './turns/turn';
 export * from './turns/ship-open-pr';
+export * from './turns/adr-promotion';
 export * from './turns/build-handoff';

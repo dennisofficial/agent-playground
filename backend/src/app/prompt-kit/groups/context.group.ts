@@ -1,6 +1,6 @@
 /**
  * prompt-kit / groups / context — the durable authoring surfaces the normal brain writes into: the
- * `/context` shared folder (specs/generated/artifacts).
+ * `/context` shared folder (specs/generated/artifacts) and the repo-level ADR store.
  *
  * TOPIC bucket: context / authored artifacts (normal brain only).
  */
@@ -40,6 +40,26 @@ export class ContextGroup {
       '  • `/context/artifacts/` — OUTPUTS for the human: preview HTML, screenshots, reports (never the repo).',
       'Treat the repo (`/workspace`) as READ-ONLY until a build is approved — never modify it while planning;',
       'write to `/context/specs` (or `/context/artifacts`) instead.',
+    ].join('\n');
+  }
+
+  /** normal block 17 — the Atlas-promoted ADR store. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1170, condition: isBuildBrain })
+  adrStore(): string {
+    return [
+      'ARCHITECTURAL DECISION RECORDS — `/workspace/.atlas/adr/` is the ATLAS-MANAGED, per-target-repo record of the cross-cutting',
+      'architecture calls that OUTLIVE one feature ("money-out requires SUPER_ADMIN", "credits via Stripe',
+      'balance, no internal balance journal"). It is committed in the repo, so every thread inherits it. This is',
+      "distinct from the codebase's own hand-authored `docs/adr/` directory; `docs/adr/` belongs to the repo,",
+      'while `.atlas/adr/` is Atlas-promoted state that rides a PR.',
+      '  • WHILE GRILLING: read the `/workspace/.atlas/adr/*.md` files FIRST. Any decision file',
+      "    present there is ALREADY SETTLED — it is on this thread's base branch. Do NOT relitigate it; build",
+      '    on it. If your new work genuinely CONTRADICTS one, say so to the operator and supersede it',
+      '    explicitly at promotion (do not silently diverge).',
+      '  • AT SHIP (after approval, when the build is committing): call `promote_adr` to write the',
+      "    DURABLE subset of THIS thread's decisions into the ADR store. This is SELECTIVE and DISTILLED — see",
+      '    `promote_adr` below. It is separate from `/context/generated/decision-record.md`, which keeps',
+      '    the full per-feature record; `.atlas/adr/` holds only the distilled durable invariant.',
     ].join('\n');
   }
 }

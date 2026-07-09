@@ -18,6 +18,7 @@ export * from './thread.entity';
 export * from './step.entity';
 export * from './build-leg.entity';
 export * from './decision-record.entity';
+export * from './repo-adr.entity';
 export * from './memory.entity';
 export * from './org-credentials.entity';
 export * from './org-worktree-secret-file.entity';
@@ -47,6 +48,7 @@ import { ThreadEntity } from './thread.entity';
 import { StepEntity } from './step.entity';
 import { BuildLegEntity } from './build-leg.entity';
 import { DecisionRecordEntity } from './decision-record.entity';
+import { RepoAdrEntity } from './repo-adr.entity';
 import { MemoryEntity } from './memory.entity';
 import { OrgCredentialsEntity } from './org-credentials.entity';
 import { OrgWorktreeSecretFileEntity } from './org-worktree-secret-file.entity';
@@ -78,6 +80,7 @@ export const ENTITIES = [
   StepEntity,
   BuildLegEntity,
   DecisionRecordEntity,
+  RepoAdrEntity,
   MemoryEntity,
   OrgCredentialsEntity,
   OrgWorktreeSecretFileEntity,
