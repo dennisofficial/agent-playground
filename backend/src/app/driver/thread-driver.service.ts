@@ -2226,6 +2226,7 @@ export class ThreadDriver implements JobDispatcher {
           systemPrompt: renderAgentPrompt(spec.agent, {
             jobKind: job.kind,
             settings: { repoConventions },
+            turnPhase: 'commit',
           }),
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
@@ -2376,6 +2377,7 @@ export class ThreadDriver implements JobDispatcher {
     const systemPrompt = renderAgentPrompt(spec.agent, {
       jobKind: job.kind,
       settings: { repoConventions },
+      turnPhase: 'batch',
     });
     // Leg-rotation occupancy watch: fires SOFT once, then a REMINDER on each further +delta as this builder
     // session's main-agent context fills. Codex/master-review turns emit no per-call occupancy, so the watch
@@ -2843,6 +2845,7 @@ export class ThreadDriver implements JobDispatcher {
           systemPrompt: renderAgentPrompt(Agent.WORKER, {
             jobKind: job.kind,
             settings: { repoConventions },
+            turnPhase: 'gate',
           }),
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
@@ -3313,12 +3316,6 @@ export function renderGateTask(
     : '';
   return [
     `Verification gate (required before your work is accepted) — attempt ${iteration}.`,
-    `\nTHIS TURN'S TOOLS ARE DIFFERENT from your last one: the ONLY host tool available right now is` +
-      ` \`report_verification\`. Your system prompt's mention of \`complete_thread\`/\`request_operator_input\`` +
-      ` describes the BATCH turn you just finished, not this one — they are NOT callable here, and you` +
-      ` already called \`complete_thread\` to get here. Do not ask the operator anything; just do the work` +
-      ` below and call \`report_verification\` when you're done — it IS registered for this turn even though` +
-      ` your system prompt doesn't mention it by name.`,
     `\nThis thread's changes touched these files:\n${fileList}`,
     priorBlock,
     `\n1. Run \`mcp__atlas-lsp-ts__diagnostics\` on each changed file above — a fast per-file check.`,
