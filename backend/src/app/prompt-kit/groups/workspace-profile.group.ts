@@ -20,8 +20,8 @@ const WORKSPACE_PROFILE_DIMENSIONS = [
   '  2. Mounts         — write_workspace_config({ mounts }) — durable dirs a tool writes outside your HOME',
   '  3. Cache folders  — write_workspace_config (a shared-rw mount); most caches already persist under HOME',
   '  4. Setup script   — write_setup_script — the idempotent bring-up commands a cold sandbox needs',
-  '  5. MCP servers    — propose_mcp_servers (owner-approved)',
-  '  6. Skills         — propose_skill_install (reuse a maintained skill) · propose_skill (author a repo-idiom one)',
+  '  5. MCP servers    — propose_mcp_servers (owner-approved; scope:"repo" default or scope:"org" for every repo in the org)',
+  '  6. Skills         — propose_skill_install (reuse a maintained skill) · propose_skill (author a repo-idiom one); scope:"repo" default or scope:"org" for every repo in the org',
   '  7. House style    — propose_convention_profile (owner-approved)',
 ].join('\n');
 
@@ -51,7 +51,11 @@ export class WorkspaceProfileGroup {
       'not cover (a new stack, a missing secret, a cache, a tool worth an MCP server or skill), fix it in the',
       'profile with the SAME tools so every FUTURE job inherits it instead of silently working around it. A new',
       'stack is often best filled by INSTALLING a maintained skill (propose_skill_install from a known marketplace)',
-      'rather than authoring one from memory — reuse before you write. Any',
+      'rather than authoring one from memory — reuse before you write. SCOPE — some dimensions are org-wide, not',
+      'just this repo: the skill tools (propose_skill_install / propose_skill / propose_skill_removal) and',
+      'propose_mcp_servers each take scope:"repo" (this repo only, the DEFAULT) or scope:"org" (EVERY repo in the',
+      'org). When the operator asks for something org-wide, PASS scope:"org" — never decline an org-wide request',
+      'as "repo-only". Any',
       'gap the host can detect (e.g. an unfilled MCP secret slot) is flagged inline above as PROFILE GAPS.',
       'Persistence, by kind: (a) a CLI the image does not ship (run `command -v` first — the sandbox bakes a',
       'broad toolkit) → drop it in `~/.local/bin` (on PATH, durable); (b) a tool credential/cache → it already',

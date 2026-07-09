@@ -54,4 +54,11 @@ describe('workspace-profile.group — the named provisioning umbrella', () => {
     expect(onboarding).toContain('FIRST, BULK pass');
     expect(normal).toContain('KEEPING IT CURRENT IS YOUR JOB TOO');
   });
+
+  it('surfaces org vs repo scope for skills + MCP in a NORMAL job (not just onboarding)', () => {
+    const normal = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    expect(normal).toContain('scope:"org"');
+    // The anti-pattern the fix targets: a normal job must not be steered to decline org-wide requests.
+    expect(normal).toContain('never decline an org-wide request');
+  });
 });
