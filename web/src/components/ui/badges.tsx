@@ -1,7 +1,14 @@
-import { GitMerge, GitPullRequest, GitPullRequestClosed } from "lucide-react";
+import {
+  CheckCircle2,
+  GitMerge,
+  GitPullRequest,
+  GitPullRequestClosed,
+  LoaderCircle,
+  XCircle,
+} from "lucide-react";
 import { cn } from "@/lib/cn";
 import { KIND_META, STATUS_META } from "@/lib/api/status";
-import type { InboxPr, JobKind, JobStatus } from "@/lib/api/types";
+import type { CiStatus, InboxPr, JobKind, JobStatus } from "@/lib/api/types";
 
 /** A status dot — colored by status, optionally pulsing (running/triaging) with a soft glow. */
 export function StatusDot({
@@ -310,6 +317,46 @@ function prGlyph(pr: InboxPr): {
     };
   }
   return { Icon: GitPullRequest, color: "var(--green)", title: "PR open" };
+}
+
+/**
+ * Four-state CI glyph for a PR head (backend `jobs.ci_status`) — shared by the job header and the sidebar
+ * dot so the two never disagree. Returns null for the no-CI state (`ci == null`): callers render nothing.
+ *   success → green check-circle "CI passed"
+ *   failure → red x-circle "CI failed"
+ *   pending → amber loader (pulsing) "CI running"
+ */
+export function ciGlyph(ci: CiStatus | null): {
+  Icon: typeof CheckCircle2;
+  color: string;
+  title: string;
+  pulse: boolean;
+} | null {
+  if (ci === "success")
+    return { Icon: CheckCircle2, color: "var(--green)", title: "CI passed", pulse: false };
+  if (ci === "failure")
+    return { Icon: XCircle, color: "var(--red)", title: "CI failed", pulse: false };
+  if (ci === "pending")
+    return { Icon: LoaderCircle, color: "var(--amber)", title: "CI running", pulse: true };
+  return null;
+}
+
+/** A subtle CI dot for the sidebar job row — a small colored corner dot mirroring the halt dot. Renders
+ *  nothing for the no-CI state. Keep it ≤7px so it reads at a glance without crowding the PR glyph. */
+export function CiStatusDot({ ci, size = 7 }: { ci: CiStatus | null; size?: number }) {
+  const g = ciGlyph(ci);
+  if (!g) return null;
+  return (
+    <span
+      className={cn(
+        "absolute -bottom-px -left-0.5 rounded-full border-[1.5px] border-panel",
+        g.pulse && "pulse-dot",
+      )}
+      style={{ width: size, height: size, background: g.color }}
+      title={g.title}
+      aria-label={g.title}
+    />
+  );
 }
 
 /** Status pill: a dot + label, tinted by status. */
