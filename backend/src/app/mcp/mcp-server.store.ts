@@ -279,6 +279,34 @@ export class McpServerStore {
     return out;
   }
 
+  /**
+   * For each ENABLED org/repo server whose last validation FAILED (`validation_error` is set) — a server
+   * that USED to work and later broke (an expired static secret → 401, or an OAuth refresh token that died
+   * → `McpOAuthService.markNeedsReauth` writes `'needs re-auth'`). Distinct from `unfilledSecretSlots`
+   * (a NEVER-filled slot); the caller de-dupes so an unfilled slot isn't also reported as broken auth.
+   * Surfaced as a Workspace Profile `broken_auth` gap. Returns secret-SAFE data only — `validation_error`
+   * is a safe message string, never a secret VALUE; `auth_kind` picks the right fix (static→request_secret,
+   * oauth→operator re-consent).
+   */
+  async authFailingServers(
+    orgId: string,
+    repoId: string,
+  ): Promise<{ name: string; scope: 'org' | string; authKind: McpAuthKind; reason: string }[]> {
+    const rows = await this.rowsForTurn(orgId, repoId);
+    const out: { name: string; scope: 'org' | string; authKind: McpAuthKind; reason: string }[] = [];
+    for (const r of rows) {
+      if (!r.enabled) continue;
+      if (r.validation_error == null) continue;
+      out.push({
+        name: r.name,
+        scope: McpServerStore.fromDbScope(r.scope),
+        authKind: r.auth_kind,
+        reason: r.validation_error,
+      });
+    }
+    return out;
+  }
+
   /** Decrypt a row's secret blob into `{ headers?, env? }`, or `{}` when it has none. */
   decryptSecrets(row: McpServerEntity): McpSecretValues {
     if (!row.secrets_enc) return {};

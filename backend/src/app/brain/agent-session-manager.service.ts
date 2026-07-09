@@ -4261,6 +4261,10 @@ export class AgentSessionManager
           surfaces: s.surfaces,
           enabled: s.enabled,
           secretKeys: s.secretKeys,
+          // Secret-SAFE failure state so a brain that lists servers sees a broken one directly (not only
+          // via the PROFILE GAPS block): `validationError` is a safe message; `needsReauth` is OAuth-only.
+          validationError: s.validationError,
+          needsReauth: s.needsReauth,
         }));
         return {
           ok: true,

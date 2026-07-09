@@ -11,6 +11,7 @@ function make(overrides?: {
   slug?: string | null;
   conventionName?: string | null;
   unfilledSlots?: { name: string; scope: string; slots: string[] }[];
+  authFailing?: { name: string; scope: string; authKind: 'static' | 'oauth'; reason: string }[];
   seenManifests?: string[] | null;
 }): WorkspaceProfileService {
   const o = overrides ?? {};
@@ -23,6 +24,7 @@ function make(overrides?: {
   const mcp = {
     rowsForTurn: async () => o.mcpRows ?? [],
     unfilledSecretSlots: async () => o.unfilledSlots ?? [],
+    authFailingServers: async () => o.authFailing ?? [],
   };
   const skills = { rowsForTurn: async () => o.skillRows ?? [] };
   const conventions = {
@@ -129,5 +131,41 @@ describe('WorkspaceProfileService.computeGaps / renderGaps', () => {
   it('no new-stack gap when every current manifest is already acknowledged', async () => {
     const svc = make({ seenManifests: ['package.json', 'go.mod'] });
     expect(await svc.computeGaps('org1', 'repo-1', ['package.json'])).toEqual([]);
+  });
+
+  it('flags a static server whose auth broke with the request_secret + reset_sandbox fix', async () => {
+    const svc = make({
+      authFailing: [{ name: 'github', scope: 'repo-1', authKind: 'static', reason: '401 Unauthorized' }],
+    });
+    const gaps = await svc.computeGaps('org1', 'repo-1');
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].kind).toBe('broken_auth');
+    const rendered = svc.renderGaps(gaps);
+    expect(rendered).toContain('github');
+    expect(rendered).toContain('401 Unauthorized');
+    expect(rendered).toContain('request_secret');
+    expect(rendered).toContain('reset_sandbox');
+  });
+
+  it('flags a broken OAuth server as owner-must-reconnect (no request_secret fix)', async () => {
+    const svc = make({
+      authFailing: [{ name: 'jira', scope: 'org', authKind: 'oauth', reason: 'needs re-auth' }],
+    });
+    const gaps = await svc.computeGaps('org1', 'repo-1');
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].kind).toBe('broken_auth');
+    expect(gaps[0].detail).toContain('re-authorization');
+    expect(gaps[0].detail).toContain('Reconnect');
+    expect(gaps[0].detail).not.toContain('request_secret');
+  });
+
+  it('does not double-report a never-filled slot as broken_auth (unfilled wins)', async () => {
+    const svc = make({
+      unfilledSlots: [{ name: 'github', scope: 'repo-1', slots: ['header:Authorization'] }],
+      authFailing: [{ name: 'github', scope: 'repo-1', authKind: 'static', reason: 'missing Authorization' }],
+    });
+    const gaps = await svc.computeGaps('org1', 'repo-1');
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].kind).toBe('unfilled_mcp_secret');
   });
 });
