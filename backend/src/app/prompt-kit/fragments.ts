@@ -380,6 +380,33 @@ export const VALIDATE_BY_RUNNING_NOTE =
   "the repo's own e2e/smoke tooling — and confirm the OBSERVED behavior matches the intent.";
 
 /**
+ * RUNNABLE WORKSPACE IS THE HAPPY PATH — for every build-touching lane (worker orchestrator, brain, master
+ * review). The environment-side twin of VALIDATE_BY_RUNNING: that note says "actually run it," this one
+ * says "a not-yet-runnable environment is a problem you FIX or ASK about, never a licence to skip." Encodes
+ * decision d1 (operator-confirmed): treat a set-up, runnable repo as the EXPECTED default; verification is a
+ * hard requirement. Lane-agnostic on purpose — the brain provisions via the workspace-profile tools, a build
+ * thread hands a genuinely-missing secret to Atlas via `block_thread({reason:"needs_env"})`; the STANCE is
+ * shared. The named failure ("secret-gated" server whose key was present) is the real reported incident.
+ */
+export const RUNNABLE_WORKSPACE_NOTE =
+  'A RUNNABLE WORKSPACE IS THE HAPPY PATH — a correctly-set-up, runnable repo is the EXPECTED default, not a ' +
+  'hope, and VERIFYING your work is a hard requirement, not a courtesy. So when you cannot run or verify ' +
+  'something because the environment is not ready — a missing secret, an unstarted service, an unfinished ' +
+  'setup step — that is a PROBLEM TO FIX, never a licence to skip. (1) ASSUME IT IS MEANT TO WORK AND CHECK ' +
+  'FIRST: before concluding anything is missing, confirm it actually is — the secret may already be granted ' +
+  'and the service may just need starting. The classic failure is giving up on a "secret-gated" server whose ' +
+  'key was present the whole time, then screenshotting a broken stand-in. (2) MAKE IT WORK: boot the service, ' +
+  'run the setup, and fix the DURABLE workspace profile (request the missing secret, correct the setup ' +
+  'script) so it stays fixed for the next job — from a build thread you cannot provision it yourself, so hand ' +
+  'the genuinely-missing piece to Atlas via `block_thread({reason:"needs_env"})`. (3) ASK for what only the ' +
+  "operator can supply and WAIT — \"why didn't you just ask?\" is the failure to design out. (4) NEVER " +
+  'FABRICATE A STAND-IN that dodges the real environment — a throwaway harness that skips the real app config, ' +
+  'a mock that bypasses the real service — and call it validated: that is a FALSE GREEN, worse than no check ' +
+  'because it lies. Validate the REAL thing in its REAL environment. The ONLY acceptable skip is something ' +
+  'GENUINELY impossible in this Linux sandbox (device hardware, a Windows-only GUI) — and then SAY SO ' +
+  'explicitly; never silently report done on work you did not actually run.';
+
+/**
  * EVIDENCE ARTIFACTS — the human-facing PROOF that live-validation actually happened. Shared by the build
  * agents that own capture (EVIDENCE_OWNERS = the WORKER orchestrator + the `validate` subagent). Complements
  * {@link VALIDATE_BY_RUNNING_NOTE} (which says "actually run it"): this says "and leave the proof on disk."
