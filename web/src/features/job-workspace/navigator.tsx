@@ -382,7 +382,6 @@ export function Navigator({
              selected `.nav-selected` band + left accent bar can run flush to the rail edge. ─────────── */}
       <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto py-3">
         <StateBanner
-          status={st}
           job={job}
           jobRef={jobRef}
           onConversation={onConversation}
@@ -925,12 +924,10 @@ function PortsRegion({
 // ── state banners (failed / paused / awaiting) ─────────────────────────────────────────────────────
 
 function StateBanner({
-  status,
   job,
   jobRef,
   onConversation,
 }: {
-  status: JobStatus;
   job: PipelineJob | null;
   jobRef: JobRef;
   onConversation: () => void;
