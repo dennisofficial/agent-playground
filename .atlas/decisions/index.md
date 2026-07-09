@@ -5,6 +5,8 @@ it is regenerated on every promotion. Edit an individual decision file to propos
 
 | id | decision | status |
 |----|----------|--------|
+| [agent-html-rendered-in-sandboxed-iframe](agent-html-rendered-in-sandboxed-iframe.md) | Agent-authored HTML is rendered in a sandboxed, opaque-origin iframe | proposed |
+| [context-file-raw-serving-route](context-file-raw-serving-route.md) | Path-based raw route serves /context bucket files as raw bytes | proposed |
 | [needs-you-halted-axis](needs-you-halted-axis.md) | Turn-stopping errors surface via a persisted `halted` flag, not by mutating job.status | proposed |
 | [harness-projections-live-in-context-generated](harness-projections-live-in-context-generated.md) | Non-committed harness projections live in /context/generated, never the git worktree | proposed |
 | [subagent-recovery-nudge-before-respawn](subagent-recovery-nudge-before-respawn.md) | Orchestrators nudge stalled/failed subagents instead of respawning | proposed |
