@@ -21,7 +21,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { createReadStream, existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
@@ -1923,7 +1923,7 @@ export class WebSurfaceController {
     const buf = readFileSync(abs);
     return {
       name: basename(abs),
-      path: relative(sandbox.worktreePath, abs).split(sep).join('/'),
+      path: relative(realpathSync(sandbox.worktreePath), abs).split(sep).join('/'),
       size: st.size,
       mtime: st.mtime.toISOString(),
       encoding: binary ? 'base64' : 'text',

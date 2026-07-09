@@ -2,11 +2,12 @@
  * LIVE HTTP proof for the two new repo-worktree read endpoints on `WebSurfaceController`
  * (`GET …/repo/tree`, `GET …/repo/file`) — boots a REAL Nest HTTP application (supertest, real
  * listening `http.Server`) and drives it against a REAL temp git worktree via the REAL
- * `LocalGitService` (`git ls-files` / `--error-unmatch` actually run as subprocesses). No Postgres:
- * every other collaborator is auto-mocked via `Test.createTestingModule(...).useMocker(...)`, so
- * this is a pure controller-level HTTP test that boots the Nest app entirely in-memory — hence
- * `*.spec.ts` (the fast unit tier, which has no DB setupFiles/globalSetup), not the Postgres-gated
- * `*.int.test.ts` integration tier.
+ * `LocalGitService` (`git ls-files` / `--error-unmatch` actually run as subprocesses). It boots a
+ * real Nest HTTP app and spawns real git subprocesses (real local services / app boot), so it lives
+ * in the `*.int.test.ts` integration tier — NOT the `*.spec.ts` unit tier, which the config reserves
+ * for fast, no-app-boot, no-external-service specs. It needs no Postgres of its own (every other
+ * collaborator is auto-mocked via `Test.createTestingModule(...).useMocker(...)`), but the integration
+ * tier's single-threaded pool + globalSetup are the correct home for this profile.
  *
  * Fixture repo (real `git init` + real commits in a temp dir):
  *   backend/sandbox/Dockerfile   — tracked, committed          → served by both endpoints
