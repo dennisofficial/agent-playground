@@ -16,17 +16,22 @@ import type {
 } from './autofix.types';
 
 /**
- * The default fan-out: four complementary read-only lenses. Conservative + non-overlapping focuses so
- * the deduped union stays signal-rich. Callers override via `AutoFixOptions.lenses`.
+ * The default fan-out: four narrow diff-scoped lenses plus one always-on HOLISTIC lens. The four narrow
+ * lenses are complementary + non-overlapping so the deduped union stays signal-rich; the holistic lens
+ * counters their by-design tunnel vision by judging the change as a whole against its intent. Each focus
+ * defers to the shared ship-blocker bar in the output contract — the focus says WHAT to look at, the
+ * contract says how high the bar is. Callers override via `AutoFixOptions.lenses`.
  */
 export const DEFAULT_LENSES: ReviewLens[] = [
   {
     id: 'best_practices',
     label: 'Best practices & conventions',
     focus:
-      'Idiomatic, maintainable code: naming, structure, error handling, dead code, obvious ' +
-      'performance/security footguns, and adherence to the language/framework conventions visible in ' +
-      'the surrounding files. Do NOT propose broad refactors — only fixes scoped to the change set.',
+      'Genuine best-practice defects this change introduces: broken or missing error handling, ' +
+      'resource or security footguns, dead/unreachable code, and clear breaks from a language or ' +
+      'framework convention the surrounding files consistently follow. Do NOT flag naming, formatting, ' +
+      'or stylistic taste — defer to the ship-blocker bar. No broad refactors; only fixes scoped to the ' +
+      'change set.',
   },
   {
     id: 'correctness',
@@ -34,30 +39,44 @@ export const DEFAULT_LENSES: ReviewLens[] = [
     focus:
       'Logic correctness: off-by-one, null/undefined handling, missed edge cases, incorrect async/' +
       'await or error propagation, resource leaks, and behavior that diverges from the stated intent. ' +
-      'Flag bugs the change introduced, not pre-existing ones outside the diff. Pay special attention to ' +
-      'REMOVED code that is still referenced: if the change deletes a symbol/file/export, verify nothing ' +
-      'in the repo still imports or calls it (including intra-file and dynamic/string references) — a ' +
-      'still-referenced deletion is a high-severity bug. Also flag changes that claim to be complete but ' +
-      'leave the build/types broken.',
+      'Flag only bugs THIS change introduced, not pre-existing ones outside the diff. Pay special ' +
+      'attention to REMOVED code that is still referenced: if the change deletes a symbol/file/export, ' +
+      'verify nothing in the repo still imports or calls it (including intra-file and dynamic/string ' +
+      'references) — a still-referenced deletion is a high-severity bug. Also flag a change that claims ' +
+      'to be complete but leaves the build or types broken.',
   },
   {
     id: 'consistency',
     label: 'Consistency with the codebase',
     focus:
-      'Consistency with existing patterns in this repo: does the new code match how the codebase ' +
-      'already does logging, DI, types, imports, file placement, and tests? Read neighbouring files ' +
-      'to judge the house style; flag deviations the change introduced.',
+      "Consistency with THIS repo's established patterns for logging, DI, types, imports, file " +
+      'placement, and tests. Read neighbouring files to judge the house style, then flag a deviation ' +
+      'only when the surrounding code is actually consistent and this change breaks it in a way that ' +
+      'would mislead a maintainer — not where it merely differs in taste. Defer to the ship-blocker bar.',
   },
   {
     id: 'minimalism',
     label: 'Minimal code / no over-engineering',
     focus:
-      'Over-engineering introduced by THIS change: a new abstraction, dependency, service, wrapper, or ' +
+      'Over-engineering THIS change introduces: a new abstraction, dependency, service, wrapper, or ' +
       'config where reuse of something already in the repo, the stdlib, a native platform feature, or a ' +
-      'one-liner would do; needless indirection; speculative flexibility or options nobody asked for; ' +
-      'code that builds more than the stated intent needs. Flag the leaner alternative concretely. ' +
-      'NEVER flag input validation, error handling, security, or accessibility as "excess" — those are ' +
-      'required. Do NOT propose broad refactors — only reductions scoped to the change set.',
+      'one-liner would do; needless indirection; speculative flexibility or options nobody asked for. ' +
+      'Flag the leaner alternative concretely. NEVER flag input validation, error handling, security, or ' +
+      'accessibility as "excess" — those are required. No broad refactors; only reductions scoped to the ' +
+      'change set.',
+  },
+  {
+    id: 'holistic',
+    label: 'Holistic: change vs intent',
+    scope: 'holistic',
+    focus:
+      'The change as a WHOLE against its stated intent. Does it actually accomplish the goal? Are all ' +
+      'the pieces the intent implies actually present — no half-wired feature, missing call site, ' +
+      'unhandled branch, or TODO left where behavior was promised? Do the changed files integrate ' +
+      'correctly with each other AND with the existing code that calls them? Flag the cross-file, ' +
+      'integration, and completeness problems the narrow lenses miss. You MAY read beyond the diff to ' +
+      'judge integration, but only flag issues THIS change introduced or left incomplete — never ' +
+      'pre-existing debt.',
   },
 ];
 
@@ -92,20 +111,49 @@ export function meetsSeverity(sev: FindingSeverity, min: FindingSeverity): boole
   return SEVERITY_RANK[sev] >= SEVERITY_RANK[min];
 }
 
-/** The contract every review pass must satisfy — appended to each lens prompt. */
-const REVIEW_OUTPUT_CONTRACT = `
-Return your findings as a SINGLE fenced JSON code block and nothing else after it:
+/** The JSON shape every review pass returns — identical across scopes, so parse + dedupe are untouched. */
+const REVIEW_OUTPUT_FORMAT = `Return your findings as a SINGLE fenced JSON code block and nothing else after it:
 
 \`\`\`json
 { "findings": [ { "severity": "low|medium|high", "file": "path/relative/to/repo or null", "title": "one line", "detail": "what is wrong + the concrete fix" } ] }
-\`\`\`
+\`\`\``;
+
+/**
+ * The ship-blocker bar + honest-severity rubric — shared by EVERY scope. This is the anti-nitpicking
+ * lever: the post-review fix pass only acts on findings >= medium, so an honest severity here directly
+ * shrinks what the fix pass churns on (no threshold change needed).
+ */
+const SHIP_BLOCKER_BAR = `Bar for reporting — report ONLY what a senior engineer would raise in a PR review that BLOCKS approval:
+- Do NOT report style preferences, restate what a linter/formatter already handles, or nitpick a pattern the surrounding code already accepts.
+- An empty report is the correct, expected outcome for a clean change — return { "findings": [] } and never pad it to look thorough.
+
+Assign severity honestly — do NOT inflate:
+- high = breaks production, loses data, or is a real bug.
+- medium = a real defect or a maintainability problem worth fixing before merge.
+- low = minor.
+- When unsure an issue truly matters, use low or omit it.`;
+
+/** The scope clause — how far the pass may look. The narrow lenses stay diff-only; holistic may read out. */
+const SCOPE_CLAUSE: Record<NonNullable<ReviewLens['scope']>, string> = {
+  diff: 'ONLY report issues introduced by (or directly within) the change set below — never pre-existing issues outside it.',
+  holistic:
+    'Judge the change as a WHOLE against its stated intent. You MAY read beyond the diff — into the files it touches and the existing code that calls them — to judge integration and completeness. But only FLAG problems THIS change introduced or left incomplete; never report pre-existing debt outside the change\'s responsibility.',
+};
+
+/** The output contract appended to a review pass, tuned to the lens's scope (shared bar + format). */
+function reviewOutputContract(scope: NonNullable<ReviewLens['scope']>): string {
+  return `
+Scope of what you may report:
+- ${SCOPE_CLAUSE[scope]}
+
+${SHIP_BLOCKER_BAR}
+
+${REVIEW_OUTPUT_FORMAT}
 
 Rules:
-- ONLY report issues introduced by (or directly within) the change set below — never pre-existing
-  issues outside it, and never style opinions the surrounding code already violates.
-- If the change set is clean, return { "findings": [] }.
 - Keep each finding scoped to a concrete, safe fix. No speculative rewrites.
 - "file" must be repo-relative (or null for a cross-cutting note).`;
+}
 
 /** Build one read-only review pass's prompt for a given lens + context. */
 export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): string {
@@ -122,7 +170,7 @@ export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): string
     files,
     diffBlock,
     'This is a READ-ONLY review turn — do not modify any files. You may read files for context.',
-    REVIEW_OUTPUT_CONTRACT,
+    reviewOutputContract(lens.scope ?? 'diff'),
   ].join('\n');
 }
 

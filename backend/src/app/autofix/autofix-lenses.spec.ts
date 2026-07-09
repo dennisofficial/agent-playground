@@ -114,6 +114,25 @@ describe('meetsSeverity', () => {
   });
 });
 
+describe('DEFAULT_LENSES', () => {
+  it('includes the always-on holistic lens with holistic scope', () => {
+    const holistic = DEFAULT_LENSES.find((l) => l.id === 'holistic');
+    expect(holistic).toBeDefined();
+    expect(holistic?.scope).toBe('holistic');
+  });
+
+  it('leaves the four narrow lenses diff-scoped (default)', () => {
+    const narrow = DEFAULT_LENSES.filter((l) => l.id !== 'holistic');
+    expect(narrow.map((l) => l.id)).toEqual([
+      'best_practices',
+      'correctness',
+      'consistency',
+      'minimalism',
+    ]);
+    for (const l of narrow) expect(l.scope ?? 'diff').toBe('diff');
+  });
+});
+
 describe('prompt builders', () => {
   it('review prompt carries the lens focus, intent, files and diff', () => {
     const p = buildReviewPrompt(DEFAULT_LENSES[0], ctx);
@@ -122,6 +141,29 @@ describe('prompt builders', () => {
     expect(p).toContain('src/x.ts');
     expect(p).toContain('READ-ONLY');
     expect(p).toContain('"findings"');
+  });
+
+  it('a diff-scoped lens gets the strict diff-only contract + the ship-blocker/severity bar', () => {
+    const diffLens = DEFAULT_LENSES.find((l) => l.id === 'correctness')!;
+    const p = buildReviewPrompt(diffLens, ctx);
+    // strict diff-only scoping (not the holistic exemption)
+    expect(p).toContain('ONLY report issues introduced by (or directly within) the change set');
+    expect(p).not.toContain('MAY read beyond the diff');
+    // shared ship-blocker bar + honest severity rubric render for every scope
+    expect(p).toContain('BLOCKS approval');
+    expect(p).toContain('Assign severity honestly');
+    expect(p).toContain('never pad it to look thorough');
+  });
+
+  it('the holistic lens gets the beyond-diff exemption while still bounding findings to this change', () => {
+    const holistic = DEFAULT_LENSES.find((l) => l.id === 'holistic')!;
+    const p = buildReviewPrompt(holistic, ctx);
+    expect(p).toContain('MAY read beyond the diff');
+    expect(p).toContain('only FLAG problems THIS change introduced or left incomplete');
+    // the strict diff-only clause must NOT be the scope for the holistic lens
+    expect(p).not.toContain('ONLY report issues introduced by (or directly within) the change set');
+    // but the shared ship-blocker bar still applies
+    expect(p).toContain('BLOCKS approval');
   });
 
   it('fix prompt enumerates findings, forbids scope creep, and REQUIRES the agent commit + push', () => {

@@ -37,6 +37,13 @@ export interface ReviewLens {
   label: string;
   /** The lens-specific framing injected into the review prompt (what this pass is looking for). */
   focus: string;
+  /**
+   * Review scope, defaulting to `'diff'` when omitted. `'diff'` = the strict, tunnel-visioned lenses
+   * that only flag issues within the change set. `'holistic'` = judges the whole change against its
+   * intent (integration + completeness) and MAY read beyond the diff, while still only flagging what
+   * this change is responsible for. Drives which output contract `buildReviewPrompt` appends.
+   */
+  scope?: 'diff' | 'holistic';
 }
 
 /** A commit the stage produced (a fix commit). */
