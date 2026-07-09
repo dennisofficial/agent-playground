@@ -1632,7 +1632,12 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       await h.driver.dispatch(state.job);
       // The trail is rendered under `<contextDirHost>/generated/threads/<ordinal>-<slug>/` — here `010-backend`.
       const trail = join(ctxDir, 'generated', 'threads', '010-backend', 'completion.md');
-      await flushUntil(() => existsSync(trail));
+      // Wait for CONTENT, not just the file's existence: writeCompletionMd is fire-and-forget and
+      // writeFile creates the (empty) file before the content lands, so an existence-only wait can read
+      // '' and flake (observed in CI). Waiting for non-empty content makes the assertions deterministic.
+      await flushUntil(
+        () => existsSync(trail) && readFileSync(trail, 'utf8').length > 0,
+      );
 
       expect(existsSync(trail)).toBe(true);
       expect(readFileSync(trail, 'utf8')).toContain('# Thread halted: Backend');

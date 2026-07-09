@@ -52,4 +52,6 @@ export const qk = {
   /** One repo's attached house-style profile slug (`GET …/convention-profiles/repo/:repoId`). */
   repoConventionProfile: (orgId: string, repoId: string) =>
     ["repo-convention-profile", orgId, repoId] as const,
+  /** One org's skills registry (`GET /web/orgs/:orgId/skills`). */
+  orgSkills: (orgId: string) => ["org-skills", orgId] as const,
 };

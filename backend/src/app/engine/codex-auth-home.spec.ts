@@ -9,6 +9,9 @@ import {
   ensureCodexAuthHome,
   readCodexAuthHome,
 } from './codex-auth-home';
+import type { EngineHomeKey } from './engine-home';
+
+const key: EngineHomeKey = { orgId: 'org', repoId: 'repo', jobId: 'job', type: 'plan-review' };
 
 const fullTokens = {
   OPENAI_API_KEY: null,
@@ -45,20 +48,20 @@ describe('assertValidCodexAuthJson', () => {
 describe('ensureCodexAuthHome', () => {
   it('throws a clear error on non-JSON (no bare-token wrapping anymore)', () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-home-'));
-    expect(() => ensureCodexAuthHome(root, 'k', 'some-opaque-token')).toThrow(CodexAuthInvalidError);
+    expect(() => ensureCodexAuthHome(root, key, 'some-opaque-token')).toThrow(CodexAuthInvalidError);
   });
 
   it('writes auth.json verbatim for a valid blob', () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-home-'));
     const secret = JSON.stringify(fullTokens);
-    const home = ensureCodexAuthHome(root, 'k', secret);
+    const home = ensureCodexAuthHome(root, key, secret);
     expect(readFileSync(join(home, 'auth.json'), 'utf8')).toBe(secret);
   });
 
   it('throws before writing anything when the blob is missing id_token', () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-home-'));
     const secret = JSON.stringify({ tokens: { access_token: 'a', refresh_token: 'r' } });
-    expect(() => ensureCodexAuthHome(root, 'k', secret)).toThrow(/id_token/);
+    expect(() => ensureCodexAuthHome(root, key, secret)).toThrow(/id_token/);
   });
 });
 
@@ -66,20 +69,20 @@ describe('codexAuthHomeDir / readCodexAuthHome', () => {
   it('codexAuthHomeDir is deterministic and matches where ensureCodexAuthHome writes', () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-home-'));
     const secret = JSON.stringify(fullTokens);
-    const written = ensureCodexAuthHome(root, 'k', secret);
-    expect(codexAuthHomeDir(root, 'k')).toBe(written);
-    expect(codexAuthHomeDir(root, 'k')).toBe(codexAuthHomeDir(root, 'k')); // stable
+    const written = ensureCodexAuthHome(root, key, secret);
+    expect(codexAuthHomeDir(root, key)).toBe(written);
+    expect(codexAuthHomeDir(root, key)).toBe(codexAuthHomeDir(root, key)); // stable
   });
 
   it('readCodexAuthHome round-trips the written blob', () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-home-'));
     const secret = JSON.stringify(fullTokens);
-    ensureCodexAuthHome(root, 'k', secret);
-    expect(readCodexAuthHome(root, 'k')).toBe(secret);
+    ensureCodexAuthHome(root, key, secret);
+    expect(readCodexAuthHome(root, key)).toBe(secret);
   });
 
   it('readCodexAuthHome returns null when no auth.json has been written', () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-home-'));
-    expect(readCodexAuthHome(root, 'never-written')).toBeNull();
+    expect(readCodexAuthHome(root, { ...key, jobId: 'never-written' })).toBeNull();
   });
 });

@@ -23,6 +23,7 @@ import type {
 } from '../persistence/entities';
 import type { GithubPrService, LocalGitService } from '../git';
 import type { CredentialResolver } from '../onboarding';
+import type { SkillUpdaterService } from '../skills/skill-updater.service';
 import type { DriverRepoResolver } from './repo-resolver';
 import { SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
@@ -79,6 +80,7 @@ function makeService(
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
+    { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
   );
 }
 
@@ -112,6 +114,7 @@ function makeServiceWithMocks(
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
+    { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
   );
   return { svc, sandboxes, provisionAndAttach };
 }
@@ -144,6 +147,7 @@ function makeServiceForReset(row: JobSandboxEntity | null) {
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { failRunningForJob } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
+    { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
   );
   return { svc, sandboxes, teardown, activity, failRunningForJob };
 }

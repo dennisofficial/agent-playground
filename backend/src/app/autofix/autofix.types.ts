@@ -7,7 +7,7 @@
  * These shapes live in THIS subfolder, never `domain/index.ts`. Zero imports from `harness/**` or the
  * v1 `slack-app` surface — the stage talks only to W1's `EngineRunner` + `LocalGitService`.
  */
-import type { EngineAuth } from '../engine';
+import type { EngineAuth, EngineHomeKey } from '../engine';
 import type { SessionEngine } from '../domain';
 
 /** How severe a finding is — drives whether the fix turn is even attempted (see `fixMinSeverity`). */
@@ -116,10 +116,11 @@ export interface AutoFixContext {
   /** Absolute path to the feature worktree (the engine cwd + the commit target). */
   worktreePath: string;
   /**
-   * Stable per-feature key namespacing the engine's isolated home + Codex client cache. Use the same
-   * `<repoId>--<branch>` key the turn-runner uses so the auto-fix turns share the feature's home.
+   * The `type: 'autofix'` engine-home key namespacing the isolated home + Codex client cache — the
+   * JOB's own key (stable across every lens/fix turn of the pass; the stage itself layers a `subId` per
+   * lens/fix turn, see `autofix.stage.ts`).
    */
-  sandboxKey: string;
+  sandboxKey: EngineHomeKey;
   /**
    * The unified diff to review. When omitted the stage derives one from the worktree git state (see
    * `gitRange`). Supplying it is cheaper + deterministic (the driver already has the thread's diff).

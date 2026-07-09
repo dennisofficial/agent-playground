@@ -1,8 +1,14 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type { WorkspaceSkillEntity } from '../persistence/entities';
 import { SkillResolver } from './skill-resolver.service';
 import { WorkspaceSkillStore } from './workspace-skill.store';
+
+// This file tests the ORG/REPO tier in isolation from whatever `system-skill-registry.ts` actually ships
+// (real content since P5+#14) — an empty system tier here, exactly like `skill-resolver.managed-tier.spec.ts`
+// stubs it for the OPPOSITE reason (to test the system tier's own precedence behavior). `vi.mock` is
+// hoisted above these imports by vitest.
+vi.mock('./system-skill-registry', () => ({ buildSystemSkills: () => [] }));
 
 /** Minimal in-memory repository (only the methods the store calls). */
 class FakeRepo {
@@ -53,21 +59,24 @@ describe('SkillResolver.resolveForTurn', () => {
   });
 
   it('a repo-scoped skill OVERRIDES an org-scoped skill of the same name', async () => {
-    await store.write('org1', '*', 'migrations', { description: 'org', body: 'org body' });
-    await store.write('org1', 'repo-1', 'migrations', { description: 'repo', body: 'repo body' });
+    await store.write('org1', '*', 'migrations', { description: 'org' });
+    await store.write('org1', 'repo-1', 'migrations', { description: 'repo' });
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
     expect(out).toHaveLength(1);
-    expect(out[0].body).toBe('repo body');
+    expect(out[0].description).toBe('repo');
+    // repo-scoped → dirPath nests under repos/<repoId>/<name>, not the org-scoped `<name>` shape.
+    expect(out[0].dirPath).toBe('repos/repo-1/migrations');
   });
 
   it('org-scoped skills apply to a repo that has no override of that name', async () => {
-    await store.write('org1', '*', 'shared', { description: 'd', body: 'b' });
+    await store.write('org1', '*', 'shared', { description: 'd' });
     const out = await resolver.resolveForTurn('org1', 'repo-9', 'build');
     expect(out.map((s) => s.name)).toEqual(['shared']);
+    expect(out[0].dirPath).toBe('shared');
   });
 
   it('filters by surface (default surfaces is build-only)', async () => {
-    await store.write('org1', '*', 'buildonly', { description: 'd', body: 'b' });
+    await store.write('org1', '*', 'buildonly', { description: 'd' });
     expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual([]);
     expect((await resolver.resolveForTurn('org1', 'repo-1', 'build')).map((s) => s.name)).toEqual([
       'buildonly',
@@ -75,13 +84,13 @@ describe('SkillResolver.resolveForTurn', () => {
   });
 
   it('excludes disabled skills', async () => {
-    await store.write('org1', '*', 'off', { description: 'd', body: 'b', enabled: false });
+    await store.write('org1', '*', 'off', { description: 'd', enabled: false });
     expect(await resolver.resolveForTurn('org1', 'repo-1', 'build')).toEqual([]);
   });
 
-  it('returns name/description/body (plain data, no secrets)', async () => {
-    await store.write('org1', '*', 'k', { description: 'Use when X', body: '# body', surfaces: ['brain'] });
+  it('returns name/description/dirPath (plain data, no secrets or file content)', async () => {
+    await store.write('org1', '*', 'k', { description: 'Use when X', surfaces: ['brain'] });
     const [s] = await resolver.resolveForTurn('org1', 'repo-1', 'brain');
-    expect(s).toEqual({ name: 'k', description: 'Use when X', body: '# body' });
+    expect(s).toEqual({ name: 'k', description: 'Use when X', dirPath: 'k' });
   });
 });
