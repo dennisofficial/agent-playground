@@ -825,9 +825,6 @@ export class ThreadDriver implements JobDispatcher {
       summary,
     );
     if (!parked) return;
-    // Parked on the operator (the "Ship it" gate) — the system is no longer working; go idle so the
-    // needs-you dot can light for the awaiting_ship_review phase.
-    await this.store.setActivity(job.id, 'idle').catch(() => undefined);
     this.logger.log(`job=${job.id} parked at ship-review gate — awaiting operator "Ship it"`);
     await this.post(
       route,
@@ -3400,4 +3397,3 @@ export function shortReason(err: unknown): string {
     .join(' | ');
   return detail.length > 500 ? `${detail.slice(0, 497)}...` : detail || 'unknown error';
 }
-

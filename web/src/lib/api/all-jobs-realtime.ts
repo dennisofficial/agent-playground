@@ -103,6 +103,7 @@ export function useAllJobsRealtime(): void {
           title: row.title?.trim() || next[idx].title,
           kind: row.kind ? toJobKind(row.kind as WireJobKind) : next[idx].kind,
           status: nextStatus,
+          activity: row.activity ?? next[idx].activity,
           needsYou: row.needsYou,
           halted: row.halted,
           // The flat WAL row carries no PR url — preserve the enriched one from the fetched row so a

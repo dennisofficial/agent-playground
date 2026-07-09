@@ -251,10 +251,10 @@ export class DriverStoreService {
   // ── ship-review gate (the terminal human gate: reviewed diff → operator clicks "Ship it" → PR) ────────
 
   /**
-   * PARK the job at the ship-review gate in one txn: flip `running → awaiting_ship_review` and post the
-   * durable "Ship it" card. The status flip is CONDITIONAL on `running`, so it's the single-park guard — a
-   * concurrent drive (or a re-drive) that finds the job already parked affects 0 rows and skips the card,
-   * returning false. Returns whether THIS caller parked it.
+   * PARK the job at the ship-review gate in one txn: flip `running → awaiting_ship_review`, clear activity
+   * to `idle`, and post the durable "Ship it" card. The status flip is CONDITIONAL on `running`, so it's
+   * the single-park guard — a concurrent drive (or a re-drive) that finds the job already parked affects 0
+   * rows and skips the card, returning false. Returns whether THIS caller parked it.
    */
   async parkForShipReview(
     jobId: string,
@@ -266,7 +266,7 @@ export class DriverStoreService {
         .getRepository(JobEntity)
         .createQueryBuilder()
         .update(JobEntity)
-        .set({ status: 'awaiting_ship_review' })
+        .set({ status: 'awaiting_ship_review', activity: 'idle' })
         .where('id = :jobId', { jobId })
         .andWhere("status = 'running'")
         .execute();
@@ -323,6 +323,7 @@ export class DriverStoreService {
         pr_url: prUrl,
         ...(prNumber != null ? { pr_number: prNumber } : {}),
         status: 'done',
+        activity: 'idle',
         // Latch the PR lifecycle to `open` HERE (not on a later reconcile) so the sidebar shows the
         // pull-request glyph the moment the PR is recorded — the reap-timer reconcile is up to 30 min away.
         pr_state: 'open',
