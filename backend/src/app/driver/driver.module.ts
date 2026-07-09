@@ -2,6 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import {
   Global,
   Inject,
+  Logger,
   Module,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
@@ -111,6 +112,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
   private reapTimer?: ReturnType<typeof setInterval>;
+  private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
   private webhooksBackfilled = false; // per-repo webhook backfill runs ONCE per process on leadership
 
@@ -159,7 +161,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       // itself when the backend isn't publicly reachable. The 30-min poll covers sync regardless.
       if (!this.webhooksBackfilled) {
         this.webhooksBackfilled = true;
-        void this.onboarding.ensureWebhooksForActiveRepos().catch(() => undefined);
+        void this.onboarding
+          .ensureWebhooksForActiveRepos()
+          .catch((err) => this.logger.warn(`webhook backfill sweep failed: ${err}`));
       }
       // Re-drive `running` jobs on EVERY promotion — including a mid-life re-promote. Leadership-fenced
       // drives (see ThreadDriver.runJob) YIELD on demotion, so a re-promote must re-pick-up the yielded job or

@@ -757,6 +757,17 @@ function RepoRow({
           </span>
         ) : null}
 
+        {!revalidating && repo.accessOk && repo.webhookWarning ? (
+          <span
+            className="flex max-w-[220px] items-start gap-1.5 text-right text-[10.5px] leading-snug"
+            style={{ color: "var(--amber)" }}
+            title={repo.webhookWarning}
+          >
+            <AlertCircle size={12} className="mt-px shrink-0" />
+            <span>real-time PR sync off — {repo.webhookWarning}</span>
+          </span>
+        ) : null}
+
         {canManage ? (
           <>
             <div className="mt-0.5 flex items-center gap-1.5">
