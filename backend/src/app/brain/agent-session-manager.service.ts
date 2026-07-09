@@ -89,6 +89,7 @@ import {
 } from '../driver/live-verification-support';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
+import { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
 import { SkillFileWriter, SkillInstallerService, SkillResolver, WorkspaceSkillStore } from '../skills';
@@ -302,6 +303,10 @@ export class AgentSessionManager
     // LiveVerificationModule). Gates the direct-build `finalize_build` ship: a runtime diff must be exercised
     // live (curl / drive / run), not merely typechecked, before the PR opens.
     @Inject(LIVE_VERIFICATION_JUDGE) private readonly liveVerificationJudge: LiveVerificationJudge,
+    // Host-side subscription usage snapshot — the Main-lane session-limit park reads `getResetAt(orgId,
+    // rateLimitType)` to seed the resume clock when the engine didn't surface a precise reset instant.
+    // @Global OnboardingModule.
+    private readonly usage: OauthUsageService,
     // Durable per-model usage/cost analytics (best-effort) for brain + compaction turns. @Optional so
     // unit tests can construct the manager without wiring analytics; DI (@Global) supplies it live.
     @Optional() private readonly usageProjector?: TurnUsageProjector,
@@ -1345,6 +1350,7 @@ export class AgentSessionManager
     const tools = this.buildTools(stimulus, reattachKind);
     const streamer = this.turnHarness.create({
       jobId: row.job_id,
+      orgId: row.org_id,
       channel: row.channel,
     });
     const sandboxRow = await this.sandboxRows.findOne({
@@ -1776,6 +1782,7 @@ export class AgentSessionManager
     // The brain streams on the default `main` lane (no metaTag) — its blocks ARE the conversation.
     const streamer = this.turnHarness.create({
       jobId: stimulus.jobId,
+      orgId: stimulus.orgId,
       channel,
     });
     // One-shot guard so THIS turn's fully-assembled prompt (the operator body PLUS the invisible folded
@@ -2106,6 +2113,43 @@ export class AgentSessionManager
     if (result.sessionId && sandboxRow) {
       sandboxRow.session_id = result.sessionId;
       await this.sandboxRows.save(sandboxRow);
+    }
+
+    // SESSION/USAGE LIMIT PARK (Main lane): the engine ended the turn CLEANLY on a Claude subscription limit
+    // (not a crash). Park the lane on the durable resume clock — the Main lane has no `halt`, so the clock IS
+    // the park marker — finalize the live stream as a GRACEFUL end (the turn already ended; just flush, don't
+    // run the triage success tails), post ONE stable notice, and stop. The leader sweep auto-resumes at the
+    // reset (or the operator Force-resumes via `POST …/retry-turn`); every un-park path clears the clock.
+    if (result.sessionLimit) {
+      const rlType = result.sessionLimit.rateLimitType;
+      const resumeAt = result.sessionLimit.resetAt ?? this.usage.getResetAt(stimulus.orgId, rlType);
+      const resetSource: 'usage_api' | 'parsed_string' = rlType ? 'usage_api' : 'parsed_string';
+      const reason = `Claude session limit${rlType ? ` (${rlType})` : ''}${resumeAt ? `; resets ${resumeAt}` : ''}`;
+      await this.store
+        .setSessionResume(stimulus.jobId, resumeAt ?? null, { lane: 'main', reason, resetSource })
+        .catch((err) => this.logger.warn(`setSessionResume failed: ${err}`));
+      // Graceful finish, mirroring the normal success finish below — so the lane doesn't hang and the
+      // transcript flushes — WITHOUT the halt-wake / secret / file success-tail writes (no triage happened).
+      await streamer.finish(
+        result.result,
+        result.usage
+          ? {
+              usage: result.usage,
+              contextTokens: result.usage.contextTokens ?? null,
+              contextLimit: resolveContextLimit(result.usage.contextModel ?? result.usage.model),
+            }
+          : undefined,
+      );
+      void this.usageProjector?.record(
+        { jobId: stimulus.jobId, orgId: stimulus.orgId, lane: 'main', kind: 'brain', engine: 'claude' },
+        result.usage,
+      );
+      await this.saySystemOperator(
+        stimulus,
+        `You've hit your session limit — resets ${resumeAt ? this.fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`,
+        { retryable: false, sessionLimit: true, ...(resumeAt ? { resumeAt } : {}) },
+      );
+      return;
     }
 
     // Flush the durable transcript (persists any unpaired tool call + a text fallback if the turn emitted
@@ -5930,10 +5974,18 @@ export class AgentSessionManager
     return /aborted_streaming/.test(String(err));
   }
 
+  /** Render a session-limit reset instant as a short human time (e.g. "3:20 PM"); falls back to the raw ISO
+   *  string if unparseable. Mirrors the build lane's `fmtReset`; kept STABLE so the park notice dedupes. */
+  private fmtReset(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
   private async saySystemOperator(
     stimulus: ChatStimulus,
     text: string,
-    opts: { retryable?: boolean } = {},
+    opts: { retryable?: boolean; sessionLimit?: boolean; resumeAt?: string } = {},
   ): Promise<void> {
     const route = await this.store.route({
       orgId: stimulus.orgId,
@@ -5955,7 +6007,12 @@ export class AgentSessionManager
       await this.store.setHalted(stimulus.jobId, true).catch(() => undefined);
       return;
     }
-    const meta = { source: 'system_operator', ...(opts.retryable ? { retryable: true } : {}) };
+    const meta = {
+      source: 'system_operator',
+      ...(opts.retryable ? { retryable: true } : {}),
+      ...(opts.sessionLimit ? { sessionLimit: true } : {}),
+      ...(opts.resumeAt ? { resumeAt: opts.resumeAt } : {}),
+    };
     try {
       await this.surface.post(channel, text, {
         threadTs,

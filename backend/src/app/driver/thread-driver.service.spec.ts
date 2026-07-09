@@ -30,6 +30,7 @@ import type { TurnRunnerService } from '../runner';
 import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
 import { TurnHarnessFactory } from '../surface';
 import type { CredentialResolver } from '../onboarding';
+import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import type { LeaderElectionService } from '../cluster';
 import type { EnvService } from '@core/config/env/env.service';
 import type {
@@ -107,6 +108,7 @@ function makeStore(state: StoreState): {
     clearJobHalt: vi.fn(async (_id: string) => {
       state.job.halt = null;
     }),
+    setSessionResume: vi.fn(async () => undefined),
     setFeatureBranch: vi.fn(async (_id: string, branch: string) => {
       state.job.featureBranch = branch;
     }),
@@ -845,7 +847,8 @@ function assemble(
       },
     ),
   } as unknown as TaskEventSink;
-  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink);
+  const usage = { applyHarvest: vi.fn() } as unknown as OauthUsageService;
+  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink, usage);
   // BuildShipService's direct ENGINE_RUNNER dependency (the PR Review orchestrator) — separate from the
   // `turn`/`calls` fake above (TurnRunnerService, used by per-thread build turns) so PR Review's one
   // execute turn doesn't inflate the per-thread `execTurns` count.
@@ -917,6 +920,8 @@ function assemble(
       githubToken: async () => undefined,
       engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
+    // OauthUsageService: the session-limit park reads getResetAt; default → no harvested window.
+    { getResetAt: () => undefined } as unknown as OauthUsageService,
     // McpResolver: no user-defined MCP servers in tests.
     { resolveForTurn: async () => [], resolveForSandbox: async () => [] } as never,
     // McpOAuthService: no OAuth servers in tests (and the fake SANDBOX_PROVIDER has no kickMcpHubRefresh anyway).

@@ -7,7 +7,11 @@
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
-import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@workspace/shared";
+import type {
+  JobHalt as WireJobHalt,
+  JobStatus as WireJobStatus,
+  OrgUsage as WireOrgUsage,
+} from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
@@ -17,6 +21,8 @@ import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@worksp
 export type { WireJobStatus };
 /** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
 export type { WireJobHalt };
+/** Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`. */
+export type { WireOrgUsage };
 
 export type WireJobKind =
   | "feature"

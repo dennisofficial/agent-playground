@@ -1337,6 +1337,25 @@ export class BrainStoreService {
   }
 
   /**
+   * Set (or clear) the durable auto-resume clock the Main lane parks on when it hits a Claude session/usage
+   * limit. `resumeAt=null` (with `meta=null`) clears the clock so the leader sweep never re-fires — called on
+   * the force-resume path (`/retry-turn`). See {@link JobEntity.session_resume_at}.
+   */
+  async setSessionResume(
+    jobId: string,
+    resumeAt: string | null,
+    meta: JobEntity['session_resume'],
+  ): Promise<void> {
+    await this.jobs.update(
+      { id: jobId },
+      {
+        session_resume_at: resumeAt ? new Date(resumeAt) : null,
+        session_resume: meta,
+      },
+    );
+  }
+
+  /**
    * Persist the ADR-0005 live-verification verdict for this job's DIRECT-BUILD ship (the brain's
    * `finalize_build` gate). Written on BOTH the pass and the refusal path so direct-build verdicts are
    * queryable (`jobs.direct_build_verification`) — the observability hook the prod audit needs. Overwrites

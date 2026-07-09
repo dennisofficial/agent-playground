@@ -2,7 +2,14 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '../domain';
-import { ENGINE_RUNNER, EngineAuthError, SANDBOX_RESET_NOTICE, pickKeys, type EngineRunnerPort } from '../engine';
+import {
+  ENGINE_RUNNER,
+  EngineAuthError,
+  EngineSessionLimitError,
+  SANDBOX_RESET_NOTICE,
+  pickKeys,
+  type EngineRunnerPort,
+} from '../engine';
 import type {
   CodexReasoningEffort,
   EngineAuth,
@@ -244,6 +251,19 @@ export class TurnRunnerService {
         await this.steps.update({ id: stepId }, { session_id: err.sessionId });
       }
       throw err;
+    }
+
+    // Session/usage limit — the turn ended CLEANLY on a Claude subscription limit (not a crash). Persist the
+    // step session id first (so a resume continues the SAME session, exactly like the auth-error path above),
+    // then THROW so the driver's halt-classification chokepoint parks the lane on a resume clock instead of
+    // failing the build. Only the build lane calls runTurn (the brain reads result.sessionLimit directly).
+    if (result.sessionLimit) {
+      if (stepId && result.sessionId) {
+        await this.steps.update({ id: stepId }, { session_id: result.sessionId });
+      }
+      const { resetAt, rateLimitType } = result.sessionLimit;
+      const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
+      throw new EngineSessionLimitError(message, resetAt, rateLimitType, result.sessionId);
     }
 
     // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread. Belt-and-

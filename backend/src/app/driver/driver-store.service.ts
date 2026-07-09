@@ -228,6 +228,25 @@ export class DriverStoreService {
     await this.jobs.update({ id: jobId }, { halt: null });
   }
 
+  /**
+   * Set (or clear) the durable auto-resume clock a lane parks on when it hits a Claude session/usage limit.
+   * `resumeAt=null` (with `meta=null`) clears the clock so the leader sweep never re-fires — called on every
+   * un-park path (retry / resumePaused / the sweep itself). See {@link JobEntity.session_resume_at}.
+   */
+  async setSessionResume(
+    jobId: string,
+    resumeAt: string | null,
+    meta: JobEntity['session_resume'],
+  ): Promise<void> {
+    await this.jobs.update(
+      { id: jobId },
+      {
+        session_resume_at: resumeAt ? new Date(resumeAt) : null,
+        session_resume: meta,
+      },
+    );
+  }
+
   /** Record the feature branch all threads stack on (set once, when the sandbox is cut). */
   async setFeatureBranch(jobId: string, branch: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { feature_branch: branch });

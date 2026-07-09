@@ -7,6 +7,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, MessageEntity, ThreadEntity } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
 import { type TaskScope, taskScopeForLane } from './thread-registry';
+import { OauthUsageService } from '../onboarding/oauth-usage.service';
 
 /**
  * The durable destination for a turn's transcript blocks — a narrow port (just `appendBlock`) so a
@@ -198,6 +199,9 @@ export interface TurnHarness {
 export interface TurnHarnessOptions {
   /** The thread whose durable log + live stream this turn writes to. */
   jobId: string;
+  /** The org this turn runs under — the key `rate_limit` frames harvest into {@link OauthUsageService}.
+   *  Optional: when absent (e.g. an org-less internal turn), rate-limit frames are simply not harvested. */
+  orgId?: string;
   /** The repo channel the LiveTurnStore keys its stream by. */
   channel: string;
   /** Which lane this turn streams on. `'main'` = the brain; `'phase:<stepId>'` = a build turn. Default `'main'`. */
@@ -230,6 +234,7 @@ export class TurnHarnessFactory {
     private readonly liveTurns: LiveTurnStore,
     @Inject(BLOCK_SINK) private readonly sink: BlockSink,
     @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
+    private readonly usage: OauthUsageService,
   ) {}
 
   /**
@@ -241,7 +246,7 @@ export class TurnHarnessFactory {
   }
 
   create(options: TurnHarnessOptions): TurnHarness {
-    const { jobId, channel } = options;
+    const { jobId, orgId, channel } = options;
     const lane = options.lane ?? 'main';
     const metaTag = options.metaTag;
 
@@ -393,6 +398,19 @@ export class TurnHarnessFactory {
                   break;
                 }
               }
+            }
+            break;
+          }
+          case 'rate_limit': {
+            // Harvest-only: fold this org's window straight into the usage snapshot. No durable block, no
+            // extra live frame beyond the `liveTurns.push` above — the ring/popover reads it via `get()`.
+            if (orgId) {
+              this.usage.applyHarvest(orgId, {
+                status: e.status,
+                resetsAt: e.resetsAt,
+                rateLimitType: e.rateLimitType,
+                utilization: e.utilization,
+              });
             }
             break;
           }

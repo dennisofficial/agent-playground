@@ -239,6 +239,16 @@ export class JobEntity extends TimestampedEntity {
   next_poll_at!: Date | null;
 
   /**
+   * The DURABLE auto-resume clock — when a lane is parked on a Claude session/usage limit, the ISO
+   * instant it should auto-resume. Null = not parked. Swept leader-only (`SessionResumeSweep`, mirroring
+   * `GitStateReconciler`'s `next_poll_at` due-query pattern: `WHERE session_resume_at <= now()`); cleared
+   * on resume (auto or force). The Main (brain) lane has no `halt` at all, so it needs this column
+   * regardless of the build-lane's `halt.resumeAt`.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  session_resume_at!: Date | null;
+
+  /**
    * The MAIN brain session's own LLM-authored task list (the navigator's Main-row checklist), folded from
    * its `TaskCreate`/`TaskUpdate` calls on the `main` lane. LITERAL default — a function default loops
    * `migration:generate` (see the jsonb-default-loop memory).
@@ -286,6 +296,16 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   halt!: JobHalt | null;
+
+  /**
+   * Which lane is parked on {@link session_resume_at} + why, so the sweep dispatches to the right resume
+   * rail (`main` re-drives via the seed path; `build` calls `ThreadDriver.resumePaused`). `resetSource`
+   * records how the reset instant was determined (the live usage API vs. a best-effort parse of the CLI's
+   * "resets 5:20pm" string). Null when not parked. Nullable jsonb, no default — a `() => '...'::jsonb`
+   * default makes `migration:generate` loop forever (see {@link halt}).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  session_resume!: { lane: 'main' | 'build'; reason: string; resetSource: 'usage_api' | 'parsed_string' } | null;
 
   /**
    * The ADR-0005 LIVE-VERIFICATION verdict for the DIRECT-BUILD ship path (the brain-owned

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { LiveTurnStore } from './live-turn-store';
+import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import {
   type BlockSink,
   EntityTaskEventSink,
@@ -32,7 +33,8 @@ function setup() {
     }),
   };
   const taskSink: TaskEventSink = { applyTaskEvent: vi.fn(async () => undefined) };
-  return { live, persisted, taskSink, factory: new TurnHarnessFactory(live, sink, taskSink) };
+  const usage = { applyHarvest: vi.fn() } as unknown as OauthUsageService;
+  return { live, persisted, taskSink, factory: new TurnHarnessFactory(live, sink, taskSink, usage) };
 }
 
 describe('TurnHarnessFactory — the shared transcript spine', () => {
