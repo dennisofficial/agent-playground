@@ -228,10 +228,6 @@ export interface ThreadTerminalRecord {
     exitCode?: number;
     stderrTail?: string;
   };
-  /** HOST-populated at halt/notable time from `steps.session_id` / `build_legs` — the transcript anchor the
-   *  wake hands the brain (read via `atlas-tx show <sessionId>`). Not builder-self-reported; the host has
-   *  ground truth. Durably written back by {@link DriverStoreService.mergeTerminalSessionAnchor}. */
-  sessionAnchor?: SessionAnchor;
   /** The ADR-0005 live-verification judge's verdict on this claim, when the gate ran. The basis for the
    *  `blocked`/`unverified` downgrade above (also recorded when the claim passed, for observability). */
   liveVerification?: {

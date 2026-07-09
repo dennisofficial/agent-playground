@@ -635,25 +635,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(await store.resolveSessionAnchor(threadId)).toBeUndefined();
   });
 
-  it('mergeTerminalSessionAnchor writes the anchor onto an EXISTING record (read-modify-write)', async () => {
-    const { threadId } = await seedJobThreadStep('sess-merge');
-    await store.recordThreadTermination(threadId, {
-      status: 'blocked',
-      summary: 'blocked on env',
-      blocked: { reason: 'needs_env', detail: 'no key' },
-    });
-    await store.mergeTerminalSessionAnchor(threadId);
-    const rec = await store.getTerminalRecord(threadId);
-    expect(rec?.sessionAnchor).toEqual({ sessionId: 'sess-merge', legOrdinal: 1 });
-    expect(rec?.summary).toBe('blocked on env'); // existing fields preserved
-  });
-
-  it('mergeTerminalSessionAnchor is a no-op when there is no terminal record (the incomplete class)', async () => {
-    const { threadId } = await seedJobThreadStep('sess-none');
-    await store.mergeTerminalSessionAnchor(threadId);
-    expect(await store.getTerminalRecord(threadId)).toBeNull();
-  });
-
   // ── Regression: the prod `get_pipeline_state` "empty Error" incident (missing `AddJobHalt` migration) ──
 
   // Regression tripwire for the prod `get_pipeline_state` "empty Error" incident: the handler reads the

@@ -282,9 +282,8 @@ function makeStore(state: StoreState): {
       return (s as { terminal_record?: ThreadTerminalRecord | null })?.terminal_record ?? null;
     }),
     // Transcript anchor (halt-wake) — no steps/legs session seeded in these tests, so the anchor resolves
-    // undefined and the merge is a no-op; present so `haltJob`/`writeCompletionMd` don't call an undefined fn.
+    // undefined; present so `writeCompletionMd` doesn't call an undefined fn.
     resolveSessionAnchor: vi.fn(async (_threadId: string) => undefined),
-    mergeTerminalSessionAnchor: vi.fn(async (_threadId: string) => undefined),
     // ── Leg rotation (context-rot mitigation) — no prior rotation in these tests, so the driver folds no seed
     //    and rotates ONLY on a self-authored handoff. `completeLegRotation` is present for the type only. ──
     getPendingLegSeed: vi.fn(async (_anchorStepId: string) => null),

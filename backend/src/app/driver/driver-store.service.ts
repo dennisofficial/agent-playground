@@ -892,21 +892,6 @@ export class DriverStoreService {
   }
 
   /**
-   * DURABILITY convenience: resolve the anchor via {@link resolveSessionAnchor} and, WHEN a `terminal_record`
-   * exists, write `.sessionAnchor` onto it (read-modify-write; safe — the thread has ended, no concurrent
-   * writer). No-op when the record or the anchor is absent. Keeps `completion.md` / observability consistent,
-   * but it is NOT the wake's source of truth: the wake resolves the anchor directly so an `incomplete` halt
-   * (null record) still carries it. Thread 3 (completion wake) reuses this for the notable/final case.
-   */
-  async mergeTerminalSessionAnchor(threadId: string): Promise<void> {
-    const anchor = await this.resolveSessionAnchor(threadId);
-    if (!anchor) return;
-    const record = await this.getTerminalRecord(threadId);
-    if (!record) return;
-    await this.recordThreadTermination(threadId, { ...record, sessionAnchor: anchor });
-  }
-
-  /**
    * Lock a thread's steps: persist the planned step list as `steps` rows (gap-numbered,
    * `pending`/step `build`). Idempotent across a resume — if rows already exist (the plan locked before
    * the restart) the existing rows are returned untouched, so steps never double-create.

@@ -952,16 +952,6 @@ export class ThreadDriver implements JobDispatcher {
           ),
         );
     }
-    // Durably persist the transcript anchor onto the terminal record (when one exists) BEFORE writing
-    // completion.md, so the durable record and the file agree. The wake itself resolves the anchor directly
-    // (independent of the record), so this is a consistency convenience — never the wake's source of truth.
-    await this.store
-      .mergeTerminalSessionAnchor(thread.id)
-      .catch((e) =>
-        this.logger.warn(
-          `could not persist sessionAnchor for thread=${thread.id}: ${e}`,
-        ),
-      );
     await this.writeCompletionMd(job, thread, haltOutcome, term).catch((e) =>
       this.logger.warn(`could not write completion.md for thread=${thread.id}: ${e}`),
     );
