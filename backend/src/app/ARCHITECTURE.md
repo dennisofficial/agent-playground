@@ -127,7 +127,7 @@ beyond observing + interjecting the current build turn is 🟡 limited (see §6)
 | Answer a question card | `POST …/jobs/:jobId/answer-question` | brain (`answer`) | ✅ |
 | Provide a secret | `POST …/jobs/:jobId/provide-secret` | encrypted store + grant (onboarding) | ✅ |
 | Live observability | `GET …/repos/:repoId/events` (SSE) + `GET /web/jobs/realtime` | outbound stream (chat + cards + build events; cross-org "needs you") | ✅ |
-| Automated event | `POST /ingress/github`, `/ingress/webhook` | event intake → **route to the owning job, else seed a new one** (§7) | ✅ |
+| Automated event | `POST /webhooks/github/events` | event intake → **route to the owning job, else drop** — route-only, never seeds (§7) | ✅ |
 | Retry / resume a halted build | `POST …/jobs/:jobId/retry` | `ThreadDriver.resumePaused` | ✅ |
 | Interject the current build turn | build transcript composer (`say`) | folded in at the next turn boundary | 🟡 in-turn interject only |
 | Pause / revert step / NL steering ("undo that step", "simplify the rest") | — | driver | ⛔ not built |
@@ -171,37 +171,40 @@ filesystem-settings isolation is preserved while exactly the resolved skills are
 ## 7. Event intake — the untrusted firehose
 
 An automated event that becomes or advances work (a CI failure, a review, a PR/issue comment) is **routed to
-the job that already owns its PR/branch — or, when nothing owns it, seeds a new job**
-(`stimulus/stimulus-intake.service.ts:55-161`). Correlation-first: an event carrying a PR# or branch an
-existing job owns is delivered to THAT job's brain (`:69-103`, `resolveOwningJob`); otherwise it seeds a fresh
-job (`:105-149`). This corrects a common misconception that `/ingress/github` *only* creates new jobs — it does
-both. Either way, intake produces a brain **stimulus / harness notification**; it NEVER writes the job's DB
-sync columns (`pr_state` / `pr_url` / `status`) — that is the separate silent PR-state path (below). Four
-**mechanical guards** run first — the firehose is hostile and noisy, and these have nothing to do with the job
-model, so they stay:
+the job that already owns its PR/branch — or, when nothing owns it, dropped** (ROUTE-ONLY, decision **d6**;
+`stimulus/stimulus-intake.service.ts`). Correlation-first: an event carrying a PR# or branch an existing job
+owns is delivered to THAT job's brain (`resolveOwningJob`); an event nothing owns (external / default-branch
+CI) is a deliberate no-op. Repo activity **NEVER silently seeds a job** — deliberate job creation stays with
+the operator / an explicitly configured integration. Routing produces a brain **stimulus / harness
+notification** for the owning job; it NEVER writes the job's DB sync columns (`pr_state` / `pr_url` /
+`status`) — that is the separate silent PR-state path (below). Three **mechanical guards** run first — the
+firehose is hostile and noisy, and these have nothing to do with the job model, so they stay:
 
 - **dedup + rate-limit**, no LLM — a Stripe re-delivery or a Sentry storm must not each pay a turn
   (`stimulus/event-filter.service.ts`).
 - **repo routing** — a webhook carries no `org_id`, so `owner/repo` → connected repo
   (`stimulus/project-routing.service.ts`).
 - **untrusted fence** — the body is DATA, never instructions (`stimulus/untrusted-content.ts`).
-- **route or seed** — deliver to the owning job's brain when a PR#/branch correlation matches, else seed a
-  new job + first message (stamped `meta.source='system_event'` → the operator-visible **EVENT bubble**) +
-  stimulus row, with a DB unique-index dedupe backstop (`stimulus/stimulus-store.service.ts`).
+
+Then **route or drop** (decision **d6**): when a PR#/branch correlation matches a live job, attach the event
+to it (message stamped `meta.source='system_event'` → the operator-visible **EVENT bubble** + stimulus row,
+with a DB unique-index dedupe backstop; `stimulus/stimulus-store.service.ts`) and deliver it to that job's
+brain. No match → drop (a 202 `ignored`). There is no seed-a-new-job path — that was removed with the generic
+`/ingress/webhook` endpoint.
 
 **The model:** there is only **one brain per job — its session**. After the guards, an event is delivered to
-the owning (or freshly-seeded) job's brain as a **harness message** — a server-initiated turn
+the **owning** job's brain as a **harness message** — a server-initiated turn
 (`AgentSessionManager.deliverEvent` → `handleChatTurn`, the same seam the Codex plan-review delivery uses).
 The brain reads a trusted framing
-("an automated {source} notification opened this job — no human sent it…") wrapped around the
+("an automated {source} notification about this job — no human sent it…") wrapped around the
 `wrapUntrusted`-fenced body, then triages it **in-session**. There is **no** `Stimulus` union, no
 `StimulusRouter`, and no second event-only brain — those were deleted; the intake sink is the typed
 `BRAIN_SINK` port (`handleChat` / `deliverEvent`).
 
 - **Async + at-least-once.** Intake does NOT await the engine turn (the webhook 202 stays fast); it schedules
   `deliverEvent` and returns. Durability = `stimuli.delivered_at` (stamped only after the turn) + a leader
-  boot sweep re-delivering any seeded event still `null`.
-- **Security = the approval card.** **Every** event-spawned plan goes through the same human approval gate —
+  boot sweep re-delivering any attached event still `null`.
+- **Security = the approval card.** **Every** plan goes through the same human approval gate —
   no autonomous self-approve/dispatch lane. Untrusted → the brain proposes → a human approves → the harness builds.
 
 ### GitHub → Atlas sync — two front doors + a layered model
@@ -215,19 +218,24 @@ Never conflate them.
 
 **Two front doors** (they carry different kinds of GitHub payload):
 
-- **`/ingress/github` — event → job intake.** Events that become or advance work — CI
+Both are literally GitHub webhooks on the same repo, auto-registered per repo (`onboarding` `ensureRepoWebhook`)
+and split by event set + downstream behavior — named by behavior so the purpose is apparent at the URL:
+
+- **`/webhooks/github/events` — WORK-EVENTS → route to the owning job.** Events that advance work — CI
   (`workflow_run` / `check_run` / `check_suite`), `pull_request_review`, review / issue comments (`WORK_EVENTS`,
-  `git/github-pr.service.ts`) — run through `StimulusIntake.intakeEvent` (route-to-owning-job or seed-new,
-  §7 above). These wake a brain.
-- **silent PR-state sync — pure state facts.** A `pull_request` event (opened / closed / merged / reopened) is
-  a *fact* about a PR, not a task: `GithubNotificationSource` classifies it as a `pr-sync` delta
-  (`ingress/ingress-http.ts` `runIngress`) applied by `GithubPrStateSync` →
-  `JobLifecycleService.applyGithubPrState` (`driver/job-lifecycle.service.ts:547`), which writes the sync
-  columns DIRECTLY — `pr_state`; plus `pr_url` / `pr_number` / `status:'done'` when the branch is owned by a
-  job (opened); sandbox teardown on close/merge; `pr_state` back to `open` on reopen. It NEVER touches
-  `StimulusIntake` — a state fact must not wake the brain or seed a job (decision **d2**). A dedicated
-  `/webhooks/github` hook is auto-registered for these `pull_request` events (`STATE_EVENTS`), distinct from
-  the `/ingress/github` work hook (decision **d5**).
+  `git/github-pr.service.ts`) — run through `StimulusIntake.intakeEvent`, which ROUTES to the job that owns the
+  event's PR/branch and DROPS anything unowned (route-only, **d6** — §7 above). This wakes the owning job's brain.
+- **`/webhooks/github/state` — pure state facts (silent).** A `pull_request` event (opened / closed / merged /
+  reopened) is a *fact* about a PR, not a task: `GithubNotificationSource` classifies it as a `pr-sync` delta
+  (`ingress/ingress-http.ts` `runPrWebhook`) applied by `GithubPrStateSync` →
+  `JobLifecycleService.applyGithubPrState` (`driver/job-lifecycle.service.ts`), which writes the sync columns
+  DIRECTLY — `pr_state`; plus `pr_url` / `pr_number` / `status:'done'` when the branch is owned by a job
+  (opened); sandbox teardown on close/merge; `pr_state` back to `open` on reopen. It NEVER touches
+  `StimulusIntake` — a state fact must not wake the brain or seed a job (decision **d2**), and its hook is
+  distinct from the work-events hook (decision **d5**).
+
+> The generic first-party `/ingress/webhook` endpoint (PostHog/Sentry/cron template) was **removed** — it was
+> wired but never registered/used, and could only seed. Re-add cleanly when a real integration needs it.
 
 **The layers** (fastest first; each is a fallback for the one above):
 

@@ -11,9 +11,8 @@ import {
 } from './brain';
 import { ThreadDriver } from './driver';
 import {
-  GithubIngressController,
+  GithubEventsWebhookController,
   GithubStateWebhookController,
-  WebhookIngressController,
 } from './ingress';
 import { BRAIN_SINK, StimulusIntake, type BrainSink } from './stimulus';
 import { WebSurface, CHAT_SURFACE, type ChatSurface } from './surface';
@@ -45,9 +44,8 @@ describe('AppModule HTTP boot (full DI assembly, live Postgres)', () => {
     // The intake seam + both ingress controllers resolved — proves the W2 wiring (adapters →
     // routing → store → intake → consumer) is DI-complete.
     expect(app.get(StimulusIntake)).toBeDefined();
-    expect(app.get(GithubIngressController)).toBeDefined();
+    expect(app.get(GithubEventsWebhookController)).toBeDefined();
     expect(app.get(GithubStateWebhookController)).toBeDefined();
-    expect(app.get(WebhookIngressController)).toBeDefined();
 
     // R3 brain services resolved — proves the brain graph (store, classifier + memory deps) is
     // DI-complete, the guard against shipping a typecheck-only DI bug.
@@ -78,9 +76,8 @@ describe('AppModule HTTP boot (full DI assembly, live Postgres)', () => {
       server.listen(0, (err?: Error) => (err ? reject(err) : resolve()));
     });
     const routes = collectRoutePaths(app);
-    expect(routes).toContain('/ingress/github');
-    expect(routes).toContain('/webhooks/github');
-    expect(routes).toContain('/ingress/webhook');
+    expect(routes).toContain('/webhooks/github/events');
+    expect(routes).toContain('/webhooks/github/state');
 
     await app.close();
   }, 60_000);
