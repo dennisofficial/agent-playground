@@ -23,6 +23,9 @@ export const isOnboarding = (c: PromptCtx): boolean => c.jobKind === 'onboarding
 /** The job reviews an existing external PR (the review-persona fragments). */
 export const isReview = (c: PromptCtx): boolean => c.jobKind === 'review';
 
+/** The job is NOT an external-PR review — build/onboarding authoring guidance may apply. */
+export const notReview = (c: PromptCtx): boolean => c.jobKind !== 'review';
+
 /**
  * Anything BUT onboarding — the shared non-onboarding surface (how to read harness tags, investigate,
  * sandbox basics, safety, task list). BOTH the normal build brain AND a review job compose these.

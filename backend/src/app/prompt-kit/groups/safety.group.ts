@@ -1,17 +1,17 @@
 /**
- * prompt-kit / groups / safety — the closing discipline: act-with-care / report-truthfully (normal brain),
+ * prompt-kit / groups / safety — the closing discipline: act-with-care / report-truthfully (build brain),
  * and how onboarding finishes (the FINISH gate + the "you don't plan here" scope line).
  *
  * TOPIC bucket: acting safely & finishing.
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { isOnboarding, notOnboarding } from '../conditions';
+import { isBuildBrain, isOnboarding } from '../conditions';
 
 @FragmentGroup()
 export class SafetyGroup {
   /** Act with care, report truthfully. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1290, condition: notOnboarding })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1290, condition: isBuildBrain })
   actWithCare(): string {
     return [
       'ACT WITH CARE, REPORT TRUTHFULLY: the approval gate is your safety net, not a substitute for judgment.',

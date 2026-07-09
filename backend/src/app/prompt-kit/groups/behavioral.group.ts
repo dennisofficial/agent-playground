@@ -2,13 +2,15 @@
  * prompt-kit / groups / behavioral — the brain's behavioral TAIL (baseline-first + author-live-validation +
  * spike-first + clarity-over-comments + minimal-code), reused from the shared `fragments.ts` catalog.
  *
- * NO jobKind condition — the layer applied to BOTH the normal and onboarding brain (both compose on audience
- * `brain`). Ordered in the `8000` max band so these render LAST in either the normal or onboarding subset.
+ * The authoring fragments are gated out of `jobKind:'review'`: review jobs share the investigation/sandbox
+ * framing, but their persona says they report an existing PR rather than author a plan or direct build.
+ * Ordered in the `8000` max band so these render LAST in either the normal or onboarding subset.
  * clarity-over-comments and minimal-code ride here because the brain AUTHORS code on a direct build and on
  * onboarding script fixes (and shapes the plan the builders execute); they are the same house style the
  * worker orchestrator and fan-out writers carry.
  */
 import { Agent } from '../agent';
+import { notReview } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
   AUTHOR_LIVE_VALIDATION_NOTE,
@@ -29,45 +31,45 @@ export class BehavioralGroup {
     return CANDOR_NOTE;
   }
 
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8000 })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8000, condition: notReview })
   baselineFirst(): string {
     return BASELINE_FIRST_NOTE;
   }
 
   /** PROVE IT BY RUNNING IT — the brain-authoring twin of the worker's VALIDATE_BY_RUNNING: the plan's
    *  `## Validation` and the brain's own direct builds must live-run, never "optional". */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8005 })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8005, condition: notReview })
   authorLiveValidation(): string {
     return AUTHOR_LIVE_VALIDATION_NOTE;
   }
 
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8010 })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8010, condition: notReview })
   spikeFirst(): string {
     return SPIKE_FIRST_NOTE;
   }
 
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8020 })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8020, condition: notReview })
   clarityOverComments(): string {
     return CLARITY_OVER_COMMENTS_NOTE;
   }
 
   /** MINIMAL CODE — the brain authors plans + direct builds; a lean plan prevents over-building before any
    *  code is written. Same ladder the worker orchestrator and fan-out writers carry. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8030 })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8030, condition: notReview })
   minimalCode(): string {
     return MINIMAL_CODE_NOTE;
   }
 
   /** TYPESCRIPT TYPE STYLE — the brain authors code on direct builds + onboarding script fixes; same house
    *  rule the worker orchestrator and fan-out writers carry. No-op on non-TS repos by its own wording. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8040 })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8040, condition: notReview })
   tsStyle(): string {
     return TS_STYLE_NOTE;
   }
 
   /** VERIFY DOCS + INSTALLED VERSION before building on a dependency — the implementation-correctness twin of
    *  VERIFY_CURRENCY (which the brain carries in orientation). Shared with the worker + fan-out writers. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8050 })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8050, condition: notReview })
   docVersionVerify(): string {
     return DOC_VERSION_VERIFY_NOTE;
   }
