@@ -43,6 +43,19 @@ export function detectSessionLimitText(text: string | null | undefined): boolean
   return typeof text === 'string' && SESSION_LIMIT_RE.test(text);
 }
 
+/**
+ * The shortest Claude subscription window (5 hours), in ms. Used as a BOUNDED default resume clock when a
+ * limit is detected but no precise reset instant is known: parking on a null clock would never auto-resume
+ * (the leader sweep only fires on a non-null `session_resume_at <= now()`), so a limit could then only ever
+ * be Force-resumed by hand.
+ */
+export const SESSION_LIMIT_DEFAULT_RESUME_MS = 5 * 60 * 60 * 1000;
+
+/** A bounded fallback reset instant (now + shortest subscription window) so a durable resume clock is always set. */
+export function defaultResumeAt(now: Date = new Date()): string {
+  return new Date(now.getTime() + SESSION_LIMIT_DEFAULT_RESUME_MS).toISOString();
+}
+
 /** A clock time like "5:20pm", "5pm", "11:30am" — optional minutes, required am/pm marker. */
 const CLOCK_RE = /(\d{1,2})(?::(\d{2}))?\s*([ap])m\b/i;
 

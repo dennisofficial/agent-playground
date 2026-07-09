@@ -37,6 +37,7 @@ import {
   type ToolBridgeOptions,
   type ToolImpl,
 } from '../engine';
+import { defaultResumeAt } from '../engine/session-limit';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
   CHAT_SURFACE,
@@ -592,6 +593,9 @@ export class ThreadDriver implements JobDispatcher {
         // Resume-clock precedence (d5): the engine's precise reset instant → the org's harvested usage window.
         const resumeAt =
           limit.resetAt ?? (orgId ? this.usage.getResetAt(orgId, limit.rateLimitType) : undefined);
+        // When neither yields a precise instant, park on a BOUNDED default clock (now + shortest window) so the
+        // leader sweep still auto-resumes — a null clock would only ever be Force-resumed by hand.
+        const resumeClock = resumeAt ?? defaultResumeAt();
         // A structured `rateLimitType` means the reset came from the usage frame/API; its absence means the
         // engine fell back to parsing the CLI's printed "resets …" string.
         const resetSource: 'usage_api' | 'parsed_string' = limit.rateLimitType ? 'usage_api' : 'parsed_string';
@@ -601,11 +605,11 @@ export class ThreadDriver implements JobDispatcher {
             kind: 'session_limit',
             reason: limit.message,
             at,
-            ...(resumeAt ? { resumeAt } : {}),
+            resumeAt: resumeClock,
           })
           .catch(() => undefined);
         await this.store
-          .setSessionResume(jobId, resumeAt ?? null, {
+          .setSessionResume(jobId, resumeClock, {
             lane: 'build',
             reason: limit.message,
             resetSource,

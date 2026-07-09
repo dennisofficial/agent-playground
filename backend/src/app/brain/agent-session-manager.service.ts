@@ -90,6 +90,7 @@ import {
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
+import { defaultResumeAt } from '../engine/session-limit';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
 import { SkillFileWriter, SkillInstallerService, SkillResolver, WorkspaceSkillStore } from '../skills';
@@ -2123,10 +2124,14 @@ export class AgentSessionManager
     if (result.sessionLimit) {
       const rlType = result.sessionLimit.rateLimitType;
       const resumeAt = result.sessionLimit.resetAt ?? this.usage.getResetAt(stimulus.orgId, rlType);
+      // The Main lane has no `halt`, so the durable clock IS the park marker: when no precise reset is known,
+      // seed a BOUNDED default (now + shortest window) so the leader sweep auto-resumes and a process restart
+      // still has something to resume — a null clock would strand the lane on manual Force-resume only.
+      const resumeClock = resumeAt ?? defaultResumeAt();
       const resetSource: 'usage_api' | 'parsed_string' = rlType ? 'usage_api' : 'parsed_string';
       const reason = `Claude session limit${rlType ? ` (${rlType})` : ''}${resumeAt ? `; resets ${resumeAt}` : ''}`;
       await this.store
-        .setSessionResume(stimulus.jobId, resumeAt ?? null, { lane: 'main', reason, resetSource })
+        .setSessionResume(stimulus.jobId, resumeClock, { lane: 'main', reason, resetSource })
         .catch((err) => this.logger.warn(`setSessionResume failed: ${err}`));
       // Graceful finish, mirroring the normal success finish below — so the lane doesn't hang and the
       // transcript flushes — WITHOUT the halt-wake / secret / file success-tail writes (no triage happened).
