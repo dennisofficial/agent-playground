@@ -18,9 +18,9 @@ jobs:
           submodules: recursive
 
       - name: Set up pnpm
+        # No `version:` here — action-setup derives it from package.json `packageManager`
+        # (single source of truth), so the two can never drift out of sync.
         uses: pnpm/action-setup@v4
-        with:
-          version: "11.1.2"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
