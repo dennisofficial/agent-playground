@@ -117,10 +117,6 @@ function makeStore(state: StoreState): {
     clearShipApproval: vi.fn(async (_id: string) => {
       state.job.shipReviewApprovedAt = null;
     }),
-    // ADR promotion spine (no-op fakes — the ADR turn itself is stubbed via ModuleRef).
-    claimAdrPromotion: vi.fn(async () => true),
-    setAdrPromotionStatus: vi.fn(async () => undefined),
-    markAdrPromoted: vi.fn(async () => undefined),
     decisionRecord: vi.fn(async () => state.record),
     threadsForJob: vi.fn(async () => state.threads.map((s) => ({ ...s }))),
     getThread: vi.fn(async (id: string) => {
@@ -848,12 +844,11 @@ function assemble(
   // Records each seeded open-PR turn (`BuildShipService` → `brain.openPrAtShip`). Replaces the old proxy of
   // "an engine execute/claude call happened" now that the ship step is a brain turn, not a separate session.
   const shipSeeds: Array<{ jobId: string; branch: string }> = [];
-  // ModuleRef: the lazy brain lookup shared by the driver (halt wakes + ADR promotion) AND BuildShipService
+  // ModuleRef: the lazy brain lookup shared by the driver (halt wakes) AND BuildShipService
   // (the seeded open-PR turn). A stub brain records `notifyThreadHalted` wakes + `openPrAtShip` seeds (the
   // seeded turns themselves are exercised in the brain specs — here the host latches by branch discovery).
   const brainModuleRef = {
     get: () => ({
-      promoteAdrAtShip: async () => undefined,
       openPrAtShip: async (input: { jobId: string; branch: string }) => {
         shipSeeds.push({ jobId: input.jobId, branch: input.branch });
       },
@@ -943,7 +938,7 @@ function assemble(
     (opts.turnRegistry ?? {
       listRunning: async () => [],
     }) as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
-    // ModuleRef: the lazy brain lookup (halt wakes + ADR promotion), shared with BuildShipService above.
+    // ModuleRef: the lazy brain lookup (halt wakes), shared with BuildShipService above.
     brainModuleRef,
     judge,
     taskSink,

@@ -76,7 +76,7 @@ export class JobSandboxEntity extends TimestampedEntity {
    * NULLs `session_id` (abandoning the heavy transcript) and stores the lean summary here. The next brain
    * turn folds this into its prompt and starts a FRESH session with it (see the fold in `runChatTurnInner`),
    * then clears it the instant that fresh session is born. Best-effort: if lost to a crash, the fresh
-   * session re-orients from durable state (`/context`, `.atlas/adr`) on its own. Null when there's
+   * session re-orients from durable state (`/context`) on its own. Null when there's
    * no pending compaction.
    */
   @Column({ type: 'text', nullable: true })

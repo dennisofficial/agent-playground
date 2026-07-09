@@ -30,11 +30,11 @@ export const HANDOFF_SCHEMA = [
   '2. Failed attempts — every approach that did NOT work, WITH its verbatim error text. Never drop an error:',
   '   the fresh session needs it so it does not walk back into the same dead end.',
   '3. On-disk state NOW — exactly what is committed vs uncommitted WIP in the worktree; name the current commit SHA.',
-  '4. Decisions — choices you made this session that are not already written into `.atlas/adr/`.',
+  '4. Decisions — choices you made this session that are not already written into `/context/specs`.',
   '5. Verification — commands you ran, their exit codes, and the tail of their output (evidence, not claims).',
   '6. Next safe action — the SINGLE concrete next step the fresh session should take. One step, not a plan.',
   '7. Open questions — each with the options you were weighing, so the next session neither re-derives nor re-asks.',
-  '8. Pointers — the durable artifacts to re-read (`/context/specs`, `.atlas/adr/`, the commit SHA). Reference',
+  '8. Pointers — the durable artifacts to re-read (`/context/specs`, the commit SHA). Reference',
   '   them by path; do not re-transcribe them.',
 ];
 
@@ -49,7 +49,7 @@ export const ROTATION_PREAMBLE = [
   'recovered memory. Your work-in-progress from that session is ALREADY ON DISK in this worktree — do NOT restart',
   'the batch, do NOT redo work that is already committed or staged, and do NOT re-ask or re-derive anything the',
   'handoff already settles. Re-read the durable artifacts it points to as needed (`/context/specs`,',
-  '`.atlas/adr/`, `get_pipeline_state`), then continue from its "Next safe action".',
+  '`get_pipeline_state`), then continue from its "Next safe action".',
   '</session_rotated>',
 ].join('\n');
 
@@ -97,7 +97,7 @@ export const RECORD_LEG_HANDOFF_DESCRIPTION =
   'Pass a single `handoff` markdown string covering: scope & files changed by path+status; FAILED attempts WITH ' +
   'their verbatim errors; committed-vs-WIP on-disk state + commit SHA; decisions this session; verification ' +
   '(commands + exit codes + output tails); the single next safe action; open questions with options; and pointers ' +
-  '(`/context/specs`, `.atlas/adr/`). After calling this, STOP and yield — your WIP is on disk.';
+  '(`/context/specs`). After calling this, STOP and yield — your WIP is on disk.';
 
 /** The `record_leg_handoff` tool's success reply — an explicit STOP so the model yields instead of continuing. */
 export const RECORD_LEG_HANDOFF_STOP =

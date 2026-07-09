@@ -9,9 +9,8 @@ import type { ResolvedRepo } from './repo-resolver';
  * The outcome of the terminal ship sequence. The job brain opens the PR ITSELF as a seeded harness turn in
  * its own sandbox (see {@link BuildShipService.ship}), and the HOST records the PR afterward by branch
  * discovery (`findOpenPullByHead` → `setPrReady`, backstopped by the git-state reconciler). `opened` means
- * the open-PR turn RAN; `prConfirmed` means the host latched `pr_url`/`pr_number` this pass. Callers gate the
- * ADR `complete` stamp on `opened` (the branch push happens inside the turn regardless), but only treat a
- * `prConfirmed` result as "the PR is recorded".
+ * the open-PR turn RAN; `prConfirmed` means the host latched `pr_url`/`pr_number` this pass. Callers only
+ * treat a `prConfirmed` result as "the PR is recorded".
  */
 export type ShipOutcome =
   | { opened: true; prConfirmed: true; url: string; number: number }
@@ -63,7 +62,7 @@ export interface ShipInput {
  * The shared TERMINAL "ship" sequence — used by BOTH the full thread build and the direct-build fast path so
  * they finalize identically:
  *
- *   host: commit the ADR/change → pre-ship leak-scan gate → (brain: reconcile the branch against its base
+ *   host: commit the change → pre-ship leak-scan gate → (brain: reconcile the branch against its base
  *   → push → author the PR body → open ONE PR) → host: record `pr_url`/`pr_number` (which flips the job
  *   `done`, so the merge poll watches it) → relay "PR ready".
  *
@@ -114,7 +113,7 @@ export class BuildShipService {
 
     // OPEN THE PR — as a seeded turn on the job-brain session. The brain reconciles the branch against its
     // base, pushes, authors the body, and `gh pr create`s, all with its own authenticated git + `gh`. This
-    // AWAITS the brain turn to completion (like the ADR-promotion turn). No host "opening the PR" system
+    // AWAITS the brain turn to completion. No host "opening the PR" system
     // message here — the seeded turn renders on Main with its own "Opening the pull request." pill.
     const brain = await this.brain();
     await brain.openPrAtShip({
@@ -138,7 +137,7 @@ export class BuildShipService {
   }
 
   /**
-   * HOST-SIDE PRE-SHIP GATE (shared): commit the ADR/change under `commitMessage`, verify a GitHub token
+   * HOST-SIDE PRE-SHIP GATE (shared): commit the change under `commitMessage`, verify a GitHub token
    * exists, then run the pre-ship leak-scan — a HARD gate before any push. Writers own their commits, so the
    * hydrated-secret check runs here (not inside a host commit), scanning EVERY commit on the branch
    * (`origin/<base>..HEAD`, per-commit — catches a secret added then deleted). The forbidden set lives in a

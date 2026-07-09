@@ -17,7 +17,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES, StepEntity, ThreadEntity, JobEntity } from '../persistence/entities';
-import { laneDefaultFooter } from '../thread-kind';
 import { DriverStoreService } from './driver-store.service';
 
 const ORG_ID = '21111111-1111-4111-8111-111111111111';
@@ -367,11 +366,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       }),
     );
     // `no_job` still carries the brain's own task list — the navigator's Main row shows it pre-plan.
-    expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({
-      status: 'no_job',
-      mainTasks: [],
-      mainDefaultFooter: laneDefaultFooter('main'),
-    });
+    expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({ status: 'no_job', mainTasks: [] });
   });
 
   // ── ADR 0004 Phase 3 — halt-wake + bounded-fix store methods (live CAS correctness) ──────────────

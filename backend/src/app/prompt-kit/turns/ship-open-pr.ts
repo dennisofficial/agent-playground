@@ -1,6 +1,6 @@
 /**
- * prompt-kit / turns / ship-open-pr — the SHIP-TIME open-PR turn, delivered as a BRAIN harness-turn body
- * (like `ADR_PROMOTION_TURN`). The host seeds `shipOpenPrBody(...)` into the job-brain session, which
+ * prompt-kit / turns / ship-open-pr — the SHIP-TIME open-PR turn, delivered as a BRAIN harness-turn body.
+ * The host seeds `shipOpenPrBody(...)` into the job-brain session, which
  * reconciles the branch against its base, pushes, AUTHORS a Claude-Code-style PR body from the real diff +
  * its `/context/artifacts/` evidence bundle, and opens the PR with its own authenticated git + `gh`.
  *

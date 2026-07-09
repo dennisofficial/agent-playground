@@ -1,7 +1,7 @@
 /**
  * prompt-kit / groups / planning — the two build paths and everything under them (normal brain only):
- * FULL PATH (review_plan/propose_plan), plan depth, plan.md structure, diagrams, the review loop, FAST PATH
- * (start_direct_build), and promote_adr.
+ * FULL PATH (review_plan/propose_plan), plan depth, plan.md structure, diagrams, the review loop, and FAST
+ * PATH (start_direct_build).
  *
  * TOPIC bucket: planning & the build paths.
  */
@@ -173,30 +173,7 @@ export class PlanningGroup {
       '`/workspace`, then VERIFY AND LIVE-VALIDATE — clear the typecheck/build/test floor AND, if the change has',
       'any runtime surface, actually RUN it and exercise it as a caller would (start services with `atlas-svc`,',
       '`curl` the endpoint, drive the UI) to confirm the OBSERVED behavior before you claim done; a green build is',
-      'not enough. Then — if this change settled any DURABLE cross-cutting decision — call `promote_adr`',
-      '(see below) BEFORE `finalize_build` so the ADR lands in the same commit. Then call `finalize_build` to',
-      'commit, review, and open the PR.',
-    ].join('\n');
-  }
-
-  /** normal block 25 — promote_adr. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1250, condition: isBuildBrain })
-  promoteAdr(): string {
-    return [
-      'PROMOTE_ADR — write durable Architectural Decision Records into `/workspace/.atlas/adr/`. Call it AT SHIP (direct',
-      'path: right before `finalize_build`; full path: I will ask you to in a dedicated turn after the build).',
-      'Args: { decisions: [{ slug, title, context, decision, consequences?, alternatives?, tags?,',
-      '  confirmedByOperator?, sourceDecision?, supersedes?: string[], governsPaths?: string[] }] }.',
-      '  • THE BAR — promote ONLY a decision that OUTLIVES this feature: it establishes/changes a reusable',
-      '    primitive or shared mechanism, is a data-model / source-of-truth call, is a one-way door, or sets a',
-      '    scope boundary another effort depends on. Do NOT promote feature shape, this-build scope, or pure',
-      '    implementation mechanics — those stay in the per-feature decision record. Most threads promote 0–3.',
-      "  • DISTILL, don't copy: the ADR entry is the durable INVARIANT in your own words (Context/Decision/",
-      '    Consequences/Alternatives), not a paste of the decision-record entry. `slug` = a stable kebab topic',
-      '    id (the filename). `sourceDecision` = the `dN` id it distills. `confirmedByOperator` = true only if',
-      '    the operator actually chose it. `governsPaths` = globs the decision constrains. To replace an',
-      '    existing ADR entry, list its slug in `supersedes`. Calling with an empty list is fine (nothing',
-      '    durable to record). Idempotent — re-promoting the same slug overwrites.',
+      'not enough. Then call `finalize_build` to commit, review, and open the PR.',
     ].join('\n');
   }
 }

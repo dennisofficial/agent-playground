@@ -54,7 +54,7 @@ export const SOLE_AUTHOR_NOTE =
  * which ONE is under git. Fixes a real failure mode: the brain treated `/.atlas` supervisor state (atlas-svc
  * markers/logs) as a worktree leak and "flagged a deviation" adding `.atlas/` to `.gitignore`. `/.atlas`,
  * `/context`, `/playground` are separate binds OUTSIDE `/workspace` (see `sandbox/container-paths.ts`), so git
- * never sees them and they need no ignore rule; the ONLY in-worktree `.atlas` is the committed ADR store.
+ * never sees them and they need no ignore rule.
  */
 export const SANDBOX_FILESYSTEM_MAP_NOTE = [
   'SANDBOX FILESYSTEM MAP — WHAT IS UNDER GIT AND WHAT IS NOT: your sandbox has four areas, and only ONE is a',
@@ -67,8 +67,6 @@ export const SANDBOX_FILESYSTEM_MAP_NOTE = [
   '  - `/context` — plan/spec/validation artifacts (e.g. `RESULTS.md`, smoke logs). Separate mount, OUTSIDE the',
   '    worktree, never in git.',
   '  - `/playground` — throwaway scratch. Separate mount, OUTSIDE the worktree, never in git.',
-  'ONE thing to disambiguate: `/workspace/.atlas/adr/` IS inside the worktree and IS committed on purpose',
-  '(Atlas-promoted ADRs) — do not confuse it with the root `/.atlas` infra mount, and do not gitignore it either.',
   'RULE: never add `/.atlas`, `/context`, or `/playground` to a `.gitignore` "to keep the tree clean" — they are',
   'not in the tree. If `git status` in `/workspace` is clean, it already is clean. A `.gitignore` edit is',
   'warranted ONLY for genuine junk a build tool writes INTO `/workspace` itself.',
@@ -89,13 +87,6 @@ export const TASK_LIST_NOTE =
   'a task to `in_progress` when you start it (one at a time) and `completed` the moment it finishes, never ' +
   'in a batch at the end. Keep the list TRUTHFUL as the work reshapes: add tasks you discover mid-flight, ' +
   "and drop ones that become moot (`TaskUpdate` with `status:'deleted'`). A stale checklist is worse than none.";
-
-/**
- * Commit message for the ADR-only commit that records durable decisions into `.atlas/adr/`.
- * Shared so the driver and the brain don't drift on the string.
- */
-export const ADR_COMMIT_MESSAGE =
-  'Atlas: record ADRs in .atlas/adr';
 
 /**
  * The canonical "what a code review covers" list — the single home so every review surface (the ship-time

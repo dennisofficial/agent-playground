@@ -117,7 +117,7 @@ export class JobLifecycleService {
     private readonly provisioner: WorktreeProvisioner,
     private readonly tickets: TicketService,
     private readonly turnRegistry: TurnRegistry,
-    // Lazily resolves the brain-module adr manifest for merge-time reconcile (avoids cycle).
+    // Lazily resolves brain-module services (e.g. the onboarding + wake handlers) to avoid a load cycle.
     private readonly moduleRef: ModuleRef,
   ) {}
 
@@ -566,12 +566,6 @@ export class JobLifecycleService {
           // ROW SURVIVES — only the sandbox is torn down (see closeJob); merged jobs stay as "truly done".
           const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
           await this.jobs.update({ id: thread.id }, { pr_state: prState });
-          // On MERGE, the thread's promoted ADRs are now canonical on the default branch: reconcile
-          // the repo's ADR manifest (proposed→accepted + human-edit detection). Reads the base checkout,
-          // not this thread's worktree, so it's safe to run before closeJob tears the worktree down.
-          if (state === 'merged') {
-            await this.reconcileAdrOnMerge(thread.org_id, thread.repo_id);
-          }
           await this.closeJob(thread.id, thread.org_id);
           closed++;
         }
@@ -581,23 +575,6 @@ export class JobLifecycleService {
     }
     if (closed) this.logger.log(`pollPrClosures: closed ${closed} merged/closed thread(s)`);
     return closed;
-  }
-
-  /**
-   * Reconcile a repo's ADR manifest after one of its threads' PRs merged — flips merged
-   * `proposed` decisions to `accepted` and flags any human edits. Lazily resolved (the manifest lives in
-   * the brain module; a dynamic import keeps it out of the driver's module-load cycle). Best-effort.
-   */
-  private async reconcileAdrOnMerge(orgId: string, repoId: string): Promise<void> {
-    try {
-      const { RepoAdrManifestService } = await import(
-        '../brain/repo-adr-manifest.service.js'
-      );
-      const manifest = this.moduleRef.get(RepoAdrManifestService, { strict: false });
-      await manifest.reconcileFromBaseCheckout(orgId, repoId);
-    } catch (err) {
-      this.logger.debug(`ADR merge-reconcile failed for repo=${repoId} (continuing): ${err}`);
-    }
   }
 
   /**

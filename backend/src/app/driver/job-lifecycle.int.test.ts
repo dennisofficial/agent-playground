@@ -106,11 +106,6 @@ class FakeGitService {
     return { ...sandbox, branch: featureBranch };
   }
 
-  async refExists(_repoPath: string, ref: string): Promise<boolean> {
-    const branch = ref.replace(/^refs\/heads\//, '');
-    return branch === FAKE_BASE_BRANCH || this.branches.includes(branch);
-  }
-
   // Provision-path no-ops (no real git/cache/submodules/index in the fake).
   async ensureSubmodules(): Promise<void> {}
   async isIgnored(): Promise<boolean> {

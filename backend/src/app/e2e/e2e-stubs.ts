@@ -162,7 +162,7 @@ export class FakeLocalGitService {
     return [];
   }
 
-  /** Fast-path host commit (direct-build/onboarding/ADR ship) — synthetic sha; advances HEAD too. */
+  /** Fast-path host commit (direct-build/onboarding ship) — synthetic sha; advances HEAD too. */
   async commitAll(): Promise<string | null> {
     this.commitSeq += 1;
     return `fakesha${String(this.commitSeq).padStart(8, '0')}`;
