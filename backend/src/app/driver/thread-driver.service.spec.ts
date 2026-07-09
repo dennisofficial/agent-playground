@@ -2804,16 +2804,16 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     // that never redelivers. So the ONLY way the verdict can be recovered (and the job reach `done`) is the
     // fix replay-driving the handler from this event.
     const reattach = vi.fn(async (input: Parameters<TurnRunnerService['reattach']>[0]) => {
-      // The replayed `tool_use` carries `block.input` VERBATIM — for a bridge proxy tool that is the WRAPPED
-      // `{ args: {...} }` shape (the proxy is registered with an outer `{ args }` schema; the live transport
-      // unwraps `input.args` before dispatch, but the replay path must unwrap it too). Feeding the real wrapped
-      // shape here is what makes this test guard the prod bug: without the unwrap the handler reads
-      // `args['passed']` off the wrapper → `undefined` → a false `passed:false` → the thread falsely halts.
+      // The replayed `tool_use` carries `block.input` VERBATIM — the model's raw payload against the proxy's
+      // generic `{ args }` schema, which it DOUBLE-WRAPS in practice (`{ args: { args: { passed: true } } }`;
+      // sometimes even stringified). The replay path must normalise it (`unwrapBridgeArgs`) exactly like the
+      // live dispatch, or the handler reads `args['passed']` off a wrapper → `undefined` → a false
+      // `passed:false` → the thread falsely halts. This is the real prod shape (see job b30616d2).
       input.onEvent?.({
         kind: 'tool_use',
         id: 'rv-1',
         name: 'mcp__atlas-host-bridge__report_verification',
-        input: { args: { passed: true } },
+        input: { args: { args: { passed: true } } },
       });
       return {
         report: 'gate resumed',

@@ -22,6 +22,7 @@ import {
   EngineAuthError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
+  unwrapBridgeArgs,
   type EngineEvent,
   type EngineHomeKey,
   type EngineHomeType,
@@ -2756,17 +2757,12 @@ export class ThreadDriver implements JobDispatcher {
     const bareName = e.name.startsWith(prefix) ? e.name.slice(prefix.length) : e.name;
     const impl = toolBridge.tools[bareName];
     if (!impl) return;
-    // The replayed `tool_use` carries `block.input` verbatim — the WRAPPED `{ args: {...} }` shape, since every
-    // bridge proxy tool is registered under an outer `{ args }` schema (see `engine-entrypoint.ts` `makeProxyTool`).
-    // The LIVE transport unwraps it (`input.args ?? {}`) before dispatch; the replay path must unwrap identically,
-    // or the handler reads its fields off the wrapper (`args['passed']` → undefined → a false `passed:false` verdict
-    // → the gate falsely halts with "…without calling report_verification"). Pass an already-unwrapped shape through.
-    const raw = (e.input as Record<string, unknown> | undefined) ?? {};
-    const args =
-      raw.args && typeof raw.args === 'object' && !Array.isArray(raw.args)
-        ? (raw.args as Record<string, unknown>)
-        : raw;
-    void impl(args);
+    // The replayed `tool_use` carries `block.input` verbatim — the model's raw (often MIS-NESTED) payload:
+    // the proxy tools use a generic `{ args }` schema and the model double-wraps / stringifies against it
+    // (`{ args: { args: { passed: true } } }`, `{ args: "{…}" }`). Normalise it the same way the live dispatch
+    // does (`unwrapBridgeArgs`), or the handler reads `args['passed']` off a wrapper → undefined → a false
+    // `passed:false` → the gate falsely halts even though the orchestrator reported passed.
+    void impl(unwrapBridgeArgs(e.input));
   }
 
   /** KICK a fresh gate-iteration turn — resumes the orchestrator's persisted session (via `stepId`) with the
