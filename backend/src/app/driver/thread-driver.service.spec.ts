@@ -365,6 +365,14 @@ function makeStore(state: StoreState): {
       }
       return n;
     }),
+    // Decision d1 — completion wake (mirrors the halt trio's presence-for-type-only stubbing above).
+    setDoneWakeOwed: vi.fn(async (_threadId: string, _reason: 'final' | 'notable') => undefined),
+    threadsAwaitingDoneWake: vi.fn(async (_jobId?: string) => []),
+    markDoneWaked: vi.fn(async (_threadId: string) => undefined),
+    masterReviewThreadId: vi.fn(async (jobId: string) => {
+      const s = state.threads.find((x) => x.jobId === jobId && x.kind === 'master_review');
+      return s?.id ?? null;
+    }),
   } as unknown as DriverStoreService;
   return { store, state };
 }

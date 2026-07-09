@@ -514,6 +514,68 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(oks[0]).toEqual({ ok: true, used: 2 });
   });
 
+  // ── Decision d1 — completion-wake store methods (mirrors the halt trio, no generation CAS) ────────
+
+  it('setDoneWakeOwed → threadsAwaitingDoneWake selects only owed+un-waked rows', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    // A second thread on the SAME job, already waked — must never resurface as owed.
+    const otherThread = await threads.save(
+      threads.create({
+        kind: 'builder',
+        job_id: jobId,
+        org_id: ORG_ID,
+        ordinal: 20,
+        brief: 'Frontend — done',
+        status: 'done',
+      }),
+    );
+    expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([]);
+
+    await store.setDoneWakeOwed(threadId, 'notable');
+    await store.setDoneWakeOwed(otherThread.id, 'final');
+    await store.markDoneWaked(otherThread.id); // already waked — must be excluded
+
+    const owed = await store.threadsAwaitingDoneWake(jobId);
+    expect(owed).toEqual([{ jobId, threadId, reason: 'notable' }]);
+  });
+
+  it('markDoneWaked stamps `done_waked_at`, clears the owed flag, and is idempotent (repeat is a no-op)', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    await store.setDoneWakeOwed(threadId, 'final');
+    expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([
+      { jobId, threadId, reason: 'final' },
+    ]);
+
+    await store.markDoneWaked(threadId);
+    expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([]);
+    const row = await threads.findOne({ where: { id: threadId } });
+    expect(row?.done_wake_owed).toBe(false);
+    expect(row?.done_waked_at).toBeInstanceOf(Date);
+    const firstStamp = row?.done_waked_at;
+
+    // A repeat call matches zero rows (owed is already false) — the stamp does not move.
+    await store.markDoneWaked(threadId);
+    const rowAgain = await threads.findOne({ where: { id: threadId } });
+    expect(rowAgain?.done_waked_at).toEqual(firstStamp);
+  });
+
+  it('masterReviewThreadId returns the job\'s master_review thread id, or null when it has none', async () => {
+    const { jobId } = await seedJobThread();
+    expect(await store.masterReviewThreadId(jobId)).toBeNull();
+
+    const masterReview = await threads.save(
+      threads.create({
+        kind: 'master_review',
+        job_id: jobId,
+        org_id: ORG_ID,
+        ordinal: 999,
+        brief: 'master review',
+        status: 'executing',
+      }),
+    );
+    expect(await store.masterReviewThreadId(jobId)).toBe(masterReview.id);
+  });
+
   // ── Leg rotation (context-rot: one build thread → many sequential engine sessions) ─────────────────
 
   async function seedJobThreadStep(

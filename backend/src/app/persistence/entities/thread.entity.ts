@@ -177,6 +177,27 @@ export class ThreadEntity extends TimestampedEntity {
   halt_fix_attempts!: number;
 
   /**
+   * Completion-wake OWED signal (mirrors {@link halt_outcome} for the clean-completion path, decision d1).
+   * Set true by `setDoneWakeOwed` only when a completion qualifies for an autonomous brain wake: the FINAL
+   * thread of a build (parked at the ship gate) or a NOTABLE completion (finished `done` but carrying
+   * gaps/unverified items). Intermediate clean completions never set it — they keep the cheap note-and-queue.
+   * The owed-wake sweep delivers it at-least-once. Unlike the halt path there is no generation CAS: a `done`
+   * thread is never re-driven, so the `done_waked_at IS NULL` guard alone is enough.
+   */
+  @Column({ type: 'boolean', default: false })
+  done_wake_owed!: boolean;
+
+  /** Why the completion wake was owed — `'final'` (whole build parked at ship gate) or `'notable'`
+   *  (done-with-gaps). Drives the wake framing. Null when no done-wake is owed. */
+  @Column({ type: 'text', nullable: true })
+  done_wake_reason!: string | null;
+
+  /** Completion-wake DEDUP marker: stamped by `markDoneWaked` only on the wake turn's SUCCESS TAIL (null
+   *  while owed), so a crash before the stamp lets the boot sweep re-fire (at-least-once). */
+  @Column({ type: 'timestamptz', nullable: true })
+  done_waked_at!: Date | null;
+
+  /**
    * The thread's START HEAD — the feature-branch sha captured ONCE, the first time the thread begins
    * executing. The post-build review scopes its diff by `start_sha..HEAD` and commit-recording compares
    * HEAD against it (thread-driver `:1733`); RE-capturing it on every (re)entry lets a RESUME grab it AFTER

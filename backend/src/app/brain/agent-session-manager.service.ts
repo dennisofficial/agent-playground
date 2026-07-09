@@ -423,6 +423,10 @@ export class AgentSessionManager
       void this.dispatcher
         .deliverOwedHaltWakes()
         .catch((err) => this.logger.warn(`periodic halt-wake sweep failed: ${err}`));
+      // Decision d1: same at-least-once backstop for the completion wake (`'final'`/`'notable'`).
+      void this.dispatcher
+        .deliverOwedDoneWakes()
+        .catch((err) => this.logger.warn(`periodic done-wake sweep failed: ${err}`));
     }, CHAT_SWEEP_INTERVAL_MS);
     if (typeof this.chatSweepTimer.unref === 'function') this.chatSweepTimer.unref();
   }
@@ -604,6 +608,13 @@ export class AgentSessionManager
       this.logger.warn(`halt-wake reconciliation failed: ${err}`);
     }
 
+    // Same at-least-once reconciliation for the completion wake (decision d1).
+    try {
+      await this.dispatcher.deliverOwedDoneWakes();
+    } catch (err) {
+      this.logger.warn(`done-wake reconciliation failed: ${err}`);
+    }
+
     // Operator-chat delivery reconciliation (the durable-inbox at-least-once boot half): a plain operator
     // message is a `stimuli` row persisted at intake; `delivered_at` is stamped only on a positive brain
     // hand-off. Clear leases first (a row mid-attempt at crash never reached the registered hand-off — a
@@ -720,6 +731,54 @@ export class AgentSessionManager
         chunkKey: `seed:halt:${threadId}:${gen}`,
         untrustedSource: `thread-halt:${threadId}`,
         severity: outcome,
+      },
+    });
+    await this.handleChatTurn(stimulus);
+  }
+
+  /**
+   * Decision d1 — WAKE the job brain for a CLEAN completion owed a wake: `'final'` (the whole build parked
+   * at the ship gate) or `'notable'` (a thread finished `done` but carrying gaps/unverified items). Called
+   * by the driver (via `BrainSurface`) and again by the periodic + boot sweeps. Runs a TRUSTED harness turn
+   * (same convention as {@link notifyThreadHalted}) so the brain can investigate/report/retry within the d2
+   * autonomy boundary. A no-op if the thread has vanished.
+   */
+  async notifyThreadDone(
+    jobId: string,
+    threadId: string,
+    reason: 'final' | 'notable',
+  ): Promise<void> {
+    const job = await this.driverStore.loadJob(jobId).catch(() => null);
+    if (!job) return;
+    const thread = await this.driverStore.getThread(threadId).catch(() => null);
+    if (!thread) return;
+    const term = await this.driverStore.getTerminalRecord(threadId).catch(() => null);
+    // Resolved DIRECTLY from steps/legs at delivery time (not stored) — mirrors `notifyThreadHalted`.
+    const anchor = await this.driverStore.resolveSessionAnchor(threadId).catch(() => undefined);
+    let perThreadGaps: { brief: string; gaps: string[] }[] | undefined;
+    if (reason === 'final') {
+      const allThreads = await this.driverStore.threadsForJob(jobId).catch(() => []);
+      const withGaps = await Promise.all(
+        allThreads.map(async (t) => {
+          const r = await this.driverStore.getTerminalRecord(t.id).catch(() => null);
+          return r?.gaps?.length ? { brief: t.brief, gaps: r.gaps } : null;
+        }),
+      );
+      perThreadGaps = withGaps.filter((g): g is { brief: string; gaps: string[] } => g != null);
+    }
+    const stimulus = doneDeliveryStimulus({
+      jobId,
+      orgId: job.orgId,
+      repoId: job.repoId,
+      body: renderDoneDelivery(thread, reason, term, anchor, perThreadGaps),
+      seedDoneWake: { threadId, reason },
+      // The completed thread's own (untrusted) record → a visible `untrusted` pill.
+      seedRow: {
+        kind: 'untrusted',
+        label: doneRecordBody(term, anchor),
+        chunkKey: `seed:done:${threadId}`,
+        untrustedSource: `thread-done:${threadId}`,
+        severity: reason,
       },
     });
     await this.handleChatTurn(stimulus);
@@ -1305,6 +1364,7 @@ export class AgentSessionManager
       seed?: boolean;
       seedQuestionId?: string;
       seedHaltWake?: { threadId: string; gen: number };
+      seedDoneWake?: { threadId: string; reason: 'final' | 'notable' };
     };
     if (
       !row.container_id ||
@@ -1337,6 +1397,9 @@ export class AgentSessionManager
       // Preserve the halt-wake key so a reattached wake turn still stamps `halt_waked_at` on success — else
       // the halt stays owed and the sweeps re-wake it forever (Codex review Medium-1).
       ...(ctx.seedHaltWake ? { seedHaltWake: ctx.seedHaltWake } : {}),
+      // Same reasoning for the completion wake (decision d1) — else a reattached done-wake turn never
+      // stamps `done_waked_at` and the sweeps re-wake it forever.
+      ...(ctx.seedDoneWake ? { seedDoneWake: ctx.seedDoneWake } : {}),
     };
     // Rebuild the dispatch map with the SAME shape the original kick used: an onboarding thread's
     // container declares the curated onboarding toolset, so a re-attach that registers the normal map
@@ -1905,6 +1968,8 @@ export class AgentSessionManager
             : {}),
           // Halt-wake key: a reattached wake turn must still stamp `halt_waked_at` on success (Medium-1).
           ...(stimulus.seedHaltWake ? { seedHaltWake: stimulus.seedHaltWake } : {}),
+          // Done-wake key (decision d1): same reasoning, for `done_waked_at`.
+          ...(stimulus.seedDoneWake ? { seedDoneWake: stimulus.seedDoneWake } : {}),
         },
       },
       ...(opts?.onRegistered ? { onTurnRegistered: opts.onRegistered } : {}),
@@ -2031,13 +2096,14 @@ export class AgentSessionManager
         `in-sandbox turn failed for thread=${stimulus.jobId}: ${err}`,
       );
       await streamer.finish();
-      // ADR 0004 Phase 3: a halt-WAKE turn is an internal, auto-retried delivery (the periodic + boot sweeps
-      // re-fire it because `halt_waked_at` only stamps on the success tail). Don't post a scary operator error
-      // box for it — that's noise the operator can't act on. Just log; the sweep will retry once the session
-      // settles. (This is the wake that could otherwise race `dispatch_build`'s compaction session-rewrite.)
-      if (stimulus.seedHaltWake) {
+      // ADR 0004 Phase 3 / decision d1: a halt-wake OR done-wake turn is an internal, auto-retried delivery
+      // (the periodic + boot sweeps re-fire it because the stamp only lands on the success tail). Don't post a
+      // scary operator error box for it — that's noise the operator can't act on. Just log; the sweep will
+      // retry once the session settles. (This is the wake that could otherwise race `dispatch_build`'s
+      // compaction session-rewrite.)
+      if (stimulus.seedHaltWake || stimulus.seedDoneWake) {
         this.logger.warn(
-          `halt-wake turn failed for thread=${stimulus.jobId} (sweep will retry): ${err}`,
+          `wake turn failed for thread=${stimulus.jobId} (sweep will retry): ${err}`,
         );
         return;
       }
@@ -2152,6 +2218,13 @@ export class AgentSessionManager
       await this.driverStore
         .markHaltWaked(stimulus.seedHaltWake.threadId, stimulus.seedHaltWake.gen)
         .catch((err) => this.logger.warn(`markHaltWaked failed: ${err}`));
+    }
+
+    // SUCCESS TAIL — decision d1 completion wake: mirrors the halt stamp above (no generation CAS needed).
+    if (stimulus.seedDoneWake) {
+      await this.driverStore
+        .markDoneWaked(stimulus.seedDoneWake.threadId)
+        .catch((err) => this.logger.warn(`markDoneWaked failed: ${err}`));
     }
 
     // SUCCESS TAIL — same for the secure-secret gate: the masked confirmation reached the brain this turn.
@@ -6366,6 +6439,105 @@ function haltDeliveryStimulus(input: {
     seed: true,
     // Stamped on the turn's SUCCESS tail — a failed/guard-hit/detached wake turn stays un-waked for the sweeps.
     seedHaltWake: input.seedHaltWake,
+    ...(input.seedRow ? { seedRow: input.seedRow } : {}),
+  };
+}
+
+/**
+ * The harness framing for a delivered COMPLETION wake (decision d1) — a TRUSTED instruction telling Atlas
+ * one of its own threads finished `done` and it's worth a look, followed by the thread's own model-authored
+ * record fields wrapped in `wrapUntrusted` (data, not instructions). Reason-branched: `'final'` reviews the
+ * whole parked build; `'notable'` triages one thread's leftover gaps.
+ */
+export function renderDoneDelivery(
+  thread: { id: string; ordinal: number; brief: string },
+  reason: 'final' | 'notable',
+  term: ThreadTerminalRecord | null,
+  anchor: SessionAnchor | undefined,
+  perThreadGaps?: { brief: string; gaps: string[] }[],
+): string {
+  const preamble = [
+    `An AUTONOMOUS wake — no human sent this; the build driver woke you.`,
+    // Decision d2 — the same explicit autonomy boundary as the halt wake, verbatim.
+    `You may investigate (read transcripts/code), post a diagnosis, request a missing secret, and` +
+      ` retry_thread within budget — but you may NOT edit/push code or ship without the operator.`,
+    `Use \`atlas-tx\` to inspect any lane's raw transcript.`,
+  ];
+  const body =
+    reason === 'final'
+      ? [
+          `The whole build finished and is parked at the ship gate — nothing is pushed yet. Review the`,
+          `integrated result (the diff; any lane's transcript via \`atlas-tx\`), then post the operator a crisp`,
+          `summary of what shipped and any risks. You may investigate/report/request-secret/retry a lane; you`,
+          `may NOT ship — the **Ship it** gate is the operator's.`,
+          term?.summary ? `master review outcome: ${term.summary}` : null,
+          perThreadGaps?.length
+            ? [
+                `per-thread gaps left behind:`,
+                ...perThreadGaps.map((g) => `- ${g.brief}: ${g.gaps.join('; ')}`),
+              ].join('\n')
+            : null,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : [
+          `A build thread finished but flagged gaps/unverified items (below). Investigate whether they matter`,
+          `(read its transcript: \`atlas-tx show ${anchor?.sessionId ?? '<sessionId>'} --errors\`), report to`,
+          `the operator, and retry the lane with guidance if you hold the fix. Don't edit/push autonomously.`,
+        ].join('\n');
+  const framing = [...preamble, '', body].join('\n');
+  const fenced = wrapUntrusted({
+    source: `thread-done:${thread.id}`,
+    severity: reason,
+    body: doneRecordBody(term, anchor),
+  });
+  return `${framing}\n\n${fenced}`;
+}
+
+/** The CLEAN (unfenced) readable projection of a completed thread's terminal record — mirrors
+ *  `haltRecordBody` (same transcript-line format), shared by the engine-facing wake and the durable
+ *  `untrusted` transcript row. */
+export function doneRecordBody(term: ThreadTerminalRecord | null, anchor?: SessionAnchor): string {
+  return [
+    term?.summary ? `summary: ${term.summary}` : null,
+    term?.gaps?.length ? `gaps:\n${term.gaps.map((g) => `- ${g}`).join('\n')}` : null,
+    anchor
+      ? `transcript: session ${anchor.sessionId}${anchor.legOrdinal ? ` (Leg ${anchor.legOrdinal})` : ''} —` +
+        ` inspect with: atlas-tx show ${anchor.sessionId} --errors  (also --thinking / --tools / cat | jq)`
+      : null,
+    !term ? '(no terminal record)' : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Build the synthetic harness stimulus that delivers a COMPLETION wake to the brain (decision d1). Same
+ * trusted-seed convention as {@link haltDeliveryStimulus} (SYSTEM_SEED_AUTHOR + `seed`, no operator bubble,
+ * body NOT `wrapSystemNotification`-wrapped since `renderDoneDelivery` already framed + fenced it).
+ */
+function doneDeliveryStimulus(input: {
+  jobId: string;
+  orgId: string;
+  repoId: string;
+  body: string;
+  seedDoneWake: { threadId: string; reason: 'final' | 'notable' };
+  seedRow?: SeedRow;
+}): ChatStimulus {
+  return {
+    id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
+    orgId: input.orgId,
+    repoId: input.repoId,
+    body: input.body, // already framed + fenced by renderDoneDelivery
+    receivedAt: new Date(),
+    kind: 'chat',
+    trust: 'trusted',
+    jobId: input.jobId,
+    author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+    replyRoute: { surfaceId: 'web', jobRef: input.jobId },
+    seed: true,
+    // Stamped on the turn's SUCCESS tail — a failed/guard-hit/detached wake turn stays un-waked for the sweeps.
+    seedDoneWake: input.seedDoneWake,
     ...(input.seedRow ? { seedRow: input.seedRow } : {}),
   };
 }

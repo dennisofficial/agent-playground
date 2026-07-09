@@ -172,6 +172,14 @@ interface BrainSurface {
     outcome: 'blocked' | 'incomplete' | 'failed',
     gen: number,
   ): Promise<void>;
+
+  /** Wake the job brain for a `done` completion owed a wake (decision d1) — `'final'` (whole build parked
+   *  at ship gate) or `'notable'` (finished done but carrying gaps/unverified items). */
+  notifyThreadDone(
+    jobId: string,
+    threadId: string,
+    reason: 'final' | 'notable',
+  ): Promise<void>;
 }
 
 @Injectable()
@@ -513,6 +521,35 @@ export class ThreadDriver implements JobDispatcher {
     await brain.notifyThreadHalted(t.jobId, t.threadId, t.outcome, t.gen);
   }
 
+  /**
+   * Decision d1 — deliver any OWED completion brain wakes (`'final'`/`'notable'`). Called from the periodic
+   * chat-delivery sweep and the leader boot sweep (all jobs). For each owed thread: wake the brain, which
+   * stamps the dedup marker on its own success tail. Fire-and-forget per thread; a wake-turn failure leaves
+   * the marker un-stamped so the boot sweep re-fires (at-least-once).
+   */
+  async deliverOwedDoneWakes(jobId?: string): Promise<void> {
+    const owed = await this.store.threadsAwaitingDoneWake(jobId).catch(() => []);
+    for (const t of owed) {
+      if (this.active.has(t.jobId)) continue; // defer — NEVER wake during an active drive (a notable wake can fire mid-build; the build continues; deliver on the next quiescent sweep tick)
+      void this.deliverOneDoneWake(t).catch((err) =>
+        this.logger.warn(
+          `done wake failed for thread=${t.threadId} (boot sweep will retry): ${err}`,
+        ),
+      );
+    }
+  }
+
+  private async deliverOneDoneWake(t: {
+    jobId: string;
+    threadId: string;
+    reason: 'final' | 'notable';
+  }): Promise<void> {
+    const brain = await this.brain();
+    // Stamp is NOT here — the brain stamps `done_waked_at` on the wake turn's SUCCESS tail, so a
+    // failed/steered/detached wake stays owed for the sweeps.
+    await brain.notifyThreadDone(t.jobId, t.threadId, t.reason);
+  }
+
   // ── the pipeline ───────────────────────────────────────────────────────────────────────────────
 
   /** Guard the job against a concurrent drive, then run it to a PR (or `failed`). */
@@ -831,6 +868,15 @@ export class ThreadDriver implements JobDispatcher {
       `ship-review:${job.id}`,
       'The build finished and passed master review; it is parked awaiting your ship-review approval before the PR opens.',
     ).catch(() => undefined);
+    // Decision d1 — the FINAL wake, additive to the milestone above. Carried by the job's master-review
+    // thread (the whole-build carrier). If none resolves, skip the wake rather than guess — the milestone
+    // still informs.
+    const masterReviewId = await this.store.masterReviewThreadId(job.id).catch(() => null);
+    if (masterReviewId) {
+      await this.store
+        .setDoneWakeOwed(masterReviewId, 'final')
+        .catch((e) => this.logger.warn(`could not set final done-wake for job=${job.id}: ${e}`));
+    }
   }
 
   /**
@@ -1112,6 +1158,19 @@ export class ThreadDriver implements JobDispatcher {
       `thread:${thread.id}:done`,
       `Thread "${thread.brief}" finished building.`,
     );
+    // Decision d1 — a clean `done` is normally cheap note-and-queue; a NOTABLE one (gaps left, or the
+    // live-verification judge flagged the claim inadequate) also owes an autonomous brain wake so the operator
+    // isn't the first to notice. The wake resolves the transcript anchor itself at delivery time.
+    const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
+    const isNotable =
+      term != null &&
+      ((term.gaps?.length ?? 0) > 0 ||
+        term.liveVerification?.verdict.liveVerificationAdequate === false);
+    if (isNotable) {
+      await this.store
+        .setDoneWakeOwed(thread.id, 'notable')
+        .catch((e) => this.logger.warn(`could not set notable done-wake for thread=${thread.id}: ${e}`));
+    }
     await this.post(route, `:white_check_mark: Thread done — *${thread.brief}*`);
     return { outcome: 'done', handoff: handoffOut };
   }

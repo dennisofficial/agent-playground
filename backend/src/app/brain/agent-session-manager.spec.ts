@@ -27,7 +27,7 @@ const noopTurnHarness = {
 } as unknown as TurnHarnessFactory;
 import type { Repository } from 'typeorm';
 import type { JobSandboxEntity } from '../persistence/entities';
-import { AgentSessionManager } from './agent-session-manager.service';
+import { AgentSessionManager, renderDoneDelivery, doneRecordBody } from './agent-session-manager.service';
 import { ProvisioningNotReadyError } from '../driver/job-lifecycle.service';
 import { UNRESUMABLE_SESSION_MARKER } from '../engine/engine.types';
 import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
@@ -127,6 +127,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     resolveSessionAnchor: vi.fn().mockResolvedValue(undefined),
     claimHaltFixAttempt: vi.fn(),
     markHaltWaked: vi.fn(),
+    // Decision d1 — completion wake
+    threadsForJob: vi.fn().mockResolvedValue([]),
+    markDoneWaked: vi.fn(),
   } as unknown as DriverStoreService;
 
   const mockMemory = {
@@ -1908,6 +1911,107 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       fn(mockDriverStore.loadJob).mockResolvedValue(null);
       const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
       await manager.notifyThreadHalted('gone', 'th-x', 'blocked', 0);
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+  });
+
+  // ── Decision d1 — selective completion wake (FINAL + NOTABLE), mirrors the halt wake above ─────────
+  describe('decision d1 — completion wake (final + notable)', () => {
+    const fn = (m: unknown) => m as ReturnType<typeof vi.fn>;
+
+    it('renderDoneDelivery states the d2 autonomy boundary + the atlas-tx pointer for BOTH reasons', () => {
+      const thread = { id: 'th-x', ordinal: 10, brief: 'response format' };
+      const anchor = { sessionId: 'sess-final', legOrdinal: 2 };
+      const term = { status: 'done' as const, summary: 'shipped cleanly' };
+
+      const finalBody = renderDoneDelivery(thread, 'final', term, anchor);
+      expect(finalBody).toMatch(/may NOT edit\/push code or ship without the operator/);
+      expect(finalBody).toMatch(/Ship it/);
+      expect(finalBody).toContain('atlas-tx');
+
+      const notableBody = renderDoneDelivery(thread, 'notable', term, anchor);
+      expect(notableBody).toMatch(/may NOT edit\/push code or ship without the operator/);
+      expect(notableBody).toContain('atlas-tx show sess-final --errors');
+    });
+
+    it('renderDoneDelivery (final) surfaces the master-review summary + per-thread gaps', () => {
+      const thread = { id: 'th-final', ordinal: 99, brief: 'master review' };
+      const term = { status: 'done' as const, summary: 'all lanes reviewed, no blockers' };
+      const body = renderDoneDelivery(thread, 'final', term, undefined, [
+        { brief: 'Backend — auth', gaps: ['rate limiting not load-tested'] },
+      ]);
+      expect(body).toContain('all lanes reviewed, no blockers');
+      expect(body).toContain('Backend — auth');
+      expect(body).toContain('rate limiting not load-tested');
+      expect(body).toMatch(/Ship it/);
+    });
+
+    it('doneRecordBody projects summary + gaps + the transcript line (mirrors haltRecordBody)', () => {
+      const term = {
+        status: 'done' as const,
+        summary: 'done with a caveat',
+        gaps: ['auth edge case unverified'],
+      };
+      const projection = doneRecordBody(term, { sessionId: 'sess-1', legOrdinal: 3 });
+      expect(projection).toContain('summary: done with a caveat');
+      expect(projection).toContain('gaps:\n- auth edge case unverified');
+      expect(projection).toContain('atlas-tx show sess-1 --errors');
+      expect(projection).toContain('Leg 3');
+    });
+
+    it('notifyThreadDone wakes the brain with a TRUSTED seed carrying seedDoneWake + the fenced record (notable)', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'auth lane' });
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
+        status: 'done',
+        summary: 'done, but left a gap',
+        gaps: ['rate limiting not load-tested'],
+      });
+      fn(mockDriverStore.resolveSessionAnchor).mockResolvedValue({ sessionId: 'sess-notable' });
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadDone('job1', 'th-x', 'notable');
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      const stim = spy.mock.calls[0][0] as ChatStimulus;
+      expect(stim.trust).toBe('trusted');
+      expect(stim.seed).toBe(true);
+      expect(stim.seedDoneWake).toEqual({ threadId: 'th-x', reason: 'notable' });
+      expect(stim.body).toContain('<untrusted');
+      expect(stim.body).toContain('rate limiting not load-tested');
+      expect(stim.body).toMatch(/may NOT edit\/push code or ship without the operator/);
+      spy.mockRestore();
+    });
+
+    it('notifyThreadDone (final) gathers per-thread gaps across the job for the master-review carrier', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-mr', ordinal: 99, brief: 'master review' });
+      fn(mockDriverStore.getTerminalRecord).mockImplementation((id: string) =>
+        Promise.resolve(
+          id === 'th-mr'
+            ? { status: 'done', summary: 'build reviewed and clean' }
+            : { status: 'done', summary: 'ok', gaps: ['left a TODO'] },
+        ),
+      );
+      fn(mockDriverStore.threadsForJob).mockResolvedValue([
+        { id: 'th-mr', ordinal: 99, brief: 'master review' },
+        { id: 'th-a', ordinal: 10, brief: 'Backend — auth' },
+      ]);
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadDone('job1', 'th-mr', 'final');
+
+      const stim = spy.mock.calls[0][0] as ChatStimulus;
+      expect(stim.seedDoneWake).toEqual({ threadId: 'th-mr', reason: 'final' });
+      expect(stim.body).toContain('build reviewed and clean');
+      expect(stim.body).toContain('Backend — auth');
+      expect(stim.body).toContain('left a TODO');
+      spy.mockRestore();
+    });
+
+    it('notifyThreadDone is a no-op when the job is gone', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue(null);
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadDone('gone', 'th-x', 'notable');
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
     });
