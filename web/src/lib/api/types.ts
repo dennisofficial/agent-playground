@@ -7,7 +7,11 @@
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
-import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@workspace/shared";
+import type {
+  JobActivity as WireJobActivity,
+  JobHalt as WireJobHalt,
+  JobStatus as WireJobStatus,
+} from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
@@ -17,6 +21,11 @@ import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@worksp
 export type { WireJobStatus };
 /** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
 export type { WireJobHalt };
+/**
+ * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
+ * single-sourced in `@workspace/shared`. Carried on the realtime row; the dot itself reads `needsYou`.
+ */
+export type { WireJobActivity };
 
 export type WireJobKind =
   | "feature"
