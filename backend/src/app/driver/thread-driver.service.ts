@@ -1079,6 +1079,9 @@ export class ThreadDriver implements JobDispatcher {
     //    empty range → the review is silently skipped and the commit mis-recorded as `(nothing)`.
     const sectionStartSha = await this.resolveThreadStartSha(thread, sandbox);
     await this.store.setThreadStatus(thread.id, 'executing');
+    // Clear any stale halt overlay from a prior run — this (re)start of the turn puts the step back on the
+    // linear ladder, so a resumed/retried thread must not keep a persisted 'incomplete'|'failed'|'paused'.
+    await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
     const { outcome, reports } = await this.executeSteps(
       job, route, sandbox, thread, record, repo, sectionStartSha,
     );
@@ -1273,11 +1276,15 @@ export class ThreadDriver implements JobDispatcher {
     const lens = lensById(lensId);
     if (!lens) {
       this.logger.warn(`review-lens child ${child.id} has unknown lensId "${lensId}" — skipping`);
-      await this.store.setThreadStatus(child.id, 'reviewing').catch(() => undefined);
+      // Terminal `done` (matching the empty-diff skip) — nothing to review, so the step genuinely completed;
+      // this keeps the `=== 'done'` resume-idempotency guard intact while `skipped` carries the overlay.
+      await this.store.setThreadStatus(child.id, 'done').catch(() => undefined);
       await this.store.setThreadCondition(child.id, 'skipped').catch(() => undefined);
       return;
     }
     await this.store.setThreadStatus(child.id, 'executing').catch(() => undefined);
+    // Clear any stale halt overlay from a prior run before (re)running the lens's turn.
+    await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     try {
       const findings = await this.autofix.runReviewLens(ctx, lens);
       await this.store.setThreadReviewFindings(child.id, findings);
