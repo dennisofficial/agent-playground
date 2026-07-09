@@ -26,6 +26,7 @@ import { buildLspBridgeOptions } from './lsp-bridge-options';
 import { buildContext7BridgeOptions } from './context7-bridge-options';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
 import { ToolBridgeReader } from './tool-bridge-reader';
+import { TOOL_SHAPES, TOOL_DESCRIPTIONS } from './host-tool-schemas';
 
 // `TurnSpec` is the SINGLE host↔engine wire contract — imported from engine.types (the same type the host's
 // `redis-engine-runner.buildSpec` produces), NOT re-declared here, so producer + consumer can never drift.
@@ -107,19 +108,20 @@ async function runOverRedis(turnId: string): Promise<void> {
       reader.start();
       const toolReader = reader;
 
-      const z = (await import('zod/v4')).z;
       // One proxy per tool — identical transport (XADD a `tool_request` by BARE name); which server
-      // it is registered under is purely presentational. Reused for both bridges below.
+      // it is registered under is purely presentational. Reused for both bridges below. Each tool
+      // registers its REAL per-tool shape from the shared canonical source, so the SDK's strict object
+      // validates + strips the model's input and the flat parsed payload forwards straight through.
       const makeProxyTool = (toolName: string) =>
         claudeSdk.tool(
           toolName,
-          `Host-side tool '${toolName}' proxied via the Atlas tool bridge.`,
-          { args: z.record(z.string(), z.unknown()).optional().describe('Tool arguments') },
-          async (input: { args?: Record<string, unknown> }) => {
+          TOOL_DESCRIPTIONS[toolName] ?? `Host-side tool '${toolName}' proxied via the Atlas tool bridge.`,
+          TOOL_SHAPES[toolName] ?? {},
+          async (input: Record<string, unknown>) => {
             const id = randomUUID();
             const resultPromise = toolReader.register(id);
             try {
-              await xadd(toolsKey, { t: 'tool_request', id, name: toolName, args: input.args ?? {} });
+              await xadd(toolsKey, { t: 'tool_request', id, name: toolName, args: input ?? {} });
             } catch (err) {
               toolReader.cancel(id);
               throw err;

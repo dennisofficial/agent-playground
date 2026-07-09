@@ -36,6 +36,7 @@ import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
+import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
@@ -1129,6 +1130,20 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // Conversely, reset_sandbox is a real tool but deliberately NOT on the profile bridge.
     expect(typeof tools['reset_sandbox']).toBe('function');
     expect(WORKSPACE_PROFILE_TOOL_NAMES as readonly string[]).not.toContain('reset_sandbox');
+  });
+
+  // Drift guard: every tool the brain actually registers — across every curated kind — MUST have a
+  // TOOL_SHAPES entry, or the SDK bridge would silently strip every argument that tool's handler reads
+  // (a strict zod object drops unknown keys before the handler ever sees them).
+  it('every buildTools()-registered tool (all kinds) has a TOOL_SHAPES entry', () => {
+    for (const kind of [null, 'review', 'onboarding']) {
+      const tools = manager.buildTools(fakeStimulus, kind);
+      for (const name of Object.keys(tools)) {
+        expect(TOOL_SHAPES, `brain tool "${name}" (kind=${kind}) must have a TOOL_SHAPES entry`).toHaveProperty(
+          name,
+        );
+      }
+    }
   });
 
   it('finish_onboarding: no repo diff → marks onboarded, does NOT ship a PR', async () => {
