@@ -24,6 +24,7 @@ import { Agent } from '../prompt-kit/agent';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
 import { context7Enabled, qualifyContext7ToolNames } from './context7-tools';
 import {
+  BG_TASK_CAP_NOTICE,
   EngineAuthError,
   isAuthErrorMessage,
   UNRESUMABLE_SESSION_MARKER,
@@ -543,6 +544,45 @@ export class EngineCore {
       cancelEnd();
       endTimer = setTimeout(() => input.end(), STEER_IDLE_GRACE_MS);
     };
+    // BACKGROUND-TASK HOLD (SDK `run_in_background` Bash): a tool-native background task closes the turn's
+    // first `result` immediately (terminal_reason=completed), which would let the STEER_IDLE_GRACE close the
+    // input and force the SDK to KILL the still-running shell. Instead we hold the query() session open while
+    // any task is in flight so the task's `task_notification` AND the model's auto-continuation land in THIS
+    // turn. The hold is bounded by HOLD_CAP_MS (a stuck/endless task can't wedge the turn forever); after the
+    // cap we steer the agent with BG_TASK_CAP_NOTICE and give it CAP_ACK_GRACE_MS to acknowledge before an
+    // unconditional close. Read from process.env so the container path works and tests can shrink them.
+    const HOLD_CAP_MS = Number(process.env.BG_TASK_MAX_HOLD_MS) > 0 ? Number(process.env.BG_TASK_MAX_HOLD_MS) : 600_000;
+    const CAP_ACK_GRACE_MS = Number(process.env.BG_TASK_CAP_ACK_GRACE_MS) > 0 ? Number(process.env.BG_TASK_CAP_ACK_GRACE_MS) : 15_000;
+    const liveBgTasks = new Set<string>();
+    let holdTimer: ReturnType<typeof setTimeout> | undefined;
+    let capKillTimer: ReturnType<typeof setTimeout> | undefined;
+    let capping = false;
+    const clearHold = (): void => {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = undefined;
+      }
+    };
+    // Cap fired: warn the agent IN-TURN (mirrors injectRotationNudge), stop the loop from cancelling closes
+    // (`capping`), and arm an UNCONDITIONAL backstop close that a late progress frame can never undo.
+    const onCap = (): void => {
+      if (!input || turnEnded || capping) return;
+      capping = true;
+      onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background task exceeded ${HOLD_CAP_MS}ms` });
+      cancelEnd();
+      input.push(steerUserMessage(BG_TASK_CAP_NOTICE, 'now'));
+      capKillTimer = setTimeout(() => {
+        if (!turnEnded) input.end();
+      }, CAP_ACK_GRACE_MS);
+    };
+    const armHoldTimer = (): void => {
+      clearHold();
+      holdTimer = setTimeout(onCap, HOLD_CAP_MS);
+    };
+    const resetHoldTimer = (): void => {
+      if (liveBgTasks.size > 0) armHoldTimer();
+      else clearHold();
+    };
     const steerIter = streaming ? steerInput![Symbol.asyncIterator]() : undefined;
     // A priority:'now' steer pushed BEFORE the model commits its first assistant message makes the SDK
     // abort the whole turn (result_type=user, terminal_reason=aborted_streaming, subtype=error_during_
@@ -731,12 +771,30 @@ export class EngineCore {
         prompt: streaming ? input!.stream : task,
         options,
       })) {
-        // Model is actively producing (or a steer is being processed) → don't close input under it.
-        if (streaming && message.type !== 'result') cancelEnd();
+        // Model is actively producing (or a steer is being processed) → don't close input under it. Once
+        // `capping` latches, a late task_progress/task_updated frame must NOT undo the forced close.
+        if (streaming && !capping && message.type !== 'result') cancelEnd();
         if (message.type === 'system' && message.subtype === 'init') {
           resolvedSession = message.session_id;
           // Surface the resume handle the instant the session exists, so a mid-turn halt is recoverable.
           if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });
+        } else if (message.type === 'system' && message.subtype === 'task_started') {
+          // An SDK run_in_background Bash task began — track it so the turn holds its input open until the
+          // task settles (its `task_notification`) instead of closing on the immediate first `result`.
+          if (message.task_id) liveBgTasks.add(message.task_id);
+          onEvent?.({
+            kind: 'bg_task',
+            taskId: message.task_id,
+            status: 'started',
+            detail: message.description,
+            taskType: message.task_type,
+          });
+        } else if (message.type === 'system' && message.subtype === 'task_notification') {
+          // The task settled (completed/failed/stopped). Drop it from the live set; a settlement +
+          // auto-continuation is imminent, so restart the hold window (or clear it if none remain).
+          if (message.task_id) liveBgTasks.delete(message.task_id);
+          onEvent?.({ kind: 'bg_task', taskId: message.task_id, status: message.status, detail: message.summary });
+          resetHoldTimer();
         } else if (richStream && message.type === 'stream_event') {
           // LIVE token-by-token deltas (partial-message stream). Authoritative full blocks still arrive
           // on the `assistant` message below — these are for live rendering only, not persistence. Carry
@@ -885,9 +943,15 @@ export class EngineCore {
           resolvedSession = message.session_id;
           if (message.subtype === 'success') {
             result = message.result;
-            usage = extractClaudeUsage(message as Record<string, unknown>, model);
+            // A background-task hold produces ≥2 results per turn (the immediate first result + the
+            // auto-continuation after the task settles). SUM the billing tokens across results; the
+            // contextTokens/contextModel/model/modelUsage below all reflect the LATEST result (turn-end
+            // occupancy). The `result` string keeps the last result too — the final answer.
+            const u = extractClaudeUsage(message as Record<string, unknown>, model);
+            usage = usage ? addClaudeUsage(usage, u) : u;
             // Attach the per-call context occupancy (+ its model) onto the billing usage. The cumulative
-            // `inputTokens` stays the billing number; `contextTokens` is the real window occupancy.
+            // `inputTokens` stays the billing number; `contextTokens` is the real window occupancy. Runs for
+            // EVERY result so the FINAL result's occupancy wins.
             if (usage && contextTokens !== undefined) {
               usage.contextTokens = contextTokens;
               if (contextModel) usage.contextModel = contextModel;
@@ -895,7 +959,21 @@ export class EngineCore {
             // Streaming-input mode: the model finished responding but the query stays alive awaiting more
             // input. Close it after a short grace unless a steer lands (which cancels the timer). Single-
             // message mode ends naturally when the generator closes.
-            if (streaming) scheduleEnd();
+            if (streaming) {
+              if (capping) {
+                // The agent acked the cap notice with this result → close NOW, directly (skip the backstop).
+                if (capKillTimer) {
+                  clearTimeout(capKillTimer);
+                  capKillTimer = undefined;
+                }
+                input!.end();
+              } else if (liveBgTasks.size === 0) {
+                scheduleEnd();
+              } else {
+                // A background task is still in flight — hold the input open (bounded by HOLD_CAP_MS).
+                armHoldTimer();
+              }
+            }
           } else {
             // Surface the SDKResultError detail the SDK otherwise flattens into `subtype`.
             // Keep the leading `Claude engine ended: <subtype>` intact — isAuthErrorMessage
@@ -932,6 +1010,11 @@ export class EngineCore {
       // Stop feeding/consuming input so the detached steer consumer + entrypoint generator unwind.
       turnEnded = true;
       cancelEnd();
+      clearHold();
+      if (capKillTimer) {
+        clearTimeout(capKillTimer);
+        capKillTimer = undefined;
+      }
       input?.end();
       void steerIter?.return?.(undefined);
     }
@@ -1224,6 +1307,38 @@ export function makeCanUseTool(
       }
     }
     return { behavior: 'allow', updatedInput: input };
+  };
+}
+
+/**
+ * Fold one result's {@link EngineUsage} into a running accumulator. A background-task hold yields ≥2
+ * results per turn (the immediate first result + the post-settlement auto-continuation), so the BILLING
+ * token fields are SUMMED across results. Occupancy-and-label fields (`contextTokens`/`contextModel`/
+ * `model`/`modelUsage`) are NOT summed — they reflect the LATEST result (the turn-end window), so `next`
+ * overwrites when it carries them. `next` undefined (a result with no usage) leaves `acc` unchanged.
+ */
+export function addClaudeUsage(acc: EngineUsage, next: EngineUsage | undefined): EngineUsage {
+  if (!next) return acc;
+  const inputTokens = (acc.inputTokens ?? 0) + (next.inputTokens ?? 0);
+  const outputTokens = (acc.outputTokens ?? 0) + (next.outputTokens ?? 0);
+  const cacheReadTokens = (acc.cacheReadTokens ?? 0) + (next.cacheReadTokens ?? 0);
+  const cacheWriteTokens = (acc.cacheWriteTokens ?? 0) + (next.cacheWriteTokens ?? 0);
+  const reasoningTokens = (acc.reasoningTokens ?? 0) + (next.reasoningTokens ?? 0);
+  const bothCostAbsent = acc.costUsd === undefined && next.costUsd === undefined;
+  const costUsd = bothCostAbsent ? undefined : (acc.costUsd ?? 0) + (next.costUsd ?? 0);
+  return {
+    ...acc,
+    inputTokens,
+    outputTokens,
+    ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
+    ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    // Occupancy + labels track the LATEST result.
+    ...(next.model ? { model: next.model } : {}),
+    ...(next.contextTokens !== undefined ? { contextTokens: next.contextTokens } : {}),
+    ...(next.contextModel ? { contextModel: next.contextModel } : {}),
+    ...(next.modelUsage ? { modelUsage: next.modelUsage } : {}),
   };
 }
 
