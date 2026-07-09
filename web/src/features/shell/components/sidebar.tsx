@@ -741,6 +741,11 @@ function ThreadRow({
           {thread.title}
         </span>
       </span>
+      {thread.pr?.number != null ? (
+        <span className="mt-px flex-none font-mono text-[10px] text-faint">
+          #{thread.pr.number}
+        </span>
+      ) : null}
       {thread.needsYou ? (
         <span
           className="mt-1 h-1.5 w-1.5 flex-none rounded-full"

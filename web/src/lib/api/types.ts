@@ -576,6 +576,8 @@ export type PrState = "open" | "merged" | "closed";
  *  GitHub's `mergeable_state` ('dirty' = merge conflict); `url` links to the PR. */
 export interface InboxPr {
   state: PrState;
+  /** GitHub PR number, shown on sidebar rows for cross-referencing. */
+  number: number | null;
   mergeable: string | null;
   url: string | null;
 }
