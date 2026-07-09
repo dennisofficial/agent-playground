@@ -24,6 +24,7 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
       reconcileDeletingJobs: vi.fn(async () => undefined),
       reapIdle: vi.fn(async () => undefined),
       pollPrClosures: vi.fn(async () => undefined),
+      reapOrphanedSandboxArtifacts: vi.fn(async () => undefined),
     } as unknown as JobLifecycleService;
     const reconciler = {
       tick: vi.fn(async () => 0),
@@ -86,6 +87,28 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000); // one reap interval (default)
     // The tick's idempotent resume() ran, re-driving any stranded running job.
     expect((h.driver.resume as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    h.mod.onApplicationShutdown();
+  });
+
+  it('sweeps orphaned sandbox artifacts ONCE per process on boot BEFORE resuming jobs, and again on each reap tick', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const reapArtifacts = h.lifecycle.reapOrphanedSandboxArtifacts as ReturnType<typeof vi.fn>;
+    const resume = h.driver.resume as ReturnType<typeof vi.fn>;
+    await h.mod.onApplicationBootstrap();
+
+    await h.promote(); // first promotion (boot)
+    await h.promote(); // mid-life re-promote
+
+    // The boot one-shot sweep (unblocks recovery drives from an exhausted address pool) is once-per-process…
+    expect(reapArtifacts).toHaveBeenCalledTimes(1);
+    // …and it runs BEFORE resume() so a resumed drive's ensureNetwork can't hit a still-exhausted pool.
+    expect(reapArtifacts.mock.invocationCallOrder[0]).toBeLessThan(resume.mock.invocationCallOrder[0]);
+
+    // The recurring reap timer sweeps too (decoupled from MAX_CONCURRENT_SANDBOXES).
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+    expect(reapArtifacts.mock.calls.length).toBeGreaterThanOrEqual(2);
 
     h.mod.onApplicationShutdown();
   });

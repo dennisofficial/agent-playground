@@ -11,12 +11,11 @@ import {
   type OnApplicationShutdown,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
 import type {
   ChatStimulus,
-  EventSeverity,
   EventStimulus,
   Job,
   JobKind,
@@ -413,6 +412,10 @@ export class AgentSessionManager
     if (this.chatSweepTimer) return;
     this.chatSweepTimer = setInterval(() => {
       void this.sweepUndeliveredChat();
+      // Same leader cadence re-drives any routed GitHub event whose brain delivery never landed (a steer
+      // swallowed by a finishing turn, or a fresh turn that never registered). Events get the SAME periodic
+      // at-least-once backstop as operator chat — not just the once-per-boot sweep. Leader-guarded.
+      void this.sweepUndeliveredEvents();
       // Same leader cadence re-drives WORK-OWED Codex reviews (a `review_plan` stranded `running` after its
       // brain turn was finalized on the non-detached path — reattach can't recover it). Leader-guarded.
       void this.reconcileWorkOwedReviews();
@@ -571,22 +574,23 @@ export class AgentSessionManager
     //    pending-chat guards as the periodic pass — see reconcileWorkOwedReviews.
     await this.reconcileWorkOwedReviews();
 
-    // Event-delivery reconciliation (same at-least-once shape): an event seeds its thread + stimulus row
-    // BEFORE the brain turn runs (and intake does not await the turn — the webhook 202 must stay fast). If
-    // the host died between seed and the harness turn, the dedupe-protected stimulus would block a webhook
-    // retry, so re-deliver every event with `delivered_at` null whose thread still exists. `deliverEvent`
-    // is idempotent on `delivered_at` (stamped only after the turn completes).
+    // Event-delivery reconciliation (same durable-inbox at-least-once shape as operator chat): a routed event
+    // is a `stimuli` row (kind='event') persisted at intake; `delivered_at` is stamped only on a positive
+    // brain hand-off (engine `input_ack` for a steer, or the fresh turn's registration). Clear leases first
+    // (a row mid-attempt at crash never reached a stamping hand-off), then pump every undelivered event. The
+    // pump steers a re-attached live turn or runs a fresh one; the periodic sweep keeps re-driving after boot.
     try {
-      const undeliveredEvents = await this.findUndeliveredEvents();
-      if (undeliveredEvents.length > 0) {
+      await this.stimulusStore.resetEventLeases();
+      const events = await this.stimulusStore.eligiblePendingEvents(
+        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+      );
+      if (events.length > 0) {
         this.logger.log(
-          `Leader: re-delivering ${undeliveredEvents.length} seeded-but-undelivered event(s)`,
+          `Leader: re-driving ${events.length} seeded-but-undelivered event(s)`,
         );
-        for (const ev of undeliveredEvents) {
-          void this.deliverEvent(ev).catch((err) =>
-            this.logger.warn(
-              `boot event re-delivery failed for stimulus=${ev.id}: ${err}`,
-            ),
+        for (const ev of events) {
+          void this.pumpEvent(ev).catch((err) =>
+            this.logger.warn(`boot event re-drive failed for stimulus=${ev.id}: ${err}`),
           );
         }
       }
@@ -5622,61 +5626,120 @@ export class AgentSessionManager
     await this.handleChatTurn(stimulus);
   }
 
-  /**
-   * Deliver a seeded EVENT to its thread's brain as a HARNESS message — the one-brain replacement for the
-   * deleted event-triage lane. Atlas itself triages the event in-session (no second brain): frames it
-   * (trusted harness instruction) + the UNTRUSTED-fenced body, runs a server-initiated turn (serialized
-   * behind any in-flight turn by the turn queue), then stamps `delivered_at` so the boot sweep won't
-   * re-deliver. Idempotent on `delivered_at`; NOT awaited by intake (the webhook 202 must stay fast). The
-   * operator-visible artifact is the seeded message row — independent of whether this turn lands.
-   */
+  // ── Durable EVENT delivery: the one-brain replacement for the deleted event-triage lane ─────────────
+  //
+  // Mirrors the operator-chat pump (steer-into-live OR fresh queued turn), with the SAME at-least-once
+  // guarantee. The event's operator-visible `system_event` card is written at intake; the durable `stimuli`
+  // row (kind='event', `delivered_at` null) is the queue this drives. CRITICAL: delivery is NEVER stamped on
+  // a bare steer XADD — only the engine's `input_ack` (steer path) or the fresh turn's registration hand-off
+  // marks `delivered_at`. So an event steered into a turn that ENDS before consuming it stays undelivered
+  // (the engine leaves such a steer un-acked) and the sweep re-drives it — closing the swallowed-steer race.
+
+  /** BrainSink.deliverEvent — a routed event is ready; ensure the owning job's brain consumes it. */
   async deliverEvent(stimulus: EventStimulus): Promise<void> {
-    // Already delivered (a boot-sweep / intake race) → no-op. Cheap guard before paying the turn.
-    const row = await this.stimulusRows.findOne({ where: { id: stimulus.id } });
-    if (row?.delivered_at) return;
-
-    const delivery = eventDeliveryStimulus({
-      jobId: stimulus.jobId,
-      orgId: stimulus.orgId,
-      repoId: stimulus.repoId,
-      body: renderEventDelivery(stimulus),
-      // The untrusted event body is already a durable `system_event` row (seeded at intake) — don't dup it.
-      seedRow: 'skip',
-    });
-    await this.handleChatTurn(delivery);
-
-    // Reached only when the delivery turn completed — stamp delivered (at-least-once across restarts).
-    await this.stimulusRows.update(
-      { id: stimulus.id },
-      { delivered_at: new Date() },
-    );
+    await this.pumpEvent(stimulus);
   }
 
   /**
-   * Seeded events whose brain delivery never completed (`delivered_at` null) — the at-least-once boot
-   * sweep's worklist. Reconstructs the `EventStimulus` from the durable row (its body is the CLEAN text;
-   * `deliverEvent` re-fences it). The FK cascade removes the row with its thread, so a surviving row
-   * always has a live thread.
+   * Deliver ONE event to its job's brain. FAST PATH: a running brain turn is steered (the event-row id is the
+   * steer id, so the engine's `input_ack` stamps THIS row). SLOW PATH (no running turn): a fresh turn framed
+   * by `renderEventDelivery` is queued on the per-thread turn queue and stamps delivery at its registration
+   * hand-off. Idempotent (skips an already-delivered row); lease-guarded so a concurrent sweep can't
+   * double-drive. Deliberately does NOT go through `handleChatTurn` — that method's seed steer fast-path
+   * (`steerIntoLiveBrainTurn`) reports "handled" on a bare XADD, which would re-open the swallowed-steer race.
    */
-  private async findUndeliveredEvents(): Promise<EventStimulus[]> {
-    const rows = await this.stimulusRows.find({
-      where: { kind: 'event', delivered_at: IsNull() },
+  async pumpEvent(stimulus: EventStimulus): Promise<void> {
+    if (this.election.getState() === 'draining') return;
+
+    // Already delivered (an intake / sweep / boot race) → no-op. Cheap guard before paying a turn.
+    const row = await this.stimulusRows.findOne({ where: { id: stimulus.id } });
+    if (row?.delivered_at) return;
+
+    const body = renderEventDelivery(stimulus);
+    const live = await this.turnRegistry.runningBrainTurn(stimulus.jobId).catch(() => null);
+    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+      await this.steerEvent(live.turn_id, stimulus.id, body);
+      return;
+    }
+
+    // No running turn → deliver via a fresh turn, serialized on the per-thread turn queue.
+    const key = `${stimulus.orgId}:${stimulus.jobId}`;
+    const prev = this.turnQueues.get(key) ?? Promise.resolve();
+    const next = prev
+      .catch(() => undefined)
+      .then(() => this.deliverEventViaFreshTurn(stimulus, body));
+    this.turnQueues.set(
+      key,
+      next.finally(() => {
+        if (this.turnQueues.get(key) === next) this.turnQueues.delete(key);
+      }),
+    );
+    return next;
+  }
+
+  /** Steer an event into a live turn (lease first; the engine `input_ack` on the event-row id stamps delivered). */
+  private async steerEvent(turnId: string, eventRowId: string, body: string): Promise<void> {
+    await this.stimulusStore
+      .leaseChatStimuli([eventRowId]) // kind-agnostic (updates by id) — reused for the event row
+      .catch((err) => this.logger.debug(`pump: lease event failed (continuing): ${err}`));
+    await this.engineRunner
+      .steer!(turnId, eventRowId, body)
+      .catch((err) =>
+        this.logger.warn(`pump: steer event into turn ${turnId} failed (sweep will re-drive): ${err}`),
+      );
+  }
+
+  /** Run ONE fresh turn that consumes a single event, stamping delivery at the registration hand-off. */
+  private async deliverEventViaFreshTurn(stimulus: EventStimulus, body: string): Promise<void> {
+    // A turn may have appeared since pumpEvent's check (a boot re-attach resumed one). Steer it instead of
+    // starting a SECOND turn on the same session (never two concurrent turns resuming one session id).
+    const live = await this.turnRegistry.runningBrainTurn(stimulus.jobId).catch(() => null);
+    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+      await this.steerEvent(live.turn_id, stimulus.id, body);
+      return;
+    }
+
+    // Lease BEFORE dispatch (like the chat fresh path) so a concurrent sweep can't re-drive a duplicate
+    // while this potentially-long turn runs.
+    await this.stimulusStore.leaseChatStimuli([stimulus.id]);
+    const delivery = eventDeliveryStimulus({
+      id: stimulus.id, // the DURABLE event-row id — so `onRegistered` stamps THIS row (not a synthetic uuid)
+      jobId: stimulus.jobId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
+      body,
+      seedRow: 'skip', // the untrusted event body already has a durable `system_event` row from intake
     });
-    return rows
-      .filter((r) => Boolean(r.job_id))
-      .map((r) => ({
-        id: r.id,
-        orgId: r.org_id,
-        repoId: r.repo_id,
-        kind: 'event' as const,
-        trust: 'untrusted' as const,
-        jobId: r.job_id as string,
-        body: r.body,
-        source: r.source ?? 'webhook',
-        dedupeKey: r.dedupe_key ?? '',
-        severity: (r.severity as EventSeverity | null) ?? 'info',
-        receivedAt: r.created_at,
-      }));
+    await this.runChatTurn(delivery, {
+      // Restart-survivable hand-off: stamp delivered the instant the turn is registered + kicked (a later
+      // crash resumes THIS turn rather than re-running the event).
+      onRegistered: () => {
+        void this.stimulusStore
+          .markChatDelivered(stimulus.id)
+          .catch((err) =>
+            this.logger.debug(`event markDelivered ${stimulus.id} failed (sweep will retry): ${err}`),
+          );
+      },
+    });
+  }
+
+  /** LEADER periodic + boot re-drive of any routed event still undelivered (the event at-least-once sweep). */
+  private async sweepUndeliveredEvents(): Promise<void> {
+    if (this.election.getState() !== 'leader') return;
+    let events: EventStimulus[];
+    try {
+      events = await this.stimulusStore.eligiblePendingEvents(
+        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+      );
+    } catch (err) {
+      this.logger.debug(`event delivery sweep query failed (will retry): ${err}`);
+      return;
+    }
+    for (const ev of events) {
+      void this.pumpEvent(ev).catch((err) =>
+        this.logger.debug(`event sweep pump failed for stimulus=${ev.id}: ${err}`),
+      );
+    }
   }
 
   /**
@@ -6205,6 +6268,9 @@ function renderEventDelivery(stimulus: EventStimulus): string {
  * so this stays a `trust: 'trusted'` harness turn carrying clearly-fenced untrusted data.
  */
 function eventDeliveryStimulus(input: {
+  /** The DURABLE event-row id — pass it so a steer's `input_ack` and the fresh turn's `onRegistered` both
+   *  stamp the same `stimuli` row. Omitted only by callers that don't drive delivery bookkeeping. */
+  id?: string;
   jobId: string;
   orgId: string;
   repoId: string;
@@ -6212,7 +6278,7 @@ function eventDeliveryStimulus(input: {
   seedRow?: SeedRow;
 }): ChatStimulus {
   return {
-    id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
+    id: input.id ?? randomUUID(),
     orgId: input.orgId,
     repoId: input.repoId,
     body: input.body, // already framed + fenced by renderEventDelivery

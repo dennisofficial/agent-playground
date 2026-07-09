@@ -213,6 +213,40 @@ describe('SandboxManager.reapOrphanedArtifacts', () => {
 
     expect(await manager(engine).reapOrphanedArtifacts()).toEqual({ networks: 0, volumes: 0 });
   });
+
+  it('protects an in-flight create: a `-net`/`-dind` whose container does not exist YET is not reaped', async () => {
+    // Simulates `attach` mid-create: the network/volume exist (ensureNetwork ran) but the container has not
+    // been created, so there is no live container name matching the stem. The create-stamp must protect it.
+    const { engine, removedNetworks, removedVolumes } = fakeEngine({
+      containers: [],
+      networks: ['atlas-sbx-inflight-net'],
+      volumes: ['atlas-sbx-inflight-dind'],
+    });
+    const mgr = manager(engine);
+    (mgr as unknown as { creating: Map<string, number> }).creating.set('atlas-sbx-inflight', Date.now());
+
+    expect(await mgr.reapOrphanedArtifacts()).toEqual({ networks: 0, volumes: 0 });
+    expect(removedNetworks).toEqual([]);
+    expect(removedVolumes).toEqual([]);
+  });
+
+  it('reaps once the create-stamp ages past the grace window, and prunes the stale stamp', async () => {
+    // A create that started but never produced a container (crash) leaves a stamp; after the grace window it
+    // must no longer protect the leaked artifacts, and the stale map entry is pruned.
+    const { engine, removedNetworks, removedVolumes } = fakeEngine({
+      containers: [],
+      networks: ['atlas-sbx-dead-net'],
+      volumes: ['atlas-sbx-dead-dind'],
+    });
+    const mgr = manager(engine);
+    const creating = (mgr as unknown as { creating: Map<string, number> }).creating;
+    creating.set('atlas-sbx-dead', Date.now() - 10 * 60 * 1000); // 10m ago — well past the 5m grace
+
+    expect(await mgr.reapOrphanedArtifacts()).toEqual({ networks: 1, volumes: 1 });
+    expect(removedNetworks).toEqual(['atlas-sbx-dead-net']);
+    expect(removedVolumes).toEqual(['atlas-sbx-dead-dind']);
+    expect(creating.has('atlas-sbx-dead')).toBe(false); // stale stamp pruned
+  });
 });
 
 describe('SandboxManager.teardownByIdentity', () => {
