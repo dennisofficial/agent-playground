@@ -82,7 +82,7 @@ them (you observe them, and can interject the current build turn).
 
 **Job brain — the host tools** (`agent-session-manager.service.ts` `buildTools`). ~15 tools, grouped:
 - *read/plan:* `get_pipeline_state`, `get_decision_record`, `submit_plan`, `finalize_plan`, `dispatch_build`
-- *decisions/questions:* `create_decision`, `ask_question`, `answer`, `promote_decisions`
+- *decisions/questions:* `create_decision`, `ask_question`, `answer`
 - *memory:* `recall`, `remember`
 - *spin-off / intake:* `create_job` (a NEW independent job on this repo — own base branch, starts scoping),
   `create_ticket` (a note for LATER, no work starts), `request_secret` (onboarding)

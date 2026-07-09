@@ -48,7 +48,7 @@ Two coordinated changes — prompt *asks*, contract *enforces*:
 - **Credential/env probe:** before any "no creds, skipping" is accepted, the agent must hit a real env/capability probe (what secrets are granted, what env is present). If creds exist, the excuse evaporates; if genuinely absent, it's a legitimate `blocked (needsEnv)` surfaced to the operator — not a `done`-with-a-caveat.
 
 ### 4. Terminal record routes to the brain
-The typed terminal record (a) is rendered to a durable `.atlas/threads/<id>/completion.md` (files-as-store, like the decision ledger), and (b) is delivered to the **job brain**, which triages each piece: next-thread handoff (finally populating the dead `orientation` hook), decision-ledger entry, operator card, or a `blocked` question that *cannot be silently filed*. This replaces the lossy 4000-char prose handoff as the source of truth while keeping thread→thread carry for the happy path. The driver stays the deterministic loop; the brain gains decision authority **at the boundaries** (it does not own control flow — see Alternatives).
+The typed terminal record (a) is rendered to a durable `.atlas/threads/<id>/completion.md` (a files-as-store pattern), and (b) is delivered to the **job brain**, which triages each piece: next-thread handoff (finally populating the dead `orientation` hook), a durable memory entry, operator card, or a `blocked` question that *cannot be silently filed*. This replaces the lossy 4000-char prose handoff as the source of truth while keeping thread→thread carry for the happy path. The driver stays the deterministic loop; the brain gains decision authority **at the boundaries** (it does not own control flow — see Alternatives).
 
 ## Consequences
 

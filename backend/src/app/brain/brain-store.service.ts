@@ -1582,47 +1582,6 @@ export class BrainStoreService {
     return toThread(row);
   }
 
-  // ── decision-ledger promotion spine (boot backstop + direct-path stamp) ──────────────────────────
-
-  /** Mark a thread's ledger promotion COMPLETE — stamped only after the promotion turn + commit succeed. */
-  async markLedgerPromoted(jobId: string): Promise<void> {
-    await this.jobs.update(
-      { id: jobId },
-      { ledger_promotion_status: 'complete', ledger_promoted_at: new Date() },
-    );
-  }
-
-  /**
-   * Boot backstop: SHIPPED threads (PR opened) whose ledger promotion never reached `complete` — the
-   * crash window after ship but before the ledger commit/stamp, plus a direct build whose brain skipped
-   * promotion. The startup sweep re-promotes each (idempotent) while its worktree is still live; once the
-   * PR merges + the worktree is torn down, there's nothing to write and the sweep skips it.
-   */
-  async threadsAwaitingLedgerPromotion(): Promise<Job[]> {
-    // `status: Not('running')` ENFORCES the backstop⇄driver disjointness invariant at the query level: a
-    // `running` job is owned by the driver's `resume()`, so excluding it here guarantees the backstop can
-    // never act on a job a live drive is finalizing (even if some future path set `pr_url` on a still-
-    // `running` row). Every legitimately-shipped row is `done` (`setPrReady` sets both atomically).
-    const rows = await this.jobs.find({
-      where: {
-        pr_url: Not(IsNull()),
-        status: Not('running'),
-        ledger_promotion_status: Not('complete'),
-      },
-    });
-    // `Not('complete')` excludes NULLs in SQL, so add the never-started rows explicitly.
-    const nullRows = await this.jobs.find({
-      where: { pr_url: Not(IsNull()), status: Not('running'), ledger_promotion_status: IsNull() },
-    });
-    // Onboarding threads never get `promote_decisions` (see `buildTools`) — there is nothing durable
-    // for them to promote by design, so they can never legitimately reach `complete`. Excluded here
-    // (not just left to `finish_onboarding`'s own stamp) so no future onboarding-ship path can
-    // resurrect the impossible `promote_decisions` harness turn against one.
-    return [...rows, ...nullRows]
-      .filter((row) => row.kind !== 'onboarding')
-      .map(toThread);
-  }
-
   // ── create_job tool ───────────────────────────────────────────────────────────────────────────
 
   /**

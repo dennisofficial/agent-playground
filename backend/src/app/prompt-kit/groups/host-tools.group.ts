@@ -34,7 +34,6 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__propose_plan         — send the reviewed plan to the operator for approval (FULL PATH; requires review_plan first; see below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__promote_decisions    — write durable cross-cutting decisions to the .atlas/decisions ledger (AT SHIP; see DECISION LEDGER)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__dispatch_build       — (gated) dispatch an already-approved full build`,
       `  - mcp__${BRIDGE_SERVER_NAME}__retry_thread         — re-drive a HALTED build thread you were woken about, passing {threadId, guidance} (your fix note); bounded attempts, then escalate (see HALTED THREADS)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__note_cleared_block   — record that you CLEARED a halt by RETRIEVING an existing answer, passing {threadId, reason, evidence} (the source you cited); call BEFORE retry_thread (see HALTED THREADS)`,

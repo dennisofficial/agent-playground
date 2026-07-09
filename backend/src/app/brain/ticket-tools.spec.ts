@@ -52,8 +52,6 @@ function makeManager(tickets: Partial<TicketService>) {
       onPromote: () => ({ unsubscribe() {} }),
       onDemote: () => ({ unsubscribe() {} }),
     } as never, // election
-    {} as never, // ledger
-    {} as never, // manifest
     {} as never, // turnRecovery
     {} as never, // secretStore
     {} as never, // configStore
