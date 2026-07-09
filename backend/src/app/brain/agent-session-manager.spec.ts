@@ -36,6 +36,7 @@ import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
+import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
 import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
@@ -1129,6 +1130,30 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // Conversely, reset_sandbox is a real tool but deliberately NOT on the profile bridge.
     expect(typeof tools['reset_sandbox']).toBe('function');
     expect(WORKSPACE_PROFILE_TOOL_NAMES as readonly string[]).not.toContain('reset_sandbox');
+  });
+
+  // Drift guard for the shared backend↔web contract (`ATLAS_HOST_BRIDGE_TOOLS` in @workspace/shared).
+  // The host-bridge tool set is `Object.keys(buildTools())` MINUS the workspace-profile server's tools,
+  // unioned across every session kind. This asserts the contract equals what the backend actually
+  // registers — so adding/renaming/removing a host tool fails CI unless the contract (and, being an
+  // exhaustive Record, the web label map) is updated in lockstep.
+  it('ATLAS_HOST_BRIDGE_TOOLS matches the host-bridge tools registered across all session kinds', () => {
+    const profile = new Set<string>(WORKSPACE_PROFILE_TOOL_NAMES);
+    const registered = new Set<string>();
+    for (const kind of [undefined, 'onboarding', 'review'] as const) {
+      for (const name of Object.keys(manager.buildTools(fakeStimulus, kind))) {
+        if (!profile.has(name)) registered.add(name);
+      }
+    }
+    const contract = new Set<string>(ATLAS_HOST_BRIDGE_TOOLS);
+    // Every registered host-bridge tool is in the contract (nothing unlisted)…
+    for (const name of registered) {
+      expect(contract.has(name), `registered host tool "${name}" missing from ATLAS_HOST_BRIDGE_TOOLS`).toBe(true);
+    }
+    // …and every contract entry is really registered (no stale name like the old `log_decision`).
+    for (const name of contract) {
+      expect(registered.has(name), `ATLAS_HOST_BRIDGE_TOOLS lists "${name}" but no kind registers it`).toBe(true);
+    }
   });
 
   it('finish_onboarding: no repo diff → marks onboarded, does NOT ship a PR', async () => {
