@@ -504,7 +504,9 @@ export class E2eHarness {
     const raw = Buffer.from(JSON.stringify(payload));
     const secret = process.env.GITHUB_WEBHOOK_SECRET as string;
     const signature = `sha256=${createHmac('sha256', secret).update(raw).digest('hex')}`;
-    const res = await fetch(`http://127.0.0.1:${this.serverPort}/ingress/github`, {
+    // NOTE: route-only (d6) — this WORK-EVENTS door now ROUTES to an owning job and never seeds; the
+    // unowned-CI scenarios in this manual harness need reworking to that model (not CI-run).
+    const res = await fetch(`http://127.0.0.1:${this.serverPort}/webhooks/github/events`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

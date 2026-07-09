@@ -9,7 +9,7 @@ import { Injectable } from '@nestjs/common';
 
 const API = 'https://api.github.com';
 
-/** Events delivered to the existing event→job intake front door (`/ingress/github`). */
+/** Events delivered to the WORK-EVENTS front door (`/webhooks/github/events`) → routed to the owning job. */
 export const WORK_EVENTS = [
   'workflow_run',
   'check_run',
@@ -18,7 +18,7 @@ export const WORK_EVENTS = [
   'pull_request_review_comment',
   'issue_comment',
 ];
-/** Events delivered to the silent PR-state-sync front door (`/webhooks/github`). */
+/** Events delivered to the silent PR-state-sync front door (`/webhooks/github/state`). */
 export const STATE_EVENTS = ['pull_request'];
 
 export interface OpenPullRequestArgs {
@@ -569,5 +569,37 @@ export class GithubPrService {
     );
     if (created.status === 403 || created.status === 404) return 'no-scope';
     return created.ok ? 'created' : 'error';
+  }
+
+  /**
+   * Delete any Atlas-owned webhooks on the repo that point at OUR backend (`urlPrefix`) but are NOT in
+   * `keepUrls` — the migration/prune that removes hooks at RENAMED or retired URLs (e.g. the old
+   * `/ingress/github` + `/webhooks/github` doors after the rename to `/webhooks/github/{events,state}`).
+   * Scoped to `urlPrefix` so third-party hooks (Vercel, Slack, …) are never touched. Idempotent + best
+   * effort: returns the count deleted; a lack of `admin:repo_hook` (403/404) is a silent no-op.
+   */
+  async pruneWebhooksExcept(
+    token: string,
+    args: { owner: string; repo: string; urlPrefix: string; keepUrls: string[] },
+  ): Promise<number> {
+    const list = await this.fetchImpl(
+      `${API}/repos/${args.owner}/${args.repo}/hooks`,
+      { headers: this.headers(token) },
+    );
+    if (!list.ok) return 0;
+    const hooks = (await list.json()) as Array<{ id: number; config?: { url?: string } }>;
+    const keep = new Set(args.keepUrls);
+    const stale = hooks.filter(
+      (h) => !!h.config?.url && h.config.url.startsWith(args.urlPrefix) && !keep.has(h.config.url),
+    );
+    let deleted = 0;
+    for (const h of stale) {
+      const res = await this.fetchImpl(
+        `${API}/repos/${args.owner}/${args.repo}/hooks/${h.id}`,
+        { method: 'DELETE', headers: this.headers(token) },
+      );
+      if (res.ok) deleted++;
+    }
+    return deleted;
   }
 }
