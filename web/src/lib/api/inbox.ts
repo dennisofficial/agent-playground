@@ -8,6 +8,7 @@ import { toJobStatus, toJobKind } from "./status";
 import type {
   WireJobStatus,
   WireJobKind,
+  WireJobHalt,
   JobStatus,
   JobKind,
   InboxPr,
@@ -37,6 +38,8 @@ export interface RawInboxThread {
   createdAt: string;
   /** The observed PR (null until one exists) — drives the sidebar PR-status glyph. */
   pr?: InboxPr | null;
+  /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
+  halt?: WireJobHalt | null;
   org: { id: string; slug?: string; name?: string };
   repo: { id: string; name?: string };
 }
@@ -53,6 +56,8 @@ export interface InboxThread {
   /** The observed PR (null until one exists) — when present the sidebar shows a PR-status glyph
    *  instead of the build `status` pie. */
   pr: InboxPr | null;
+  /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
+  halt: WireJobHalt | null;
   org: { id: string; slug: string; name: string };
   repo: { id: string; name: string };
 }
@@ -82,6 +87,7 @@ export function normalize(r: RawInboxThread): InboxThread {
     needsYou: r.needsYou,
     createdAt: r.createdAt,
     pr: r.pr ?? null,
+    halt: r.halt ?? null,
     org: {
       id: r.org.id,
       slug: r.org.slug ?? r.org.id,

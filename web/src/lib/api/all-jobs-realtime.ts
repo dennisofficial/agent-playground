@@ -7,7 +7,7 @@ import { qk } from "./query-keys";
 import { subscribeSse, type SseHandle } from "./sse-manager";
 import { uiStatus, type InboxThread } from "./inbox";
 import { toJobKind } from "./status";
-import type { WireJobKind, PrState } from "./types";
+import type { WireJobKind, WireJobHalt, PrState } from "./types";
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
@@ -33,6 +33,8 @@ interface RealtimeRow {
   prState?: string | null;
   /** GitHub mergeable_state ('dirty' = conflict); refines the open-PR glyph. */
   prMergeable?: string | null;
+  /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
+  halt?: WireJobHalt | null;
 }
 
 /** A pg-realtime delta (mirrors the backend `RowDelta`), plus the `disabled` control frame. */
@@ -95,6 +97,7 @@ export function useAllJobsRealtime(): void {
                 url: next[idx].pr?.url ?? null,
               }
             : null,
+          halt: row.halt ?? null,
         };
         return next;
       });

@@ -161,9 +161,7 @@ export function Navigator({
     !hasPr &&
     meta.status !== "done" &&
     meta.status !== "running" &&
-    meta.status !== "awaiting_ship_review" &&
-    meta.status !== "paused" &&
-    meta.status !== "failed";
+    meta.status !== "awaiting_ship_review";
   const [editing, setEditing] = useState(false);
 
   // Tickets Atlas raised FROM this job — the header "Tickets raised" entry appears only once there's ≥1.
@@ -942,7 +940,12 @@ function StateBanner({
   const onRetry = () => {
     retry.mutate(undefined, { onSuccess: onConversation });
   };
-  if (status === "failed") {
+  if (
+    job?.halt &&
+    (job.halt.kind === "failed" ||
+      job.halt.kind === "budget_exhausted" ||
+      job.halt.kind === "incomplete")
+  ) {
     const haltNo = job ? haltSectionNo(job) : null;
     return (
       <div
@@ -975,7 +978,7 @@ function StateBanner({
       </div>
     );
   }
-  if (status === "paused") {
+  if (job?.halt?.kind === "blocked_credentials") {
     return (
       <div
         className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
