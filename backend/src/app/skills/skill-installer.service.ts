@@ -1,6 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
@@ -11,8 +11,10 @@ import { parseSkillFrontmatter } from './skill-frontmatter';
 import { skillDirHost } from './skill-store-paths';
 import { type SkillView, WorkspaceSkillStore } from './workspace-skill.store';
 
-/** One `.claude-plugin/marketplace.json` — see the operator's `context-engineering-collection` for a real
- *  example. Only the fields the installer reads; the rest (owner/metadata/strict…) are ignored. */
+/** One `.claude-plugin/marketplace.json` — see `anthropics/skills` and the operator's
+ *  `context-engineering-collection` for real examples. `skills` is usually an explicit list, but the plugin
+ *  spec also allows omitting it entirely and letting consumers scan the plugin's `skills/` subdir (see
+ *  `pluginSkillRels`). Only the fields the installer reads; the rest (owner/metadata/strict…) are ignored. */
 interface MarketplaceManifest {
   plugins?: Array<{ source?: string; skills?: string[] }>;
 }
@@ -67,7 +69,13 @@ export class SkillInstallerService {
 
       const manifestPath = join(root, '.claude-plugin', 'marketplace.json');
       if (existsSync(manifestPath)) {
-        return this.installMarketplace(input, tmpDir, root, manifestPath, ref, sha);
+        // MUST be `await`ed here — a bare `return this.installMarketplace(...)` inside this try/finally
+        // returns the pending promise WITHOUT waiting on it, so the `finally` below starts deleting
+        // `tmpDir` while the expansion loop below is still reading skill dirs out of it. With a slow
+        // enough per-skill DB round trip (real Postgres, not a test's in-memory fake) the cleanup wins
+        // the race and every skill after the first reports "no SKILL.md" — exactly what happened
+        // installing the real `anthropics/skills` marketplace (17 skills in the manifest, 1 vendored).
+        return await this.installMarketplace(input, tmpDir, root, manifestPath, ref, sha);
       }
       if (!existsSync(join(root, 'SKILL.md'))) {
         throw new BadRequestException(
@@ -97,7 +105,7 @@ export class SkillInstallerService {
     const results: SkillView[] = [];
     for (const plugin of manifest.plugins ?? []) {
       const pluginDir = join(marketplaceRoot, plugin.source ?? './');
-      for (const skillRel of plugin.skills ?? []) {
+      for (const skillRel of pluginSkillRels(plugin, pluginDir)) {
         const skillDir = join(pluginDir, skillRel);
         if (!existsSync(join(skillDir, 'SKILL.md'))) {
           this.logger.warn(`marketplace ${input.sourceUrl}: skipping '${skillRel}' — no SKILL.md`);
@@ -161,4 +169,20 @@ export class SkillInstallerService {
  *  path segment or collide with the registry's PK shape. */
 function sanitizeName(name: string): string {
   return name.trim().replace(/[^a-z0-9_-]/gi, '-').replace(/^-+|-+$/g, '') || 'skill';
+}
+
+/**
+ * A plugin's skill paths (relative to `pluginDir`), covering both real-world marketplace shapes: an
+ * explicit `skills: ["./skills/foo", …]` list (`anthropics/skills`, `context-engineering-collection`), or
+ * — when a plugin omits `skills` entirely — the plugin-spec convention of a `skills/` subdir where every
+ * child directory containing a `SKILL.md` IS a skill (github.com/anthropics/claude-code plugin marketplace
+ * spec). A present-but-empty `skills: []` is treated as "none" (explicit opt-out), not a signal to scan.
+ */
+function pluginSkillRels(plugin: { skills?: string[] }, pluginDir: string): string[] {
+  if (plugin.skills && plugin.skills.length > 0) return plugin.skills;
+  const skillsDir = join(pluginDir, 'skills');
+  if (!existsSync(skillsDir)) return [];
+  return readdirSync(skillsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(join(skillsDir, e.name, 'SKILL.md')))
+    .map((e) => join('skills', e.name));
 }

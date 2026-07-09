@@ -196,11 +196,18 @@ export interface EngineCoreConfig {
    */
   skillsRoot?: string;
   /**
-   * Root of Atlas's own MANAGED (system-tier) skills a `managed: true` `RunEngineArgs.skills[].dirPath`
+   * Root of Atlas's own MANAGED (system-tier) STATIC skills a `managed: true` `RunEngineArgs.skills[].dirPath`
    * resolves against (from `SKILLS_MANAGED_ROOT` — in-sandbox, always `CONTAINER_SKILLS_MANAGED`, set by
    * `redis-engine-runner.ts`'s exec env). Undefined → the skills-compose step skips every managed skill.
    */
   managedSkillsRoot?: string;
+  /**
+   * Root of Atlas's own MANAGED (system-tier) GIT-SOURCED skills a `managedGit: true`
+   * `RunEngineArgs.skills[].dirPath` resolves against (from `SKILLS_MANAGED_GIT_ROOT` — in-sandbox, always
+   * `CONTAINER_SKILLS_MANAGED_GIT`, set by `redis-engine-runner.ts`'s exec env). Undefined → the
+   * skills-compose step skips every git-managed skill.
+   */
+  managedGitSkillsRoot?: string;
 }
 
 /**
@@ -443,30 +450,34 @@ export function applyConventionsToAgents(
 
 /**
  * Compose this turn's resolved skills into `<claudeConfigDir>/skills/` as write-through symlinks into the
- * central skills store — a `managed` skill from `managedSkillsRoot` (Atlas's own built-ins,
- * `CONTAINER_SKILLS_MANAGED`), every other skill from `skillsRoot` (the org-scoped store,
- * `CONTAINER_SKILLS_STORE`) — for the SDK to discover NATIVELY (`settingSources: ['user']` + `skills: 'all'`,
- * below) — no synthetic plugin. Idempotent wipe+rewrite EVERY turn (the config dir is durable across turns,
- * so a skill removed/disabled since last turn must not linger — same discipline the old plugin-render step
- * used). A skill whose source dir isn't actually on disk under its root yet (e.g. its DB row exists but
- * nothing installed/authored the files) is skipped rather than left as a dangling symlink. `SkillResolver`
- * already resolved precedence (a workspace skill overrides a managed one of the same name) into ONE entry
- * per name, so this step never sees both — it just symlinks whichever root each entry says.
+ * central skills store — a `managed` skill from `managedSkillsRoot` (Atlas's own STATIC built-ins,
+ * `CONTAINER_SKILLS_MANAGED`), a `managedGit` skill from `managedGitSkillsRoot` (Atlas's GIT-SOURCED
+ * built-ins, synced by `ManagedSkillSyncService`, `CONTAINER_SKILLS_MANAGED_GIT`), every other skill from
+ * `skillsRoot` (the org-scoped store, `CONTAINER_SKILLS_STORE`) — for the SDK to discover NATIVELY
+ * (`settingSources: ['user']` + `skills: 'all'`, below) — no synthetic plugin. Idempotent wipe+rewrite
+ * EVERY turn (the config dir is durable across turns, so a skill removed/disabled since last turn must not
+ * linger — same discipline the old plugin-render step used). A skill whose source dir isn't actually on
+ * disk under its root yet (e.g. its DB row exists but nothing installed/authored the files, OR a
+ * `managedGit` entry `ManagedSkillSyncService` hasn't vendored yet) is skipped rather than left as a
+ * dangling symlink. `SkillResolver` already resolved precedence (a workspace skill overrides a managed one
+ * of the same name) into ONE entry per name, so this step never sees more than one root per entry — it
+ * just symlinks whichever root each entry says.
  */
 export function composeSkillsDir(
   claudeConfigDir: string,
   skills: RunEngineArgs['skills'],
   skillsRoot: string | undefined,
   managedSkillsRoot: string | undefined,
+  managedGitSkillsRoot?: string,
 ): void {
   const skillsDir = join(claudeConfigDir, 'skills');
   rmSync(skillsDir, { recursive: true, force: true });
-  if (!skills || skills.length === 0 || (!skillsRoot && !managedSkillsRoot)) return;
+  if (!skills || skills.length === 0 || (!skillsRoot && !managedSkillsRoot && !managedGitSkillsRoot)) return;
   mkdirSync(skillsDir, { recursive: true });
   for (const skill of skills) {
     // Defensive: skill names are validated kebab at authoring time, but never let one escape skillsDir.
     const safeName = skill.name.replace(/[^a-z0-9_-]/gi, '-') || 'skill';
-    const root = skill.managed ? managedSkillsRoot : skillsRoot;
+    const root = skill.managedGit ? managedGitSkillsRoot : skill.managed ? managedSkillsRoot : skillsRoot;
     if (!root) continue;
     const source = join(root, skill.dirPath);
     if (!existsSync(source)) continue;
@@ -502,6 +513,10 @@ export class EngineCore {
 
   private managedSkillsRoot(): string | undefined {
     return this.cfg.managedSkillsRoot;
+  }
+
+  private managedGitSkillsRoot(): string | undefined {
+    return this.cfg.managedGitSkillsRoot;
   }
 
   /**
@@ -711,7 +726,13 @@ export class EngineCore {
     // `<claudeConfigDir>/skills/` as write-through symlinks into the central skills store, for the SDK to
     // discover NATIVELY (settingSources 'user' + skills 'all' below). Re-composed every turn (wipes a
     // removed/disabled skill); a no-op wipe when the turn carries none.
-    composeSkillsDir(claudeConfigDir, args.skills, this.skillsRoot(), this.managedSkillsRoot());
+    composeSkillsDir(
+      claudeConfigDir,
+      args.skills,
+      this.skillsRoot(),
+      this.managedSkillsRoot(),
+      this.managedGitSkillsRoot(),
+    );
 
     const options: Options = {
       cwd,
