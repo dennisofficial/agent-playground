@@ -3,7 +3,8 @@ import { deriveNeedsYou } from './job';
 
 /**
  * `deriveNeedsYou` is the single server-owned definition of the sidebar "alert dot": a thread needs the
- * operator when the AI is NOT actively working (no live turn, no running build) and is NOT terminal.
+ * operator when the AI is NOT actively working (no live turn, no running build), is NOT terminal, and is
+ * NOT halted (the separate failure/pause axis).
  */
 describe('deriveNeedsYou', () => {
   it('is false while a conversational turn is streaming, regardless of status', () => {
@@ -12,8 +13,8 @@ describe('deriveNeedsYou', () => {
       'planning',
       'awaiting_approval',
       'running',
-      'paused',
-      'failed',
+      'awaiting_ship_review',
+      'plan_review',
     ]) {
       expect(deriveNeedsYou(status, true, false, false)).toBe(false);
     }
@@ -31,10 +32,16 @@ describe('deriveNeedsYou', () => {
   it('is true when idle and waiting on the operator', () => {
     expect(deriveNeedsYou('awaiting_approval', false, false, false)).toBe(true);
     expect(deriveNeedsYou('awaiting_ship_review', false, false, false)).toBe(true); // parked at the ship gate
-    expect(deriveNeedsYou('paused', false, false, false)).toBe(true);
     expect(deriveNeedsYou('planning', false, false, false)).toBe(true); // grilling, between turns
     expect(deriveNeedsYou('open', false, false, false)).toBe(true);
-    expect(deriveNeedsYou('failed', false, false, false)).toBe(true); // failed run needs you to act
+  });
+
+  it('is true when halted (the failure/pause axis), whatever phase it halted in', () => {
+    // `status` is now the pure build phase; failure / credential / budget / incomplete halts live on the
+    // separate halt field. A halted job always needs you — even under a phase that is otherwise not a
+    // needs-you state, like `running` (the old `failed`/`paused` status values used to encode this).
+    expect(deriveNeedsYou('running', false, false, true)).toBe(true);
+    expect(deriveNeedsYou('awaiting_ship_review', false, false, true)).toBe(true);
   });
 
   it('is true when blocked on the durable question gate, even when otherwise idle', () => {
@@ -52,12 +59,13 @@ describe('deriveNeedsYou', () => {
     expect(deriveNeedsYou('done', false, true, false)).toBe(true);
   });
 
-  it('a deleting job never needs you — it wins even over the question gate', () => {
+  it('a deleting job never needs you — it wins even over the question gate and a halt', () => {
     // The job is being torn down and about to vanish; it must never light the sidebar dot, regardless of
-    // a stray open question or live turn (deleting is checked before the question gate).
+    // a stray open question, a live turn, or a halt (deleting is checked before every other axis).
     expect(deriveNeedsYou('deleting', false, false, false)).toBe(false);
     expect(deriveNeedsYou('deleting', false, true, false)).toBe(false);
     expect(deriveNeedsYou('deleting', true, true, false)).toBe(false);
+    expect(deriveNeedsYou('deleting', false, false, true)).toBe(false);
   });
 
   it('halted signals needs-you even when actively working (running/plan_review)', () => {
@@ -65,9 +73,5 @@ describe('deriveNeedsYou', () => {
     expect(deriveNeedsYou('running', true, false, true)).toBe(true); // even mid-turn
     expect(deriveNeedsYou('planning', false, false, true)).toBe(true);
     expect(deriveNeedsYou('plan_review', false, false, true)).toBe(true);
-  });
-
-  it('deleting still wins over halted', () => {
-    expect(deriveNeedsYou('deleting', false, false, true)).toBe(false);
   });
 });

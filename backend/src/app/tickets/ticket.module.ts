@@ -8,6 +8,7 @@ import {
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
+import { MemoryModule } from '../memory';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -45,6 +46,9 @@ import { TicketService } from './ticket.service';
       ],
       DB_CONNECTION,
     ),
+    // For `EMBEDDING_PROVIDER` (semantic ticket dedup). MemoryModule depends only on TypeORM +
+    // CredentialResolver (@Global), so importing it here introduces no cycle.
+    MemoryModule,
   ],
   controllers: [TicketController],
   providers: [TicketService, TicketEventBus],

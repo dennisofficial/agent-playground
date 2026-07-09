@@ -3,6 +3,7 @@ import {
   RealtimeRuleGuard,
   type Row,
 } from '@workspace/pg-realtime';
+import type { JobHalt } from '@workspace/shared';
 import { deriveNeedsYou } from '../domain/job';
 
 /**
@@ -48,6 +49,8 @@ export interface ThreadRealtimeRow extends Row {
   prMergeable: string | null;
   /** Observed PR lifecycle ('open'|'merged'|'closed'|null) — drives the sidebar PR-status glyph. */
   prState: string | null;
+  /** Null when healthy; when set, the sidebar renders a red halt overlay from it. */
+  halt: JobHalt | null;
 }
 
 /** Row-level scope: a user may stream only threads belonging to an org they are a member of. */
@@ -80,7 +83,12 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     status,
     turnActive,
     halted,
-    needsYou: deriveNeedsYou(status, turnActive, awaitingQuestion, halted),
+    needsYou: deriveNeedsYou(
+      status,
+      turnActive,
+      awaitingQuestion,
+      halted || raw.halt != null,
+    ),
     createdAt:
       createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
     orgId: String(raw.org_id),
@@ -90,6 +98,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     ciStatus: (raw.ci_status as string | null) ?? null,
     prMergeable: (raw.pr_mergeable as string | null) ?? null,
     prState: (raw.pr_state as string | null) ?? null,
+    halt: (raw.halt as JobHalt | null) ?? null,
   };
 }
 
@@ -97,6 +106,9 @@ function mapRow(raw: Row): ThreadRealtimeRow {
 export const THREADS_MODEL: ModelConfig<ThreadRealtimeRow> = {
   table: 'jobs',
   primaryKey: 'id',
+  // `halt` is jsonb. On UPDATE, pgoutput may omit an unchanged TOASTed jsonb value; refetch so status-only
+  // or turn-active deltas never accidentally map an existing halt to null in the sidebar cache.
+  refetchOnUpdate: true,
   mapRow,
   guard: new ThreadOrgGuard(),
 };

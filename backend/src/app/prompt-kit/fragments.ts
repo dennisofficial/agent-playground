@@ -91,13 +91,6 @@ export const TASK_LIST_NOTE =
   "and drop ones that become moot (`TaskUpdate` with `status:'deleted'`). A stale checklist is worse than none.";
 
 /**
- * Commit message for the ledger-only commit that records durable decisions into `.atlas/decisions/`.
- * Shared so the driver and the brain don't drift on the string.
- */
-export const LEDGER_COMMIT_MESSAGE =
-  'Atlas: record durable decisions in .atlas/decisions';
-
-/**
  * The canonical "what a code review covers" list — the single home so every review surface (the ship-time
  * master review + the `review` subagent) hunts the SAME dimensions and the final gate can't be narrower
  * than the per-step one. A noun-phrase list meant to slot into "find …". The autofix lenses

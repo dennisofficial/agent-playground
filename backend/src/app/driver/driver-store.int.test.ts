@@ -418,7 +418,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    // `no_job` still carries the brain's own task list — the navigator's Main row shows it pre-plan.
+    // `no_job` still carries the brain's own task list + default footer — the navigator's Main row shows it
+    // pre-plan, before the job has entered the build lifecycle.
     expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({
       status: 'no_job',
       mainTasks: [],

@@ -57,6 +57,7 @@ import {
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { TicketService } from '../tickets';
+import { SkillUpdaterService } from '../skills/skill-updater.service';
 import {
   DRIVER_REPO,
   type DriverRepoResolver,
@@ -135,11 +136,24 @@ class FakeGitService {
     return { ...sandbox, branch: featureBranch };
   }
 
-  async refExists(): Promise<boolean> {
-    return true;
+  async refExists(_repoPath: string, ref: string): Promise<boolean> {
+    const branch = ref.replace(/^refs\/heads\//, '');
+    return branch === FAKE_BASE_BRANCH || this.branches.includes(branch);
   }
 
-  // Provision-path no-ops (no real git/cache/submodules/index in the fake).
+  // Provision-path no-ops (no real git/cache/submodules/index in the fake). The fake repo never carries
+  // a `.gitmodules`, so it always takes the plain-worktree path (never the full-clone submodule path).
+  async hasSubmodules(): Promise<boolean> {
+    return false;
+  }
+
+  async createBaseClone(
+    repo: ProjectRepo,
+    jobId: string,
+  ): Promise<FeatureSandbox> {
+    return this.createBaseWorktree(repo, jobId);
+  }
+
   async ensureSubmodules(): Promise<void> {}
   async isIgnored(): Promise<boolean> {
     return true;
@@ -278,6 +292,10 @@ beforeEach(async () => {
           openPullRequest: async () => ({ url: '', existing: false }),
           getPullState: async () => 'open',
         },
+      },
+      {
+        provide: SkillUpdaterService,
+        useValue: { reconcileOrgAsync: () => undefined },
       },
       {
         provide: DRIVER_REPO,
@@ -779,6 +797,10 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
             openPullRequest: async () => ({ url: '', existing: false }),
             getPullState: async () => 'open',
           },
+        },
+        {
+          provide: SkillUpdaterService,
+          useValue: { reconcileOrgAsync: () => undefined },
         },
         {
           provide: DRIVER_REPO,

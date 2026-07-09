@@ -65,7 +65,7 @@ import {
 import { DriverStoreService } from '../driver/driver-store.service';
 import { BuildShipService } from '../driver/build-ship.service';
 import { threadDirName } from '../driver/thread-dir-name';
-import { Agent, LEDGER_COMMIT_MESSAGE, PromptService } from '../prompt-kit';
+import { Agent, PromptService } from '../prompt-kit';
 // The ledger-promotion prompt is delivered as a TASK message (`body:`), not a system prompt; the brain's
 // system prompt is assembled from fragments via `PromptService.generate`.
 import { LEDGER_PROMOTION_TURN, decisionsBlock, shipOpenPrBody } from '../prompt-kit';
@@ -77,6 +77,17 @@ import {
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/render-plan';
+import {
+  LIVE_VERIFICATION_JUDGE,
+  type LiveVerificationJudge,
+  type LiveVerificationVerdict,
+} from '../driver/live-verification-judge';
+import {
+  NON_RUNTIME_FILE_RE,
+  renderLockedDecisionsSummary,
+  renderTerminalRecordSummary,
+  type VerificationEvidence,
+} from '../driver/live-verification-support';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { McpResolver, McpServerStore } from '../mcp';
@@ -96,6 +107,7 @@ import { TicketService } from '../tickets';
 import type {
   TicketKind,
   TicketPriority,
+  TicketSimilarItem,
   TicketStatus,
 } from '../domain/ticket';
 import {
@@ -218,12 +230,17 @@ export class AgentSessionManager
   private static readonly MAX_BENIGN_ABORT_REDRIVES = 2;
 
   // ── reset_sandbox bookkeeping (all keyed `orgId:jobId`, in-memory, per-process) ─────────────────
-  /** "Tear down before the verify turn": set by the `reset_sandbox` tool, consumed by the turn tail. */
-  private readonly resetRequests = new Map<string, { reason: string }>();
+  /** "Tear down before the verify turn": set by the `reset_sandbox` tool, consumed by the turn tail. `hard`
+   *  ⇒ a from-scratch worktree + container re-provision (vs the default container-only reset). */
+  private readonly resetRequests = new Map<string, { reason: string; hard?: boolean }>();
   /** After a teardown, the verify framing is owed to the FIRST cold-attached turn (operator or synthetic). */
   private readonly pendingResetVerify = new Set<string>();
   /** Consecutive autonomous resets — incremented by the tool, cleared ONLY on an operator turn (loop guard). */
   private readonly consecutiveResets = new Map<string, number>();
+  /** Two-call confirm for `reset_sandbox({ hard:true })`: the FIRST hard call arms this (returns a notice of
+   *  what happens / what's lost, does NOT reset); the SECOND actually queues the hard reset. Cleared on any
+   *  operator turn, so a stale arm can't fire a later reset the operator didn't just ask for. */
+  private readonly pendingHardReset = new Set<string>();
   /** Set by `finalize_build` when a direct-build ship is committed and about to open its PR inline; consumed
    *  by the turn-end latch in `runChatTurn` (records the PR + flips done + promotes the ledger promptly). */
   private readonly directBuildShipPending = new Map<string, boolean>();
@@ -295,6 +312,10 @@ export class AgentSessionManager
     // The shared send seam — the brain registers its `main`-lane transport (the durable steer/fresh-turn
     // pump) so a generic caller can `postToThread(laneFor('main', jobId), …)` without knowing it's the brain.
     private readonly threadInput: ThreadInputService,
+    // ADR-0005 live-verification judge — the SAME port the driver's per-thread gate uses (shared @Global
+    // LiveVerificationModule). Gates the direct-build `finalize_build` ship: a runtime diff must be exercised
+    // live (curl / drive / run), not merely typechecked, before the PR opens.
+    @Inject(LIVE_VERIFICATION_JUDGE) private readonly liveVerificationJudge: LiveVerificationJudge,
     // Durable per-model usage/cost analytics (best-effort) for brain + compaction turns. @Optional so
     // unit tests can construct the manager without wiring analytics; DI (@Global) supplies it live.
     @Optional() private readonly usageProjector?: TurnUsageProjector,
@@ -831,20 +852,14 @@ export class AgentSessionManager
     const rec = (await this.driverStore
       .getDecisionRecord(thread.id)
       .catch(() => null)) as { overview: string; decisions: Decision[] } | null;
-    // No `notify` — a silent recovery commit must not re-post "PR ready".
-    const outcome = await this.ship.ship({
-      job: thread,
-      record: rec,
-      repo,
-      sandbox,
-      commitMessage: LEDGER_COMMIT_MESSAGE,
-    });
-    // Stamp complete once the ship turn actually ran (`opened`) — the ledger commit + branch push happen
-    // unconditionally inside `ship()` before it even checks for an open PR (see `BuildShipService.ship`), so
-    // the files are on the remote regardless of `prConfirmed`, which only reflects a GitHub API lookup that
-    // can lag right after `gh pr create`. Gating on `prConfirmed` here just re-selects this row (and re-runs
-    // the promote turn on an empty delta) on every boot until GitHub's list endpoint catches up.
-    if (outcome.opened) {
+    // No `notify` — a silent recovery ship must not re-post "PR ready".
+    const outcome = await this.ship.ship({ job: thread, record: rec, repo, sandbox });
+    // Stamp complete only once the ledger is PROVEN committed. The host no longer commits the ledger; the
+    // brain's `openPrAtShip` turn (awaited inside `ship()`) commits + pushes the `.atlas/decisions/` files.
+    // `ledgerClean` (nothing pending under `.atlas/decisions/`) after that awaited turn is positive proof the
+    // files landed — stronger than `opened` alone (which only means the turn ran). If not clean, leave the row
+    // for the next boot's reconcile pass rather than falsely marking it complete.
+    if (outcome.opened && (await this.git.ledgerClean(sandbox.worktreePath))) {
       await this.store.markLedgerPromoted(thread.id);
     }
   }
@@ -1564,6 +1579,23 @@ export class AgentSessionManager
     // on `sandbox.branch`, so hand it the live branch, mirroring the full ship path.
     const liveSandbox = { ...sandbox, branch: job.currentBranch ?? sandbox.branch };
     await this.ship.latchPr(job, repo, liveSandbox).catch(() => undefined);
+
+    // STAMP the ledger-promotion spine COMPLETE now — at TURN END, the direct-build turn has already committed
+    // + pushed everything it wrote this turn (the code changes AND the host-written `.atlas/decisions/` ledger
+    // files), because `finalize_build` returned `shipOpenPrBody` and the brain committed+pushed+opened the PR
+    // inline before this `finally` runs. The host no longer commits the ledger, so we require POSITIVE proof
+    // it landed: `ledgerClean` (nothing pending under `.atlas/decisions/`). If clean, stamp so the boot
+    // backstop never re-fires a redundant promote+open-PR turn against the already-open PR; if NOT clean (the
+    // brain skipped/failed the commit), leave the row for `reconcileLedgerPromotion` to re-promote at boot.
+    if (await this.git.ledgerClean(sandbox.worktreePath)) {
+      await this.store
+        .markLedgerPromoted(job.id)
+        .catch((err) =>
+          this.logger.warn(
+            `markLedgerPromoted failed for direct build=${job.id} (harmless — boot backstop would re-fire): ${err}`,
+          ),
+        );
+    }
   }
 
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
@@ -1576,8 +1608,13 @@ export class AgentSessionManager
   ): Promise<void> {
     const resetKey = `${stimulus.orgId}:${stimulus.jobId}`;
     // A real operator turn breaks any autonomous reset→verify→reset spiral — clear the loop counter so
-    // operator-driven resets never trip the guard (only unattended self-resets accumulate).
-    if (isOperatorAuthored(stimulus)) this.consecutiveResets.delete(resetKey);
+    // operator-driven resets never trip the guard (only unattended self-resets accumulate). Also disarm any
+    // pending hard-reset confirm: the two `hard:true` calls must be consecutive within one autonomous stretch,
+    // never split across an operator message that might have changed the intent.
+    if (isOperatorAuthored(stimulus)) {
+      this.consecutiveResets.delete(resetKey);
+      this.pendingHardReset.delete(resetKey);
+    }
     // Reset-verify continuation no-op: the verify instruction rides the reset-notice, consumed by whichever
     // turn cold-attaches FIRST. If an earlier turn (e.g. a queued operator message) already consumed it,
     // this synthetic wake has nothing to do — drop it rather than run a redundant turn on the warm box.
@@ -2286,14 +2323,19 @@ export class AgentSessionManager
     const req = this.resetRequests.get(key);
     if (!req) return;
     this.resetRequests.delete(key);
-    this.logger.log(`reset_sandbox: honoring reset for thread=${stimulus.jobId} (reason: ${req.reason}) — tearing down`);
+    this.logger.log(
+      `reset_sandbox: honoring ${req.hard ? 'HARD ' : ''}reset for thread=${stimulus.jobId} (reason: ${req.reason}) — tearing down`,
+    );
 
-    const res = await this.lifecycle
-      .resetContainer(stimulus.jobId, stimulus.orgId)
-      .catch((err) => {
-        this.logger.warn(`reset_sandbox teardown failed for thread=${stimulus.jobId}: ${err}`);
-        return { reset: false, reason: 'no-container' } as const;
-      });
+    // HARD reset re-provisions the whole sandbox (worktree + container, session preserved); the default reset
+    // recreates only the container. Both keep `session_id`, so the fresh box resumes the same brain session.
+    const res = await (req.hard
+      ? this.lifecycle.hardResetSandbox(stimulus.jobId, stimulus.orgId)
+      : this.lifecycle.resetContainer(stimulus.jobId, stimulus.orgId)
+    ).catch((err) => {
+      this.logger.warn(`reset_sandbox ${req.hard ? 'hard-' : ''}teardown failed for thread=${stimulus.jobId}: ${err}`);
+      return { reset: false, reason: 'no-container' } as const;
+    });
 
     if (!res.reset) {
       this.logger.log(`reset_sandbox: skipped for thread=${stimulus.jobId} — ${res.reason}`);
@@ -2416,11 +2458,40 @@ export class AgentSessionManager
     // `report_verification` before `finalize_build` will ship. Reset per turn (this closure is rebuilt fresh
     // at turn start / boot re-attach — see `buildTools` call sites), so a later turn must re-verify.
     let directBuildVerified = false;
+    // The STRUCTURED live-verification evidence the brain reports alongside `passed` — the substance the
+    // ADR-0005 judge grades in `finalize_build` (a bare boolean gives it nothing to judge). Mirrors the
+    // driver's `complete_thread` `verification[]` shape. Turn-local (reset with `directBuildVerified`).
+    let directBuildVerification: VerificationEvidence[] = [];
 
     const tools: Record<string, ToolImpl> = {
       report_verification: async (args) => {
         const passed = args['passed'] === true;
         directBuildVerified = passed;
+        // Coerce `verification` with the SAME tolerant logic as the driver's `complete_thread`
+        // (`thread-driver.service.ts`): an array of {kind,command,exitCode,outputTail} (filtered on a real
+        // command), OR a free-text string collapsed into one `reported` entry — never silently drop evidence.
+        directBuildVerification = Array.isArray(args['verification'])
+          ? (args['verification'] as unknown[])
+              .map((e) => {
+                const o = (e ?? {}) as Record<string, unknown>;
+                return {
+                  kind: String(o['kind'] ?? '').trim(),
+                  command: String(o['command'] ?? '').trim(),
+                  exitCode: Number.isFinite(Number(o['exitCode'])) ? Number(o['exitCode']) : -1,
+                  outputTail: String(o['outputTail'] ?? '').slice(0, 2000),
+                };
+              })
+              .filter((v) => v.command)
+          : typeof args['verification'] === 'string' && args['verification'].trim()
+            ? [
+                {
+                  kind: 'reported',
+                  command: '(see outputTail)',
+                  exitCode: 0,
+                  outputTail: (args['verification'] as string).trim().slice(0, 2000),
+                },
+              ]
+            : [];
         if (passed) return { ok: true };
         const remaining = Array.isArray(args['remaining'])
           ? (args['remaining'] as unknown[]).map((x) => String(x).trim()).filter(Boolean)
@@ -2913,10 +2984,10 @@ export class AgentSessionManager
             reason: 'No job on this thread — call submit_plan first',
           };
         }
-        if (job.status !== 'running') {
+        if (job.status !== 'running' || job.halt != null) {
           return {
             ok: false,
-            reason: `Job ${job.id} is in status '${job.status}' — only 'running' (approved) jobs can be dispatched`,
+            reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ` and halted (${job.halt.kind})` : ''} — only 'running' (approved), un-halted jobs can be dispatched`,
           };
         }
         await this.dispatcher.dispatch(job);
@@ -3125,58 +3196,111 @@ export class AgentSessionManager
         } | null;
         const repo = await this.repos.resolve(job);
 
-        // HOST PRE-SHIP GATE only (commit + no-token + leak-scan). We are ALREADY inside this brain turn, so
-        // we cannot seed a nested open-PR turn (that is the driver/boot ship path). Once the branch is clean,
-        // hand `shipOpenPrBody` back as the tool result so the brain — still in THIS turn — reconciles,
-        // pushes, and opens the PR itself. The git-state reconciler then records `pr_url` + flips the job
-        // `done` on discovery (and the ledger boot-backstop reconciles the now-shipped row).
-        const pre = await this.ship.preShip(
-          job,
-          repo,
-          sandbox,
-          `Atlas direct build — ${job.title ?? 'change'}`,
-          (m) => this.say(stimulus, m),
+        // ADR-0005 LIVE-VERIFICATION GATE (direct-build analog of the driver's `complete_thread` gate). A
+        // direct build that touched a runtime surface must have been EXERCISED LIVE (curl / drive / run),
+        // not just typechecked — the judge grades the structured evidence the brain reported via
+        // `report_verification`. Runs BEFORE `preShip`, mirroring the driver's pre-persist gate; the base ref
+        // is `origin/<default>` (same ref preShip's leak-scan uses), and `changedFileNames` unions untracked
+        // files so the brain's still-uncommitted direct-build changes are seen pre-commit. On a
+        // touched-but-inadequate verdict this REFUSES the tool (synchronous, mid-turn) — the brain reads the
+        // reason, does the live run, and calls `finalize_build` again. Fail-closed + always-on (mirrors the
+        // driver: no key / malformed / throw → touched-but-unverified), no rollout dial.
+        const changedFiles = await this.git.changedFileNames(
+          sandbox.worktreePath,
+          `origin/${repo.defaultBranch}`,
         );
+        const nonRuntime =
+          changedFiles.length === 0 || changedFiles.every((f) => NON_RUNTIME_FILE_RE.test(f));
+        let verdict: LiveVerificationVerdict | undefined;
+        if (!nonRuntime) {
+          verdict = await this.liveVerificationJudge
+            .judge({
+              terminalRecordSummary: renderTerminalRecordSummary({
+                summary: rec?.overview ?? job.title ?? 'direct build',
+                verification: directBuildVerification,
+              }),
+              changedFiles,
+              lockedDecisionsSummary: renderLockedDecisionsSummary(
+                rec ? { decisions: rec.decisions } : null,
+              ),
+              orgId: stimulus.orgId,
+            })
+            .catch(() => undefined);
+        }
+        const effective: LiveVerificationVerdict = nonRuntime
+          ? {
+              runtimeSurfaceTouched: false,
+              liveVerificationAdequate: true,
+              reason: 'non-runtime file set (pre-filter)',
+            }
+          : (verdict ?? {
+              runtimeSurfaceTouched: true,
+              liveVerificationAdequate: false,
+              reason: 'live-verification judge unavailable',
+            });
+        // Persist on BOTH paths (pass + refusal) so direct-build verdicts are queryable — the observability
+        // hook the prod audit needs. Best-effort; a write failure must never wedge the ship turn.
+        await this.store
+          .recordDirectBuildVerification(jobId, { verdict: effective, at: new Date().toISOString() })
+          .catch((err) => this.logger.debug(`recordDirectBuildVerification failed: ${err}`));
+        if (effective.runtimeSurfaceTouched && !effective.liveVerificationAdequate) {
+          let detail = [effective.reason, effective.missingChecks].filter(Boolean).join(' — ');
+          // Distinguish "no key configured" from a generic judge failure so the operator isn't left guessing
+          // (mirrors the driver gate). Only when the judge was actually consulted (runtime diff) but returned
+          // nothing.
+          if (!nonRuntime && !verdict) {
+            const hasKey = await this.creds.anthropicKey(stimulus.orgId).catch(() => undefined);
+            if (!hasKey) {
+              detail = `no Anthropic API key configured for the live-verification judge — configure one. (${detail})`;
+            }
+          }
+          await this.store.appendSystemEvent(
+            jobId,
+            `Live-verification gate blocked the direct-build ship — ${detail}`,
+          );
+          return {
+            ok: false,
+            jobId,
+            reason:
+              `Live validation inadequate — ${detail}. Actually exercise the changed runtime surface ` +
+              `(curl the endpoint / drive the UI / run the CLI), re-report_verification with the captured ` +
+              `evidence, then finalize_build again.`,
+          };
+        }
+
+        // HOST PRE-SHIP GATE only (no-token + leak-scan — the host NEVER commits). We are ALREADY inside this
+        // brain turn, so we cannot seed a nested open-PR turn (that is the driver/boot ship path). Hand
+        // `shipOpenPrBody` back as the tool result so the brain — still in THIS turn — commits anything
+        // uncommitted (its code changes AND the host-written `.atlas/decisions/` ledger files), reconciles,
+        // pushes, and opens the PR itself. The git-state reconciler then records `pr_url` + flips the job
+        // `done` on discovery, and `latchDirectBuildAtTurnEnd` latches the PR + stamps the ledger complete
+        // once the turn's commit is proven landed (`ledgerClean`).
+        const pre = await this.ship.preShip(job, repo, sandbox, (m) => this.say(stimulus, m));
 
         if (!pre.ok) {
           if (pre.reason === 'leak-scan') {
-            // Hard security block — a hydrated secret/seed path was committed on the branch. NOT ok: the
-            // brain must clean the branch history before it can ship.
+            // Hard security block — a hydrated secret/seed path is on the branch (committed OR staged in the
+            // working tree). NOT ok: the brain must clean it before it can ship.
             return {
               ok: false,
               jobId,
               reason:
-                `PR blocked by the pre-ship security scan — a managed secret/seed file was committed on ` +
+                `PR blocked by the pre-ship security scan — a managed secret/seed file is on ` +
                 `this branch: ${pre.leaked.join(', ')}. Remove it from the branch history and retry.`,
             };
           }
           return {
             ok: true,
             jobId,
-            message: 'Committed, but no GitHub token is configured — PR not opened.',
+            message: 'No GitHub token is configured — PR not opened. Commit your work; connect a token to ship.',
           };
         }
 
-        // STAMP the ledger-promotion spine COMPLETE inline. On the direct path the brain runs
-        // `promote_decisions` before `finalize_build`, and `preShip` just committed those files — so promotion
-        // is already done. Stamping here (mirrors the driver path's `markLedgerPromoted` in
-        // `ThreadDriver.finalizeBuild`) stops the boot backstop `threadsAwaitingLedgerPromotion` from
-        // re-selecting this shipped row and re-firing a redundant promote + open-PR turn against the
-        // already-open PR. Safe before the inline PR-open resolves: the backstop only ever acts on `pr_url`-set
-        // rows, and `setPrReady`'s partial update preserves this status. Fail-soft — a failed stamp only means
-        // the (idempotent) backstop would still re-fire.
-        await this.store
-          .markLedgerPromoted(jobId)
-          .catch((err) =>
-            this.logger.warn(
-              `markLedgerPromoted failed for direct build=${jobId} (harmless — boot backstop would re-fire): ${err}`,
-            ),
-          );
-
-        // The brain opens the PR inline later in THIS turn; flag the job so the turn-end latch records the
-        // PR + flips running→done the moment the turn completes (decision d3), rather than waiting on the
-        // 30-min reconciler. Ledger promotion is NOT redone at turn-end — it was just stamped complete above.
-        // A latch miss leaves the job running for the reconciler backstop.
+        // The brain opens the PR inline later in THIS turn; flag the job so the turn-end latch
+        // (`latchDirectBuildAtTurnEnd`) records the PR + flips running→done the moment the turn completes,
+        // rather than waiting on the reconciler. That same latch stamps the ledger-promotion spine complete
+        // (gated on `ledgerClean`) — the ledger is committed by the brain's inline open-PR push, so the stamp
+        // must wait until AFTER this turn's commit lands. A latch miss leaves the job for the boot backstop.
         this.directBuildShipPending.set(jobId, true);
         return {
           ok: true,
@@ -3338,6 +3462,39 @@ export class AgentSessionManager
         if (args['kind'] != null && !kind)
           return { ok: false, reason: `invalid kind: ${String(args['kind'])}` };
 
+        const body = optStr(args['body']);
+
+        // Semantic dedup: unless the model has explicitly confirmed, surface any near-duplicate tickets
+        // already on this board and STOP — so we don't file a second "same bug, one word off" ticket (the
+        // #6/#7 case). The model then either update_ticket's the existing one, skips, or re-calls
+        // create_ticket with confirm:true. Fail-soft: no embedding key → no matches → proceeds to create.
+        const confirm = args['confirm'] === true;
+        let precomputedEmbedding: number[] | undefined;
+        if (!confirm) {
+          const sim = await this.tickets
+            .findSimilar({ orgId: stimulus.orgId, repoId: stimulus.repoId, title, body })
+            .catch(() => ({ queryVector: null, matches: [] as TicketSimilarItem[] }));
+          if (sim.matches.length > 0) {
+            return {
+              ok: false,
+              needsConfirmation: true,
+              similar: sim.matches.map((m) => ({
+                number: m.number,
+                title: m.title,
+                status: m.status,
+                kind: m.kind,
+                similarity: Math.round(m.sim * 100) / 100,
+              })),
+              message:
+                `Found ${sim.matches.length} possibly-related ticket(s) already on this board (see \`similar\`). ` +
+                `If one already covers this, update_ticket that one (or just skip) instead of filing a duplicate. ` +
+                `If this is genuinely new, call create_ticket again with confirm:true.`,
+            };
+          }
+          // No duplicates — reuse the vector we just computed so create() doesn't embed the same text twice.
+          precomputedEmbedding = sim.queryVector ?? undefined;
+        }
+
         // Stamp provenance from THIS thread + its locked decision (if any) — closure-derived, not args.
         const job = await this.store
           .loadJob(stimulus.jobId)
@@ -3347,13 +3504,14 @@ export class AgentSessionManager
             orgId: stimulus.orgId,
             repoId: stimulus.repoId,
             title,
-            body: optStr(args['body']),
+            body,
             status,
             priority,
             kind,
             originThreadId: stimulus.jobId,
             originDecisionRecordId: job?.decisionRecordId ?? null,
             dependsOn: strArray(args['dependsOn']),
+            embedding: precomputedEmbedding,
           });
           // Relay the capture to the operator's live view — a durable callout card on this job's
           // conversation. Best-effort: the ticket is already captured, so a transcript-write hiccup must
@@ -4597,17 +4755,72 @@ export class AgentSessionManager
   }
 
   /**
-   * `reset_sandbox({ reason })` — recreate this thread's sandbox container from scratch, so Atlas can PROVE
-   * its environment cold-boots from durable inputs (worktree + recorded mounts + granted secrets + the
-   * durable HOME + `/.atlas`) instead of ephemeral container state it built by hand. It does NOT tear down
-   * synchronously (that would kill the engine process running this very call); it flags the reset, and the
-   * turn tail (`maybeHonorSandboxReset`) tears down + kicks a fresh-container verify turn once Atlas stops.
-   * A soft loop guard refuses a 4th consecutive unattended reset so a broken setup can't spin forever.
+   * `reset_sandbox({ reason, hard? })` — recreate this thread's sandbox so Atlas can PROVE it cold-boots from
+   * durable inputs (worktree + recorded mounts + granted secrets + the durable HOME + `/.atlas`) instead of
+   * ephemeral container state it built by hand.
+   *   • DEFAULT (soft): recreate just the CONTAINER; the durable worktree + session survive.
+   *   • `hard:true`: recreate the WHOLE sandbox FROM SCRATCH — a fresh worktree AND container, as if the job
+   *     were just created — while KEEPING the coding session (history resumes) and the `/context` +
+   *     `/playground` mounts. TWO-CALL CONFIRM: the first `hard` call returns a notice of what happens / what
+   *     is lost and does NOT reset; the second actually queues it. REFUSES on a dirty tree / unpushed commits
+   *     (the host never commits, so it cannot rescue that work — commit + push first).
+   * It does NOT tear down synchronously (that would kill the engine process running this very call); it flags
+   * the reset, and the turn tail (`maybeHonorSandboxReset`) tears down + kicks a fresh verify turn once Atlas
+   * stops. A soft loop guard refuses a 4th consecutive unattended reset so a broken setup can't spin forever.
    */
   private buildResetSandboxTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
       const key = `${stimulus.orgId}:${stimulus.jobId}`;
       const reason = String(args['reason'] ?? '').trim() || 'no reason given';
+      const hard = args['hard'] === true;
+
+      if (hard) {
+        // Refusal gate — the host will NOT commit to rescue work, so a hard reset must not be armed over a
+        // dirty tree or a full clone with unpushed commits. Checked on BOTH calls (state may have changed).
+        const sandbox = await this.lifecycle
+          .findSandbox(stimulus.jobId, stimulus.orgId)
+          .catch(() => null);
+        if (!sandbox) {
+          this.pendingHardReset.delete(key);
+          return { ok: false, reason: 'No sandbox for this job yet — nothing to hard-reset.' };
+        }
+        const dirty = await this.git.hasChanges(sandbox.worktreePath).catch(() => true);
+        const safe = dirty
+          ? false
+          : await this.git.worktreeSafeToRecut(sandbox.worktreePath, sandbox.branch).catch(() => false);
+        if (!safe) {
+          this.pendingHardReset.delete(key);
+          return {
+            ok: false,
+            reason:
+              'Hard reset refused: this checkout has work that a from-scratch re-cut would DESTROY ' +
+              `(${dirty ? 'uncommitted changes in the working tree' : 'commits not yet pushed to origin'}). ` +
+              'The host never commits on your behalf — commit and `git push` everything you want to keep, then ' +
+              'call `reset_sandbox({ hard:true })` again.',
+          };
+        }
+
+        // FIRST hard call: arm + describe. No reset yet, no loop-counter tick (nothing was torn down).
+        if (!this.pendingHardReset.has(key)) {
+          this.pendingHardReset.add(key);
+          return {
+            ok: true,
+            willReset: false,
+            confirmRequired: true,
+            message:
+              'HARD RESET — this recreates your sandbox FROM SCRATCH on your next turn: the worktree is ' +
+              'deleted and re-cut fresh from the branch, and the container is rebuilt. PRESERVED: your coding ' +
+              'session (history resumes), and the `/context` + `/playground` mounts. LOST: anything only in ' +
+              'the running container (installed packages, running services, scratch files outside those ' +
+              'mounts) — it all re-derives from durable config on the fresh box. Your git work is safe (the ' +
+              'tree is clean and pushed). To proceed, call `reset_sandbox({ hard:true })` ONCE MORE; otherwise ' +
+              'do nothing and it will not reset.',
+          };
+        }
+        // SECOND hard call: confirmed — fall through to arm the actual reset (marked `hard`).
+        this.pendingHardReset.delete(key);
+      }
+
       const priorResets = this.consecutiveResets.get(key) ?? 0;
       if (priorResets >= RESET_LOOP_CAP) {
         return {
@@ -4616,7 +4829,7 @@ export class AgentSessionManager
         };
       }
       this.consecutiveResets.set(key, priorResets + 1);
-      this.resetRequests.set(key, { reason });
+      this.resetRequests.set(key, { reason, ...(hard ? { hard: true } : {}) });
       // Post the operator-visible cue HERE (mid-turn) rather than in the tail: `appendSystemEvent` only
       // surfaces on the next `/messages` reconcile (turn boundary), and the tail runs AFTER this turn's
       // `streamer.finish` already fired turn_end — so a tail-posted pill would miss this turn's reconcile
@@ -4625,14 +4838,17 @@ export class AgentSessionManager
       await this.store
         .appendSystemEvent(
           stimulus.jobId,
-          `🔄 Sandbox reset requested (${reason}) — the container will be recreated from scratch on the next turn, then Atlas verifies the environment cold-boots from durable config.`,
+          hard
+            ? `🔄 HARD reset requested (${reason}) — the worktree + container will be recreated from scratch on the next turn (session preserved), then Atlas verifies the environment cold-boots.`
+            : `🔄 Sandbox reset requested (${reason}) — the container will be recreated from scratch on the next turn, then Atlas verifies the environment cold-boots from durable config.`,
         )
         .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
       return {
         ok: true,
         willReset: true,
-        message:
-          'Your sandbox will be recreated fresh on your next turn — stop here now. Once it is back you will be prompted to verify the environment cold-boots and record anything that was lost.',
+        message: hard
+          ? 'Your sandbox will be recreated FROM SCRATCH (fresh worktree + container, session preserved) on your next turn — stop here now. Once it is back you will be prompted to verify the stack cold-boots and record anything that was lost.'
+          : 'Your sandbox will be recreated fresh on your next turn — stop here now. Once it is back you will be prompted to verify the environment cold-boots and record anything that was lost.',
       };
     };
   }
@@ -4706,15 +4922,12 @@ export class AgentSessionManager
         // pr_url/pr_number on the thread → flips it done).
         const job = await this.store.loadJob(stimulus.jobId);
         const repo = await this.repos.resolve(job);
-        // HOST PRE-SHIP GATE only. `finish_onboarding` runs INSIDE this brain turn, so (like `finalize_build`)
-        // it cannot seed a nested open-PR turn — it commits + leak-scans host-side, then hands `shipOpenPrBody`
-        // back so the brain opens the PR itself in THIS turn. The git-state reconciler records the PR later.
-        const pre = await this.ship.preShip(
-          job,
-          repo,
-          sandbox,
-          'Atlas: onboarding — environment setup',
-          (m) => this.store.appendSystemEvent(stimulus.jobId, m),
+        // HOST PRE-SHIP GATE only (no-token + leak-scan — the host NEVER commits). `finish_onboarding` runs
+        // INSIDE this brain turn, so (like `finalize_build`) it cannot seed a nested open-PR turn — it
+        // leak-scans host-side, then hands `shipOpenPrBody` back so the brain commits its env-setup changes and
+        // opens the PR itself in THIS turn. The git-state reconciler records the PR later.
+        const pre = await this.ship.preShip(job, repo, sandbox, (m) =>
+          this.store.appendSystemEvent(stimulus.jobId, m),
         );
         // Onboarding threads never get `promote_decisions` (see `buildTools`) — there is nothing to
         // promote by design. Stamp complete here so the boot backstop's `threadsAwaitingLedgerPromotion`
@@ -5384,10 +5597,16 @@ export class AgentSessionManager
     const instruction =
       'The direct-build plan was APPROVED. Implement the change now, directly, in the repo ' +
       '(`/workspace`) — follow the spec/notes you wrote under `/context`. When the change is complete, ' +
-      'run `mcp__atlas-lsp-ts__diagnostics` on the files you changed and the repo\'s own typecheck, fix ' +
-      'anything they find, then call `report_verification({ passed: true })` — `finalize_build` refuses ' +
-      'to ship until you have. Only then call `finalize_build` to commit, review, and open the PR. Do NOT ' +
-      'call submit_plan or start_direct_build again.';
+      'run `mcp__atlas-lsp-ts__diagnostics` on the files you changed and the repo\'s own typecheck, and fix ' +
+      'anything they find. Then — if your change touched a runtime surface (an HTTP endpoint/route, a UI ' +
+      'page/component, a CLI entry point, or a background job) — ACTUALLY EXERCISE IT LIVE: boot the process ' +
+      'and curl the endpoint / drive the UI / run the CLI for real. Typecheck, build, lint, and the test ' +
+      'suite are NOT live verification on their own. Report what you ran with ' +
+      '`report_verification({ passed: true, verification: [{ kind, command, exitCode, outputTail }, …] })` — ' +
+      'capture the real command, its exit code, and a tail of its output. `finalize_build` now runs a ' +
+      'live-verification judge over that evidence and REFUSES to ship a runtime change you only typechecked. ' +
+      'Only then call `finalize_build` to commit, review, and open the PR. Do NOT call submit_plan or ' +
+      'start_direct_build again.';
     const synthetic: ChatStimulus = {
       ...stimulus,
       id: randomUUID(),

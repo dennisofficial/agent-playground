@@ -2,6 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import {
   Global,
   Inject,
+  Logger,
   Module,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
@@ -36,8 +37,7 @@ import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
 import { JobLifecycleService } from './job-lifecycle.service';
 import { GithubPrStateSync } from './github-pr-state-sync.service';
-import { CredentialResolver, OnboardingService } from '../onboarding';
-import { LIVE_VERIFICATION_JUDGE, AnthropicLiveVerificationJudge } from './live-verification-judge';
+import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -86,12 +86,6 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     PipelineAwarenessStore,
     BuildShipService,
     { provide: DRIVER_REPO, useClass: GitDriverRepoResolver },
-    {
-      provide: LIVE_VERIFICATION_JUDGE,
-      inject: [CredentialResolver],
-      useFactory: (creds: CredentialResolver) =>
-        new AnthropicLiveVerificationJudge((orgId) => creds.anthropicKey(orgId)),
-    },
     ThreadDriver,
     JobLifecycleService,
     GithubPrStateSync,
@@ -118,6 +112,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
   private reapTimer?: ReturnType<typeof setInterval>;
+  private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
   private webhooksBackfilled = false; // per-repo webhook backfill runs ONCE per process on leadership
 
@@ -166,7 +161,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       // itself when the backend isn't publicly reachable. The 30-min poll covers sync regardless.
       if (!this.webhooksBackfilled) {
         this.webhooksBackfilled = true;
-        void this.onboarding.ensureWebhooksForActiveRepos().catch(() => undefined);
+        void this.onboarding
+          .ensureWebhooksForActiveRepos()
+          .catch((err) => this.logger.warn(`webhook backfill sweep failed: ${err}`));
       }
       // Re-drive `running` jobs on EVERY promotion — including a mid-life re-promote. Leadership-fenced
       // drives (see ThreadDriver.runJob) YIELD on demotion, so a re-promote must re-pick-up the yielded job or

@@ -88,4 +88,15 @@ export class TicketEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   origin!: TicketOrigin | null;
+
+  /**
+   * Semantic-dedup vector — `title\n\nbody` embedded via the shared OpenAI provider (1536-dim,
+   * text-embedding-3-small; mirrors `MemoryEntity.embedding`). `select: false` keeps ~19 KB off every
+   * normal load — only the vector-distance query adds it back. Nullable + fail-soft: a missing OpenAI
+   * key or a failed embed leaves it NULL (the ticket just drops out of similarity search), so ticket
+   * creation NEVER depends on embedding availability. The HNSW cosine index is hand-added in the
+   * migration (the generator can't emit a vector index).
+   */
+  @Column({ type: 'vector', length: 1536, nullable: true, select: false })
+  embedding!: string | null;
 }

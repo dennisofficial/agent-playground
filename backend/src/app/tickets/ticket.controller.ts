@@ -43,6 +43,12 @@ interface UpdateTicketDto {
 interface AddDependencyDto {
   dependsOnTicketId: string;
 }
+interface SimilarTicketsDto {
+  title: string;
+  body?: string | null;
+  /** Exclude a ticket from its own results (edit flow). */
+  excludeTicketId?: string;
+}
 
 /**
  * TICKETS — the per-repo board/backlog HTTP edge. All routes live under
@@ -112,6 +118,30 @@ export class TicketController {
       dependsOn: Array.isArray(body.dependsOn) ? body.dependsOn : undefined,
     });
     return toTicketDto(ticket);
+  }
+
+  /**
+   * `POST …/repos/:repoId/tickets/similar` — semantic near-neighbour search over the repo's board, used
+   * by the create modal to surface "one of these may already cover this" BEFORE the operator files a
+   * duplicate. Read-only (creates nothing). Fail-soft: no OpenAI key configured → empty list.
+   */
+  @Post('orgs/:orgId/repos/:repoId/tickets/similar')
+  @UseGuards(OrgMembershipGuard)
+  async similar(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Body() body: SimilarTicketsDto,
+  ): Promise<unknown[]> {
+    if (!body?.title?.trim()) throw new BadRequestException('title is required');
+    await this.requireRepo(repoId, org.id);
+    const { matches } = await this.tickets.findSimilar({
+      orgId: org.id,
+      repoId,
+      title: body.title,
+      body: body.body,
+      excludeTicketId: body.excludeTicketId,
+    });
+    return matches;
   }
 
   /** `GET …/tickets/:ticketId` — one ticket with its advisory dependencies + derived `blocked`. */

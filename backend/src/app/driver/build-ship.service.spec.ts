@@ -49,8 +49,8 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
   }
 
   function baseGit(over: Partial<Record<string, unknown>> = {}): LocalGitService {
+    // No `commitAll` — the host has no commit primitive anymore (Atlas owns every commit).
     return {
-      commitAll: vi.fn(async () => 'sha'),
       scanBranchForForbidden: vi.fn(async () => []),
       currentBranch: vi.fn(async () => null),
       push: vi.fn(),
@@ -221,24 +221,28 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     expect(result).toEqual({ opened: false, reason: 'leak-scan', leaked: [] });
   });
 
-  it('preShip is the host gate reused by mid-turn callers (finalize_build / finish_onboarding)', async () => {
-    const git = baseGit();
+  it('preShip is the host gate reused by mid-turn callers (finalize_build / finish_onboarding) — NEVER commits', async () => {
+    const scanBranchForForbidden = vi.fn(async () => []);
+    const git = baseGit({ scanBranchForForbidden });
     const pr = { findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
     const store = { setCurrentBranch: vi.fn(async () => undefined) } as unknown as DriverStoreService;
     const { moduleRef } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, moduleRef);
-    const ok = await svc.preShip(job, repo, sandbox, 'commit msg');
-    expect(git.commitAll).toHaveBeenCalledWith('/wt/feat', 'commit msg');
+    const ok = await svc.preShip(job, repo, sandbox);
+    // The host NEVER commits — `preShip` only leak-scans the branch (over commits AND the working tree).
+    expect(scanBranchForForbidden).toHaveBeenCalledWith('/wt/feat', 'origin/main');
     expect(ok).toEqual({ ok: true });
+  });
 
-    const blocked = await svc.preShip(
-      job,
-      repo,
-      { ...sandbox },
-      undefined,
-      undefined,
-    );
-    expect(blocked).toEqual({ ok: true });
+  it('preShip HARD-BLOCKS when the leak-scan finds a forbidden path (committed or uncommitted)', async () => {
+    const git = baseGit({ scanBranchForForbidden: vi.fn(async () => ['.env.local']) });
+    const pr = { findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
+    const store = { setCurrentBranch: vi.fn(async () => undefined) } as unknown as DriverStoreService;
+    const { moduleRef } = makeBrain();
+
+    const svc = new BuildShipService(git, pr, store, moduleRef);
+    const blocked = await svc.preShip(job, repo, sandbox);
+    expect(blocked).toEqual({ ok: false, reason: 'leak-scan', leaked: ['.env.local'] });
   });
 });
