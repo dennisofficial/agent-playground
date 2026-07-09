@@ -24,7 +24,12 @@ import {
   TicketIcon,
   Trash2,
 } from "lucide-react";
-import { Dot, KindBadge, StatusPie, ciGlyph } from "@/components/ui/badges";
+import {
+  CiHeaderGlyph,
+  Dot,
+  KindBadge,
+  StatusPie,
+} from "@/components/ui/badges";
 import { STATUS_META } from "@/lib/api/status";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -291,33 +296,7 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  {(() => {
-                    const ci = ciGlyph(job!.ciStatus);
-                    if (!ci) return null;
-                    const {
-                      Icon: CiIcon,
-                      color: ciColor,
-                      title,
-                      pulse,
-                    } = ci;
-                    return (
-                      <span
-                        className="flex shrink-0 items-center gap-0.5"
-                        title={title}
-                      >
-                        <span className="font-mono text-[9.5px] text-faint">
-                          ·
-                        </span>
-                        <CiIcon
-                          size={11}
-                          strokeWidth={2}
-                          style={{ color: ciColor }}
-                          className={cn("shrink-0", pulse && "pulse-dot")}
-                          aria-label={title}
-                        />
-                      </span>
-                    );
-                  })()}
+                  <CiHeaderGlyph ci={job!.ciStatus} />
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
@@ -334,33 +313,7 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  {(() => {
-                    const ci = ciGlyph(job!.ciStatus);
-                    if (!ci) return null;
-                    const {
-                      Icon: CiIcon,
-                      color: ciColor,
-                      title,
-                      pulse,
-                    } = ci;
-                    return (
-                      <span
-                        className="flex shrink-0 items-center gap-0.5"
-                        title={title}
-                      >
-                        <span className="font-mono text-[9.5px] text-faint">
-                          ·
-                        </span>
-                        <CiIcon
-                          size={11}
-                          strokeWidth={2}
-                          style={{ color: ciColor }}
-                          className={cn("shrink-0", pulse && "pulse-dot")}
-                          aria-label={title}
-                        />
-                      </span>
-                    );
-                  })()}
+                  <CiHeaderGlyph ci={job!.ciStatus} />
                 </div>
               );
             })()

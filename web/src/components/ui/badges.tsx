@@ -341,6 +341,27 @@ export function ciGlyph(ci: CiStatus | null): {
   return null;
 }
 
+/** The CI glyph shown in the job header after the `PR #NN · open` line — a `·` separator + the four-state
+ *  {@link ciGlyph} icon (pulsing while running). Renders nothing for the no-CI state. Shared by both PR
+ *  header branches (linked `<a>` and inline `<div>`) so the two can't drift. */
+export function CiHeaderGlyph({ ci }: { ci: CiStatus | null }) {
+  const g = ciGlyph(ci);
+  if (!g) return null;
+  const { Icon, color, title, pulse } = g;
+  return (
+    <span className="flex shrink-0 items-center gap-0.5" title={title}>
+      <span className="font-mono text-[9.5px] text-faint">·</span>
+      <Icon
+        size={11}
+        strokeWidth={2}
+        style={{ color }}
+        className={cn("shrink-0", pulse && "pulse-dot")}
+        aria-label={title}
+      />
+    </span>
+  );
+}
+
 /** A subtle CI dot for the sidebar job row — a small colored corner dot mirroring the halt dot. Renders
  *  nothing for the no-CI state. Keep it ≤7px so it reads at a glance without crowding the PR glyph. */
 export function CiStatusDot({ ci, size = 7 }: { ci: CiStatus | null; size?: number }) {
