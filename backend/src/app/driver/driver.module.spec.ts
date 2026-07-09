@@ -26,15 +26,19 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
       pollPrClosures: vi.fn(async () => undefined),
     } as unknown as JobLifecycleService;
     const reconciler = {
-      reconcile: vi.fn(async () => undefined),
+      tick: vi.fn(async () => 0),
     } as unknown as GitStateReconciler;
     let promoteCb: (() => void | Promise<void>) | undefined;
+    let demoteCb: (() => void | Promise<void>) | undefined;
     const election = {
       onPromote: vi.fn((cb: () => void | Promise<void>) => {
         promoteCb = cb;
         return { unsubscribe: vi.fn() };
       }),
-      onDemote: vi.fn(() => ({ unsubscribe: vi.fn() })),
+      onDemote: vi.fn((cb: () => void | Promise<void>) => {
+        demoteCb = cb;
+        return { unsubscribe: vi.fn() };
+      }),
     } as unknown as LeaderElectionService;
     const env = { get: vi.fn(() => undefined) } as unknown as EnvService;
     const surface = { resumeRequests$: undefined } as unknown as ChatSurface;
@@ -42,7 +46,15 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
       ensureWebhooksForActiveRepos: vi.fn(async () => undefined),
     } as unknown as OnboardingService;
     const mod = new DriverModule(driver, env, lifecycle, reconciler, election, surface, onboarding);
-    return { mod, driver, lifecycle, reconciler, onboarding, promote: () => promoteCb!() };
+    return {
+      mod,
+      driver,
+      lifecycle,
+      reconciler,
+      onboarding,
+      promote: () => promoteCb!(),
+      demote: () => demoteCb!(),
+    };
   }
 
   afterEach(() => {
@@ -75,6 +87,43 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     // The tick's idempotent resume() ran, re-driving any stranded running job.
     expect((h.driver.resume as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2);
 
+    h.mod.onApplicationShutdown();
+  });
+
+  it('the fast heartbeat runs the reconciler tick on the leader, and demotion stops it', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.mod.onApplicationBootstrap();
+    await h.promote(); // starts the fast poll timer
+
+    await vi.advanceTimersByTimeAsync(15 * 1000); // one heartbeat
+    const afterOne = (h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(afterOne).toBeGreaterThanOrEqual(1);
+
+    // Demotion stops the heartbeat — no further ticks.
+    h.demote();
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect((h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length).toBe(afterOne);
+
+    h.mod.onApplicationShutdown();
+  });
+
+  it('a slow tick does not overlap — the heartbeat skips while the prior tick is in flight', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    // A tick that never resolves within the test → the in-flight guard must suppress the next heartbeats.
+    let resolveTick: (() => void) | undefined;
+    (h.reconciler.tick as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<number>((res) => (resolveTick = () => res(0))),
+    );
+    await h.mod.onApplicationBootstrap();
+    await h.promote();
+
+    await vi.advanceTimersByTimeAsync(15 * 1000); // first heartbeat starts a tick (still pending)
+    await vi.advanceTimersByTimeAsync(15 * 1000); // second heartbeat — guarded, must NOT start another tick
+    expect((h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+
+    resolveTick?.();
     h.mod.onApplicationShutdown();
   });
 });

@@ -8,6 +8,12 @@ export * from './thread-driver.service';
 export * from './driver-store.service';
 export * from './job-lifecycle.service';
 export * from './github-pr-state-sync.service';
+export {
+  GitStateReconciler,
+  summarizeChecks,
+  CADENCE_MS,
+  type PollTier,
+} from './git-state-reconciler.service';
 export { WorktreeProvisioner } from './worktree-provisioner.service';
 export { WorktreeHydrator } from './worktree-hydrator.service';
 export { type MountSpec, type MountMode } from '../sandbox/container-paths';
