@@ -170,10 +170,22 @@ export class FakeLocalGitService {
   }
 
   async currentBranch(): Promise<string | null> {
-    return 'main';
+    return null;
   }
 
-  /** Provision-path no-ops (real impls touch git/cache/submodules; nothing to do in the fake). */
+  /** Provision-path no-ops (real impls touch git/cache/submodules; nothing to do in the fake). The fake
+   *  repo never carries a `.gitmodules`, so it always takes the plain-worktree path, never full-clone. */
+  async hasSubmodules(): Promise<boolean> {
+    return false;
+  }
+
+  async createBaseClone(
+    repo: ProjectRepo,
+    jobId: string,
+  ): Promise<FeatureSandbox> {
+    return this.createBaseWorktree(repo, jobId);
+  }
+
   async ensureSubmodules(): Promise<void> {
     // no-op
   }

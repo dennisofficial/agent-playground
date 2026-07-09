@@ -108,9 +108,9 @@ const STATUS_SHAPE: Record<
   awaiting_approval: "waiting",
   // The ship-review gate — the second "your move" bullseye, same shape as the plan-approval gate.
   awaiting_ship_review: "waiting",
-  paused: "paused",
-  failed: "failed",
   done: "done",
+  // A genuine operator-chosen terminal state (plan denied) — same muted static ring as deleting.
+  cancelled: "paused",
   // Winding down — a muted static ring; the faint color (STATUS_META) carries the "Deleting…" meaning.
   deleting: "paused",
 };
@@ -128,7 +128,7 @@ export function StatusPie({
 }) {
   const shape = halted ? "failed" : status ? STATUS_SHAPE[status] : null;
   const color = halted
-    ? STATUS_META.failed.color
+    ? "var(--red)"
     : status
       ? STATUS_META[status].color
       : "var(--border-2)";

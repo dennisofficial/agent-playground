@@ -1,4 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import type { JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
 import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
@@ -104,7 +105,7 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   kind!: string | null;
 
-  // 'open' | 'planning' | 'awaiting_approval' | 'running' | 'awaiting_ship_review' | 'paused' | 'done' | 'failed' | 'cancelled'
+  // 'open' | 'planning' | 'plan_review' | 'awaiting_approval' | 'running' | 'awaiting_ship_review' | 'done' | 'cancelled' | 'deleting'
   @Column({ type: 'text', default: 'open' })
   status!: string;
 
@@ -281,6 +282,17 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'timestamptz', nullable: true })
   ledger_promoted_at!: Date | null;
+
+  /**
+   * The PHASE-PRESERVING HALT — the orthogonal failure/pause axis. `status` stays the pure build phase;
+   * when the build halts (a failure, a credential/budget block, or an incomplete turn) this is populated
+   * and the phase is preserved, so the sidebar renders the job under the phase it halted in with a red
+   * mark. Null when healthy; cleared only on operator re-engagement (retry/resume) or a brain re-drive.
+   * Job-scoped mirror of `ThreadEntity.terminal_record` (nullable jsonb, no default — a `() => '...'::jsonb`
+   * default makes `migration:generate` loop forever; nullable avoids a default entirely).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  halt!: JobHalt | null;
 
   /**
    * The ADR-0005 LIVE-VERIFICATION verdict for the DIRECT-BUILD ship path (the brain-owned

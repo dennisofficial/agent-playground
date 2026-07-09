@@ -21,12 +21,28 @@ export type JobStatus =
   // the operator to eyeball it and click "Ship it" before the PR is opened. The SECOND human gate (after
   // `awaiting_approval` at the plan stage) — a needs-you state. Only driver builds (feature/bugfix) reach
   // it; the direct-build fast path and `review` jobs never do. Approval flips back to `running` + re-drives.
-  | 'paused' // a turn hit a credential/401 error; the live session is saved, waiting on a re-ping to
-  // resume (NOT auto-resumed on boot — it would just 401 again). Durable: the unfinished step keeps its
-  // `session_id`, so a ping continues the SAME session instead of starting from scratch.
   | 'done' // one PR opened, all tracks handed off
-  | 'failed'
   | 'cancelled'
   | 'deleting'; // terminal-bound: the operator deleted the job; container + worktree teardown is in
 // progress and the row is about to be removed. Transient (self-heals via boot/reap reconcilers) and
 // NOT a needs-you state — the job is going away, so it must never light the sidebar alert dot.
+
+/**
+ * A job's HALT — the orthogonal failure/pause axis. `status` stays the pure build PHASE; when a job
+ * halts (a build failure, a credential/budget block, or an incomplete build turn) this field is
+ * populated and the phase is preserved, so the sidebar can render the job under the phase it halted in
+ * with a red mark. `null` when the job is healthy. Mirrors the lane-level phase-preserving halt pattern
+ * (`ThreadEntity.terminal_record`/`halt_outcome`) but job-scoped and leaner. Wire-shared: emitted by
+ * `GET /web/jobs` and the realtime row, consumed by the web console.
+ *
+ * `kind` distinguishes consumer behavior: `blocked_credentials` drives request-secret / needs-you;
+ * `failed`/`incomplete` are build failures; `budget_exhausted` is a rest-until-re-armed halt.
+ */
+export type JobHaltKind = 'failed' | 'blocked_credentials' | 'budget_exhausted' | 'incomplete';
+export type JobHalt = {
+  kind: JobHaltKind;
+  /** Short human string (what `relayFailure` already computes via `shortReason`). */
+  reason: string;
+  /** ISO timestamp the halt was recorded. */
+  at: string;
+};

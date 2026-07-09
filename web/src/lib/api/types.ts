@@ -7,7 +7,7 @@
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
-import type { JobStatus as WireJobStatus } from "@workspace/shared";
+import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
@@ -15,6 +15,8 @@ import type { JobStatus as WireJobStatus } from "@workspace/shared";
  * backend's `JobStatus`. (The web's own UI-presentation `JobStatus` — below — is a separate type.)
  */
 export type { WireJobStatus };
+/** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
+export type { WireJobHalt };
 
 export type WireJobKind =
   | "feature"
@@ -416,6 +418,7 @@ export interface PipelineJob {
   title: string;
   kind: WireJobKind;
   status: WireJobStatus;
+  halt: WireJobHalt | null;
   decisionRecordId: string | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
@@ -528,8 +531,7 @@ export type JobStatus =
   | "awaiting_ship_review"
   | "done"
   | "triaging"
-  | "paused"
-  | "failed"
+  | "cancelled"
   | "deleting";
 
 /** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job;

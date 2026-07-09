@@ -529,9 +529,9 @@ export class E2eHarness {
     return !!row && row.status === 'done' && !!row.pr_url;
   }
 
-  /** A terminal state the poll can stop on (so a `failed`/`cancelled` job surfaces fast, not on timeout). */
+  /** A terminal state the poll can stop on (so a halted/`cancelled` job surfaces fast, not on timeout). */
   private isTerminal(row: JobEntity | null): boolean {
-    return !!row && (this.isPrReady(row) || row.status === 'failed' || row.status === 'cancelled');
+    return !!row && (this.isPrReady(row) || row.halt != null || row.status === 'cancelled');
   }
 
   /** Poll a specific job until it reaches a terminal state (PR-ready / failed / cancelled) or times out. */

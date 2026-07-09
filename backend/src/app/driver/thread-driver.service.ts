@@ -294,6 +294,14 @@ export class ThreadDriver implements JobDispatcher {
     this.logger.log(
       `dispatch thread=${job.id} kind=${job.kind} title="${job.title}"`,
     );
+    // HALT INVARIANT: never drive a halted job. dispatch does NOT clear the halt — only an explicit operator
+    // re-engagement (retry/resumePaused) or a brain re-drive (redriveThread) may un-halt and re-drive.
+    if (job.halt != null) {
+      this.logger.warn(
+        `dispatch job=${job.id} halted (${job.halt.kind}) — not driving`,
+      );
+      return;
+    }
     // A fresh build cycle (a new plan approval) — clear any prior ship-review approval so this build's ship
     // re-gates. A re-drive AFTER ship-approval goes through `drive()` directly (not `dispatch`), preserving it.
     await this.store.clearShipApproval(job.id).catch(() => undefined);
@@ -337,21 +345,23 @@ export class ThreadDriver implements JobDispatcher {
    */
   async resumePaused(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
-    if (!job || job.status !== 'paused') {
+    if (!job || job.halt?.kind !== 'blocked_credentials') {
       this.logger.warn(
-        `resumePaused job=${jobId}: not paused (${job?.status ?? 'gone'}) — ignoring`,
+        `resumePaused job=${jobId}: not a credential halt (${job?.halt?.kind ?? 'gone'}) — ignoring`,
       );
       return;
     }
     this.logger.log(
-      `resumePaused job=${jobId} — re-driving the paused session`,
+      `resumePaused job=${jobId} — re-driving the halted session`,
     );
     // OPERATOR RE-ARM: a human resume re-grants Atlas's autonomous re-drive budget for any thread it exhausted
-    // (a `blocked` thread `haltJob` rested to `paused`). Boot `resume()` never re-arms — only explicit pings.
+    // (a `blocked` thread `haltJob` rested). Boot `resume()` never re-arms — only explicit pings.
     const rearmed = await this.store.rearmHaltedThreads(jobId).catch(() => 0);
     if (rearmed) {
       this.logger.log(`resumePaused job=${jobId} — re-armed ${rearmed} halted thread(s)`);
     }
+    // Clear the halt (only retry/resumePaused/redriveThread may un-halt) then re-drive the preserved phase.
+    await this.store.clearJobHalt(jobId);
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
@@ -377,13 +387,13 @@ export class ThreadDriver implements JobDispatcher {
       this.logger.warn(`retry job=${jobId}: thread not found — ignoring`);
       return;
     }
-    if (job.status !== 'failed' && job.status !== 'paused') {
+    if (!job.halt) {
       this.logger.warn(
-        `retry job=${jobId}: not retryable (status=${job.status}) — ignoring`,
+        `retry job=${jobId}: not retryable (not halted) — ignoring`,
       );
       return;
     }
-    this.logger.log(`retry job=${jobId} — re-driving from ${job.status}`);
+    this.logger.log(`retry job=${jobId} — re-driving a ${job.halt.kind} halt`);
     // OPERATOR RE-ARM: an explicit human retry re-grants Atlas its autonomous re-drive budget for any thread
     // it exhausted (a `blocked` thread rested by `haltJob`). Only the explicit operator paths re-arm — NOT
     // boot `resume()` — so the halt loop can't self-perpetuate.
@@ -391,6 +401,10 @@ export class ThreadDriver implements JobDispatcher {
     if (rearmed) {
       this.logger.log(`retry job=${jobId} — re-armed ${rearmed} halted thread(s)`);
     }
+    // Clear the halt (the invariant: only retry/resumePaused/redriveThread may un-halt) and re-drive. The
+    // status flip is a no-op in practice — a halt is only ever recorded mid-drive, i.e. while `running` — but
+    // it self-heals any drifted/backfilled phase so `runJob`'s `running` gate lets the re-drive through.
+    await this.store.clearJobHalt(jobId);
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
@@ -449,6 +463,9 @@ export class ThreadDriver implements JobDispatcher {
     }
     await this.store.clearTerminalRecord(threadId).catch(() => undefined);
     await this.store.clearHalt(threadId).catch(() => undefined);
+    // Clear the JOB-level phase-preserving halt too (budget-aware recovery path): the brain's authorized
+    // re-drive must lift the halt or `runJob`/`drive`'s halt gate would refuse to re-drive.
+    await this.store.clearJobHalt(jobId).catch(() => undefined);
     await this.store.setThreadStatus(threadId, 'executing').catch(() => undefined);
     if (guidance) {
       await this.store.setThreadOrientation(threadId, guidance).catch(() => undefined);
@@ -532,19 +549,31 @@ export class ThreadDriver implements JobDispatcher {
         return;
       }
       if (err instanceof EngineAuthError) {
-        // A credential/401 halt — PAUSE (don't fail): the unfinished step's session_id is persisted, so
-        // a ping (`resumePaused`) continues the SAME session once creds are fixed. Re-driving now would
-        // just 401 again, so we wait for the human.
+        // A credential/401 halt — HALT (don't fail): the phase is preserved and the unfinished step's
+        // session_id is persisted, so a ping (`resumePaused`) continues the SAME session once creds are
+        // fixed. Re-driving now would just 401 again, so we wait for the human.
         this.logger.warn(
-          `job=${jobId} paused on credential error: ${err.message}`,
+          `job=${jobId} halted on credential error: ${err.message}`,
         );
-        await this.store.setJobStatus(jobId, 'paused').catch(() => undefined);
+        await this.store
+          .setJobHalt(jobId, {
+            kind: 'blocked_credentials',
+            reason: err.message,
+            at: new Date().toISOString(),
+          })
+          .catch(() => undefined);
         await this.relayPaused(jobId, err);
       } else {
         this.logger.error(
           `job=${jobId} failed: ${err instanceof Error ? err.stack : err}`,
         );
-        await this.store.setJobStatus(jobId, 'failed').catch(() => undefined);
+        await this.store
+          .setJobHalt(jobId, {
+            kind: 'failed',
+            reason: shortReason(err),
+            at: new Date().toISOString(),
+          })
+          .catch(() => undefined);
         // RELAY the failure into the thread — a failed job must never dead-end silently (issue #2).
         await this.relayFailure(jobId, err);
       }
@@ -655,6 +684,14 @@ export class ThreadDriver implements JobDispatcher {
     if (job.status !== 'running') {
       this.logger.warn(
         `job=${jobId} not running (status=${job.status}) — not driving`,
+      );
+      return;
+    }
+    // HALT INVARIANT: a halted job is NEVER driven — the single chokepoint. `halt` is cleared only by an
+    // operator re-engagement (retry/resumePaused) or a brain re-drive (redriveThread), which re-enter here.
+    if (job.halt != null) {
+      this.logger.warn(
+        `job=${jobId} halted (${job.halt.kind}) — not driving`,
       );
       return;
     }
@@ -849,29 +886,38 @@ export class ThreadDriver implements JobDispatcher {
     // it has no budget left to fix (the pre-fix behavior — a wasted brain turn on every boot). `paused` also
     // lights the needs-you dot; `resumePaused`/`retry` re-arm the budget when the operator re-engages.
     let owedWake = true;
+    const at = new Date().toISOString();
     if (outcome === 'failed') {
-      await this.store.setJobStatus(job.id, 'failed').catch(() => undefined);
       const why = term?.failure
         ? `${term.failure.kind} failed${term.failure.command ? ` (\`${term.failure.command}\`)` : ''}${
             term.failure.stderrTail ? `:\n${term.failure.stderrTail.slice(0, 500)}` : ''
           }`
         : (term?.summary ?? 'the thread reported a failure');
+      await this.store
+        .setJobHalt(job.id, { kind: 'failed', reason: why, at })
+        .catch(() => undefined);
       text = `:x: Build failed in *${thread.brief}* — ${why}\n_The job is marked failed; reply in this thread to retry or adjust._`;
       severity = 'error';
     } else if (outcome === 'blocked') {
       const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
       if (spent >= HALT_FIX_ATTEMPT_CAP) {
         // Autonomous budget exhausted → rest the job for the operator (no more brain wakes owed).
-        await this.store.setJobStatus(job.id, 'paused').catch(() => undefined);
+        const reason = term?.blocked?.detail ?? 'needs your input';
+        await this.store
+          .setJobHalt(job.id, { kind: 'budget_exhausted', reason, at })
+          .catch(() => undefined);
         owedWake = false;
-        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
+        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${reason}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
       } else {
         // Budget remains: job stays `running`; the thread is `awaiting_input` (Phase 3 wakes the brain to fix).
         text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
       }
     } else {
       // incomplete
-      await this.store.setJobStatus(job.id, 'paused').catch(() => undefined);
+      const reason = `${thread.brief} ended without asserting completion (no complete_thread)`;
+      await this.store
+        .setJobHalt(job.id, { kind: 'incomplete', reason, at })
+        .catch(() => undefined);
       text = `:warning: Build halted — *${thread.brief}* ended without asserting completion (no \`complete_thread\`), so nothing shipped. Ping to retry, or open the thread to see what it did.`;
     }
     await this.blockSink
