@@ -61,6 +61,8 @@ export type PrStateDelta = {
  * SUCCESSFUL no-op (a verified-but-uninteresting payload, e.g. GitHub's `ping`), distinct from a
  * `rejected` (verification/routing failure). `pr-sync` is a SILENT authoritative PR-state delta
  * (open/merged/closed/reopened) applied directly to the owning job's row — it never seeds a stimulus.
+ * For the GitHub adapter this is emitted only by `handlePrWebhook` (the `/webhooks/github` front door),
+ * never by `handle` (the `/ingress/github` work-events front door).
  */
 export type IngressResult =
   | { outcome: 'accepted'; event: ParsedEvent }

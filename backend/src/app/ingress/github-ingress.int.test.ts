@@ -254,10 +254,10 @@ describe('GithubIngressController return-path (live Postgres)', () => {
 });
 
 describe('GithubStateWebhookController PR-state path', () => {
-  it('dispatches pull_request deltas silently without calling StimulusIntake', async () => {
+  it('dispatches pull_request deltas via handlePrWebhook, with no StimulusIntake wired at all', async () => {
     const adapter = {
       source: 'github',
-      handle: async () => ({
+      handlePrWebhook: async () => ({
         outcome: 'pr-sync' as const,
         delta: {
           orgId: ORG_ID,
@@ -270,15 +270,10 @@ describe('GithubStateWebhookController PR-state path', () => {
         },
       }),
     } as unknown as GithubNotificationSource;
-    const intake = { intakeEvent: vi.fn() } as unknown as StimulusIntake;
     const prSync = {
       dispatch: vi.fn(async () => undefined),
     } as unknown as GithubPrStateSync;
-    const controller = new GithubStateWebhookController(
-      adapter,
-      intake,
-      prSync,
-    );
+    const controller = new GithubStateWebhookController(adapter, prSync);
 
     const res = await controller.receive({ body: {}, headers: {} });
 
@@ -292,6 +287,5 @@ describe('GithubStateWebhookController PR-state path', () => {
       url: 'https://github.com/acme/web/pull/7',
       merged: true,
     });
-    expect(intake.intakeEvent).not.toHaveBeenCalled();
   });
 });
