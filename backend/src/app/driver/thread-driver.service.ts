@@ -902,18 +902,27 @@ export class ThreadDriver implements JobDispatcher {
       text = `:x: Build failed in *${thread.brief}* — ${why}\n_The job is marked failed; reply in this thread to retry or adjust._`;
       severity = 'error';
     } else if (outcome === 'blocked') {
-      const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
-      if (spent >= HALT_FIX_ATTEMPT_CAP) {
-        // Autonomous budget exhausted → rest the job for the operator (no more brain wakes owed).
-        const reason = term?.blocked?.detail ?? 'needs your input';
-        await this.store
-          .setJobHalt(job.id, { kind: 'budget_exhausted', reason, at })
-          .catch(() => undefined);
-        owedWake = false;
-        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${reason}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
+      // A `judge_unavailable` block is a TRANSIENT infra hold, not a work defect: the live-verification judge
+      // was unreachable (Anthropic outage / key rate-or-credit limit), so a genuinely-done thread must HOLD and
+      // retry when the service recovers — NOT consume its autonomous fix budget and rest `budget_exhausted`
+      // (which would let a single Anthropic blip permanently stall EVERY in-flight job; 07-09 incident). Keep the
+      // job `running` with the thread `awaiting_input` + owed wake, regardless of prior attempts.
+      if (term?.blocked?.reason === 'judge_unavailable') {
+        text = `:hourglass_flowing_sand: *${thread.brief}* is done but the live-verification judge is temporarily unavailable — holding to retry when it recovers (not counted against the fix budget).`;
       } else {
-        // Budget remains: job stays `running`; the thread is `awaiting_input` (Phase 3 wakes the brain to fix).
-        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
+        const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
+        if (spent >= HALT_FIX_ATTEMPT_CAP) {
+          // Autonomous budget exhausted → rest the job for the operator (no more brain wakes owed).
+          const reason = term?.blocked?.detail ?? 'needs your input';
+          await this.store
+            .setJobHalt(job.id, { kind: 'budget_exhausted', reason, at })
+            .catch(() => undefined);
+          owedWake = false;
+          text = `:raising_hand: Thread blocked — *${thread.brief}*: ${reason}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
+        } else {
+          // Budget remains: job stays `running`; the thread is `awaiting_input` (Phase 3 wakes the brain to fix).
+          text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
+        }
       }
     } else {
       // incomplete
@@ -1766,11 +1775,18 @@ export class ThreadDriver implements JobDispatcher {
 
     if (effective.runtimeSurfaceTouched && !effective.liveVerificationAdequate) {
       let detail = [effective.reason, effective.missingChecks].filter(Boolean).join(' — ');
-      // Distinguish "no key configured" from a generic judge failure so an operator isn't left guessing.
+      // The judge was CONSULTED (runtime diff) but returned nothing → it was UNAVAILABLE, not a real
+      // "inadequate" verdict. Distinguish the two so a transient judge outage doesn't masquerade as unverified
+      // work: `judge_unavailable` HOLDS + retries (see `haltJob`) instead of burning the fix budget. A missing
+      // key is a real config gap the operator must fix, so that stays a plain `unverified` block.
+      let reason: 'unverified' | 'judge_unavailable' = 'unverified';
       if (!nonRuntime && !verdict) {
         const hasKey = await this.creds.anthropicKey(job.orgId).catch(() => undefined);
         if (!hasKey) {
           detail = `no Anthropic API key configured for the live-verification judge — configure one. (${detail})`;
+        } else {
+          reason = 'judge_unavailable';
+          detail = `live-verification judge temporarily unavailable (transient infra) — the work may be fine; will retry when the service recovers. (${detail})`;
         }
       }
       const blocked: ThreadTerminalRecord = {
@@ -1780,12 +1796,15 @@ export class ThreadDriver implements JobDispatcher {
         ...(candidate.verification ? { verification: candidate.verification } : {}),
         ...(candidate.deviations ? { deviations: candidate.deviations } : {}),
         ...(candidate.gaps ? { gaps: candidate.gaps } : {}),
-        blocked: { reason: 'unverified', detail },
+        blocked: { reason, detail },
         liveVerification: { verdict: effective },
       };
       return {
         record: blocked,
-        warning: `Downgraded to blocked (unverified) by the live-verification judge: ${detail}`,
+        warning:
+          reason === 'judge_unavailable'
+            ? `Live-verification judge unavailable (transient) — holding ${thread.brief} to retry, not counted against the fix budget: ${detail}`
+            : `Downgraded to blocked (unverified) by the live-verification judge: ${detail}`,
       };
     }
 

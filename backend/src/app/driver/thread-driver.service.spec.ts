@@ -760,6 +760,9 @@ function assemble(
     turn?: TurnRunnerService;
     turnRegistry?: Pick<import('../sandbox/turn-registry.service').TurnRegistry, 'listRunning'>;
     judge?: LiveVerificationJudge & { calls: number };
+    /** Override `CredentialResolver.anthropicKey` — defaults to the env-fallback shape (no key). A test that
+     *  exercises the judge-unavailable-WITH-key path (transient infra hold) sets this to return a key. */
+    anthropicKey?: (orgId?: string) => Promise<string | undefined>;
     /** SHIP-REVIEW GATE: feature/bugfix builds now PARK before the PR (awaiting the operator's "Ship it").
      *  Default true → the harness auto-clicks "Ship it" the instant the gate parks, so the many
      *  build→ship pipeline tests still reach `done` without each re-encoding the gate. The dedicated
@@ -912,7 +915,7 @@ function assemble(
     },
     // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.
     {
-      anthropicKey: async () => undefined,
+      anthropicKey: opts.anthropicKey ?? (async () => undefined),
       openaiKey: async () => undefined,
       githubToken: async () => undefined,
       engineAuth: async () => ({ secret: 'test-secret' }),
@@ -2225,6 +2228,36 @@ describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — 
     expect(term.blocked?.reason).toBe('unverified');
     // No Anthropic key resolves in the default CredentialResolver fake → the operator-facing message names it.
     expect(term.blocked?.detail).toContain('no Anthropic API key configured');
+  });
+
+  it('judge UNAVAILABLE but a key IS configured → transient HOLD (judge_unavailable), job stays running, never rested', async () => {
+    // 07-09 incident: an Anthropic outage made the judge return undefined for EVERY thread. With a key present
+    // that is a TRANSIENT infra failure, not unverified work — the thread must hold + retry, NOT burn the fix
+    // budget and rest the job `budget_exhausted`. Re-drive it up to the cap and prove the job never rests.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const judge = fakeJudge(undefined); // judge unreachable (Anthropic down)
+    const h = assemble(state, { judge, anthropicKey: async () => 'sk-ant-present' });
+    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.threads[0].condition === 'paused');
+
+    const term = (state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record;
+    expect(term.status).toBe('blocked');
+    expect(term.blocked?.reason).toBe('judge_unavailable'); // distinct from 'unverified'
+    expect(term.blocked?.detail).toContain('temporarily unavailable');
+    // Held for retry — the job is NOT rested and the operator card does NOT claim the fix budget is spent.
+    expect(state.job.status).toBe('running');
+    expect(h.posts.some((p) => p.includes('temporarily unavailable'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('autonomous fix attempts'))).toBe(false);
+    expect(h.opened).toHaveLength(0); // nothing shipped
   });
 
   it('judge THROWING → caught, conservative blocked, never crashes the drive', async () => {
