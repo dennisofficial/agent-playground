@@ -234,9 +234,14 @@ function ThreadStatusGlyph({
   state: LaneState;
   isHalt: boolean;
 }) {
+  // The lane's OWN state owns its glyph: a `blocked` (paused) or `done` lane keeps its glyph even when it
+  // is the job's halt row, so it never masquerades as a red failure. `isHalt` only paints red as a fallback
+  // for a halt whose lane state doesn't already show it (e.g. a job-level halt on an in-flight lane).
+  const haltRed =
+    state === "failed" || (isHalt && state !== "blocked" && state !== "done");
   return (
     <span className="grid h-[13px] w-[13px] shrink-0 place-items-center">
-      {isHalt || state === "failed" ? (
+      {haltRed ? (
         <span
           className="h-[9px] w-[9px] rounded-full"
           style={{ background: "var(--red)" }}
