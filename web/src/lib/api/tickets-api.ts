@@ -159,6 +159,31 @@ export function createTicket(
   });
 }
 
+/** A near-duplicate surfaced by semantic dedup — the candidate ticket + its cosine similarity (0–1). */
+export interface TicketSimilarRow {
+  id: string;
+  number: number;
+  title: string;
+  status: TicketStatus;
+  kind: TicketKind | null;
+  priority: TicketPriority | null;
+  sim: number;
+}
+
+/**
+ * Semantic near-neighbour search over the repo's board (POST, read-only). Powers the create modal's
+ * "one of these may already cover this" panel. Returns [] when no OpenAI key is configured (fail-soft).
+ */
+export function findSimilarTickets(
+  ref: TicketRef,
+  body: { title: string; body?: string | null; excludeTicketId?: string },
+): Promise<TicketSimilarRow[]> {
+  return ticketJson<TicketSimilarRow[]>(ticketsPath(ref, "/similar"), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export interface UpdateTicketBody {
   title?: string;
   body?: string | null;

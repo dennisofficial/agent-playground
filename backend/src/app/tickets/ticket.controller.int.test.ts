@@ -31,6 +31,23 @@ import {
 } from '../e2e/e2e-stubs';
 import { JobTitler } from '../titling';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { EMBEDDING_PROVIDER } from '../memory/embedding';
+
+/**
+ * A deterministic bag-of-words embedder for the dedup tests — maps each word to a fixed 1536-dim slot so
+ * near-identical titles yield high cosine similarity, with NO network. Bound in place of the real OpenAI
+ * provider so `/tickets/similar` + embed-on-write are exercised end-to-end against live pgvector.
+ */
+function bowEmbed(text: string): number[] {
+  const v = new Array<number>(1536).fill(0);
+  for (const tok of text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)) {
+    let h = 0;
+    for (let i = 0; i < tok.length; i++) h = (h * 31 + tok.charCodeAt(i)) >>> 0;
+    v[h % 1536] += 1;
+  }
+  return v;
+}
+const fakeEmbedder = { model: 'fake-bow', embed: async (t: string) => bowEmbed(t) };
 
 const fakeCreds = {
   anthropicKey: async () => undefined,
@@ -112,6 +129,8 @@ beforeAll(async () => {
     .useValue(fakeCreds)
     .overrideProvider(JobTitler)
     .useValue(new FakeThreadTitler())
+    .overrideProvider(EMBEDDING_PROVIDER)
+    .useValue(fakeEmbedder)
     .compile();
 
   app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
@@ -201,6 +220,65 @@ describe('TicketController HTTP (membership guard + scoping + dependencies, live
   it('rejects an invalid status with 400', async () => {
     const res = await createTicket(ownerCookie, ORG1, REPO1, { title: 'x', status: 'doing' });
     expect(res.status).toBe(400);
+  });
+
+  describe('semantic dedup — POST /tickets/similar (+ embed-on-write)', () => {
+    const DUP_A =
+      'Verification gate loses report_verification verdict across a restart-mid-gate reattach';
+    const DUP_B =
+      'Verification gate loses report_verification verdict across restart-mid-gate reattach';
+    const UNRELATED = 'Add a dark mode toggle to the settings page';
+
+    it('requires authentication (401 unauthenticated)', async () => {
+      const res = await request(server)
+        .post(`${ticketsPath(ORG1, REPO1)}/similar`)
+        .send({ title: DUP_A });
+      expect(res.status).toBe(401);
+    });
+
+    it('persists an embedding on create and surfaces near-duplicates ranked, excluding unrelated tickets', async () => {
+      const a = await createTicket(ownerCookie, ORG1, REPO1, { title: DUP_A, kind: 'bug' });
+      await createTicket(ownerCookie, ORG1, REPO1, { title: UNRELATED });
+      const aId = a.body.id as string;
+
+      // embed-on-write: the created ticket has a non-null vector (proves the fake provider ran in create()).
+      const [{ has_embedding }] = (await ds.query(
+        `SELECT (embedding IS NOT NULL) AS has_embedding FROM tickets WHERE id = $1`,
+        [aId],
+      )) as Array<{ has_embedding: boolean }>;
+      expect(has_embedding).toBe(true);
+
+      // A near-identical title (one word off, the #6/#7 case) finds DUP_A above the floor; UNRELATED is out.
+      const res = await request(server)
+        .post(`${ticketsPath(ORG1, REPO1)}/similar`)
+        .set('Cookie', ownerCookie)
+        .send({ title: DUP_B });
+      expect([200, 201]).toContain(res.status);
+      const matches = res.body as Array<{ id: string; sim: number }>;
+      expect(matches.length).toBe(1);
+      expect(matches[0].id).toBe(aId);
+      expect(matches[0].sim).toBeGreaterThanOrEqual(0.6);
+    });
+
+    it('excludes the ticket itself via excludeTicketId (edit flow)', async () => {
+      const a = await createTicket(ownerCookie, ORG1, REPO1, { title: DUP_A });
+      const aId = a.body.id as string;
+      const res = await request(server)
+        .post(`${ticketsPath(ORG1, REPO1)}/similar`)
+        .set('Cookie', ownerCookie)
+        .send({ title: DUP_A, excludeTicketId: aId });
+      expect((res.body as Array<{ id: string }>).some((m) => m.id === aId)).toBe(false);
+    });
+
+    it('does not bleed similar matches across repos', async () => {
+      await createTicket(ownerCookie, ORG1, REPO1, { title: DUP_A });
+      // Same title searched on a DIFFERENT repo → no matches (each board is isolated).
+      const res = await request(server)
+        .post(`${ticketsPath(ORG1, REPO2)}/similar`)
+        .set('Cookie', ownerCookie)
+        .send({ title: DUP_A });
+      expect(res.body).toEqual([]);
+    });
   });
 
   it('allocates monotonic per-repo numbers (independent counters per repo)', async () => {

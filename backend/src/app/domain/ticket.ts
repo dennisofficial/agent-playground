@@ -51,6 +51,28 @@ export const TICKET_TERMINAL_STATUSES: ReadonlySet<TicketStatus> = new Set<Ticke
 ]);
 
 /**
+ * Semantic-dedup similarity thresholds (cosine similarity to the candidate's `title\n\nbody`; 1 =
+ * identical). `TICKET_SIMILAR_SIM` is the floor for SURFACING a "related" candidate to a human/agent
+ * who then decides (the brain's confirm-gate + the web create panel). `TICKET_AUTO_SKIP_SIM` is the
+ * higher bar at which the builder — which has NO human in the loop — silently collapses a capture into
+ * an existing OPEN ticket rather than filing a near-duplicate. Tunable.
+ */
+export const TICKET_SIMILAR_SIM = 0.6;
+export const TICKET_AUTO_SKIP_SIM = 0.82;
+
+/** A near-neighbour surfaced by embedding dedup: the candidate ticket plus its cosine similarity. */
+export interface TicketSimilarItem {
+  id: string;
+  number: number;
+  title: string;
+  status: TicketStatus;
+  kind: TicketKind | null;
+  priority: TicketPriority | null;
+  /** Cosine similarity to the query text (1 = identical). */
+  sim: number;
+}
+
+/**
  * Allow-list validators — shared by the HTTP DTO layer AND the brain tools so status/priority/kind are
  * never persisted unvalidated (a `text` column accepts anything; these are the only valid values).
  */
