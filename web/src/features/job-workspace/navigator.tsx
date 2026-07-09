@@ -43,10 +43,7 @@ import {
   haltThreadIdx,
 } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
-import {
-  NavigatorApproveButton,
-  NavigatorShipButton,
-} from "./spec-approval";
+import { NavigatorApproveButton, NavigatorShipButton } from "./spec-approval";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
@@ -276,6 +273,7 @@ export function Navigator({
                 job!.prMergeable,
               );
               const text = `${job!.prNumber != null ? `PR #${job!.prNumber}` : "pull request"} · ${label}`;
+              const showCi = job!.prNumber != null;
               // Link out only when we actually have the PR url; otherwise show the same status inline.
               return job!.prUrl ? (
                 <a
@@ -296,7 +294,7 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  <CiHeaderGlyph ci={job!.ciStatus} />
+                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
@@ -313,7 +311,7 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  <CiHeaderGlyph ci={job!.ciStatus} />
+                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
                 </div>
               );
             })()

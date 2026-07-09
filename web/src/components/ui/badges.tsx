@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  CircleSlash2,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -321,32 +322,52 @@ function prGlyph(pr: InboxPr): {
 
 /**
  * Four-state CI glyph for a PR head (backend `jobs.ci_status`) — shared by the job header and the sidebar
- * dot so the two never disagree. Returns null for the no-CI state (`ci == null`): callers render nothing.
+ * dot so the two never disagree.
  *   success → green check-circle "CI passed"
  *   failure → red x-circle "CI failed"
  *   pending → amber loader (pulsing) "CI running"
+ *   null    → neutral slashed-circle "No CI"
  */
 export function ciGlyph(ci: CiStatus | null): {
   Icon: typeof CheckCircle2;
   color: string;
   title: string;
   pulse: boolean;
-} | null {
+} {
   if (ci === "success")
-    return { Icon: CheckCircle2, color: "var(--green)", title: "CI passed", pulse: false };
+    return {
+      Icon: CheckCircle2,
+      color: "var(--green)",
+      title: "CI passed",
+      pulse: false,
+    };
   if (ci === "failure")
-    return { Icon: XCircle, color: "var(--red)", title: "CI failed", pulse: false };
+    return {
+      Icon: XCircle,
+      color: "var(--red)",
+      title: "CI failed",
+      pulse: false,
+    };
   if (ci === "pending")
-    return { Icon: LoaderCircle, color: "var(--amber)", title: "CI running", pulse: true };
-  return null;
+    return {
+      Icon: LoaderCircle,
+      color: "var(--amber)",
+      title: "CI running",
+      pulse: true,
+    };
+  return {
+    Icon: CircleSlash2,
+    color: "var(--faint)",
+    title: "No CI",
+    pulse: false,
+  };
 }
 
 /** The CI glyph shown in the job header after the `PR #NN · open` line — a `·` separator + the four-state
- *  {@link ciGlyph} icon (pulsing while running). Renders nothing for the no-CI state. Shared by both PR
- *  header branches (linked `<a>` and inline `<div>`) so the two can't drift. */
+ *  {@link ciGlyph} icon (pulsing while running). Shared by both PR header branches (linked `<a>` and
+ *  inline `<div>`) so the two can't drift. */
 export function CiHeaderGlyph({ ci }: { ci: CiStatus | null }) {
   const g = ciGlyph(ci);
-  if (!g) return null;
   const { Icon, color, title, pulse } = g;
   return (
     <span className="flex shrink-0 items-center gap-0.5" title={title}>
@@ -362,11 +383,16 @@ export function CiHeaderGlyph({ ci }: { ci: CiStatus | null }) {
   );
 }
 
-/** A subtle CI dot for the sidebar job row — a small colored corner dot mirroring the halt dot. Renders
- *  nothing for the no-CI state. Keep it ≤7px so it reads at a glance without crowding the PR glyph. */
-export function CiStatusDot({ ci, size = 7 }: { ci: CiStatus | null; size?: number }) {
+/** A subtle CI dot for the sidebar job row — a small colored corner dot mirroring the halt dot. Keep it
+ *  ≤7px so it reads at a glance without crowding the PR glyph. */
+export function CiStatusDot({
+  ci,
+  size = 7,
+}: {
+  ci: CiStatus | null;
+  size?: number;
+}) {
   const g = ciGlyph(ci);
-  if (!g) return null;
   return (
     <span
       className={cn(
