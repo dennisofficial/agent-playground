@@ -297,4 +297,16 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   direct_build_verification!: { verdict: LiveVerificationVerdict; at: string } | null;
+
+  /**
+   * Which BUILD PATH was committed for this job: 'direct' (the fast, brain-implemented path) or 'plan'
+   * (the driver-run multi-thread path). Null until an approval commits the path — a proposal still sitting
+   * at `awaiting_approval` (which can still be re-proposed as the other path) has no value here, so a
+   * requested-but-unapproved direct build is NOT yet a committed direct build. Stamped ATOMICALLY with the
+   * `awaiting_approval → running` flip in `BrainStoreService.approve()`. The UI reads this (surfaced as
+   * `buildPath` on the pipeline DTO) to suppress the plan-oriented empty-state placeholders — build lanes,
+   * `plan.md`, generated docs — that never apply to a direct build.
+   */
+  @Column({ type: 'text', nullable: true })
+  build_path!: 'direct' | 'plan' | null;
 }
