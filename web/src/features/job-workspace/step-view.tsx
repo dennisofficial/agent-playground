@@ -17,6 +17,7 @@ import {
 } from "./bubbles";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
+import { highlightLine, langFromPath } from "./tool-calls/highlight";
 import {
   durableSubBlocks,
   durableSubagentPrompt,
@@ -40,7 +41,12 @@ import { ServiceLogView, serviceHeaderSubtitle } from "./service-log-view";
 import { TicketsRaisedPane } from "./tickets-raised-pane";
 import { useCommentableRef } from "./use-text-selection";
 import { useReviewComments } from "./review-comments";
-import { pipelineJob, type JobMessage, type JobRef } from "@/lib/api/job-api";
+import {
+  contextRawUrl,
+  pipelineJob,
+  type JobMessage,
+  type JobRef,
+} from "@/lib/api/job-api";
 import {
   APPROVE_ACTION_ID,
   type ContextFileContent,
@@ -1080,7 +1086,7 @@ function FileView({
             }
           />
         ) : data ? (
-          <FileBody file={data} onSelectNode={onSelectNode} />
+          <FileBody file={data} jobRef={jobRef} onSelectNode={onSelectNode} />
         ) : null}
       </div>
     </div>
@@ -1116,9 +1122,11 @@ function contextNodeForLink(fromPath: string, href: string): string | null {
 
 function FileBody({
   file,
+  jobRef,
   onSelectNode,
 }: {
   file: ContextFileContent;
+  jobRef: JobRef;
   onSelectNode?: (node: string) => void;
 }) {
   const pathname = usePathname();
@@ -1142,6 +1150,9 @@ function FileBody({
         This file is empty.
       </p>
     );
+  }
+  if (file.mime === "text/html") {
+    return <HtmlFileBody file={file} jobRef={jobRef} />;
   }
   if (file.mime === "text/markdown") {
     // Shared renderer — same dark terminal code frames + syntax highlighting as the conversation view.
@@ -1170,6 +1181,65 @@ function FileBody({
     <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-4 py-3 font-mono text-[12px] leading-relaxed text-dim">
       {file.content}
     </pre>
+  );
+}
+
+/**
+ * HTML artifact viewer with a Preview / Source toggle. Preview renders the document in a SANDBOXED iframe
+ * (`allow-scripts`, but NO `allow-same-origin` → opaque origin): its own CSS/JS run so mockups render
+ * faithfully, but it can't read the session cookie, call the API as the operator, or reach the parent DOM.
+ * The iframe loads from the path-based `context/raw` route so the document's relative sub-resources
+ * (`style.css`, images) resolve. Source shows the syntax-highlighted markup (highlight.js escapes it).
+ */
+function HtmlFileBody({
+  file,
+  jobRef,
+}: {
+  file: ContextFileContent;
+  jobRef: JobRef;
+}) {
+  const [mode, setMode] = useState<"preview" | "source">("preview");
+  return (
+    <div>
+      <div className="mb-3 inline-flex rounded-md border border-border bg-surface-2 p-0.5 text-[11.5px] font-medium">
+        {(["preview", "source"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setMode(m)}
+            className={cn(
+              "rounded px-2.5 py-1 capitalize transition-colors",
+              mode === m
+                ? "bg-surface text-text shadow-sm"
+                : "text-dim hover:text-text",
+            )}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+      {mode === "preview" ? (
+        <iframe
+          src={contextRawUrl(jobRef, file.path)}
+          title={file.name}
+          sandbox="allow-scripts"
+          className="h-[78vh] w-full rounded-md border border-border bg-white"
+        />
+      ) : (
+        <pre
+          className="hljs m-0 overflow-x-auto rounded-md border border-border px-4 py-3 font-mono text-[12px] leading-relaxed"
+          style={{ background: "var(--term)", color: "var(--term-fg)" }}
+        >
+          <code
+            // highlight.js escapes its input, so this is safe. highlightLine is normally called
+            // per-line, but hljs.highlight handles the whole multi-line document fine here.
+            dangerouslySetInnerHTML={{
+              __html: highlightLine(file.content, langFromPath(file.path)),
+            }}
+          />
+        </pre>
+      )}
+    </div>
   );
 }
 

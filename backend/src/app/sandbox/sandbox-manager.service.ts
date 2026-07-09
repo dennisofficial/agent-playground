@@ -7,7 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { promisify } from 'node:util';
 import { atlasAgentHomeBase } from '../engine/engine-home';
 import type { FeatureSandbox } from '../git';
-import { orgSkillsRootHost } from '../skills/skill-store-paths';
+import { managedGitSkillsRootHost, orgSkillsRootHost } from '../skills/skill-store-paths';
 import { managedSkillsRootHost } from '../skills/system-skill-store-paths';
 import { engineBundlePath, mcpBridgeBundlePath, mcpHubBundlePath } from './bundle-engine';
 import {
@@ -21,6 +21,7 @@ import {
   CONTAINER_PLAYGROUND,
   CONTAINER_PNPM_STORE,
   CONTAINER_SKILLS_MANAGED,
+  CONTAINER_SKILLS_MANAGED_GIT,
   CONTAINER_SKILLS_STORE,
   CONTAINER_WORKTREE,
   isExternalMountPath,
@@ -345,6 +346,14 @@ export class SandboxManager implements SandboxProvider {
     if (existsSync(managedSkillsDir)) {
       binds.push(`${managedSkillsDir}:${CONTAINER_SKILLS_MANAGED}:ro`);
     }
+    // Atlas's GIT-SOURCED managed skills — ONE fixed host dir (not per-org; see CONTAINER_SKILLS_MANAGED_GIT
+    // + skills/skill-store-paths.ts's managedGitSkillsRootHost), read-only. `ManagedSkillSyncService`
+    // vendors it lazily (leader-gated, boot + periodic), so — unlike the committed managedSkillsDir above —
+    // it's entirely normal for this to not exist yet (fresh checkout, sync hasn't run, or the leader is
+    // still syncing); mkdir it eagerly so the bind never fails on that.
+    const managedGitSkillsDir = managedGitSkillsRootHost(this.env.get('SKILLS_ROOT'));
+    mkdirSync(managedGitSkillsDir, { recursive: true });
+    binds.push(`${managedGitSkillsDir}:${CONTAINER_SKILLS_MANAGED_GIT}:ro`);
     // The thread's durable SHARED CONTEXT folder at /context — lives OUTSIDE the worktree (keyed by
     // jobId so it survives container recreate; the host reads it via contextDirHost()). THREE buckets,
     // pre-created so all always list cleanly:

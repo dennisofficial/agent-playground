@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { ResolvedSkill } from '../engine/engine.types';
 import type { McpSurface, WorkspaceSkillEntity } from '../persistence/entities';
-import { skillRelativeDir } from './skill-store-paths';
+import { managedGitSkillRelativeDir, skillRelativeDir } from './skill-store-paths';
 import { buildSystemSkills } from './system-skill-registry';
 import { managedSkillRelativeDir } from './system-skill-store-paths';
 import { WorkspaceSkillStore } from './workspace-skill.store';
@@ -37,12 +37,12 @@ export class SkillResolver {
     const byName = new Map<string, ResolvedSkill>();
     for (const s of buildSystemSkills()) {
       if (!s.surfaces.includes(surface)) continue;
-      byName.set(s.name, {
-        name: s.name,
-        description: s.description,
-        dirPath: managedSkillRelativeDir(s.name),
-        managed: true,
-      });
+      byName.set(
+        s.name,
+        s.git
+          ? { name: s.name, description: s.description, dirPath: managedGitSkillRelativeDir(s.name), managedGit: true }
+          : { name: s.name, description: s.description, dirPath: managedSkillRelativeDir(s.name), managed: true },
+      );
     }
 
     const rows = await this.store.rowsForTurn(orgId, repoId);

@@ -627,11 +627,15 @@ export type SkillProvenance = "git" | "custom" | "managed";
 export type SkillUpdatePolicy = "pinned" | "track-ref" | "manual";
 
 /** A built-in (Atlas-managed) skill, shown read-only — the skills counterpart of `SystemMcpServer`. Not a
- *  `workspace_skills` row (no `scope`/`enabled`/etc.) — it's code-defined, always on. */
+ *  `workspace_skills` row (no `scope`/`enabled`/etc.) — it's code-defined, always on. Two flavors: STATIC
+ *  (no `git`, committed to `backend/skills-managed/`) or GIT-SOURCED (`git` present — synced from an
+ *  upstream repo by `ManagedSkillSyncService`; `synced` says whether that sync has landed yet). */
 export interface SystemSkill {
   name: string;
   description: string;
   surfaces: McpSurface[];
+  git?: { url: string; subpath: string; ref: string };
+  synced?: boolean;
 }
 
 /** A skill as returned to the client — no secrets exist on a skill, so this is the full row. */

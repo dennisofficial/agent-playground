@@ -16,6 +16,15 @@ const ORG: CurrentOrgCtx = { id: 'orgB', role: 'owner' };
 
 let root: string;
 
+/** Drain a StreamableFile's read stream to a utf-8 string (also closes the fd so the temp dir can be removed). */
+async function streamToString(res: {
+  getStream(): NodeJS.ReadableStream;
+}): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of res.getStream()) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 function makeController(threadOrgId: string) {
   const threads = {
     findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) =>
@@ -105,6 +114,70 @@ describe('WebSurfaceController.contextFile', () => {
     const { controller, threadLifecycle } = makeController('orgA'); // thread belongs to org A
     await expect(
       controller.contextFile(ORG, 'leaked-thread-id', 'specs/plan.md'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(threadLifecycle.contextDirHost).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `GET …/context/raw/<path>` streams a bucket file as raw bytes with the right `Content-Type` for direct
+ * browser rendering (the HTML `<iframe>` preview + its relative sub-resources). The `*path` wildcard
+ * arrives from Express 5 as an array of decoded segments; the same bucket/traversal guard as `contextFile`
+ * applies. StreamableFile carries the mime, so we assert on its `options.type`.
+ */
+describe('WebSurfaceController.contextRaw', () => {
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'ctxraw-'));
+    mkdirSync(join(root, 'artifacts', 'sidebar redesign'), { recursive: true });
+    writeFileSync(
+      join(root, 'artifacts', 'sidebar redesign', 'index.html'),
+      '<!doctype html><link rel="stylesheet" href="style.css"><h1>Hi</h1>',
+    );
+    writeFileSync(join(root, 'artifacts', 'sidebar redesign', 'style.css'), 'h1{color:red}');
+    writeFileSync(join(root, 'secret.txt'), 'not in a bucket');
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('streams an HTML artifact with text/html and its bytes', async () => {
+    const { controller } = makeController('orgB');
+    const res = await controller.contextRaw(ORG, 'thread-1', ['artifacts', 'sidebar redesign', 'index.html']);
+    expect(res.options.type).toBe('text/html');
+    expect(res.options.length).toBeGreaterThan(0);
+    expect(await streamToString(res)).toContain('<h1>Hi</h1>');
+  });
+
+  it('streams a relative sibling asset (the CSS the HTML references)', async () => {
+    const { controller } = makeController('orgB');
+    const res = await controller.contextRaw(ORG, 'thread-1', ['artifacts', 'sidebar redesign', 'style.css']);
+    expect(res.options.type).toBe('text/css');
+    expect(await streamToString(res)).toBe('h1{color:red}');
+  });
+
+  it('rejects ".." traversal that escapes the context dir', async () => {
+    const { controller } = makeController('orgB');
+    await expect(
+      controller.contextRaw(ORG, 'thread-1', ['..', '..', '..', 'etc', 'passwd']),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects a path outside the exposed buckets', async () => {
+    const { controller } = makeController('orgB');
+    await expect(controller.contextRaw(ORG, 'thread-1', ['secret.txt'])).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('404s a missing file inside a valid bucket', async () => {
+    const { controller } = makeController('orgB');
+    await expect(
+      controller.contextRaw(ORG, 'thread-1', ['artifacts', 'nope.html']),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("404s another org's thread before touching the disk", async () => {
+    const { controller, threadLifecycle } = makeController('orgA');
+    await expect(
+      controller.contextRaw(ORG, 'leaked-thread-id', ['artifacts', 'sidebar redesign', 'index.html']),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(threadLifecycle.contextDirHost).not.toHaveBeenCalled();
   });
