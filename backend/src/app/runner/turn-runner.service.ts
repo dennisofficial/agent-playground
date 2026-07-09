@@ -12,6 +12,7 @@ import type {
   EngineUsage,
   ResolvedMcpServer,
   ResolvedSkill,
+  SessionLimitHit,
   ToolBridgeOptions,
   TurnMeta,
 } from '../engine';
@@ -124,6 +125,9 @@ export interface RunTurnResult {
   /** A plan, when the turn was a plan turn that captured one. */
   planText?: string;
   usage?: EngineUsage;
+  /** Set when the turn ended on a Claude subscription session/usage limit (see {@link EngineRunResult.sessionLimit}).
+   *  Pure pass-through from the engine result; the caller decides how to park/resume. */
+  sessionLimit?: SessionLimitHit;
   /** The handle the driver holds for the session's next turn. */
   session: SessionRef;
 }
@@ -283,6 +287,7 @@ export class TurnRunnerService {
       report: result.result,
       ...(result.planText ? { planText: result.planText } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
+      ...(result.sessionLimit ? { sessionLimit: result.sessionLimit } : {}),
       session,
     };
   }
@@ -355,6 +360,7 @@ export class TurnRunnerService {
       report: result.result,
       ...(result.planText ? { planText: result.planText } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
+      ...(result.sessionLimit ? { sessionLimit: result.sessionLimit } : {}),
       // The driver's reattach continuation only reads `report`; the SessionRef is the legacy return shape.
       session: {
         id: result.sessionId ?? '',
