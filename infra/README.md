@@ -57,18 +57,20 @@ busy box exhausts it and sandbox creation fails with:
 
 > (HTTP code 400) unexpected - all predefined address pools have been fully subnetted
 
-Install the repo's `infra/daemon.json` (base `172.20.0.0/14`, /24 subnets → 1024 networks) before starting
+Install the repo's `infra/daemon.json` (base `10.100.0.0/14`, /24 subnets → 1024 networks) before starting
 Atlas. This restarts the daemon, so do it now (nothing else is running yet) or during a maintenance window:
 
 ```bash
 # Merge into an existing /etc/docker/daemon.json if one is already present (don't blindly overwrite).
 sudo cp infra/daemon.json /etc/docker/daemon.json
 sudo systemctl restart docker                              # restarts ALL containers
-docker system info | grep -A4 'Default Address Pools'      # verify: 172.20.0.0/14, size 24
+docker system info | grep -A4 'Default Address Pools'      # verify: 10.100.0.0/14, size 24
 ```
 
-If the box already uses `172.20–172.23.x.x` on its host/LAN/VPN, pick another free RFC1918 range in
-`daemon.json` first (e.g. `{ "base": "10.100.0.0/16", "size": 24 }` → 256 networks).
+The range must not collide with any subnet the box already uses on its host/LAN/VPN — check first
+(`ip -o addr` / `ip route`). `10.100.0.0/14` was chosen for the OVH prod box because Docker's built-in
+default already scattered networks across `172.16/12` + `192.168/16` there (so a 172.x pool collided) and
+`10.x` was entirely free. On a box where `10.100–10.103.x.x` is in use, pick another free RFC1918 range.
 
 **Emergency reclaim (if the pool is already exhausted on a running box):** leaked, unused sandbox networks
 can be dropped without a daemon restart — `prune` only removes networks with no attached container:
