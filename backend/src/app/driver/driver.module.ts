@@ -100,6 +100,9 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     JOB_DISPATCHER,
     JobLifecycleService,
     GithubPrStateSync,
+    // Exported so the @Global surface + the ingress state-webhook controller can reach `markRepoDue`
+    // (a base-branch push marks the repo's open PRs due-now for the fast heartbeat).
+    GitStateReconciler,
     WorktreeProvisioner,
     DriverStoreService,
     PipelineAwarenessStore,
@@ -112,6 +115,8 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
   private reapTimer?: ReturnType<typeof setInterval>;
+  private pollTimer?: ReturnType<typeof setInterval>;
+  private pollInFlight = false; // skip a heartbeat if the prior tick is still running (slow GitHub / many PRs)
   private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
   private webhooksBackfilled = false; // per-repo webhook backfill runs ONCE per process on leadership
@@ -172,13 +177,20 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       // the drive's yield checkpoint); yielded jobs are re-driven and runJob fast-forwards completed work.
       await this.driver.resume();
       this.startReapTimer(); // transient: stopped on demote, restarted on every promote
+      this.startPollTimer(); // the fast adaptive PR-state heartbeat (leader-only, like the reap timer)
     });
-    this.demoteSub = this.election.onDemote(() => this.stopReapTimer());
+    this.demoteSub = this.election.onDemote(() => {
+      this.stopReapTimer();
+      this.stopPollTimer();
+    });
   }
 
   /**
    * Periodically reap idle thread-sandbox containers (worktrees survive) AND close threads whose PR has
-   * merged/closed (reclaims container + worktree). unref so it never keeps the process alive.
+   * merged/closed (reclaims container + worktree). unref so it never keeps the process alive. The GitHub
+   * PR-state observation itself now rides the fast `startPollTimer` heartbeat, NOT this slow sweep — this
+   * timer keeps only idle-reap + the `pollPrClosures` merge/close-teardown backstop (teardown is already
+   * real-time via the `/webhooks/github/state` webhook) + the stranded-job re-drive backstop.
    */
   private startReapTimer(): void {
     if (this.reapTimer) return;
@@ -191,9 +203,6 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       void this.driver.resume().catch(() => undefined);
       void this.lifecycle.reapIdle().catch(() => undefined);
       void this.lifecycle.pollPrClosures().catch(() => undefined);
-      // Observe GitHub for every open PR: refresh CI/mergeable UI columns + route merge conflicts back
-      // to the owning brain (the flagship signal webhooks don't emit).
-      void this.reconciler.reconcile().catch(() => undefined);
       void this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
     }, everyMs);
     this.reapTimer.unref?.();
@@ -206,10 +215,43 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     }
   }
 
+  /**
+   * The FAST adaptive PR-state heartbeat (~15s) — the leader observes GitHub for every DUE open PR:
+   * refreshes the CI/mergeable UI columns + routes merge conflicts back to the owning brain (the flagship
+   * signal webhooks don't emit), then re-stamps each job's durable `next_poll_at` clock by adaptive
+   * cadence so a hot PR (GitHub still computing mergeability) is re-checked in ~8s while a settled one
+   * relaxes to ~45s. Replaces the old fixed 30-min git-state sweep. Leader-only (like the reap timer):
+   * it tears/re-drives nothing, but must not double-poll from two processes. `unref` so it never keeps
+   * the process alive; `pollInFlight` guards against overlap when a tick runs long.
+   */
+  private startPollTimer(): void {
+    if (this.pollTimer) return;
+    const everyMs = 15 * 1000; // 15s — the fast heartbeat; the reconciler's per-PR cadence does the throttling.
+    this.pollTimer = setInterval(() => {
+      if (this.pollInFlight) return;
+      this.pollInFlight = true;
+      void this.reconciler
+        .tick()
+        .catch((err) => this.logger.warn(`git-state tick failed: ${err}`))
+        .finally(() => {
+          this.pollInFlight = false;
+        });
+    }, everyMs);
+    this.pollTimer.unref?.();
+  }
+
+  private stopPollTimer(): void {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+  }
+
   onApplicationShutdown(): void {
     this.resumeSub?.unsubscribe();
     this.promoteSub?.unsubscribe();
     this.demoteSub?.unsubscribe();
     this.stopReapTimer();
+    this.stopPollTimer();
   }
 }
