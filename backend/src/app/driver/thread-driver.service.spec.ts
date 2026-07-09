@@ -416,10 +416,9 @@ function makeGit(): {
     // (below) advances `sha` to simulate the writer's commit, so `headSha` returns the fresh sha the driver
     // stamps. `hasChanges` reports a CLEAN tree by default (the writer committed) — no dirty-tree nudge.
     hasChanges: vi.fn(async () => false),
-    commitAll: vi.fn(async (_wt: string, message: string) => {
-      commits.push(message);
-      return `commit${++sha}`;
-    }),
+    // The ledger is committed by the brain's ship turn (host never commits); `ledgerClean` = true means the
+    // `.atlas/decisions/` files landed, gating the `markLedgerPromoted` stamp in `finalizeBuild`.
+    ledgerClean: vi.fn(async () => true),
     push: vi.fn(async (sandbox: FeatureSandbox) => {
       pushed.push(sandbox.branch);
     }),

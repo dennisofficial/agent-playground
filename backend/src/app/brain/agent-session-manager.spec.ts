@@ -11,6 +11,7 @@ import type { BuildShipService } from '../driver/build-ship.service';
 import { DecisionLedgerService } from './decision-ledger.service';
 import type { RepoDecisionManifestService } from './repo-decision-manifest.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
+import type { LiveVerificationJudge } from '../driver/live-verification-judge';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import type { TicketService } from '../tickets';
 import type { DecisionClassifier } from '../decision-gate';
@@ -111,6 +112,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     threadTicketId: vi.fn().mockResolvedValue(null),
     // Direct-build finalize stamps the ledger promotion complete after ship.
     markLedgerPromoted: vi.fn().mockResolvedValue(undefined),
+    // ADR-0005 direct-build live-verification verdict (persisted on both pass + refusal paths).
+    recordDirectBuildVerification: vi.fn().mockResolvedValue(undefined),
     // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
     setTurnActive: vi.fn().mockResolvedValue(undefined),
     setHalted: vi.fn().mockResolvedValue(undefined),
@@ -160,7 +163,22 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // The brain turn observes the live branch (detached HEAD → null); default to null so no live-branch
     // backstop fires in these streaming/tool tests.
     currentBranch: vi.fn().mockResolvedValue(null),
+    // The ledger is committed by the brain's ship turn (host never commits); `ledgerClean` gates the
+    // `markLedgerPromoted` stamp in the direct-build turn-end latch + boot reconcile.
+    ledgerClean: vi.fn().mockResolvedValue(true),
+    // Hard-reset safety guard: a clean, pushed tree is safe to re-cut by default.
+    worktreeSafeToRecut: vi.fn().mockResolvedValue(true),
+    // ADR-0005 direct-build gate reads the changed files (vs origin/<default>) to decide runtime-touch.
+    // Default: empty → the pre-filter passes without consulting the judge (keeps all existing ship tests green).
+    changedFileNames: vi.fn().mockResolvedValue([]),
   } as unknown as LocalGitService;
+
+  // ADR-0005 live-verification judge — a mutable stub so gate tests set the verdict per case. Default
+  // (undefined) never matters for non-gate tests: their empty changed-file set short-circuits the pre-filter
+  // before the judge is consulted.
+  const mockJudge = {
+    judge: vi.fn().mockResolvedValue(undefined),
+  } as unknown as LiveVerificationJudge & { judge: ReturnType<typeof vi.fn> };
 
   const mockDockerRunner = {} as unknown as EngineRunnerPort;
 
@@ -704,10 +722,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // The tool returns the open-PR instructions for the brain to act on in-turn (host no longer opens it).
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     expect((result as { message: string }).message).toContain('gh pr create');
-    // The direct path stamps the ledger-promotion spine COMPLETE inline (the brain already ran
-    // promote_decisions and preShip committed it), so the boot backstop never re-selects this shipped
-    // row and re-fires a redundant promote + open-PR turn against the already-open PR.
-    expect(mockStore.markLedgerPromoted).toHaveBeenCalledWith(FAKE_JOB_ID);
+    // finalize_build does NOT stamp the ledger inline anymore — the host no longer commits it, so the stamp
+    // must wait until the brain's inline open-PR push lands the `.atlas/decisions/` files. The turn-end latch
+    // (`latchDirectBuildAtTurnEnd`) stamps it then, gated on `ledgerClean` (covered by its own tests).
+    expect(mockStore.markLedgerPromoted).not.toHaveBeenCalled();
   });
 
   it('(c) finalize_build: a leak-scan block returns a hard failure (brain must clean the branch)', async () => {
@@ -986,12 +1004,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(mockLifecycle.markRepoOnboarded).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
-    // preShip is called positionally (job, repo, sandbox, commitMessage, notify) with the reframed message.
+    // preShip is called positionally (job, repo, sandbox, notify) — no commit message: the host no longer
+    // commits, so the brain commits its env-setup changes itself in the inline open-PR turn.
     expect(mockShip.preShip).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       expect.anything(),
-      'Atlas: onboarding — environment setup',
       expect.anything(),
     );
     // prOpened is false at return (the PR opens inline afterward), and the message tells the brain to open it.
@@ -1588,6 +1606,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     wasReset?: boolean;
     sessionId?: string | null;
     resetContainer?: ReturnType<typeof vi.fn>;
+    hardResetSandbox?: ReturnType<typeof vi.fn>;
     /** A live brain turn `runningBrainTurn` returns (drives the steer-into-live path); default none. */
     runningBrainTurn?: { turn_id: string } | null;
     /** The engine runner's `steer` mock (present → `steerIntoLiveBrainTurn` can fire). */
@@ -1622,7 +1641,14 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         .fn()
         .mockResolvedValue({ sandbox: { worktreePath: '/wt', containerId: 'c1' }, wasReset: opts.wasReset ?? false }),
       resetContainer: opts.resetContainer ?? vi.fn().mockResolvedValue({ reset: true }),
+      hardResetSandbox: opts.hardResetSandbox ?? vi.fn().mockResolvedValue({ reset: true }),
     } as unknown as JobLifecycleService;
+    const git = {
+      hasChanges: vi.fn().mockResolvedValue(false),
+      currentBranch: vi.fn().mockResolvedValue(null),
+      ledgerClean: vi.fn().mockResolvedValue(true),
+      worktreeSafeToRecut: vi.fn().mockResolvedValue(true),
+    } as unknown as LocalGitService;
     const surface = {
       post: vi.fn().mockResolvedValue('ts'),
       name: 'web',
@@ -1710,11 +1736,11 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         listMounts: async () => [],
         upsertMount: async () => undefined,
       } as unknown as WorkspaceConfigStore,
-      { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
+      git,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
-    return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
+    return { manager, store, lifecycle, git, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
   }
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
@@ -2309,6 +2335,74 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       expect(resetContainer).not.toHaveBeenCalled();
     });
 
+    // ── hard reset ({ hard:true }) — two-call confirm + dirty/unpushed refusal ──────────────────────
+    const resetReq = (m: AgentSessionManager) =>
+      (m as unknown as { resetRequests: Map<string, { reason: string; hard?: boolean }> }).resetRequests;
+    const pendingHard = (m: AgentSessionManager) =>
+      (m as unknown as { pendingHardReset: Set<string> }).pendingHardReset;
+
+    it('hard reset: FIRST call arms + returns a notice and does NOT queue the reset', async () => {
+      const { manager } = makeManager({ findSandbox: { branch: 'atlas/feature', worktreePath: '/wt' } });
+      const res = (await manager.buildTools(stimulus).reset_sandbox({ reason: 'prove stack', hard: true })) as Record<
+        string,
+        unknown
+      >;
+      expect(res).toMatchObject({ ok: true, willReset: false, confirmRequired: true });
+      expect(String(res.message)).toMatch(/HARD RESET/);
+      // Armed but NOT queued — nothing for the tail to honor yet.
+      expect(pendingHard(manager).has(KEY)).toBe(true);
+      expect(resetReq(manager).has(KEY)).toBe(false);
+    });
+
+    it('hard reset: SECOND call queues the reset marked `hard` and disarms the confirm', async () => {
+      const { manager } = makeManager({ findSandbox: { branch: 'atlas/feature', worktreePath: '/wt' } });
+      const tool = manager.buildTools(stimulus).reset_sandbox;
+      await tool({ reason: 'prove stack', hard: true }); // arm
+      const res = (await tool({ reason: 'prove stack', hard: true })) as Record<string, unknown>;
+      expect(res).toMatchObject({ ok: true, willReset: true });
+      expect(resetReq(manager).get(KEY)).toEqual({ reason: 'prove stack', hard: true });
+      expect(pendingHard(manager).has(KEY)).toBe(false);
+    });
+
+    it('hard reset: REFUSES on a dirty tree (host never commits to rescue work)', async () => {
+      const { manager, git } = makeManager({ findSandbox: { branch: 'atlas/feature', worktreePath: '/wt' } });
+      (git.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      const res = (await manager.buildTools(stimulus).reset_sandbox({ reason: 'x', hard: true })) as Record<
+        string,
+        unknown
+      >;
+      expect(res.ok).toBe(false);
+      expect(String(res.reason)).toMatch(/uncommitted changes/);
+      expect(pendingHard(manager).has(KEY)).toBe(false); // not armed
+    });
+
+    it('hard reset: REFUSES a full clone with unpushed commits (would be lost on re-cut)', async () => {
+      const { manager, git } = makeManager({ findSandbox: { branch: 'atlas/feature', worktreePath: '/wt' } });
+      (git.worktreeSafeToRecut as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+      const res = (await manager.buildTools(stimulus).reset_sandbox({ reason: 'x', hard: true })) as Record<
+        string,
+        unknown
+      >;
+      expect(res.ok).toBe(false);
+      expect(String(res.reason)).toMatch(/not yet pushed/);
+    });
+
+    it('the turn tail honors a HARD reset via hardResetSandbox (not resetContainer)', async () => {
+      const hardResetSandbox = vi.fn().mockResolvedValue({ reset: true });
+      const resetContainer = vi.fn();
+      const { manager, lifecycle } = makeManager({ hardResetSandbox, resetContainer });
+      resetReq(manager).set(KEY, { reason: 'prove stack', hard: true });
+      vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+
+      await (manager as unknown as { maybeHonorSandboxReset: (s: ChatStimulus) => Promise<void> }).maybeHonorSandboxReset(
+        stimulus,
+      );
+
+      expect(lifecycle.hardResetSandbox as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(THREAD_ID, TEAM_ID);
+      expect(lifecycle.resetContainer as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+      expect((manager as unknown as { pendingResetVerify: Set<string> }).pendingResetVerify.has(KEY)).toBe(true);
+    });
+
     it('folds the verify instruction into the reset-notice on the FIRST cold-attached turn (e.g. a queued operator turn)', async () => {
       const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
       const { manager, dockerRunner } = makeManager({ run, wasReset: true, sessionId: 'sess-prior' });
@@ -2429,7 +2523,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         listMounts: async () => [],
         upsertMount: async () => undefined,
       } as unknown as WorkspaceConfigStore,
-      { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
+      { hasChanges: async () => false, currentBranch: async () => null, ledgerClean: async () => true, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
@@ -2518,6 +2612,9 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     const store = {
       loadJob: overrides.loadJob ?? vi.fn().mockResolvedValue(runningJob),
       setTurnActive: vi.fn().mockResolvedValue(undefined),
+      // The direct-build turn-end latch now stamps the ledger complete once it is proven committed
+      // (`ledgerClean`) — the host no longer commits it inline at `finalize_build`.
+      markLedgerPromoted: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox:
@@ -2584,7 +2681,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
         read: async () => null,
       } as unknown as WorkspaceSecretFileStore,
       { listMounts: async () => [], upsertMount: async () => undefined } as unknown as WorkspaceConfigStore,
-      { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
+      { hasChanges: async () => false, currentBranch: async () => null, ledgerClean: async () => true, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
     );
