@@ -1,0 +1,17 @@
+## report_verification
+Report the verification you ran for a DIRECT BUILD before shipping. Pass passed:true only once diagnostics + the repo typecheck are clean AND — if you touched a runtime surface (HTTP endpoint, UI page/component, CLI entry point, or background job) — you have ACTUALLY EXERCISED IT LIVE (booted the process and curled the endpoint / drove the UI / ran the CLI for real). Include that live evidence in `verification` (the real command, its exit code, a tail of its output). finalize_build runs a live-verification judge over this evidence and refuses to ship a runtime change you only typechecked. If you cannot get things clean, pass passed:false with `remaining` listing the specific errors.
+
+## complete_thread
+Assert this thread is DONE. Call exactly once when the work is complete and verified. Provide a one-line summary plus, ideally, the changes you made and the verification you ran.
+
+## block_thread
+Voluntarily HALT this thread — you cannot make progress this turn and there is nothing to poll for. Use complete_thread when done instead.
+
+## reset_sandbox
+Recreate this job’s sandbox so you can PROVE it cold-boots from durable config. Default: recreates the CONTAINER only (worktree + session survive). `hard:true`: recreates the WHOLE sandbox from scratch — fresh worktree AND container, as if the job just started — while keeping your coding session (history resumes) and the /context + /playground mounts. A hard reset is a TWO-CALL CONFIRM: the first call describes what happens / what is lost and does nothing; call it again to actually reset. It REFUSES on a dirty tree or unpushed commits (the host never commits for you — commit + push first). The reset happens on your NEXT turn — call it, then STOP.
+
+## task_create
+Add ONE item to your live task list (shown to the operator as a checklist for this thread). Call it up front for each concrete step you plan to do, and as new work emerges. Returns the created task id.
+
+## task_update
+Update one task in your live task list — mark it in_progress when you start it and completed when it is done (exactly one task should be in_progress at a time). Use status "deleted" to remove a task.

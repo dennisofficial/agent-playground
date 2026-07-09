@@ -1,0 +1,16 @@
+Feature overview:
+
+
+Locked decisions (respect these):
+(none)
+
+Thread: A build thread
+
+Your grounding is `/context/specs/` — read its `plan.md` index, this thread's `sections/NN-*.md` file, and `data-model.md`; treat `/context/specs` and `/context/generated` as READ-ONLY. Make ALL code changes under `/workspace`. The one `/context` bucket you may write is `/context/artifacts/`: leave your live-validation evidence there (logs, screenshots, a `RESULTS.md` index) so it surfaces in the operator's ARTIFACTS panel.
+
+Implement this thread: read the specs, then delegate the work to writer subagents (one at a time), making small edits yourself where a subagent would be overkill, and verify the whole thread before finishing. If you hit a decision the locked plan does NOT cover: if a one-line human answer would unblock you right now, call `request_operator_input` and wait; if you genuinely cannot make progress this turn (a missing secret/service, or a substantive decision that needs deliberation), call `block_thread` to hand it to Atlas rather than guessing or stopping silently.
+
+### Step 1: Step one
+do the thing
+
+COMMIT YOUR WORK (required — the host does NOT commit for you): once the work is done and verified, run `git add -A` (your `.gitignore` governs what's tracked; if build or cache junk appears in `git status`, add it to `.gitignore` instead of committing it), commit with a clear message, and `git push` your branch. Leave the working tree CLEAN. THEN call `complete_thread`. If you finish without committing, your work is treated as unfinished.
