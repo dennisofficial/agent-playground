@@ -19,13 +19,19 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: 't@t',
 };
 
-/** Minimal in-memory `workspace_skills` repository — mirrors `skill-resolver.service.spec.ts`'s FakeRepo. */
+/** Minimal in-memory `workspace_skills` repository — mirrors `skill-resolver.service.spec.ts`'s FakeRepo.
+ *  `delayMs` (default 0) simulates a real Postgres round trip: with it set, a marketplace install races the
+ *  scratch-clone cleanup against `installMarketplace`'s expansion loop exactly like the live bug did (see
+ *  `skill-installer.service.ts`'s `install()` — a missing `await` let `finally`'s `rm(tmpDir)` run
+ *  concurrently with the loop still reading skill dirs out of it). */
 class FakeRepo {
   rows: WorkspaceSkillEntity[] = [];
+  constructor(private readonly delayMs = 0) {}
   create(p: Partial<WorkspaceSkillEntity>): WorkspaceSkillEntity {
     return { ...p } as WorkspaceSkillEntity;
   }
   async save(row: WorkspaceSkillEntity): Promise<WorkspaceSkillEntity> {
+    if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs));
     const i = this.rows.findIndex((r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name);
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
@@ -93,6 +99,50 @@ function makeMarketplaceRepo(tmp: string): string {
   return commitAndBare(tmp, work, 'marketplace.git');
 }
 
+/** The real `anthropics/skills` shape at scale: multiple plugins, each with several `skills[]` entries —
+ *  the fixture that would have caught the missing-`await` scratch-dir race (a 2-skill/1-plugin manifest
+ *  finishes too fast to expose it; this one has enough entries + a slow store to reliably lose the race
+ *  if the bug regresses). */
+function makeMultiPluginMarketplaceRepo(tmp: string): string {
+  const work = join(tmp, 'multi-work');
+  initRepo(work);
+  mkdirSync(join(work, '.claude-plugin'), { recursive: true });
+  const skillNames = ['one', 'two', 'three', 'four', 'five', 'six'];
+  for (const name of skillNames) {
+    mkdirSync(join(work, 'skills', name), { recursive: true });
+    writeFileSync(join(work, 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: Skill ${name}\n---\nBody.\n`);
+  }
+  writeFileSync(
+    join(work, '.claude-plugin', 'marketplace.json'),
+    JSON.stringify({
+      name: 'multi-marketplace',
+      plugins: [
+        { name: 'plugin-a', source: './', skills: skillNames.slice(0, 3).map((n) => `./skills/${n}`) },
+        { name: 'plugin-b', source: './', skills: skillNames.slice(3).map((n) => `./skills/${n}`) },
+      ],
+    }),
+  );
+  return commitAndBare(tmp, work, 'multi.git');
+}
+
+/** A marketplace repo whose plugin omits `skills` entirely — the plugin-spec convention `context-
+ *  engineering-collection`-style repos also use: every dir under the plugin's `skills/` with a `SKILL.md`
+ *  IS a skill, discovered by scanning rather than an explicit manifest list. */
+function makeDirScanMarketplaceRepo(tmp: string): string {
+  const work = join(tmp, 'dirscan-work');
+  initRepo(work);
+  mkdirSync(join(work, '.claude-plugin'), { recursive: true });
+  mkdirSync(join(work, 'skills', 'gamma'), { recursive: true });
+  mkdirSync(join(work, 'skills', 'delta'), { recursive: true });
+  writeFileSync(
+    join(work, '.claude-plugin', 'marketplace.json'),
+    JSON.stringify({ name: 'dirscan-marketplace', plugins: [{ name: 'dirscan-plugin', source: './' }] }),
+  );
+  writeFileSync(join(work, 'skills', 'gamma', 'SKILL.md'), '---\nname: gamma\ndescription: Gamma skill\n---\nBody.\n');
+  writeFileSync(join(work, 'skills', 'delta', 'SKILL.md'), '---\nname: delta\ndescription: Delta skill\n---\nBody.\n');
+  return commitAndBare(tmp, work, 'dirscan.git');
+}
+
 describe('SkillInstallerService (real git, local fixture repos)', () => {
   let tmp: string;
   let storeRoot: string;
@@ -152,6 +202,27 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
     const betaDest = skillDirHost(storeRoot, 'org1', 'repo-1', 'beta');
     const assetBytes = readFileSync(join(betaDest, 'asset.bin'));
     expect([...assetBytes]).toEqual([0, 1, 2, 255, 254, 253, 0, 10]); // byte-identical, not mangled as text
+  });
+
+  it('expands EVERY skill across multiple plugins even with slow (real-DB-like) per-skill writes — the ' +
+     'scratch-dir-cleanup race regression', async () => {
+    const sourceUrl = makeMultiPluginMarketplaceRepo(tmp);
+    const slowStore = new WorkspaceSkillStore(new FakeRepo(20) as unknown as Repository<WorkspaceSkillEntity>);
+    const slowInstaller = new SkillInstallerService(
+      { get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined) } as never,
+      new LocalGitService({ get: () => undefined } as never),
+      { githubToken: async () => undefined } as unknown as CredentialResolver,
+      slowStore,
+    );
+
+    const skills = await slowInstaller.install({ orgId: 'org1', scope: '*', sourceUrl });
+    expect(skills.map((s) => s.name).sort()).toEqual(['five', 'four', 'one', 'six', 'three', 'two']);
+  });
+
+  it('expands a plugin that omits `skills` — scans its `skills/` subdir for SKILL.md dirs', async () => {
+    const sourceUrl = makeDirScanMarketplaceRepo(tmp);
+    const skills = await installer.install({ orgId: 'org1', scope: '*', sourceUrl });
+    expect(skills.map((s) => s.name).sort()).toEqual(['delta', 'gamma']);
   });
 
   it('rejects a subpath with neither a SKILL.md nor a marketplace manifest', async () => {

@@ -28,8 +28,7 @@ import { BUNDLED_CLAUDE_CODE_SKILLS } from './bundled-skills';
 import { SkillFileWriter } from './skill-file-writer.service';
 import { SkillInstallerService } from './skill-installer.service';
 import { SkillUpdaterService } from './skill-updater.service';
-import { SystemSkillResolver } from './system-skill-resolver.service';
-import type { SystemSkill } from './system-skill-registry';
+import { SystemSkillResolver, type SystemSkillView } from './system-skill-resolver.service';
 import { ORG_SCOPE, WorkspaceSkillStore, type SkillInput, type SkillView } from './workspace-skill.store';
 
 const SURFACES = ['brain', 'build', 'review'] as const;
@@ -97,7 +96,7 @@ export class SkillsController {
   @Get()
   async list(
     @CurrentOrg() org: CurrentOrgCtx,
-  ): Promise<{ system: SystemSkill[]; bundled: string[]; skills: SkillView[] }> {
+  ): Promise<{ system: SystemSkillView[]; bundled: string[]; skills: SkillView[] }> {
     return {
       system: this.systemSkills.list(),
       bundled: [...BUNDLED_CLAUDE_CODE_SKILLS],

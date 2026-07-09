@@ -1,8 +1,14 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type { WorkspaceSkillEntity } from '../persistence/entities';
 import { SkillResolver } from './skill-resolver.service';
 import { WorkspaceSkillStore } from './workspace-skill.store';
+
+// This file tests the ORG/REPO tier in isolation from whatever `system-skill-registry.ts` actually ships
+// (real content since P5+#14) — an empty system tier here, exactly like `skill-resolver.managed-tier.spec.ts`
+// stubs it for the OPPOSITE reason (to test the system tier's own precedence behavior). `vi.mock` is
+// hoisted above these imports by vitest.
+vi.mock('./system-skill-registry', () => ({ buildSystemSkills: () => [] }));
 
 /** Minimal in-memory repository (only the methods the store calls). */
 class FakeRepo {

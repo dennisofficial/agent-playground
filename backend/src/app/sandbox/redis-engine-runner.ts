@@ -22,6 +22,7 @@ import {
   CONTAINER_CONTEXT,
   CONTAINER_PLAYGROUND,
   CONTAINER_SKILLS_MANAGED,
+  CONTAINER_SKILLS_MANAGED_GIT,
   CONTAINER_SKILLS_STORE,
   CONTAINER_WORKTREE,
 } from './container-paths';
@@ -497,6 +498,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // Atlas's own MANAGED (system-tier) skills — ONE fixed dir bind-mounted read-only at this path (see
     // SandboxManager's managedSkillsDir bind). The engine joins a `managed: true` skill's `dirPath` here.
     e.SKILLS_MANAGED_ROOT = CONTAINER_SKILLS_MANAGED;
+    // Atlas's GIT-SOURCED managed skills — ManagedSkillSyncService's sync target, bind-mounted read-only
+    // (see SandboxManager's managedGitSkillsDir bind). The engine joins a `managedGit: true` skill's
+    // `dirPath` here.
+    e.SKILLS_MANAGED_GIT_ROOT = CONTAINER_SKILLS_MANAGED_GIT;
     // Redis transport: the engine reads its spec from / writes events to Redis under this turn id.
     e.ENGINE_TRANSPORT = 'redis';
     e.TURN_ID = turnId;
