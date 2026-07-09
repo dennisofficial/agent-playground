@@ -16,7 +16,10 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { EngineCore } from './engine-core';
+import { type EngineHomeKey } from './engine-home';
 import { BG_TASK_CAP_NOTICE, type EngineEvent } from './engine.types';
+
+const TEST_KEY: EngineHomeKey = { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' };
 
 const HOME_ROOT = join(tmpdir(), `atlas-bg-task-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
@@ -53,8 +56,11 @@ const taskUpdated = (taskId: string, status: string): Record<string, unknown> =>
 const taskProgress = (taskId: string): Record<string, unknown> => ({
   type: 'system', subtype: 'task_progress', task_id: taskId, description: 'running', usage: { total_tokens: 1, tool_uses: 0, duration_ms: 1 }, session_id: 'sess-1',
 });
+// A genuinely-completed result — for a tool-native run_in_background, the SDK's first result carries
+// terminal_reason 'completed' (verified live against sdk 0.3.201), so isTurnGenuinelyDone() is true and the
+// engine reaches the background-task hold/cap gate rather than the paused-result keep-open branch (#65).
 const resultMsg = (result: string, inputTokens: number, outputTokens: number): Record<string, unknown> => ({
-  type: 'result', subtype: 'success', session_id: 'sess-1', result, usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+  type: 'result', subtype: 'success', session_id: 'sess-1', result, terminal_reason: 'completed', stop_reason: 'end_turn', usage: { input_tokens: inputTokens, output_tokens: outputTokens },
 });
 
 type FakeState = { inputEnded: boolean };
@@ -105,7 +111,7 @@ function runTurn(
     task: 'run the suite in the background',
     cwd: '/tmp/wt',
     systemPrompt: 'persona',
-    sandboxKey: 'acme--feat',
+    sandboxKey: TEST_KEY,
     mode: 'execute',
     auth: { secret: 'oauth-tok' },
     steerInput: idleSteerInput,
