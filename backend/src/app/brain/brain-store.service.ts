@@ -1337,6 +1337,20 @@ export class BrainStoreService {
   }
 
   /**
+   * Persist the ADR-0005 live-verification verdict for this job's DIRECT-BUILD ship (the brain's
+   * `finalize_build` gate). Written on BOTH the pass and the refusal path so direct-build verdicts are
+   * queryable (`jobs.direct_build_verification`) — the observability hook the prod audit needs. Overwrites
+   * on retry (the last `finalize_build` attempt wins). Best-effort — a write failure must never break the
+   * ship turn (the caller decides how to handle it).
+   */
+  async recordDirectBuildVerification(
+    jobId: string,
+    payload: JobEntity['direct_build_verification'],
+  ): Promise<void> {
+    await this.jobs.update({ id: jobId }, { direct_build_verification: payload });
+  }
+
+  /**
    * The threads with a `turn_active` flag still set — i.e. a conversational turn was streaming when the
    * process died. Captured on boot BEFORE {@link resetAllTurnActive} clears the flags, so crash recovery
    * knows which threads have a possibly-orphaned engine still finishing in the container (to watch them to

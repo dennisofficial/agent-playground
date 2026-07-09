@@ -44,16 +44,31 @@ export type IngressRejectionReason =
   | 'unsupported' // a payload shape this adapter deliberately ignores (e.g. a GitHub ping) → 202
   | 'malformed'; // unparseable / missing required fields → 400
 
+/** A parsed GitHub `pull_request` webhook delta the silent PR-state sync applies (NOT a stimulus). */
+export type PrStateDelta = {
+  orgId: string;
+  repoId: string;
+  action: 'opened' | 'closed' | 'reopened';
+  prNumber: number;
+  headRef: string;
+  url: string;
+  merged: boolean;
+};
+
 /**
  * An adapter's verdict on a raw notification. `accepted` carries the parsed event the intake then
  * normalizes; `rejected`/`ignored` carry a reason the controller maps to a status. `ignored` is a
  * SUCCESSFUL no-op (a verified-but-uninteresting payload, e.g. GitHub's `ping`), distinct from a
- * `rejected` (verification/routing failure).
+ * `rejected` (verification/routing failure). `pr-sync` is a SILENT authoritative PR-state delta
+ * (open/merged/closed/reopened) applied directly to the owning job's row — it never seeds a stimulus.
+ * For the GitHub adapter this is emitted only by `handlePrWebhook` (the `/webhooks/github` front door),
+ * never by `handle` (the `/ingress/github` work-events front door).
  */
 export type IngressResult =
   | { outcome: 'accepted'; event: ParsedEvent }
   | { outcome: 'ignored'; reason: IngressRejectionReason; detail?: string }
-  | { outcome: 'rejected'; reason: IngressRejectionReason; detail?: string };
+  | { outcome: 'rejected'; reason: IngressRejectionReason; detail?: string }
+  | { outcome: 'pr-sync'; delta: PrStateDelta };
 
 /**
  * The inbound-only port every gateway adapter implements. One method: take a `RawNotification`, do

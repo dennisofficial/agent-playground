@@ -17,10 +17,13 @@ import {
 } from '../autofix';
 import type { DecisionRecord, Step, Job, SessionEngine, ThreadStatus } from '../domain';
 import { HALT_FIX_ATTEMPT_CAP } from '../domain';
+import { TICKET_AUTO_SKIP_SIM, TICKET_TERMINAL_STATUSES } from '../domain/ticket';
 import {
   EngineAuthError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
+  unwrapBridgeArgs,
+  type EngineEvent,
   type EngineHomeKey,
   type EngineHomeType,
   type ToolBridgeOptions,
@@ -46,12 +49,12 @@ import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
+import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import type { ActiveTurnEntity, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
   Agent,
-  LEDGER_COMMIT_MESSAGE,
   renderAgentPrompt,
   ROTATION_PREAMBLE,
   ROTATION_SOFT_NUDGE,
@@ -66,6 +69,11 @@ import {
   type LiveVerificationJudge,
   type LiveVerificationVerdict,
 } from './live-verification-judge';
+import {
+  NON_RUNTIME_FILE_RE,
+  renderLockedDecisionsSummary,
+  renderTerminalRecordSummary,
+} from './live-verification-support';
 import {
   DriverStoreService,
   type DriverThread,
@@ -1554,6 +1562,25 @@ export class ThreadDriver implements JobDispatcher {
           if (dup) {
             return { ok: true, ticketId: dup.id, number: dup.number, alreadyCaptured: true };
           }
+          // Semantic guard on top of the exact-title one: the builder has no human in the loop, so at the
+          // HIGH auto-skip bar collapse a near-identical capture into an existing OPEN ticket rather than
+          // filing a "same bug, one word off" duplicate (the #6/#7 case). Restricted to non-terminal
+          // statuses so a done/cancelled match never suppresses a fresh capture. Fail-soft (no key → skip).
+          const semantic = await this.tickets
+            .findSimilar({
+              orgId: job.orgId,
+              repoId: job.repoId,
+              title,
+              body,
+              minSim: TICKET_AUTO_SKIP_SIM,
+              limit: 1,
+              excludeStatuses: [...TICKET_TERMINAL_STATUSES],
+            })
+            .catch(() => ({ queryVector: null, matches: [] }));
+          const near = semantic.matches[0];
+          if (near) {
+            return { ok: true, ticketId: near.id, number: near.number, alreadyCaptured: true };
+          }
           const ticket = await this.tickets.create({
             orgId: job.orgId,
             repoId: job.repoId,
@@ -2604,7 +2631,7 @@ export class ThreadDriver implements JobDispatcher {
    * exactly like a batch resume) after it claims `done`, hands it a directive to run a real diagnostics +
    * typecheck pass over what it changed and fix what it finds, and reads back a structured verdict via the
    * `report_verification` host tool — never trusting prose. Called from `runBatch` for Claude worker
-   * batches only, right before `commitAll`.
+   * batches only, right before the builder commits its batch.
    *
    * Skips (passes through) when there's no `sectionStartSha` (best-effort, mirrors `gateLiveVerification`)
    * or no changed TS/JS file (nothing to typecheck — an empty diff never reaches the gate, same cheap
@@ -2670,7 +2697,10 @@ export class ThreadDriver implements JobDispatcher {
       if (verdict?.passed) return { passed: true };
       priorErrors = verdict?.remaining?.length
         ? verdict.remaining
-        : ['the orchestrator ended the turn without calling report_verification'];
+        : [
+            'no report_verification verdict was recorded for this gate turn' +
+              ' (the orchestrator ended the turn without calling it, or its verdict could not be recovered on resume)',
+          ];
     }
     return { passed: false, detail: priorErrors.join('\n') || 'verification gate exhausted its budget' };
   }
@@ -2695,7 +2725,10 @@ export class ThreadDriver implements JobDispatcher {
         containerId: row.container_id!,
         jobId: job.id,
         stepId: anchorStepId,
-        onEvent: (e) => harness.onEvent(e),
+        onEvent: (e) => {
+          harness.onEvent(e);
+          this.recoverGateVerdictFromReplay(e, toolBridge);
+        },
         toolBridge,
       });
       await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
@@ -2707,6 +2740,29 @@ export class ThreadDriver implements JobDispatcher {
       this.logger.warn(`re-attach gate turn ${row.turn_id} failed; re-running the iteration: ${err}`);
       return null;
     }
+  }
+
+  /** Recover the gate verdict from the REPLAYED events log on a gate reattach. The gate's verdict lives only
+   *  in an in-process closure driven by the tools-bridge channel, which is consumed-once + acked — so a
+   *  `report_verification` call made before an engine-detach is NOT redelivered on reattach, and the gate
+   *  would falsely halt with "…without calling report_verification" even though the call demonstrably
+   *  happened. But the authoritative events log IS replayed from the start on reattach (to rebuild the
+   *  transcript), so the call's `tool_use` event still arrives here — drive the matching bridge handler with
+   *  it to restore the verdict. Guarded to the MAIN agent (a subagent's `tool_use` must not drive the gate).
+   *  Safe ONLY because the gate's sole bridged tool (`report_verification`) is pure — do NOT reuse this on a
+   *  batch reattach, whose tools have real side effects a genuinely-pending live redelivery must own. */
+  private recoverGateVerdictFromReplay(e: EngineEvent, toolBridge: ToolBridgeOptions): void {
+    if (e.kind !== 'tool_use' || e.parentToolUseId) return;
+    const prefix = `mcp__${BRIDGE_SERVER_NAME}__`;
+    const bareName = e.name.startsWith(prefix) ? e.name.slice(prefix.length) : e.name;
+    const impl = toolBridge.tools[bareName];
+    if (!impl) return;
+    // The replayed `tool_use` carries `block.input` verbatim — the model's raw (often MIS-NESTED) payload:
+    // the proxy tools use a generic `{ args }` schema and the model double-wraps / stringifies against it
+    // (`{ args: { args: { passed: true } } }`, `{ args: "{…}" }`). Normalise it the same way the live dispatch
+    // does (`unwrapBridgeArgs`), or the handler reads `args['passed']` off a wrapper → undefined → a false
+    // `passed:false` → the gate falsely halts even though the orchestrator reported passed.
+    void impl(unwrapBridgeArgs(e.input));
   }
 
   /** KICK a fresh gate-iteration turn — resumes the orchestrator's persisted session (via `stepId`) with the
@@ -2807,26 +2863,22 @@ export class ThreadDriver implements JobDispatcher {
       record,
       repo,
       sandbox,
-      // Sweep the freshly-written ledger files into one commit (a no-op when nothing was promoted).
-      commitMessage: LEDGER_COMMIT_MESSAGE,
       notify: (m) => this.post(route, m),
     });
     // Finalize the ledger spine off what THIS call actually did, never leaving the row stuck `running`:
-    //  • promoted here AND ship at least ran the sandbox ship turn (`opened`) ⇒ COMPLETE. The ledger commit
-    //    happens unconditionally inside `ship()` BEFORE it even attempts the PR (see `BuildShipService.ship`),
-    //    and the branch push is part of that same sandbox turn — so the ledger files are on the remote branch
-    //    regardless of `prConfirmed`. `prConfirmed` only reflects a GitHub API lookup that can lag right after
-    //    `gh pr create` (or a turn interrupted before `report_pr_opened`) — gating on it here just re-fires
-    //    the promote turn on an empty ledger delta once GitHub catches up, which is the endless-loop failure
-    //    mode this spine exists to prevent.
-    //  • promoted here but ship never ran (`!opened`, e.g. missing token) ⇒ FAILED, so the claim is
-    //    re-winnable next drive (nothing was shipped at all).
-    //  • NOT promoted here ⇒ the claim was already `complete` (nothing to do), OR a crashed `running` from a
-    //    prior attempt whose promote turn may not have written the files. The boot backstop
-    //    (`reconcileLedgerPromotion`) re-promotes the now-`done`, pr_url-set row onto its open PR instead.
-    if (promoted && outcome.opened) {
+    //  • promoted here AND ship ran the sandbox ship turn (`opened`) AND the ledger is actually COMMITTED
+    //    (`ledgerClean` — nothing pending under `.atlas/decisions/`) ⇒ COMPLETE. The host no longer commits
+    //    the ledger; the brain's awaited open-PR turn commits + pushes it, so we require POSITIVE proof it
+    //    landed rather than trusting `opened` alone. `ledgerClean` after an awaited `openPrAtShip` means the
+    //    files were committed (and pushed in that same turn), independent of `prConfirmed` — which only
+    //    reflects a GitHub API lookup that can lag right after `gh pr create`.
+    //  • promoted but not clean/opened ⇒ leave for the boot backstop (`reconcileLedgerPromotion`), which
+    //    re-promotes + re-ships the now-`done`, pr_url-set row onto its open PR. Mark FAILED when ship never
+    //    ran at all (e.g. missing token) so the claim is re-winnable next drive.
+    //  • NOT promoted here ⇒ the claim was already `complete`, or a crashed `running` the backstop reconciles.
+    if (promoted && outcome.opened && (await this.git.ledgerClean(sandbox.worktreePath))) {
       await this.store.markLedgerPromoted(job.id);
-    } else if (promoted) {
+    } else if (promoted && !outcome.opened) {
       await this.store
         .setLedgerPromotionStatus(job.id, 'failed')
         .catch(() => undefined);
@@ -3299,40 +3351,6 @@ export function renderGateTask(
   ]
     .filter(Boolean)
     .join('\n');
-}
-
-/** Deterministic non-runtime file patterns — the ADR-0005 §2f pre-filter. A changed-file list that is
- *  EMPTY or matches entirely against this never reaches the live-verification judge, in any mode. */
-const NON_RUNTIME_FILE_RE =
-  /(^|\/)docs\/|\.md$|\.spec\.ts$|\.test\.ts$|(^|\/)package(-lock)?\.json$|pnpm-lock\.yaml$|yarn\.lock$|(^|\/)\.gitignore$|(^|\/)\.github\//i;
-
-/** Compact rendering of a candidate terminal record for the live-verification judge's input — untrusted,
- *  fenced by the caller. */
-function renderTerminalRecordSummary(r: ThreadTerminalRecord): string {
-  const parts = [`Summary: ${r.summary}`];
-  parts.push(
-    r.changes?.length
-      ? `Changes:\n${r.changes.map((c) => `- ${c}`).join('\n')}`
-      : 'Changes: (none reported)',
-  );
-  parts.push(
-    r.verification?.length
-      ? `Verification:\n${r.verification
-          .map((v) => `- [${v.kind}] ${v.command} (exit ${v.exitCode}): ${v.outputTail.slice(0, 300)}`)
-          .join('\n')}`
-      : 'Verification: (none reported)',
-  );
-  if (r.deviations?.length) parts.push(`Deviations:\n${r.deviations.map((d) => `- ${d}`).join('\n')}`);
-  if (r.gaps?.length) parts.push(`Gaps:\n${r.gaps.map((g) => `- ${g}`).join('\n')}`);
-  return parts.join('\n\n');
-}
-
-/** Compact rendering of the locked decisions for the live-verification judge's input — same shape as
- *  {@link renderBatchTask}'s decisions block. */
-function renderLockedDecisionsSummary(record: DecisionRecord | null): string {
-  return record?.decisions.length
-    ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
-    : '(none)';
 }
 
 /**

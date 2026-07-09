@@ -58,7 +58,9 @@ export function shipOpenPrBody(args: ShipOpenPrArgs): string {
     `CONFLICTS, resolve them PROPERLY — understand both sides, never blindly take one — then commit the merge, ` +
     `and re-run the build/tests to confirm the tree still passes after reconciling. (No drift → skip straight ` +
     `to the push.)\n` +
-    `  2. Commit anything uncommitted, then \`git push -u origin ${branch}\`.\n` +
+    `  2. Commit anything uncommitted — this INCLUDES any \`.atlas/decisions/\` ledger files that were just ` +
+    `written for this build (\`git add -A\` sweeps them in) — then \`git push -u origin ${branch}\`. Nothing ` +
+    `uncommitted is left behind: the host does NOT commit on your behalf, so if you don't commit it, it ships nowhere.\n` +
     `  3. AUTHOR THE PR BODY yourself, from what you ACTUALLY shipped — run ` +
     `\`git diff origin/${defaultBranch}...HEAD\` for the real change and read \`/context/artifacts/RESULTS.md\` ` +
     `(your evidence bundle) if it exists. Do NOT restate the plan. Compose a Markdown body with these sections:\n` +

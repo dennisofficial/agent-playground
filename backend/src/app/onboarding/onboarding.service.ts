@@ -1,9 +1,10 @@
+import { EnvService } from '@core/config/env/env.service';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
-import { GithubPrService, parseGithubRepoUrl } from '../git';
+import { GithubPrService, parseGithubRepoUrl, WORK_EVENTS, STATE_EVENTS } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -78,6 +79,29 @@ export function slugifyRepo(name: string): string {
 }
 
 /**
+ * The public backend origin GitHub can deliver webhooks to, or null when the backend isn't publicly
+ * reachable (BACKEND_HOST unset, non-https, or a localhost/private host — e.g. Atlas running locally).
+ * A null result means webhook registration is skipped and the 30-min poll is the sole sync path.
+ */
+export function publicBackendBase(env: EnvService): string | null {
+  const raw = env.get('BACKEND_HOST');
+  if (!raw) return null;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:') return null; // GitHub needs a public https endpoint
+  const host = u.hostname.toLowerCase();
+  const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local');
+  const isPrivate =
+    /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  if (isLoopback || isPrivate) return null;
+  return u.origin;
+}
+
+/**
  * The onboarding state machine + repo connection — the layer that gets an org from created → fully
  * configured → active, and connects a GitHub repo so threads can be opened against it. Checklist state
  * is DERIVED from the existing rows (credentials presence + connected/validated repo + the org's
@@ -111,6 +135,7 @@ export class OnboardingService {
     // is core (no module dependency) and the dynamic import is evaluated after boot — same pattern as
     // `OrganizationService.deleteOrg`.
     private readonly moduleRef: ModuleRef,
+    private readonly env: EnvService,
   ) {}
 
   /**
@@ -163,6 +188,9 @@ export class OnboardingService {
     if (validation.ok) {
       void this.maybeStartRepoOnboarding(orgId, repo.id).catch((err) =>
         this.logger.warn(`repo onboarding spawn failed for ${repo.id}: ${err}`),
+      );
+      void this.ensureRepoWebhook(orgId, repo).catch((err) =>
+        this.logger.warn(`webhook registration failed for ${repo.id}: ${err}`),
       );
     }
 
@@ -297,6 +325,11 @@ export class OnboardingService {
       { id: repo.id },
       { access_ok: validation.ok, access_checked_at: new Date() },
     );
+    if (validation.ok) {
+      void this.ensureRepoWebhook(orgId, repo).catch((err) =>
+        this.logger.warn(`webhook registration failed for ${repo.id}: ${err}`),
+      );
+    }
     await this.tryActivate(orgId);
     this.logger.log(`revalidated repo ${repo.slug} (${repo.id}) → org ${orgId} (access_ok=${validation.ok})`);
     return {
@@ -505,6 +538,84 @@ export class OnboardingService {
     for (const r of repos) {
       await this.maybeStartRepoOnboarding(orgId, r.id).catch((err) =>
         this.logger.warn(`repo onboarding spawn failed for ${r.id}: ${err}`),
+      );
+    }
+  }
+
+  /**
+   * Best-effort per-repo webhook registration: ensure the two GitHub hooks (event→job intake at
+   * /ingress/github, silent PR-state sync at /webhooks/github) exist with the backend's secret + full
+   * event set. Skipped (debug-log, no warning) when the backend isn't publicly reachable — local runs
+   * rely on the 30-min poll. NEVER throws (fire-and-forget by every caller). When the token lacks webhook
+   * permission (classic: repo/admin:repo_hook · fine-grained: Webhooks: Read and write), records a
+   * non-fatal `webhook_warning` on the repo row so the operator can grant it.
+   */
+  private async ensureRepoWebhook(orgId: string, repo: RepoEntity): Promise<void> {
+    const base = publicBackendBase(this.env);
+    if (!base) {
+      this.logger.debug(`webhook registration skipped for ${repo.slug} — BACKEND_HOST not publicly reachable`);
+      return;
+    }
+    const parsed = parseGithubRepoUrl(repo.git_url);
+    if (!parsed) {
+      this.logger.warn(`webhook registration skipped for ${repo.slug} — not an HTTPS GitHub URL: ${repo.git_url}`);
+      return;
+    }
+    const token = await this.creds.githubToken(orgId);
+    if (!token) {
+      this.logger.warn(`webhook registration skipped for ${repo.slug} — no GitHub token for org ${orgId}`);
+      return;
+    }
+    const secret = this.env.get('GITHUB_WEBHOOK_SECRET');
+    if (!secret) {
+      this.logger.warn(`webhook registration skipped for ${repo.slug} — GITHUB_WEBHOOK_SECRET unset`);
+      return;
+    }
+
+    const targets = [
+      { url: `${base}/ingress/github`, events: WORK_EVENTS },
+      { url: `${base}/webhooks/github`, events: STATE_EVENTS },
+    ];
+    let anyNoScope = false;
+    let allOk = true;
+    for (const t of targets) {
+      const outcome = await this.pr
+        .ensureWebhook(token, { owner: parsed.owner, repo: parsed.repo, url: t.url, secret, events: t.events })
+        .catch((err) => {
+          this.logger.warn(`ensureWebhook error for ${repo.slug} ${t.url}: ${err}`);
+          return 'error' as const;
+        });
+      this.logger.log(`webhook ${t.url} for ${repo.slug} → ${outcome}`);
+      if (outcome === 'no-scope') anyNoScope = true;
+      if (outcome !== 'created' && outcome !== 'updated') allOk = false;
+    }
+
+    // Persist/clear the operator-facing warning. On a transient 'error' (neither no-scope nor all-ok) we
+    // leave the column untouched so a real prior no-scope warning isn't wiped by a flaky call.
+    if (anyNoScope) {
+      await this.repos.update(
+        { id: repo.id },
+        {
+          webhook_warning:
+            "The org GitHub token lacks webhook permission — Atlas could not register the real-time delivery webhook. " +
+            'Classic tokens need the "repo" (or "admin:repo_hook") scope; fine-grained tokens need "Webhooks: Read and write" on the repo. ' +
+            'PR state still syncs via the 30-minute poll; grant the permission to enable real-time sync.',
+        },
+      );
+    } else if (allOk) {
+      await this.repos.update({ id: repo.id }, { webhook_warning: null });
+    }
+  }
+
+  /**
+   * One-time backfill: ensure webhooks on every already-connected (access_ok) repo, so existing repos get
+   * their hooks without a re-connect. Invoked fire-and-forget on leader promotion. Best-effort per repo.
+   */
+  async ensureWebhooksForActiveRepos(): Promise<void> {
+    const repos = await this.repos.find({ where: { access_ok: true } });
+    for (const repo of repos) {
+      await this.ensureRepoWebhook(repo.org_id, repo).catch((err) =>
+        this.logger.warn(`webhook backfill failed for ${repo.slug}: ${err}`),
       );
     }
   }

@@ -421,6 +421,8 @@ export interface RepoView {
   onboardingThreadId: string | null;
   /** When onboarding completed (workspace config live), ISO; null until then — drives "Set up" vs "Re-run". */
   onboardedAt: string | null;
+  /** Non-fatal webhook-registration warning (e.g. token lacks the webhook scope), or null when hooks are healthy. */
+  webhookWarning: string | null;
 }
 
 export function fetchOrgRepos(orgId: string): Promise<RepoView[]> {

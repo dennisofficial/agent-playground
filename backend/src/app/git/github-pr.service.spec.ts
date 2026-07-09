@@ -9,7 +9,11 @@ function fakeFetch(responses: Array<{ status: number; body: unknown }>) {
   const impl = (async (url: unknown, init?: unknown) => {
     calls.push({ url: String(url), init: init as RequestInit });
     const r = responses[Math.min(i++, responses.length - 1)];
-    return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.body };
+    return {
+      ok: r.status >= 200 && r.status < 300,
+      status: r.status,
+      json: async () => r.body,
+    };
   }) as unknown as typeof fetch;
   return { impl, calls };
 }
@@ -27,12 +31,19 @@ const prArgs = {
 describe('GithubPrService.openPullRequest', () => {
   it('creates a draft PR with the required headers; token only in Authorization', async () => {
     const { impl, calls } = fakeFetch([
-      { status: 201, body: { html_url: 'https://github.com/acme/app/pull/9', number: 9 } },
+      {
+        status: 201,
+        body: { html_url: 'https://github.com/acme/app/pull/9', number: 9 },
+      },
     ]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     const res = await svc.openPullRequest('TOK123', prArgs);
-    expect(res).toEqual({ url: 'https://github.com/acme/app/pull/9', number: 9, existing: false });
+    expect(res).toEqual({
+      url: 'https://github.com/acme/app/pull/9',
+      number: 9,
+      existing: false,
+    });
     expect(calls[0].url).toBe('https://api.github.com/repos/acme/app/pulls');
     const headers = calls[0].init?.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer TOK123');
@@ -51,21 +62,39 @@ describe('GithubPrService.openPullRequest', () => {
 
   it('returns the existing open PR on a 422 already-exists (idempotent)', async () => {
     const { impl } = fakeFetch([
-      { status: 422, body: { message: 'A pull request already exists for acme:atlas/gate-abcd.' } },
-      { status: 200, body: [{ html_url: 'https://github.com/acme/app/pull/4', number: 4 }] },
+      {
+        status: 422,
+        body: {
+          message: 'A pull request already exists for acme:atlas/gate-abcd.',
+        },
+      },
+      {
+        status: 200,
+        body: [{ html_url: 'https://github.com/acme/app/pull/4', number: 4 }],
+      },
     ]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     const res = await svc.openPullRequest('TOK', prArgs);
-    expect(res).toEqual({ url: 'https://github.com/acme/app/pull/4', number: 4, existing: true });
+    expect(res).toEqual({
+      url: 'https://github.com/acme/app/pull/4',
+      number: 4,
+      existing: true,
+    });
   });
 
   it('throws with GitHub status + detail (never the token) on other errors', async () => {
-    const { impl } = fakeFetch([{ status: 403, body: { message: 'Resource not accessible' } }]);
+    const { impl } = fakeFetch([
+      { status: 403, body: { message: 'Resource not accessible' } },
+    ]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
-    await expect(svc.openPullRequest('SECRET', prArgs)).rejects.toThrow(/403.*Resource not accessible/);
-    await expect(svc.openPullRequest('SECRET', prArgs)).rejects.not.toThrow(/SECRET/);
+    await expect(svc.openPullRequest('SECRET', prArgs)).rejects.toThrow(
+      /403.*Resource not accessible/,
+    );
+    await expect(svc.openPullRequest('SECRET', prArgs)).rejects.not.toThrow(
+      /SECRET/,
+    );
   });
 });
 
@@ -106,23 +135,131 @@ describe('GithubPrService.listBranches', () => {
     ]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
-    expect(await svc.listBranches('T', 'acme', 'app')).toEqual(['main', 'develop']);
+    expect(await svc.listBranches('T', 'acme', 'app')).toEqual([
+      'main',
+      'develop',
+    ]);
     // A short first page (< 100) means no second request.
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toContain('/repos/acme/app/branches?per_page=100&page=1');
+    expect(calls[0].url).toContain(
+      '/repos/acme/app/branches?per_page=100&page=1',
+    );
   });
 
   it('throws with the GitHub status (never the token) on a non-OK response', async () => {
-    const { impl } = fakeFetch([{ status: 403, body: { message: 'forbidden' } }]);
+    const { impl } = fakeFetch([
+      { status: 403, body: { message: 'forbidden' } },
+    ]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
-    await expect(svc.listBranches('TOK', 'acme', 'app')).rejects.toThrow(/403.*forbidden/);
+    await expect(svc.listBranches('TOK', 'acme', 'app')).rejects.toThrow(
+      /403.*forbidden/,
+    );
+  });
+});
+
+describe('GithubPrService.ensureWebhook', () => {
+  const args = {
+    owner: 'acme',
+    repo: 'app',
+    url: 'https://api.example.com/ingress/github',
+    secret: 'S3CR',
+    events: ['workflow_run', 'check_run'],
+  };
+
+  it('creates a hook when none matches the url', async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, body: [] },
+      { status: 201, body: { id: 1 } },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const outcome = await svc.ensureWebhook('TOK', args);
+    expect(outcome).toBe('created');
+    expect(calls).toHaveLength(2);
+    expect(calls[1].init?.method).toBe('POST');
+    expect(calls[1].url).toBe('https://api.github.com/repos/acme/app/hooks');
+    const body = JSON.parse(String(calls[1].init?.body));
+    expect(body).toEqual({
+      config: {
+        url: args.url,
+        content_type: 'json',
+        secret: args.secret,
+        insecure_ssl: '0',
+      },
+      events: args.events,
+      active: true,
+    });
+  });
+
+  it('updates (PATCHes) an existing hook matched by config.url', async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        body: [
+          { id: 42, config: { url: 'https://api.example.com/ingress/github' } },
+        ],
+      },
+      { status: 200, body: { id: 42 } },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const outcome = await svc.ensureWebhook('TOK', args);
+    expect(outcome).toBe('updated');
+    expect(calls).toHaveLength(2);
+    expect(calls[1].init?.method).toBe('PATCH');
+    expect(calls[1].url).toBe('https://api.github.com/repos/acme/app/hooks/42');
+  });
+
+  it("returns 'no-scope' on a 403 listing hooks (only one fetch made)", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 403, body: { message: 'Resource not accessible' } },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    expect(await svc.ensureWebhook('TOK', args)).toBe('no-scope');
+    expect(calls).toHaveLength(1);
+  });
+
+  it("returns 'no-scope' on a 403 creating the hook", async () => {
+    const { impl } = fakeFetch([
+      { status: 200, body: [] },
+      { status: 403, body: {} },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    expect(await svc.ensureWebhook('TOK', args)).toBe('no-scope');
+  });
+
+  it("returns 'no-scope' on a 403 patching an existing hook", async () => {
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        body: [
+          { id: 42, config: { url: 'https://api.example.com/ingress/github' } },
+        ],
+      },
+      { status: 403, body: {} },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    expect(await svc.ensureWebhook('TOK', args)).toBe('no-scope');
+  });
+
+  it("returns 'error' on a 500 listing hooks", async () => {
+    const { impl } = fakeFetch([{ status: 500, body: {} }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    expect(await svc.ensureWebhook('TOK', args)).toBe('error');
   });
 });
 
 describe('parseGithubRepoUrl', () => {
   it('parses owner/repo and drops .git; null on non-github', () => {
-    expect(parseGithubRepoUrl('https://github.com/acme/app.git')).toEqual({ owner: 'acme', repo: 'app' });
+    expect(parseGithubRepoUrl('https://github.com/acme/app.git')).toEqual({
+      owner: 'acme',
+      repo: 'app',
+    });
     expect(parseGithubRepoUrl('https://gitlab.com/a/b')).toBeNull();
   });
 });

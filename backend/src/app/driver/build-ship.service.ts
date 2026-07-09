@@ -9,8 +9,9 @@ import type { ResolvedRepo } from './repo-resolver';
  * The outcome of the terminal ship sequence. The job brain opens the PR ITSELF as a seeded harness turn in
  * its own sandbox (see {@link BuildShipService.ship}), and the HOST records the PR afterward by branch
  * discovery (`findOpenPullByHead` → `setPrReady`, backstopped by the git-state reconciler). `opened` means
- * the open-PR turn RAN; `prConfirmed` means the host latched `pr_url`/`pr_number` this pass. Callers gate the
- * ledger `complete` stamp on `opened` (the branch push happens inside the turn regardless), but only treat a
+ * the open-PR turn RAN; `prConfirmed` means the host latched `pr_url`/`pr_number` this pass. The open-PR turn
+ * commits + pushes everything (the host NEVER commits), so callers gate the ledger `complete` stamp on
+ * `opened` AND positive proof the ledger landed (`LocalGitService.ledgerClean`), and only treat a
  * `prConfirmed` result as "the PR is recorded".
  */
 export type ShipOutcome =
@@ -21,8 +22,8 @@ export type ShipOutcome =
   // (never opened). `leaked` is the offending path(s), surfaced loudly to the operator.
   | { opened: false; reason: 'leak-scan'; leaked: string[] };
 
-/** The host-side pre-ship gate result (commit + no-token + leak-scan) — shared by the driver ship path and
- *  the direct-build `finalize_build` tool. `ok` ⇒ safe to open the PR. */
+/** The host-side pre-ship gate result (no-token + leak-scan; the host NEVER commits) — shared by the driver
+ *  ship path and the direct-build `finalize_build` tool. `ok` ⇒ safe to open the PR. */
 export type PreShipResult =
   | { ok: true }
   | { ok: false; reason: 'no-token' }
@@ -49,12 +50,6 @@ export interface ShipInput {
   record: ShipRecord | null;
   repo: ResolvedRepo;
   sandbox: FeatureSandbox;
-  /**
-   * When set, stage + commit any uncommitted worktree changes under this message BEFORE shipping. The
-   * thread-driver omits it (it commits per-step); the direct-build fast path sets it (the brain wrote
-   * the change but hasn't committed). A clean tree → no-op.
-   */
-  commitMessage?: string;
   /** Optional surface relay for the "PR ready" / "no token" notices (best-effort). */
   notify?: (message: string) => Promise<void> | void;
 }
@@ -63,9 +58,14 @@ export interface ShipInput {
  * The shared TERMINAL "ship" sequence — used by BOTH the full thread build and the direct-build fast path so
  * they finalize identically:
  *
- *   host: commit the ledger/change → pre-ship leak-scan gate → (brain: reconcile the branch against its base
- *   → push → author the PR body → open ONE PR) → host: record `pr_url`/`pr_number` (which flips the job
+ *   host: pre-ship leak-scan gate → (brain: commit anything uncommitted → reconcile the branch against its
+ *   base → push → author the PR body → open ONE PR) → host: record `pr_url`/`pr_number` (which flips the job
  *   `done`, so the merge poll watches it) → relay "PR ready".
+ *
+ * The HOST NEVER COMMITS. Every commit on the branch is authored by Atlas's own in-sandbox session (builders
+ * commit per-step; the open-PR turn commits any remaining uncommitted work — incl. the host-written
+ * `.atlas/decisions/` ledger files — before it pushes). This keeps the git history free of robotic
+ * host-identity commits.
  *
  * The whole-diff review-and-fix runs UPSTREAM as the build's last thread (the Codex master-review builder —
  * see `thread-driver.service.ts`), so the branch reaching `ship` is already reviewed and fixed; `ship` just
@@ -94,7 +94,7 @@ export class BuildShipService {
     const { job, record, repo, sandbox } = input;
     const notify = this.notifier(input.notify);
 
-    const pre = await this.preShip(job, repo, sandbox, input.commitMessage, notify);
+    const pre = await this.preShip(job, repo, sandbox, notify);
     if (!pre.ok) {
       return pre.reason === 'leak-scan'
         ? { opened: false, reason: 'leak-scan', leaked: pre.leaked }
@@ -138,28 +138,20 @@ export class BuildShipService {
   }
 
   /**
-   * HOST-SIDE PRE-SHIP GATE (shared): commit the ledger/change under `commitMessage`, verify a GitHub token
-   * exists, then run the pre-ship leak-scan — a HARD gate before any push. Writers own their commits, so the
-   * hydrated-secret check runs here (not inside a host commit), scanning EVERY commit on the branch
-   * (`origin/<base>..HEAD`, per-commit — catches a secret added then deleted). The forbidden set lives in a
-   * host-only sidecar the in-sandbox turn can't read, so this MUST run host-side, before the open-PR turn.
-   * Fail CLOSED: a scan error blocks the ship (an unprovable branch is not waved through).
+   * HOST-SIDE PRE-SHIP GATE (shared): verify a GitHub token exists, then run the pre-ship leak-scan — a HARD
+   * gate before any push. The HOST NEVER COMMITS (Atlas owns every commit); the hydrated-secret check scans
+   * EVERY commit on the branch (`origin/<base>..HEAD`, per-commit — catches a secret added then deleted) AND
+   * the current WORKING TREE (staged/unstaged/untracked), so an uncommitted secret the brain's ship turn is
+   * about to commit is still caught here. The forbidden set lives in a host-only sidecar the in-sandbox turn
+   * can't read, so this MUST run host-side, before the open-PR turn. Fail CLOSED: a scan error blocks the ship.
    */
   async preShip(
     job: Job,
     repo: ResolvedRepo,
     sandbox: FeatureSandbox,
-    commitMessage?: string,
     notify?: (message: string) => Promise<void>,
   ): Promise<PreShipResult> {
     const relay = this.notifier(notify);
-
-    if (commitMessage) {
-      const sha = await this.git.commitAll(sandbox.worktreePath, commitMessage);
-      this.logger.log(
-        `job=${job.id} ship — committed ${sha ? sha.slice(0, 8) : '(nothing to commit)'}`,
-      );
-    }
 
     if (!repo.token) {
       this.logger.warn(

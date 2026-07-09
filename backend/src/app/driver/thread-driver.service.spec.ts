@@ -416,10 +416,9 @@ function makeGit(): {
     // (below) advances `sha` to simulate the writer's commit, so `headSha` returns the fresh sha the driver
     // stamps. `hasChanges` reports a CLEAN tree by default (the writer committed) — no dirty-tree nudge.
     hasChanges: vi.fn(async () => false),
-    commitAll: vi.fn(async (_wt: string, message: string) => {
-      commits.push(message);
-      return `commit${++sha}`;
-    }),
+    // The ledger is committed by the brain's ship turn (host never commits); `ledgerClean` = true means the
+    // `.atlas/decisions/` files landed, gating the `markLedgerPromoted` stamp in `finalizeBuild`.
+    ledgerClean: vi.fn(async () => true),
     push: vi.fn(async (sandbox: FeatureSandbox) => {
       pushed.push(sandbox.branch);
     }),
@@ -2747,6 +2746,120 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(judge.calls).toBe(2);
     const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }).terminal_record;
     expect(term?.status).toBe('done'); // recovered in-turn, not falsely stuck blocked
+    expect(state.job.status).toBe('done');
+  });
+
+  it('a REATTACHED diagnostics done-gate recovers its report_verification verdict from the replayed events log (never falsely halts)', async () => {
+    // REGRESSION: the gate verdict lives only in an in-process closure fed by the consume-once/acked
+    // tools-bridge channel. When the gate turn engine-detaches AFTER `report_verification({passed:true})` and
+    // is REATTACHED on the next boot, that channel does NOT redeliver the call — but the authoritative events
+    // log IS replayed. The driver must recover the verdict from the replayed `tool_use` event; otherwise it
+    // falsely halts with "…without calling report_verification" and burns the brain's retry budget.
+    const steps: Step[] = [
+      {
+        id: 'sec-be-ph0',
+        threadId: 'sec-be',
+        jobId: 'job-abcdef12',
+        ordinal: 10,
+        title: 'Backend',
+        brief: 'Backend',
+        stage: 'build' as const,
+        status: 'building' as StepStatus,
+        sessionId: 'sess-live', // persisted → gate's `canReattach() && anchor.sessionId` reattach lookup fires
+        batchOrdinal: 1,
+        legOrdinal: 1,
+        commitSha: null,
+      },
+    ];
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps,
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+
+    // The batch turn completes normally; the GATE turn is served via `reattach` (a live gate row exists).
+    const runTurn = vi.fn(
+      async (input: {
+        mode: string;
+        stepId?: string | null;
+        jobId: string;
+        toolBridge?: ToolBridgeOptions;
+      }) => {
+        await input.toolBridge?.tools?.['complete_thread']?.({ summary: 'built the backend' });
+        return {
+          report: 'built',
+          session: {
+            id: 'sess-live', jobId: input.jobId, stepId: input.stepId ?? null,
+            engine: 'claude' as const, mode: input.mode as 'plan' | 'execute' | 'review',
+            branch: 'b', worktreePath: '/wt/b',
+          },
+        };
+      },
+    );
+    // The reattach REPLAYS the pre-detach `report_verification` tool_use (main agent, qualified MCP name) but
+    // deliberately does NOT drive `toolBridge.tools.report_verification` itself — mirroring the acked channel
+    // that never redelivers. So the ONLY way the verdict can be recovered (and the job reach `done`) is the
+    // fix replay-driving the handler from this event.
+    const reattach = vi.fn(async (input: Parameters<TurnRunnerService['reattach']>[0]) => {
+      // The replayed `tool_use` carries `block.input` VERBATIM — the model's raw payload against the proxy's
+      // generic `{ args }` schema, which it DOUBLE-WRAPS in practice (`{ args: { args: { passed: true } } }`;
+      // sometimes even stringified). The replay path must normalise it (`unwrapBridgeArgs`) exactly like the
+      // live dispatch, or the handler reads `args['passed']` off a wrapper → `undefined` → a false
+      // `passed:false` → the thread falsely halts. This is the real prod shape (see job b30616d2).
+      input.onEvent?.({
+        kind: 'tool_use',
+        id: 'rv-1',
+        name: 'mcp__atlas-host-bridge__report_verification',
+        input: { args: { args: { passed: true } } },
+      });
+      return {
+        report: 'gate resumed',
+        session: {
+          id: 'sess-live', jobId: input.jobId, stepId: input.stepId ?? null,
+          engine: 'claude' as const, mode: 'execute' as const, branch: 'b', worktreePath: '/wt/b',
+        },
+      };
+    });
+    const turn = { runTurn, reattach, canReattach: () => true } as unknown as TurnRunnerService;
+
+    // A live GATE row (kind:'gate') keyed on the anchor — the gate's `findReattachableTurn(...,'gate')` finds
+    // it; the batch's `findReattachableTurn(...,'step')` does NOT (kind mismatch), so the batch runs fresh.
+    const listRunning = vi.fn(async () => [
+      {
+        turn_id: 'gate-turn-live',
+        job_id: 'job-abcdef12',
+        org_id: 'T1',
+        channel: 'C1',
+        lane: 'thread:sec-be',
+        kind: 'gate',
+        container_id: 'ctr-gate',
+        status: 'running',
+        ctx: { anchorStepId: 'sec-be-ph0' },
+      },
+    ]);
+    const judge: LiveVerificationJudge & { calls: number } = {
+      calls: 0,
+      async judge() {
+        return { runtimeSurfaceTouched: false, liveVerificationAdequate: true, reason: 'n/a' };
+      },
+    };
+
+    const h = assemble(state, { turn, judge, turnRegistry: { listRunning } as never });
+    stubChangedFileNames(h.git, async () => ['src/routes/x.ts']); // a changed .ts → the done-gate kicks
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // The gate went through the REATTACH path (not a fresh runTurn); the verdict was recovered SOLELY from
+    // the replayed `tool_use` event (the mock never drove the bridge tool itself).
+    expect(reattach).toHaveBeenCalledTimes(1);
+    expect(reattach.mock.calls[0][0]).toMatchObject({ turnId: 'gate-turn-live', containerId: 'ctr-gate' });
+    // No false halt: the thread verified + committed and the job shipped.
+    const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }).terminal_record;
+    expect(term?.status).toBe('done');
     expect(state.job.status).toBe('done');
   });
 

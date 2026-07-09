@@ -60,7 +60,9 @@ export class WorkspaceProfileGroup {
       '`remember` it for the base image. A broken script or missing build step is just a normal code change —',
       'make it as part of your build. If you set up state by hand and want to confirm it survives, call',
       'reset_sandbox({ reason }) — the box comes back fresh (worktree, recorded mounts, granted secrets, HOME,',
-      'and /.atlas survive; ephemeral state does not); whatever you must redo by hand is what you forgot to record.',
+      'and /.atlas survive; ephemeral state does not); whatever you must redo by hand is what you forgot to',
+      'record. For a true from-scratch check (fresh worktree too, like a brand-new job), use { hard:true } —',
+      'commit + push first, as it refuses on a dirty/unpushed tree.',
     ].join('\n');
   }
 
@@ -288,9 +290,13 @@ export class WorkspaceProfileGroup {
       'RESET / PROVE-IT-COLD-BOOTS — a stack that runs right now might only run because of ephemeral container',
       'state YOU created by hand (a global install outside your HOME/workspace, a tool that wrote state OUTSIDE',
       'your HOME that you never recorded as a mount, a service you started manually). The next fresh job would',
-      'NOT have it. Before you finish, call reset_sandbox({ reason }) to recreate the container from scratch,',
-      'then STOP. On your next turn the box is fresh — the worktree, recorded mounts, granted secrets, your',
-      'durable HOME (~/.config, ~/.local/bin), and /.atlas survive; everything else is gone. Re-run setup and see',
+      'NOT have it. Before you finish, call reset_sandbox({ reason, hard:true }) — a HARD reset recreates the',
+      'WHOLE sandbox from scratch (fresh WORKTREE and container, exactly like a brand-new job, so it also proves',
+      'worktree hydration + your setup script + the MCP servers all come up clean), while keeping this coding',
+      'session. It is a two-call confirm and refuses on a dirty/unpushed tree, so commit + push any repo edits',
+      'first. Call it, then STOP. On your next turn the box is fresh — recorded mounts, granted secrets, your',
+      'durable HOME (~/.config, ~/.local/bin), /.atlas, and /context + /playground survive; everything else is',
+      'gone. Re-run setup and see',
       'what broke: whatever you have to re-do by hand is exactly what you forgot to record (fix it via',
       'write_setup_script for bring-up commands, or write_workspace_config / request_secret / derive_secret for',
       'durable state, then reset again to confirm). This is the strongest evidence onboarding is DURABLE, not',
