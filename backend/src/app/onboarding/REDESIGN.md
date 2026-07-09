@@ -1,6 +1,8 @@
 # Onboarding redesign — the repo's living, self-healing environment
 
 > Design doc for the ADR-0002 reframe. Read `docs/adr/0002-onboarding-hydration-manifest-not-boot-recipe.md` first for the decision + rejected alternatives; this doc holds the full model, the vocabulary, and the seam map for the implementation plan.
+>
+> **Terminology note:** this doc predates the "Workspace Profile" rename. Read "worktree config" as **workspace config** and `WorktreeConfigStore`/`WorktreeSecretFileStore`/`org_worktree_*` as `WorkspaceConfigStore`/`WorkspaceSecretFileStore`/`org_workspace_*` (tool `write_worktree_config` → `write_workspace_config`). See `backend/src/app/ARCHITECTURE.md` "The Workspace Profile" for the current vocabulary.
 
 ## The reframe in one line
 

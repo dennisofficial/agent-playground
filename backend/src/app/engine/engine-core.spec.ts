@@ -4,12 +4,16 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 import { claudeSessionExists, EngineCore, extractClaudeUsage } from './engine-core';
-import { atlasEngineHomeDir } from './engine-home';
+import { atlasEngineHomeDir, type EngineHomeKey } from './engine-home';
 import { isUnresumableSessionMessage, UNRESUMABLE_SESSION_MARKER } from './engine.types';
 import type { EngineEvent } from './engine.types';
 
 const HOME_ROOT = join(tmpdir(), `atlas-engine-core-spec-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
+
+/** A default engine-home key for tests that don't care about its exact shape (most of this file — the
+ *  isolated-home behavior itself is `engine-home.spec.ts`'s job). */
+const TEST_KEY: EngineHomeKey = { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' };
 
 /** A fake Claude SDK whose `query` records the options it was called with and yields a success. */
 function fakeClaudeSdk() {
@@ -205,7 +209,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'do it',
       cwd: '/tmp/wt',
       systemPrompt: 'persona',
-      sandboxKey: 'acme--feat',
+      sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'oauth-tok' },
       model: 'claude-x',
@@ -223,8 +227,11 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     // Subscription token threaded into the SUBPROCESS env (any ambient API key is stripped at the seam).
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-tok');
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
-    // settingSources [] = full isolation (no on-disk config files read).
-    expect(opts.settingSources).toEqual([]);
+    // settingSources ['user'] = only <CLAUDE_CONFIG_DIR>/settings.json (missing → no-op), never CLAUDE.md,
+    // never the untrusted worktree's own project-scope config (see engine-core.ts's options comment).
+    expect(opts.settingSources).toEqual(['user']);
+    // skills 'all' turns on native skill discovery (the single SDK-level switch, auto-enables Skill tool).
+    expect(opts.skills).toBe('all');
     // Result + usage surfaced.
     expect(res.result).toBe('done');
     expect(res.sessionId).toBe('sess-1');
@@ -235,7 +242,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const run = async (mode: 'execute' | 'plan' | 'review') => {
       const { sdk, captured } = fakeClaudeSdk();
       const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
-      await core.run({ engine: 'claude', task: 't', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'a--b', mode, auth: { secret: 'tok' } });
+      await core.run({ engine: 'claude', task: 't', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: TEST_KEY, mode, auth: { secret: 'tok' } });
       return captured.options!.agents as Record<string, { tools: string[]; model: string }>;
     };
 
@@ -278,7 +285,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'do it',
       cwd: '/workspace',
       systemPrompt: 'persona',
-      sandboxKey: 'acme--feat',
+      sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
       // The durable `/context` shared mount the docker runner grants so the brain can author the plan.
@@ -297,6 +304,65 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(await canUseTool('Write', { file_path: '/etc/passwd' })).toMatchObject({ behavior: 'deny' });
   });
 
+  it('execute mode: skills are read-only by default, editable only with a matching grant', async () => {
+    const { sdk, captured } = fakeClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, skillsRoot: '/skills' });
+    const skills = [{ name: 'house-migrations', description: 'd', dirPath: 'house-migrations' }];
+    await core.run({
+      engine: 'claude',
+      task: 'do it',
+      cwd: '/workspace',
+      systemPrompt: 'persona',
+      sandboxKey: TEST_KEY,
+      mode: 'execute',
+      auth: { secret: 'tok' },
+      skills,
+      grantedSkills: ['house-migrations'],
+    });
+    const canUseTool = captured.options!.canUseTool as (
+      name: string,
+      input: Record<string, unknown>,
+    ) => Promise<{ behavior: string; message?: string }>;
+    const claudeConfigDir = atlasEngineHomeDir(HOME_ROOT, 'claude', TEST_KEY);
+    const composedPath = join(claudeConfigDir, 'skills', 'house-migrations', 'SKILL.md');
+    const storePath = '/skills/house-migrations/SKILL.md';
+    // Granted skill: allowed via both the composed symlink path AND the resolved store path.
+    expect(await canUseTool('Edit', { file_path: composedPath })).toMatchObject({ behavior: 'allow' });
+    expect(await canUseTool('Write', { file_path: storePath })).toMatchObject({ behavior: 'allow' });
+    // A DIFFERENT (ungranted) skill under the same composed dir → denied, with the unlock hint.
+    const ungrantedPath = join(claudeConfigDir, 'skills', 'other-skill', 'SKILL.md');
+    const denied = await canUseTool('Edit', { file_path: ungrantedPath });
+    expect(denied.behavior).toBe('deny');
+    expect(denied.message).toContain("request_skill_edit_access({ skill: 'other-skill' })");
+    // Reads are never touched by the skill guard.
+    expect(await canUseTool('Read', { file_path: ungrantedPath })).toMatchObject({ behavior: 'allow' });
+  });
+
+  it('execute mode: with no grantedSkills at all, ANY skill path is denied', async () => {
+    const { sdk, captured } = fakeClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, skillsRoot: '/skills' });
+    await core.run({
+      engine: 'claude',
+      task: 'do it',
+      cwd: '/workspace',
+      systemPrompt: 'persona',
+      sandboxKey: TEST_KEY,
+      mode: 'execute',
+      auth: { secret: 'tok' },
+      skills: [{ name: 'house-migrations', description: 'd', dirPath: 'house-migrations' }],
+    });
+    const canUseTool = captured.options!.canUseTool as (
+      name: string,
+      input: Record<string, unknown>,
+    ) => Promise<{ behavior: string }>;
+    const claudeConfigDir = atlasEngineHomeDir(HOME_ROOT, 'claude', TEST_KEY);
+    expect(
+      await canUseTool('Edit', {
+        file_path: join(claudeConfigDir, 'skills', 'house-migrations', 'SKILL.md'),
+      }),
+    ).toMatchObject({ behavior: 'deny' });
+  });
+
   it('plan mode: permissionMode plan, ExitPlanMode tool present, no writes flag in canUseTool', async () => {
     const { sdk, captured } = fakeClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
@@ -305,7 +371,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'plan it',
       cwd: '/tmp/wt',
       systemPrompt: 'persona',
-      sandboxKey: 'acme--feat',
+      sandboxKey: TEST_KEY,
       mode: 'plan',
       auth: { secret: 'tok' },
     });
@@ -322,7 +388,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'review it',
       cwd: '/tmp/wt',
       systemPrompt: 'persona',
-      sandboxKey: 'acme--feat',
+      sandboxKey: TEST_KEY,
       mode: 'review',
       auth: { secret: 'tok' },
     });
@@ -341,7 +407,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'x',
       cwd: '/tmp/wt',
       systemPrompt: 'p',
-      sandboxKey: 'k',
+      sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
       richStream: true,
@@ -382,7 +448,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const events: EngineEvent[] = [];
-    await core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute', auth: { secret: 'tok' }, richStream: true, onEvent: (e) => events.push(e) });
+    await core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' }, richStream: true, onEvent: (e) => events.push(e) });
 
     const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<EngineEvent, { kind: 'tool_result' }>;
     expect(toolResult.structuredPatch).toEqual(hunks);
@@ -408,7 +474,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await expect(
-      core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute', auth: { secret: 'tok' } }),
+      core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' } }),
     ).rejects.toThrow(/Claude engine ended: error_during_execution.*stop_reason=refusal.*errors=boom: upstream failed.*stderr\(tail\)=.*529 overloaded_error/s);
   });
 
@@ -421,7 +487,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'x',
       cwd: '/tmp/wt',
       systemPrompt: 'p',
-      sandboxKey: 'k',
+      sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
       onEvent: (e) => events.push(e),
@@ -472,7 +538,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'do the thing',
       cwd: '/tmp/wt',
       systemPrompt: 'p',
-      sandboxKey: 'k',
+      sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
       steerable: true,
@@ -528,7 +594,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'the task',
       cwd: '/tmp/wt',
       systemPrompt: 'p',
-      sandboxKey: 'k',
+      sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
       steerable: true,
@@ -587,7 +653,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'the task',
       cwd: '/tmp/wt',
       systemPrompt: 'p',
-      sandboxKey: 'k',
+      sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
       steerable: true,
@@ -611,7 +677,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'x',
       cwd: '/tmp/wt',
       systemPrompt: 'p',
-      sandboxKey: 'k',
+      sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
     });
@@ -637,7 +703,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
         task: 'x',
         cwd: '/tmp/wt',
         systemPrompt: 'p',
-        sandboxKey: 'k',
+        sandboxKey: TEST_KEY,
         mode: 'execute',
         auth: { secret: 'oauth-from-host' },
       });
@@ -659,7 +725,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
         task: 'x',
         cwd: '/tmp/wt',
         systemPrompt: 'p',
-        sandboxKey: 'k',
+        sandboxKey: TEST_KEY,
         mode: 'execute',
         // no explicit auth → must throw (no env/config fallback exists)
       }),
@@ -672,7 +738,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const mcpServers = { 'atlas-host-bridge': { __fake: 'server' } };
     const names = ['mcp__atlas-host-bridge__submit_plan', 'mcp__atlas-host-bridge__get_pipeline_state'];
     await core.runWithExtras(
-      { engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute', auth: { secret: 'tok' } },
+      { engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' } },
       { mcpServers },
       names,
     );
@@ -693,18 +759,21 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       task: 'x',
       cwd: '/tmp/wt',
       systemPrompt: 'p',
-      sandboxKey: 'k',
+      sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
     });
     const opts = captured.options!;
-    // Auto-approve: safe reads + subagent spawning + the task tools (live task list) + web. Writes/Bash
-    // still fall through to canUseTool.
+    // Auto-approve: safe reads + subagent spawning + subagent management (nudge/peek/stop) + the task
+    // tools (live task list) + web. Writes/Bash still fall through to canUseTool.
     expect(opts.allowedTools).toEqual([
       'Read',
       'Glob',
       'Grep',
       'Task',
+      'SendMessage',
+      'TaskOutput',
+      'TaskStop',
       'TaskCreate',
       'TaskUpdate',
       'TaskList',
@@ -725,7 +794,7 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
       task: 'do it',
       cwd: '/tmp/wt',
       systemPrompt: 'persona',
-      sandboxKey: 'acme--feat',
+      sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: VALID_CODEX_AUTH },
     });
@@ -748,7 +817,7 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
       task: 'plan it',
       cwd: '/tmp/wt',
       systemPrompt: 'persona',
-      sandboxKey: 'acme--feat',
+      sandboxKey: TEST_KEY,
       mode: 'plan',
       auth: { secret: VALID_CODEX_AUTH },
     });
@@ -796,7 +865,7 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
         task: 'edit it',
         cwd: wt,
         systemPrompt: 'persona',
-        sandboxKey: 'acme--feat',
+        sandboxKey: TEST_KEY,
         mode: 'execute',
         richStream: true,
         auth: { secret: VALID_CODEX_AUTH },
@@ -820,7 +889,7 @@ describe('EngineCore — Codex auth-refresh readback', () => {
   const runCodex = async (opts: {
     refreshedBlob: string | null;
     persistAuthRefresh?: boolean;
-    sandboxKey: string;
+    sandboxKey: EngineHomeKey;
   }) => {
     const core = new EngineCore(fakeClaudeSdk().sdk, fakeRefreshingCodexSdk(opts.refreshedBlob), {
       homeRoot: HOME_ROOT,
@@ -839,30 +908,30 @@ describe('EngineCore — Codex auth-refresh readback', () => {
 
   it('relays the refreshed auth.json when Codex rewrote it AND persistAuthRefresh is set', async () => {
     const refreshed = codexAuthBlob('2026-07-02T00:00:00.000Z', 'a2');
-    const res = await runCodex({ refreshedBlob: refreshed, persistAuthRefresh: true, sandboxKey: 'rb--hit' });
+    const res = await runCodex({ refreshedBlob: refreshed, persistAuthRefresh: true, sandboxKey: { ...TEST_KEY, jobId: 'rb-hit' } });
     expect(res.refreshedAuthSecret).toBe(refreshed);
   });
 
   it('does NOT relay when the overlay is unchanged (no real refresh)', async () => {
-    const res = await runCodex({ refreshedBlob: VALID_CODEX_AUTH, persistAuthRefresh: true, sandboxKey: 'rb--same' });
+    const res = await runCodex({ refreshedBlob: VALID_CODEX_AUTH, persistAuthRefresh: true, sandboxKey: { ...TEST_KEY, jobId: 'rb-same' } });
     expect(res.refreshedAuthSecret).toBeUndefined();
   });
 
   it('does NOT relay when persistAuthRefresh is unset (env-fallback gate) even though the file changed', async () => {
     const refreshed = codexAuthBlob('2026-07-02T00:00:00.000Z', 'a3');
-    const res = await runCodex({ refreshedBlob: refreshed, sandboxKey: 'rb--gated' });
+    const res = await runCodex({ refreshedBlob: refreshed, sandboxKey: { ...TEST_KEY, jobId: 'rb-gated' } });
     expect(res.refreshedAuthSecret).toBeUndefined();
   });
 
   it('does NOT relay a corrupt refreshed overlay (never propagates an invalid blob)', async () => {
-    const res = await runCodex({ refreshedBlob: '{not valid json', persistAuthRefresh: true, sandboxKey: 'rb--corrupt' });
+    const res = await runCodex({ refreshedBlob: '{not valid json', persistAuthRefresh: true, sandboxKey: { ...TEST_KEY, jobId: 'rb-corrupt' } });
     expect(res.refreshedAuthSecret).toBeUndefined();
   });
 });
 
 describe('EngineCore — unresumable session detection', () => {
   it('claudeSessionExists is true only when the transcript is present under the config dir', () => {
-    const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', 'resume-present');
+    const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', { ...TEST_KEY, jobId: 'resume-present' });
     expect(claudeSessionExists(dir, 'sess-x')).toBe(false); // no projects dir yet
     mkdirSync(join(dir, 'projects', '-tmp-wt'), { recursive: true });
     writeFileSync(join(dir, 'projects', '-tmp-wt', 'sess-x.jsonl'), '{}');
@@ -884,7 +953,7 @@ describe('EngineCore — unresumable session detection', () => {
         task: 'resume me',
         cwd: '/tmp/wt',
         systemPrompt: 'persona',
-        sandboxKey: 'resume-missing',
+        sandboxKey: { ...TEST_KEY, jobId: 'resume-missing' },
         mode: 'execute',
         auth: { secret: 'oauth-tok' },
         sessionId: 'ghost-session',
@@ -895,7 +964,7 @@ describe('EngineCore — unresumable session detection', () => {
 
   it('run() resumes normally when the transcript exists', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', 'resume-ok');
+    const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', { ...TEST_KEY, jobId: 'resume-ok' });
     mkdirSync(join(dir, 'projects', '-tmp-wt'), { recursive: true });
     writeFileSync(join(dir, 'projects', '-tmp-wt', 'live-session.jsonl'), '{}');
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
@@ -904,7 +973,7 @@ describe('EngineCore — unresumable session detection', () => {
       task: 'resume me',
       cwd: '/tmp/wt',
       systemPrompt: 'persona',
-      sandboxKey: 'resume-ok',
+      sandboxKey: { ...TEST_KEY, jobId: 'resume-ok' },
       mode: 'execute',
       auth: { secret: 'oauth-tok' },
       sessionId: 'live-session',

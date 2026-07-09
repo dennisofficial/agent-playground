@@ -192,6 +192,24 @@ export async function fetchAttachmentUrl(
 }
 
 /**
+ * The absolute URL that STREAMS one `/context` file as raw bytes with its real `Content-Type` — used as an
+ * `<iframe>` src for the HTML-artifact preview. PATH-based (each segment encoded, slashes preserved) so the
+ * document's own RELATIVE sub-resources (`style.css`, images) resolve against it and get fetched too.
+ * `path` is bucket-relative, e.g. `artifacts/sidebar-redesign/index.html`. Consumed directly as an
+ * `<iframe>` src, so — unlike `fetchAttachmentUrl` — it does NOT flow through `fetchWithRefresh`'s 401
+ * retry (an iframe navigation can't); an expired access cookie just means the operator reopens the file
+ * after the app refreshes.
+ */
+export function contextRawUrl(ref: JobRef, path: string): string {
+  const encoded = path
+    .split("/")
+    .filter((seg) => seg.length > 0)
+    .map(encodeURIComponent)
+    .join("/");
+  return `${BASE}${threadPath(ref, `/context/raw/${encoded}`)}`;
+}
+
+/**
  * Gracefully stop the thread brain's in-flight turn (the composer's Stop button). Returns `{ stopped }` —
  * `false` if there was no live turn to stop. The backend emits a normal `turn_end` (no separate abort
  * frame), so the live indicator clears through the usual reconcile path.
@@ -401,7 +419,7 @@ export interface RepoView {
   threadCount: number;
   /** The repo's current onboarding thread id (`kind='onboarding'`), or null if never started. */
   onboardingThreadId: string | null;
-  /** When onboarding completed (worktree config live), ISO; null until then — drives "Set up" vs "Re-run". */
+  /** When onboarding completed (workspace config live), ISO; null until then — drives "Set up" vs "Re-run". */
   onboardedAt: string | null;
 }
 

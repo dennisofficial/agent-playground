@@ -67,6 +67,16 @@ export class RepoEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   setup_script!: string | null;
 
+  /**
+   * The dependency-manifest filenames the Workspace Profile has ACKNOWLEDGED for this repo (e.g.
+   * `["package.json","go.mod"]`) — seeded at `finish_onboarding` (the bulk pass looked at the whole
+   * stack) and refreshed when the brain records a setup script. `WorkspaceProfileService.computeGaps`
+   * compares the worktree's current manifests against this to flag a NEW stack the profile hasn't
+   * covered (suggest a skill/MCP). NULL = never seeded (no new-stack gap emitted until it is).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  profile_seen_manifests!: string[] | null;
+
   /** Named GitHub-token override; null → the org default token. */
   @Column({ type: 'text', nullable: true })
   token_name!: string | null;
@@ -94,7 +104,7 @@ export class RepoEntity extends TimestampedEntity {
    * runnable org — the RE-SPAWN SUPPRESSION marker. Set the moment the onboarding thread is created (NOT
    * waiting for it to finish), so a reconnect/revalidate never spawns a second one. Null = never onboarded
    * (eligible to spawn). Distinct from {@link onboarded_at} on purpose: this marks "started", that marks
-   * "the worktree config is live". Cleared if the onboarding thread is deleted before finishing, so a
+   * "the workspace config is live". Cleared if the onboarding thread is deleted before finishing, so a
    * re-connect can re-spawn. Not a real FK (the thread may be deleted out from under it).
    */
   @Column({ type: 'uuid', nullable: true })
@@ -108,4 +118,14 @@ export class RepoEntity extends TimestampedEntity {
    */
   @Column({ type: 'timestamptz', nullable: true })
   onboarded_at!: Date | null;
+
+  /**
+   * Non-fatal webhook-registration warning surfaced to the operator — set when the org's GitHub token
+   * lacks `admin:repo_hook` so Atlas could not register the delivery webhook (PR state still syncs via the
+   * 30-minute poll). Null when the hooks registered cleanly (or registration was skipped for a local/non-
+   * public backend). Written fire-and-forget after connect/revalidate, so it can only surface here (row),
+   * not in the synchronous connect response.
+   */
+  @Column({ type: 'text', nullable: true })
+  webhook_warning!: string | null;
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { EnvService } from '@core/config/env/env.service';
 import type { ModuleRef } from '@nestjs/core';
 import type { Repository } from 'typeorm';
 import type { GithubPrService, RepoInfo } from '../git';
@@ -89,6 +90,14 @@ function makeRepos() {
         }
       }
     },
+    // `ensureWebhooksForActiveRepos` scans all access_ok repos (no org scope) for the leader-promotion backfill.
+    async find({ where }: { where: { org_id?: string; access_ok?: boolean } }) {
+      return [...map.values()].filter(
+        (v) =>
+          (where.org_id === undefined || v.org_id === where.org_id) &&
+          (where.access_ok === undefined || v.access_ok === where.access_ok),
+      );
+    },
   } as unknown as Repository<RepoEntity>;
   return { repo, map };
 }
@@ -160,12 +169,36 @@ function fakeStore(presence: Partial<CredentialPresence> = {}): TenantCredential
   } as unknown as TenantCredentialStore;
 }
 
-function fakePr(repoInfo: RepoInfo | null): GithubPrService {
+/**
+ * Fakes the env accessor `OnboardingService` reads for webhook registration. Defaults to a publicly
+ * reachable backend + a secret set, so a test opts INTO the skip paths by overriding a single key.
+ */
+function fakeEnv(over: Record<string, string | undefined> = {}): EnvService {
+  const values: Record<string, string | undefined> = {
+    BACKEND_HOST: 'https://api.example.com',
+    GITHUB_WEBHOOK_SECRET: 'whsec',
+    ...over,
+  };
+  return { get: (k: string) => values[k] } as unknown as EnvService;
+}
+
+function fakePr(
+  repoInfo: RepoInfo | null,
+  opts: { ensureWebhookOutcome?: 'created' | 'updated' | 'no-scope' | 'error' } = {},
+): GithubPrService & { ensureWebhookCalls: number } {
+  let ensureWebhookCalls = 0;
   return {
     async getRepo() {
       return repoInfo;
     },
-  } as unknown as GithubPrService;
+    async ensureWebhook() {
+      ensureWebhookCalls++;
+      return opts.ensureWebhookOutcome ?? 'created';
+    },
+    get ensureWebhookCalls() {
+      return ensureWebhookCalls;
+    },
+  } as unknown as GithubPrService & { ensureWebhookCalls: number };
 }
 
 function assemble(
@@ -174,6 +207,8 @@ function assemble(
     creds?: Partial<Record<'anthropic' | 'github', string>>;
     repoInfo?: RepoInfo | null;
     llmValidated?: boolean;
+    env?: Record<string, string | undefined>;
+    ensureWebhookOutcome?: 'created' | 'updated' | 'no-scope' | 'error';
   } = {},
 ) {
   const orgs = makeOrgs();
@@ -194,6 +229,7 @@ function assemble(
     },
   };
   const moduleRef = { get: () => threadLifecycle } as unknown as ModuleRef;
+  const pr = fakePr(opts.repoInfo ?? null, { ensureWebhookOutcome: opts.ensureWebhookOutcome });
 
   const svc = new OnboardingService(
     orgs.repo,
@@ -205,10 +241,11 @@ function assemble(
     sandboxes.repo as unknown as Repository<JobSandboxEntity>,
     fakeCreds(opts.creds),
     fakeStore(opts.presence),
-    fakePr(opts.repoInfo ?? null),
+    pr,
     moduleRef,
+    fakeEnv(opts.env),
   );
-  return { svc, orgs, repos, orgCreds, threads, stimuli, decisionRecords, sandboxes, threadLifecycle, deepDeleted };
+  return { svc, orgs, repos, orgCreds, threads, stimuli, decisionRecords, sandboxes, threadLifecycle, deepDeleted, pr };
 }
 
 const REPO = 'https://github.com/acme/web';
@@ -449,6 +486,73 @@ describe('OnboardingService', () => {
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       expect((await svc.tryActivate('T1')).lifecycle).toBe('onboarding');
+    });
+  });
+
+  describe('ensureWebhooksForActiveRepos / ensureRepoWebhook', () => {
+    // Seeds an access_ok repo directly (bypassing connectRepo, whose own fire-and-forget webhook call
+    // would otherwise race with — and double-count — the assertions below).
+    function seedActiveRepo(repos: ReturnType<typeof makeRepos>) {
+      const row = {
+        id: 'repo-1',
+        org_id: 'T1',
+        slug: 'web',
+        name: 'web',
+        git_url: REPO,
+        default_branch: 'main',
+        access_ok: true,
+      } as RepoEntity;
+      repos.map.set('T1:web', row);
+      return row;
+    }
+
+    it("skips (no ensureWebhook call, no warning) when BACKEND_HOST isn't publicly reachable", async () => {
+      const { svc, repos, pr } = assemble({
+        creds: { github: 'ghp_x' },
+        env: { BACKEND_HOST: 'http://localhost:4002' },
+      });
+      seedActiveRepo(repos);
+      await svc.ensureWebhooksForActiveRepos();
+      expect(pr.ensureWebhookCalls).toBe(0);
+      expect(repos.map.get('T1:web')?.webhook_warning).toBeFalsy();
+    });
+
+    it('skips when GITHUB_WEBHOOK_SECRET is unset', async () => {
+      const { svc, repos, pr } = assemble({
+        creds: { github: 'ghp_x' },
+        env: { GITHUB_WEBHOOK_SECRET: undefined },
+      });
+      seedActiveRepo(repos);
+      await expect(svc.ensureWebhooksForActiveRepos()).resolves.toBeUndefined();
+      expect(pr.ensureWebhookCalls).toBe(0);
+    });
+
+    it('skips when the org has no GitHub token', async () => {
+      const { svc, repos, pr } = assemble({});
+      seedActiveRepo(repos);
+      await expect(svc.ensureWebhooksForActiveRepos()).resolves.toBeUndefined();
+      expect(pr.ensureWebhookCalls).toBe(0);
+    });
+
+    it('writes a no-scope warning when ensureWebhook reports the PAT lacks admin:repo_hook', async () => {
+      const { svc, repos } = assemble({
+        creds: { github: 'ghp_x' },
+        ensureWebhookOutcome: 'no-scope',
+      });
+      seedActiveRepo(repos);
+      await svc.ensureWebhooksForActiveRepos();
+      expect(repos.map.get('T1:web')?.webhook_warning).toContain('admin:repo_hook');
+    });
+
+    it('clears the warning when both hooks register cleanly', async () => {
+      const { svc, repos } = assemble({
+        creds: { github: 'ghp_x' },
+        ensureWebhookOutcome: 'updated',
+      });
+      const row = seedActiveRepo(repos);
+      row.webhook_warning = 'stale warning from a prior run';
+      await svc.ensureWebhooksForActiveRepos();
+      expect(repos.map.get('T1:web')?.webhook_warning).toBeNull();
     });
   });
 });

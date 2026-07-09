@@ -61,11 +61,13 @@ export interface IEnvConfig {
 
   // Path roots (differ dev↔prod; each has a code default). REPOS_ROOT: per-repo clones. AGENT_HOME_ROOT:
   // the engines' isolated CLAUDE_CONFIG_DIR/CODEX_HOME. REFS_ROOT: read-only /refs reference library.
+  // SKILLS_ROOT: the central skills store bind-mounted read-write per-org at /skills.
   // ATLAS_HYDRATION_STATE: the worktree-hydration sidecar's host dir. ENGINE_BUNDLE_PATH: the live-mounted
   // engine bundle path (read via process.env by bundle-engine.ts; declared for completeness).
   REPOS_ROOT?: string;
   AGENT_HOME_ROOT?: string;
   REFS_ROOT?: string;
+  SKILLS_ROOT?: string;
   ATLAS_HYDRATION_STATE?: string;
   ENGINE_BUNDLE_PATH?: string;
 
@@ -173,6 +175,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   REPOS_ROOT: Joi.string().optional(),
   AGENT_HOME_ROOT: Joi.string().optional(),
   REFS_ROOT: Joi.string().optional(),
+  SKILLS_ROOT: Joi.string().optional(),
   ATLAS_HYDRATION_STATE: Joi.string().optional(),
   ENGINE_BUNDLE_PATH: Joi.string().optional(),
 

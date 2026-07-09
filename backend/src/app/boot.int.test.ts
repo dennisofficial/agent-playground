@@ -10,7 +10,11 @@ import {
   type JobDispatcher,
 } from './brain';
 import { ThreadDriver } from './driver';
-import { GithubIngressController, WebhookIngressController } from './ingress';
+import {
+  GithubIngressController,
+  GithubStateWebhookController,
+  WebhookIngressController,
+} from './ingress';
 import { BRAIN_SINK, StimulusIntake, type BrainSink } from './stimulus';
 import { WebSurface, CHAT_SURFACE, type ChatSurface } from './surface';
 import { TestBridgeController } from './test-bridge';
@@ -42,6 +46,7 @@ describe('AppModule HTTP boot (full DI assembly, live Postgres)', () => {
     // routing → store → intake → consumer) is DI-complete.
     expect(app.get(StimulusIntake)).toBeDefined();
     expect(app.get(GithubIngressController)).toBeDefined();
+    expect(app.get(GithubStateWebhookController)).toBeDefined();
     expect(app.get(WebhookIngressController)).toBeDefined();
 
     // R3 brain services resolved — proves the brain graph (store, classifier + memory deps) is
@@ -74,6 +79,7 @@ describe('AppModule HTTP boot (full DI assembly, live Postgres)', () => {
     });
     const routes = collectRoutePaths(app);
     expect(routes).toContain('/ingress/github');
+    expect(routes).toContain('/webhooks/github');
     expect(routes).toContain('/ingress/webhook');
 
     await app.close();

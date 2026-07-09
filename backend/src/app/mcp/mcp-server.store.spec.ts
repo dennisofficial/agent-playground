@@ -189,4 +189,88 @@ describe('McpServerStore', () => {
       expect(await store.setSecret('org1', 'repo-1', 'missing', 'headers', 'X', 'v')).toBe(false);
     });
   });
+
+  describe('unfilledSecretSlots', () => {
+    it('reports a declared-but-empty secret slot as unfilled, by slot name only', async () => {
+      await store.write('org1', 'repo-1', 'github', {
+        transport: 'http',
+        url: 'https://api.githubcopilot.com/mcp/',
+        headers: [{ name: 'Authorization', value: '', secret: true }], // declared, no value
+      });
+      const gaps = await store.unfilledSecretSlots('org1', 'repo-1');
+      expect(gaps).toEqual([{ name: 'github', scope: 'repo-1', slots: ['header:Authorization'] }]);
+    });
+
+    it('does not report a slot once its value is filled', async () => {
+      await store.write('org1', 'repo-1', 'github', {
+        transport: 'http',
+        url: 'https://x',
+        headers: [{ name: 'Authorization', value: 'Bearer tok', secret: true }],
+      });
+      expect(await store.unfilledSecretSlots('org1', 'repo-1')).toEqual([]);
+    });
+
+    it('ignores non-secret headers and disabled servers', async () => {
+      await store.write('org1', 'repo-1', 'plain', {
+        transport: 'http',
+        url: 'https://x',
+        headers: [{ name: 'X-Env', value: 'prod' }], // non-secret → never a gap
+      });
+      await store.write('org1', 'repo-1', 'off', {
+        transport: 'http',
+        url: 'https://x',
+        headers: [{ name: 'Authorization', value: '', secret: true }],
+        enabled: false,
+      });
+      expect(await store.unfilledSecretSlots('org1', 'repo-1')).toEqual([]);
+    });
+  });
+
+  describe('authFailingServers', () => {
+    it('reports an enabled server whose validation probe failed, with auth kind + reason (safe string only)', async () => {
+      await store.write('org1', 'repo-1', 'github', {
+        transport: 'http',
+        url: 'https://api.githubcopilot.com/mcp/',
+        headers: [{ name: 'Authorization', value: 'Bearer ghp_expired', secret: true }],
+      });
+      await store.recordValidation('org1', 'repo-1', 'github', { error: '401 Unauthorized' });
+      expect(await store.authFailingServers('org1', 'repo-1')).toEqual([
+        { name: 'github', scope: 'repo-1', authKind: 'static', reason: '401 Unauthorized' },
+      ]);
+    });
+
+    it('reports an OAuth server flagged for re-auth as authKind oauth', async () => {
+      await store.write('org1', '*', 'jira', {
+        transport: 'http',
+        url: 'https://mcp.atlassian.com',
+        authKind: 'oauth',
+      });
+      // McpOAuthService.markNeedsReauth writes this marker into validation_error on a dead refresh.
+      await store.recordValidation('org1', '*', 'jira', { error: 'needs re-auth' });
+      expect(await store.authFailingServers('org1', '*')).toEqual([
+        { name: 'jira', scope: 'org', authKind: 'oauth', reason: 'needs re-auth' },
+      ]);
+    });
+
+    it('does not report a healthy server (no validation_error)', async () => {
+      await store.write('org1', 'repo-1', 'ok', {
+        transport: 'http',
+        url: 'https://x',
+        headers: [{ name: 'Authorization', value: 'Bearer live', secret: true }],
+      });
+      await store.recordValidation('org1', 'repo-1', 'ok', { discoveredTools: ['t'] });
+      expect(await store.authFailingServers('org1', 'repo-1')).toEqual([]);
+    });
+
+    it('skips a disabled server even when its auth is failing', async () => {
+      await store.write('org1', 'repo-1', 'off', {
+        transport: 'http',
+        url: 'https://x',
+        headers: [{ name: 'Authorization', value: 'Bearer x', secret: true }],
+        enabled: false,
+      });
+      await store.recordValidation('org1', 'repo-1', 'off', { error: '401 Unauthorized' });
+      expect(await store.authFailingServers('org1', 'repo-1')).toEqual([]);
+    });
+  });
 });

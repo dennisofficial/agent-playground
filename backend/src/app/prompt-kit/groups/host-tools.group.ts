@@ -9,6 +9,7 @@ import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, isReview, notOnboarding } from '../conditions';
 import { BRIDGE_SERVER_NAME } from '../../sandbox/image/bridge-options';
+import { WORKSPACE_PROFILE_BRIDGE_NAME } from '../../sandbox/image/workspace-profile-bridge-options';
 import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 
 @FragmentGroup()
@@ -44,12 +45,12 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__link_ticket_dependency — record an advisory "blocked by" edge between tickets`,
       `  - mcp__${BRIDGE_SERVER_NAME}__promote_ticket       — turn a backlog ticket into a working follow-up thread`,
       `You ALSO have these AMBIENT capability tools — usable ANY turn, whenever the work hits the friction they solve (see ENVIRONMENT GAPS below):`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__request_secret       — securely request a missing SECRET VALUE from the operator (stored encrypted, rendered to a path; persists for future jobs)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__request_file         — have the operator UPLOAD a whole file/key (env file, service-account JSON, .pem; encrypted, granted to a gitignored path)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_file_request — retract a still-open request_file card BY requestId (wrong path / no longer needed); post a corrected request_file if you still need the file`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__derive_secret        — store a value YOU computed from an already-granted credential (no operator wait; e.g. a printed webhook secret)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — amend the repo's DB-backed worktree config (mounts) — a live write for every future job on this repo, no PR`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__write_setup_script   — save the repo's cold-boot setup script ({ script }) — runs on EVERY cold sandbox bring-up for every future job on this repo (no PR); must be idempotent`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__request_secret       — securely request a missing SECRET VALUE from the operator (stored encrypted, rendered to a path; persists for future jobs)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__request_file         — have the operator UPLOAD a whole file/key (env file, service-account JSON, .pem; encrypted, granted to a gitignored path)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__withdraw_file_request — retract a still-open request_file card BY requestId (wrong path / no longer needed); post a corrected request_file if you still need the file`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__derive_secret        — store a value YOU computed from an already-granted credential (no operator wait; e.g. a printed webhook secret)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_workspace_config — amend the repo's DB-backed workspace config (mounts) — a live write for every future job on this repo, no PR`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_setup_script   — save the repo's cold-boot setup script ({ script }) — runs on EVERY cold sandbox bring-up for every future job on this repo (no PR); must be idempotent`,
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox        — recreate your container from scratch to prove the setup cold-boots (recreates on your NEXT turn — call it, then STOP)`,
     ].join('\n');
   }
@@ -120,22 +121,22 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_question   — retract a still-unanswered question BY questionId (reword/moot; never re-ask an open one)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__recall              — retrieve relevant memory facts`,
       `  - mcp__${BRIDGE_SERVER_NAME}__remember            — store a durable memory fact about this repo`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (see SECRETS)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__request_file        — ask the operator to UPLOAD a file (JSON/key file; see SECRETS)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_file_request — retract a still-open request_file card BY requestId (wrong path / no longer needed; re-post request_file if still needed)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__derive_secret       — store a value YOU computed (not operator-provided; see SECRETS)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — AMEND worktree config (mounts; NOT secrets) —`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (see SECRETS)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__request_file        — ask the operator to UPLOAD a file (JSON/key file; see SECRETS)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__withdraw_file_request — retract a still-open request_file card BY requestId (wrong path / no longer needed; re-post request_file if still needed)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__derive_secret       — store a value YOU computed (not operator-provided; see SECRETS)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_workspace_config — AMEND workspace config (mounts; NOT secrets) —`,
       '    a DB write, live instantly for every job on this repo (no PR). Merges with what is already recorded',
       '    (upserts a mount by path) — pass only the ONE new entry you are adding; existing entries survive',
       '    automatically, you never need to reconstruct the whole set yourself.',
-      `  - mcp__${BRIDGE_SERVER_NAME}__write_setup_script  — save the repo's cold-boot SETUP SCRIPT ({ script }) —`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_setup_script  — save the repo's cold-boot SETUP SCRIPT ({ script }) —`,
       '    a DB write, live for every future job on this repo (no PR). The host runs it on EVERY cold sandbox',
       '    bring-up (and skips it warm), so it MUST be idempotent (guard the one-time work) and must NOT init',
       '    submodules (already automatic). This is how you record the bring-up steps so a cold box comes up ready.',
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox       — recreate your container from scratch to PROVE the`,
       '    environment cold-boots from durable inputs (see RESET). It does not reset instantly — it recreates on',
       '    your NEXT turn, so call it then STOP; you will be prompted to verify once the fresh box is up.',
-      `  - mcp__${BRIDGE_SERVER_NAME}__propose_mcp_servers  — recommend stack-matched MCP servers ({ servers }) for`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__propose_mcp_servers  — recommend stack-matched MCP servers ({ servers }) for`,
       '    the OWNER to approve (see MCP SERVERS). Posts a proposal card; you never register servers yourself.',
       '    Declare a credential slot by name with `secret: true`; fill it after approval via request_secret (mcp).',
       `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: only after the stack boots green (see FINISH)`,
@@ -157,8 +158,8 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__set_job_kind        — re-classify this job if it turns out NOT to be a PR review`,
       `  - mcp__${BRIDGE_SERVER_NAME}__recall              — retrieve relevant memory facts`,
       `  - mcp__${BRIDGE_SERVER_NAME}__remember            — store a durable memory fact about this repo`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (only if you need one to run the branch's tests)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__request_file        — ask the operator to UPLOAD a file`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (only if you need one to run the branch's tests)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__request_file        — ask the operator to UPLOAD a file`,
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox       — recreate your container from scratch (rarely needed for a review)`,
     ].join('\n');
   }

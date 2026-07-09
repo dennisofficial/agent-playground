@@ -53,7 +53,7 @@ function baseArgs(onEvent: (e: EngineEvent) => void): RunEngineArgs {
     task: 'do the thing',
     cwd: '/wt',
     systemPrompt: 'SYS',
-    sandboxKey: 'sk',
+    sandboxKey: { orgId: 'org-1', repoId: 'repo-1', jobId: 'job-1', type: 'build' },
     mode: 'execute',
     onEvent,
     target: { containerId: 'c1', worktreeHost: '/wt' },

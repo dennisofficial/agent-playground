@@ -1,5 +1,12 @@
 # ADR 0003 — Worktree config (mounts + seed) moves from committed `atlas.json` to the DB
 
+> **Terminology note (later rename):** what this ADR calls "worktree config" was renamed to
+> **workspace config** as part of unifying the whole config layer under the "Workspace Profile"
+> umbrella — tool `write_worktree_config` → `write_workspace_config`, `WorktreeConfigStore` →
+> `WorkspaceConfigStore`, `WorktreeSecretFileStore` → `WorkspaceSecretFileStore`, tables
+> `org_worktree_*` → `org_workspace_*`. The runtime `WorktreeHydrator`/`WorktreeProvisioner` keep
+> "worktree" (they act on the literal git worktree). This ADR's body is left as historical record.
+
 - **Status:** Accepted — implemented.
 - **Date:** 2026-07-02
 - **Supersedes:** §5 ("Two-speed propagation") of `docs/adr/0002-onboarding-hydration-manifest-not-boot-recipe.md`, and the `driver/worktree-manifest.ts` live-hydration path it introduced.

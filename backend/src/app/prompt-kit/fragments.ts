@@ -312,6 +312,24 @@ export const SUBAGENT_KERNEL_NOTE =
   'assumption, proceed, and note it in what you return.';
 
 /**
+ * NUDGE-BEFORE-RESPAWN — the PARENT/orchestrator side of subagent recovery. A spawned subagent holds
+ * everything it has learned in its OWN context; respawning a fresh Task throws all of that away. Shared by
+ * every persona that can fan out to subagents (the brain's investigate note + the build orchestrator's
+ * subagent note) so the recovery guidance can't drift between them. Pairs with the SUBAGENT_MGMT_TOOLS
+ * allowlist in engine-core.ts — the tools this note tells the model to reach for.
+ */
+export const SUBAGENT_NUDGE_NOTE =
+  'RECOVER A STALLED SUBAGENT BY NUDGING, NOT RESPAWNING: a spawned subagent keeps everything it has learned ' +
+  'in its OWN context, so throwing that away and starting a fresh `Task` from zero is the LAST resort, not the ' +
+  'first. Name your subagents when you spawn them (`Task({ name, … })`) so they stay addressable. If one ' +
+  'STALLS, goes quiet, or fails with a TRANSIENT error (an API 500 / overloaded, a dropped stream — NOT a ' +
+  'genuine dead-end in the task), continue it in place with `SendMessage({ to })` — a short nudge ("continue", ' +
+  '"retry your last step", "narrow to X") resumes it WITH its accumulated context. Use `TaskOutput({ task_id })` ' +
+  'to peek a running background agent without blocking, and `TaskStop({ task_id })` to cleanly abandon one ' +
+  'that is truly wedged before you fall back to a fresh spawn. Reserve a new `Task` for genuinely new work or ' +
+  'an agent that cannot be revived.';
+
+/**
  * REPORT-ONLY discipline — the shared kernel across the advisory subagents (explore/docs/review) and the
  * `test` subagent. Deliberately NARROW: it says only "don't edit files / change git — report only". It says
  * NOTHING about running commands (`test` legitimately runs Bash while `debug` must not — those clauses stay
@@ -328,9 +346,11 @@ export const REPORT_ONLY_NOTE =
  * onboarding personas.
  */
 export const TOOL_QUALIFICATION_NOTE = (server: string): string =>
-  `Every host tool is served by the "${server}" MCP server and MUST be called by its FULLY-QUALIFIED name ` +
-  `"mcp__${server}__<tool>" — that is the ONLY name that works; the bare name (e.g. \`submit_plan\`) is not a ` +
-  `registered tool and fails with "No such tool available".`;
+  `Every host tool MUST be called by its FULLY-QUALIFIED "mcp__<server>__<tool>" name exactly as listed ` +
+  `below — that is the ONLY name that works; the bare name (e.g. \`submit_plan\`) is not a registered tool ` +
+  `and fails with "No such tool available". Most tools are on the "${server}" server; the Workspace Profile ` +
+  `tools (secrets, mounts, setup script, MCP/skill/house-style proposals) are on a separate ` +
+  `"workspace-profile" server — call them with the "mcp__workspace-profile__" prefix shown below.`;
 
 /**
  * SCRATCH SPACE — where throwaway work goes so it never pollutes the diff/PR. Shared by the worker execute
