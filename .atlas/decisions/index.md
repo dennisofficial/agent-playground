@@ -13,5 +13,6 @@ it is regenerated on every promotion. Edit an individual decision file to propos
 | [ship-gate-driver-builds-only](ship-gate-driver-builds-only.md) | The ship-review gate and driver ship path apply to DRIVER builds only, never brain-owned direct builds | proposed |
 | [sandbox-submodule-repos-full-clone](sandbox-submodule-repos-full-clone.md) | Submodule repos get full-clone sandboxes, not linked worktrees | proposed |
 | [live-turn-time-ordered-render](live-turn-time-ordered-render.md) | Live turn renders as one time-ordered stream; live blocks carry server emittedAt | proposed |
+| [streaming-turn-input-close-gate](streaming-turn-input-close-gate.md) | Streaming turns close their input/control channel only on a genuinely-completed result | proposed |
 
-_Last regenerated: 2026-07-08T21:05:31.989Z_
+_Last regenerated: 2026-07-08T21:55:29.298Z_
