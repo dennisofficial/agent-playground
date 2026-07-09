@@ -47,8 +47,8 @@ const ORG = '77777777-7777-4777-8777-777777777701';
 const REPO = '77777777-7777-4777-8777-777777777702';
 const HALTED_JOB = '77777777-7777-4777-8777-777777777703';
 const HEALTHY_JOB = '77777777-7777-4777-8777-777777777704';
-// A job idling in `planning` with a Codex review genuinely in flight (turn_active cleared by the liveness
-// watchdog) — the false-positive "needs you" scenario the `review_running` axis fixes.
+// A job idling in `planning` with a Codex review genuinely in flight (activity='plan_review') — the
+// false-positive "needs you" scenario the `activity` axis suppresses.
 const REVIEWING_JOB = '77777777-7777-4777-8777-777777777705';
 const OWNER_EMAIL = 'halt-wire-it-owner@example.test';
 const PASSWORD = 'halt-wire-it-pw-12345';
@@ -140,12 +140,12 @@ beforeAll(async () => {
     [HEALTHY_JOB, ORG, REPO],
   );
 
-  // The REVIEWING job: idle in `planning` (no live turn) but a Codex review is running — the denormalized
-  // `review_running` flag must suppress the "needs you" dot even though status='planning'+turn_active=false
-  // would otherwise light it. This is the exact bug this build fixes.
+  // The REVIEWING job: idle in `planning` but a Codex review is running (activity='plan_review') — the
+  // activity axis must suppress the "needs you" dot even though status='planning' would otherwise light
+  // it. This is the exact bug this build fixes.
   await ds.query(
-    `INSERT INTO jobs (id, org_id, repo_id, origin, title, status, turn_active, review_running, halt)
-     VALUES ($1, $2, $3, 'control', 'Reviewing build', 'planning', false, true, NULL)`,
+    `INSERT INTO jobs (id, org_id, repo_id, origin, title, status, activity, halt)
+     VALUES ($1, $2, $3, 'control', 'Reviewing build', 'planning', 'plan_review', NULL)`,
     [REVIEWING_JOB, ORG, REPO],
   );
 
@@ -179,7 +179,7 @@ describe('Job.halt wire — GET /web/jobs and GET /web/orgs/:orgId/repos/:repoId
     // THE BUG FIX: idle-in-planning while a Codex review runs must NOT light the dot.
     const reviewing = (res.body as Array<Record<string, unknown>>).find((r) => r.jobId === REVIEWING_JOB);
     expect(reviewing).toBeDefined();
-    expect(reviewing).toMatchObject({ status: 'planning', turnActive: false, needsYou: false });
+    expect(reviewing).toMatchObject({ status: 'planning', activity: 'plan_review', needsYou: false });
 
     // eslint-disable-next-line no-console -- evidence: dump the OBSERVED live rows verbatim.
     console.log('OBSERVED GET /web/jobs [reviewing]:', JSON.stringify(reviewing, null, 2));

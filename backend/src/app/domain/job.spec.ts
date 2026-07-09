@@ -1,99 +1,122 @@
 import { describe, expect, it } from 'vitest';
+import type { JobActivity } from '@workspace/shared';
 import { deriveNeedsYou } from './job';
 
 /**
  * `deriveNeedsYou` is the single server-owned definition of the sidebar "alert dot": a thread needs the
- * operator when the AI is NOT actively working (no live turn, no running build, no Codex review in flight),
- * is NOT terminal, and is NOT halted (the separate failure/pause axis).
+ * operator when the SYSTEM is NOT working (`activity === 'idle'`), the phase is NOT terminal, and either a
+ * gate is open (halt / question / secret) or the phase is operator-owned. Three axes: phase (`status`),
+ * activity (what the system is doing), and the hard/soft gates.
  */
+
+type Input = Parameters<typeof deriveNeedsYou>[0];
+
+// A fully-idle, ungated job — override one axis at a time in each case.
+function at(overrides: Partial<Input> & { status: string }): Input {
+  return {
+    activity: 'idle',
+    openQuestion: false,
+    awaitingSecret: false,
+    halted: false,
+    ...overrides,
+  };
+}
+
+const NON_IDLE_ACTIVITIES: JobActivity[] = [
+  'turn',
+  'plan_review',
+  'build',
+  'master_review',
+];
+
 describe('deriveNeedsYou', () => {
-  it('is false while a conversational turn is streaming, regardless of status', () => {
+  it('is false for terminal phases (done / cancelled / deleting)', () => {
+    for (const status of ['done', 'cancelled', 'deleting']) {
+      expect(deriveNeedsYou(at({ status }))).toBe(false);
+      // Terminal wins over every gate — even an open question or a halt cannot light a dying job's dot.
+      expect(
+        deriveNeedsYou(at({ status, openQuestion: true, halted: true })),
+      ).toBe(false);
+    }
+  });
+
+  it('is false whenever the system is working (any non-idle activity)', () => {
+    for (const activity of NON_IDLE_ACTIVITIES) {
+      expect(deriveNeedsYou(at({ status: 'planning', activity }))).toBe(false);
+      expect(deriveNeedsYou(at({ status: 'open', activity }))).toBe(false);
+    }
+    // The regression: a plan review runs while the phase sits at `planning` — must NOT light the dot.
+    expect(
+      deriveNeedsYou(at({ status: 'planning', activity: 'plan_review' })),
+    ).toBe(false);
+  });
+
+  it('is true when idle in an operator-owned phase with no gate', () => {
     for (const status of [
       'open',
       'planning',
       'awaiting_approval',
-      'running',
       'awaiting_ship_review',
-      'plan_review',
     ]) {
-      expect(deriveNeedsYou(status, true, false, false, false)).toBe(false);
+      expect(deriveNeedsYou(at({ status }))).toBe(true);
     }
   });
 
-  it('is false when the build is running (AI working)', () => {
-    expect(deriveNeedsYou('running', false, false, false, false)).toBe(false);
+  it('is false when idle in a system-owned phase with no gate', () => {
+    // `running` and `plan_review` phases are the system's to advance — an idle, ungated job there waits on
+    // the pipeline, not the operator.
+    expect(deriveNeedsYou(at({ status: 'running' }))).toBe(false);
+    expect(deriveNeedsYou(at({ status: 'plan_review' }))).toBe(false);
   });
 
-  it('is false for terminal states (done / cancelled)', () => {
-    expect(deriveNeedsYou('done', false, false, false, false)).toBe(false);
-    expect(deriveNeedsYou('cancelled', false, false, false, false)).toBe(false);
-  });
-
-  it('is true when idle and waiting on the operator', () => {
+  it('soft-gates (open question) light the dot when idle, but are suppressed while working', () => {
+    expect(deriveNeedsYou(at({ status: 'open', openQuestion: true }))).toBe(
+      true,
+    );
+    expect(deriveNeedsYou(at({ status: 'running', openQuestion: true }))).toBe(
+      true,
+    );
+    // Suppressed while the system works — the asking turn is still streaming.
     expect(
-      deriveNeedsYou('awaiting_approval', false, false, false, false),
+      deriveNeedsYou(
+        at({ status: 'planning', openQuestion: true, activity: 'turn' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('soft-gates (awaiting secret) light the dot when idle, but are suppressed while working', () => {
+    expect(deriveNeedsYou(at({ status: 'running', awaitingSecret: true }))).toBe(
+      true,
+    );
+    expect(deriveNeedsYou(at({ status: 'open', awaitingSecret: true }))).toBe(
+      true,
+    );
+    // Suppressed while a review owns the next step.
+    expect(
+      deriveNeedsYou(
+        at({
+          status: 'planning',
+          awaitingSecret: true,
+          activity: 'plan_review',
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it('the HARD halt gate lights the dot even while a stale activity says "working"', () => {
+    // A halt means the system STOPPED — it must surface even if a failed build left `activity` non-idle
+    // (defense in depth behind the halt writers that also clear activity).
+    expect(
+      deriveNeedsYou(at({ status: 'running', halted: true, activity: 'build' })),
     ).toBe(true);
     expect(
-      deriveNeedsYou('awaiting_ship_review', false, false, false, false),
-    ).toBe(true); // parked at the ship gate
-    expect(deriveNeedsYou('planning', false, false, false, false)).toBe(true); // grilling, between turns
-    expect(deriveNeedsYou('open', false, false, false, false)).toBe(true);
-  });
-
-  it('is true when halted (the failure/pause axis), whatever phase it halted in', () => {
-    // `status` is now the pure build phase; failure / credential / budget / incomplete halts live on the
-    // separate halt field. A halted job always needs you — even under a phase that is otherwise not a
-    // needs-you state, like `running` (the old `failed`/`paused` status values used to encode this).
-    expect(deriveNeedsYou('running', false, false, true, false)).toBe(true);
-    expect(
-      deriveNeedsYou('awaiting_ship_review', false, false, true, false),
+      deriveNeedsYou(
+        at({ status: 'planning', halted: true, activity: 'plan_review' }),
+      ),
     ).toBe(true);
-  });
-
-  it('is true when blocked on the durable question gate, even when otherwise idle', () => {
-    // The brain asked via `ask_question` and the answering turn ended: status is back to an idle
-    // conversational state and no turn streams, but the operator still owes an answer.
-    expect(deriveNeedsYou('open', false, true, false, false)).toBe(true);
-    expect(deriveNeedsYou('planning', false, true, false, false)).toBe(true);
-  });
-
-  it('the question gate overrides every other axis (turn streaming / running / terminal)', () => {
-    // An open question (`open_question_count > 0`) is definitionally "needs you" — it wins over a stray
-    // live turn, a running build, and even a terminal status.
-    expect(deriveNeedsYou('planning', true, true, false, false)).toBe(true);
-    expect(deriveNeedsYou('running', false, true, false, false)).toBe(true);
-    expect(deriveNeedsYou('done', false, true, false, false)).toBe(true);
-  });
-
-  it('a deleting job never needs you — it wins even over the question gate and a halt', () => {
-    // The job is being torn down and about to vanish; it must never light the sidebar dot, regardless of
-    // a stray open question, a live turn, or a halt (deleting is checked before every other axis).
-    expect(deriveNeedsYou('deleting', false, false, false, false)).toBe(false);
-    expect(deriveNeedsYou('deleting', false, true, false, false)).toBe(false);
-    expect(deriveNeedsYou('deleting', true, true, false, false)).toBe(false);
-    expect(deriveNeedsYou('deleting', false, false, true, false)).toBe(false);
-  });
-
-  it('halted signals needs-you even when actively working (running/plan_review)', () => {
-    expect(deriveNeedsYou('running', false, false, true, false)).toBe(true);
-    expect(deriveNeedsYou('running', true, false, true, false)).toBe(true); // even mid-turn
-    expect(deriveNeedsYou('planning', false, false, true, false)).toBe(true);
-    expect(deriveNeedsYou('plan_review', false, false, true, false)).toBe(true);
-  });
-
-  it('is false while a Codex plan review is in flight, even when idle in planning', () => {
-    // A `review_plan` runs while `status` stays `planning`; if the parent turn got finalized (turn_active
-    // cleared) the old rule false-lit the dot. The running-review axis now suppresses it — the system owns
-    // the next step, not the operator.
-    expect(deriveNeedsYou('planning', false, false, false, true)).toBe(false);
-    expect(deriveNeedsYou('open', false, false, false, true)).toBe(false);
-  });
-
-  it('a running review never overrides halted or the question gate', () => {
-    // A genuinely dead review surfaces via halted (set on unrecoverable failure) or the question gate — the
-    // review-running suppression must never mask those.
-    expect(deriveNeedsYou('planning', false, false, true, true)).toBe(true); // halted wins
-    expect(deriveNeedsYou('planning', false, true, false, true)).toBe(true); // open question wins
-    expect(deriveNeedsYou('deleting', false, false, false, true)).toBe(false); // deleting still wins
+    // But never for a terminal job.
+    expect(
+      deriveNeedsYou(at({ status: 'deleting', halted: true, activity: 'build' })),
+    ).toBe(false);
   });
 });

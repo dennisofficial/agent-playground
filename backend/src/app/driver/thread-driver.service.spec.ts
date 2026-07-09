@@ -99,6 +99,9 @@ function makeStore(state: StoreState): {
     setJobStatus: vi.fn(async (_id: string, status: Job['status']) => {
       state.job.status = status;
     }),
+    setActivity: vi.fn(async (_id: string, activity: Job['activity']) => {
+      state.job.activity = activity;
+    }),
     setJobHalt: vi.fn(async (_id: string, halt: Job['halt']) => {
       state.job.halt = halt;
     }),
@@ -684,6 +687,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     baseBranch: null,
     kind: 'feature',
     status: 'running',
+    activity: 'build',
     halt: null,
     decisionRecordId: 'dr-1',
     featureBranch: null,

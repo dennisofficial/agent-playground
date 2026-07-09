@@ -609,14 +609,14 @@ export class JobLifecycleService {
       if (!row.container_id) continue;
       if (this.activity.isBusy(row.container_id)) continue; // never mid-turn (this process)
       // Durable cross-process guard: never reap a container whose thread is mid-turn on ANY instance.
-      // `activity` is in-memory/per-process; `turn_active` is the DB-backed signal that survives the
+      // `this.activity` is in-memory/per-process; the DB `activity` column is the signal that survives the
       // brief leader overlap of a rolling deploy (defense-in-depth — the single-leader invariant already
       // means no other process is reaping, but this is cheap insurance).
       const active = await this.jobs.findOne({
         where: { id: row.job_id },
-        select: { id: true, turn_active: true },
+        select: { id: true, activity: true },
       });
-      if (active?.turn_active) continue;
+      if (active?.activity === 'turn') continue;
       if (row.last_active_at && row.last_active_at.getTime() > cutoff) continue; // recently active
       await this.detachContainer(row, 'idle');
       reaped++;

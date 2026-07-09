@@ -10,6 +10,7 @@ import type {
   Thread,
   ThreadStatus,
   Job,
+  JobActivity,
   JobStatus,
   JobHalt,
 } from '../domain';
@@ -215,10 +216,18 @@ export class DriverStoreService {
     await this.jobs.update({ id: jobId }, { status });
   }
 
+  /** Set the job's `activity` axis (see {@link JobActivity} / `deriveNeedsYou`) — the driver's build/review
+   *  boundary writer, mirroring the brain's turn writer. */
+  async setActivity(jobId: string, activity: JobActivity): Promise<void> {
+    await this.jobs.update({ id: jobId }, { activity });
+  }
+
   /** Record a phase-preserving job HALT (see {@link JobHalt}) — the status/phase is left untouched. Named
-   *  JOB-level to stay distinct from {@link clearHalt} (the per-thread halt table). */
+   *  JOB-level to stay distinct from {@link clearHalt} (the per-thread halt table). A halt means the build
+   *  STOPPED, so `activity` is cleared to `idle` in the same write (a stale `build`/`master_review` must not
+   *  mask the halt in `deriveNeedsYou`). */
   async setJobHalt(jobId: string, halt: JobHalt): Promise<void> {
-    await this.jobs.update({ id: jobId }, { halt });
+    await this.jobs.update({ id: jobId }, { halt, activity: 'idle' });
   }
 
   /** Clear the phase-preserving job halt on operator re-engagement / a brain re-drive. */
@@ -1135,6 +1144,7 @@ function toJob(row: JobEntity): Job {
     baseBranch: row.base_branch,
     kind: row.kind as Job['kind'],
     status: row.status as JobStatus,
+    activity: row.activity,
     halt: row.halt ?? null,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,

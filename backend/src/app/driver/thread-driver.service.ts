@@ -720,6 +720,8 @@ export class ThreadDriver implements JobDispatcher {
       );
       return;
     }
+    // The driver now owns this job's work — mark it building (system-owned; suppresses the needs-you dot).
+    await this.store.setActivity(jobId, 'build').catch(() => undefined);
     // Cap the BUILDER lanes at MAX_SECTIONS, but NEVER drop the master-review thread (it rides on top of the
     // builders and must always run last) — partition by kind, cap the builders, re-append the review last.
     const featureSections = executable.filter((s) => s.kind === 'builder');
@@ -758,6 +760,11 @@ export class ThreadDriver implements JobDispatcher {
           `job=${job.id} lost leadership mid-drive — yielding (a leader will re-drive; job left running)`,
         );
         return;
+      }
+      if (thread.kind === 'master_review') {
+        await this.store
+          .setActivity(job.id, 'master_review')
+          .catch(() => undefined);
       }
       const res = await this.runThread(
         job,
@@ -798,6 +805,8 @@ export class ThreadDriver implements JobDispatcher {
       return;
     }
     await this.finalizeBuild(job, record, route, repo, sandbox);
+    // Build shipped — the system is done working this job; hand it back to idle.
+    await this.store.setActivity(job.id, 'idle').catch(() => undefined);
   }
 
   /**
@@ -816,6 +825,9 @@ export class ThreadDriver implements JobDispatcher {
       summary,
     );
     if (!parked) return;
+    // Parked on the operator (the "Ship it" gate) — the system is no longer working; go idle so the
+    // needs-you dot can light for the awaiting_ship_review phase.
+    await this.store.setActivity(job.id, 'idle').catch(() => undefined);
     this.logger.log(`job=${job.id} parked at ship-review gate — awaiting operator "Ship it"`);
     await this.post(
       route,

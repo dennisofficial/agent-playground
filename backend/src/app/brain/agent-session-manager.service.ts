@@ -441,17 +441,15 @@ export class AgentSessionManager
     if (this.bootSweepsDone) return;
     this.bootSweepsDone = true;
 
-    // 1) Clear any `turn_active` flag left set by a crash mid-turn — re-attach (below) re-sets it for any
-    //    turn it resumes, so a leftover-true flag on a non-resumable thread is stale and would suppress its
+    // 1) Reset any non-idle `activity` left set by a crash mid-work — re-attach (below) re-sets it for any
+    //    turn it resumes, so a leftover flag on a non-resumable thread is stale and would suppress its
     //    "needs you" dot.
     try {
-      const reset = await this.store.resetAllTurnActive();
+      const reset = await this.store.resetAllActivity();
       if (reset > 0)
-        this.logger.log(
-          `Leader: cleared stale turn_active on ${reset} thread(s)`,
-        );
+        this.logger.log(`Leader: reset stale activity on ${reset} thread(s)`);
     } catch (err) {
-      this.logger.warn(`turn_active reconciliation failed: ${err}`);
+      this.logger.warn(`activity reconciliation failed: ${err}`);
     }
 
     // 2) RE-ATTACH every interrupted turn this service owns (brain + compaction — same discipline as the
@@ -1346,7 +1344,7 @@ export class AgentSessionManager
     const sandboxRow = await this.sandboxRows.findOne({
       where: { job_id: row.job_id, org_id: row.org_id },
     });
-    await this.store.setTurnActive(row.job_id, true).catch(() => undefined);
+    await this.store.setActivity(row.job_id, 'turn').catch(() => undefined);
     try {
       const result = await this.engineRunner.reattach!(
         row.turn_id,
@@ -1404,7 +1402,7 @@ export class AgentSessionManager
       await streamer.finish();
     } finally {
       await this.store
-        .setTurnActive(row.job_id, false)
+        .endTurnActivity(row.job_id)
         .catch(() => undefined);
     }
   }
@@ -1420,7 +1418,7 @@ export class AgentSessionManager
     opts?: TurnDeliveryOpts,
   ): Promise<void> {
     await this.store
-      .setTurnActive(stimulus.jobId, true)
+      .setActivity(stimulus.jobId, 'turn')
       .catch(() => undefined);
     // A new turn is starting (a fresh operator message OR the Resume nudge) — clear any outstanding halted
     // flag so the thread reads as working again. Best-effort; never block the turn.
@@ -1432,7 +1430,7 @@ export class AgentSessionManager
     } finally {
       await this.latchDirectBuildAtTurnEnd(stimulus);
       await this.store
-        .setTurnActive(stimulus.jobId, false)
+        .endTurnActivity(stimulus.jobId)
         .catch(() => undefined);
     }
   }
@@ -2679,6 +2677,11 @@ export class AgentSessionManager
           ...(hasSteps ? { stepsByThread: threads.map((s) => s.steps) } : {}),
           ...(note ? { note } : {}),
         });
+
+        // The review just finalized `activity` to `idle`, but this tool ran INSIDE the still-live brain
+        // turn — re-assert `turn` so the brief idle window before the turn-end writer settles it can't
+        // false-light the "needs you" dot.
+        await this.store.setActivity(jobId, 'turn').catch(() => undefined);
 
         if (outcome.status === 'failed') {
           return {

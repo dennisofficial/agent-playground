@@ -17,67 +17,54 @@
 // The thread lifecycle status is the WIRE CONTRACT with the web console, so it is single-sourced in
 // `@workspace/shared` (see its doc comment for the per-value meanings). Imported for local use below
 // and re-exported as the domain's `JobStatus` so the brain/driver keep importing it from `../domain`.
-import type { JobStatus, JobHalt } from '@workspace/shared';
-export type { JobStatus, JobHalt };
+import type { JobStatus, JobHalt, JobActivity } from '@workspace/shared';
+import { JOB_ACTIVITIES } from '@workspace/shared';
+export { JOB_ACTIVITIES };
+export type { JobStatus, JobHalt, JobActivity };
 
 /** Why a thread exists — a human-started chat, a notification-seeded thread, or an operator control action. */
 export type ThreadOrigin = 'chat' | 'event' | 'control';
 
+// Phases the job is DEAD in — never a needs-you state (it is going away or already finished).
+const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'deleting']);
+// Phases whose next step is the OPERATOR's: an idle job sitting here is waiting on the human.
+const OPERATOR_OWNED_STATUSES = new Set([
+  'open',
+  'planning',
+  'awaiting_approval',
+  'awaiting_ship_review',
+]);
+
 /**
  * Whether a thread NEEDS THE OPERATOR — the single, server-owned definition of the sidebar "alert dot".
+ * Derived, never stored, so there is exactly ONE rule, consumed by both the REST thread-list and the
+ * realtime row mapper (they must never diverge).
  *
- * A thread needs you when the AI is NOT actively working and is NOT in a terminal state: neither a live
- * conversational turn is streaming (`turnActive`) nor a build is running (`status='running'`) nor a plan
- * is under Codex review (`status='plan_review'`), and the thread hasn't finished (`done`/`cancelled`).
- * `turnActive` is a separate axis from `status` because
- * `status` alone can't tell "grilling, mid-turn" from "grilling, waiting on an answer" (both `planning`).
+ * Three orthogonal axes decide it:
+ *  - `status` — the pure build PHASE. Terminal phases never light the dot; a handful of phases are
+ *    OPERATOR-owned (the human is the next actor), the rest are system-owned.
+ *  - `activity` — what the SYSTEM is doing right now (turn / plan_review / build / master_review). Any
+ *    non-`idle` value means the system owns the next step, so the dot is suppressed. This is the axis that
+ *    tells "grilling, mid-turn" from "grilling, waiting on an answer" (both `status='planning'`).
+ *  - the GATES — `halted` (a HARD gate: a stopped/failed job), `openQuestion` and `awaitingSecret` (SOFT
+ *    gates: durable human-input requests).
  *
- * `awaitingQuestion` is the third axis: a thread with one or more open `ask_question` cards
- * (`open_question_count > 0` — the brain asked and the answering turn has ended cleanly) is DEFINITIONALLY
- * waiting on the operator, so it overrides every other axis (the asking turn may have briefly left
- * `turn_active` set; the gate still wins).
- *
- * `halted` is the fourth axis: `status` is now the pure build PHASE, so failure/pause lives on the
- * separate `halt` field (a build failure, a credential/budget block, or an incomplete turn), and a
- * chat-turn failure sets the orthogonal `halted` flag without ever touching `status`. A halted job
- * always needs the operator regardless of the phase it halted in — this is what the old `failed`/`paused`
- * status values used to signal before the phase and the halt were split apart.
- *
- * `reviewRunning` is the fifth axis: a Codex plan review runs synchronously INSIDE a `review_plan` tool
- * call while `status` stays `planning`, so the only thing that suppressed the dot was `turnActive`. But the
- * liveness watchdog can clear `turn_active` (finalizing a quiet parent turn) while the review is still
- * genuinely running — and `plan_review` is no longer a status any writer sets — which false-lit the dot. So
- * the running `codex_reviews` row is mirrored onto the job (`review_running`) and threaded in here: a live
- * review is owned by the SYSTEM, not the operator. It is checked AFTER `halted`/`awaitingQuestion` so a
- * genuinely dead review (which resolves to `failed`/`complete` or sets `halted`) still surfaces.
- *
- * Derived — never stored — so there is exactly one rule, consumed by both the thread-list REST shape and
- * the realtime row mapper (they must never diverge).
+ * The `halted` HARD gate is checked BEFORE the activity suppressor on purpose: a halt means the system
+ * stopped, so it must light the dot even if a build/turn left `activity` non-idle (the halt writers also
+ * clear activity, so this is defense in depth). The soft gates apply only once the system is idle.
  */
-export function deriveNeedsYou(
-  status: string,
-  turnActive: boolean,
-  awaitingQuestion: boolean,
-  halted: boolean,
-  reviewRunning: boolean,
-): boolean {
-  // A deleting job is going away — it must never light the alert dot, even with an open question. This
-  // MUST precede the question gate below (which otherwise overrides every other axis).
-  if (status === 'deleting') return false;
-  if (awaitingQuestion) return true;
-  // A halted thread — a chat-turn failure box outstanding, or a phase-preserving build `halt` — needs the
-  // operator even when its `status` is still `running`/`plan_review`; neither ever flips `status`.
-  if (halted) return true;
-  if (turnActive) return false;
-  // A Codex plan review in flight is the system working, not the operator waiting — suppress the dot even
-  // though `status` sits at `planning` and the parent turn may have been finalized out from under it.
-  if (reviewRunning) return false;
-  return (
-    status !== 'running' &&
-    status !== 'plan_review' &&
-    status !== 'done' &&
-    status !== 'cancelled'
-  );
+export function deriveNeedsYou(i: {
+  status: string;
+  activity: JobActivity;
+  openQuestion: boolean;
+  awaitingSecret: boolean;
+  halted: boolean; // halted === true OR halt != null
+}): boolean {
+  if (TERMINAL_STATUSES.has(i.status)) return false;
+  if (i.halted) return true;
+  if (i.activity !== 'idle') return false;
+  if (i.openQuestion || i.awaitingSecret) return true;
+  return OPERATOR_OWNED_STATUSES.has(i.status);
 }
 
 /**
@@ -110,6 +97,10 @@ export interface Job {
   /** Build intent; null until the thread enters the build lifecycle. */
   kind: JobKind | null;
   status: JobStatus;
+  /** What the SYSTEM is doing right now — the ephemeral "working" axis, orthogonal to {@link status} (the
+   *  phase) and {@link halt} (the failure gate). Any non-`idle` value suppresses the needs-you dot; reset
+   *  to `idle` on boot. See {@link JobActivity} and {@link deriveNeedsYou}. */
+  activity: JobActivity;
   /** The phase-preserving HALT (failure / credential-or-budget block / incomplete), or null when healthy.
    *  Orthogonal to {@link status} (the pure build phase). See {@link JobHalt}. */
   halt: JobHalt | null;
