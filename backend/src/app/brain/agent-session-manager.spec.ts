@@ -319,6 +319,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // — propose_plan chains `.catch` on it. review() defaults clean; the propose_plan gate defaults to "a
     // review has run for the current specs" (a terminal row) so propose is allowed unless a test overrides.
     (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    // ADR-0005 direct-build gate defaults (resetAllMocks wiped the declared resolves): an empty changed-file
+    // set → pre-filter passes without the judge; persistence is a resolved no-op; the judge returns undefined
+    // unless a gate test overrides it.
+    (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockStore.recordDirectBuildVerification as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.threadTicketId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
       status: 'complete',
@@ -390,7 +396,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockRepos,
       mockAwareness,
       {} as unknown as TicketService,
-      { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
+      {
+        engineAuth: async () => undefined,
+        openaiKey: async () => undefined,
+        // The direct-build gate consults this only to phrase a "no key" refusal; default → no key configured.
+        anthropicKey: async () => undefined,
+      } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
       {
         getState: () => 'leader',
@@ -410,6 +421,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockGit,
       { generate: () => 'SYSTEM PROMPT' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      mockJudge, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
   });
 
@@ -777,6 +789,148 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("'planning'");
     expect(mockShip.preShip).not.toHaveBeenCalled();
+  });
+
+  // ADR-0005 live-verification gate on the DIRECT-BUILD ship path — the brain-owned analog of the driver's
+  // `complete_thread` gate (`thread-driver.service.spec.ts`). `finalize_build` runs the SAME judge port over
+  // the changed files + the structured evidence reported via `report_verification`, and REFUSES the tool
+  // (mid-turn, no halt machinery) on a touched-but-inadequate verdict. Always-on, fail-closed, no dial.
+  describe('(c) finalize_build — ADR-0005 live-verification gate', () => {
+    // Stand up an APPROVED (running) direct build ready to ship, with a sandbox + resolved repo + a
+    // reported verification pass. Tests vary the changed files + the judge verdict.
+    const armReadyToFinalize = () => {
+      (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: FAKE_JOB_ID,
+        status: 'running',
+        title: 'Add a /health endpoint',
+        repoId: PROJECT_ID,
+        orgId: TEAM_ID,
+      });
+      (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'sbx-1',
+        worktreePath: '/w/feat',
+        branch: 'atlas/health',
+      });
+      (mockDriverStore.getDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+        overview: 'Add a health endpoint',
+        decisions: [],
+      });
+      (mockRepos.resolve as ReturnType<typeof vi.fn>).mockResolvedValue({
+        owner: 'o',
+        repo: 'r',
+        defaultBranch: 'main',
+        token: 't',
+      });
+      (mockShip.preShip as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
+    };
+
+    it('touched + adequate → ships (judge consulted with the changed files, preShip runs, verdict persisted)', async () => {
+      const tools = manager.buildTools(fakeStimulus);
+      armReadyToFinalize();
+      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
+        'src/app/api/health.controller.ts',
+      ]);
+      (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue({
+        runtimeSurfaceTouched: true,
+        liveVerificationAdequate: true,
+        reason: 'curl /health → 200',
+      });
+
+      await tools['report_verification']({
+        passed: true,
+        verification: [{ kind: 'curl', command: 'curl localhost:3000/health', exitCode: 0, outputTail: '200 OK' }],
+      });
+      const result = await tools['finalize_build']({});
+
+      // The judge saw exactly what git reported as changed (the diff-fed regression).
+      expect(mockJudge.judge).toHaveBeenCalledOnce();
+      expect((mockJudge.judge as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+        changedFiles: ['src/app/api/health.controller.ts'],
+      });
+      // Adequate → falls through to preShip and hands the open-PR instructions back.
+      expect(mockShip.preShip).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
+      expect((result as { message: string }).message).toContain('gh pr create');
+      // Verdict persisted on the PASS path too (the observability hook).
+      expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        expect.objectContaining({
+          verdict: expect.objectContaining({ runtimeSurfaceTouched: true, liveVerificationAdequate: true }),
+        }),
+      );
+    });
+
+    it('touched + INADEQUATE → REFUSES the tool (no preShip), names the missing checks, persists the verdict', async () => {
+      const tools = manager.buildTools(fakeStimulus);
+      armReadyToFinalize();
+      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
+        'src/app/api/health.controller.ts',
+      ]);
+      (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue({
+        runtimeSurfaceTouched: true,
+        liveVerificationAdequate: false,
+        reason: 'only typechecked',
+        missingChecks: 'curl the /health endpoint against a running server',
+      });
+
+      // The brain claims passed but never actually exercised the endpoint.
+      await tools['report_verification']({ passed: true });
+      const result = await tools['finalize_build']({});
+
+      expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
+      expect((result as { reason: string }).reason).toContain('Live validation inadequate');
+      expect((result as { reason: string }).reason).toContain('curl the /health endpoint');
+      // Refusal is BEFORE the host ship gate — no preShip, no PR.
+      expect(mockShip.preShip).not.toHaveBeenCalled();
+      // Verdict persisted on the REFUSE path (the whole point of the audit hook) + a quiet pill.
+      expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        expect.objectContaining({
+          verdict: expect.objectContaining({ liveVerificationAdequate: false }),
+        }),
+      );
+      expect(mockStore.appendSystemEvent).toHaveBeenCalled();
+    });
+
+    it('docs-only diff → pre-filter SKIPS the judge entirely and ships', async () => {
+      const tools = manager.buildTools(fakeStimulus);
+      armReadyToFinalize();
+      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
+        'docs/health.md',
+        'README.md',
+      ]);
+
+      await tools['report_verification']({ passed: true });
+      const result = await tools['finalize_build']({});
+
+      expect(mockJudge.judge).not.toHaveBeenCalled();
+      expect(mockShip.preShip).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
+      // Pre-filter verdict is a non-runtime pass.
+      expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        expect.objectContaining({
+          verdict: expect.objectContaining({ runtimeSurfaceTouched: false, liveVerificationAdequate: true }),
+        }),
+      );
+    });
+
+    it('judge UNAVAILABLE (undefined) on a runtime diff → conservative refusal, never a silent ship', async () => {
+      const tools = manager.buildTools(fakeStimulus);
+      armReadyToFinalize();
+      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
+        'src/app/api/health.controller.ts',
+      ]);
+      (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue(undefined); // no key / malformed
+
+      await tools['report_verification']({ passed: true });
+      const result = await tools['finalize_build']({});
+
+      expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
+      // The mocked CredentialResolver reports no anthropic key → the refusal calls that out.
+      expect((result as { reason: string }).reason).toContain('no Anthropic API key');
+      expect(mockShip.preShip).not.toHaveBeenCalled();
+    });
   });
 
   it('write_workspace_config UPSERTS mounts straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
@@ -1739,6 +1893,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       git,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
     return { manager, store, lifecycle, git, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
   }
@@ -2526,6 +2681,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       { hasChanges: async () => false, currentBranch: async () => null, ledgerClean: async () => true, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
     return { manager, store };
   }
@@ -2684,6 +2840,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       { hasChanges: async () => false, currentBranch: async () => null, ledgerClean: async () => true, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
     return { manager, store, lifecycle, ship, repos };
   }
@@ -2794,6 +2951,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 14 … 28 (incl. secretStore, configStore, mcp, git)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
     return { manager, stimulusRows };
   }
@@ -2902,6 +3060,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert, inert, inert, inert, inert, inert, // ledger…git (27)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
     return { manager, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
   }
@@ -3102,6 +3261,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, inert, inert, inert, inert, inert, // ledger…git (27)
         { generate: () => 'SYSTEM' } as never, // prompts (28)
         { register: () => undefined } as never, // threadInput (29)
+        { judge: async () => undefined } as never, // liveVerificationJudge (30)
       );
       // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
       const handleChatTurn = vi

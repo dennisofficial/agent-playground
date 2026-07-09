@@ -36,8 +36,7 @@ import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
 import { JobLifecycleService } from './job-lifecycle.service';
 import { GithubPrStateSync } from './github-pr-state-sync.service';
-import { CredentialResolver, OnboardingService } from '../onboarding';
-import { LIVE_VERIFICATION_JUDGE, AnthropicLiveVerificationJudge } from './live-verification-judge';
+import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -86,12 +85,6 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     PipelineAwarenessStore,
     BuildShipService,
     { provide: DRIVER_REPO, useClass: GitDriverRepoResolver },
-    {
-      provide: LIVE_VERIFICATION_JUDGE,
-      inject: [CredentialResolver],
-      useFactory: (creds: CredentialResolver) =>
-        new AnthropicLiveVerificationJudge((orgId) => creds.anthropicKey(orgId)),
-    },
     ThreadDriver,
     JobLifecycleService,
     GithubPrStateSync,
