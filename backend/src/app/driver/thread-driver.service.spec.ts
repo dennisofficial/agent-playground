@@ -90,10 +90,18 @@ function makeStore(state: StoreState): {
   const store = {
     loadJob: vi.fn(async () => ({ ...state.job })),
     runningJobs: vi.fn(async () =>
-      state.job.status === 'running' ? [{ ...state.job }] : [],
+      state.job.status === 'running' && state.job.halt == null
+        ? [{ ...state.job }]
+        : [],
     ),
     setJobStatus: vi.fn(async (_id: string, status: Job['status']) => {
       state.job.status = status;
+    }),
+    setJobHalt: vi.fn(async (_id: string, halt: Job['halt']) => {
+      state.job.halt = halt;
+    }),
+    clearJobHalt: vi.fn(async (_id: string) => {
+      state.job.halt = null;
     }),
     setFeatureBranch: vi.fn(async (_id: string, branch: string) => {
       state.job.featureBranch = branch;
@@ -682,6 +690,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     baseBranch: null,
     kind: 'feature',
     status: 'running',
+    halt: null,
     decisionRecordId: 'dr-1',
     featureBranch: null,
     currentBranch: null,
@@ -1564,9 +1573,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'failed');
+    await flushUntil(() => state.job.halt?.kind === 'failed');
 
-    expect(state.job.status).toBe('failed');
+    expect(state.job.halt?.kind).toBe('failed');
     expect(
       h.posts.some(
         (p) =>
@@ -1590,10 +1599,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state, { turn });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'paused');
+    await flushUntil(() => state.job.halt?.kind === 'incomplete');
 
     expect(state.threads[0].status).toBe('incomplete'); // halted, NOT silently done
-    expect(state.job.status).toBe('paused'); // needs-you, recoverable — NOT done, NOT failed
+    expect(state.job.halt?.kind).toBe('incomplete'); // needs-you, recoverable — NOT done, NOT failed
     expect(h.opened).toHaveLength(0); // nothing shipped
     expect(
       h.posts.some((p) => p.includes('without asserting completion')),
@@ -1700,10 +1709,8 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.opened).toHaveLength(0);
     expect(state.job.status).toBe('running');
     expect(
-      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some(
-        (c) => c[1] === 'failed',
-      ),
-    ).toBe(false); // a cooperative yield is NOT a failure
+      (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls,
+    ).toHaveLength(0); // a cooperative yield is NOT a failure — no halt recorded
   });
 
   it('aborts + relays a step that exceeds PHASE_TIMEOUT_MS (issue #3 circuit breaker)', async () => {
@@ -1723,9 +1730,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'failed');
+    await flushUntil(() => state.job.halt?.kind === 'failed');
 
-    expect(state.job.status).toBe('failed');
+    expect(state.job.halt?.kind).toBe('failed');
     expect(
       h.posts.some(
         (p) => p.includes('Build failed') && p.includes('PHASE_TIMEOUT_MS'),
@@ -1794,9 +1801,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'paused');
+    await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
 
-    expect(state.job.status).toBe('paused'); // paused, NOT failed
+    expect(state.job.halt?.kind).toBe('blocked_credentials'); // halted, NOT failed
     expect(
       h.posts.some((p) => /paused/i.test(p) && /credential|auth/i.test(p)),
     ).toBe(true);
@@ -1817,9 +1824,12 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await noop.driver.resumePaused(running.job.id);
     expect(noop.opened).toHaveLength(0); // never re-driven
 
-    // resume path: a paused job is flipped to running and driven to a PR.
+    // resume path: a credential-halted job (phase preserved) is cleared + driven to a PR.
     const state: StoreState = {
-      job: makeJob({ status: 'paused' }),
+      job: makeJob({
+        status: 'running',
+        halt: { kind: 'blocked_credentials', reason: '401', at: new Date().toISOString() },
+      }),
       record: makeRecord(),
       threads: [thread('sec-be', 10, 'Backend')],
       steps: [],
@@ -2800,12 +2810,13 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
 
     // Simulate boot resume re-driving the still-`running` job.
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'paused');
+    await flushUntil(() => state.job.halt?.kind === 'budget_exhausted');
 
-    // No orchestrator re-run, the job is RESTED (`paused`), and NO wake was owed (halt_outcome stays null →
-    // the sweeps have nothing to re-fire), so the brain is not re-woken to re-escalate a halt it can't fix:
+    // No orchestrator re-run, the job is RESTED (budget-exhausted halt), and NO wake was owed (halt_outcome
+    // stays null → the sweeps have nothing to re-fire), so the brain is not re-woken to re-escalate a halt it
+    // can't fix:
     expect(calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
-    expect(state.job.status).toBe('paused');
+    expect(state.job.halt?.kind).toBe('budget_exhausted');
     expect((state.threads[0] as unknown as HaltFields).halt_outcome ?? null).toBeNull();
     expect(h.wakes).toHaveLength(0);
   });
@@ -2829,7 +2840,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     const h = assemble(state, { turn });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'paused');
+    await flushUntil(() => state.job.halt?.kind === 'budget_exhausted');
     expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(2);
 
     // The operator's explicit retry re-grants the budget (boot resume never would). Poll until dispatch's
@@ -3076,16 +3087,16 @@ describe('ThreadDriver — 401 auth recovery', () => {
     const h = assemble(state, { turn: flakyAuthTurn() });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'paused');
+    await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
 
-    expect(state.job.status).toBe('paused'); // paused, NOT 'failed'
+    expect(state.job.halt?.kind).toBe('blocked_credentials'); // halted, NOT 'failed'
     expect(state.job.prUrl).toBeNull();
     expect(h.posts.some((p) => p.toLowerCase().includes('paused'))).toBe(true);
 
-    // Boot reconciliation must NOT auto-retry a paused job (it would just 401 again).
+    // Boot reconciliation must NOT auto-retry a credential-halted job (it would just 401 again).
     await h.driver.resume();
     await flushUntil(() => false, 5);
-    expect(state.job.status).toBe('paused');
+    expect(state.job.halt?.kind).toBe('blocked_credentials');
 
     // PING → resume the SAME session → drive to completion (one PR).
     await h.driver.resumePaused(state.job.id);

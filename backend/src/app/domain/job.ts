@@ -17,8 +17,8 @@
 // The thread lifecycle status is the WIRE CONTRACT with the web console, so it is single-sourced in
 // `@workspace/shared` (see its doc comment for the per-value meanings). Imported for local use below
 // and re-exported as the domain's `JobStatus` so the brain/driver keep importing it from `../domain`.
-import type { JobStatus } from '@workspace/shared';
-export type { JobStatus };
+import type { JobStatus, JobHalt } from '@workspace/shared';
+export type { JobStatus, JobHalt };
 
 /** Why a thread exists — a human-started chat, a notification-seeded thread, or an operator control action. */
 export type ThreadOrigin = 'chat' | 'event' | 'control';
@@ -37,6 +37,11 @@ export type ThreadOrigin = 'chat' | 'event' | 'control';
  * waiting on the operator, so it overrides every other axis (the asking turn may have briefly left
  * `turn_active` set; the gate still wins).
  *
+ * `halted` is the fourth axis: `status` is now the pure build PHASE, so failure/pause lives on the
+ * separate `halt` field. A halted job (a build failure, a credential/budget block, or an incomplete turn)
+ * always needs the operator regardless of the phase it halted in — this is what the old `failed`/`paused`
+ * status values used to signal before the phase and the halt were split apart.
+ *
  * Derived — never stored — so there is exactly one rule, consumed by both the thread-list REST shape and
  * the realtime row mapper (they must never diverge).
  */
@@ -44,11 +49,13 @@ export function deriveNeedsYou(
   status: string,
   turnActive: boolean,
   awaitingQuestion: boolean,
+  halted: boolean,
 ): boolean {
   // A deleting job is going away — it must never light the alert dot, even with an open question. This
   // MUST precede the question gate below (which otherwise overrides every other axis).
   if (status === 'deleting') return false;
   if (awaitingQuestion) return true;
+  if (halted) return true;
   if (turnActive) return false;
   return (
     status !== 'running' &&
@@ -88,6 +95,9 @@ export interface Job {
   /** Build intent; null until the thread enters the build lifecycle. */
   kind: JobKind | null;
   status: JobStatus;
+  /** The phase-preserving HALT (failure / credential-or-budget block / incomplete), or null when healthy.
+   *  Orthogonal to {@link status} (the pure build phase). See {@link JobHalt}. */
+  halt: JobHalt | null;
   /** The locked decision record's id (null until the upfront grill produces one). */
   decisionRecordId: string | null;
   /** The feature branch all threads stack on (null until the branch is cut). */

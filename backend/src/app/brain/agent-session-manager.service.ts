@@ -2828,10 +2828,10 @@ export class AgentSessionManager
             reason: 'No job on this thread — call submit_plan first',
           };
         }
-        if (job.status !== 'running') {
+        if (job.status !== 'running' || job.halt != null) {
           return {
             ok: false,
-            reason: `Job ${job.id} is in status '${job.status}' — only 'running' (approved) jobs can be dispatched`,
+            reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ` and halted (${job.halt.kind})` : ''} — only 'running' (approved), un-halted jobs can be dispatched`,
           };
         }
         await this.dispatcher.dispatch(job);

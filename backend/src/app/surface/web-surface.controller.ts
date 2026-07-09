@@ -588,11 +588,13 @@ export class WebSurfaceController {
         origin: t.origin,
         kind: t.kind, // job kind ('feature'/'bugfix'/'onboarding'/'event'/'review'/null) — drives the web badge
         status: t.status,
+        halt: t.halt ?? null,
         turnActive: t.turn_active,
         needsYou: deriveNeedsYou(
           t.status,
           t.turn_active,
           t.open_question_count > 0,
+          t.halt != null,
         ),
         createdAt: t.created_at,
         // The observed PR (null until one exists) — drives the sidebar's PR-status glyph. `mergeable`
@@ -653,11 +655,13 @@ export class WebSurfaceController {
       title: t.title,
       origin: t.origin,
       status: t.status,
+      halt: t.halt ?? null,
       turnActive: t.turn_active,
       needsYou: deriveNeedsYou(
         t.status,
         t.turn_active,
         t.open_question_count > 0,
+        t.halt != null,
       ),
       baseBranch: t.base_branch,
       createdAt: t.created_at,
@@ -1040,10 +1044,11 @@ export class WebSurfaceController {
   }
 
   /**
-   * `POST …/threads/:jobId/retry` — the halted-build "Retry" button. Re-drives a `failed`/`paused`
-   * build through the deterministic, resumable driver (`JOB_DISPATCHER.retry` → flips back to `running`,
-   * fast-forwards finished work, continues at the first unfinished step). No-op if the thread isn't in a
-   * retryable state. Scoped to the caller's org via the membership guard + `requireThread`.
+   * `POST …/threads/:jobId/retry` — the halted-build "Retry" button. Re-drives a HALTED build (a job
+   * carrying a `halt`) through the deterministic, resumable driver (`JOB_DISPATCHER.retry` → flips back to
+   * `running`, fast-forwards finished work, continues at the first unfinished step). `status` (the build
+   * phase) is untouched by the halt, so retry resumes it in place. No-op if the thread isn't halted.
+   * Scoped to the caller's org via the membership guard + `requireThread`.
    */
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/retry')
   @UseGuards(OrgMembershipGuard)
@@ -1052,7 +1057,7 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
   ): Promise<{ ok: boolean; status: string }> {
     const thread = await this.requireThread(jobId, org.id);
-    if (thread.status !== 'failed' && thread.status !== 'paused') {
+    if (!thread.halt) {
       // Idempotent / not-applicable: nothing to retry (already running, done, or pre-build).
       return { ok: false, status: thread.status };
     }
@@ -1063,7 +1068,7 @@ export class WebSurfaceController {
   /**
    * `POST …/threads/:jobId/retry-turn` — the "Resume" button on a `retryable` system→operator error box
    * (a brain chat-turn that hit a transient engine failure, e.g. a 529). Distinct from `/retry` (which only
-   * re-drives a `failed`/`paused` BUILD track) — a chat-turn failure never touches job status, so that
+   * re-drives a HALTED build) — a chat-turn failure never touches job status, so that
    * endpoint would no-op here. Seeds a NON-persisted system turn (`seedSystemNotification` — same seam
    * `provide-secret`/`answer-question` already use) that resumes the SAME engine session
    * (`resume: sessionId`, already the default across turns) with a minimal harness-authored nudge — never

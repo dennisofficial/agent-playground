@@ -1556,7 +1556,10 @@ export class BrainStoreService {
       { id: decisionRecordId },
       { status: 'approved', approved_by: approvedBy, approved_at: now },
     );
-    await this.jobs.update({ id: jobId }, { status: 'running' });
+    // A freshly approved plan is an explicit operator action that supersedes any stale halt, so the
+    // dispatch that follows isn't refused by the halt-invariant guard (halt is cleared here, at the
+    // operator transition, never inside dispatch()).
+    await this.jobs.update({ id: jobId }, { status: 'running', halt: null });
     return this.loadJob(jobId);
   }
 
@@ -1674,6 +1677,7 @@ function toThread(row: JobEntity): Job {
     baseBranch: row.base_branch,
     kind: row.kind as JobKind | null,
     status: row.status as Job['status'],
+    halt: row.halt ?? null,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
     currentBranch: row.current_branch,
