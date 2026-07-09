@@ -48,7 +48,7 @@ import { GithubNotificationSource } from './github-notification.source';
 import {
   GithubEventsWebhookController,
   GithubStateWebhookController,
-} from './github-ingress.controller';
+} from './github-webhook.controller';
 import type { RawBodyRequest } from './ingress-http';
 
 const ORG_ID = '31111111-1111-4111-8111-111111111111';
