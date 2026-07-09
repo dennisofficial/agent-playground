@@ -266,6 +266,16 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            // ⌘+Enter (Mac) / Ctrl+Enter (Windows/Linux) submits, mirroring the Create thread button.
+            // Plain Enter still inserts a newline. No-op while a create is in flight or there are no repos.
+            const submitCombo =
+              (e.metaKey || e.ctrlKey) && e.key === "Enter";
+            if (!submitCombo) return;
+            e.preventDefault();
+            if (create.isPending || repos.length === 0) return;
+            submit();
+          }}
           onPaste={(e) => {
             if (addPastedImages(e)) e.preventDefault();
           }}
