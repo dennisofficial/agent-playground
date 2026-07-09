@@ -35,6 +35,8 @@ export interface ThreadRealtimeRow extends Row {
   turnActive: boolean;
   /** Unresolved turn-failure box outstanding — drives the sidebar ✕ glyph even when status is untouched. */
   halted: boolean;
+  /** A Codex plan review is in flight — suppresses the "needs you" dot while the system owns the next step. */
+  reviewRunning: boolean;
   needsYou: boolean;
   createdAt: string;
   orgId: string;
@@ -74,6 +76,9 @@ function mapRow(raw: Row): ThreadRealtimeRow {
   // always present here; opening/answering a question updates the thread row → fires a realtime delta.
   const awaitingQuestion = Number(raw.open_question_count ?? 0) > 0;
   const halted = raw.halted === true;
+  // Denormalized mirror of the job's running `codex_reviews` row (a jobs-table column, so the single-table
+  // WAL image carries it here — the mapper cannot query `codex_reviews`). Suppresses the dot mid-review.
+  const reviewRunning = raw.review_running === true;
   const createdAt = raw.created_at;
   return {
     jobId: String(raw.id),
@@ -83,11 +88,13 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     status,
     turnActive,
     halted,
+    reviewRunning,
     needsYou: deriveNeedsYou(
       status,
       turnActive,
       awaitingQuestion,
       halted || raw.halt != null,
+      reviewRunning,
     ),
     createdAt:
       createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),

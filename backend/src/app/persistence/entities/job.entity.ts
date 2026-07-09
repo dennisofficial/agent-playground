@@ -1,4 +1,11 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import type { JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
@@ -141,6 +148,19 @@ export class JobEntity extends TimestampedEntity {
   halted!: boolean;
 
   /**
+   * Whether a Codex PLAN REVIEW is in flight for this job RIGHT NOW — a denormalized mirror of the job's
+   * `codex_reviews` row being `status='running'`, kept in sync by `PlanReviewService.persistRow`. A
+   * SEPARATE axis feeding `deriveNeedsYou`: during `review_plan` the `status` column stays `planning` and
+   * the parent-turn `turn_active` flag can be cleared by the liveness watchdog while the review is still
+   * genuinely running, which used to false-light the "needs you" dot. This column lets the sidebar (both
+   * the REST list and the single-table WAL realtime mapper, which cannot see `codex_reviews`) suppress the
+   * dot while a review is owned by the system, not the operator. Checked AFTER `halted`/`open_question_count`
+   * so a genuinely dead review still surfaces. Not reset on boot — the backstop re-drives a stranded review.
+   */
+  @Column({ type: 'boolean', default: false })
+  review_running!: boolean;
+
+  /**
    * The durable HUMAN-INPUT GATE: how many `ask_question` cards on this thread are still awaiting an
    * operator answer. Each card carries its OWN lifecycle (`answer`/`answeredAt`/`deliveredAt`) — there is
    * NO single-slot pointer, so the brain may have several questions open at once, answerable in any order.
@@ -168,7 +188,10 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'uuid', nullable: true })
   decision_record_id!: string | null;
 
-  @ManyToOne(() => DecisionRecordEntity, { onDelete: 'SET NULL', nullable: true })
+  @ManyToOne(() => DecisionRecordEntity, {
+    onDelete: 'SET NULL',
+    nullable: true,
+  })
   @JoinColumn({ name: 'decision_record_id' })
   decisionRecord?: DecisionRecordEntity | null;
 
@@ -303,5 +326,8 @@ export class JobEntity extends TimestampedEntity {
    * jobs that never ran a direct build (driver builds record their verdict on the thread terminal record).
    */
   @Column({ type: 'jsonb', nullable: true })
-  direct_build_verification!: { verdict: LiveVerificationVerdict; at: string } | null;
+  direct_build_verification!: {
+    verdict: LiveVerificationVerdict;
+    at: string;
+  } | null;
 }

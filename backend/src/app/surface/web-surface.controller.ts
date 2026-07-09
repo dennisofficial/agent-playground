@@ -610,6 +610,7 @@ export class WebSurfaceController {
           t.turn_active,
           t.open_question_count > 0,
           t.halted || t.halt != null,
+          t.review_running,
         ),
         createdAt: t.created_at,
         // The observed PR (null until one exists) — drives the sidebar's PR-status glyph. `mergeable`
@@ -678,6 +679,7 @@ export class WebSurfaceController {
         t.turn_active,
         t.open_question_count > 0,
         t.halted || t.halt != null,
+        t.review_running,
       ),
       baseBranch: t.base_branch,
       createdAt: t.created_at,

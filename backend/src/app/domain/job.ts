@@ -43,6 +43,14 @@ export type ThreadOrigin = 'chat' | 'event' | 'control';
  * always needs the operator regardless of the phase it halted in — this is what the old `failed`/`paused`
  * status values used to signal before the phase and the halt were split apart.
  *
+ * `reviewRunning` is the fifth axis: a Codex plan review runs synchronously INSIDE a `review_plan` tool
+ * call while `status` stays `planning`, so the only thing that suppressed the dot was `turnActive`. But the
+ * liveness watchdog can clear `turn_active` (finalizing a quiet parent turn) while the review is still
+ * genuinely running — and `plan_review` is no longer a status any writer sets — which false-lit the dot. So
+ * the running `codex_reviews` row is mirrored onto the job (`review_running`) and threaded in here: a live
+ * review is owned by the SYSTEM, not the operator. It is checked AFTER `halted`/`awaitingQuestion` so a
+ * genuinely dead review (which resolves to `failed`/`complete` or sets `halted`) still surfaces.
+ *
  * Derived — never stored — so there is exactly one rule, consumed by both the thread-list REST shape and
  * the realtime row mapper (they must never diverge).
  */
@@ -51,6 +59,7 @@ export function deriveNeedsYou(
   turnActive: boolean,
   awaitingQuestion: boolean,
   halted: boolean,
+  reviewRunning: boolean,
 ): boolean {
   // A deleting job is going away — it must never light the alert dot, even with an open question. This
   // MUST precede the question gate below (which otherwise overrides every other axis).
@@ -60,6 +69,9 @@ export function deriveNeedsYou(
   // operator even when its `status` is still `running`/`plan_review`; neither ever flips `status`.
   if (halted) return true;
   if (turnActive) return false;
+  // A Codex plan review in flight is the system working, not the operator waiting — suppress the dot even
+  // though `status` sits at `planning` and the parent turn may have been finalized out from under it.
+  if (reviewRunning) return false;
   return (
     status !== 'running' &&
     status !== 'plan_review' &&
