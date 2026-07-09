@@ -1,4 +1,0 @@
-interface:
-  display_name: "Dotenv Vault Migration"
-  short_description: "Migrate dotenv-vault projects to dotenvx"
-  default_prompt: "Use $dotenv-vault-migration to migrate this project from dotenv-vault to dotenvx encrypted env files."

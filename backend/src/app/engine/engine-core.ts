@@ -1,11 +1,11 @@
 import type { CanUseTool, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Codex, FileChangeItem, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve as resolvePath } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { join, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { structuredPatch as diffStructuredPatch } from 'diff';
 import { applyClaudeAuth } from './claude-auth';
-import { atlasEngineHomeDir } from './engine-home';
+import { atlasEngineHomeDir, engineHomeKeyString, type EngineHomeKey } from './engine-home';
 import {
   assertValidCodexAuthJson,
   type CodexExtraMcpServers,
@@ -171,6 +171,26 @@ const STEER_IDLE_GRACE_MS = 350;
 export interface EngineCoreConfig {
   /** Root for the isolated agent home (from AGENT_HOME_ROOT). */
   homeRoot?: string;
+  /**
+   * Root of the org-scoped skills store this run resolves a non-`managed` `RunEngineArgs.skills[].dirPath`
+   * against (from `SKILLS_ROOT` — in-sandbox, always `CONTAINER_SKILLS_STORE`, set by
+   * `redis-engine-runner.ts`'s exec env). Undefined (e.g. a bare unit test with no cfg) → the
+   * skills-compose step skips every non-managed skill (still symlinks any `managed` one).
+   */
+  skillsRoot?: string;
+  /**
+   * Root of Atlas's own MANAGED (system-tier) STATIC skills a `managed: true` `RunEngineArgs.skills[].dirPath`
+   * resolves against (from `SKILLS_MANAGED_ROOT` — in-sandbox, always `CONTAINER_SKILLS_MANAGED`, set by
+   * `redis-engine-runner.ts`'s exec env). Undefined → the skills-compose step skips every managed skill.
+   */
+  managedSkillsRoot?: string;
+  /**
+   * Root of Atlas's own MANAGED (system-tier) GIT-SOURCED skills a `managedGit: true`
+   * `RunEngineArgs.skills[].dirPath` resolves against (from `SKILLS_MANAGED_GIT_ROOT` — in-sandbox, always
+   * `CONTAINER_SKILLS_MANAGED_GIT`, set by `redis-engine-runner.ts`'s exec env). Undefined → the
+   * skills-compose step skips every git-managed skill.
+   */
+  managedGitSkillsRoot?: string;
 }
 
 /**
@@ -225,19 +245,34 @@ const CONTEXT7_TOOLS = context7Enabled() ? qualifyContext7ToolNames() : [];
 // derives the per-thread checklist from these calls (see web `thread-todos.ts`). `tools` is an allowlist, so
 // they must be named even though task-mode is default-on. They have no FS/git side effects.
 const TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet'];
-const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'Task', ...TASK_TOOLS, ...WEB_TOOLS];
+// Subagent-management tools (SDK 0.3.x). Once a subagent is spawned with a `name` it stays ADDRESSABLE, so
+// the orchestrator's only recovery from a stall/failure is no longer a fresh `Task` that starts from zero:
+//   • SendMessage({to}) — nudge/continue an existing agent WITH ITS ACCUMULATED CONTEXT INTACT (the whole
+//     point: a stalled or transiently-failed subagent — e.g. an API 500 — is recovered by nudging, not by
+//     throwing away everything it learned and respawning);
+//   • TaskOutput({task_id}) — peek a running background agent without blocking;
+//   • TaskStop({task_id}) — cleanly abandon a truly-wedged one before falling back to a respawn.
+// `tools` is a RESTRICTING allowlist, so these must be named for the model to call them at all; auto-approved
+// below so nudging/peeking/stopping never stalls on a permission prompt (like `Task` itself). Deliberately
+// NOT given to REVIEW_TOOLS (a review turn shouldn't fan out) nor to the subagents' own `tools:` arrays
+// (subagents don't recurse).
+const SUBAGENT_MGMT_TOOLS = ['SendMessage', 'TaskOutput', 'TaskStop'];
+// 'Skill' loads a discovered skill's body — read-only in itself (the SDK's `skills: 'all'` option auto-
+// approves it into `allowedTools`, but `tools` below RESTRICTS the available set independent of that, so it
+// must still be named here or the SDK's own enablement gets stripped).
+const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'Task', 'Skill', ...SUBAGENT_MGMT_TOOLS, ...TASK_TOOLS, ...WEB_TOOLS];
 // A plan turn adds ExitPlanMode — native plan mode's turn-ender and the one place the FULL plan text
 // reaches canUseTool headlessly (the CLI auto-writes the plan file, then calls ExitPlanMode with the
 // plan in its input).
 const PLAN_TOOLS = [...WORKER_TOOLS, 'ExitPlanMode'];
-// A read-only review turn gets the read tools (+ web for verifying against current docs). No Task — a
-// review turn shouldn't fan out.
-const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS];
+// A read-only review turn gets the read tools (+ web for verifying against current docs) + Skill. No Task —
+// a review turn shouldn't fan out.
+const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', 'Skill', ...WEB_TOOLS];
 // Auto-approve safe reads, web, and subagent spawning; writes/bash fall through to canUseTool where the
 // boundary is re-applied. Context7 docs tools (read-only, gated off by default) auto-approve too so the
 // `docs` subagent never stalls on a permission prompt for them.
 const AUTO_APPROVE = [
-  'Read', 'Glob', 'Grep', 'Task', ...TASK_TOOLS, ...WEB_TOOLS, ...CONTEXT7_TOOLS,
+  'Read', 'Glob', 'Grep', 'Task', ...SUBAGENT_MGMT_TOOLS, ...TASK_TOOLS, ...WEB_TOOLS, ...CONTEXT7_TOOLS,
 ];
 
 // LSP navigation/rename (`atlas-lsp-ts`, registered per-turn — see sandbox/image/lsp-bridge-options.ts).
@@ -397,31 +432,40 @@ export function applyConventionsToAgents(
 }
 
 /**
- * Render this turn's resolved skills into a LOCAL SDK plugin dir and return its path (or null when there are
- * none). The Claude Agent SDK loads skills from `plugins: [{type:'local', path}]` independent of
- * `settingSources`, so this keeps full filesystem-settings isolation while adding exactly the skills Atlas
- * resolved for the turn. Layout: `<dir>/.claude-plugin/plugin.json` + `<dir>/skills/<name>/SKILL.md`. The
- * `skills/` subtree is wiped and rewritten each turn so a skill removed since last turn does not linger.
+ * Compose this turn's resolved skills into `<claudeConfigDir>/skills/` as write-through symlinks into the
+ * central skills store — a `managed` skill from `managedSkillsRoot` (Atlas's own STATIC built-ins,
+ * `CONTAINER_SKILLS_MANAGED`), a `managedGit` skill from `managedGitSkillsRoot` (Atlas's GIT-SOURCED
+ * built-ins, synced by `ManagedSkillSyncService`, `CONTAINER_SKILLS_MANAGED_GIT`), every other skill from
+ * `skillsRoot` (the org-scoped store, `CONTAINER_SKILLS_STORE`) — for the SDK to discover NATIVELY
+ * (`settingSources: ['user']` + `skills: 'all'`, below) — no synthetic plugin. Idempotent wipe+rewrite
+ * EVERY turn (the config dir is durable across turns, so a skill removed/disabled since last turn must not
+ * linger — same discipline the old plugin-render step used). A skill whose source dir isn't actually on
+ * disk under its root yet (e.g. its DB row exists but nothing installed/authored the files, OR a
+ * `managedGit` entry `ManagedSkillSyncService` hasn't vendored yet) is skipped rather than left as a
+ * dangling symlink. `SkillResolver` already resolved precedence (a workspace skill overrides a managed one
+ * of the same name) into ONE entry per name, so this step never sees more than one root per entry — it
+ * just symlinks whichever root each entry says.
  */
-export function renderSkillsPlugin(
-  dir: string,
+export function composeSkillsDir(
+  claudeConfigDir: string,
   skills: RunEngineArgs['skills'],
-): string | null {
-  if (!skills || skills.length === 0) return null;
-  const skillsRoot = join(dir, 'skills');
-  // Idempotent rewrite: clear the prior skill set so a removed/renamed skill can't survive.
-  rmSync(skillsRoot, { recursive: true, force: true });
-  mkdirSync(join(dir, '.claude-plugin'), { recursive: true });
-  writeFileSync(join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'atlas-skills' }));
+  skillsRoot: string | undefined,
+  managedSkillsRoot: string | undefined,
+  managedGitSkillsRoot?: string,
+): void {
+  const skillsDir = join(claudeConfigDir, 'skills');
+  rmSync(skillsDir, { recursive: true, force: true });
+  if (!skills || skills.length === 0 || (!skillsRoot && !managedSkillsRoot && !managedGitSkillsRoot)) return;
+  mkdirSync(skillsDir, { recursive: true });
   for (const skill of skills) {
-    // Defensive: skill names are validated kebab at propose time, but never let one escape the skills root.
+    // Defensive: skill names are validated kebab at authoring time, but never let one escape skillsDir.
     const safeName = skill.name.replace(/[^a-z0-9_-]/gi, '-') || 'skill';
-    const skillDir = join(skillsRoot, safeName);
-    mkdirSync(skillDir, { recursive: true });
-    const frontmatter = `---\nname: ${skill.name}\ndescription: ${skill.description.replace(/\n/g, ' ')}\n---\n`;
-    writeFileSync(join(skillDir, 'SKILL.md'), `${frontmatter}\n${skill.body}\n`);
+    const root = skill.managedGit ? managedGitSkillsRoot : skill.managed ? managedSkillsRoot : skillsRoot;
+    if (!root) continue;
+    const source = join(root, skill.dirPath);
+    if (!existsSync(source)) continue;
+    symlinkSync(source, join(skillsDir, safeName), 'dir');
   }
-  return dir;
 }
 
 /** Is `path` inside `root` (after resolution)? Confines writes to the worktree. */
@@ -444,6 +488,18 @@ export class EngineCore {
 
   private homeRoot(): string | undefined {
     return this.cfg.homeRoot;
+  }
+
+  private skillsRoot(): string | undefined {
+    return this.cfg.skillsRoot;
+  }
+
+  private managedSkillsRoot(): string | undefined {
+    return this.cfg.managedSkillsRoot;
+  }
+
+  private managedGitSkillsRoot(): string | undefined {
+    return this.cfg.managedGitSkillsRoot;
   }
 
   /**
@@ -649,27 +705,38 @@ export class EngineCore {
       if (stderrTail.length > 40) stderrTail.shift(); // keep the last ~40 chunks
     };
 
-    // This repo's skills (resolved host-side, no secrets) rendered into a LOCAL plugin dir the SDK loads via
-    // `plugins` — independent of `settingSources` (which stays `[]`, so no ambient .claude config leaks in).
-    // Re-rendered each turn (drops removed skills). null when the turn carries none → no `plugins` key.
-    const skillsPluginDir = renderSkillsPlugin(
-      join(claudeConfigDir, 'atlas-skills-plugin'),
+    // This repo's skills (resolved host-side, dir paths + names only — no bodies) composed into
+    // `<claudeConfigDir>/skills/` as write-through symlinks into the central skills store, for the SDK to
+    // discover NATIVELY (settingSources 'user' + skills 'all' below). Re-composed every turn (wipes a
+    // removed/disabled skill); a no-op wipe when the turn carries none.
+    composeSkillsDir(
+      claudeConfigDir,
       args.skills,
+      this.skillsRoot(),
+      this.managedSkillsRoot(),
+      this.managedGitSkillsRoot(),
     );
 
     const options: Options = {
       cwd,
       systemPrompt,
-      // settingSources [] means NO on-disk config files are read (full isolation). Skills are loaded ONLY via
-      // the `plugins` key below (a host-controlled dir), never from ambient `.claude/skills`.
-      settingSources: [],
-      ...(skillsPluginDir ? { plugins: [{ type: 'local' as const, path: skillsPluginDir }] } : {}),
+      // 'user' loads ONLY <CLAUDE_CONFIG_DIR>/settings.json (missing → no-op) and NEVER CLAUDE.md (the SDK
+      // requires 'project' for that) — so nothing from the untrusted worktree's own `.claude/` leaks in. The
+      // ONLY thing Atlas itself ever places under CLAUDE_CONFIG_DIR is the `skills/` dir composed above; no
+      // settings.json/CLAUDE.md/agents/commands are ever written there (verified clean at P0/P1 spike time).
+      settingSources: ['user'],
+      // Turns skills on for the whole resolved set — the single place the SDK needs (auto-enables the Skill
+      // tool; no plugins key, no manual 'Skill' in allowedTools). See WORKER_TOOLS/REVIEW_TOOLS below for
+      // why 'Skill' is still added to the `tools` ALLOWLIST (that list restricts, independent of this).
+      skills: 'all',
       tools: planMode ? PLAN_TOOLS : readOnly ? REVIEW_TOOLS : WORKER_TOOLS,
-      // Programmatic subagent definitions (settingSources [] means none are read from disk) — the only
-      // spawnable Task subagents. Advisory subagents (read-only, Sonnet) are always available; the WRITER
-      // subagents (implement/implement-deep) and the build-time VALIDATE subagent are added ONLY on EXECUTE
-      // turns, so a plan/brain/review turn can never fan out a file-mutating or evidence-writing subagent.
-      // See SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT.
+      // Programmatic subagent definitions — the only spawnable Task subagents. `settingSources: ['user']`
+      // never reads a project-scope `.claude/agents/` (excluded from the allowed sources), and Atlas's own
+      // CLAUDE_CONFIG_DIR never has a user-scope `agents/` dir either, so these always win by simple absence.
+      // Advisory subagents (read-only, Sonnet) are always available; the WRITER subagents
+      // (implement/implement-deep) and the build-time VALIDATE subagent are added ONLY on EXECUTE turns, so a
+      // plan/brain/review turn can never fan out a file-mutating or evidence-writing subagent. See
+      // SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT.
       agents: applyConventionsToAgents(
         mode === 'execute'
           ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT }
@@ -680,9 +747,19 @@ export class EngineCore {
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
       // they're host-controlled, never a human prompt. Empty for non-bridge turns (workers).
       allowedTools: [...AUTO_APPROVE, ...(bridgeToolNames ?? [])],
-      canUseTool: makeCanUseTool(readOnly, [cwd, ...(args.writableRoots ?? [])], (plan) => {
-        capturedPlan = plan;
-      }),
+      canUseTool: makeCanUseTool(
+        readOnly,
+        [cwd, ...(args.writableRoots ?? [])],
+        (plan) => {
+          capturedPlan = plan;
+        },
+        {
+          composedSkillsDir: join(claudeConfigDir, 'skills'),
+          skillsStoreRoot: this.skillsRoot(),
+          skills: args.skills,
+          granted: new Set(args.grantedSkills ?? []),
+        },
+      ),
       permissionMode: planMode ? 'plan' : 'default',
       // Suppress the SDK's default "Co-Authored-By: Claude" attribution.
       settings: { attribution: { commit: '', pr: '' } },
@@ -951,7 +1028,7 @@ export class EngineCore {
   // ── Codex ─────────────────────────────────────────────────────────────────────────────────────
 
   private getCodex(
-    sandboxKey: string,
+    sandboxKey: EngineHomeKey,
     auth: EngineAuth,
     bridge?: CodexMcpBridge,
     extraMcpServers?: CodexExtraMcpServers,
@@ -961,7 +1038,7 @@ export class EngineCore {
     // turn — a config.toml with the host tool bridge (`[mcp_servers.atlasbridge]`) plus any user-defined
     // stdio MCP servers. The cache key keeps separate sandboxes apart. NO apiKey is ever passed.
     const codexHome = ensureCodexAuthHome(root, sandboxKey, auth.secret, bridge, extraMcpServers);
-    const cacheKey = `sub:${sandboxKey}`;
+    const cacheKey = `sub:${engineHomeKeyString(sandboxKey)}`;
     let client = this.codexClients.get(cacheKey);
     if (!client) {
       // The SDK's `env` REPLACES inheritance — pass process.env through and override CODEX_HOME.
@@ -1180,7 +1257,7 @@ export class EngineCore {
    * `undefined` (never fail the turn, never propagate a corrupt overlay). Cheap string compare → no-op on
    * the common path where Codex didn't refresh.
    */
-  private readBackCodexRefresh(sandboxKey: string, writtenSecret: string): string | undefined {
+  private readBackCodexRefresh(sandboxKey: EngineHomeKey, writtenSecret: string): string | undefined {
     try {
       const after = readCodexAuthHome(this.homeRoot(), sandboxKey);
       if (!after || after === writtenSecret) return undefined;
@@ -1200,10 +1277,47 @@ export class EngineCore {
  *
  * `roots` is the set of directories Write/Edit may target (the worktree `cwd` plus any extra writable
  * mounts like the durable `/context` shared folder). A write is allowed if it lands inside ANY root. */
+/** The tool names whose `input.file_path` can mutate a skill — read-only-by-default gate applies to all three. */
+const SKILL_MUTATING_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
+
+/**
+ * Skills read-only enforcement context: the per-turn composed dir + store mount + resolved skill list
+ * `makeCanUseTool` needs to recognize a skill path and name it in the deny message. Optional — a turn with
+ * no skills resolved (or a non-Claude/legacy caller) passes none and the skill check is simply skipped.
+ */
+export interface SkillGuardCtx {
+  /** `<CLAUDE_CONFIG_DIR>/skills` — the write-through symlink dir `composeSkillsDir` maintains. */
+  composedSkillsDir: string;
+  /** The org-scoped skills-store mount root (`CONTAINER_SKILLS_STORE` in-sandbox), if the run has one. */
+  skillsStoreRoot?: string;
+  /** This turn's resolved skills (name + store-relative dirPath) — used to name a store-mount path. */
+  skills: RunEngineArgs['skills'];
+  /** Skill names this SESSION already holds an edit grant for (`RunEngineArgs.grantedSkills`). */
+  granted: Set<string>;
+}
+
+/** Which skill (if any) `filePath` belongs to — the composed symlink dir first (structural: the first path
+ *  segment under it IS the skill name), then a match against a resolved skill's store dir (the model
+ *  resolved the symlink and is addressing the real path). Undefined → not a skill path at all. */
+function skillNameForPath(filePath: string, ctx: SkillGuardCtx): string | undefined {
+  if (isInsideRoot(filePath, ctx.composedSkillsDir)) {
+    const rel = relativePath(resolvePath(ctx.composedSkillsDir), resolvePath(ctx.composedSkillsDir, filePath));
+    const name = rel.split(/[/\\]/)[0];
+    if (name) return name;
+  }
+  if (ctx.skillsStoreRoot) {
+    for (const skill of ctx.skills ?? []) {
+      if (isInsideRoot(filePath, join(ctx.skillsStoreRoot, skill.dirPath))) return skill.name;
+    }
+  }
+  return undefined;
+}
+
 export function makeCanUseTool(
   readOnly: boolean,
   roots: string | string[],
   onPlan: (plan: string) => void,
+  skillGuard?: SkillGuardCtx,
 ): CanUseTool {
   const allowedRoots = (Array.isArray(roots) ? roots : [roots]).filter(Boolean);
   return async (toolName, input): Promise<PermissionResult> => {
@@ -1213,6 +1327,19 @@ export function makeCanUseTool(
     }
     if (readOnly && (toolName === 'Write' || toolName === 'Edit')) {
       return { behavior: 'deny', message: 'This is a read-only turn — no file writes.' };
+    }
+    if (skillGuard && SKILL_MUTATING_TOOLS.has(toolName)) {
+      const path = typeof input.file_path === 'string' ? input.file_path : '';
+      const skillName = path ? skillNameForPath(path, skillGuard) : undefined;
+      if (skillName) {
+        if (skillGuard.granted.has(skillName)) return { behavior: 'allow', updatedInput: input };
+        return {
+          behavior: 'deny',
+          message:
+            `This skill is read-only. Call request_skill_edit_access({ skill: '${skillName}' }) to request ` +
+            'edit access for this session, then retry your edit.',
+        };
+      }
     }
     if (toolName === 'Write' || toolName === 'Edit') {
       const path = typeof input.file_path === 'string' ? input.file_path : '';

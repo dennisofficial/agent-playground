@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import { ChevronRight, LayoutGrid, Plus, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { env } from "@/lib/env";
 import { ROUTES, threadHref } from "@/lib/routes";
 import { useOrgs, type OrgSummary } from "@/lib/api/me";
 import { useAllJobs, type InboxThread } from "@/lib/api/inbox";
@@ -227,6 +228,17 @@ export function Sidebar() {
             />
           ))
         )}
+      </div>
+
+      {/* Build tag — the running web bundle's git SHA, baked in at build time (falls back to "dev"
+          locally). Lets prod be checked against the latest deploy at a glance. */}
+      <div className="flex-none border-t border-border px-3 py-2">
+        <span
+          className="font-mono text-[10px] text-faint"
+          title="Running web build"
+        >
+          {env.NEXT_PUBLIC_GIT_SHA}
+        </span>
       </div>
     </aside>
   );
@@ -563,9 +575,12 @@ function ThreadRow({
       }
     >
       <span className="mt-px flex-none">
-        {/* Once a PR exists the leaf shows its PR status (GitHub color convention); until then, the
-            build-lifecycle status pie. */}
-        {thread.pr ? (
+        {/* A halted thread (a turn-stopping error is outstanding) shows the failed ✕ over everything —
+            it needs attention above its PR glyph. Otherwise, once a PR exists the leaf shows its PR
+            status (GitHub color convention); until then, the build-lifecycle status pie. */}
+        {thread.halted ? (
+          <StatusPie status={thread.status} halted size={14} />
+        ) : thread.pr ? (
           <PrStatusIcon pr={thread.pr} size={14} />
         ) : (
           <StatusPie status={thread.status} size={14} />

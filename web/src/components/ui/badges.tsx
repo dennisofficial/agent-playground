@@ -117,13 +117,21 @@ const STATUS_SHAPE: Record<
 
 export function StatusPie({
   status,
+  halted = false,
   size = 14,
 }: {
   status?: JobStatus;
+  /** A turn-stopping error is outstanding — force the `failed` ✕ glyph (danger color) regardless of
+   *  `status`, so a stopped thread reads like the EXDEV failed job even while its pipeline stage lives on. */
+  halted?: boolean;
   size?: number;
 }) {
-  const shape = status ? STATUS_SHAPE[status] : null;
-  const color = status ? STATUS_META[status].color : "var(--border-2)";
+  const shape = halted ? "failed" : status ? STATUS_SHAPE[status] : null;
+  const color = halted
+    ? STATUS_META.failed.color
+    : status
+      ? STATUS_META[status].color
+      : "var(--border-2)";
   const r = 7.5;
   const circ = 2 * Math.PI * r;
   const ring = (

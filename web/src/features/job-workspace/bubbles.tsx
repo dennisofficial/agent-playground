@@ -203,27 +203,33 @@ export function ThinkingBlock({
   );
 }
 
-/** Render a thread's in-flight LIVE turn (token-streamed text, thinking, and grouped tool calls). */
-export function LiveTurnView({
-  turn,
-  lane,
-  onSelectNode,
-}: {
-  turn: LiveTurn;
-  /** The lane `turn` is streaming on — baked into any subagent card's node so its pane subscribes to the
-   *  right live turn (see {@link subagentNode}). */
-  lane: string;
-  onSelectNode?: (node: string) => void;
-}) {
+/**
+ * Builds the render items for a thread's in-flight LIVE turn (token-streamed text, thinking, and grouped
+ * tool calls), each stamped with a `ts` (epoch ms) so a caller can time-merge them against durable rows
+ * that arrive mid-turn. See {@link LiveTurnView}, the thin standalone-rendering wrapper around this.
+ */
+export function buildLiveTurnItems(
+  turn: LiveTurn,
+  lane: string,
+  onSelectNode?: (node: string) => void,
+): Array<{ key: string; node: React.ReactNode; ts: number }> {
   // Collapse runs of consecutive tool blocks into one group; text/thinking break the run.
-  const items: Array<{ key: string; node: React.ReactNode }> = [];
+  const items: Array<{ key: string; node: React.ReactNode; ts: number }> = [];
   let pending: ToolItem[] = [];
+  // Parallel to `pending` — each tool block's `emittedAt`, so a flushed group's `ts` is the MIN across its
+  // (possibly re-segmented) members.
+  let pendingEmittedAt: number[] = [];
   const flush = () => {
     if (pending.length === 0) return;
+    const emittedAtByKey = new Map(
+      pending.map((t, i) => [t.key, pendingEmittedAt[i]]),
+    );
     for (const seg of segmentToolRun(pending)) {
-      items.push({ key: `tg-${seg[0].key}`, node: <ToolGroup tools={seg} /> });
+      const ts = Math.min(...seg.map((t) => emittedAtByKey.get(t.key)!));
+      items.push({ key: `tg-${seg[0].key}`, node: <ToolGroup tools={seg} />, ts });
     }
     pending = [];
+    pendingEmittedAt = [];
   };
 
   // Peel subagent activity out of the live turn: hide its child blocks, render the spawning Task as a card.
@@ -255,6 +261,7 @@ export function LiveTurnView({
               onOpen={() => onSelectNode?.(subagentNode(lane, parentId))}
             />
           ),
+          ts: b.emittedAt,
         });
       }
       continue;
@@ -269,6 +276,7 @@ export function LiveTurnView({
         structuredPatch: b.structuredPatch as ToolItem["structuredPatch"],
         running: !b.done,
       });
+      pendingEmittedAt.push(b.emittedAt);
       continue;
     }
     flush();
@@ -278,6 +286,7 @@ export function LiveTurnView({
         node: (
           <StreamTextBubble text={b.text} streaming={!b.done && turn.active} />
         ),
+        ts: b.emittedAt,
       });
     } else {
       items.push({
@@ -285,14 +294,30 @@ export function LiveTurnView({
         node: (
           <ThinkingBlock text={b.text} streaming={!b.done && turn.active} />
         ),
+        ts: b.emittedAt,
       });
     }
   }
   flush();
 
+  return items;
+}
+
+/** Render a thread's in-flight LIVE turn (token-streamed text, thinking, and grouped tool calls). */
+export function LiveTurnView({
+  turn,
+  lane,
+  onSelectNode,
+}: {
+  turn: LiveTurn;
+  /** The lane `turn` is streaming on — baked into any subagent card's node so its pane subscribes to the
+   *  right live turn (see {@link subagentNode}). */
+  lane: string;
+  onSelectNode?: (node: string) => void;
+}) {
   return (
     <>
-      {items.map((it) => (
+      {buildLiveTurnItems(turn, lane, onSelectNode).map((it) => (
         <div key={it.key}>{it.node}</div>
       ))}
     </>

@@ -41,7 +41,6 @@ import { codexReviewNode } from "./codex-review";
 import {
   NavigatorApproveButton,
   NavigatorShipButton,
-  NavigatorShipCallout,
 } from "./spec-approval";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
@@ -115,6 +114,7 @@ export function Navigator({
   onRename,
   onDelete,
   deleting,
+  directBuild,
 }: {
   meta: JobMeta;
   pipeline: PipelineState | undefined;
@@ -139,6 +139,8 @@ export function Navigator({
   onRename?: (title: string) => void;
   onDelete?: () => void;
   deleting?: boolean;
+  /** True when the awaiting approval is a direct build — flips the approve CTA to "Approve Direct Build". */
+  directBuild?: boolean;
 }) {
   const job = pipelineJob(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
@@ -361,7 +363,11 @@ export function Navigator({
         {/* Approve — pinned as the last header item while the plan is awaiting approval. */}
         {st === "awaiting_approval" && approveValue ? (
           <div className="mt-2">
-            <NavigatorApproveButton jobRef={jobRef} value={approveValue} />
+            <NavigatorApproveButton
+              jobRef={jobRef}
+              value={approveValue}
+              directBuild={directBuild}
+            />
           </div>
         ) : null}
         {/* Ship it — the SECOND human gate, pinned the same way once the build + master review finish. */}
@@ -413,12 +419,6 @@ export function Navigator({
 
         {/* The whole-diff master review is now just another thread in the THREADS list above (rendered
             "Master review", no pinned region) — see the master-review-as-thread change. */}
-
-        {/* Ship-review callout — pinned above OUTPUTS (the diff/artifacts region it's about), mirroring
-            where the plan-approval callout is meant to sit above SPECS. */}
-        {st === "awaiting_ship_review" && shipValue ? (
-          <NavigatorShipCallout jobRef={jobRef} value={shipValue} />
-        ) : null}
 
         {/* OUTPUTS — specs / artifacts / generated, merged. Open in the RIGHT pane (blue highlight). */}
         <OutputsRegion

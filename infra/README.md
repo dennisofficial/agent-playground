@@ -12,10 +12,13 @@ Single OVH box (64 GB, SYS-GAME-2). Docker + docker-compose. Caddy for TLS termi
 │   ├── repos/          # per-org repo clones (REPOS_ROOT)
 │   ├── agent-home/     # per-thread Claude/Codex config + session state (AGENT_HOME_ROOT)
 │   ├── refs/           # read-only reference repo clones (REFS_ROOT)
+│   ├── skills/         # central skills store, per-org dirs bind-mounted rw at /skills (SKILLS_ROOT)
 │   ├── golden/         # operator golden-seed files (ATLAS_GOLDEN_ROOT)
 │   └── engine/         # hot-reloaded engine bundle (ENGINE_BUNDLE_PATH parent)
 │       └── engine-entrypoint.mjs   # written by bundleEngine() at boot
 ├── pgdata/             # Postgres data directory (bind-mounted into postgres container)
+├── .env                # compose interpolation store — POSTGRES_USER/PASSWORD/DB for ${..}
+│                       # substitution + pg-backup.sh; mode 600 (see infra/.env.compose.example)
 ├── secrets/
 │   └── atlas.env       # plaintext secrets — mode 600, never committed (see .env.prod.example)
 ├── caddy/
@@ -76,12 +79,27 @@ sudo chown atlas:atlas /srv/atlas/secrets/atlas.env
 
 `backend-entrypoint.sh` decrypts `.env.production.enc` at container start given that
 key (`dotenvx run -f .env.production.enc -- node dist/main`); the migrator image does
-the same before running migrations. Compose-level Postgres bootstrap (the
-`${POSTGRES_USER}`/`${POSTGRES_PASSWORD}`/`${POSTGRES_DB}` substitution in
-`docker-compose.prod.yml`'s `postgres` service) still needs those three values as
-plain values in `/srv/atlas/.env` (docker compose reads that file for variable
-substitution at parse time, before any container — let alone dotenvx — runs) — keep
-them in sync with the encrypted copy.
+the same before running migrations. So `atlas.env` holds only the private key + infra
+wiring — **no `POSTGRES_*`** (see the guard note in `.env.prod.example`).
+
+Compose provisions the `postgres` container at parse time — before any container, let
+alone dotenvx, runs — so it needs `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` as
+plain values. These live in a separate box file, `/srv/atlas/.env`, which `deploy.sh`
+passes to every compose command via `--env-file` (and which `pg-backup.sh` sources):
+
+```bash
+cp infra/.env.compose.example /srv/atlas/.env
+# fill in POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB — MUST match the encrypted copy
+sudo chmod 600 /srv/atlas/.env
+sudo chown atlas:atlas /srv/atlas/.env
+```
+
+> **Env domains — the three-way split (there is no duplicate env *file*).**
+> - **infra** — `/srv/atlas/secrets/atlas.env` (the dotenvx private key + host/port/data-root wiring; the backend's compose `env_file:`) and `/srv/atlas/.env` (Postgres bootstrap for `${POSTGRES_*}` compose interpolation + backups).
+> - **backend** — `backend/.env.production.enc` (committed ciphertext, decrypted in-container at startup; the **authoritative** source for app secrets incl. the real `POSTGRES_*`).
+> - **frontend** — `NEXT_PUBLIC_*`, baked into the bundle at `next build` time (nothing at runtime).
+>
+> The only value that must be maintained in two places is the 3 Postgres vars — plain in `/srv/atlas/.env` (compose can't read the `.enc` when it creates the DB container) and encrypted in `backend/.env.production.enc`. Keep them in sync. They are deliberately kept out of `atlas.env` so they don't shadow the enc-decrypted values in the backend container.
 
 To add/rotate a secret: edit `backend/.env.production.enc` locally with
 `pnpm exec dotenvx set KEY value -f .env.production.enc` (see `env-conventions` for
@@ -114,14 +132,18 @@ ufw --force enable
 
 ### 6. Start Postgres and Redis first
 
+Every manual `docker compose` command must pass `--env-file /srv/atlas/.env` so
+`${POSTGRES_*}` resolves (deploy.sh does this automatically; a bare `docker compose`
+leaves them unset and postgres comes up with wrong/empty credentials):
+
 ```bash
 cd /path/to/atlas  # repo checkout on the box
-docker compose -f infra/docker-compose.prod.yml up -d postgres redis
+docker compose --env-file /srv/atlas/.env -f infra/docker-compose.prod.yml up -d postgres redis
 ```
 
 Wait for them to be healthy:
 ```bash
-docker compose -f infra/docker-compose.prod.yml ps
+docker compose --env-file /srv/atlas/.env -f infra/docker-compose.prod.yml ps
 ```
 
 ### 7. Run initial migration
@@ -228,7 +250,8 @@ rclone config  # follow prompts to add the remote
 ### Restore
 
 ```bash
-# Copy backup file from offsite or local backup dir
+# Copy backup file from offsite or local backup dir, then load the Postgres creds:
+set -a; source /srv/atlas/.env; set +a
 docker exec -i atlas-postgres pg_restore \
     --schema=app --format=custom --clean --if-exists \
     -U $POSTGRES_USER -d $POSTGRES_DB \
@@ -250,7 +273,7 @@ firewall. Check `docker logs atlas-caddy` and `ufw status`.
 
 **Backend stuck on /health/ready (follower):** another instance holds the advisory
 lock. Check `docker ps` — only one backend should be running. If both are up after
-a failed deploy, stop the old color manually: `docker compose -f infra/docker-compose.prod.yml stop backend-<old-color>`.
+a failed deploy, stop the old color manually: `docker compose --env-file /srv/atlas/.env -f infra/docker-compose.prod.yml stop backend-<old-color>`.
 
 **Sandbox build fails on first boot:** `docker logs atlas-backend-blue | grep -i sandbox`.
 Common causes: docker socket permission (check `ls -la /var/run/docker.sock`), or

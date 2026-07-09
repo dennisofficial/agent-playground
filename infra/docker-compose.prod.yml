@@ -3,7 +3,7 @@
 # Prerequisites:
 #   - /srv/atlas/secrets/atlas.env  (mode 600, see infra/.env.prod.example)
 #   - /srv/atlas/pgdata/            (Postgres data directory)
-#   - /srv/atlas/data/{repos,agent-home,refs,golden,engine}/
+#   - /srv/atlas/data/{repos,agent-home,refs,skills,golden,engine}/
 #   - /srv/atlas/caddy/{data,config}/
 #   - /srv/atlas/state/             (blue/green active-color + tag)
 #   - /var/run/docker.sock          (the host Docker daemon socket)
@@ -24,9 +24,11 @@ x-backend-common: &backend-common
     - /srv/atlas/secrets/atlas.env
   environment:
     # Internal compose network — postgres reachable by service name. POSTGRES_USER/PASSWORD/DB come from
-    # the dotenvx-decrypted backend/.env.production.enc at container start (single source shared with the
-    # migrator, which runs via `docker run` outside compose). The plain values in /srv/atlas/.env are only
-    # for compose's own bootstrap of the postgres service — keep them in sync (see infra/README.md).
+    # the dotenvx-decrypted backend/.env.production.enc at container start (authoritative; shared with the
+    # migrator, which runs via `docker run` outside compose). The plain values in /srv/atlas/.env are the
+    # box's single plaintext store, used ONLY for compose's own bootstrap of the postgres service below
+    # (${POSTGRES_*} substitution, deploy.sh `--env-file /srv/atlas/.env`) and by pg-backup.sh — keep them
+    # in sync with the encrypted copy (template: infra/.env.compose.example; rationale: infra/README.md).
     POSTGRES_HOST: postgres
     POSTGRES_SSL_MODE: disable
     REDIS_URL: "redis://redis:6379"
@@ -43,6 +45,7 @@ x-backend-common: &backend-common
     REPOS_ROOT: /srv/atlas/data/repos
     AGENT_HOME_ROOT: /srv/atlas/data/agent-home
     REFS_ROOT: /srv/atlas/data/refs
+    SKILLS_ROOT: /srv/atlas/data/skills
     ATLAS_GOLDEN_ROOT: /srv/atlas/data/golden
     # Engine bundle hot-reload path (under the same-path mount → host-resolvable).
     # bundleEngine() writes here so running sandboxes pick up a fresh bundle without

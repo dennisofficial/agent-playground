@@ -140,6 +140,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
       };
 
       await new TurnRunnerService(fakeEngine1, fakePhases).runTurn({
+        orgId: 'team-restart',
         jobId: 'j1',
         stepId: 'ph1',
         sandbox: s1,
@@ -179,6 +180,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
       };
 
       await new TurnRunnerService(fakeEngine2, fakePhases).runTurn({
+        orgId: 'team-restart',
         jobId: 'j1',
         stepId: 'ph1',
         sandbox: s2,

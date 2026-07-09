@@ -79,6 +79,7 @@ export type SettingsSection =
   | "worktree-secrets"
   | "mcp-servers"
   | "convention-profiles"
+  | "skills"
   | "members"
   | "repos";
 

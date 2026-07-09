@@ -71,12 +71,15 @@ describe('WorkspaceProfileService.render', () => {
     // The rendered block lists refs and metadata only — no store ever hands `render` a plaintext value.
   });
 
-  it('renders a compact per-dimension block naming all seven areas', async () => {
+  it('renders a compact per-dimension block naming the rendered areas', async () => {
     const out = make().render(
       await make().describe('org1', 'repo-1'),
     );
-    for (const label of ['Mounts:', 'Setup script:', 'Secret files:', 'MCP servers:', 'Skills:', 'House style:']) {
+    // No 'Skills:' label (dropped) — the SDK's native skill listing now owns that surfacing; see render()'s
+    // comment. `describe()` still aggregates `snap.skills` (covered above), just not re-rendered here.
+    for (const label of ['Mounts:', 'Setup script:', 'Secret files:', 'MCP servers:', 'House style:']) {
       expect(out).toContain(label);
     }
+    expect(out).not.toContain('Skills:');
   });
 });

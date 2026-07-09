@@ -1,7 +1,7 @@
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { Test } from '@nestjs/testing';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataSource } from 'typeorm';
 import type { ChatStimulus } from '../domain';
 import { CLASSIFIER_LLM } from '../decision-gate';
@@ -130,15 +130,6 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
       replyRoute: { surfaceId: 'agent', jobRef: jobId },
     };
 
-    // The ledger-promotion turn is a NEW brain turn (real, engine-backed). This test targets the DB latch;
-    // spy it so the fire-and-forget promotion is observable + doesn't race teardown with a live seeded turn.
-    const promote = vi
-      .spyOn(
-        manager as unknown as { reconcileLedgerPromotion: (j: unknown) => Promise<void> },
-        'reconcileLedgerPromotion',
-      )
-      .mockResolvedValue(undefined);
-
     // Arm the flag exactly as `finalize_build` does at its ship success return, then run the turn-end latch
     // (what `runChatTurn`'s finally calls once the finalize turn completes).
     (manager as unknown as { directBuildShipPending: Map<string, boolean> }).directBuildShipPending.set(
@@ -166,10 +157,8 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
     expect(fakePr.opened.some((o) => (o.args as { head?: string }).head === LIVE_BRANCH)).toBe(true);
     expect(fakePr.opened.some((o) => (o.args as { head?: string }).head === FEATURE_BRANCH)).toBe(false);
 
-    // The ledger promotion was kicked exactly once (fire-and-forget) after the latch.
-    expect(promote).toHaveBeenCalledOnce();
-
-    // The flag was consumed — a subsequent turn-end must not re-latch.
+    // Ledger promotion is NOT re-run at turn-end — `finalize_build` stamps it complete inline, so the latch
+    // only records the PR + flips status. The flag was consumed — a subsequent turn-end must not re-latch.
     expect(
       (manager as unknown as { directBuildShipPending: Map<string, boolean> }).directBuildShipPending.has(
         jobId,

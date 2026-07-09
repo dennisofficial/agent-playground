@@ -255,7 +255,12 @@ export class WorkspaceProfileGroup {
       'You do NOT register skills yourself — this posts an owner-approvable card; the OWNER approves it, which',
       'writes the skill so every future build on a matching repo inherits it. Skip it entirely if nothing clearly',
       'fits. Like MCP servers, a newly-approved skill loads on the NEXT fresh session — reset_sandbox to pick it up.',
-      'To UPDATE a skill, propose_skill with the SAME name (an owner-approved edit); to REMOVE an obsolete one,',
+      'propose_skill only CREATES — it refuses if the name already exists. Skills are real, possibly multi-file',
+      'directories (SKILL.md + references/scripts/assets) that stay READ-ONLY once created: to edit one, call',
+      'request_skill_edit_access({ skill, rationale }) and wait for the owner to grant it, then Edit/Write its',
+      'files directly (granular, no re-pasting the whole body). If the skill is installed from git, approval',
+      'forks it to a local custom copy first (the original stays clean and keeps auto-updating) and the grant',
+      'applies to the fork — the confirmation names the exact skill to edit. To REMOVE an obsolete skill,',
       'propose_skill_removal({ name, scope, rationale }) (also owner-approved). list_skills shows what exists.',
     ].join('\n');
   }
