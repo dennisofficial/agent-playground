@@ -21,6 +21,7 @@ import {
   EngineAuthError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
+  type EngineEvent,
   type EngineHomeKey,
   type EngineHomeType,
   type ToolBridgeOptions,
@@ -46,6 +47,7 @@ import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
+import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import type { ActiveTurnEntity, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
@@ -2670,7 +2672,10 @@ export class ThreadDriver implements JobDispatcher {
       if (verdict?.passed) return { passed: true };
       priorErrors = verdict?.remaining?.length
         ? verdict.remaining
-        : ['the orchestrator ended the turn without calling report_verification'];
+        : [
+            'no report_verification verdict was recorded for this gate turn' +
+              ' (the orchestrator ended the turn without calling it, or its verdict could not be recovered on resume)',
+          ];
     }
     return { passed: false, detail: priorErrors.join('\n') || 'verification gate exhausted its budget' };
   }
@@ -2695,7 +2700,10 @@ export class ThreadDriver implements JobDispatcher {
         containerId: row.container_id!,
         jobId: job.id,
         stepId: anchorStepId,
-        onEvent: (e) => harness.onEvent(e),
+        onEvent: (e) => {
+          harness.onEvent(e);
+          this.recoverGateVerdictFromReplay(e, toolBridge);
+        },
         toolBridge,
       });
       await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
@@ -2707,6 +2715,24 @@ export class ThreadDriver implements JobDispatcher {
       this.logger.warn(`re-attach gate turn ${row.turn_id} failed; re-running the iteration: ${err}`);
       return null;
     }
+  }
+
+  /** Recover the gate verdict from the REPLAYED events log on a gate reattach. The gate's verdict lives only
+   *  in an in-process closure driven by the tools-bridge channel, which is consumed-once + acked — so a
+   *  `report_verification` call made before an engine-detach is NOT redelivered on reattach, and the gate
+   *  would falsely halt with "…without calling report_verification" even though the call demonstrably
+   *  happened. But the authoritative events log IS replayed from the start on reattach (to rebuild the
+   *  transcript), so the call's `tool_use` event still arrives here — drive the matching bridge handler with
+   *  it to restore the verdict. Guarded to the MAIN agent (a subagent's `tool_use` must not drive the gate).
+   *  Safe ONLY because the gate's sole bridged tool (`report_verification`) is pure — do NOT reuse this on a
+   *  batch reattach, whose tools have real side effects a genuinely-pending live redelivery must own. */
+  private recoverGateVerdictFromReplay(e: EngineEvent, toolBridge: ToolBridgeOptions): void {
+    if (e.kind !== 'tool_use' || e.parentToolUseId) return;
+    const prefix = `mcp__${BRIDGE_SERVER_NAME}__`;
+    const bareName = e.name.startsWith(prefix) ? e.name.slice(prefix.length) : e.name;
+    const impl = toolBridge.tools[bareName];
+    if (!impl) return;
+    void impl((e.input as Record<string, unknown> | undefined) ?? {});
   }
 
   /** KICK a fresh gate-iteration turn — resumes the orchestrator's persisted session (via `stepId`) with the
