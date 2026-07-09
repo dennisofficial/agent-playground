@@ -19,6 +19,7 @@ import type {
   EventStimulus,
   Job,
   JobKind,
+  JobStatus,
   SeedRow,
 } from '../domain';
 import { MemoryStore } from '../memory';
@@ -2621,6 +2622,30 @@ export class AgentSessionManager
         };
       },
 
+      withdraw_plan: async (args) => {
+        const reason = String(args['reason'] ?? '').trim();
+        const res = await this.store.withdrawPlan(stimulus.jobId, reason || undefined);
+        if (!res.withdrawn) {
+          return {
+            ok: false,
+            message:
+              'No plan is currently awaiting the operator’s approval — nothing to withdraw. ' +
+              '(If it was already approved or denied, work from that instead.)',
+          };
+        }
+        this.approvals.cancel(stimulus.jobId, reason || 'plan withdrawn by Atlas');
+        await this.store.appendAtlasMessage(
+          stimulus.jobId,
+          `Withdrew the plan from approval${reason ? `: ${reason}` : ''}. Still working — I’ll re-propose when ready.`,
+        );
+        return {
+          ok: true,
+          message:
+            'Plan withdrawn — the approve button is cleared and the job is back in planning. ' +
+            'Re-propose with propose_plan when the plan is ready.',
+        };
+      },
+
       // Classify (or re-classify) THIS job's kind — e.g. this is a PR review, not a build. The next turn's
       // system prompt reflects the new kind automatically (it's read fresh each turn). Operator/system kinds
       // ('event'/'onboarding') are NOT settable here. Prefer letting propose_plan/start_direct_build carry
@@ -2847,27 +2872,6 @@ export class AgentSessionManager
         // plan straight to `awaiting_approval` and posts the approval card — the operator is the FINAL gate.
         // GATED on a review having RUN for THIS plan version (mandatory-run, advisory-to-pass).
 
-        // REATTACH IDEMPOTENCY (durable): a host death mid-propose_plan (before the tool reply was acked)
-        // makes claimStale RE-RUN this tool on reboot. persistPlan already flipped the job to
-        // `awaiting_approval` on the first run, so short-circuit here — do NOT persist a second decision
-        // record or post a second approval card. The durable status is the dedup key (the in-memory pending
-        // map is gone after a restart, so the check must live on the persisted job, not the handle).
-        const existing = await this.store
-          .loadJob(stimulus.jobId)
-          .catch(() => null);
-        if (
-          existing &&
-          existing.status === 'awaiting_approval' &&
-          existing.decisionRecordId
-        ) {
-          return {
-            ok: true,
-            jobId: existing.id,
-            decisionRecordId: existing.decisionRecordId,
-            message: 'This plan is already awaiting the operator’s approval.',
-          };
-        }
-
         const overview = String(args['overview'] ?? '').trim();
         // The one-line goal — the SAME text Atlas writes as plan.md's `# <H1>`. Becomes the thread title
         // (durable + live `thread_meta` frame, repainted inside requestApprovalAndAct).
@@ -2919,6 +2923,14 @@ export class AgentSessionManager
               'again (the reviewed version no longer matches).',
           };
         }
+
+        // REATTACH IDEMPOTENCY (durable) + clean re-propose: if a proposal is already pending, durably
+        // retract it (flip → planning, supersede the draft) BEFORE persisting the new one — so a re-run
+        // (host death mid-propose) or a deliberate revise-and-repropose always ends with exactly ONE
+        // pending proposal, never a no-op and never an orphaned live handle. Run this ONLY after all
+        // validation/gates above have passed, so a rejected re-propose never retracts an approvable card.
+        const prep = await this.prepareRepropose(stimulus.jobId);
+        if (prep.refuse) return { ok: false, reason: prep.refuse };
 
         // Persist STRAIGHT to `awaiting_approval` (no `plan_review`): persistPlan supersedes drafts + titles
         // in one transaction. `thread_meta` repaint happens inside requestApprovalAndAct (single source).
@@ -3076,6 +3088,7 @@ export class AgentSessionManager
             reason: 'summary is required (what you will change, directly)',
           };
         }
+
         const changeOutline = Array.isArray(args['changeOutline'])
           ? args['changeOutline'].map((c) => String(c).trim()).filter(Boolean)
           : [];
@@ -3111,6 +3124,12 @@ export class AgentSessionManager
               `Lock it with the operator first, or use submit_plan for the full ceremony.`,
           };
         }
+
+        // Clean re-propose: durably retract any pending proposal (flip → planning, supersede the draft)
+        // ONLY after the always-ask safety gate has passed — so an uncovered always-ask class refuses
+        // WITHOUT first destroying an approvable card, always ending with exactly ONE pending proposal.
+        const prep = await this.prepareRepropose(stimulus.jobId);
+        if (prep.refuse) return { ok: false, reason: prep.refuse };
 
         // Persist a MINIMAL record (overview = summary, any locked decisions, NO threads) and post the
         // lightweight approval card. The build runs only after approval (kind: 'direct').
@@ -5084,6 +5103,37 @@ export class AgentSessionManager
   // ── Approval flow ──────────────────────────────────────────────────────────────────────────────
 
   /**
+   * Prepare a (re)proposal: refuse if the job already moved past the gate; if a proposal is pending,
+   * durably retract it (flip → planning, supersede the draft) BEFORE returning, then drop the live handle.
+   * Returns a refusal reason to bail with, or null to proceed. After this returns null the job is in
+   * 'planning'/'open', so no in-flight click can approve the old plan.
+   */
+  private async prepareRepropose(jobId: string): Promise<{ refuse?: string }> {
+    const existing = await this.store.loadJob(jobId).catch(() => null);
+    if (!existing) return {};
+    // Statuses past the approval gate (post-`awaiting_approval`) — never (re)propose over these. A build
+    // FAILURE is now the orthogonal `halt` axis (JobStatus has no 'failed'/'paused'); a failed/paused job
+    // keeps its phase (typically 'running'), so it's still caught here.
+    const pastGate: JobStatus[] = ['running', 'awaiting_ship_review', 'done', 'cancelled', 'deleting'];
+    if (pastGate.includes(existing.status)) {
+      return { refuse: `This job is already '${existing.status}' — can’t (re)propose a plan for it.` };
+    }
+    if (existing.status === 'awaiting_approval' && existing.decisionRecordId) {
+      const res = await this.store.withdrawPlan(jobId, 'superseded by a re-proposed plan');
+      if (!res.withdrawn) {
+        const now = await this.store.loadJob(jobId).catch(() => null);
+        return {
+          refuse:
+            `This job just moved to '${now?.status ?? 'a non-planning state'}' (an approval or cancel raced ` +
+            `in) — nothing was changed. Re-check the state before proposing again.`,
+        };
+      }
+      this.approvals.cancel(jobId, 'superseded by a re-proposed plan');
+    }
+    return {};
+  }
+
+  /**
    * Post the approval card and act on the verdict — mirrors the old `ConversationalBrainService`
    * flow but without blocking the session turn on it.
    */
@@ -5147,11 +5197,18 @@ export class AgentSessionManager
     resolution: ApprovalResolution,
   ): Promise<void> {
     if (resolution.verdict === 'approve') {
-      const running = await this.store.approve(
-        job.id,
-        decisionRecordId,
-        resolution.ruledBy,
-      );
+      // Prefer the record the OPERATOR clicked (the version pin); fall back to the handle's closure
+      // record when a caller didn't supply one (e.g. a test, or a client that omitted decisionRecordId).
+      const recId = resolution.clickedDecisionRecordId ?? decisionRecordId;
+      const running = await this.store.approve(job.id, recId, resolution.ruledBy);
+      if (!running) {
+        await this.say(
+          stimulus,
+          'That plan was withdrawn or updated since you clicked — nothing was approved. ' +
+            'Re-propose the current version and approve that.',
+        );
+        return;
+      }
       if (isDirect) {
         // FAST PATH: the brain implements it ITSELF in an autonomous in-sandbox turn (no driver).
         await this.store.appendAtlasMessage(
@@ -5225,6 +5282,7 @@ export class AgentSessionManager
     verdict: ApprovalVerdict,
     ruledBy: string,
     note?: string,
+    clickedDecisionRecordId?: string,
   ): Promise<boolean> {
     const job = await this.store.loadJob(jobId).catch(() => null);
     if (!job || job.status !== 'awaiting_approval' || !job.decisionRecordId)
@@ -5253,6 +5311,7 @@ export class AgentSessionManager
         verdict,
         ruledBy,
         ...(note ? { note } : {}),
+        ...(clickedDecisionRecordId ? { clickedDecisionRecordId } : {}),
       },
     );
     return true;
