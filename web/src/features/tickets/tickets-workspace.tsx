@@ -13,7 +13,7 @@ import {
   useTickets,
   useUpdateTicket,
 } from "@/lib/api/tickets-queries";
-import type { TicketListRow } from "@/lib/api/tickets-api";
+import { findSimilarTickets, type TicketListRow } from "@/lib/api/tickets-api";
 import {
   BOARD_COLUMNS,
   PRIORITY_RANK,
@@ -278,6 +278,16 @@ export function TicketsWorkspace({
           busy={create.isPending || update.isPending}
           onSubmit={submitForm}
           onClose={() => setModal(null)}
+          onCheckSimilar={(v) =>
+            findSimilarTickets(
+              { orgId, repoId },
+              { title: v.title, body: v.body || null },
+            )
+          }
+          onOpenSimilar={(id) => {
+            setModal(null);
+            setDrawerId(id);
+          }}
         />
       ) : null}
     </div>

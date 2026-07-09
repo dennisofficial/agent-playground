@@ -34,3 +34,11 @@ export {
   type LiveVerificationJudge,
   type LiveVerificationVerdict,
 } from './live-verification-judge';
+export { LiveVerificationModule } from './live-verification.module';
+export {
+  NON_RUNTIME_FILE_RE,
+  renderLockedDecisionsSummary,
+  renderTerminalRecordSummary,
+  type TerminalRecordSummaryInput,
+  type VerificationEvidence,
+} from './live-verification-support';

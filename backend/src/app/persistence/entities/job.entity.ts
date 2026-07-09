@@ -2,6 +2,7 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } 
 import type { JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
+import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
@@ -292,4 +293,15 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   halt!: JobHalt | null;
+
+  /**
+   * The ADR-0005 LIVE-VERIFICATION verdict for the DIRECT-BUILD ship path (the brain-owned
+   * `finalize_build` gate — the direct-path analog of a driver thread's `terminal_record.liveVerification`).
+   * Written on BOTH the pass and the refusal path so the same prod audit SQL that surfaced the direct-build
+   * gap can confirm the fix: a direct-build job with a runtime diff now shows a verdict here, and a
+   * validation-skipping ship is blocked at `finalize_build` with `liveVerificationAdequate: false`. Null for
+   * jobs that never ran a direct build (driver builds record their verdict on the thread terminal record).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  direct_build_verification!: { verdict: LiveVerificationVerdict; at: string } | null;
 }

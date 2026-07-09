@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type { TicketStatus } from '../domain/ticket';
+import type { EmbeddingProvider } from '../memory/embedding';
 import type { TicketEntity, JobEntity } from '../persistence/entities';
 import type { TicketEventBus } from './ticket-event-bus';
 import { TicketService } from './ticket.service';
@@ -15,6 +16,12 @@ import { TicketService } from './ticket.service';
 const ORG = 'org-1';
 const THREAD = 'thread-1';
 const TICKET = 'ticket-1';
+
+/** A no-op embedder for tests that never exercise similarity (embed is never called). */
+const NULL_EMBEDDER = {
+  model: 'fake',
+  embed: vi.fn(),
+} as unknown as EmbeddingProvider;
 
 /** Build a service whose threads/tickets repos return the given rows; expose the save + publish spies. */
 function makeService(opts: {
@@ -46,6 +53,7 @@ function makeService(opts: {
     {} as never, // dataSource (unused)
     events,
     {} as never, // JobTitler (unused)
+    NULL_EMBEDDER,
   );
   return { svc, save, publish };
 }
@@ -127,6 +135,7 @@ describe('TicketService.list — originJobId filter', () => {
       {} as never,
       {} as never,
       {} as never,
+      NULL_EMBEDDER,
     );
     return { svc, andWhereCalls };
   }
@@ -168,6 +177,7 @@ describe('TicketService.reconcileStrandedTickets', () => {
       {} as never,
       events,
       {} as never,
+      NULL_EMBEDDER,
     );
     return { svc, save, publish };
   }
@@ -188,5 +198,104 @@ describe('TicketService.reconcileStrandedTickets', () => {
 
     expect(await svc.reconcileStrandedTickets()).toBe(0);
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe('TicketService.findSimilar', () => {
+  /**
+   * A QueryBuilder stand-in that records every `andWhere(sql, params)` call and resolves the given rows
+   * from `getRawAndEntities`. Lets us assert the dedup query's filters without a real DB.
+   */
+  function makeSimilarService(opts: {
+    embed?: number[] | Error; // the vector the embedder returns, or an error it throws
+    rows?: Array<Partial<TicketEntity>>;
+    sims?: number[];
+  }) {
+    const andWhereCalls: Array<[string, Record<string, unknown> | undefined]> = [];
+    const entities = (opts.rows ?? []).map((r, i) => ({
+      id: `t${i}`,
+      number: i,
+      title: `t${i}`,
+      status: 'backlog',
+      kind: null,
+      priority: null,
+      ...r,
+    })) as TicketEntity[];
+    const raw = (opts.sims ?? entities.map(() => 0.9)).map((sim) => ({ sim }));
+
+    const qb: Record<string, unknown> = {};
+    for (const m of ['addSelect', 'where', 'orderBy', 'limit', 'setParameter']) qb[m] = vi.fn(() => qb);
+    qb['andWhere'] = vi.fn((sql: string, params?: Record<string, unknown>) => {
+      andWhereCalls.push([sql, params]);
+      return qb;
+    });
+    qb['getRawAndEntities'] = vi.fn().mockResolvedValue({ entities, raw });
+
+    const tickets = { createQueryBuilder: vi.fn(() => qb) } as unknown as Repository<TicketEntity>;
+    const embed = vi.fn(async () => {
+      if (opts.embed instanceof Error) throw opts.embed;
+      return opts.embed ?? [0.1, 0.2, 0.3];
+    });
+    const embedder = { model: 'fake', embed } as unknown as EmbeddingProvider;
+    const svc = new TicketService(
+      tickets,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      embedder,
+    );
+    return { svc, andWhereCalls, embed };
+  }
+
+  it('returns matches with their similarity, most-similar-first', async () => {
+    const { svc } = makeSimilarService({
+      rows: [{ id: 'a', number: 1, title: 'dup' }],
+      sims: [0.97],
+    });
+    const { queryVector, matches } = await svc.findSimilar({
+      orgId: ORG,
+      repoId: 'repo-1',
+      title: 'dup',
+    });
+    expect(queryVector).toEqual([0.1, 0.2, 0.3]);
+    expect(matches).toEqual([
+      { id: 'a', number: 1, title: 'dup', status: 'backlog', kind: null, priority: null, sim: 0.97 },
+    ]);
+  });
+
+  it('fails soft to no matches when embedding is unavailable', async () => {
+    const { svc, embed } = makeSimilarService({ embed: new Error('no OpenAI key') });
+    const res = await svc.findSimilar({ orgId: ORG, repoId: 'repo-1', title: 'x' });
+    expect(embed).toHaveBeenCalled();
+    expect(res).toEqual({ queryVector: null, matches: [] });
+  });
+
+  it('applies the minSim floor, status exclusions and self-exclusion', async () => {
+    const { svc, andWhereCalls } = makeSimilarService({ rows: [] });
+    await svc.findSimilar({
+      orgId: ORG,
+      repoId: 'repo-1',
+      title: 'x',
+      minSim: 0.82,
+      excludeStatuses: ['done', 'cancelled'],
+      excludeTicketId: 'self',
+    });
+    const simClause = andWhereCalls.find(([sql]) => sql.includes('>= :minSim'));
+    expect(simClause?.[1]).toEqual({ minSim: 0.82 });
+    const statusClause = andWhereCalls.find(([sql]) => sql.includes('status NOT IN'));
+    expect(statusClause?.[1]).toEqual({ excludeStatuses: ['done', 'cancelled'] });
+    const selfClause = andWhereCalls.find(([sql]) => sql.includes('t.id != :excludeTicketId'));
+    expect(selfClause?.[1]).toEqual({ excludeTicketId: 'self' });
+  });
+
+  it('defaults to excluding only cancelled tickets', async () => {
+    const { svc, andWhereCalls } = makeSimilarService({ rows: [] });
+    await svc.findSimilar({ orgId: ORG, repoId: 'repo-1', title: 'x' });
+    const statusClause = andWhereCalls.find(([sql]) => sql.includes('status NOT IN'));
+    expect(statusClause?.[1]).toEqual({ excludeStatuses: ['cancelled'] });
   });
 });

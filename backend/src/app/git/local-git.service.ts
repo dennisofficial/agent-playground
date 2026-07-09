@@ -193,6 +193,20 @@ export class LocalGitService {
         if (forbiddenSet.has(name)) leaked.add(name);
       }
     }
+
+    // ALSO scan the current WORKING TREE (staged + unstaged tracked changes + untracked files). Since the
+    // host no longer commits at ship, an uncommitted forbidden path the brain's open-PR turn is about to
+    // commit would otherwise slip past the per-commit scan above. Fail-closed like the rest of this gate.
+    const [tracked, untracked] = await Promise.all([
+      this.git(['diff', '--name-only', 'HEAD'], { cwd: worktreePath }),
+      this.git(['ls-files', '--others', '--exclude-standard'], { cwd: worktreePath }),
+    ]);
+    for (const name of [...tracked.split('\n'), ...untracked.split('\n')]
+      .map((s) => s.trim())
+      .filter(Boolean)) {
+      if (forbiddenSet.has(name)) leaked.add(name);
+    }
+
     return [...leaked].sort();
   }
 
@@ -423,39 +437,58 @@ export class LocalGitService {
   }
 
   /**
-   * Stage everything and commit. Identity is set per-invocation via `-c` so the worktree's config
-   * stays clean. Returns the new commit sha, or null when there was nothing to commit.
-   *
-   * HOST COMMIT IS NOW A FAST-PATH-ONLY primitive. The multi-thread build pipeline no longer commits on the
-   * writer's behalf — builders / fix-it / master-review each commit + push their own work, and the host only
-   * READS `git rev-parse HEAD`. `commitAll` survives ONLY for the terminal/fast ship paths that write in the
-   * BRAIN's own session and commit at ship time (`BuildShipService` `commitMessage`: direct-build, onboarding
-   * env setup, the decision-ledger commit). The hydrated-secret leak-scan that used to live here has moved to
-   * {@link scanBranchForForbidden}, run once as a HARD pre-ship gate before the PR opens — so no host commit
-   * carries a per-commit secret check anymore.
+   * THE HOST NEVER COMMITS. Every commit on a feature branch is authored by Atlas's own in-sandbox session
+   * (builders commit per-step; the open-PR turn commits any remaining uncommitted work — including the
+   * host-written `.atlas/decisions/` ledger files — before it pushes). There is intentionally no host
+   * `commitAll` primitive: a host-identity commit would read as robotic in the git history, and the
+   * hydrated-secret leak-scan ({@link scanBranchForForbidden}) already runs host-side as a HARD pre-ship gate
+   * over both the branch commits AND the working tree, so no host commit is needed to make that check sound.
    */
-  async commitAll(
-    worktreePath: string,
-    message: string,
-    author = { name: 'Atlas', email: 'atlas@users.noreply.github.com' },
-  ): Promise<string | null> {
-    return this.withLock(worktreePath, async () => {
-      await this.git(['add', '-A'], { cwd: worktreePath });
-      if (!(await this.hasChanges(worktreePath))) return null;
-      await this.git(
-        [
-          '-c',
-          `user.name=${author.name}`,
-          '-c',
-          `user.email=${author.email}`,
-          'commit',
-          '-m',
-          message,
-        ],
+
+  /**
+   * True when nothing is pending under `.atlas/decisions/` — i.e. the ledger files the host wrote into the
+   * worktree have been COMMITTED (by the brain's ship turn). This is the positive proof used to stamp the
+   * ledger-promotion spine `complete` now that the host no longer commits the ledger itself: if it's not
+   * clean, the row is left for the boot reconciler rather than marked done. Best-effort — a git error returns
+   * `false` (treat as "not yet committed", the safe direction for the durability stamp).
+   */
+  async ledgerClean(worktreePath: string): Promise<boolean> {
+    try {
+      const status = await this.git(
+        ['status', '--porcelain', '--', '.atlas/decisions/'],
         { cwd: worktreePath },
       );
-      return this.git(['rev-parse', 'HEAD'], { cwd: worktreePath });
-    });
+      return status.trim().length === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Guard for a HARD sandbox reset (which deletes + re-cuts the worktree). Returns whether it is safe to
+   * blow the worktree away without losing committed work. A LINKED worktree keeps its branch ref + objects in
+   * the shared main clone across `git worktree remove`, so local-only commits survive — only a DIRTY tree is
+   * unsafe (uncommitted work is genuinely lost; the caller refuses on that separately via {@link hasChanges}).
+   * A FULL CLONE is `rm -rf`'d and can only be restored from `origin/<branch>` ({@link switchBranch} clone
+   * recovery), so it is unsafe unless every commit is already on origin: a MISSING `origin/<branch>` (never
+   * pushed) or any `origin/<branch>..HEAD` commit ⇒ unsafe. Missing upstream is treated as UNSAFE, never as
+   * "0 ahead". Fail-closed: any git error ⇒ unsafe.
+   */
+  async worktreeSafeToRecut(worktreePath: string, branch: string): Promise<boolean> {
+    try {
+      const dotGit = join(worktreePath, '.git');
+      const isClone = existsSync(dotGit) && (await stat(dotGit)).isDirectory();
+      if (!isClone) return true; // linked worktree — branch ref + objects live in the shared common dir
+      const remoteRef = `refs/remotes/origin/${branch}`;
+      if (!(await this.refExists(worktreePath, remoteRef))) return false; // never pushed → would be lost
+      const ahead = await this.git(
+        ['rev-list', '--count', `origin/${branch}..HEAD`],
+        { cwd: worktreePath },
+      );
+      return parseInt(ahead.trim(), 10) === 0;
+    } catch {
+      return false; // fail-closed — refuse the destructive reset if we can't prove safety
+    }
   }
 
   /** Push the feature branch to origin (token via GIT_CONFIG_* — never in argv/config). */

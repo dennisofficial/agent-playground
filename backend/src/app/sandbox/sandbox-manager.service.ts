@@ -286,7 +286,14 @@ export class SandboxManager implements SandboxProvider {
     // sees host-shaped paths. `cwd` is rewritten host→`/workspace` by the runner.
     const binds = [`${sandbox.worktreePath}:${CONTAINER_WORKTREE}`, `${hostHome}:${CONTAINER_AGENT_HOME}`];
     const gitDir = await this.gitCommonDir(sandbox.worktreePath);
-    if (gitDir && !gitDir.startsWith(`${sandbox.worktreePath}/`)) {
+    // Realpath-normalize BOTH operands before deciding linked-vs-clone. `git --git-common-dir` returns a
+    // realpath'd absolute path, but `sandbox.worktreePath` may be a symlinked form (on macOS the OS tmp/repos
+    // root is `/var/folders/…` → `/private/var/folders/…`). Without normalizing, a FULL CLONE — whose `.git`
+    // IS inside the worktree — is misread as a linked worktree and gets a spurious `/.atlas/git-common`
+    // overlay. Mirrors the same normalization `rebaseDotGit` already does before its `relative()` diff.
+    const gitDirInsideWorktree =
+      !!gitDir && realpathSafe(gitDir).startsWith(`${realpathSafe(sandbox.worktreePath)}/`);
+    if (gitDir && !gitDirInsideWorktree) {
       // Linked worktree: its `.git` lives OUTSIDE the worktree (the repo's shared common dir). Mount the
       // common dir at a neutral path too, then SHADOW the worktree's `.git` pointer file — which holds an
       // absolute HOST path — with a container-local one so in-container git resolves the worktree's gitdir

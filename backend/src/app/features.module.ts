@@ -6,7 +6,7 @@ import { ClusterModule } from './cluster';
 import { AutoFixModule } from './autofix';
 import { BrainModule } from './brain';
 import { DecisionGateModule } from './decision-gate';
-import { DriverModule } from './driver';
+import { DriverModule, LiveVerificationModule } from './driver';
 import { IngressModule } from './ingress';
 import { RunnerModule } from './runner';
 import { SandboxModule } from './sandbox';
@@ -78,6 +78,7 @@ import { ThreadKindModule } from './thread-kind';
     AutoFixModule,
     BrainModule,
     DriverModule,
+    LiveVerificationModule,
     TestBridgeModule,
   ],
 })

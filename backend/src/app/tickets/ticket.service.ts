@@ -1,16 +1,20 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { toSql } from 'pgvector';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import {
   type TicketKind,
   type TicketOrigin,
   type TicketPriority,
+  type TicketSimilarItem,
   type TicketStatus,
+  TICKET_SIMILAR_SIM,
   TICKET_TERMINAL_STATUSES,
   isTicketKind,
   isTicketPriority,
   isTicketStatus,
 } from '../domain/ticket';
+import { EMBEDDING_PROVIDER, type EmbeddingProvider } from '../memory/embedding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -41,6 +45,12 @@ export interface CreateTicketInput {
   originDecisionRecordId?: string | null;
   /** Existing ticket ids in this repo that the new ticket is blocked by (advisory edges). */
   dependsOn?: string[];
+  /**
+   * A precomputed embedding for `title\n\nbody`, so a caller that just ran `findSimilar` (which already
+   * embedded the same text) doesn't pay a second OpenAI round-trip. When omitted, `create` embeds it
+   * itself (fail-soft). Never populated from raw client input — it's an internal optimization.
+   */
+  embedding?: number[];
 }
 
 export interface UpdateTicketPatch {
@@ -111,6 +121,8 @@ export class TicketService {
     private readonly dataSource: DataSource,
     private readonly events: TicketEventBus,
     private readonly titler: JobTitler,
+    @Inject(EMBEDDING_PROVIDER)
+    private readonly embedder: EmbeddingProvider,
   ) {}
 
   /** Create a ticket: allocate its per-repo number, snapshot provenance, attach any dependency edges. */
@@ -138,6 +150,11 @@ export class TicketService {
       input.originDecisionRecordId ?? null,
     );
 
+    // Embed OUTSIDE the transaction — the external OpenAI call must never run while we hold the
+    // `ticket_counters` row lock (it would serialize all ticket creation behind a network round-trip).
+    // Reuse a caller-supplied vector when present (avoids a second embed after `findSimilar`). Fail-soft.
+    const embedding = input.embedding ?? (await this.embedTicket(orgId, title, body));
+
     const saved = await this.dataSource.transaction(async (m) => {
       const number = await this.allocateNumber(m, repoId);
       const ticket = await m.save(
@@ -156,6 +173,16 @@ export class TicketService {
           origin,
         }),
       );
+      // Write the vector as plain SQL (no API call in the txn), mirroring MemoryStore's write pattern.
+      if (embedding) {
+        await m
+          .createQueryBuilder()
+          .update(TicketEntity)
+          .set({ embedding: () => ':qv::vector' })
+          .where('id = :id', { id: ticket.id })
+          .setParameter('qv', vecSql(embedding))
+          .execute();
+      }
       // A brand-new ticket has no incoming edges, so dependsOn edges can't form a cycle — only validate
       // that each blocker exists in this repo.
       for (const blockerId of dependsOn) {
@@ -247,6 +274,65 @@ export class TicketService {
     });
   }
 
+  /**
+   * Semantic near-neighbour search over this repo's tickets — the dedup primitive. Embeds the candidate
+   * `title\n\nbody`, then ranks existing tickets by cosine similarity (pgvector `<=>`), returning those
+   * at/above `minSim` most-similar-first. Fail-soft: if embedding is unavailable (no OpenAI key / API
+   * error) it returns `{ queryVector: null, matches: [] }`, so callers degrade to no-dedup rather than
+   * error. The `queryVector` is handed back so a caller can pass it straight into `create` and skip a
+   * second embed.
+   *
+   * Default `excludeStatuses` drops only `cancelled` — a `done` match is deliberately surfaced ("this
+   * was already fixed"). The builder (no human in the loop) overrides this to exclude ALL terminal
+   * statuses so a silent auto-skip can only ever collapse into an OPEN ticket.
+   */
+  async findSimilar(input: {
+    orgId: string;
+    repoId: string;
+    title: string;
+    body?: string | null;
+    limit?: number;
+    minSim?: number;
+    excludeStatuses?: TicketStatus[];
+    excludeTicketId?: string;
+  }): Promise<{ queryVector: number[] | null; matches: TicketSimilarItem[] }> {
+    const limit = input.limit ?? 5;
+    const minSim = input.minSim ?? TICKET_SIMILAR_SIM;
+    const excludeStatuses = input.excludeStatuses ?? ['cancelled'];
+
+    const queryVector = await this.embedTicket(input.orgId, input.title, input.body ?? null);
+    if (!queryVector) return { queryVector: null, matches: [] };
+    const qv = vecSql(queryVector);
+
+    const qb = this.tickets
+      .createQueryBuilder('t')
+      .addSelect('1 - (t.embedding <=> :qv::vector)', 'sim')
+      .where('t.org_id = :orgId AND t.repo_id = :repoId', { orgId: input.orgId, repoId: input.repoId })
+      .andWhere('t.embedding IS NOT NULL')
+      .andWhere('1 - (t.embedding <=> :qv::vector) >= :minSim', { minSim })
+      .orderBy('t.embedding <=> :qv::vector', 'ASC')
+      .limit(limit)
+      .setParameter('qv', qv);
+    if (excludeStatuses.length > 0) {
+      qb.andWhere('t.status NOT IN (:...excludeStatuses)', { excludeStatuses });
+    }
+    if (input.excludeTicketId) {
+      qb.andWhere('t.id != :excludeTicketId', { excludeTicketId: input.excludeTicketId });
+    }
+
+    const { entities, raw } = await qb.getRawAndEntities();
+    const matches: TicketSimilarItem[] = entities.map((t, i) => ({
+      id: t.id,
+      number: t.number,
+      title: t.title,
+      status: t.status as TicketStatus,
+      kind: (t.kind as TicketKind | null) ?? null,
+      priority: (t.priority as TicketPriority | null) ?? null,
+      sim: Number(raw[i].sim),
+    }));
+    return { queryVector, matches };
+  }
+
   /** Resolve a ticket scoped to the org+repo (or 404) plus its dependency edges + derived `blocked`. */
   async get(args: { orgId: string; repoId: string; ticketId: string }): Promise<TicketDetail> {
     const ticket = await this.requireTicket(args.orgId, args.repoId, args.ticketId);
@@ -300,7 +386,22 @@ export class TicketService {
       ticket.sort_order = patch.sortOrder;
     }
 
+    const textChanged = patch.title !== undefined || patch.body !== undefined;
     const saved = await this.tickets.save(ticket);
+
+    // Title/body drive the embedding — re-embed when either changes. On a failed re-embed, NULL the
+    // vector rather than leave a stale one that would make `findSimilar` match on outdated text.
+    if (textChanged) {
+      const vec = await this.embedTicket(saved.org_id, saved.title, saved.body);
+      const qb = this.tickets
+        .createQueryBuilder()
+        .update(TicketEntity)
+        .where('id = :id', { id: saved.id });
+      if (vec) qb.set({ embedding: () => ':qv::vector' }).setParameter('qv', vecSql(vec));
+      else qb.set({ embedding: () => 'NULL' });
+      await qb.execute();
+    }
+
     this.events.publish({
       type: 'ticket_event',
       orgId: args.orgId,
@@ -509,6 +610,25 @@ export class TicketService {
 
   // ── helpers ───────────────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Embed a ticket's dedup text (`title\n\nbody`) to a vector, FAIL-SOFT: a missing OpenAI key or an
+   * API error yields `null` (dedup silently degrades — ticket creation must never fail on embedding).
+   */
+  private async embedTicket(
+    orgId: string,
+    title: string,
+    body: string | null,
+  ): Promise<number[] | null> {
+    const text = `${title}\n\n${body ?? ''}`.trim();
+    if (!text) return null;
+    try {
+      return await this.embedder.embed(text, orgId);
+    } catch (err) {
+      this.logger.debug(`ticket embedding unavailable for org ${orgId}: ${err}`);
+      return null;
+    }
+  }
+
   /** Resolve a ticket scoped to org+repo or 404 — the guard for every ticket-keyed op. */
   async requireTicket(orgId: string, repoId: string, ticketId: string): Promise<TicketEntity> {
     const ticket = await this.tickets.findOne({
@@ -608,6 +728,11 @@ function normalizeBody(body: string | null | undefined): string | null {
 
 function dedupe(ids: string[]): string[] {
   return [...new Set(ids.filter((id) => typeof id === 'string' && id.length > 0))];
+}
+
+/** Serialize a JS vector to the pgvector SQL literal (`[0.1,0.2,…]`). Mirrors `MemoryStore`. */
+function vecSql(v: number[]): string {
+  return toSql(v)!;
 }
 
 function firstLine(text: string): string {

@@ -424,10 +424,9 @@ function makeGit(): {
     // (below) advances `sha` to simulate the writer's commit, so `headSha` returns the fresh sha the driver
     // stamps. `hasChanges` reports a CLEAN tree by default (the writer committed) — no dirty-tree nudge.
     hasChanges: vi.fn(async () => false),
-    commitAll: vi.fn(async (_wt: string, message: string) => {
-      commits.push(message);
-      return `commit${++sha}`;
-    }),
+    // The ledger is committed by the brain's ship turn (host never commits); `ledgerClean` = true means the
+    // `.atlas/decisions/` files landed, gating the `markLedgerPromoted` stamp in `finalizeBuild`.
+    ledgerClean: vi.fn(async () => true),
     push: vi.fn(async (sandbox: FeatureSandbox) => {
       pushed.push(sandbox.branch);
     }),
@@ -2815,11 +2814,16 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     // that never redelivers. So the ONLY way the verdict can be recovered (and the job reach `done`) is the
     // fix replay-driving the handler from this event.
     const reattach = vi.fn(async (input: Parameters<TurnRunnerService['reattach']>[0]) => {
+      // The replayed `tool_use` carries `block.input` VERBATIM — for a bridge proxy tool that is the WRAPPED
+      // `{ args: {...} }` shape (the proxy is registered with an outer `{ args }` schema; the live transport
+      // unwraps `input.args` before dispatch, but the replay path must unwrap it too). Feeding the real wrapped
+      // shape here is what makes this test guard the prod bug: without the unwrap the handler reads
+      // `args['passed']` off the wrapper → `undefined` → a false `passed:false` → the thread falsely halts.
       input.onEvent?.({
         kind: 'tool_use',
         id: 'rv-1',
         name: 'mcp__atlas-host-bridge__report_verification',
-        input: { passed: true },
+        input: { args: { passed: true } },
       });
       return {
         report: 'gate resumed',
