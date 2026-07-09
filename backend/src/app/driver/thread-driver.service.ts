@@ -1158,14 +1158,12 @@ export class ThreadDriver implements JobDispatcher {
       `thread:${thread.id}:done`,
       `Thread "${thread.brief}" finished building.`,
     );
-    // Decision d1 — a clean `done` is normally cheap note-and-queue; a NOTABLE one (gaps left, or the
-    // live-verification judge flagged the claim inadequate) also owes an autonomous brain wake so the operator
-    // isn't the first to notice. The wake resolves the transcript anchor itself at delivery time.
+    // Decision d1 — a clean `done` is normally cheap note-and-queue; a NOTABLE one (gaps left) also owes an
+    // autonomous brain wake so the operator isn't the first to notice. The wake resolves the transcript anchor
+    // itself at delivery time. (No live-verification sub-clause here: a runtime-touched-but-inadequate record is
+    // already downgraded to `blocked` upstream, so a `done` record's verdict is always adequate.)
     const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
-    const isNotable =
-      term != null &&
-      ((term.gaps?.length ?? 0) > 0 ||
-        term.liveVerification?.verdict.liveVerificationAdequate === false);
+    const isNotable = term != null && (term.gaps?.length ?? 0) > 0;
     if (isNotable) {
       await this.store
         .setDoneWakeOwed(thread.id, 'notable')
