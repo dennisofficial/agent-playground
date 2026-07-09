@@ -55,6 +55,8 @@ import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
   Agent,
+  CODEX_TASK_LIST_NOTE,
+  COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
   ROTATION_PREAMBLE,
   ROTATION_SOFT_NUDGE,
@@ -3190,18 +3192,11 @@ export function renderBatchTask(
 }
 
 /**
- * Shared writer instruction — YOU (the writer session) own the commit. The host no longer commits your
- * work; it only reads what you leave. So before you call `complete_thread`, LEAVE A CLEAN TREE: stage,
- * commit, and push your own changes. `.gitignore` governs what's tracked — if build/cache junk (a
- * package store, node_modules, a build dir) shows up in `git status`, add it to `.gitignore` rather than
- * committing it. Used by every writer prompt (builder batch, verification gate, master-review).
+ * The batch writer's commit instruction — the shared `COMMIT_AND_PUSH_NOTE`, prefixed with the leading
+ * newline the surrounding task body splices on. YOU (the writer session) own the commit: the host reads what
+ * you leave and does NOT commit for you, so leave a CLEAN tree before you call `complete_thread`.
  */
-export const COMMIT_AND_PUSH_INSTRUCTION =
-  `\nCOMMIT YOUR WORK (required — the host does NOT commit for you): once the work is done and verified,` +
-  ` run \`git add -A\` (your \`.gitignore\` governs what's tracked; if build or cache junk appears in` +
-  ` \`git status\`, add it to \`.gitignore\` instead of committing it), commit with a clear message, and` +
-  ` \`git push\` your branch. Leave the working tree CLEAN. THEN call \`complete_thread\`. If you finish` +
-  ` without committing, your work is treated as unfinished.`;
+export const COMMIT_AND_PUSH_INSTRUCTION = '\n' + COMMIT_AND_PUSH_NOTE;
 
 /**
  * Render the durable halt trail for `/context/generated/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
@@ -3276,10 +3271,7 @@ export function renderMasterReviewTask(record: DecisionRecord | null, repo: Reso
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nThis is the FINAL review-and-fix pass over the whole feature branch before its pull request opens.`,
-    `\nTRACK YOUR WORK: use the \`task_create\` / \`task_update\` host tools (the "atlasbridge" MCP server) to` +
-      ` keep a live checklist the operator can watch — up front, \`task_create\` one task for each step below,` +
-      ` then \`task_update({ taskId, status: "in_progress" })\` as you start each and \`"completed"\` when it's` +
-      ` done (\`task_create\` returns the id to pass back). Keep exactly one task in_progress at a time.`,
+    `\nTRACK YOUR WORK: ${CODEX_TASK_LIST_NOTE} Up front, \`task_create\` one task for each step below.`,
     `\n1. Review the whole merged diff: \`git diff origin/${repo.defaultBranch}...HEAD\`. Look for real,` +
       ` in-scope defects — correctness bugs, security issues, and cross-thread integration mistakes (where` +
       ` two threads' changes don't line up). Ignore style nits and anything outside this feature's scope.`,

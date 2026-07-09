@@ -89,6 +89,19 @@ export const TASK_LIST_NOTE =
   "and drop ones that become moot (`TaskUpdate` with `status:'deleted'`). A stale checklist is worse than none.";
 
 /**
+ * CODEX task-list discipline — the Codex-tool-name SIBLING of {@link TASK_LIST_NOTE}. Codex threads drive the
+ * live checklist through the host bridge's snake_case `task_create`/`task_update` tools (the "atlasbridge" MCP
+ * server), NOT Claude Code's `TaskCreate`/`TaskUpdate`, so the two notes stay distinct. Shared by the Codex
+ * master-review persona (`ship.group`) and the driver's master-review task body. Each consumer prepends its own
+ * lead-in ("TASK LIST — " / "TRACK YOUR WORK: ") and appends its own seeding rule.
+ */
+export const CODEX_TASK_LIST_NOTE =
+  'keep a live checklist via the `task_create` / `task_update` host tools (from the "atlasbridge" MCP ' +
+  'server) so the operator can watch your progress: `task_create` returns a task id, and ' +
+  '`task_update({ taskId, status: "in_progress" })` as you start each item and `"completed"` when it is ' +
+  'done, keeping exactly one task in_progress at a time.';
+
+/**
  * The canonical "what a code review covers" list — the single home so every review surface (the ship-time
  * master review + the `review` subagent) hunts the SAME dimensions and the final gate can't be narrower
  * than the per-step one. A noun-phrase list meant to slot into "find …". The autofix lenses
@@ -111,6 +124,29 @@ export const MONOREPO_VERIFY_HINT =
   "In a monorepo/workspace the real typecheck/build/test commands often live in a sub-package's " +
   'package.json or the workspace config (turbo/nx/pnpm/lerna workspaces), NOT a single root script — check ' +
   "the sub-packages; do not conclude 'no tests' from the root package.json alone.";
+
+/**
+ * COMMIT + PUSH — the writer session owns its commit; the host reads what you leave and does NOT commit for
+ * you, so leave a CLEAN tree before asserting completion. The single home for this instruction: the driver's
+ * task builders re-export it as `COMMIT_AND_PUSH_INSTRUCTION` (with a leading newline for their inline splice)
+ * and any prompt-kit persona can splice it directly.
+ */
+export const COMMIT_AND_PUSH_NOTE =
+  'COMMIT YOUR WORK (required — the host does NOT commit for you): once the work is done and verified, run ' +
+  "`git add -A` (your `.gitignore` governs what's tracked; if build or cache junk appears in `git status`, " +
+  'add it to `.gitignore` instead of committing it), commit with a clear message, and `git push` your ' +
+  'branch. Leave the working tree CLEAN. THEN call `complete_thread`. If you finish without committing, your ' +
+  'work is treated as unfinished.';
+
+/**
+ * GIT SAFETY — the destructive-command prohibition every git-running persona/turn shares. The single home so
+ * the in-sandbox open-PR turn (`turns/ship-open-pr.ts`) and the ship-time master-review persona (`ship.group`)
+ * carry the SAME guardrail. Ends at "git config."; a consumer that also resolves conflicts (the open-PR turn)
+ * appends its own "make no code changes beyond a clean conflict resolution" clause after this.
+ */
+export const GIT_SAFETY_NOTE =
+  'GIT SAFETY: NEVER run destructive or irreversible git commands (`push --force`, `reset --hard`, history ' +
+  'rewrites, etc.) unless explicitly instructed. Never skip hooks (`--no-verify`) and never touch git config.';
 
 /**
  * DOCS BEFORE GREP — orient off the repo's own docs before spelunking. Shared by the brain (orientation.group)

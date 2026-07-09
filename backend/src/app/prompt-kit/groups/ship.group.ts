@@ -8,7 +8,9 @@ import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
   CLOUD_SANDBOX_NOTE,
+  CODEX_TASK_LIST_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
+  GIT_SAFETY_NOTE,
   REVIEW_SCOPE_NOTE,
   SOLE_AUTHOR_NOTE,
   TS_STYLE_NOTE,
@@ -60,6 +62,13 @@ export class ShipGroup {
     );
   }
 
+  /** Git safety — the master review runs git ops (commit + push), so it carries the same destructive-command
+   *  guardrail as the open-PR turn. */
+  @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 105 })
+  gitSafety(): string {
+    return GIT_SAFETY_NOTE;
+  }
+
   /** Commit + push your own fixes; do not open the PR. */
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 106 })
   commitAndPush(): string {
@@ -75,11 +84,10 @@ export class ShipGroup {
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 108 })
   taskList(): string {
     return (
-      'TASK LIST — keep a live checklist via the `task_create` / `task_update` host tools (from the ' +
-      '"atlasbridge" MCP server) so the operator can watch your progress. Up front, `task_create` one task ' +
-      'per phase (e.g. "Review the merged diff", "Apply fixes", "Verify + live smoke"); mark exactly one ' +
-      '`task_update({ taskId, status: "in_progress" })` as you work it and `"completed"` when done. ' +
-      '`task_create` returns the task id to pass back to `task_update`.'
+      'TASK LIST — ' +
+      CODEX_TASK_LIST_NOTE +
+      ' Up front, `task_create` one task per phase (e.g. "Review the merged diff", "Apply fixes", ' +
+      '"Verify + live smoke").'
     );
   }
 
