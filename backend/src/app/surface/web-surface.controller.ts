@@ -2181,6 +2181,9 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean }> {
     // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable.
     const job = await this.requireThread(jobId, org.id);
+    if (prAction != null && prAction !== 'close' && prAction !== 'leave') {
+      throw new BadRequestException("prAction must be 'close' or 'leave'");
+    }
     if (prAction === 'close') {
       try {
         await this.threadLifecycle.closeJobPullRequest(job);

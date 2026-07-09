@@ -224,4 +224,20 @@ describe('DELETE /web/orgs/:orgId/repos/:repoId/jobs/:jobId?prAction=… (live P
     // eslint-disable-next-line no-console -- evidence: dump the OBSERVED leave result.
     console.log('OBSERVED leave:', JSON.stringify({ status: res.status, body: res.body, ghCalls: gh.calls, row }, null, 2));
   });
+
+  it('rejects an invalid prAction without claiming the delete', async () => {
+    const jobId = '88888888-8888-4888-8888-888888888806';
+    await seedOpenPrJob(jobId, 104);
+    gh.shouldThrow = false;
+    gh.calls = [];
+
+    const res = await request(server)
+      .delete(`/web/orgs/${ORG}/repos/${REPO}/jobs/${jobId}?prAction=merge`)
+      .set('Cookie', ownerCookie);
+
+    expect(res.status).toBe(400);
+    expect(gh.calls).toEqual([]);
+    const row = await jobRow(jobId);
+    expect(row?.status).toBe('running');
+  });
 });

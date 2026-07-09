@@ -466,19 +466,21 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
     expect(closePullRequest).not.toHaveBeenCalled();
   });
 
-  it('no-ops when pr_state is open but pr_number is null', async () => {
+  it('throws when pr_state is open but pr_number is null', async () => {
     const { svc, closePullRequest } = makeServiceForClose({
       id: 'repo-1',
       git_url: 'https://github.com/acme/app.git',
     });
 
-    await svc.closeJobPullRequest({
-      id: 'job-1',
-      org_id: 'T1',
-      repo_id: 'repo-1',
-      pr_state: 'open',
-      pr_number: null,
-    } as JobEntity);
+    await expect(
+      svc.closeJobPullRequest({
+        id: 'job-1',
+        org_id: 'T1',
+        repo_id: 'repo-1',
+        pr_state: 'open',
+        pr_number: null,
+      } as JobEntity),
+    ).rejects.toThrow(/missing PR number/);
 
     expect(closePullRequest).not.toHaveBeenCalled();
   });
@@ -497,7 +499,7 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
       pr_number: 9,
     } as JobEntity);
 
-    expect(projects.findOne).toHaveBeenCalledWith({ where: { id: 'repo-1' } });
+    expect(projects.findOne).toHaveBeenCalledWith({ where: { id: 'repo-1', org_id: 'T1' } });
     expect(githubToken).toHaveBeenCalledWith('T1');
     expect(closePullRequest).toHaveBeenCalledWith('TOK', {
       owner: 'acme',

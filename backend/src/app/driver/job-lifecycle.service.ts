@@ -483,8 +483,11 @@ export class JobLifecycleService {
 
   /** Close the job's OPEN PR on GitHub (no merge). Throws if it can't — the caller aborts the delete. */
   async closeJobPullRequest(job: JobEntity): Promise<void> {
-    if (job.pr_state !== 'open' || job.pr_number == null) return; // nothing open to close — no-op
-    const repo = await this.projects.findOne({ where: { id: job.repo_id } });
+    if (job.pr_state !== 'open') return; // nothing open to close — no-op
+    if (job.pr_number == null) {
+      throw new Error(`cannot close PR for job ${job.id}: missing PR number`);
+    }
+    const repo = await this.projects.findOne({ where: { id: job.repo_id, org_id: job.org_id } });
     const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
     const token = await this.creds.githubToken(job.org_id);
     if (!parsed || !token) {

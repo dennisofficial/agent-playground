@@ -105,10 +105,9 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   // Prefer the pipeline job; fall back to the sidebar feed (resolves earlier). null = genuinely unknown.
   const prState = job?.prState ?? inboxThread?.pr?.state ?? null;
+  const prUrl = job?.prUrl ?? inboxThread?.pr?.url ?? null;
   const prNumber = job?.prNumber ?? null;
-  // Mirror the prState-only PR-presence signal used elsewhere (navigator.tsx): a partially-recorded
-  // open PR can carry prState/prNumber with a null prUrl, and closing needs only the number.
-  const hasOpenPr = prState === "open";
+  const hasOpenPr = prState === "open" && Boolean(prUrl);
   // PR state is "known" once EITHER source has resolved; until then, block delete (don't leave-orphan).
   const prStateKnown = job != null || inboxThread != null;
   const [prDialogOpen, setPrDialogOpen] = useState(false);
