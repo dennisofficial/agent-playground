@@ -281,7 +281,15 @@ export function TranscriptView({
   // the callback passed to useTailFollow stays stable while still reaching the freshly-built `virtualizer`
   // (which itself depends on the scrollRef useTailFollow returns — the ref breaks that render-order cycle).
   const pinRef = useRef<() => void>(() => {});
-  const { scrollRef, endRef, showJump, jumpToLatest, onScroll } = useTailFollow(
+  const {
+    scrollRef,
+    endRef,
+    showJump,
+    jumpToLatest,
+    onScroll,
+    onPointerOver,
+    onPointerLeave,
+  } = useTailFollow(
     [
       messages.length,
       live,
@@ -336,6 +344,8 @@ export function TranscriptView({
       <div
         ref={scrollRef}
         onScroll={onScroll}
+        onPointerOver={onPointerOver}
+        onPointerLeave={onPointerLeave}
         className="h-full overflow-y-auto px-7 pt-5"
       >
         <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
@@ -736,6 +746,11 @@ function buildLogItems(
 
     const push = (node: React.ReactNode) =>
       nodes.push({ key: message.ts, node });
+    // Interactive cards (buttons/inputs the operator clicks) are wrapped in `data-tailpause` so hovering
+    // ANYWHERE on the card — not just its controls — suspends tail-follow (see useTailFollow), keeping the
+    // target still under the cursor while tokens stream in.
+    const pushCard = (node: React.ReactNode) =>
+      push(<div data-tailpause>{node}</div>);
     switch (c.kind) {
       case "user":
         push(
@@ -757,7 +772,7 @@ function buildLogItems(
         );
         break;
       case "approval":
-        push(
+        pushCard(
           <ApprovalCardView
             key={message.ts}
             card={c.card}
@@ -767,30 +782,40 @@ function buildLogItems(
         );
         break;
       case "verdict":
-        push(<VerdictCardView key={message.ts} card={c.card} />);
+        pushCard(<VerdictCardView key={message.ts} card={c.card} />);
         break;
       case "question":
-        push(
+        pushCard(
           <QuestionCardView key={message.ts} card={c.card} jobRef={jobRef} />,
         );
         break;
       case "secret":
-        push(<SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "mcp_proposal":
-        push(<McpProposalCard key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <McpProposalCard key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "skill_proposal":
-        push(<SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "ticket":
-        push(<TicketCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <TicketCardView key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "file":
-        push(<FileCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <FileCardView key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "review_comments":
-        push(
+        pushCard(
           <ReviewCommentsCardView
             key={message.ts}
             card={c.card}
@@ -799,7 +824,7 @@ function buildLogItems(
         );
         break;
       case "attachments":
-        push(
+        pushCard(
           <AttachmentsCardView
             key={message.ts}
             card={c.card}
