@@ -1676,7 +1676,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const acted = await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
 
     expect(acted).toBe(true);
-    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, FAKE_RECORD_ID, 'U-OP');
+    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, FAKE_RECORD_ID, 'U-OP', 'plan');
     expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(runningJob);
   });
 
@@ -1754,7 +1754,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       } as never,
     );
 
-    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, 'rec-CLICKED', 'U-OP');
+    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, 'rec-CLICKED', 'U-OP', 'plan');
   });
 
   type PrepareRepropose = { prepareRepropose(jobId: string): Promise<{ refuse?: string }> };

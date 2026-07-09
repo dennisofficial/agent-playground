@@ -450,6 +450,13 @@ export interface PipelineJob {
   kind: WireJobKind;
   status: WireJobStatus;
   halt: WireJobHalt | null;
+  /**
+   * Which build path was committed at approval: `'direct'` (fast, brain-implemented) | `'plan'` (driver
+   * multi-thread) | `null` (never approved — still an open/awaiting-approval proposal that could become
+   * either). The navigator reads this to suppress the plan-oriented empty-state placeholders (build lanes,
+   * `plan.md`, generated docs) for a direct build, where they never apply. Absent on very old payloads.
+   */
+  buildPath?: "direct" | "plan" | null;
   decisionRecordId: string | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
