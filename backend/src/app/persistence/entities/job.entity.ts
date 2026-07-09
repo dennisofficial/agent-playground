@@ -155,7 +155,7 @@ export class JobEntity extends TimestampedEntity {
    * operator value for, or null. Kept SEPARATE so the two human-input lanes don't collide and so secret
    * delivery keeps its own crash-safe lifecycle (still single-slot — at most one secret request at a time). Set
    * atomically with the secret card by `request_secret` (`BrainStoreService.openSecretRequest`). The value
-   * itself NEVER lands here or in the transcript — it goes straight to the encrypted `WorktreeSecretFileStore`
+   * itself NEVER lands here or in the transcript — it goes straight to the encrypted `WorkspaceSecretFileStore`
    * via the `provide-secret` endpoint, which stamps the card `provided_at`; this gate is cleared only once
    * the masked-confirmation delivery turn succeeds (so a crash mid-delivery re-delivers on boot).
    */

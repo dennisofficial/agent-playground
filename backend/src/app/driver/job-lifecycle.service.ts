@@ -544,6 +544,25 @@ export class JobLifecycleService {
   }
 
   /**
+   * Apply an authoritative GitHub PR state to a job: terminal `pr_state` write (authoritative sidebar
+   * glyph) FIRST, then ledger reconcile on merge, then sandbox teardown. Ordering is load-bearing:
+   * `reconcileLedgerOnMerge` reads the base checkout (not the worktree) so it must run pre-teardown;
+   * `closeJob` is last. Idempotent — an `open` state is a no-op; `gone` (PR/repo deleted) folds to `closed`.
+   * Shared by the `pull_request` webhook (fast path) and `pollPrClosures` (30-min backstop) so they can't drift.
+   */
+  async applyGithubPrState(
+    job: JobEntity,
+    state: 'open' | 'merged' | 'closed' | 'gone',
+  ): Promise<'closed' | 'noop'> {
+    if (state === 'open') return 'noop';
+    const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
+    await this.jobs.update({ id: job.id }, { pr_state: prState });
+    if (state === 'merged') await this.reconcileLedgerOnMerge(job.org_id, job.repo_id);
+    await this.closeJob(job.id, job.org_id);
+    return 'closed';
+  }
+
+  /**
    * Poll the PR of every thread that has one (the PR lives on the THREAD now) whose sandbox isn't
    * `closed`; when it has merged or closed (or was deleted), `closeJob` to reclaim the container +
    * worktree. Best-effort per thread. Returns how many threads were closed.
@@ -564,21 +583,9 @@ export class JobLifecycleService {
           repo: parsed.repo,
           number: thread.pr_number,
         });
-        if (state !== 'open') {
+        const outcome = await this.applyGithubPrState(thread, state);
+        if (outcome === 'closed') {
           this.logger.log(`thread ${thread.id} PR #${thread.pr_number} is ${state} — closing thread`);
-          // Latch the terminal PR lifecycle for the sidebar glyph (purple merged / red closed) BEFORE the
-          // sandbox teardown — this is the authoritative observer, so purple/red are immediate and don't
-          // wait on a separately-fired reconcile pass. `gone` (PR/repo deleted) reads as closed. The JOB
-          // ROW SURVIVES — only the sandbox is torn down (see closeJob); merged jobs stay as "truly done".
-          const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
-          await this.jobs.update({ id: thread.id }, { pr_state: prState });
-          // On MERGE, the thread's promoted decisions are now canonical on the default branch: reconcile
-          // the repo's ledger manifest (proposed→accepted + human-edit detection). Reads the base checkout,
-          // not this thread's worktree, so it's safe to run before closeJob tears the worktree down.
-          if (state === 'merged') {
-            await this.reconcileLedgerOnMerge(thread.org_id, thread.repo_id);
-          }
-          await this.closeJob(thread.id, thread.org_id);
           closed++;
         }
       } catch (err) {
@@ -804,7 +811,7 @@ export class JobLifecycleService {
 
   /**
    * Stamp a repo's `onboarded_at` — proof its worktree provisioning config is live. Called from exactly
-   * one place: the brain's `finish_onboarding`, synchronously — secrets and worktree config (mounts/seed)
+   * one place: the brain's `finish_onboarding`, synchronously — secrets and workspace config (mounts/seed)
    * are DB-backed now (see docs/adr/0003), so there is no PR-merge event to wait on. Idempotent (only
    * stamps when currently null).
    */

@@ -885,7 +885,7 @@ export class SandboxManager implements SandboxProvider {
    *   - `shared-ro`  → one read-only dir per repo (`_shared`).
    *   - `shared-rw`  → one read-WRITE dir per repo (`_shared-rw`) — persistent auth STATE (e.g. `.gcloud`)
    *     reused by every job for the repo; set up once, survives sandbox reap. The concurrent-writer race
-   *     is accepted (see sandbox/container-paths.ts and onboarding/worktree-config.store.ts).
+   *     is accepted (see sandbox/container-paths.ts and onboarding/workspace-config.store.ts).
    */
   private cacheMountBinds(input: SandboxAttachInput): string[] {
     const mounts = input.mounts ?? [];

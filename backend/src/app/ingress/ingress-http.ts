@@ -13,6 +13,8 @@ import type {
   RawNotification,
 } from '../domain';
 import type { IntakeOutcome, StimulusIntake } from '../stimulus';
+import type { GithubPrStateSync } from '../driver';
+import type { GithubNotificationSource } from './github-notification.source';
 
 /** Express request shape the ingress controllers read (rawBody enabled on the Nest app). */
 export interface RawBodyRequest {
@@ -55,6 +57,9 @@ export function toRawNotification(req: RawBodyRequest): RawNotification {
  *  - rejected:bad-signature / unverifiable → 401
  *  - rejected:unroutable  → 404
  *  - rejected:malformed   → 400
+ *
+ * A `pr-sync` outcome can never reach this path — `adapter.handle()` no longer emits one (see
+ * `runPrWebhook`, the silent PR-state front door's counterpart).
  */
 export async function runIngress(
   logger: Logger,
@@ -72,6 +77,10 @@ export async function runIngress(
     logger.debug(`${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`);
     return { status: 'ignored', reason: result.reason };
   }
+  if (result.outcome !== 'accepted') {
+    // Unreachable via `handle()` (only `handlePrWebhook` emits 'pr-sync') — kept for exhaustiveness.
+    return { status: 'ignored', reason: 'unsupported' };
+  }
 
   const outcome: IntakeOutcome = await intake.intakeEvent(result.event);
   if (!outcome.admitted) {
@@ -82,6 +91,35 @@ export async function runIngress(
     stimulusId: outcome.stimulusId,
     jobId: outcome.jobId,
   };
+}
+
+/**
+ * Run the GitHub adapter's PR-state front door (`/webhooks/github`): verify + route, parse a
+ * `pull_request` event into a `PrStateDelta`, and dispatch it straight to the silent
+ * `GithubPrStateSync` — this path never touches `StimulusIntake`.
+ */
+export async function runPrWebhook(
+  logger: Logger,
+  adapter: GithubNotificationSource,
+  req: RawBodyRequest,
+  prSync: GithubPrStateSync,
+): Promise<Record<string, unknown>> {
+  const result: IngressResult = await adapter.handlePrWebhook(toRawNotification(req));
+
+  if (result.outcome === 'rejected') {
+    logger.warn(`${adapter.source} rejected (${result.reason}): ${result.detail ?? ''}`);
+    throw rejectionToHttp(result.reason, result.detail);
+  }
+  if (result.outcome === 'ignored') {
+    logger.debug(`${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`);
+    return { status: 'ignored', reason: result.reason };
+  }
+  if (result.outcome === 'pr-sync') {
+    await prSync.dispatch(result.delta);
+    return { status: 'accepted' };
+  }
+
+  return { status: 'ignored', reason: 'unsupported' };
 }
 
 function rejectionToHttp(

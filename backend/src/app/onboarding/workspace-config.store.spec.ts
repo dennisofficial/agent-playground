@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { OrgWorktreeMountEntity, RepoEntity } from '../persistence/entities';
-import { WorktreeConfigStore } from './worktree-config.store';
+import type { OrgWorkspaceMountEntity, RepoEntity } from '../persistence/entities';
+import { WorkspaceConfigStore } from './workspace-config.store';
 
 /** A tiny in-memory stand-in for a TypeORM repository (composite-key find/save/update/delete). */
 function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> & { rows: T[] } {
@@ -39,14 +39,14 @@ function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> & { rows: T
 const ORG = 'org-1';
 const REPO = 'repo-1';
 
-describe('WorktreeConfigStore', () => {
-  let store: WorktreeConfigStore;
+describe('WorkspaceConfigStore', () => {
+  let store: WorkspaceConfigStore;
   let repos: Repository<RepoEntity> & { rows: RepoEntity[] };
 
   beforeEach(() => {
     repos = memRepo<RepoEntity>(['id']);
-    store = new WorktreeConfigStore(
-      memRepo<OrgWorktreeMountEntity>(['org_id', 'repo_id', 'path']),
+    store = new WorkspaceConfigStore(
+      memRepo<OrgWorkspaceMountEntity>(['org_id', 'repo_id', 'path']),
       repos,
     );
   });

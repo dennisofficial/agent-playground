@@ -6,14 +6,14 @@ import { RepoEntity } from './repo.entity';
 /**
  * A per-repo secret FILE the worktree hydrator renders into a sandbox (`.env.keys`, a GCP
  * service-account JSON, …). This single row IS the value, the authority, AND the render instruction —
- * it replaces the old two-table split (a named `OrgWorktreeSecret` value + a separate
- * `OrgWorktreeSecretGrant` authorising it for a repo+path). In practice every secret was a strict
+ * it replaces the old two-table split (a named `OrgWorkspaceSecret` value + a separate
+ * `OrgWorkspaceSecretGrant` authorising it for a repo+path). In practice every secret was a strict
  * 1-value-↔-1-grant pair bound to one destination, so the value/authority separation bought nothing
  * and forced two confusing invalid states ("granted but no value", "value but no grant").
  *
  * The value column stores AES-256-GCM ciphertext (`secret-cipher.ts`) — plaintext NEVER lands in a
  * column or a log, exactly like {@link OrgCredentialsEntity}. Resolved through
- * {@link WorktreeSecretFileStore}.
+ * {@link WorkspaceSecretFileStore}.
  *
  * The ADR-0003 "committed file is a request, never authority" property is preserved: a row existing
  * IS the owner's authorisation to render that file; a repo-controlled `.atlas/worktree.json` (which
@@ -22,10 +22,10 @@ import { RepoEntity } from './repo.entity';
  * Composite PK (org_id, repo_id, path): the destination path is the file's identity. `repo_id` is the
  * `repos.id` uuid (the FK identity), NOT the slug.
  */
-@Entity({ name: 'org_worktree_secret_files' })
+@Entity({ name: 'org_workspace_secret_files' })
 @Index(['org_id'])
 @Index(['org_id', 'repo_id'])
-export class OrgWorktreeSecretFileEntity extends TimestampedEntity {
+export class OrgWorkspaceSecretFileEntity extends TimestampedEntity {
   /** The owning org (FK → organizations). */
   @PrimaryColumn({ type: 'uuid' })
   org_id!: string;

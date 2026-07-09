@@ -3,25 +3,25 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { OrgWorktreeSecretFileEntity } from '../persistence/entities';
+import { OrgWorkspaceSecretFileEntity } from '../persistence/entities';
 import { decryptSecret, encryptSecret, loadSecretsKey } from './secret-cipher';
 
 /** A secret file's identity + display label (never its value). */
-export interface WorktreeSecretFileRef {
+export interface WorkspaceSecretFileRef {
   repoId: string;
   path: string;
   label?: string | null;
 }
 
 /** A repo-scoped secret file ref plus its `updated_at` epoch ms — for cheap re-hydration sig. */
-export interface WorktreeSecretFileVersion {
+export interface WorkspaceSecretFileVersion {
   path: string;
   label?: string | null;
   updatedAt: number;
 }
 
 /**
- * The encrypt-on-write / decrypt-on-read path for per-repo worktree secret FILES. Mirrors {@link
+ * The encrypt-on-write / decrypt-on-read path for per-repo workspace secret FILES. Mirrors {@link
  * TenantCredentialStore}: AES-256-GCM via `secret-cipher`, values never logged,
  * `SECRETS_ENCRYPTION_KEY` required to write/read a value.
  *
@@ -32,12 +32,12 @@ export interface WorktreeSecretFileVersion {
  * — never values.
  */
 @Injectable()
-export class WorktreeSecretFileStore {
-  private readonly logger = new Logger(WorktreeSecretFileStore.name);
+export class WorkspaceSecretFileStore {
+  private readonly logger = new Logger(WorkspaceSecretFileStore.name);
 
   constructor(
-    @InjectRepository(OrgWorktreeSecretFileEntity, DB_CONNECTION)
-    private readonly files: Repository<OrgWorktreeSecretFileEntity>,
+    @InjectRepository(OrgWorkspaceSecretFileEntity, DB_CONNECTION)
+    private readonly files: Repository<OrgWorkspaceSecretFileEntity>,
     private readonly env: EnvService,
   ) {}
 
@@ -46,7 +46,7 @@ export class WorktreeSecretFileStore {
   }
 
   /** All secret files for an org (paths + labels, never values), optionally scoped to one repo. */
-  async list(orgId: string, repoId?: string): Promise<WorktreeSecretFileRef[]> {
+  async list(orgId: string, repoId?: string): Promise<WorkspaceSecretFileRef[]> {
     const rows = await this.files.find({
       where: repoId ? { org_id: orgId, repo_id: repoId } : { org_id: orgId },
       select: ['repo_id', 'path', 'label'],
@@ -59,7 +59,7 @@ export class WorktreeSecretFileStore {
    * re-hydration sig computation. A rotated value bumps `updated_at`, so the sig changes and the next
    * attach re-renders it; an added/removed row changes the path set.
    */
-  async listForRepo(orgId: string, repoId: string): Promise<WorktreeSecretFileVersion[]> {
+  async listForRepo(orgId: string, repoId: string): Promise<WorkspaceSecretFileVersion[]> {
     const rows = await this.files.find({
       where: { org_id: orgId, repo_id: repoId },
       select: ['path', 'label', 'updated_at'],
@@ -95,12 +95,12 @@ export class WorktreeSecretFileStore {
     row.value_enc = encryptSecret(value, key);
     if (label !== undefined) row.label = label;
     await this.files.save(row);
-    this.logger.log(`wrote worktree secret file org=${orgId} repo=${repoId} path=${path}`);
+    this.logger.log(`wrote workspace secret file org=${orgId} repo=${repoId} path=${path}`);
   }
 
   /** Delete a secret file at (orgId, repoId, path). */
   async delete(orgId: string, repoId: string, path: string): Promise<void> {
     await this.files.delete({ org_id: orgId, repo_id: repoId, path });
-    this.logger.log(`deleted worktree secret file org=${orgId} repo=${repoId} path=${path}`);
+    this.logger.log(`deleted workspace secret file org=${orgId} repo=${repoId} path=${path}`);
   }
 }

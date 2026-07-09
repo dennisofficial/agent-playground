@@ -127,7 +127,7 @@ beyond observing + interjecting the current build turn is 🟡 limited (see §6)
 | Answer a question card | `POST …/jobs/:jobId/answer-question` | brain (`answer`) | ✅ |
 | Provide a secret | `POST …/jobs/:jobId/provide-secret` | encrypted store + grant (onboarding) | ✅ |
 | Live observability | `GET …/repos/:repoId/events` (SSE) + `GET /web/jobs/realtime` | outbound stream (chat + cards + build events; cross-org "needs you") | ✅ |
-| Automated event | `POST /ingress/github`, `/ingress/webhook` | event intake → **spawns a job** (§7) | ✅ |
+| Automated event | `POST /ingress/github`, `/ingress/webhook` | event intake → **route to the owning job, else seed a new one** (§7) | ✅ |
 | Retry / resume a halted build | `POST …/jobs/:jobId/retry` | `ThreadDriver.resumePaused` | ✅ |
 | Interject the current build turn | build transcript composer (`say`) | folded in at the next turn boundary | 🟡 in-turn interject only |
 | Pause / revert step / NL steering ("undo that step", "simplify the rest") | — | driver | ⛔ not built |
@@ -139,20 +139,25 @@ Everything a repo needs to be a **runnable, correctly-configured workspace** is 
 
 | Dimension | Storage | Upkeep tool |
 |---|---|---|
-| Secret files | `org_worktree_secret_files` | `request_secret` / `request_file` / `derive_secret` |
-| Mounts | `org_worktree_mounts` | `write_worktree_config` |
-| Cache folders | mounts (`shared-rw`) + fixed durable HOME binds | `write_worktree_config` |
+| Secret files | `org_workspace_secret_files` | `request_secret` / `request_file` / `derive_secret` |
+| Mounts | `org_workspace_mounts` | `write_workspace_config` |
+| Cache folders | mounts (`shared-rw`) + fixed durable HOME binds | `write_workspace_config` |
 | Setup / SDK installs | `repos.setup_script` | `write_setup_script` |
 | MCP servers | `mcp_servers` | `propose_mcp_servers` (owner-approved) |
 | Skills | `workspace_skills` | `propose_skill` (owner-approved reusable `SKILL.md`) |
 | House style | `convention_profiles` + `repos.convention_profile_slug` | `propose_convention_profile[_change]` (owner-approved) |
 
-The tables stay separate; the unification is at three seams:
+The tables stay separate; the unification is at four seams:
 
 - **Read-model** — `WorkspaceProfileService` (`workspace-profile/`) composes the seven per-dimension stores
-  into one snapshot (`describe` → `render`). No storage of its own; never exposes a secret *value*.
-- **Prompt** — the snapshot is injected into the brain every turn (`ctx.settings.workspaceProfile`) by the
-  single `workspace-profile.group` (was `environment.group`), which names the area, prints the current
+  into one snapshot (`describe` → `render`). No storage of its own; never exposes a secret *value*. It also
+  derives host-visible **gaps** (`computeGaps` → `renderGaps`) the brain can't see from the snapshot — v1:
+  an approved MCP server with an unfilled secret slot (it silently fails auth). Rendered only when present.
+- **Bridge** — every dimension's upkeep tool lives on a dedicated `workspace-profile` MCP bridge
+  (`sandbox/image/workspace-profile-bridge-options.ts`), so the brain addresses them as
+  `mcp__workspace-profile__*` — one coherent section, distinct from the general `atlas-host-bridge`.
+- **Prompt** — the snapshot (+ any gaps) is injected into the brain every turn (`ctx.settings.workspaceProfile`)
+  by the single `workspace-profile.group` (was `environment.group`), which names the area, prints the current
   state, and lists each dimension's upkeep tool.
 - **Lifecycle** — **onboarding is the first BULK pass** over the profile (`isOnboarding` fragments +
   `finish_onboarding`); **every job after keeps it current INCREMENTALLY** — the same upkeep tools live in
@@ -165,20 +170,29 @@ filesystem-settings isolation is preserved while exactly the resolved skills are
 
 ## 7. Event intake — the untrusted firehose
 
-An automated event (CI failure, GitHub/PostHog/Sentry webhook) becomes a **job**. Four **mechanical guards**
-run first — the firehose is hostile and noisy, and these have nothing to do with the job model, so they stay:
+An automated event that becomes or advances work (a CI failure, a review, a PR/issue comment) is **routed to
+the job that already owns its PR/branch — or, when nothing owns it, seeds a new job**
+(`stimulus/stimulus-intake.service.ts:55-161`). Correlation-first: an event carrying a PR# or branch an
+existing job owns is delivered to THAT job's brain (`:69-103`, `resolveOwningJob`); otherwise it seeds a fresh
+job (`:105-149`). This corrects a common misconception that `/ingress/github` *only* creates new jobs — it does
+both. Either way, intake produces a brain **stimulus / harness notification**; it NEVER writes the job's DB
+sync columns (`pr_state` / `pr_url` / `status`) — that is the separate silent PR-state path (below). Four
+**mechanical guards** run first — the firehose is hostile and noisy, and these have nothing to do with the job
+model, so they stay:
 
 - **dedup + rate-limit**, no LLM — a Stripe re-delivery or a Sentry storm must not each pay a turn
   (`stimulus/event-filter.service.ts`).
 - **repo routing** — a webhook carries no `org_id`, so `owner/repo` → connected repo
   (`stimulus/project-routing.service.ts`).
 - **untrusted fence** — the body is DATA, never instructions (`stimulus/untrusted-content.ts`).
-- **seed a job** + first message (stamped `meta.source='system_event'` → the operator-visible **EVENT
-  bubble**) + stimulus row, with a DB unique-index dedupe backstop (`stimulus/stimulus-store.service.ts`).
+- **route or seed** — deliver to the owning job's brain when a PR#/branch correlation matches, else seed a
+  new job + first message (stamped `meta.source='system_event'` → the operator-visible **EVENT bubble**) +
+  stimulus row, with a DB unique-index dedupe backstop (`stimulus/stimulus-store.service.ts`).
 
 **The model:** there is only **one brain per job — its session**. After the guards, an event is delivered to
-the seeded job's brain as a **harness message** — a server-initiated turn (`AgentSessionManager.deliverEvent`
-→ `handleChatTurn`, the same seam the Codex plan-review delivery uses). The brain reads a trusted framing
+the owning (or freshly-seeded) job's brain as a **harness message** — a server-initiated turn
+(`AgentSessionManager.deliverEvent` → `handleChatTurn`, the same seam the Codex plan-review delivery uses).
+The brain reads a trusted framing
 ("an automated {source} notification opened this job — no human sent it…") wrapped around the
 `wrapUntrusted`-fenced body, then triages it **in-session**. There is **no** `Stimulus` union, no
 `StimulusRouter`, and no second event-only brain — those were deleted; the intake sink is the typed
@@ -189,6 +203,51 @@ the seeded job's brain as a **harness message** — a server-initiated turn (`Ag
   boot sweep re-delivering any seeded event still `null`.
 - **Security = the approval card.** **Every** event-spawned plan goes through the same human approval gate —
   no autonomous self-approve/dispatch lane. Untrusted → the brain proposes → a human approves → the harness builds.
+
+### GitHub → Atlas sync — two front doors + a layered model
+
+GitHub deliveries split by **what the event is for**, not just where they land — and PR-state sync is
+**layered / defense-in-depth**, so no single missed signal strands a job in the wrong state. Two axes stay
+distinct throughout: **`pr_state`** (the PR lifecycle — `open | merged | closed`, drives the sidebar glyph)
+is SEPARATE from **`status`** (the build lifecycle, which latches `done` the moment a PR opens and can't tell
+open-vs-merged) — a merge flips `pr_state` only (`persistence/entities/job.entity.ts` `pr_state` :204-214).
+Never conflate them.
+
+**Two front doors** (they carry different kinds of GitHub payload):
+
+- **`/ingress/github` — event → job intake.** Events that become or advance work — CI
+  (`workflow_run` / `check_run` / `check_suite`), `pull_request_review`, review / issue comments (`WORK_EVENTS`,
+  `git/github-pr.service.ts`) — run through `StimulusIntake.intakeEvent` (route-to-owning-job or seed-new,
+  §7 above). These wake a brain.
+- **silent PR-state sync — pure state facts.** A `pull_request` event (opened / closed / merged / reopened) is
+  a *fact* about a PR, not a task: `GithubNotificationSource` classifies it as a `pr-sync` delta
+  (`ingress/ingress-http.ts` `runIngress`) applied by `GithubPrStateSync` →
+  `JobLifecycleService.applyGithubPrState` (`driver/job-lifecycle.service.ts:547`), which writes the sync
+  columns DIRECTLY — `pr_state`; plus `pr_url` / `pr_number` / `status:'done'` when the branch is owned by a
+  job (opened); sandbox teardown on close/merge; `pr_state` back to `open` on reopen. It NEVER touches
+  `StimulusIntake` — a state fact must not wake the brain or seed a job (decision **d2**). A dedicated
+  `/webhooks/github` hook is auto-registered for these `pull_request` events (`STATE_EVENTS`), distinct from
+  the `/ingress/github` work hook (decision **d5**).
+
+**The layers** (fastest first; each is a fallback for the one above):
+
+1. **Fast path — webhooks.** The two front doors deliver in near-real-time.
+2. **Direct-build turn-end latch.** When a `finalize_build` (direct-build) brain turn opens the PR, a turn-end
+   hook immediately runs the existing branch-discovery latch (`BuildShipService.latchPr` → `setPrReady`) to
+   record `pr_url` / `pr_number`, flip `status` `running → done`, and seed the ledger-promotion turn — instead
+   of waiting on the poll (decision **d3**). Fire-and-forget, to avoid a per-job turn-queue deadlock. Full-path
+   `dispatch_build` behavior is unchanged. There is **no** brain-reported-PR-URL tool (decision **d1**);
+   host-side branch discovery (`findOpenPullByHead`) stays the mechanism by which Atlas learns of an opened PR.
+3. **Backstop — the 30-min poll.** `pollPrClosures` + `GitStateReconciler` on the reap timer are retained
+   **UNCHANGED** as the guaranteed *pull* path for missed / undelivered webhooks and for local runs. The
+   webhook fast path and the poll call the SAME `applyGithubPrState`, so they can't drift.
+4. **Delivery — per-repo auto-registration.** Atlas auto-registers the hooks per repo on connect / revalidate
+   (+ a one-time boot backfill for `access_ok` repos), idempotently, always re-PATCHing the secret (GitHub
+   hides the stored one, so drift is undetectable). Registration is **SKIPPED** when `BACKEND_HOST` is
+   unset / localhost / non-public-https (Atlas running locally — GitHub can't deliver there; debug-log, no
+   warning), and degrades gracefully (a checklist warning) when the PAT lacks `admin:repo_hook`. Per-repo (not
+   org-level) because the PAT spans several GitHub orgs with no 1:1 Atlas→org mapping. Webhooks are a
+   best-effort accelerator — layer 3 is always the backstop, never bypassed.
 
 ## 8. Known divergences & tech debt
 

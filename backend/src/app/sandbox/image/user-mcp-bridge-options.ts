@@ -23,13 +23,7 @@ import type { CodexExtraMcpServers } from '../../engine/codex-auth-home';
 import type { ResolvedMcpServer } from '../../engine/engine.types';
 import { mcpHubUrl } from './mcp-hub-config';
 
-/** Server names the system already owns — a user server may not reuse them. */
-const RESERVED_NAMES = new Set([
-  'atlas-host-bridge',
-  'atlasbridge',
-  'atlas-lsp-ts',
-  'context7',
-]);
+import { isReservedMcpName } from './reserved-mcp-names';
 
 export interface UserMcpBridgeOptions {
   /** `{ mcpServers: { <name>: {...} } }` — spread verbatim into the SDK `Options` (Claude). */
@@ -54,7 +48,7 @@ export function buildUserMcpBridgeOptions(
   const codexExtraMcpServers: CodexExtraMcpServers = {};
 
   for (const s of servers) {
-    if (!s.name || RESERVED_NAMES.has(s.name)) continue;
+    if (!s.name || isReservedMcpName(s.name)) continue;
 
     // Per-transport validity gate + the DIRECT Codex block (stdio only) — the hub does not front Codex.
     if (s.transport === 'stdio') {

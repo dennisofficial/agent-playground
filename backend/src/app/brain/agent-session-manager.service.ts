@@ -78,11 +78,11 @@ import {
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/render-plan';
 import { DecisionClassifier } from '../decision-gate';
-import { CredentialResolver, WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
+import { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
 import { SkillFileWriter, SkillResolver, WorkspaceSkillStore } from '../skills';
-import { WorkspaceProfileService } from '../workspace-profile';
+import { WorkspaceProfileService, detectRepoManifests } from '../workspace-profile';
 import {
   isExternalMountPath,
   isReservedContainerPath,
@@ -117,6 +117,7 @@ import {
   type PromotedManifestInput,
 } from './repo-decision-manifest.service';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
+import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
 import {
   BrainTurnAlreadyRunningError,
   TurnRegistry,
@@ -223,6 +224,9 @@ export class AgentSessionManager
   private readonly pendingResetVerify = new Set<string>();
   /** Consecutive autonomous resets — incremented by the tool, cleared ONLY on an operator turn (loop guard). */
   private readonly consecutiveResets = new Map<string, number>();
+  /** Set by `finalize_build` when a direct-build ship is committed and about to open its PR inline; consumed
+   *  by the turn-end latch in `runChatTurn` (records the PR + flips done + promotes the ledger promptly). */
+  private readonly directBuildShipPending = new Map<string, boolean>();
   /** Per-job resolved git auth (repo url + org PAT) for in-sandbox push/fetch — cached; see resolveBrainGitAuth. */
   private readonly gitAuthByJob = new Map<string, { gitUrl: string; token?: string }>();
   /**
@@ -281,9 +285,9 @@ export class AgentSessionManager
     // Crash recovery: back-fill brain turns that completed in-container but never reached `finish()`.
     private readonly turnRecovery: TurnRecoveryService,
     // Repo onboarding: the encrypted per-org secret store + grants the secure `request_secret` flow writes.
-    private readonly secretStore: WorktreeSecretFileStore,
-    // The org+repo-scoped mounts/seed config `write_worktree_config` writes — DB-backed (see docs/adr/0003).
-    private readonly configStore: WorktreeConfigStore,
+    private readonly secretStore: WorkspaceSecretFileStore,
+    // The org+repo-scoped mounts/seed config `write_workspace_config` writes — DB-backed (see docs/adr/0003).
+    private readonly configStore: WorkspaceConfigStore,
     // Used by `finish_onboarding` to decide whether there's an actual repo diff worth shipping a PR for.
     private readonly git: LocalGitService,
     // The fragment-library assembler for the brain's system prompt (ATLAS_MAIN; onboarding is a jobKind).
@@ -1528,10 +1532,38 @@ export class AgentSessionManager
     try {
       await this.runChatTurnInner(stimulus, opts);
     } finally {
+      await this.latchDirectBuildAtTurnEnd(stimulus);
       await this.store
         .setTurnActive(stimulus.jobId, false)
         .catch(() => undefined);
     }
+  }
+
+  /**
+   * DIRECT-BUILD TURN-END LATCH (decision d3). A `finalize_build` in this turn committed the change and
+   * handed the brain `shipOpenPrBody` — the brain then reconciled/pushed/`gh pr create`d inline, so the PR
+   * now exists. Record it + flip `running → done` PROMPTLY here, instead of waiting on the 30-min
+   * `GitStateReconciler` discovery. Runs only when the pending flag was set for this job (consumed here); a
+   * latch MISS leaves the job `running` for that same reconciler backstop.
+   *
+   * Ledger promotion is intentionally NOT done here: `finalize_build` already stamped the promotion spine
+   * complete (the brain promotes via `promote_decisions` before ship), so re-seeding it would just re-fire a
+   * redundant promote + open-PR turn against the already-open PR.
+   */
+  private async latchDirectBuildAtTurnEnd(stimulus: ChatStimulus): Promise<void> {
+    if (!this.directBuildShipPending.delete(stimulus.jobId)) return;
+    const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+    // Mirror the `finalize_build` refusal gate: only a `running` build with an owning feature branch latches.
+    if (!job || job.status !== 'running' || !job.featureBranch) return;
+    const sandbox = await this.lifecycle
+      .findSandbox(job.id, job.orgId)
+      .catch(() => null);
+    const repo = sandbox ? await this.repos.resolve(job).catch(() => null) : null;
+    if (!sandbox || !repo) return;
+    // Follow the LIVE branch (the agent may have `git checkout -b …` mid-build) — `discoverOpenPr` matches
+    // on `sandbox.branch`, so hand it the live branch, mirroring the full ship path.
+    const liveSandbox = { ...sandbox, branch: job.currentBranch ?? sandbox.branch };
+    await this.ship.latchPr(job, repo, liveSandbox).catch(() => undefined);
   }
 
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
@@ -1880,14 +1912,25 @@ export class AgentSessionManager
     // spawns in-container gets the same envelope (Layer B).
     const repoConventions =
       (await this.conventions?.resolveForRepo(stimulus.orgId, stimulus.repoId)) ?? null;
-    // The CURRENT state of this repo's Workspace Profile, rendered for the brain prompt so it can keep the
-    // seven provisioning dimensions current (see `workspace-profile.group`). Null when the service is
-    // absent (unit tests) or the render is empty → the group prints "nothing recorded yet".
-    const workspaceProfile = this.workspaceProfile
-      ? this.workspaceProfile.render(
-          await this.workspaceProfile.describe(stimulus.orgId, stimulus.repoId),
-        )
-      : null;
+    // The CURRENT state of this repo's Workspace Profile + any host-derived GAPS (an approved MCP server
+    // with an unfilled secret slot, or a new dependency manifest the profile hasn't acknowledged) the
+    // brain can't otherwise see. Gaps render ONLY when present, so a healthy profile adds nothing — upkeep
+    // is a concrete conditional signal, not standing prompt prose. Null when the service is absent (unit
+    // tests) or the render is empty → the group prints "nothing recorded yet".
+    let workspaceProfile: string | null = null;
+    if (this.workspaceProfile) {
+      const rendered = this.workspaceProfile.render(
+        await this.workspaceProfile.describe(stimulus.orgId, stimulus.repoId),
+      );
+      const gaps = this.workspaceProfile.renderGaps(
+        await this.workspaceProfile.computeGaps(
+          stimulus.orgId,
+          stimulus.repoId,
+          detectRepoManifests(sandbox.worktreePath),
+        ),
+      );
+      workspaceProfile = gaps ? `${rendered}\n\n${gaps}` : rendered;
+    }
     // This repo's skills, resolved for the brain surface — forwarded on the run args so the in-container
     // engine symlinks each into `<CLAUDE_CONFIG_DIR>/skills/`, natively discovered by the SDK (Layer B,
     // like `userMcpServers`/`repoConventions`).
@@ -3130,6 +3173,11 @@ export class AgentSessionManager
             ),
           );
 
+        // The brain opens the PR inline later in THIS turn; flag the job so the turn-end latch records the
+        // PR + flips running→done the moment the turn completes (decision d3), rather than waiting on the
+        // 30-min reconciler. Ledger promotion is NOT redone at turn-end — it was just stamped complete above.
+        // A latch miss leaves the job running for the reconciler backstop.
+        this.directBuildShipPending.set(jobId, true);
         return {
           ok: true,
           jobId,
@@ -3474,13 +3522,13 @@ export class AgentSessionManager
     // does it all up front in one pass; any other thread does it incrementally, on the fly, whenever it
     // hits the same kind of friction (a missing secret, a repo setup gap worth recording for next time).
     // Every thread can request a missing secret/file on the spot (the owner-gated provide endpoints accept
-    // any job) AND amend the repo's DB-backed worktree config (mounts/seed) — writes land instantly for
-    // every job on the repo, no PR/ship step needed outside the ceremony (see `write_worktree_config`).
+    // any job) AND amend the repo's DB-backed workspace config (mounts/seed) — writes land instantly for
+    // every job on the repo, no PR/ship step needed outside the ceremony (see `write_workspace_config`).
     const intake = {
       request_secret: this.buildRequestSecretTool(stimulus),
       request_file: this.buildRequestFileTool(stimulus),
       withdraw_file_request: this.buildWithdrawFileRequestTool(stimulus),
-      write_worktree_config: this.buildWriteWorktreeConfigTool(stimulus),
+      write_workspace_config: this.buildWriteWorkspaceConfigTool(stimulus),
       write_setup_script: this.buildWriteSetupScriptTool(stimulus),
       derive_secret: this.buildDeriveSecretTool(stimulus),
       reset_sandbox: this.buildResetSandboxTool(stimulus),
@@ -3847,7 +3895,7 @@ export class AgentSessionManager
   }
 
   /**
-   * `write_worktree_config({ mounts })` — AMEND the repo's DB-backed worktree config (the NON-secret
+   * `write_workspace_config({ mounts })` — AMEND the repo's DB-backed workspace config (the NON-secret
    * hydration half: cache/auth mounts; see docs/adr/0003). A pure DB write keyed by org+repo — a mount is
    * upserted by `path` (same path replaces that entry, everything else untouched) — it never
    * blind-overwrites, and it needs no sandbox. This is what makes it safe as an ANY-THREAD tool: the
@@ -3856,13 +3904,13 @@ export class AgentSessionManager
    * OTHER in-flight job's very next hydration instantly — no PR, no wait. Secrets are NEVER written here
    * (they live as encrypted grants); a `secrets` field is rejected. Validated before write.
    */
-  private buildWriteWorktreeConfigTool(stimulus: ChatStimulus): ToolImpl {
+  private buildWriteWorkspaceConfigTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
       if (args['secrets'] !== undefined) {
         return {
           ok: false,
           reason:
-            'secrets do not go in worktree config — use request_secret instead',
+            'secrets do not go in workspace config — use request_secret instead',
         };
       }
       const { mounts: newMounts, warnings } = this.normalizeMounts(args['mounts']);
@@ -3890,7 +3938,7 @@ export class AgentSessionManager
           priorMountSig;
         await this.store.appendSystemEvent(
           stimulus.jobId,
-          `⚙️ Updated worktree config (${mounts.length} mount(s)) — live for every job on this repo immediately.` +
+          `⚙️ Updated workspace config (${mounts.length} mount(s)) — live for every job on this repo immediately.` +
             (mountSetChanged
               ? ' The mount set changed — this sandbox recreates on your NEXT turn (in-container processes/state are lost); configure mounts BEFORE starting a login or other long-running process.'
               : ''),
@@ -3902,7 +3950,7 @@ export class AgentSessionManager
           ...(warnings.length ? { warnings } : {}),
         };
       } catch (err) {
-        this.logger.warn(`write_worktree_config failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(`write_workspace_config failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
@@ -3913,7 +3961,7 @@ export class AgentSessionManager
    * SETUP SCRIPT. The host runs it on every COLD sandbox bring-up (fresh create / restart-from-stopped /
    * `reset_sandbox`) for EVERY future job on this repo — no PR — and skips it on a warm reuse. It MUST be
    * idempotent (it re-runs on each cold boot) and must NOT init submodules (already automatic). org/repo come
-   * from the closure (never tool args) — tenant safety. Writes to the same store as `write_worktree_config`.
+   * from the closure (never tool args) — tenant safety. Writes to the same store as `write_workspace_config`.
    * The right way to test it is `reset_sandbox`, which recreates the container so the script runs cold.
    */
   private buildWriteSetupScriptTool(stimulus: ChatStimulus): ToolImpl {
@@ -3921,6 +3969,12 @@ export class AgentSessionManager
       const script = String(args['script'] ?? '').trim() ? String(args['script']) : null;
       try {
         await this.configStore.setSetupScript(stimulus.orgId, stimulus.repoId, script);
+        // Recording a setup script is an "I've addressed the stack" moment — acknowledge the worktree's
+        // current dependency manifests so a manifest already present stops reading as a NEW stack.
+        if (script) {
+          const sandbox = await this.lifecycle.findSandbox(stimulus.jobId, stimulus.orgId);
+          if (sandbox) await this.refreshSeenManifests(stimulus.orgId, stimulus.repoId, sandbox.worktreePath);
+        }
         await this.store.appendSystemEvent(
           stimulus.jobId,
           script
@@ -3936,6 +3990,20 @@ export class AgentSessionManager
   }
 
   /**
+   * Record the worktree's current dependency manifests as ACKNOWLEDGED (`repos.profile_seen_manifests`) —
+   * the baseline the new-stack gap diffs against (see `WorkspaceProfileService.computeGaps`). Seeded when
+   * onboarding finishes (the bulk pass saw the whole stack) and refreshed when a setup script is recorded.
+   * Best-effort: never throws into the caller.
+   */
+  private async refreshSeenManifests(orgId: string, repoId: string, worktreePath: string): Promise<void> {
+    try {
+      await this.configStore.setSeenManifests(orgId, repoId, detectRepoManifests(worktreePath));
+    } catch (err) {
+      this.logger.warn(`refreshSeenManifests failed for org=${orgId} repo=${repoId}: ${err}`);
+    }
+  }
+
+  /**
    * `propose_mcp_servers({ servers })` — recommend a stack-matched set of MCP servers for the operator to
    * approve, mirroring Anthropic's "Claude Code Setup" plugin. The brain NEVER writes an MCP server itself
    * (that's an owner-only Administer action, gated the same as the console `McpServersController`): this
@@ -3946,16 +4014,6 @@ export class AgentSessionManager
    * system names are rejected. org/repo/job come from the closure (never tool args) — tenant safety.
    */
   private buildProposeMcpServersTool(stimulus: ChatStimulus): ToolImpl {
-    // Names the system already owns (host bridge, LSP, Context7 + the code-index pair) — a user server may
-    // not shadow the orchestration plumbing (mirrors the sandbox render's RESERVED_NAMES + system tier).
-    const RESERVED = new Set([
-      'atlas-host-bridge',
-      'atlasbridge',
-      'atlas-lsp-ts',
-      'context7',
-      'graphify',
-      'cocoindex',
-    ]);
     const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
     const VALID_SURFACES = new Set<McpSurface>(['brain', 'build', 'review']);
     // A secret entry carries NO value (the operator supplies it later via request_secret — invariant). A
@@ -3998,7 +4056,7 @@ export class AgentSessionManager
             reason: `invalid server name "${name}" — use letters/digits/_/- (e.g. github, sentry)`,
           };
         }
-        if (RESERVED.has(name.toLowerCase())) {
+        if (isReservedMcpName(name)) {
           return {
             ok: false,
             reason: `"${name}" is a reserved system server (already provided) — pick a different tool`,
@@ -4239,6 +4297,10 @@ export class AgentSessionManager
           surfaces: s.surfaces,
           enabled: s.enabled,
           secretKeys: s.secretKeys,
+          // Secret-SAFE failure state so a brain that lists servers sees a broken one directly (not only
+          // via the PROFILE GAPS block): `validationError` is a safe message; `needsReauth` is OAuth-only.
+          validationError: s.validationError,
+          needsReauth: s.needsReauth,
         }));
         return {
           ok: true,
@@ -4577,7 +4639,7 @@ export class AgentSessionManager
 
   /**
    * `finish_onboarding({ summary })` — conclude the onboarding session. Posts the operator-visible summary.
-   * Secrets and worktree config (mounts/seed) are ALREADY live the instant they were written (encrypted
+   * Secrets and workspace config (mounts/seed) are ALREADY live the instant they were written (encrypted
    * grants / DB rows — see docs/adr/0003), so `onboarded_at` is stamped immediately regardless. If the
    * ceremony also made an actual repo edit (a script fix, a `.gitignore` change, a dependency bump — real
    * code changes are a normal part of onboarding, not just config), that diff still needs to reach the
@@ -4623,9 +4685,12 @@ export class AgentSessionManager
       // error via `reason` so it can retry (e.g. re-call finish_onboarding) instead of the ceremony
       // silently wedging with no feedback.
       try {
-        // Secrets + worktree config are already durably live (encrypted grants / DB rows) the instant
+        // Secrets + workspace config are already durably live (encrypted grants / DB rows) the instant
         // they were written — onboarding is marked done regardless of whether there's a code diff to ship.
         await this.lifecycle.markRepoOnboarded(stimulus.orgId, stimulus.repoId);
+        // Seed the new-stack baseline: the bulk pass has seen the whole stack, so acknowledge every
+        // dependency manifest now — future jobs only flag manifests that appear AFTER this.
+        await this.refreshSeenManifests(stimulus.orgId, stimulus.repoId, sandbox.worktreePath);
 
         const hasChanges = await this.git.hasChanges(sandbox.worktreePath);
         if (!hasChanges) {
@@ -4695,7 +4760,7 @@ export class AgentSessionManager
     };
   }
 
-  /** Coerce `write_worktree_config` mounts arg into validated {path, mode} specs (drops malformed entries). */
+  /** Coerce `write_workspace_config` mounts arg into validated {path, mode} specs (drops malformed entries). */
   private normalizeMounts(raw: unknown): {
     mounts: { path: string; mode: MountMode }[];
     warnings: string[];
@@ -5400,7 +5465,7 @@ export class AgentSessionManager
       'bring-up will take a while and a lot of tokens, and ask for their go-ahead via ask_question before ' +
       'proceeding. STOP and wait for their response. Only after they green-light it: bring up and validate ' +
       'the fleet, register required secrets via request_secret, record non-secret config with ' +
-      'write_worktree_config, propose any stack-matched MCP servers for the owner to approve via ' +
+      'write_workspace_config, propose any stack-matched MCP servers for the owner to approve via ' +
       'propose_mcp_servers, match the repo against the org house-style profiles (list_convention_profiles → ' +
       'propose_convention_profile with the best-matching slug, or "none" if it follows none), then call ' +
       'finish_onboarding.';
@@ -5831,7 +5896,7 @@ const RESET_VERIFY_TEXT = [
   'you started (atlas-svc now shows them stopped). Verify the environment cold-boots on this clean box:',
   're-run your setup, bring services back with atlas-svc, and confirm your CLIs + credentials are present with',
   'NO re-install/re-login. Record anything that was lost so the NEXT fresh box has it — a durable dir a tool',
-  'insists on writing OUTSIDE your HOME via write_worktree_config (a worktree-relative or external mount), an',
+  'insists on writing OUTSIDE your HOME via write_workspace_config (a worktree-relative or external mount), an',
   'uncaptured credential via request_secret/derive_secret. This is how you prove onboarding is durable, not',
   'just working-right-now.',
 ].join('\n');

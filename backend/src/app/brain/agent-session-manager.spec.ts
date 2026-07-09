@@ -35,7 +35,8 @@ import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import type { EventStimulus } from '../domain';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
-import type { CredentialResolver, WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
+import type { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
+import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
 import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
@@ -147,12 +148,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     list: vi.fn().mockResolvedValue([]),
     listForRepo: vi.fn().mockResolvedValue([]),
     read: vi.fn().mockResolvedValue(null),
-  } as unknown as WorktreeSecretFileStore;
+  } as unknown as WorkspaceSecretFileStore;
 
   const mockConfigStore = {
     listMounts: vi.fn().mockResolvedValue([]),
     upsertMount: vi.fn().mockResolvedValue(undefined),
-  } as unknown as WorktreeConfigStore;
+  } as unknown as WorkspaceConfigStore;
 
   const mockGit = {
     hasChanges: vi.fn().mockResolvedValue(false),
@@ -760,7 +761,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.preShip).not.toHaveBeenCalled();
   });
 
-  it('write_worktree_config UPSERTS mounts straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
+  it('write_workspace_config UPSERTS mounts straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
     // What the ceremony (or an earlier amendment) already recorded, per the config store.
     (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([
       { path: '.gcloud', mode: 'shared-rw' },
@@ -770,7 +771,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const tools = manager.buildTools(fakeStimulus);
 
     // A build thread discovers it needs ONE new mount — it does NOT resend the existing ones.
-    const result = await tools['write_worktree_config']({
+    const result = await tools['write_workspace_config']({
       mounts: [{ path: '.stripe', mode: 'shared-rw' }],
     });
 
@@ -784,23 +785,23 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(notice).toMatch(/3 mount/);
   });
 
-  it('write_worktree_config upserts by path — re-recording the same path replaces its mode, not a duplicate call', async () => {
+  it('write_workspace_config upserts by path — re-recording the same path replaces its mode, not a duplicate call', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
-    await tools['write_worktree_config']({
+    await tools['write_workspace_config']({
       mounts: [{ path: '.gcloud', mode: 'shared-rw' }], // corrects the mode for an existing path
     });
 
-    // The upsert-by-path semantics live in the store itself (see worktree-config.store.spec.ts); the tool's
+    // The upsert-by-path semantics live in the store itself (see workspace-config.store.spec.ts); the tool's
     // job is just to call it once per entry with the normalized path/mode.
     expect(mockConfigStore.upsertMount).toHaveBeenCalledOnce();
     expect(mockConfigStore.upsertMount).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, '.gcloud', 'shared-rw');
   });
 
-  it('write_worktree_config accepts an ABSOLUTE (external) mount and drops one targeting a reserved container path', async () => {
+  it('write_workspace_config accepts an ABSOLUTE (external) mount and drops one targeting a reserved container path', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
-    const result = await tools['write_worktree_config']({
+    const result = await tools['write_workspace_config']({
       mounts: [
         { path: '/root/.config/gcloud', mode: 'shared-rw' }, // external → recorded verbatim
         { path: '/etc/foo', mode: 'shared-rw' }, // reserved container path → dropped + warned
@@ -812,18 +813,18 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect((result as { warnings?: string[] }).warnings?.some((w) => w.includes('/etc/foo'))).toBe(true);
   });
 
-  it('write_worktree_config rejects a `secrets` field — secrets never go through this tool', async () => {
+  it('write_workspace_config rejects a `secrets` field — secrets never go through this tool', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    const result = await tools['write_worktree_config']({ secrets: [{ name: 'x' }] });
+    const result = await tools['write_workspace_config']({ secrets: [{ name: 'x' }] });
     expect(result).toMatchObject({ ok: false });
     expect(mockConfigStore.upsertMount).not.toHaveBeenCalled();
   });
 
-  it('write_worktree_config NEVER throws on a store failure — warns and hands Atlas the real error to act on', async () => {
+  it('write_workspace_config NEVER throws on a store failure — warns and hands Atlas the real error to act on', async () => {
     (mockConfigStore.upsertMount as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('connect ECONNREFUSED'));
     const tools = manager.buildTools(fakeStimulus);
 
-    const result = await tools['write_worktree_config']({ mounts: [{ path: '.gcloud', mode: 'shared-rw' }] });
+    const result = await tools['write_workspace_config']({ mounts: [{ path: '.gcloud', mode: 'shared-rw' }] });
 
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('ECONNREFUSED') });
     // No misleading "success" notice was posted for a write that never landed.
@@ -927,6 +928,19 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const result = await tools['finish_onboarding']({ summary: 'done', verified: 'too short' });
     expect(result).toMatchObject({ ok: false });
     expect(mockLifecycle.markRepoOnboarded).not.toHaveBeenCalled();
+  });
+
+  // Drift guard: every name the workspace-profile bridge routes MUST be a real, registered tool, or the
+  // entrypoint would advertise a tool that doesn't dispatch. Onboarding is the superset (includes the
+  // convention tools), so it's the right toolset to check membership against.
+  it('WORKSPACE_PROFILE_TOOL_NAMES all resolve to registered tools (no bridge/registration drift)', () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    for (const name of WORKSPACE_PROFILE_TOOL_NAMES) {
+      expect(typeof tools[name], `profile tool "${name}" must be registered`).toBe('function');
+    }
+    // Conversely, reset_sandbox is a real tool but deliberately NOT on the profile bridge.
+    expect(typeof tools['reset_sandbox']).toBe('function');
+    expect(WORKSPACE_PROFILE_TOOL_NAMES as readonly string[]).not.toContain('reset_sandbox');
   });
 
   it('finish_onboarding: no repo diff → marks onboarded, does NOT ship a PR', async () => {
@@ -1691,11 +1705,11 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         list: async () => [],
         listForRepo: async () => [],
         read: async () => null,
-      } as unknown as WorktreeSecretFileStore,
+      } as unknown as WorkspaceSecretFileStore,
       {
         listMounts: async () => [],
         upsertMount: async () => undefined,
-      } as unknown as WorktreeConfigStore,
+      } as unknown as WorkspaceConfigStore,
       { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
@@ -2163,7 +2177,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const opts = reattach.mock.calls[0][2] as { toolBridge: { tools: Record<string, unknown> } };
     const names = Object.keys(opts.toolBridge.tools);
     expect(names).toContain('finish_onboarding');
-    expect(names).toContain('write_worktree_config');
+    expect(names).toContain('write_workspace_config');
     expect(names).not.toContain('propose_plan');
   });
 
@@ -2199,7 +2213,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(tools.request_secret).toBeDefined();
     expect(tools.request_file).toBeDefined();
     expect(tools.derive_secret).toBeDefined();
-    expect(tools.write_worktree_config).toBeDefined();
+    expect(tools.write_workspace_config).toBeDefined();
     expect(tools.finish_onboarding).toBeUndefined();
   });
 
@@ -2410,11 +2424,11 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         list: async () => [],
         listForRepo: async () => [],
         read: async () => null,
-      } as unknown as WorktreeSecretFileStore,
+      } as unknown as WorkspaceSecretFileStore,
       {
         listMounts: async () => [],
         upsertMount: async () => undefined,
-      } as unknown as WorktreeConfigStore,
+      } as unknown as WorkspaceConfigStore,
       { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
@@ -2464,6 +2478,192 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
     const ran = (turn.mock.calls[0][0] as ChatStimulus);
     expect(ran).toMatchObject({ jobId: 'th-followup', orgId: ORG, repoId: REPO, body: 'kick off the follow-up' });
   });
+});
+
+describe('AgentSessionManager — direct-build turn-end latch (decision d3)', () => {
+  const ORG = 'org-latch';
+  const REPO = 'repo-latch';
+  const JOB_ID = 'job-latch-1';
+
+  const stimulus: ChatStimulus = {
+    kind: 'chat',
+    trust: 'trusted',
+    id: 'stim-latch-1',
+    receivedAt: new Date('2026-06-25T00:00:00Z'),
+    orgId: ORG,
+    repoId: REPO,
+    jobId: JOB_ID,
+    body: 'ship it',
+    author: { id: 'U-OP', displayName: 'Operator' },
+    replyRoute: { surfaceId: 'web', jobRef: JOB_ID },
+  };
+
+  /** The default `running` direct-build job the latch acts on (domain shape → camelCase branch fields). */
+  const runningJob = {
+    id: JOB_ID,
+    orgId: ORG,
+    repoId: REPO,
+    status: 'running',
+    featureBranch: 'atlas/feature',
+    currentBranch: 'atlas/live',
+    title: 'Direct build',
+  };
+
+  function makeManager(overrides: {
+    loadJob?: ReturnType<typeof vi.fn>;
+    findSandbox?: ReturnType<typeof vi.fn>;
+    resolve?: ReturnType<typeof vi.fn>;
+    latchPr?: ReturnType<typeof vi.fn>;
+  } = {}) {
+    const store = {
+      loadJob: overrides.loadJob ?? vi.fn().mockResolvedValue(runningJob),
+      setTurnActive: vi.fn().mockResolvedValue(undefined),
+    } as unknown as BrainStoreService;
+    const lifecycle = {
+      findSandbox:
+        overrides.findSandbox ??
+        vi.fn().mockResolvedValue({ id: 'sbx-1', branch: 'atlas/feature', worktreePath: '/wt' }),
+    } as unknown as JobLifecycleService;
+    const ship = {
+      latchPr: overrides.latchPr ?? vi.fn().mockResolvedValue({ url: 'https://gh/pr/9', number: 9 }),
+    } as unknown as BuildShipService;
+    const repos = {
+      resolve:
+        overrides.resolve ??
+        vi.fn().mockResolvedValue({ owner: 'o', repo: 'r', defaultBranch: 'main', token: 't' }),
+    } as unknown as DriverRepoResolver;
+
+    const manager = new AgentSessionManager(
+      store,
+      {} as unknown as DriverStoreService,
+      {} as unknown as MemoryStore,
+      {} as unknown as DecisionApprovalService,
+      lifecycle,
+      {} as unknown as EngineRunnerPort,
+      { listRunning: async () => [] } as never, // turnRegistry
+      {} as unknown as PlanReviewService,
+      {} as unknown as JobDispatcher,
+      { post: vi.fn(), name: 'web' } as unknown as ChatSurface,
+      { findOne: vi.fn(), save: vi.fn() } as unknown as Repository<JobSandboxEntity>,
+      { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
+      {
+        eligiblePendingChat: async () => [],
+        leaseChatStimuli: async () => undefined,
+        markChatDelivered: async () => undefined,
+        undeliveredChatThreads: async () => [],
+        resetChatLeases: async () => undefined,
+      } as never, // stimulusStore
+      noopTurnHarness,
+      {} as unknown as DecisionClassifier,
+      ship,
+      repos,
+      {
+        appendMarker: vi.fn().mockResolvedValue(undefined),
+        drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
+      } as unknown as PipelineAwarenessStore,
+      {} as unknown as TicketService,
+      { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
+      { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
+      {
+        getState: () => 'leader',
+        isLeader: () => true,
+        onPromote: () => ({ unsubscribe() {} }),
+        onDemote: () => ({ unsubscribe() {} }),
+      } as never, // election
+      new DecisionLedgerService(),
+      {
+        recordPromoted: async () => undefined,
+        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
+        reposWithGit: async () => [],
+      } as unknown as RepoDecisionManifestService,
+      { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
+      {
+        write: async () => undefined,
+        list: async () => [],
+        listForRepo: async () => [],
+        read: async () => null,
+      } as unknown as WorkspaceSecretFileStore,
+      { listMounts: async () => [], upsertMount: async () => undefined } as unknown as WorkspaceConfigStore,
+      { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
+      { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
+      { register: () => undefined } as never, // threadInput (ThreadInputService)
+    );
+    return { manager, store, lifecycle, ship, repos };
+  }
+
+  /** Access the private pending-flag map + the turn-end latch method the `runChatTurn` finally calls. */
+  const pending = (m: AgentSessionManager) =>
+    (m as unknown as { directBuildShipPending: Map<string, boolean> }).directBuildShipPending;
+  const runLatch = (m: AgentSessionManager, s: ChatStimulus) =>
+    (m as unknown as { latchDirectBuildAtTurnEnd: (s: ChatStimulus) => Promise<void> }).latchDirectBuildAtTurnEnd(s);
+  const spyPromote = (m: AgentSessionManager) =>
+    vi.spyOn(m as unknown as { reconcileLedgerPromotion: (j: unknown) => Promise<void> }, 'reconcileLedgerPromotion');
+
+  it('flag set + running + owning feature_branch → latches the PR on the LIVE branch (no re-promote)', async () => {
+    const { manager, ship } = makeManager();
+    const promote = spyPromote(manager).mockResolvedValue(undefined);
+    pending(manager).set(JOB_ID, true);
+
+    await runLatch(manager, stimulus);
+
+    // latchPr ran against the LIVE branch (current_branch overrides the host-named feature branch).
+    expect(mock(ship.latchPr)).toHaveBeenCalledOnce();
+    const [, , sandboxArg] = mock(ship.latchPr).mock.calls[0];
+    expect((sandboxArg as { branch: string }).branch).toBe('atlas/live');
+    // Ledger promotion is NOT re-run at turn-end — `finalize_build` stamped it complete inline.
+    expect(promote).not.toHaveBeenCalled();
+    // The flag is CONSUMED (a second turn-end must not re-latch).
+    expect(pending(manager).has(JOB_ID)).toBe(false);
+  });
+
+  it('falls back to the host feature branch when current_branch is null', async () => {
+    const { manager, ship } = makeManager({
+      loadJob: vi.fn().mockResolvedValue({ ...runningJob, currentBranch: null }),
+    });
+    spyPromote(manager).mockResolvedValue(undefined);
+    pending(manager).set(JOB_ID, true);
+
+    await runLatch(manager, stimulus);
+
+    const [, , sandboxArg] = mock(ship.latchPr).mock.calls[0];
+    expect((sandboxArg as { branch: string }).branch).toBe('atlas/feature');
+  });
+
+  it('flag NOT set → no latch, no ledger promotion (a normal chat turn ends untouched)', async () => {
+    const { manager, ship } = makeManager();
+    const promote = spyPromote(manager).mockResolvedValue(undefined);
+
+    await runLatch(manager, stimulus);
+
+    expect(mock(ship.latchPr)).not.toHaveBeenCalled();
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  it('latch MISS (PR not indexed yet) → no ledger promotion; job left running for the reconciler backstop', async () => {
+    const { manager, ship } = makeManager({ latchPr: vi.fn().mockResolvedValue(undefined) });
+    const promote = spyPromote(manager).mockResolvedValue(undefined);
+    pending(manager).set(JOB_ID, true);
+
+    await runLatch(manager, stimulus);
+
+    expect(mock(ship.latchPr)).toHaveBeenCalledOnce();
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  it('does NOT latch a non-running job (mirrors the finalize_build refusal gate)', async () => {
+    const { manager, ship } = makeManager({
+      loadJob: vi.fn().mockResolvedValue({ ...runningJob, status: 'done' }),
+    });
+    const promote = spyPromote(manager).mockResolvedValue(undefined);
+    pending(manager).set(JOB_ID, true);
+
+    await runLatch(manager, stimulus);
+
+    expect(mock(ship.latchPr)).not.toHaveBeenCalled();
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  const mock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 });
 
 describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the ONE brain as a harness message', () => {
