@@ -102,6 +102,9 @@ function mapRow(raw: Row): ThreadRealtimeRow {
 export const THREADS_MODEL: ModelConfig<ThreadRealtimeRow> = {
   table: 'jobs',
   primaryKey: 'id',
+  // `halt` is jsonb. On UPDATE, pgoutput may omit an unchanged TOASTed jsonb value; refetch so status-only
+  // or turn-active deltas never accidentally map an existing halt to null in the sidebar cache.
+  refetchOnUpdate: true,
   mapRow,
   guard: new ThreadOrgGuard(),
 };

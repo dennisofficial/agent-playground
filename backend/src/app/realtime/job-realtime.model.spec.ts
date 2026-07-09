@@ -39,3 +39,9 @@ describe('THREADS_MODEL.mapRow', () => {
     expect(row.needsYou).toBe(false);
   });
 });
+
+describe('THREADS_MODEL config', () => {
+  it('refetches TOAST-incomplete update rows so unchanged jsonb halt is not emitted as null', () => {
+    expect(THREADS_MODEL.refetchOnUpdate).toBe(true);
+  });
+});

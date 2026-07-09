@@ -138,6 +138,14 @@ export class FakeLocalGitService {
     return { ...sandbox, branch };
   }
 
+  async refExists(): Promise<boolean> {
+    return true;
+  }
+
+  async currentBranch(): Promise<string | null> {
+    return null;
+  }
+
   /** Provision-path no-ops (real impls touch git/cache/submodules; nothing to do in the fake). */
   async ensureSubmodules(): Promise<void> {
     // no-op
