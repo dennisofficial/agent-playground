@@ -65,6 +65,7 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // git
     { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
     {} as never, // threadInput
+    {} as never, // liveVerificationJudge (LiveVerificationJudge)
   );
   return { manager, store };
 }
