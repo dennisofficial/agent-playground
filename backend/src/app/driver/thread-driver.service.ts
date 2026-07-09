@@ -15,7 +15,13 @@ import {
   type AutoFixContext,
   type FindingSeverity,
 } from '../autofix';
-import type { DecisionRecord, Step, Job, SessionEngine, ThreadStatus } from '../domain';
+import type {
+  DecisionRecord,
+  Step,
+  Job,
+  SessionEngine,
+  ThreadCondition,
+} from '../domain';
 import { HALT_FIX_ATTEMPT_CAP } from '../domain';
 import { TICKET_AUTO_SKIP_SIM, TICKET_TERMINAL_STATUSES } from '../domain/ticket';
 import {
@@ -1023,7 +1029,7 @@ export class ThreadDriver implements JobDispatcher {
         `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)`,
       );
       await this.store
-        .setThreadStatus(thread.id, 'awaiting_input')
+        .setThreadCondition(thread.id, 'paused')
         .catch(() => undefined);
       return { outcome: 'blocked', handoff: null };
     }
@@ -1081,9 +1087,12 @@ export class ThreadDriver implements JobDispatcher {
     // skip auto-fix + handoff, set the thread status, and let runJob relay + skip finalize. NEVER fall through
     // to the done path (ADR 0004: a clean turn is not evidence of completion).
     if (outcome !== 'done') {
-      const status: ThreadStatus =
-        outcome === 'blocked' ? 'awaiting_input' : outcome; // 'incomplete' | 'failed'
-      await this.store.setThreadStatus(thread.id, status).catch(() => undefined);
+      // Leave the STEP at `executing` (where it halted) and record the halt on the orthogonal condition
+      // overlay instead. `outcome` here is 'blocked' | 'incomplete' | 'failed'; the latter two are valid
+      // conditions verbatim, and 'blocked' maps to the operator-pause condition 'paused'.
+      const condition: ThreadCondition =
+        outcome === 'blocked' ? 'paused' : outcome;
+      await this.store.setThreadCondition(thread.id, condition).catch(() => undefined);
       this.logger.warn(`thread ${thread.ordinal} "${thread.brief}" halted — ${outcome}`);
       return { outcome, handoff: null };
     }
@@ -1101,6 +1110,7 @@ export class ThreadDriver implements JobDispatcher {
     const handoffOut = this.summarizeHandoff(thread, steps, reports);
     await this.store.setThreadHandoffOut(thread.id, handoffOut);
     await this.store.setThreadStatus(thread.id, 'done');
+    await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
     this.logger.log(`thread ${thread.ordinal} done`);
     await this.recordMilestone(
       job.id,
@@ -1223,7 +1233,11 @@ export class ThreadDriver implements JobDispatcher {
         if (c.kind === 'review_lens') {
           await this.store.setThreadReviewFindings(c.id, []).catch(() => undefined);
         }
+        // The review lifecycle genuinely completed (there was nothing to review), so the STEP is `done` —
+        // this keeps the `=== 'done'` resume-idempotency guards intact — while `skipped` carries the
+        // "nothing to do" overlay that used to live in the status value.
         await this.store.setThreadStatus(c.id, 'done').catch(() => undefined);
+        await this.store.setThreadCondition(c.id, 'skipped').catch(() => undefined);
       }
       return;
     }
@@ -1259,7 +1273,8 @@ export class ThreadDriver implements JobDispatcher {
     const lens = lensById(lensId);
     if (!lens) {
       this.logger.warn(`review-lens child ${child.id} has unknown lensId "${lensId}" — skipping`);
-      await this.store.setThreadStatus(child.id, 'skipped').catch(() => undefined);
+      await this.store.setThreadStatus(child.id, 'reviewing').catch(() => undefined);
+      await this.store.setThreadCondition(child.id, 'skipped').catch(() => undefined);
       return;
     }
     await this.store.setThreadStatus(child.id, 'executing').catch(() => undefined);
@@ -1267,6 +1282,7 @@ export class ThreadDriver implements JobDispatcher {
       const findings = await this.autofix.runReviewLens(ctx, lens);
       await this.store.setThreadReviewFindings(child.id, findings);
       await this.store.setThreadStatus(child.id, 'done');
+      await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     } catch (err) {
       this.logger.warn(`review lens "${lensId}" failed (continuing): ${err}`);
       // Persist the reason on the lens's OWN lane so its pane explains itself instead of showing a
@@ -1275,7 +1291,7 @@ export class ThreadDriver implements JobDispatcher {
         .emitReviewNotice(ctx, { lensId }, `This review lens failed to run: ${shortReason(err)}`)
         .catch(() => undefined);
       await this.store.setThreadReviewFindings(child.id, []).catch(() => undefined);
-      await this.store.setThreadStatus(child.id, 'failed').catch(() => undefined);
+      await this.store.setThreadCondition(child.id, 'failed').catch(() => undefined);
     }
   }
 
@@ -1306,17 +1322,19 @@ export class ThreadDriver implements JobDispatcher {
           .emitReviewNotice(ctx, { fix: true }, 'No findings met the fix threshold — nothing to fix.')
           .catch(() => undefined);
         await this.store.setThreadStatus(child.id, 'done').catch(() => undefined);
+        await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
         return;
       }
       await this.autofix.applyReviewFindings(ctx, actionable);
       await this.store.setThreadStatus(child.id, 'done');
+      await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     } catch (err) {
       this.logger.warn(`post-review fix failed (continuing): ${err}`);
       // Persist the reason on the fix lane so a failed post-review explains itself, not a blank pane.
       await this.autofix
         .emitReviewNotice(ctx, { fix: true }, `Post-review fix failed to run: ${shortReason(err)}`)
         .catch(() => undefined);
-      await this.store.setThreadStatus(child.id, 'failed').catch(() => undefined);
+      await this.store.setThreadCondition(child.id, 'failed').catch(() => undefined);
     }
   }
 
@@ -1485,8 +1503,10 @@ export class ThreadDriver implements JobDispatcher {
             existing?.questionId ??
             (await this.store.openOperatorInputCard(job.id, question)).questionId;
           if (!existing) {
+            // The STEP stays `executing` (the turn is still alive, polling for the answer); the pause is
+            // recorded on the orthogonal condition overlay instead.
             await this.store
-              .setThreadStatus(thread.id, 'awaiting_input')
+              .setThreadCondition(thread.id, 'paused')
               .catch(() => undefined);
             await this.post(
               route,
@@ -1505,6 +1525,9 @@ export class ThreadDriver implements JobDispatcher {
             await this.store.markOperatorInputDelivered(job.id, questionId).catch(() => undefined);
             await this.store
               .setThreadStatus(thread.id, 'executing')
+              .catch(() => undefined);
+            await this.store
+              .setThreadCondition(thread.id, 'none')
               .catch(() => undefined);
             return { answer };
           } finally {

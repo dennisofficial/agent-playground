@@ -113,9 +113,13 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   handoff_out!: string | null;
 
-  // 'pending' | 'planning' | 'reviewing' | 'awaiting_approval' | 'executing' | 'awaiting_input' | 'auto_fixing' | 'done' | 'failed'
+  // 'pending' | 'planning' | 'reviewing' | 'executing' | 'auto_fixing' | 'done' — the PURE LINEAR step (pause/failure/skip live on `condition`)
   @Column({ type: 'text', default: 'pending' })
   status!: string;
+
+  // 'none' | 'paused' | 'incomplete' | 'failed' | 'skipped' — the orthogonal condition overlay (ADR-0004 detail stays in terminal_record/halt_outcome)
+  @Column({ type: 'text', default: 'none' })
+  condition!: string;
 
   /**
    * The thread's LLM-authored task list — folded incrementally from the orchestrating session's
