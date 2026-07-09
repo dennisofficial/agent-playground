@@ -20,6 +20,9 @@ import { JobEntity } from './job.entity';
 @Entity({ name: 'tickets' })
 @Index(['org_id', 'repo_id'])
 @Unique(['repo_id', 'number'])
+// Hands-off: the pgvector HNSW index is unexpressible in TypeORM metadata. The DDL lives in the
+// migrations; this only tells migration:generate never to DROP it.
+@Index('idx_tickets_embedding_hnsw', { synchronize: false })
 export class TicketEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -94,8 +97,9 @@ export class TicketEntity extends TimestampedEntity {
    * text-embedding-3-small; mirrors `MemoryEntity.embedding`). `select: false` keeps ~19 KB off every
    * normal load — only the vector-distance query adds it back. Nullable + fail-soft: a missing OpenAI
    * key or a failed embed leaves it NULL (the ticket just drops out of similarity search), so ticket
-   * creation NEVER depends on embedding availability. The HNSW cosine index is hand-added in the
-   * migration (the generator can't emit a vector index).
+   * creation NEVER depends on embedding availability. The HNSW cosine index DDL lives in the migration
+   * (the generator can't emit a vector index); `@Index('idx_tickets_embedding_hnsw', { synchronize:
+   * false })` on this entity keeps the generator from dropping it.
    */
   @Column({ type: 'vector', length: 1536, nullable: true, select: false })
   embedding!: string | null;
