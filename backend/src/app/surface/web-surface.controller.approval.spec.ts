@@ -61,6 +61,7 @@ function makeController(thread: {
     {} as never,
     {} as never,
     {} as never,
+    {} as never, // skillInstaller (SkillInstallerService)
   );
   return { controller, mocks };
 }
