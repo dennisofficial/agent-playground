@@ -21,5 +21,6 @@ it is regenerated on every promotion. Edit an individual decision file to propos
 | [streaming-turn-input-close-gate](streaming-turn-input-close-gate.md) | Streaming turns close their input/control channel only on a genuinely-completed result | proposed |
 | [subagent-recovery-nudge-before-respawn](subagent-recovery-nudge-before-respawn.md) | Orchestrators nudge stalled/failed subagents instead of respawning | proposed |
 | [engine-turn-background-tasks](engine-turn-background-tasks.md) | Engine turns stay alive for in-flight SDK background tasks, bounded by a hold cap | proposed |
+| [tool-bridge-reply-liveness](tool-bridge-reply-liveness.md) | Tool-bridge reply delivery is durable + liveness-driven, never wall-clock-bounded | proposed |
 
 _Last regenerated: 2026-07-09T10:42:58.436Z_

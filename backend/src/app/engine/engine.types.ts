@@ -296,8 +296,17 @@ export interface ToolErrorFrame {
   message: string;
 }
 
+/** Host liveness ping for an in-flight tool call — emitted periodically while impl() is awaited.
+ *  Carries no result; the client uses it only to reset that call's heartbeat-gap idle timer. */
+export interface ToolProgressFrame {
+  t: 'tool_progress';
+  /** Matches the originating tool_request.id. */
+  id: string;
+  ts: number;
+}
+
 /** Union of frames the host may write to the exec's stdin (one per line). */
-export type HostFrame = ToolResponseFrame | ToolErrorFrame;
+export type HostFrame = ToolResponseFrame | ToolErrorFrame | ToolProgressFrame;
 
 /** A host-side tool implementation. Receives parsed args, returns a serializable result. */
 export type ToolImpl = (args: Record<string, unknown>) => Promise<unknown>;

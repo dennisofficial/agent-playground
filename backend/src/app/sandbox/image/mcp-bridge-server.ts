@@ -24,11 +24,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
-
-/** Reply frame shape the host writes on `turn:{T}:replies` (mirrors engine-entrypoint's HostFrame). */
-type HostFrame =
-  | { t: 'tool_response'; id: string; result: unknown }
-  | { t: 'tool_error'; id: string; message: string };
+import { ToolBridgeReader } from './tool-bridge-reader';
 
 /** JSON-schema descriptions for the host bridge tools a Codex writer thread uses, so the model fills the
  *  right fields. The MCP server forwards the WHOLE arguments object as the `tool_request` `args`, which is
@@ -198,42 +194,33 @@ async function main(): Promise<void> {
   const repliesKey = `turn:${turnId}:replies`;
 
   const pub = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
-  const sub = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
   await pub.connect();
-  await sub.connect();
 
-  // Reply reader: a blocking read on the replies stream (its own connection), resolving pending calls by
-  // id. Reads from '0-0' — the stream is fresh per turn, so there are no stale replies to skip.
-  const pending = new Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>();
-  let stop = false;
-  void (async () => {
-    let lastId = '0-0';
-    while (!stop) {
-      const r = (await sub.xread('BLOCK', 1000, 'STREAMS', repliesKey, lastId)) as
-        | Array<[string, Array<[string, string[]]>]>
-        | null;
-      if (!r) continue;
-      for (const [, entries] of r) {
-        for (const [eid, f] of entries) {
-          lastId = eid;
-          const di = f.indexOf('data');
-          if (di < 0) continue;
-          const frame = JSON.parse(f[di + 1]) as HostFrame;
-          const entry = pending.get(frame.id);
-          if (!entry) continue;
-          pending.delete(frame.id);
-          if (frame.t === 'tool_response') entry.resolve(frame.result);
-          else entry.reject(new Error(frame.message));
-        }
-      }
-    }
-  })().catch(() => undefined);
+  // Reply reader: a blocking read on the replies stream (its own connection(s) — a blocking read can't
+  // share `pub`), resolving pending calls by id. Reads from '0-0' — the stream is fresh per turn, so
+  // there are no stale replies to skip. `makeSub` also assigns the outer `sub` so stdin-close cleanup
+  // always disconnects whichever connection is CURRENT (the reader swaps it internally on a stall-reset).
+  let sub: Redis | undefined;
+  const reader = new ToolBridgeReader({
+    repliesKey,
+    makeSub: () => {
+      sub = new Redis(redisUrl, { lazyConnect: false, maxRetriesPerRequest: null });
+      return sub;
+    },
+    log: (m) => process.stderr.write(`[mcp-bridge-server] ${m}\n`),
+  });
+  reader.start();
 
   const callHostTool = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
     const id = randomUUID();
-    const result = new Promise<unknown>((resolve, reject) => pending.set(id, { resolve, reject }));
-    await pub.xadd(toolsKey, '*', 'data', JSON.stringify({ t: 'tool_request', id, name, args }));
-    return result;
+    const p = reader.register(id);
+    try {
+      await pub.xadd(toolsKey, '*', 'data', JSON.stringify({ t: 'tool_request', id, name, args }));
+    } catch (err) {
+      reader.cancel(id);
+      throw err;
+    }
+    return p;
   };
 
   const server = new Server({ name: 'atlasbridge', version: '1.0.0' }, { capabilities: { tools: {} } });
@@ -262,9 +249,9 @@ async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
   // Keep the process alive; codex terminates it when the turn ends. Clean up on stdin close.
   process.stdin.on('close', () => {
-    stop = true;
+    reader.stopReader();
     pub.disconnect();
-    sub.disconnect();
+    sub?.disconnect();
     process.exit(0);
   });
 }
