@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -121,20 +121,6 @@ describe('LocalGitService (host git, daemon-free)', () => {
 
   it('reposRoot prefers REPOS_ROOT', () => {
     expect(svc.reposRoot()).toContain('repos');
-  });
-
-  // ── ledgerClean — positive proof the `.atlas/decisions/` ledger was committed (gates the promote stamp
-  // now the host no longer commits it). ────────────────────────────────────────────────────────────────
-  describe('ledgerClean', () => {
-    it('false while `.atlas/decisions` has pending changes; true once committed', async () => {
-      const r = await repo();
-      const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
-      mkdirSync(join(sandbox.worktreePath, '.atlas', 'decisions'), { recursive: true });
-      writeFileSync(join(sandbox.worktreePath, '.atlas', 'decisions', 'index.md'), '# decisions\n');
-      expect(await svc.ledgerClean(sandbox.worktreePath)).toBe(false);
-      commit(sandbox.worktreePath, 'record decisions');
-      expect(await svc.ledgerClean(sandbox.worktreePath)).toBe(true);
-    });
   });
 
   // ── worktreeSafeToRecut — the hard-reset guard: is it safe to delete + re-cut this worktree without

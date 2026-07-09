@@ -8,8 +8,6 @@ import type { MemoryStore } from '../memory';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { EngineRunnerPort } from '../engine/engine.types';
 import type { BuildShipService } from '../driver/build-ship.service';
-import { DecisionLedgerService } from './decision-ledger.service';
-import type { RepoDecisionManifestService } from './repo-decision-manifest.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
 import type { LiveVerificationJudge } from '../driver/live-verification-judge';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
@@ -111,8 +109,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     loadDecisionRecord: vi.fn(),
     appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
     threadTicketId: vi.fn().mockResolvedValue(null),
-    // Direct-build finalize stamps the ledger promotion complete after ship.
-    markLedgerPromoted: vi.fn().mockResolvedValue(undefined),
     // ADR-0005 direct-build live-verification verdict (persisted on both pass + refusal paths).
     recordDirectBuildVerification: vi.fn().mockResolvedValue(undefined),
     // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
@@ -165,9 +161,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // The brain turn observes the live branch (detached HEAD → null); default to null so no live-branch
     // backstop fires in these streaming/tool tests.
     currentBranch: vi.fn().mockResolvedValue(null),
-    // The ledger is committed by the brain's ship turn (host never commits); `ledgerClean` gates the
-    // `markLedgerPromoted` stamp in the direct-build turn-end latch + boot reconcile.
-    ledgerClean: vi.fn().mockResolvedValue(true),
     // Hard-reset safety guard: a clean, pushed tree is safe to re-cut by default.
     worktreeSafeToRecut: vi.fn().mockResolvedValue(true),
     // ADR-0005 direct-build gate reads the changed files (vs origin/<default>) to decide runtime-touch.
@@ -338,7 +331,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       specHash: null,
     });
     (mockPlanReview.findRunningReviews as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (mockStore.markLedgerPromoted as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     // persistPlan returns the canonical shape BrainStoreService returns.
     (mockStore.persistPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -411,12 +403,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         onPromote: () => ({ unsubscribe() {} }),
         onDemote: () => ({ unsubscribe() {} }),
       } as never, // election
-      new DecisionLedgerService(),
-      {
-        recordPromoted: async () => undefined,
-        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
-        reposWithGit: async () => [],
-      } as unknown as RepoDecisionManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
       mockSecretStore,
       mockConfigStore,
@@ -769,10 +755,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // The tool returns the open-PR instructions for the brain to act on in-turn (host no longer opens it).
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     expect((result as { message: string }).message).toContain('gh pr create');
-    // finalize_build does NOT stamp the ledger inline anymore — the host no longer commits it, so the stamp
-    // must wait until the brain's inline open-PR push lands the `.atlas/decisions/` files. The turn-end latch
-    // (`latchDirectBuildAtTurnEnd`) stamps it then, gated on `ledgerClean` (covered by its own tests).
-    expect(mockStore.markLedgerPromoted).not.toHaveBeenCalled();
   });
 
   it('(c) finalize_build: a leak-scan block returns a hard failure (brain must clean the branch)', async () => {
@@ -807,7 +789,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.preShip).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
     expect((result as { reason: string }).reason).toContain('.env.keys');
-    expect(mockStore.markLedgerPromoted).not.toHaveBeenCalled();
   });
 
   it('(c) finalize_build: refuses a non-running job (no ship)', async () => {
@@ -1957,7 +1938,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const git = {
       hasChanges: vi.fn().mockResolvedValue(false),
       currentBranch: vi.fn().mockResolvedValue(null),
-      ledgerClean: vi.fn().mockResolvedValue(true),
       worktreeSafeToRecut: vi.fn().mockResolvedValue(true),
     } as unknown as LocalGitService;
     const surface = {
@@ -2030,12 +2010,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         onPromote: () => ({ unsubscribe() {} }),
         onDemote: () => ({ unsubscribe() {} }),
       } as never, // election
-      new DecisionLedgerService(),
-      {
-        recordPromoted: async () => undefined,
-        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
-        reposWithGit: async () => [],
-      } as unknown as RepoDecisionManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
       {
         write: async () => undefined,
@@ -2818,12 +2792,6 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         onPromote: () => ({ unsubscribe() {} }),
         onDemote: () => ({ unsubscribe() {} }),
       } as never, // election
-      new DecisionLedgerService(),
-      {
-        recordPromoted: async () => undefined,
-        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
-        reposWithGit: async () => [],
-      } as unknown as RepoDecisionManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
       {
         write: async () => undefined,
@@ -2835,7 +2803,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         listMounts: async () => [],
         upsertMount: async () => undefined,
       } as unknown as WorkspaceConfigStore,
-      { hasChanges: async () => false, currentBranch: async () => null, ledgerClean: async () => true, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
+      { hasChanges: async () => false, currentBranch: async () => null, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -2925,9 +2893,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     const store = {
       loadJob: overrides.loadJob ?? vi.fn().mockResolvedValue(runningJob),
       setTurnActive: vi.fn().mockResolvedValue(undefined),
-      // The direct-build turn-end latch now stamps the ledger complete once it is proven committed
-      // (`ledgerClean`) — the host no longer commits it inline at `finalize_build`.
-      markLedgerPromoted: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox:
@@ -2980,12 +2945,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
         onPromote: () => ({ unsubscribe() {} }),
         onDemote: () => ({ unsubscribe() {} }),
       } as never, // election
-      new DecisionLedgerService(),
-      {
-        recordPromoted: async () => undefined,
-        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
-        reposWithGit: async () => [],
-      } as unknown as RepoDecisionManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
       {
         write: async () => undefined,
@@ -2994,7 +2953,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
         read: async () => null,
       } as unknown as WorkspaceSecretFileStore,
       { listMounts: async () => [], upsertMount: async () => undefined } as unknown as WorkspaceConfigStore,
-      { hasChanges: async () => false, currentBranch: async () => null, ledgerClean: async () => true, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
+      { hasChanges: async () => false, currentBranch: async () => null, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -3007,12 +2966,9 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     (m as unknown as { directBuildShipPending: Map<string, boolean> }).directBuildShipPending;
   const runLatch = (m: AgentSessionManager, s: ChatStimulus) =>
     (m as unknown as { latchDirectBuildAtTurnEnd: (s: ChatStimulus) => Promise<void> }).latchDirectBuildAtTurnEnd(s);
-  const spyPromote = (m: AgentSessionManager) =>
-    vi.spyOn(m as unknown as { reconcileLedgerPromotion: (j: unknown) => Promise<void> }, 'reconcileLedgerPromotion');
 
-  it('flag set + running + owning feature_branch → latches the PR on the LIVE branch (no re-promote)', async () => {
+  it('flag set + running + owning feature_branch → latches the PR on the LIVE branch', async () => {
     const { manager, ship } = makeManager();
-    const promote = spyPromote(manager).mockResolvedValue(undefined);
     pending(manager).set(JOB_ID, true);
 
     await runLatch(manager, stimulus);
@@ -3021,8 +2977,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     expect(mock(ship.latchPr)).toHaveBeenCalledOnce();
     const [, , sandboxArg] = mock(ship.latchPr).mock.calls[0];
     expect((sandboxArg as { branch: string }).branch).toBe('atlas/live');
-    // Ledger promotion is NOT re-run at turn-end — `finalize_build` stamped it complete inline.
-    expect(promote).not.toHaveBeenCalled();
     // The flag is CONSUMED (a second turn-end must not re-latch).
     expect(pending(manager).has(JOB_ID)).toBe(false);
   });
@@ -3031,7 +2985,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     const { manager, ship } = makeManager({
       loadJob: vi.fn().mockResolvedValue({ ...runningJob, currentBranch: null }),
     });
-    spyPromote(manager).mockResolvedValue(undefined);
     pending(manager).set(JOB_ID, true);
 
     await runLatch(manager, stimulus);
@@ -3040,38 +2993,32 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     expect((sandboxArg as { branch: string }).branch).toBe('atlas/feature');
   });
 
-  it('flag NOT set → no latch, no ledger promotion (a normal chat turn ends untouched)', async () => {
+  it('flag NOT set → no latch (a normal chat turn ends untouched)', async () => {
     const { manager, ship } = makeManager();
-    const promote = spyPromote(manager).mockResolvedValue(undefined);
 
     await runLatch(manager, stimulus);
 
     expect(mock(ship.latchPr)).not.toHaveBeenCalled();
-    expect(promote).not.toHaveBeenCalled();
   });
 
-  it('latch MISS (PR not indexed yet) → no ledger promotion; job left running for the reconciler backstop', async () => {
+  it('latch MISS (PR not indexed yet) → job left running for the reconciler backstop', async () => {
     const { manager, ship } = makeManager({ latchPr: vi.fn().mockResolvedValue(undefined) });
-    const promote = spyPromote(manager).mockResolvedValue(undefined);
     pending(manager).set(JOB_ID, true);
 
     await runLatch(manager, stimulus);
 
     expect(mock(ship.latchPr)).toHaveBeenCalledOnce();
-    expect(promote).not.toHaveBeenCalled();
   });
 
   it('does NOT latch a non-running job (mirrors the finalize_build refusal gate)', async () => {
     const { manager, ship } = makeManager({
       loadJob: vi.fn().mockResolvedValue({ ...runningJob, status: 'done' }),
     });
-    const promote = spyPromote(manager).mockResolvedValue(undefined);
     pending(manager).set(JOB_ID, true);
 
     await runLatch(manager, stimulus);
 
     expect(mock(ship.latchPr)).not.toHaveBeenCalled();
-    expect(promote).not.toHaveBeenCalled();
   });
 
   const mock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
@@ -3214,7 +3161,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
       inert, // mcp (McpResolver, 21)
       election, // election (22)
-      inert, inert, inert, inert, inert, inert, // ledger…git (27)
+      inert, inert, inert, inert, // turnRecovery…git (26)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -3415,7 +3362,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
         inert, // mcp (McpResolver, 21)
         election, // election (22)
-        inert, inert, inert, inert, inert, inert, // ledger…git (27)
+        inert, inert, inert, inert, // turnRecovery…git (26)
         { generate: () => 'SYSTEM' } as never, // prompts (28)
         { register: () => undefined } as never, // threadInput (29)
         { judge: async () => undefined } as never, // liveVerificationJudge (30)

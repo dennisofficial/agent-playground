@@ -6,7 +6,6 @@ import { MemoryModule } from '../memory';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  RepoDecisionEntity,
   MessageEntity,
   CodexReviewEntity,
   StepEntity,
@@ -21,8 +20,6 @@ import { AgentSessionManager } from './agent-session-manager.service';
 import { DrainService } from './drain.service';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
-import { DecisionLedgerService } from './decision-ledger.service';
-import { RepoDecisionManifestService } from './repo-decision-manifest.service';
 import { PlanReviewService } from './plan-review.service';
 import { TurnRecoveryService } from './turn-recovery.service';
 
@@ -61,7 +58,6 @@ import { TurnRecoveryService } from './turn-recovery.service';
         MessageEntity,
         CodexReviewEntity,
         DecisionRecordEntity,
-        RepoDecisionEntity,
         ThreadEntity,
         StepEntity,
         StimulusEntity,
@@ -74,8 +70,6 @@ import { TurnRecoveryService } from './turn-recovery.service';
   providers: [
     BrainStoreService,
     DecisionApprovalService,
-    DecisionLedgerService,
-    RepoDecisionManifestService,
     PlanReviewService,
     TurnRecoveryService,
     AgentSessionManager,
@@ -95,7 +89,6 @@ import { TurnRecoveryService } from './turn-recovery.service';
   exports: [
     AgentSessionManager,
     DecisionApprovalService,
-    RepoDecisionManifestService,
     BrainStoreService,
     BRAIN_SINK,
   ],

@@ -70,5 +70,4 @@ must not reintroduce a cross-mount `.git` for submodule checkouts.
 
 Implemented: `LocalGitService.hasSubmodules` / `createBaseClone`, clone-aware `switchBranch` /
 `removeSandbox`, and the `provisionSandbox` / `ensureWorktree` call sites in `JobLifecycleService` branching
-on `hasSubmodules`. See `.atlas/decisions/sandbox-submodule-repos-full-clone.md` for the original decision
-record.
+on `hasSubmodules`. See the original clone-provisioning decision record for further background.
