@@ -25,7 +25,9 @@ Any agent-authored HTML shown in the web console renders inside an <iframe> with
 
 ## Consequences
 
-New viewers that render HTML must use this sandbox posture (iframe sandbox + the CSP sandbox response header on the serving route), not dangerouslySetInnerHTML. Because there is no allow-same-origin, HTML cannot use APIs requiring a real origin; multi-file bundles work by loading the iframe from a real URL so relative sub-resources resolve.
+New viewers that render HTML must use this sandbox posture (iframe sandbox + the CSP sandbox response header on the serving route), not dangerouslySetInnerHTML. Because there is no allow-same-origin, HTML cannot use APIs requiring a real origin.
+
+IMPORTANT LIMITATION (found by live browser validation, not by unit tests/curl): because the sandbox gives the document an OPAQUE origin and the artifact is served from the SAME origin as the authenticated API, a document's EXTERNAL relative sub-resources (a separate `style.css`, images, JS files) are fetched (HTTP 200) but do NOT apply — a cross-origin/opaque-origin stylesheet is not rendered. So this posture fully supports SELF-CONTAINED HTML (inline `<style>`/`<script>`) but NOT multi-file bundles with external assets. Rendering multi-file bundles requires serving artifacts from a SEPARATE, cookie-less origin (then `allow-same-origin` is safe) — the Claude Artifacts model — tracked as a follow-up. Do NOT "fix" multi-file by adding `allow-same-origin` on the API origin: that reopens the exact API-as-operator XSS hole this decision closes.
 
 ## Alternatives considered
 
