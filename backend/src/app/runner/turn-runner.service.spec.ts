@@ -34,6 +34,7 @@ const sandbox: FeatureSandbox = {
 };
 
 const baseInput = {
+  orgId: 'org-1',
   jobId: 'job-1',
   stepId: 'step-1',
   sandbox,

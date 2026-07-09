@@ -1,14 +1,14 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { atlasAgentHomeBase, safeHomeKey } from './engine-home';
+import { atlasAgentHomeBase, engineHomeLeaf, type EngineHomeKey } from './engine-home';
 
 /**
- * The deterministic CODEX_HOME path for a sandbox key — the ONE place the overlay's location is
+ * The deterministic CODEX_HOME path for an engine-home key — the ONE place the overlay's location is
  * computed, so the writer ({@link ensureCodexAuthHome}) and the post-run reader ({@link readCodexAuthHome})
  * never drift. Idempotent mkdir (the CLI won't create a deep custom path itself).
  */
-export function codexAuthHomeDir(root: string | undefined, sandboxKey: string): string {
-  const home = join(atlasAgentHomeBase(root), safeHomeKey(sandboxKey), 'codex-sub');
+export function codexAuthHomeDir(root: string | undefined, key: EngineHomeKey): string {
+  const home = join(engineHomeLeaf(atlasAgentHomeBase(root), key), 'codex-sub');
   mkdirSync(home, { recursive: true });
   return home;
 }
@@ -19,9 +19,9 @@ export function codexAuthHomeDir(root: string | undefined, sandboxKey: string): 
  * at turn start — the caller diffs it against the input secret to detect a refresh worth persisting.
  * Returns `null` when the file is absent/unreadable (nothing to persist).
  */
-export function readCodexAuthHome(root: string | undefined, sandboxKey: string): string | null {
+export function readCodexAuthHome(root: string | undefined, key: EngineHomeKey): string | null {
   try {
-    return readFileSync(join(codexAuthHomeDir(root, sandboxKey), 'auth.json'), 'utf8');
+    return readFileSync(join(codexAuthHomeDir(root, key), 'auth.json'), 'utf8');
   } catch {
     return null;
   }
@@ -146,7 +146,7 @@ function mcpServerBlock(name: string, command: string, args: string[], env?: Rec
  */
 export function ensureCodexAuthHome(
   root: string | undefined,
-  sandboxKey: string,
+  key: EngineHomeKey,
   secret: string,
   mcpBridge?: CodexMcpBridge,
   extraMcpServers?: CodexExtraMcpServers,
@@ -159,7 +159,7 @@ export function ensureCodexAuthHome(
   }
   assertValidCodexAuthJson(parsed);
 
-  const home = codexAuthHomeDir(root, sandboxKey);
+  const home = codexAuthHomeDir(root, key);
   writeFileSync(join(home, 'auth.json'), secret, { mode: 0o600 });
 
   // Accumulate every MCP server block into ONE config.toml — the host tool bridge (atlasbridge) plus any

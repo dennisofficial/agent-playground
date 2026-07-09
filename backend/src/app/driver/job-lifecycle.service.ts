@@ -9,6 +9,7 @@ import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver, OnboardingService } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, JobEntity, JobSandboxEntity } from '../persistence/entities';
+import { SkillUpdaterService } from '../skills/skill-updater.service';
 import {
   hostExecUser,
   SANDBOX_PROVIDER,
@@ -119,6 +120,7 @@ export class JobLifecycleService {
     private readonly turnRegistry: TurnRegistry,
     // Lazily resolves the brain-module decision-ledger manifest for merge-time reconcile (avoids cycle).
     private readonly moduleRef: ModuleRef,
+    private readonly skillUpdater: SkillUpdaterService,
   ) {}
 
   /**
@@ -183,6 +185,10 @@ export class JobLifecycleService {
 
     // Provision the sandbox on the base branch.
     const sandboxRow = await this.provisionSandbox(thread, project, baseBranch);
+
+    // Fire-and-forget "on job start" skill-update check (the plan's second update trigger, alongside the
+    // updater's own cadence) — never awaited, so a slow/unreachable skill source can't delay job creation.
+    this.skillUpdater.reconcileOrgAsync(orgId);
 
     return {
       jobId: thread.id,
@@ -740,7 +746,9 @@ export class JobLifecycleService {
       // Host-named canonical branch: honors the repo's optional `branch_prefix` (falling back to the
       // historical `atlas/thread-` default) so a repo can enforce its own convention (e.g. `feat/`).
       const featureBranch = computeFeatureBranchName(project, thread.id);
-      const baseSandboxInput = await this.git.createBaseWorktree(projectRepo, thread.id);
+      const baseSandboxInput = (await this.git.hasSubmodules(projectRepo))
+        ? await this.git.createBaseClone(projectRepo, thread.id)
+        : await this.git.createBaseWorktree(projectRepo, thread.id);
       const branched = await this.git.switchBranch(baseSandboxInput, projectRepo, featureBranch);
 
       // Populate git submodules into the freshly cut worktree (no-op without a `.gitmodules`) so the
@@ -796,7 +804,7 @@ export class JobLifecycleService {
 
   /**
    * Stamp a repo's `onboarded_at` — proof its worktree provisioning config is live. Called from exactly
-   * one place: the brain's `finish_onboarding`, synchronously — secrets and worktree config (mounts/seed)
+   * one place: the brain's `finish_onboarding`, synchronously — secrets and workspace config (mounts/seed)
    * are DB-backed now (see docs/adr/0003), so there is no PR-merge event to wait on. Idempotent (only
    * stamps when currently null).
    */
@@ -846,11 +854,12 @@ export class JobLifecycleService {
   private async ensureWorktree(row: JobSandboxEntity, projectRepo: ProjectRepo): Promise<void> {
     if (row.worktree_path && existsSync(row.worktree_path)) return;
     const thread = await this.jobs.findOne({ where: { id: row.job_id } });
-    const base = await this.git.createBaseWorktree(projectRepo, row.job_id);
+    const base = (await this.git.hasSubmodules(projectRepo))
+      ? await this.git.createBaseClone(projectRepo, row.job_id)
+      : await this.git.createBaseWorktree(projectRepo, row.job_id);
     const desired = thread?.current_branch ?? thread?.feature_branch ?? null;
     const target =
-      desired &&
-      (await this.git.refExists(projectRepo.repoPath, `refs/heads/${desired}`))
+      desired && (await this.git.refExists(base.worktreePath, `refs/heads/${desired}`))
         ? desired
         : (thread?.feature_branch ?? null);
     const sb = target

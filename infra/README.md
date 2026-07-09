@@ -12,6 +12,7 @@ Single OVH box (64 GB, SYS-GAME-2). Docker + docker-compose. Caddy for TLS termi
 │   ├── repos/          # per-org repo clones (REPOS_ROOT)
 │   ├── agent-home/     # per-thread Claude/Codex config + session state (AGENT_HOME_ROOT)
 │   ├── refs/           # read-only reference repo clones (REFS_ROOT)
+│   ├── skills/         # central skills store, per-org dirs bind-mounted rw at /skills (SKILLS_ROOT)
 │   ├── golden/         # operator golden-seed files (ATLAS_GOLDEN_ROOT)
 │   └── engine/         # hot-reloaded engine bundle (ENGINE_BUNDLE_PATH parent)
 │       └── engine-entrypoint.mjs   # written by bundleEngine() at boot

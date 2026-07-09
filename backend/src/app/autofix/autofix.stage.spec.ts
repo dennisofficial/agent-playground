@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AutoFixStage } from './autofix.stage';
-import type { EngineRunnerPort } from '../engine';
+import type { EngineHomeKey, EngineRunnerPort } from '../engine';
 import type { LocalGitService } from '../git';
 import type { TurnHarnessFactory } from '../surface/turn-harness.service';
 import type { AutoFixContext, ReviewLens } from './autofix.types';
@@ -26,7 +26,7 @@ function mockHarness(): {
 /** A context that supplies its own diff/changedFiles so the stage never shells out to git for review. */
 const ctx: AutoFixContext = {
   worktreePath: '/tmp/wt',
-  sandboxKey: 'acme--feat',
+  sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'autofix' },
   diff: 'diff --git a/x.ts b/x.ts\n+const y = 1;',
   changedFiles: ['src/x.ts'],
   intent: 'add a y constant',
@@ -49,16 +49,21 @@ function reportWith(findings: Array<Record<string, unknown>>): string {
  * per-lens reports (matched by the `--review-<lensId>` sandbox key); the execute (fix) turn returns a
  * fixed report. Records all calls for assertions.
  */
+/** The lens id embedded in a review turn's `sandboxKey.subId` (`review-<lensId>`), or undefined off-lens. */
+function reviewLensId(sandboxKey: EngineHomeKey): string | undefined {
+  return sandboxKey.subId?.startsWith('review-') ? sandboxKey.subId.slice('review-'.length) : undefined;
+}
+
 function mockEngine(opts: {
   reviewReports: Record<string, string>;
   fixReport?: string;
 }): {
   engine: EngineRunnerPort;
-  calls: Array<{ mode: string; sandboxKey: string; richStream?: boolean; hasOnEvent: boolean }>;
+  calls: Array<{ mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; hasOnEvent: boolean }>;
 } {
-  const calls: Array<{ mode: string; sandboxKey: string; richStream?: boolean; hasOnEvent: boolean }> = [];
+  const calls: Array<{ mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; hasOnEvent: boolean }> = [];
   const run = vi.fn(
-    async (args: { mode: string; sandboxKey: string; richStream?: boolean; onEvent?: unknown }) => {
+    async (args: { mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; onEvent?: unknown }) => {
       calls.push({
         mode: args.mode,
         sandboxKey: args.sandboxKey,
@@ -69,8 +74,8 @@ function mockEngine(opts: {
       return { result: opts.fixReport ?? 'fixed finding 1', sessionId: 'fix-sess' };
     }
     // review turn — pick the report by the lens embedded in the sandbox key.
-    const lensId = args.sandboxKey.split('--review-')[1];
-    return { result: opts.reviewReports[lensId] ?? reportWith([]), sessionId: `rev-${lensId}` };
+    const lensId = reviewLensId(args.sandboxKey);
+    return { result: opts.reviewReports[lensId ?? ''] ?? reportWith([]), sessionId: `rev-${lensId}` };
   });
   return { engine: { run } as unknown as EngineRunnerPort, calls };
 }
@@ -279,11 +284,11 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
   });
 
   it('a single failed review pass is dropped, not fatal (other lenses still aggregate)', async () => {
-    const calls: Array<{ mode: string; sandboxKey: string }> = [];
-    const run = vi.fn(async (args: { mode: string; sandboxKey: string }) => {
+    const calls: Array<{ mode: string; sandboxKey: EngineHomeKey }> = [];
+    const run = vi.fn(async (args: { mode: string; sandboxKey: EngineHomeKey }) => {
       calls.push({ mode: args.mode, sandboxKey: args.sandboxKey });
       if (args.mode === 'execute') return { result: 'fixed' };
-      const lensId = args.sandboxKey.split('--review-')[1];
+      const lensId = reviewLensId(args.sandboxKey);
       if (lensId === 'l1') throw new Error('engine boom');
       return { result: reportWith([{ severity: 'high', file: 'a.ts', title: 'survivor' }]) };
     });
@@ -299,7 +304,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
   it('respects the configured concurrency cap (batched fan-out)', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
-    const run = vi.fn(async (args: { mode: string; sandboxKey: string }) => {
+    const run = vi.fn(async (args: { mode: string; sandboxKey: EngineHomeKey }) => {
       if (args.mode === 'review') {
         inFlight++;
         maxInFlight = Math.max(maxInFlight, inFlight);
@@ -387,8 +392,8 @@ describe('AutoFixStage — streaming onto the transcript spine', () => {
 
   it('aborts (not finishes) the lens harness when a review pass throws', async () => {
     const run = vi.fn(
-      async (args: { mode: string; sandboxKey: string; richStream?: boolean; onEvent?: unknown }) => {
-        if (args.mode === 'review' && args.sandboxKey.endsWith('--review-l1')) {
+      async (args: { mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; onEvent?: unknown }) => {
+        if (args.mode === 'review' && args.sandboxKey.subId === 'review-l1') {
           throw new Error('engine boom');
         }
         return { result: reportWith([]) };

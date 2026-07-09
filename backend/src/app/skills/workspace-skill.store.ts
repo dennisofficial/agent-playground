@@ -2,34 +2,60 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { WorkspaceSkillEntity, type McpSurface } from '../persistence/entities';
+import {
+  WorkspaceSkillEntity,
+  type McpSurface,
+  type SkillProvenance,
+  type SkillUpdatePolicy,
+} from '../persistence/entities';
 
 /** The org-wide scope sentinel (mirrors `McpServerStore.ORG_SCOPE`); a non-`*` scope is a repo id. */
 export const ORG_SCOPE = '*';
 
-/** The full skill definition a `PUT` writes (replaces the row). */
+/**
+ * The registry metadata a `PUT` writes (replaces the row). There is no file-content field here — the
+ * skill's actual `SKILL.md`/support files live on the host store (see `skill-store-paths.ts`) and are
+ * written by the installer/custom-authoring path (not this store), which owns `provenance`/`source_*`/
+ * `installed_sha`. This is the metadata-only upsert: toggling `enabled`/`surfaces` on an existing skill,
+ * or registering a row whose files were placed on disk out of band.
+ */
 export interface SkillInput {
   description: string;
-  body: string;
+  provenance?: SkillProvenance;
+  source_url?: string | null;
+  source_ref?: string | null;
+  source_subpath?: string | null;
+  installed_sha?: string | null;
+  update_policy?: SkillUpdatePolicy | null;
+  forked_from?: string | null;
   surfaces?: McpSurface[];
   enabled?: boolean;
 }
 
-/** A skill as returned to a client (no secrets exist on a skill — the body is plain markdown). */
+/** A skill as returned to a client (no secrets exist on a skill — it's registry metadata, not content). */
 export interface SkillView {
   /** 'org' for an org-wide skill, otherwise the repo id. */
   scope: 'org' | string;
   name: string;
   description: string;
-  body: string;
+  provenance: SkillProvenance;
+  source_url: string | null;
+  source_ref: string | null;
+  source_subpath: string | null;
+  installed_sha: string | null;
+  update_policy: SkillUpdatePolicy | null;
+  forked_from: string | null;
   surfaces: McpSurface[];
   enabled: boolean;
+  /** Set by `SkillUpdaterService` for a `pinned`/`manual` git skill whose remote has moved past
+   *  `installed_sha` — the console's "update available" badge. Always false for non-git skills. */
+  update_available: boolean;
 }
 
 /**
- * The read/write path for user/brain-defined skills. Mirrors {@link McpServerStore}'s shape (composite
- * (org_id, scope, name) PK, `'org'` ⇄ `'*'` scope alias, `rowsForTurn` for the resolver) MINUS the
- * encryption — a skill is plain markdown, so there is no `secrets_enc` / cipher.
+ * The read/write path for the skills REGISTRY (metadata only — see `SkillInput`). Mirrors
+ * {@link McpServerStore}'s shape (composite (org_id, scope, name) PK, `'org'` ⇄ `'*'` scope alias,
+ * `rowsForTurn` for the resolver) MINUS the encryption — a skill has no secrets.
  */
 @Injectable()
 export class WorkspaceSkillStore {
@@ -56,7 +82,7 @@ export class WorkspaceSkillStore {
     return rows.map((r) => this.view(r));
   }
 
-  /** One skill by (org, dbScope, name), or null. Includes the body (no secrets on a skill). */
+  /** One skill by (org, dbScope, name), or null. */
   async get(orgId: string, dbScope: string, name: string): Promise<SkillView | null> {
     const row = await this.skills.findOne({ where: { org_id: orgId, scope: dbScope, name } });
     return row ? this.view(row) : null;
@@ -67,21 +93,34 @@ export class WorkspaceSkillStore {
       scope: WorkspaceSkillStore.fromDbScope(r.scope),
       name: r.name,
       description: r.description,
-      body: r.body,
+      provenance: r.provenance,
+      source_url: r.source_url,
+      source_ref: r.source_ref,
+      source_subpath: r.source_subpath,
+      installed_sha: r.installed_sha,
+      update_policy: r.update_policy,
+      forked_from: r.forked_from,
       surfaces: r.surfaces,
       enabled: r.enabled,
+      update_available: r.update_available,
     };
   }
 
   // ── writes ─────────────────────────────────────────────────────────────────────────────────
 
-  /** Upsert a skill definition (replaces the row's content). */
+  /** Upsert a skill's registry metadata (does NOT touch the on-disk skill dir — see `SkillInput`). */
   async write(orgId: string, dbScope: string, name: string, input: SkillInput): Promise<void> {
     const row =
       (await this.skills.findOne({ where: { org_id: orgId, scope: dbScope, name } })) ??
       this.skills.create({ org_id: orgId, scope: dbScope, name });
     row.description = input.description;
-    row.body = input.body;
+    row.provenance = input.provenance ?? row.provenance ?? 'custom';
+    row.source_url = input.source_url ?? null;
+    row.source_ref = input.source_ref ?? null;
+    row.source_subpath = input.source_subpath ?? null;
+    row.installed_sha = input.installed_sha ?? null;
+    row.update_policy = input.update_policy ?? null;
+    row.forked_from = input.forked_from ?? null;
     row.surfaces = input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['build'];
     row.enabled = input.enabled ?? true;
     await this.skills.save(row);

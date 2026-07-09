@@ -631,12 +631,13 @@ function BlockedRing({ size = 13 }: { size?: number }) {
 
 // ── REVIEW children — each review lens + the post-review fix are first-class child threads ─────────
 
-/** The design's four agent states — a review child's wire `ThreadStatus` folds onto these. */
-type AgentDisplay = "pending" | "in_progress" | "done" | "skipped";
+/** The design's agent states — a review child's wire `ThreadStatus` folds onto these. */
+type AgentDisplay = "pending" | "in_progress" | "done" | "skipped" | "failed";
 
 /** Map a review CHILD thread's `ThreadStatus` to its navigator display state. */
 function childDisplay(status: ThreadStatus): AgentDisplay {
-  if (status === "done" || status === "failed") return "done"; // terminal — the lens ran
+  if (status === "failed") return "failed"; // the lens did NOT run (e.g. engine/auth error) — surface it
+  if (status === "done") return "done"; // terminal — the lens ran clean
   if (status === "skipped") return "skipped";
   if (status === "pending") return "pending";
   return "in_progress"; // planning / reviewing / executing / auto_fixing / awaiting_*
@@ -759,8 +760,9 @@ function LegRow({
   );
 }
 
-/** The post-review fix child's `ThreadStatus` → its row's three display states. */
-function postReviewState(status: ThreadStatus): "queued" | "running" | "done" {
+/** The post-review fix child's `ThreadStatus` → its row's display states. */
+function postReviewState(status: ThreadStatus): "queued" | "running" | "done" | "failed" {
+  if (status === "failed") return "failed"; // the fix turn errored out — don't paint it done
   if (status === "pending") return "queued";
   if (
     status === "executing" ||
@@ -786,19 +788,23 @@ function AgentRow({
 }) {
   const d = childDisplay(c.status);
   const word =
-    d === "done"
-      ? "done"
-      : d === "in_progress"
-        ? "reviewing"
-        : d === "skipped"
-          ? "skipped"
-          : "pending";
+    d === "failed"
+      ? "failed"
+      : d === "done"
+        ? "done"
+        : d === "in_progress"
+          ? "reviewing"
+          : d === "skipped"
+            ? "skipped"
+            : "pending";
   const wordColor =
-    d === "done"
-      ? "var(--green)"
-      : d === "in_progress"
-        ? "var(--blue)"
-        : "var(--faint)";
+    d === "failed"
+      ? "var(--red)"
+      : d === "done"
+        ? "var(--green)"
+        : d === "in_progress"
+          ? "var(--blue)"
+          : "var(--faint)";
   return (
     <button
       type="button"
@@ -848,6 +854,7 @@ function AgentStatusTile({
   display: AgentDisplay | "queued" | "running";
 }) {
   const done = display === "done";
+  const failed = display === "failed";
   const spinning = display === "in_progress" || display === "running";
   return (
     <span
@@ -855,14 +862,18 @@ function AgentStatusTile({
       style={{
         color: done
           ? "var(--green)"
-          : spinning
-            ? "var(--blue)"
-            : "var(--faint)",
+          : failed
+            ? "var(--red)"
+            : spinning
+              ? "var(--blue)"
+              : "var(--faint)",
         background: done
           ? "var(--green-soft)"
-          : spinning
-            ? "var(--blue-soft)"
-            : "var(--surface-3)",
+          : failed
+            ? "var(--red-soft)"
+            : spinning
+              ? "var(--blue-soft)"
+              : "var(--surface-3)",
       }}
     >
       {done ? (
@@ -878,6 +889,20 @@ function AgentStatusTile({
           aria-hidden
         >
           <path d="M20 6L9 17l-5-5" />
+        </svg>
+      ) : failed ? (
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M18 6L6 18M6 6l12 12" />
         </svg>
       ) : spinning ? (
         <SpinRing
@@ -917,7 +942,7 @@ function PostReviewFixesRow({
   selected,
   onOpen,
 }: {
-  state: "queued" | "running" | "done";
+  state: "queued" | "running" | "done" | "failed";
   selected: boolean;
   onOpen: () => void;
 }) {

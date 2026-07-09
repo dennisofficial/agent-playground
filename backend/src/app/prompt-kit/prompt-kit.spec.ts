@@ -14,6 +14,7 @@ import {
   SUBAGENT_KERNEL_NOTE,
   SOLE_AUTHOR_NOTE,
   SPIKE_FIRST_NOTE,
+  SUBAGENT_NUDGE_NOTE,
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from './fragments';
@@ -167,6 +168,19 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(
         SUBAGENT_KERNEL_NOTE,
       );
+    }
+  });
+
+  it('SUBAGENT_NUDGE_NOTE reaches the two fan-out orchestrators (brain + worker), never the subagents', () => {
+    // the personas that can spawn subagents get the nudge-before-respawn recovery guidance, once each.
+    for (const agent of [Agent.WORKER]) {
+      const out = renderAgentPrompt(agent, { jobKind: 'feature' });
+      expect(out.split(SUBAGENT_NUDGE_NOTE).length - 1, String(agent)).toBe(1);
+    }
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' })).toContain(SUBAGENT_NUDGE_NOTE);
+    // the subagents themselves don't recurse — they never get it.
+    for (const agent of [Agent.EXPLORE, Agent.DOCS, Agent.REVIEW_AGENT, Agent.DEBUG, Agent.TEST, Agent.FAN_OUT]) {
+      expect(renderAgentPrompt(agent), String(agent)).not.toContain(SUBAGENT_NUDGE_NOTE);
     }
   });
 

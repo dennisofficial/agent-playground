@@ -5,9 +5,9 @@ import type { MountMode, MountSpec } from '../sandbox/container-paths';
 
 /**
  * The shape of a legacy committed `atlas.json` (repo root) or its predecessor `.atlas/worktree.json`.
- * Worktree config (mounts) now lives in the DB (see `WorktreeConfigStore`) — this parser exists ONLY to
+ * Workspace config (mounts) now lives in the DB (see `WorkspaceConfigStore`) — this parser exists ONLY to
  * import an already-onboarded repo's committed file, once, into the DB (see
- * `WorktreeConfigStore.importLegacyIfEmpty`). It is NOT part of the live hydration path. A legacy file's
+ * `WorkspaceConfigStore.importLegacyIfEmpty`). It is NOT part of the live hydration path. A legacy file's
  * `seed` array (a removed feature) is ignored.
  */
 export interface WorktreeManifest {
@@ -91,7 +91,7 @@ function parseMounts(v: unknown, warnings: string[]): MountSpec[] {
     }
     // A legacy manifest is a REPO-COMMITTED (attacker-influenceable) file — it must NOT gain the power to
     // mount an absolute/EXTERNAL container path (that power is reserved for Atlas's validated
-    // `write_worktree_config` calls). Drop any absolute mount here; legacy import stays worktree-relative.
+    // `write_workspace_config` calls). Drop any absolute mount here; legacy import stays worktree-relative.
     if (isExternalMountPath(o.path)) {
       warnings.push(`legacy worktree manifest: mounts[] entry "${o.path}" is an absolute (external) path — not allowed from a committed file, ignored`);
       continue;

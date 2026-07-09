@@ -32,6 +32,8 @@ export interface ThreadRealtimeRow extends Row {
   kind: string | null;
   status: string;
   turnActive: boolean;
+  /** Unresolved turn-failure box outstanding — drives the sidebar ✕ glyph even when status is untouched. */
+  halted: boolean;
   needsYou: boolean;
   createdAt: string;
   orgId: string;
@@ -68,6 +70,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
   // `SELECT *` snapshots and the WAL new-row image both carry this small (never-TOASTed) column, so it is
   // always present here; opening/answering a question updates the thread row → fires a realtime delta.
   const awaitingQuestion = Number(raw.open_question_count ?? 0) > 0;
+  const halted = raw.halted === true;
   const createdAt = raw.created_at;
   return {
     jobId: String(raw.id),
@@ -76,7 +79,8 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     kind: (raw.kind as string | null) ?? null,
     status,
     turnActive,
-    needsYou: deriveNeedsYou(status, turnActive, awaitingQuestion),
+    halted,
+    needsYou: deriveNeedsYou(status, turnActive, awaitingQuestion, halted),
     createdAt:
       createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
     orgId: String(raw.org_id),
