@@ -164,40 +164,44 @@ export class StimulusStoreService {
     /** Optional render-only card payload persisted on the message row. */
     card?: Record<string, unknown>;
   }): Promise<EventStimulus> {
-    const message = await this.messages.save(
-      this.messages.create({
-        job_id: input.jobId,
-        author: input.source,
-        author_id: input.source,
-        author_bot_id: null,
-        text: input.body,
-        card: input.card ?? null,
-        meta: { source: 'system_event', eventSource: input.source, severity: input.severity },
-      }),
-    );
-
+    // ATOMIC: the operator-visible `system_event` card and the `stimuli` row that DRIVES brain delivery must
+    // commit together. Two separate saves let a crash between them leave a visible event card with NO stimulus
+    // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
+    // would render forever with the brain never consuming it. One transaction makes it both-or-neither.
     let row: StimulusEntity;
     try {
-      row = await this.stimuli.save(
-        this.stimuli.create({
-          org_id: input.orgId,
-          repo_id: input.repoId,
-          kind: 'event',
-          trust: 'untrusted',
-          body: input.body,
-          job_id: input.jobId,
-          author_id: null,
-          reply_route: null,
-          source: input.source,
-          dedupe_key: input.dedupeKey,
-          severity: input.severity,
-        }),
-      );
+      row = await this.dataSource.transaction(async (m) => {
+        await m.save(
+          m.create(MessageEntity, {
+            job_id: input.jobId,
+            author: input.source,
+            author_id: input.source,
+            author_bot_id: null,
+            text: input.body,
+            card: input.card ?? null,
+            meta: { source: 'system_event', eventSource: input.source, severity: input.severity },
+          }),
+        );
+        return m.save(
+          m.create(StimulusEntity, {
+            org_id: input.orgId,
+            repo_id: input.repoId,
+            kind: 'event',
+            trust: 'untrusted',
+            body: input.body,
+            job_id: input.jobId,
+            author_id: null,
+            reply_route: null,
+            source: input.source,
+            dedupe_key: input.dedupeKey,
+            severity: input.severity,
+          }),
+        );
+      });
     } catch (err) {
       if (isUniqueViolation(err)) {
-        // A duplicate of this exact event was already recorded for the job — drop the message we just
-        // wrote and signal the caller to skip re-delivery.
-        await this.messages.delete({ id: message.id }).catch(() => undefined);
+        // A duplicate of this exact event was already recorded for the job. The transaction rolled back BOTH
+        // the card and the stimulus row, so there is nothing to clean up — just signal skip re-delivery.
         throw new DuplicateStimulusError(input.dedupeKey);
       }
       throw err;
@@ -370,6 +374,53 @@ export class StimulusStoreService {
       { kind: 'chat', delivered_at: IsNull() },
       { attempted_at: null },
     );
+  }
+
+  // ── Durable EVENT delivery: the event-inbox queries (mirror the chat inbox above) ──────────────────
+  //
+  // Routed GitHub events are `kind:'event'` `stimuli` rows; `delivered_at` is the same at-least-once ledger
+  // as chat. Unlike chat these aren't coalesced per-thread — each event is one delivery unit — so the sweep
+  // worklist is the events themselves (leader-wide), not distinct threads. `leaseChatStimuli`/
+  // `markChatDelivered` are by-id (kind-agnostic) and reused for event rows.
+
+  /** Every eligible pending event (undelivered + lease-free), oldest first, as EventStimulus — the sweep worklist. */
+  async eligiblePendingEvents(leaseMs: number): Promise<EventStimulus[]> {
+    const cutoff = new Date(Date.now() - leaseMs);
+    const rows = await this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'event' })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere('s.job_id IS NOT NULL')
+      .andWhere('(s.attempted_at IS NULL OR s.attempted_at < :cutoff)', { cutoff })
+      .orderBy('s.created_at', 'ASC')
+      .getMany();
+    return rows.map((r) => this.rowToEventStimulus(r));
+  }
+
+  /** Clear the lease on every undelivered event row (boot reconcile — re-drive anything mid-attempt at crash). */
+  async resetEventLeases(): Promise<void> {
+    await this.stimuli.update(
+      { kind: 'event', delivered_at: IsNull() },
+      { attempted_at: null },
+    );
+  }
+
+  /** Reconstruct the in-memory `EventStimulus` from a persisted event row (for re-drive). Body is the CLEAN
+   *  text — the untrusted fence is re-applied at the delivery seam (`renderEventDelivery`). */
+  private rowToEventStimulus(row: StimulusEntity): EventStimulus {
+    return {
+      id: row.id,
+      orgId: row.org_id,
+      repoId: row.repo_id,
+      kind: 'event',
+      trust: 'untrusted',
+      jobId: row.job_id as string,
+      body: row.body,
+      source: row.source ?? 'webhook',
+      dedupeKey: row.dedupe_key ?? '',
+      severity: (row.severity as EventStimulus['severity'] | null) ?? 'info',
+      receivedAt: row.created_at,
+    };
   }
 
   /** Reconstruct the in-memory `ChatStimulus` from a persisted chat row (for re-drive). */
