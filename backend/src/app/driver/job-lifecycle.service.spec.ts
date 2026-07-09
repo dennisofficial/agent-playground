@@ -349,3 +349,78 @@ describe('JobLifecycleService — cold-boot setup_error stamping (ensureContaine
     }
   });
 });
+
+describe('JobLifecycleService.applyGithubPrState', () => {
+  /**
+   * Build a service whose `jobs.update` and `closeJob`/`reconcileLedgerOnMerge` (spied on the instance)
+   * all push a label into a shared `order` array, so tests can assert both invocation AND sequence.
+   */
+  function makeServiceForApply() {
+    const order: string[] = [];
+    const jobs = {
+      update: vi.fn(async (_where: unknown, patch: { pr_state?: string }) => {
+        order.push(`update:${patch.pr_state}`);
+        return { affected: 1 };
+      }),
+    } as unknown as Repository<JobEntity>;
+    const svc = new JobLifecycleService(
+      jobs,
+      { findOne: vi.fn(), save: vi.fn(), create: vi.fn() } as unknown as Repository<JobSandboxEntity>,
+      { findOne: vi.fn() } as unknown as Repository<RepoEntity>,
+      {} as unknown as LocalGitService,
+      { getPullState: vi.fn() } as unknown as GithubPrService,
+      { githubToken: vi.fn() } as unknown as CredentialResolver,
+      { get: vi.fn() } as unknown as EnvService,
+      new SandboxActivityRegistry(),
+      { resolve: vi.fn() } as unknown as DriverRepoResolver,
+      { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
+      { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
+      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
+      { get: vi.fn() } as unknown as ModuleRef,
+      { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    );
+    svc.closeJob = vi.fn(async () => {
+      order.push('closeJob');
+    });
+    (svc as unknown as { reconcileLedgerOnMerge: (orgId: string, repoId: string) => Promise<void> }).reconcileLedgerOnMerge =
+      vi.fn(async () => {
+        order.push('reconcileLedgerOnMerge');
+      });
+    return { svc, jobs, order };
+  }
+
+  const job = { id: 'job-1', org_id: 'T1', repo_id: 'repo-1' } as JobEntity;
+
+  it("state='open' is a no-op — no update, no closeJob", async () => {
+    const { svc, jobs } = makeServiceForApply();
+    const result = await svc.applyGithubPrState(job, 'open');
+    expect(result).toBe('noop');
+    expect(jobs.update).not.toHaveBeenCalled();
+    expect(svc.closeJob).not.toHaveBeenCalled();
+  });
+
+  it("state='merged' writes pr_state=merged, reconciles the ledger, then closes — in that order", async () => {
+    const { svc, jobs, order } = makeServiceForApply();
+    const result = await svc.applyGithubPrState(job, 'merged');
+    expect(result).toBe('closed');
+    expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'merged' });
+    expect(order).toEqual(['update:merged', 'reconcileLedgerOnMerge', 'closeJob']);
+  });
+
+  it("state='closed' writes pr_state=closed, skips ledger reconcile, then closes", async () => {
+    const { svc, jobs, order } = makeServiceForApply();
+    const result = await svc.applyGithubPrState(job, 'closed');
+    expect(result).toBe('closed');
+    expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'closed' });
+    expect(order).toEqual(['update:closed', 'closeJob']);
+  });
+
+  it("state='gone' folds to pr_state=closed and still closes the job", async () => {
+    const { svc, jobs, order } = makeServiceForApply();
+    const result = await svc.applyGithubPrState(job, 'gone');
+    expect(result).toBe('closed');
+    expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'closed' });
+    expect(order).toEqual(['update:closed', 'closeJob']);
+  });
+});

@@ -2480,6 +2480,192 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
   });
 });
 
+describe('AgentSessionManager — direct-build turn-end latch (decision d3)', () => {
+  const ORG = 'org-latch';
+  const REPO = 'repo-latch';
+  const JOB_ID = 'job-latch-1';
+
+  const stimulus: ChatStimulus = {
+    kind: 'chat',
+    trust: 'trusted',
+    id: 'stim-latch-1',
+    receivedAt: new Date('2026-06-25T00:00:00Z'),
+    orgId: ORG,
+    repoId: REPO,
+    jobId: JOB_ID,
+    body: 'ship it',
+    author: { id: 'U-OP', displayName: 'Operator' },
+    replyRoute: { surfaceId: 'web', jobRef: JOB_ID },
+  };
+
+  /** The default `running` direct-build job the latch acts on (domain shape → camelCase branch fields). */
+  const runningJob = {
+    id: JOB_ID,
+    orgId: ORG,
+    repoId: REPO,
+    status: 'running',
+    featureBranch: 'atlas/feature',
+    currentBranch: 'atlas/live',
+    title: 'Direct build',
+  };
+
+  function makeManager(overrides: {
+    loadJob?: ReturnType<typeof vi.fn>;
+    findSandbox?: ReturnType<typeof vi.fn>;
+    resolve?: ReturnType<typeof vi.fn>;
+    latchPr?: ReturnType<typeof vi.fn>;
+  } = {}) {
+    const store = {
+      loadJob: overrides.loadJob ?? vi.fn().mockResolvedValue(runningJob),
+      setTurnActive: vi.fn().mockResolvedValue(undefined),
+    } as unknown as BrainStoreService;
+    const lifecycle = {
+      findSandbox:
+        overrides.findSandbox ??
+        vi.fn().mockResolvedValue({ id: 'sbx-1', branch: 'atlas/feature', worktreePath: '/wt' }),
+    } as unknown as JobLifecycleService;
+    const ship = {
+      latchPr: overrides.latchPr ?? vi.fn().mockResolvedValue({ url: 'https://gh/pr/9', number: 9 }),
+    } as unknown as BuildShipService;
+    const repos = {
+      resolve:
+        overrides.resolve ??
+        vi.fn().mockResolvedValue({ owner: 'o', repo: 'r', defaultBranch: 'main', token: 't' }),
+    } as unknown as DriverRepoResolver;
+
+    const manager = new AgentSessionManager(
+      store,
+      {} as unknown as DriverStoreService,
+      {} as unknown as MemoryStore,
+      {} as unknown as DecisionApprovalService,
+      lifecycle,
+      {} as unknown as EngineRunnerPort,
+      { listRunning: async () => [] } as never, // turnRegistry
+      {} as unknown as PlanReviewService,
+      {} as unknown as JobDispatcher,
+      { post: vi.fn(), name: 'web' } as unknown as ChatSurface,
+      { findOne: vi.fn(), save: vi.fn() } as unknown as Repository<JobSandboxEntity>,
+      { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
+      {
+        eligiblePendingChat: async () => [],
+        leaseChatStimuli: async () => undefined,
+        markChatDelivered: async () => undefined,
+        undeliveredChatThreads: async () => [],
+        resetChatLeases: async () => undefined,
+      } as never, // stimulusStore
+      noopTurnHarness,
+      {} as unknown as DecisionClassifier,
+      ship,
+      repos,
+      {
+        appendMarker: vi.fn().mockResolvedValue(undefined),
+        drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
+      } as unknown as PipelineAwarenessStore,
+      {} as unknown as TicketService,
+      { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
+      { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
+      {
+        getState: () => 'leader',
+        isLeader: () => true,
+        onPromote: () => ({ unsubscribe() {} }),
+        onDemote: () => ({ unsubscribe() {} }),
+      } as never, // election
+      new DecisionLedgerService(),
+      {
+        recordPromoted: async () => undefined,
+        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
+        reposWithGit: async () => [],
+      } as unknown as RepoDecisionManifestService,
+      { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
+      {
+        write: async () => undefined,
+        list: async () => [],
+        listForRepo: async () => [],
+        read: async () => null,
+      } as unknown as WorkspaceSecretFileStore,
+      { listMounts: async () => [], upsertMount: async () => undefined } as unknown as WorkspaceConfigStore,
+      { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
+      { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
+      { register: () => undefined } as never, // threadInput (ThreadInputService)
+    );
+    return { manager, store, lifecycle, ship, repos };
+  }
+
+  /** Access the private pending-flag map + the turn-end latch method the `runChatTurn` finally calls. */
+  const pending = (m: AgentSessionManager) =>
+    (m as unknown as { directBuildShipPending: Map<string, boolean> }).directBuildShipPending;
+  const runLatch = (m: AgentSessionManager, s: ChatStimulus) =>
+    (m as unknown as { latchDirectBuildAtTurnEnd: (s: ChatStimulus) => Promise<void> }).latchDirectBuildAtTurnEnd(s);
+  const spyPromote = (m: AgentSessionManager) =>
+    vi.spyOn(m as unknown as { reconcileLedgerPromotion: (j: unknown) => Promise<void> }, 'reconcileLedgerPromotion');
+
+  it('flag set + running + owning feature_branch → latches the PR on the LIVE branch (no re-promote)', async () => {
+    const { manager, ship } = makeManager();
+    const promote = spyPromote(manager).mockResolvedValue(undefined);
+    pending(manager).set(JOB_ID, true);
+
+    await runLatch(manager, stimulus);
+
+    // latchPr ran against the LIVE branch (current_branch overrides the host-named feature branch).
+    expect(mock(ship.latchPr)).toHaveBeenCalledOnce();
+    const [, , sandboxArg] = mock(ship.latchPr).mock.calls[0];
+    expect((sandboxArg as { branch: string }).branch).toBe('atlas/live');
+    // Ledger promotion is NOT re-run at turn-end — `finalize_build` stamped it complete inline.
+    expect(promote).not.toHaveBeenCalled();
+    // The flag is CONSUMED (a second turn-end must not re-latch).
+    expect(pending(manager).has(JOB_ID)).toBe(false);
+  });
+
+  it('falls back to the host feature branch when current_branch is null', async () => {
+    const { manager, ship } = makeManager({
+      loadJob: vi.fn().mockResolvedValue({ ...runningJob, currentBranch: null }),
+    });
+    spyPromote(manager).mockResolvedValue(undefined);
+    pending(manager).set(JOB_ID, true);
+
+    await runLatch(manager, stimulus);
+
+    const [, , sandboxArg] = mock(ship.latchPr).mock.calls[0];
+    expect((sandboxArg as { branch: string }).branch).toBe('atlas/feature');
+  });
+
+  it('flag NOT set → no latch, no ledger promotion (a normal chat turn ends untouched)', async () => {
+    const { manager, ship } = makeManager();
+    const promote = spyPromote(manager).mockResolvedValue(undefined);
+
+    await runLatch(manager, stimulus);
+
+    expect(mock(ship.latchPr)).not.toHaveBeenCalled();
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  it('latch MISS (PR not indexed yet) → no ledger promotion; job left running for the reconciler backstop', async () => {
+    const { manager, ship } = makeManager({ latchPr: vi.fn().mockResolvedValue(undefined) });
+    const promote = spyPromote(manager).mockResolvedValue(undefined);
+    pending(manager).set(JOB_ID, true);
+
+    await runLatch(manager, stimulus);
+
+    expect(mock(ship.latchPr)).toHaveBeenCalledOnce();
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  it('does NOT latch a non-running job (mirrors the finalize_build refusal gate)', async () => {
+    const { manager, ship } = makeManager({
+      loadJob: vi.fn().mockResolvedValue({ ...runningJob, status: 'done' }),
+    });
+    const promote = spyPromote(manager).mockResolvedValue(undefined);
+    pending(manager).set(JOB_ID, true);
+
+    await runLatch(manager, stimulus);
+
+    expect(mock(ship.latchPr)).not.toHaveBeenCalled();
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  const mock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
+});
+
 describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the ONE brain as a harness message', () => {
   const eventStimulus: EventStimulus = {
     kind: 'event',

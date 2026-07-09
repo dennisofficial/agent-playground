@@ -6,6 +6,7 @@ import type {
   IngressResult,
   NotificationSource,
   ParsedEvent,
+  PrStateDelta,
   RawNotification,
 } from '../domain';
 import { ProjectRoutingService } from '../stimulus';
@@ -41,7 +42,57 @@ export class GithubNotificationSource implements NotificationSource {
     private readonly routing: ProjectRoutingService,
   ) {}
 
+  /**
+   * `/ingress/github` front door — work-events→job intake ONLY. Verifies + routes the request, then
+   * summarizes it into a triage stimulus. `pull_request` is deliberately not actionable here
+   * (`summarizeGithubEvent` returns null for it) — that event drives the silent PR-state sync via
+   * `handlePrWebhook` instead, never this method.
+   */
   async handle(raw: RawNotification): Promise<IngressResult> {
+    const g = await this.verifyAndRoute(raw);
+    if ('outcome' in g) return g;
+
+    const summary = summarizeGithubEvent(g.eventType, g.body);
+    if (!summary) {
+      // A verified payload we deliberately don't act on (e.g. a successful run, a push event, a
+      // pull_request — that one's routed via `handlePrWebhook` instead).
+      return { outcome: 'ignored', reason: 'unsupported', detail: `github ${g.eventType} (no action)` };
+    }
+
+    const event: ParsedEvent = {
+      orgId: g.route.orgId,
+      repoId: g.route.repoId,
+      source: this.source,
+      dedupeKey: deriveDedupeKey(g.eventType, g.body, raw.headers['x-github-delivery']),
+      severity: summary.severity,
+      body: summary.body,
+      ...(summary.correlation ? { correlation: summary.correlation } : {}),
+    };
+    return { outcome: 'accepted', event };
+  }
+
+  /**
+   * `/webhooks/github` front door — silent PR-state sync ONLY. Verifies + routes the request same as
+   * `handle`, but only ever parses `pull_request` events into a `PrStateDelta`; every other verified
+   * event type is ignored (this endpoint never feeds `StimulusIntake`).
+   */
+  async handlePrWebhook(raw: RawNotification): Promise<IngressResult> {
+    const g = await this.verifyAndRoute(raw);
+    if ('outcome' in g) return g;
+    if (g.eventType !== 'pull_request') {
+      return { outcome: 'ignored', reason: 'unsupported', detail: `github ${g.eventType} (not a pull_request event)` };
+    }
+    return this.parsePullRequest(g.route, g.body);
+  }
+
+  /**
+   * Shared verify + route: HMAC-secret check, signature check, `ping` ignore, `repository.full_name`
+   * read, `ProjectRoutingService.routeGithubRepo`. Both front doors call this so verification/routing
+   * behavior can never drift between them.
+   */
+  private async verifyAndRoute(
+    raw: RawNotification,
+  ): Promise<IngressResult | { eventType: string; body: GithubWebhookBody; route: { orgId: string; repoId: string } }> {
     const secret = this.env.get('GITHUB_WEBHOOK_SECRET');
     if (!secret) {
       this.logger.warn('GITHUB_WEBHOOK_SECRET unset — refusing GitHub webhook');
@@ -75,22 +126,32 @@ export class GithubNotificationSource implements NotificationSource {
       return { outcome: 'rejected', reason: 'unroutable', detail: `no atlas_project for repo ${repo}` };
     }
 
-    const summary = summarizeGithubEvent(eventType, body);
-    if (!summary) {
-      // A verified payload we deliberately don't act on (e.g. a successful run, a push event).
-      return { outcome: 'ignored', reason: 'unsupported', detail: `github ${eventType} (no action)` };
-    }
+    return { eventType, body, route };
+  }
 
-    const event: ParsedEvent = {
+  /** Parse a `pull_request` webhook into a `PrStateDelta` the silent sync applies, or ignore it. */
+  private parsePullRequest(
+    route: { orgId: string; repoId: string },
+    body: GithubWebhookBody,
+  ): IngressResult {
+    const action = body.action;
+    if (action !== 'opened' && action !== 'reopened' && action !== 'closed') {
+      return { outcome: 'ignored', reason: 'unsupported', detail: `github pull_request ${action ?? '?'} (no action)` };
+    }
+    const pr = body.pull_request;
+    if (pr?.number == null) {
+      return { outcome: 'ignored', reason: 'unsupported', detail: 'pull_request missing number' };
+    }
+    const delta: PrStateDelta = {
       orgId: route.orgId,
       repoId: route.repoId,
-      source: this.source,
-      dedupeKey: deriveDedupeKey(eventType, body, raw.headers['x-github-delivery']),
-      severity: summary.severity,
-      body: summary.body,
-      ...(summary.correlation ? { correlation: summary.correlation } : {}),
+      action,
+      prNumber: pr.number,
+      headRef: pr.head?.ref ?? '',
+      url: pr.html_url ?? '',
+      merged: pr.merged ?? false,
     };
-    return { outcome: 'accepted', event };
+    return { outcome: 'pr-sync', delta };
   }
 }
 
@@ -123,7 +184,7 @@ interface GithubWebhookBody {
     head_branch?: string;
     pull_requests?: Array<{ number?: number }>;
   };
-  pull_request?: { number?: number; head?: { ref?: string } };
+  pull_request?: { number?: number; html_url?: string; merged?: boolean; head?: { ref?: string } };
   review?: { id?: number; state?: string; body?: string | null; html_url?: string; user?: { login?: string } };
   comment?: { id?: number; body?: string | null; html_url?: string; user?: { login?: string } };
   issue?: { number?: number; pull_request?: unknown };
