@@ -104,6 +104,84 @@ function steerUserMessage(content: string, priority?: 'now' | 'next' | 'later'):
 }
 
 /**
+ * The atlas-svc nudge (see the PostToolUse hook in `run`): does this Bash command look like a long-running
+ * SERVICE that should run under the `atlas-svc` supervisor (dev server / `docker compose up` / watcher /
+ * bare-backgrounded), rather than a one-shot the model should just run directly? Returns a short label for
+ * the matched smell, or null.
+ *
+ * Precision is load-bearing: a false positive tells Atlas to wrap a one-shot like `pnpm test` in atlas-svc,
+ * which is WRONG advice. So we match a curated allowlist of long-running smells and bias toward
+ * under-matching — the token-delta throttle on the hook makes a rare miss cheap. A command already using
+ * atlas-svc is skipped outright (it's already doing the right thing).
+ */
+export function detectLongRunningCommand(command: string): string | null {
+  const cmd = command.trim();
+  if (!cmd) return null;
+  if (/\batlas-svc\b/.test(cmd)) return null;
+
+  const smells: Array<[RegExp, string]> = [
+    // Explicit backgrounding markers.
+    [/\bnohup\b/, 'nohup'],
+    [/(^|[^&])&\s*$/, 'trailing & (backgrounded)'],
+    // Docker long-running.
+    [/\bdocker(-compose|\s+compose)\s+up\b/, 'docker compose up'],
+    [/\bdocker\s+run\b(?=[^|&;]*\s(-d|--detach)\b)/, 'docker run -d'],
+    // Package-runner dev/serve/watch scripts (NOT test/build/lint/install — those are one-shots).
+    [/\b(pnpm|npm|yarn|bun|npx)\b[^|&;]*\b(dev|serve|watch)\b/, 'dev/serve/watch script'],
+    [/\b(pnpm|npm|yarn|bun)\s+start\b/, 'start script'],
+    // Bare dev servers / watchers.
+    [/\bnext\s+dev\b/, 'next dev'],
+    [/\bvite\b(?!\s+build)/, 'vite'],
+    [/\bnodemon\b/, 'nodemon'],
+    [/\bwebpack(-dev-server)?\s+serve\b/, 'webpack serve'],
+    [/\bng\s+serve\b/, 'ng serve'],
+    [/\brails\s+s(erver)?\b/, 'rails server'],
+    [/\bflask\s+run\b/, 'flask run'],
+    [/\b(uvicorn|gunicorn|daphne|hypercorn)\b/, 'python app server'],
+    [/\bpython[0-9.]*\s+-m\s+http\.server\b/, 'python http.server'],
+  ];
+  for (const [re, label] of smells) if (re.test(cmd)) return label;
+  return null;
+}
+
+const SVC_NUDGE_TEXT =
+  'this looks like a long-running process. If it is a dev server / `docker compose up` / watcher, do NOT ' +
+  "run it bare — start it under the supervisor so it survives the turn and shows in the operator's SERVICES " +
+  'sidebar with live logs: `atlas-svc run --name <id> -- <cmd>` (then `atlas-svc logs -f <id>`, `atlas-svc ' +
+  'ps`, `atlas-svc stop <id>`). Anything started with a bare `&`/nohup/`-d` is invisible to the operator and ' +
+  'gets reaped between turns. (One-off commands like `pnpm test`/`build` are fine to run directly with Bash.)';
+
+/** The atlas-svc nudge appended to a matching Bash tool result via PostToolUse `additionalContext`. */
+function renderSvcNudge(command: string): string {
+  const shown = command.length > 120 ? `${command.slice(0, 117)}…` : command;
+  return `[atlas-svc reminder] You just ran \`${shown}\` — ${SVC_NUDGE_TEXT}`;
+}
+
+/**
+ * Throttle predicate for the atlas-svc nudge: fire on the FIRST match (`last === null`), then only once the
+ * context has grown by at least `delta` tokens since the last nudge. Keeps back-to-back matching commands
+ * from spamming the reminder. Pure — the caller latches `last` on a true result.
+ */
+export function svcNudgeShouldFire(last: number | null, now: number, delta: number): boolean {
+  return last === null || now - last >= delta;
+}
+
+/** Throttle window (context-token growth) between atlas-svc nudges; env-overridable. Default ~40k. */
+const DEFAULT_SVC_NUDGE_DELTA_TOKENS = 40_000;
+function resolveSvcNudgeDeltaTokens(): number {
+  const raw = process.env.SVC_NUDGE_DELTA_TOKENS;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return DEFAULT_SVC_NUDGE_DELTA_TOKENS;
+}
+function svcNudgeDisabled(): boolean {
+  const v = process.env.SVC_NUDGE_DISABLED;
+  return v === '1' || v === 'true';
+}
+
+/**
  * A hand-driven async-iterable the engine feeds the SDK in STREAMING-INPUT mode: `push` a message to
  * deliver it to the live turn, `end` to close input so the query completes. Mirrors the spike harness.
  */
@@ -671,6 +749,11 @@ export class EngineCore {
     // the post-result close. `firedNudgeLevel` is the highest delta-band injected (-1 before soft; 0 = soft).
     let firedNudgeLevel = -1;
     let injectRotationNudge = (_text: string): void => {}; // real impl set below when streaming
+    // ENGINE-LOCAL atlas-svc nudge throttle (see the PostToolUse hook below): the context-token occupancy at
+    // which we last nudged Atlas to wrap a long-running command in `atlas-svc`. null = never nudged (first
+    // matching command always fires); then at most once per `svcNudgeDeltaTokens` of context growth. Per-turn
+    // scope like `firedNudgeLevel` — a relapse in a fresh turn re-arms the first-hit fire.
+    let lastSvcNudgeTokens: number | null = null;
     if (input) {
       input.push(steerUserMessage(task));
       // Drain operator steers into the live turn until the turn ends. Each steer carries its stimulus `id`;
@@ -774,6 +857,12 @@ export class EngineCore {
       this.managedGitSkillsRoot(),
     );
 
+    // atlas-svc nudge (PostToolUse hook, added to `options` below): enabled by default for every Claude turn,
+    // env kill-switch + tunable throttle window. Reads the live `contextTokens` (declared after `options`;
+    // the hook only fires during the query loop, after it is initialized) and the per-turn `lastSvcNudgeTokens`.
+    const svcNudgeEnabled = !svcNudgeDisabled();
+    const svcNudgeDeltaTokens = resolveSvcNudgeDeltaTokens();
+
     const options: Options = {
       cwd,
       systemPrompt,
@@ -832,6 +921,41 @@ export class EngineCore {
       // Leg rotation's HARD threshold (200k) depends on there being headroom ABOVE it to author the handoff
       // (see the context-rot plan). The SDK forwards `anthropic-beta: context-1m-2025-08-07`.
       betas: ['context-1m-2025-08-07'],
+      // atlas-svc nudge: when Atlas runs a Bash command that smells long-running (dev server / `docker
+      // compose up` / watcher / bare-backgrounded), append a reminder to that command's result pointing it at
+      // the `atlas-svc` supervisor. Uses PostToolUse `additionalContext` (a free-form string yielded to the
+      // model after the tool result — verified against the shipped CLI; `updatedToolOutput` is shape-validated
+      // against Bash's output and would error). Throttled by context-token growth so back-to-back commands
+      // don't spam. Fires post-execution and only ATTACHES context — never alters the command or its output.
+      ...(svcNudgeEnabled
+        ? {
+            hooks: {
+              PostToolUse: [
+                {
+                  matcher: 'Bash',
+                  hooks: [
+                    async (input) => {
+                      const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
+                      if (inp.tool_name !== 'Bash') return {};
+                      const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
+                      if (!detectLongRunningCommand(cmd)) return {};
+                      const now = contextTokens ?? 0;
+                      // First matching command always fires; then at most once per delta of context growth.
+                      if (!svcNudgeShouldFire(lastSvcNudgeTokens, now, svcNudgeDeltaTokens)) return {};
+                      lastSvcNudgeTokens = now;
+                      return {
+                        hookSpecificOutput: {
+                          hookEventName: 'PostToolUse' as const,
+                          additionalContext: renderSvcNudge(cmd),
+                        },
+                      };
+                    },
+                  ],
+                },
+              ],
+            },
+          }
+        : {}),
       // Rich streaming (the thread brain): partial-message stream → token-level deltas, and extended
       // thinking → thinking blocks. Adaptive lets Claude decide thinking depth per turn.
       // forwardSubagentText: forward a subagent's FULL text+thinking (not just its tool calls) tagged with
