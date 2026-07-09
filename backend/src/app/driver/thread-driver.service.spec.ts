@@ -38,6 +38,7 @@ import type {
   StepStatus,
   Thread,
   ThreadStatus,
+  ThreadCondition,
   Job,
 } from '../domain';
 import type { ThreadTerminalRecord } from '../persistence/entities';
@@ -70,6 +71,7 @@ interface ReviewChildRow {
   ordinal: number;
   config: Record<string, unknown>;
   status: ThreadStatus;
+  condition: ThreadCondition;
   reviewFindings: unknown[] | null;
 }
 
@@ -140,6 +142,13 @@ function makeStore(state: StoreState): {
       const c = (state.reviewChildren ?? []).find((x) => x.id === id);
       if (c) c.status = status;
     }),
+    setThreadCondition: vi.fn(async (id: string, condition: ThreadCondition) => {
+      const s = state.threads.find((x) => x.id === id);
+      if (s) s.condition = condition;
+      // Child rows (review_lens / post_review) share this setter.
+      const c = (state.reviewChildren ?? []).find((x) => x.id === id);
+      if (c) c.condition = condition;
+    }),
     // Set-once persist of the thread's start HEAD; returns the authoritative (first-written) sha.
     ensureThreadStartSha: vi.fn(async (id: string, candidate: string) => {
       const s = state.threads.find((x) => x.id === id);
@@ -181,6 +190,7 @@ function makeStore(state: StoreState): {
           ordinal: (i + 1) * 10,
           config: c.config,
           status: 'pending' as ThreadStatus,
+          condition: 'none' as ThreadCondition,
           reviewFindings: null as unknown[] | null,
         }));
         kids.push(...created);
@@ -722,6 +732,7 @@ function thread(
   brief: string,
   status: ThreadStatus = 'pending',
   isMasterReview = false,
+  condition: ThreadCondition = 'none',
 ): DriverThread {
   return {
     id,
@@ -734,6 +745,7 @@ function thread(
     handoffIn: null,
     handoffOut: null,
     status,
+    condition,
     kind: isMasterReview ? 'master_review' : 'builder',
     parentThreadId: null,
     startSha: null,
@@ -1073,10 +1085,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(lensNotices.length).toBeGreaterThan(0);
     expect(String(lensNotices[0][2])).toContain('fatal: cannot chdir to packages/jwt-auth');
 
-    // Every review_lens child ended `failed`, and the failure never sank the job.
+    // Every review_lens child carries the `failed` CONDITION (step stays where it was), and the failure
+    // never sank the job.
     const lensKids = (state.reviewChildren ?? []).filter((c) => c.kind === 'review_lens');
     expect(lensKids.length).toBeGreaterThan(0);
-    expect(lensKids.every((c) => c.status === 'failed')).toBe(true);
+    expect(lensKids.every((c) => c.condition === 'failed')).toBe(true);
     expect(state.job.status).toBe('done');
   });
 
@@ -1604,7 +1617,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.halt?.kind === 'incomplete');
 
-    expect(state.threads[0].status).toBe('incomplete'); // halted, NOT silently done
+    // The STEP stays at `executing`; the halt is carried on the orthogonal condition overlay.
+    expect(state.threads[0].status).toBe('executing'); // halted, NOT silently done
+    expect(state.threads[0].condition).toBe('incomplete');
     expect(state.job.halt?.kind).toBe('incomplete'); // needs-you, recoverable — NOT done, NOT failed
     expect(h.opened).toHaveLength(0); // nothing shipped
     expect(
@@ -1947,13 +1962,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.store.readOperatorInputAnswer).toHaveBeenCalled();
     expect(h.store.markOperatorInputDelivered).toHaveBeenCalledTimes(1);
 
-    // The thread's status went to 'awaiting_input' then back to 'executing' around the pause.
-    const statusCalls = (h.store.setThreadStatus as ReturnType<typeof vi.fn>).mock.calls.map(
+    // The pause is now on the condition overlay: it went to 'paused' then back to 'none' around the pause,
+    // while the STEP stays at 'executing' throughout.
+    const conditionCalls = (h.store.setThreadCondition as ReturnType<typeof vi.fn>).mock.calls.map(
       (c) => c[1],
     );
-    expect(statusCalls).toContain('awaiting_input');
-    const awaitIdx = statusCalls.indexOf('awaiting_input');
-    expect(statusCalls.slice(awaitIdx + 1)).toContain('executing');
+    expect(conditionCalls).toContain('paused');
+    const pausedIdx = conditionCalls.indexOf('paused');
+    expect(conditionCalls.slice(pausedIdx + 1)).toContain('none');
 
     // The build proceeded to completion carrying the answer in its report.
     expect(state.job.status).toBe('done');
@@ -2088,7 +2104,7 @@ describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — 
     stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].status === 'awaiting_input');
+    await flushUntil(() => state.threads[0].condition === 'paused');
 
     expect(judge.calls).toBe(1);
     expect(state.job.status).toBe('running'); // NOT failed, NOT paused — Phase 3 owns the resume path
@@ -2141,7 +2157,7 @@ describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — 
     stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].status === 'awaiting_input');
+    await flushUntil(() => state.threads[0].condition === 'paused');
 
     expect(judge.calls).toBe(1);
     const term = (state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record;
@@ -2171,7 +2187,7 @@ describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — 
     stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].status === 'awaiting_input');
+    await flushUntil(() => state.threads[0].condition === 'paused');
 
     expect(throwing.calls).toBe(1);
     const term = (state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record;
@@ -2372,7 +2388,7 @@ async function sweepDeliversWake(
 }
 
 describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bounded fix)', () => {
-  it('block_thread → blocked outcome → halts (job stays running, thread awaiting_input, no PR) and wakes the brain ONCE', async () => {
+  it('block_thread → blocked outcome → halts (job stays running, thread executing+paused, no PR) and wakes the brain ONCE', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2389,8 +2405,10 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     await h.driver.dispatch(state.job);
     await sweepDeliversWake(h, state);
 
-    // The typed voluntary halt flowed through the existing blocked plumbing:
-    expect(state.threads[0].status).toBe('awaiting_input');
+    // The typed voluntary halt flowed through the existing blocked plumbing — the STEP stays at 'executing'
+    // and the pause is carried on the condition overlay:
+    expect(state.threads[0].status).toBe('executing');
+    expect(state.threads[0].condition).toBe('paused');
     expect(state.job.status).toBe('running'); // blocked leaves the job running (not paused/failed)
     expect(h.opened).toHaveLength(0); // nothing shipped
     const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null })
@@ -2681,6 +2699,29 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.job.status).toBe('done'); // shipped after the fix
   });
 
+  it('redriveThread clears a stale condition before the asynchronous drive observes the row', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    vi.spyOn(
+      h.driver as unknown as { drive: (jobId: string) => Promise<void> },
+      'drive',
+    ).mockResolvedValue(undefined);
+
+    const result = await h.driver.redriveThread(state.job.id, 'sec-be', 'retry now');
+
+    expect(result.ok).toBe(true);
+    expect(state.threads[0].status).toBe('executing');
+    expect(state.threads[0].condition).toBe('none');
+    expect(h.store.setThreadCondition).toHaveBeenCalledWith('sec-be', 'none');
+  });
+
   it('a Phase-2 judge DOWNGRADE does NOT latch — the orchestrator adds evidence and re-completes in the same turn', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -2869,7 +2910,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'awaiting_input')],
+      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -2889,7 +2930,8 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
 
     // The orchestrator was NOT re-run (no execute turn) — the thread just re-halted + re-woke the brain:
     expect(calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
-    expect(state.threads[0].status).toBe('awaiting_input');
+    expect(state.threads[0].status).toBe('executing');
+    expect(state.threads[0].condition).toBe('paused');
     expect(h.opened).toHaveLength(0); // nothing shipped
     expect(h.wakes.some((w) => w.threadId === 'sec-be' && w.outcome === 'blocked')).toBe(true);
 
@@ -2912,7 +2954,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
       record: makeRecord(),
       threads: [
         thread('sec-be', 10, 'Backend', 'done'),
-        thread('review', 40, 'Master review', 'awaiting_input', /* isMasterReview */ true),
+        thread('review', 40, 'Master review', 'executing', /* isMasterReview */ true, 'paused'),
       ],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
@@ -2937,7 +2979,8 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
 
     // The Codex review was NOT re-run (no execute turn) — the master_review just re-halted + re-woke the brain:
     expect(calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
-    expect(state.threads[1].status).toBe('awaiting_input');
+    expect(state.threads[1].status).toBe('executing');
+    expect(state.threads[1].condition).toBe('paused');
     expect(h.opened).toHaveLength(0); // nothing shipped
     expect(h.wakes.some((w) => w.threadId === 'review' && w.outcome === 'blocked')).toBe(true);
   });
@@ -2948,7 +2991,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'awaiting_input')],
+      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -2979,7 +3022,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'awaiting_input')],
+      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -3014,7 +3057,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'awaiting_input')],
+      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -3057,7 +3100,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'awaiting_input')],
+      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -3206,6 +3249,7 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
       handoffIn: null,
       handoffOut: null,
       status: 'pending',
+      condition: 'none',
       kind: 'main',
       parentThreadId: null,
       startSha: null,

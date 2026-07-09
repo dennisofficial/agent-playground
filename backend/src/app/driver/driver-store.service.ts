@@ -9,6 +9,7 @@ import type {
   StepStatus,
   Thread,
   ThreadStatus,
+  ThreadCondition,
   Job,
   JobStatus,
   JobHalt,
@@ -52,6 +53,7 @@ export interface ReviewChildThread {
   ordinal: number;
   config: Record<string, unknown>;
   status: ThreadStatus;
+  condition: ThreadCondition;
   reviewFindings: ReviewFinding[] | null;
 }
 
@@ -345,6 +347,10 @@ export class DriverStoreService {
 
   async setThreadStatus(threadId: string, status: ThreadStatus): Promise<void> {
     await this.threads.update({ id: threadId }, { status });
+  }
+
+  async setThreadCondition(threadId: string, condition: ThreadCondition): Promise<void> {
+    await this.threads.update({ id: threadId }, { condition });
   }
 
   /**
@@ -1029,6 +1035,7 @@ export class DriverStoreService {
         brief: s.brief,
         type: s.type,
         status: s.status,
+        condition: s.condition,
         // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's kind.
         defaultFooter: laneDefaultFooter(s.kind),
         // Derived from `kind` (the `is_master_review` column is gone) — the web keys "Master review"
@@ -1163,6 +1170,7 @@ function toThread(row: ThreadEntity): DriverThread {
     handoffIn: row.handoff_in,
     handoffOut: row.handoff_out,
     status: row.status as ThreadStatus,
+    condition: (row.condition as ThreadCondition) ?? 'none',
     kind: row.kind,
     parentThreadId: row.parent_thread_id ?? null,
     startSha: row.start_sha ?? null,
@@ -1177,6 +1185,7 @@ function toReviewChild(row: ThreadEntity): ReviewChildThread {
     ordinal: row.ordinal,
     config: (row.config as Record<string, unknown>) ?? {},
     status: row.status as ThreadStatus,
+    condition: (row.condition as ThreadCondition) ?? 'none',
     reviewFindings: Array.isArray(row.review_findings) ? row.review_findings : null,
   };
 }
@@ -1187,6 +1196,7 @@ interface PipelineReviewChild {
   kind: string;
   brief: string;
   status: string;
+  condition: string;
   lensId?: string;
   findings: number | null;
   lane: string;
@@ -1234,6 +1244,7 @@ function pipelineReviewChildren(
       kind: c.kind,
       brief: c.brief,
       status,
+      condition: 'none',
       ...(lensId ? { lensId } : {}),
       findings: null,
       lane:
@@ -1271,6 +1282,7 @@ function toPipelineChild(c: ThreadEntity, parentId: string): PipelineReviewChild
     kind: c.kind,
     brief: c.brief,
     status: c.status,
+    condition: c.condition,
     ...(lensId ? { lensId } : {}),
     findings: Array.isArray(c.review_findings) ? c.review_findings.length : null,
     lane:
