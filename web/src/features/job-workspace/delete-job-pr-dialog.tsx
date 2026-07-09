@@ -22,7 +22,10 @@ export function DeleteJobPrDialog({
 }) {
   return (
     <div
-      onMouseDown={onClose}
+      onMouseDown={() => {
+        if (pending) return;
+        onClose();
+      }}
       className="fixed inset-0 z-[70] flex items-start justify-center px-4 pt-[120px]"
       style={{ background: "rgba(10,12,16,0.5)", backdropFilter: "blur(3px)" }}
     >
@@ -68,8 +71,9 @@ export function DeleteJobPrDialog({
         >
           <button
             type="button"
+            disabled={pending}
             onClick={onClose}
-            className="rounded-md border border-border-2 px-3.5 py-2 text-[12.5px] font-medium text-dim transition hover:bg-surface-2"
+            className="rounded-md border border-border-2 px-3.5 py-2 text-[12.5px] font-medium text-dim transition hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-45"
           >
             Cancel
           </button>
