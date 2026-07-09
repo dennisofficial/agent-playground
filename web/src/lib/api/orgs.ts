@@ -5,6 +5,7 @@ import { env } from "@/lib/env";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
 import { qk } from "./query-keys";
+import type { WireOrgUsage } from "./types";
 
 /**
  * Org-scoped reads + the credentials write for the settings page. All hit the Atlas app directly with the
@@ -74,6 +75,21 @@ export function useOrgCredentials(orgId: string) {
     queryFn: () => webJson<CredentialPresence>(`/orgs/${orgId}/credentials`),
     enabled: Boolean(orgId),
     staleTime: 15_000,
+  });
+}
+
+/**
+ * An org's Claude subscription usage snapshot (the composer's usage ring). The unofficial usage endpoint
+ * is aggressively rate-limited, so this polls in minutes, not seconds — never tighten `refetchInterval`.
+ * Always returns 200 (never throws on a degraded snapshot); `ok:false` just means "unknown right now".
+ */
+export function useOrgUsage(orgId: string) {
+  return useQuery({
+    queryKey: qk.orgUsage(orgId),
+    queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/usage`),
+    enabled: Boolean(orgId),
+    staleTime: 180_000,
+    refetchInterval: 180_000,
   });
 }
 

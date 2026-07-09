@@ -7,10 +7,11 @@ import { Markdown } from "./markdown";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
 import { SubagentCard, indexLiveSubagents, subagentNode } from "./subagents";
 import { Button } from "@/components/ui/button";
-import { useRetryTurn } from "@/lib/api/job-queries";
+import { useRetryJob, useRetryTurn } from "@/lib/api/job-queries";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
 import {
   formatElapsed,
+  MAIN_LANE,
   summarizeLiveTurn,
   useElapsedSeconds,
   type LiveBlock,
@@ -663,21 +664,98 @@ export function LiveIndicator({
   );
 }
 
+/** Compact countdown label ("12m", "1h 4m", "45s") for the session-limit auto-resume clock. */
+function formatRemaining(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
+}
+
+/** The live "auto-resumes in …" countdown text, ticking every second toward `resumeAt`. */
+function useResumeCountdown(resumeAt: string | undefined): string {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!resumeAt) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [resumeAt]);
+
+  if (!resumeAt) return "auto-resumes at reset";
+  const remaining = new Date(resumeAt).getTime() - now;
+  if (remaining <= 0) return "auto-resuming…";
+  return `auto-resumes in ${formatRemaining(remaining)}`;
+}
+
+/**
+ * The action row for a session-limit notice — a live countdown to the harness's own auto-resume, plus a
+ * "Force resume now" button for when the operator knows Anthropic already lifted the limit early. Main-lane
+ * notices force-resume via `/retry-turn`; build-lane notices via `/retry` (the lane's own retry endpoint).
+ */
+function SessionLimitActions({
+  jobRef,
+  isMain,
+  resumeAt,
+}: {
+  jobRef: JobRef;
+  isMain: boolean;
+  resumeAt: string | undefined;
+}) {
+  const retryTurn = useRetryTurn(jobRef);
+  const retryJob = useRetryJob(jobRef);
+  const resume = isMain ? retryTurn : retryJob;
+  const countdown = useResumeCountdown(resumeAt);
+
+  return (
+    <div
+      className="flex items-center gap-2 border-t px-3.5 py-2.5"
+      style={{ borderColor: "var(--red-line)" }}
+    >
+      <Button
+        size="sm"
+        loading={resume.isPending}
+        loadingText="Resuming…"
+        disabled={resume.isSuccess}
+        onClick={() => resume.mutate()}
+      >
+        <RotateCw size={12} className="mr-1" />
+        {resume.isSuccess ? "Resumed" : "Force resume now"}
+      </Button>
+      <span className="text-dim text-[11.5px]">{countdown}</span>
+      {resume.isError ? (
+        <span className="text-[11.5px] text-red">
+          Couldn&apos;t resume. Try again.
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * A SYSTEM→OPERATOR notice — a runtime/harness message addressed to the OPERATOR, not authored by Atlas
  * and never seen by it (e.g. "this thread can't be resumed — start a new one"). Deliberately NOT an Atlas
  * bubble: a full-width warn-toned panel with a "SYSTEM" header so it reads as coming from the harness.
  * When `meta.retryable` is set (a transient engine failure, not a terminal one), a "Resume" button
- * re-pokes the SAME engine session (`POST …/retry-turn`) with no new operator-authored message.
+ * re-pokes the SAME engine session (`POST …/retry-turn`) with no new operator-authored message. When
+ * `meta.sessionLimit` is set (Claude's own subscription session/usage limit), a session-limit action row
+ * (countdown + force-resume) renders instead — the harness already auto-resumes at `meta.resumeAt`.
  */
 export function SystemOperatorNotice({
   message,
   jobRef,
+  lane,
 }: {
   message: JobMessage;
   jobRef: JobRef;
+  lane?: string;
 }) {
   const retryable = message.meta?.retryable === true;
+  const sessionLimit = message.meta?.sessionLimit === true;
+  const resumeAt = message.meta?.resumeAt as string | undefined;
+  const isMain = (lane ?? MAIN_LANE) === MAIN_LANE;
   const retry = useRetryTurn(jobRef);
   return (
     <div
@@ -711,7 +789,9 @@ export function SystemOperatorNotice({
       <div className="px-3.5 py-3">
         <Markdown>{message.text}</Markdown>
       </div>
-      {retryable ? (
+      {sessionLimit ? (
+        <SessionLimitActions jobRef={jobRef} isMain={isMain} resumeAt={resumeAt} />
+      ) : retryable ? (
         <div
           className="flex items-center gap-2 border-t px-3.5 py-2.5"
           style={{ borderColor: "var(--red-line)" }}

@@ -835,6 +835,7 @@ function buildLogItems(
             key={message.ts}
             message={message}
             jobRef={jobRef}
+            lane={lane}
           />,
         );
         break;
