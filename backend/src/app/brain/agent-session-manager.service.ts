@@ -5288,7 +5288,12 @@ export class AgentSessionManager
       // Prefer the record the OPERATOR clicked (the version pin); fall back to the handle's closure
       // record when a caller didn't supply one (e.g. a test, or a client that omitted decisionRecordId).
       const recId = resolution.clickedDecisionRecordId ?? decisionRecordId;
-      const running = await this.store.approve(job.id, recId, resolution.ruledBy);
+      const running = await this.store.approve(
+        job.id,
+        recId,
+        resolution.ruledBy,
+        isDirect ? 'direct' : 'plan',
+      );
       if (!running) {
         await this.say(
           stimulus,

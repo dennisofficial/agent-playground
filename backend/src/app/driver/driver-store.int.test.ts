@@ -195,6 +195,47 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(sec.steps[1].status).toBe('pending');
   });
 
+  it('surfaces the committed `build_path` as `buildPath` — direct builds carry no lanes', async () => {
+    // A DIRECT build: approved fast path, committed `build_path='direct'`, done, with NO builder threads.
+    // The navigator reads `buildPath` to suppress its plan-oriented placeholders for exactly this shape.
+    const direct = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'Direct build',
+        kind: 'feature',
+        status: 'done',
+        base_branch: BASE_BRANCH,
+        build_path: 'direct',
+      }),
+    );
+    const directState = (await store.getPipelineState(direct.id, ORG_ID)) as {
+      buildPath: string | null;
+      threads: unknown[];
+    };
+    expect(directState.buildPath).toBe('direct');
+    expect(directState.threads).toHaveLength(0);
+
+    // A job that never committed a path (still convertible) reports `buildPath: null` — the navigator keeps
+    // its placeholders in that case.
+    const unset = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'Unapproved proposal',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const unsetState = (await store.getPipelineState(unset.id, ORG_ID)) as {
+      buildPath: string | null;
+    };
+    expect(unsetState.buildPath).toBeNull();
+  });
+
   it('materializes review children (idempotent) and derives per-lens status + findings from their own rows', async () => {
     const job = await jobs.save(
       jobs.create({

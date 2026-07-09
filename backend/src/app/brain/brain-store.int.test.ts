@@ -698,7 +698,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
     // The operator's approve click races in AFTER the withdraw — the guard (status='awaiting_approval')
     // already failed, so it must approve NOTHING.
-    expect(await store.approve(jobId, decisionRecordId, approverId)).toBeNull();
+    expect(await store.approve(jobId, decisionRecordId, approverId, 'plan')).toBeNull();
     expect(await jobStatus(dataSource, jobId)).toBe('planning');
     expect(await recordStatus(dataSource, decisionRecordId)).toBe('superseded');
   }, 30_000);
@@ -718,10 +718,11 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       threadTitles: ['backend'],
     });
 
-    const running = await store.approve(jobId, decisionRecordId, approverId);
+    const running = await store.approve(jobId, decisionRecordId, approverId, 'plan');
 
     expect(running?.status).toBe('running');
     expect(await recordStatus(dataSource, decisionRecordId)).toBe('approved');
+    expect(await buildPath(dataSource, jobId)).toBe('plan');
   }, 30_000);
 
   it('VERSION PIN: a stale approve on the superseded R1 record fails the guard; approve on the current R2 record succeeds (the exact stale-card scenario)', async () => {
@@ -753,12 +754,12 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
     // A stale click on the R1 card: the job is still awaiting_approval, but decision_record_id now points
     // at R2, so the guard on R1 fails → null, and nothing about the job changes.
-    expect(await store.approve(jobId, r1.decisionRecordId, approverId)).toBeNull();
+    expect(await store.approve(jobId, r1.decisionRecordId, approverId, 'plan')).toBeNull();
     expect(await jobStatus(dataSource, jobId)).toBe('awaiting_approval'); // still pointing at R2
     expect(await recordStatus(dataSource, r1.decisionRecordId)).toBe('superseded');
 
     // The CURRENT card (R2) approves cleanly.
-    const running = await store.approve(jobId, r2.decisionRecordId, approverId);
+    const running = await store.approve(jobId, r2.decisionRecordId, approverId, 'plan');
     expect(running?.status).toBe('running');
     expect(await recordStatus(dataSource, r2.decisionRecordId)).toBe('approved');
   }, 30_000);
@@ -861,6 +862,15 @@ async function draftCount(ds: DataSource, jobId: string): Promise<number> {
 /** The job row's current status (reuses `loadThreadRow`'s underlying query, narrowed to just the field). */
 async function jobStatus(ds: DataSource, jobId: string): Promise<string | null> {
   return (await loadThreadRow(ds, jobId))?.status ?? null;
+}
+
+/** The committed build path stamped by `approve()` ('direct' | 'plan'), or null before any approval. */
+async function buildPath(ds: DataSource, jobId: string): Promise<string | null> {
+  const rows: Array<{ build_path: string | null }> = await ds.query(
+    `SELECT build_path FROM jobs WHERE id = $1`,
+    [jobId],
+  );
+  return rows[0]?.build_path ?? null;
 }
 
 /** The sentinel approver's email — `decision_records.approved_by` FK's into `users`, so approve() tests

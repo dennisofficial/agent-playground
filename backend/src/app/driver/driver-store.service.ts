@@ -1036,6 +1036,10 @@ export class DriverStoreService {
       kind: thread.kind,
       status: thread.status,
       halt: thread.halt ?? null,
+      // Which build path was committed at approval: 'direct' (fast, brain-implemented) | 'plan' (driver) |
+      // null (never approved). The navigator reads this to hide the plan-oriented empty-state placeholders
+      // (build lanes / plan.md / generated docs) for a direct build, where they never apply.
+      buildPath: thread.build_path ?? null,
       // The plan-review (Codex) thread's presence + live status — the navigator renders a dedicated row that
       // opens the `codex-review:<jobId>` lane. Null when no review has run.
       planReview,
