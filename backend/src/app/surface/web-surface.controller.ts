@@ -333,6 +333,11 @@ interface ApproveDto {
   value: string;
   note?: string;
 }
+interface ApproveResult {
+  ok: boolean;
+  jobId?: string;
+  message?: string;
+}
 interface AnswerQuestionDto {
   /** The question card's id (its message `ts`). */
   questionId: string;
@@ -1028,8 +1033,9 @@ export class WebSurfaceController {
   async approve(
     @CurrentOrg() org: CurrentOrgCtx,
     @CurrentUser() user: UserEntity,
+    @Param('jobId') jobId: string,
     @Body() body: ApproveDto,
-  ): Promise<{ ok: boolean; jobId?: string }> {
+  ): Promise<ApproveResult> {
     const { actionId, value, note } = body;
     if (!actionId || !value) {
       throw new BadRequestException('actionId and value are required');
@@ -1042,13 +1048,50 @@ export class WebSurfaceController {
       throw new BadRequestException(
         'value is not a valid ApprovalActionMeta JSON',
       );
+    if (meta.jobId !== jobId) {
+      throw new BadRequestException(
+        'approval value does not match the route job',
+      );
+    }
     // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
-    await this.requireThread(meta.jobId, org.id);
+    const thread = await this.requireThread(meta.jobId, org.id);
+    if (actionId !== SHIP_ACTION_ID) {
+      const mismatch =
+        thread.status !== 'awaiting_approval' ||
+        !meta.decisionRecordId ||
+        thread.decision_record_id !== meta.decisionRecordId;
+      if (mismatch) {
+        const message =
+          'This plan changed or was withdrawn before the approval landed. Refresh and approve the current plan.';
+        await this.postSystemOperatorNotice(
+          thread.repo_id,
+          thread.id,
+          org.id,
+          message,
+        );
+        return { ok: false, jobId: meta.jobId, message };
+      }
+    }
     // Stamp the AUTHENTICATED operator (a real user uuid, FK-valid for `decision_records.approved_by`) as
     // the approver — never the client-sent `ruledBy` (untrusted, and a label like "U-OPERATOR" is not a
     // uuid, which previously made `store.approve` throw and the verdict silently no-op).
     this.surface.receiveApprovalClick(actionId, value, user.id, note);
     return { ok: true, jobId: meta.jobId };
+  }
+
+  private async postSystemOperatorNotice(
+    repoId: string,
+    jobId: string,
+    orgId: string,
+    text: string,
+  ): Promise<void> {
+    const meta = { source: 'system_operator' };
+    await this.surface
+      .post(repoId, text, { threadTs: jobId, orgId, meta })
+      .catch((err) => {
+        this.logger.warn(`failed to post approval notice: ${err}`);
+      });
+    await this.store.appendSystemOperatorMessage(jobId, text, meta);
   }
 
   /**

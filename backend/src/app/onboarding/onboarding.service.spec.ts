@@ -195,6 +195,9 @@ function fakePr(
       ensureWebhookCalls++;
       return opts.ensureWebhookOutcome ?? 'created';
     },
+    async pruneWebhooksExcept() {
+      return 0;
+    },
     get ensureWebhookCalls() {
       return ensureWebhookCalls;
     },

@@ -10,21 +10,20 @@ import {
   DuplicateStimulusError,
   StimulusStoreService,
 } from './stimulus-store.service';
-import { SurfaceOrchestration } from './surface-orchestration.service';
-import { JobTitler } from '../titling';
 
 /** Outcome of pushing an event through intake — for the controller to map to a status / log. */
 export type IntakeOutcome =
   | { admitted: true; stimulusId: string; jobId: string }
-  | { admitted: false; reason: 'duplicate' | 'rate-limited'; detail: string };
+  | { admitted: false; reason: 'duplicate' | 'rate-limited' | 'no-owner'; detail: string };
 
 /**
  * The STIMULUS INTAKE SEAM — the single entry point normalized stimuli flow through:
  *
  *  - `intakeEvent(ParsedEvent)` — the `NotificationSource` path. Runs the mechanical dedup/rate-limit
- *    filter; on pass, SEEDS a new thread + persists the event row (the body fenced as untrusted),
- *    then hands the `EventStimulus` to the consumer. On a filter drop OR a DB unique-violation
- *    backstop, nothing is consumed (the firehose pays no engine turn).
+ *    filter; on pass, ROUTES the event to the brain of the job that already OWNS its PR/branch (persists
+ *    the event row, body fenced as untrusted, then hands the `EventStimulus` to the consumer). An event
+ *    that nothing owns is DROPPED — repo activity never seeds a new job (decision d6). On a filter drop,
+ *    a no-owner drop, OR a DB unique-violation backstop, nothing is consumed (the firehose pays no turn).
  *  - `intakeChat(ChatStimulus)` — the `ChatSurface` path. Persists the chat message + row (no filter —
  *    chat bypasses it), then hands the `ChatStimulus` to the brain.
  *
@@ -43,9 +42,7 @@ export class StimulusIntake {
   constructor(
     private readonly filter: EventFilterService,
     private readonly store: StimulusStoreService,
-    private readonly orchestration: SurfaceOrchestration,
     @Inject(BRAIN_SINK) private readonly sink: BrainSink,
-    private readonly titler: JobTitler,
   ) {}
 
   /**
@@ -66,93 +63,45 @@ export class StimulusIntake {
       return { admitted: false, reason: verdict.reason, detail: verdict.detail };
     }
 
-    try {
-      // RETURN-PATH ROUTING: if the event carries a correlation hint (a GitHub event on a PR/branch an
-      // existing job already owns), deliver it to THAT job's brain instead of seeding a fresh event
-      // thread — this is how a CI failure / merge conflict / review comment reaches the Atlas session
-      // that can act on it. Falls through to seed-a-new-thread when nothing owns it (external CI).
-      const owner = await this.resolveOwningJob(event);
-      if (owner) {
-        try {
-          const stimulus = await this.store.attachEventToJob({
-            jobId: owner.id,
-            orgId: event.orgId,
-            repoId: event.repoId,
-            source: event.source,
-            dedupeKey: event.dedupeKey,
-            severity: event.severity,
-            body: event.body,
-          });
-          void this.sink
-            .deliverEvent(stimulus)
-            .catch((err) => this.logger.error(`event delivery failed for ${stimulus.id}: ${err}`));
-          this.logger.log(
-            `event admitted: ${stimulus.id} routed to owning job ${owner.id} ` +
-              `(project ${event.repoId}, severity ${event.severity})`,
-          );
-          return { admitted: true, stimulusId: stimulus.id, jobId: owner.id };
-        } catch (err) {
-          if (err instanceof DuplicateStimulusError) {
-            this.logger.log(
-              `event dropped (db-duplicate on owning job ${owner.id}): source=${event.source} key=${event.dedupeKey}`,
-            );
-            return { admitted: false, reason: 'duplicate', detail: 'db unique backstop' };
-          }
-          throw err;
-        }
-      }
+    // ROUTE-ONLY (decision d6): an event is delivered ONLY to the brain of the job that already OWNS its
+    // PR/branch — this is how a CI failure / merge conflict / review comment reaches the Atlas session
+    // that can act on it. An event nothing owns (external / default-branch CI) is DROPPED, never seeds a
+    // new job: repo activity must not silently spawn work. Deliberate job creation stays with the operator.
+    const owner = await this.resolveOwningJob(event);
+    if (!owner) {
+      this.logger.log(
+        `event dropped (no-owner): source=${event.source} key=${event.dedupeKey} — nothing owns this branch/PR`,
+      );
+      return { admitted: false, reason: 'no-owner', detail: 'no job owns this event’s branch/PR' };
+    }
 
-      // Route the derived headline through the shared titler so the seeded thread's sidebar label is a
-      // short, scannable title — critical because a parked/ignored event never reaches persistPlan, so
-      // this seeded title can stay the permanent label. Fail-soft (degrades to the trimmed first line);
-      // the SAME title is used for the timeline announcement so durable + headline stay consistent.
-      const title = await this.titler.titleFor(deriveTitle(event), event.orgId);
-      const seeded = await this.store.seedEventThread({
+    try {
+      const stimulus = await this.store.attachEventToJob({
+        jobId: owner.id,
         orgId: event.orgId,
         repoId: event.repoId,
         source: event.source,
         dedupeKey: event.dedupeKey,
         severity: event.severity,
         body: event.body,
-        title,
       });
-
-      // ANNOUNCE-IN-TIMELINE (W6): post the headline TOP-LEVEL and backfill the thread's
-      // surface_thread_ref with the announcement ts BEFORE the brain triages — so every downstream
-      // post (triage ack, park-and-ask, the driver's chatter) threads off it with no code changes.
-      // Best-effort: a failed/no-op announcement leaves the ref null (downstream falls back to top-level).
-      await this.orchestration
-        .announceEvent({
-          orgId: event.orgId,
-          repoId: event.repoId,
-          jobId: seeded.thread.id,
-          source: event.source,
-          severity: event.severity,
-          title,
-        })
-        .catch((err) => this.logger.warn(`announce failed (continuing): ${err}`));
-
-      // Deliver to the seeded thread's brain as a HARNESS message. NOT awaited: the webhook 202 must not
-      // wait on an engine turn (which can provision a sandbox). Durability is the brain's at-least-once
-      // boot sweep keyed on `stimuli.delivered_at` — a crash mid-delivery re-delivers on next boot. The
-      // seeded message row is the operator-visible artifact regardless of whether this turn lands.
-      // `deliverEvent` owns the untrusted fence (so it + the boot sweep fence identically), so we hand it
-      // the clean `EventStimulus` as seeded.
+      // NOT awaited: the webhook 202 must not wait on an engine turn (which can provision a sandbox).
+      // Durability is the brain's at-least-once boot sweep keyed on `stimuli.delivered_at`. `deliverEvent`
+      // owns the untrusted fence (so it + the boot sweep fence identically).
       void this.sink
-        .deliverEvent(seeded.stimulus)
-        .catch((err) => this.logger.error(`event delivery failed for ${seeded.stimulus.id}: ${err}`));
-
+        .deliverEvent(stimulus)
+        .catch((err) => this.logger.error(`event delivery failed for ${stimulus.id}: ${err}`));
       this.logger.log(
-        `event admitted: ${seeded.stimulus.id} seeded thread ${seeded.thread.id} ` +
+        `event admitted: ${stimulus.id} routed to owning job ${owner.id} ` +
           `(project ${event.repoId}, severity ${event.severity})`,
       );
-      return { admitted: true, stimulusId: seeded.stimulus.id, jobId: seeded.thread.id };
+      return { admitted: true, stimulusId: stimulus.id, jobId: owner.id };
     } catch (err) {
       if (err instanceof DuplicateStimulusError) {
         // The DB unique-index backstop caught a duplicate the in-memory window missed (e.g. after a
-        // restart cleared the window). Drop it — no thread seeded, no turn paid.
+        // restart cleared the window). Drop it — no turn paid.
         this.logger.log(
-          `event dropped (db-duplicate): source=${event.source} key=${event.dedupeKey}`,
+          `event dropped (db-duplicate on owning job ${owner.id}): source=${event.source} key=${event.dedupeKey}`,
         );
         return { admitted: false, reason: 'duplicate', detail: 'db unique backstop' };
       }
@@ -203,11 +152,4 @@ export class StimulusIntake {
     // silently lost). `enqueueChat` returns fast once enqueued — the engine turn runs behind it.
     await this.sink.enqueueChat(recorded);
   }
-}
-
-/** A short human-readable thread title from the event — first non-empty line of the body, truncated. */
-function deriveTitle(event: ParsedEvent): string {
-  const firstLine = event.body.split('\n').map((l) => l.trim()).find(Boolean) ?? event.source;
-  const trimmed = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
-  return `[${event.source}] ${trimmed}`;
 }

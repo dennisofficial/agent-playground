@@ -33,6 +33,7 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
       `  - mcp__${BRIDGE_SERVER_NAME}__review_plan          — run (or resume) a SYNCHRONOUS Codex review of your authored specs; returns severity-tagged findings (FULL PATH; see below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__propose_plan         — send the reviewed plan to the operator for approval (FULL PATH; requires review_plan first; see below)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_plan        — retract a still-pending plan/direct-build approval you proposed (flips back to planning; the operator's Approve button clears). Use it when you keep working after proposing; then re-propose when ready.`,
       `  - mcp__${BRIDGE_SERVER_NAME}__start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
       `  - mcp__${BRIDGE_SERVER_NAME}__promote_decisions    — write durable cross-cutting decisions to the .atlas/decisions ledger (AT SHIP; see DECISION LEDGER)`,

@@ -155,6 +155,10 @@ export class PlanningGroup {
       'anchors, concrete code/signatures for the hard edits, runnable verification — with ZERO further questions',
       'to you? is it grounded in files you actually opened (not guessed)? is the `goal` a single clear line? Do',
       'NOT add an "investigate the codebase" thread — threads are real build work.',
+      'PROPOSING KEEPS YOU IN CONTROL: sending the card does not freeze the plan. If you resume revising or pivot',
+      'while it is still pending, call `withdraw_plan` to clear the pending approval (or just call `propose_plan`',
+      'again — it cleanly supersedes the old one). Never leave a stale, no-longer-current plan sitting there',
+      'approvable while you keep working.',
     ].join('\n');
   }
 
@@ -176,6 +180,9 @@ export class PlanningGroup {
       'not enough. Then — if this change settled any DURABLE cross-cutting decision — call `promote_decisions`',
       '(see below) BEFORE `finalize_build` so the ledger lands in the same commit. Then call `finalize_build` to',
       'commit, review, and open the PR.',
+      'Same control here as the full path: proposing does not freeze anything. If you keep revising the change',
+      'before it is approved, call `withdraw_plan` to clear the pending card (or just call `start_direct_build`',
+      'again to cleanly supersede it) — never leave a stale approvable card up while you keep working.',
     ].join('\n');
   }
 

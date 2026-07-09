@@ -6,6 +6,7 @@ it is regenerated on every promotion. Edit an individual decision file to propos
 | id | decision | status |
 |----|----------|--------|
 | [agent-html-rendered-in-sandboxed-iframe](agent-html-rendered-in-sandboxed-iframe.md) | Agent-authored HTML is rendered in a sandboxed, opaque-origin iframe | proposed |
+| [approval-gate-version-pinned-retractable](approval-gate-version-pinned-retractable.md) | Plan approval is version-pinned and retractable — approve only the current draft of an awaiting_approval job | proposed |
 | [context-file-raw-serving-route](context-file-raw-serving-route.md) | Path-based raw route serves /context bucket files as raw bytes | proposed |
 | [github-pr-state-sync-silent-not-brain-pipeline](github-pr-state-sync-silent-not-brain-pipeline.md) | GitHub pull_request state syncs silently to DB columns, never through the job/brain pipeline | proposed |
 | [github-two-webhook-endpoints](github-two-webhook-endpoints.md) | Two GitHub webhook endpoints by concern: /ingress/github (events→jobs) vs /webhooks/github (silent PR-state) | proposed |
@@ -19,6 +20,7 @@ it is regenerated on every promotion. Edit an individual decision file to propos
 | [ship-gate-driver-builds-only](ship-gate-driver-builds-only.md) | The ship-review gate and driver ship path apply to DRIVER builds only, never brain-owned direct builds | proposed |
 | [streaming-turn-input-close-gate](streaming-turn-input-close-gate.md) | Streaming turns close their input/control channel only on a genuinely-completed result | proposed |
 | [subagent-recovery-nudge-before-respawn](subagent-recovery-nudge-before-respawn.md) | Orchestrators nudge stalled/failed subagents instead of respawning | proposed |
+| [engine-turn-background-tasks](engine-turn-background-tasks.md) | Engine turns stay alive for in-flight SDK background tasks, bounded by a hold cap | proposed |
 | [tool-bridge-reply-liveness](tool-bridge-reply-liveness.md) | Tool-bridge reply delivery is durable + liveness-driven, never wall-clock-bounded | proposed |
 
-_Last regenerated: 2026-07-09T03:02:39.770Z_
+_Last regenerated: 2026-07-09T10:42:58.436Z_
