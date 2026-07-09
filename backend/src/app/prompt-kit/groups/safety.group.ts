@@ -10,7 +10,7 @@ import { isOnboarding, notOnboarding } from '../conditions';
 
 @FragmentGroup()
 export class SafetyGroup {
-  /** normal block 29 — act with care, report truthfully. */
+  /** Act with care, report truthfully. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1290, condition: notOnboarding })
   actWithCare(): string {
     return [
@@ -26,7 +26,7 @@ export class SafetyGroup {
     ].join('\n');
   }
 
-  /** onboarding block 12 — FINISH (only when the fleet is green). */
+  /** FINISH (only when the fleet is green). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2120, condition: isOnboarding })
   finish(): string {
     return [
@@ -48,7 +48,7 @@ export class SafetyGroup {
     ].join('\n');
   }
 
-  /** onboarding block 13 — you do NOT plan/grill/build here. */
+  /** You do NOT plan/grill/build here. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2130, condition: isOnboarding })
   noPlanHere(): string {
     return 'You do NOT plan, grill for decisions, or build features here — this session only makes the repo runnable.';

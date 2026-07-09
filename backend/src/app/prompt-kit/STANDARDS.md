@@ -76,7 +76,7 @@ The bands as they stand today (descriptive of current reality — keep new fragm
 | Band | Range | What lives there |
 | --- | --- | --- |
 | Subagent kernel | `90` | shared subagent-kernel note |
-| Worker persona | `100`, `200-302`, `400-430` | worker role + orchestration tail |
+| Worker persona | `100`, `110-119`, `200-302`, `400-430` | worker role + orchestration tail |
 | Brain identity | `1000-1001` | ATLAS_MAIN identity |
 | Brain body | `1005-1160` | orientation, conversation, context, planning |
 | Review persona | `1082-1090` | review-surface fragments |
@@ -84,7 +84,7 @@ The bands as they stand today (descriptive of current reality — keep new fragm
 | Job-kind switch | `1900-1902` | the per-`jobKind` framing |
 | Onboarding | `2000-2130` | onboarding bring-up persona + settings groups |
 | Behavioral tail | `7990-8050` | baseline-first / spike / live-validation behavioral notes |
-| Ship / autofix / meta | `9000-9110` | ship master-review, autofix, plan-review personas |
+| Ship / autofix / meta | `100-110` | ship master-review, autofix, plan-review personas |
 
 ### 6. Comments
 

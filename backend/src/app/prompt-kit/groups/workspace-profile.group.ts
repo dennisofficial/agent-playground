@@ -36,9 +36,9 @@ function workspaceProfileSnapshot(ctx: PromptCtx): string {
 @FragmentGroup()
 export class WorkspaceProfileGroup {
   /**
-   * normal block 28 — the WORKSPACE PROFILE overview for a real build (incremental upkeep framing). Names
-   * the area, prints the current snapshot, and tells the brain that keeping it current is ongoing work, not
-   * a one-time ceremony. Absorbs the old `environmentGaps` nudge (the persistence-by-kind recipe below).
+   * The WORKSPACE PROFILE overview for a real build (incremental upkeep framing). Names the area, prints
+   * the current snapshot, and tells the brain that keeping it current is ongoing work, not a one-time
+   * ceremony. Absorbs the old `environmentGaps` nudge (the persistence-by-kind recipe below).
    */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1280, condition: notOnboarding })
   workspaceProfileNormal(ctx: PromptCtx): string {
@@ -69,9 +69,9 @@ export class WorkspaceProfileGroup {
   }
 
   /**
-   * onboarding block 015 — the WORKSPACE PROFILE overview for the bring-up (bulk-pass framing). Sits right
-   * after the onboarding identity/sandbox blocks; the deep per-dimension how-to fragments (SECRETS, CONFIG,
-   * SETUP SCRIPT, MCP SERVERS, SKILLS, HOUSE STYLE, RESET) follow below.
+   * The WORKSPACE PROFILE overview for the bring-up (bulk-pass framing). Sits right after the onboarding
+   * identity/sandbox fragments; the deep per-dimension how-to fragments (SECRETS, CONFIG, SETUP SCRIPT,
+   * MCP SERVERS, SKILLS, HOUSE STYLE, RESET) follow below.
    */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2015, condition: isOnboarding })
   workspaceProfileOnboarding(ctx: PromptCtx): string {
@@ -87,7 +87,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 06 — SECRETS. */
+  /** SECRETS. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2060, condition: isOnboarding })
   secrets(): string {
     return [
@@ -107,7 +107,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 07 — DERIVED values. */
+  /** DERIVED values. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2070, condition: isOnboarding })
   derivedValues(): string {
     return [
@@ -120,7 +120,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 08 — AUTH / CAPABILITY ACCESS (the interactive-login recipe). */
+  /** AUTH / CAPABILITY ACCESS (the interactive-login recipe). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2080, condition: isOnboarding })
   authAccess(): string {
     return [
@@ -148,7 +148,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 09 — INSTALLING A CLI. */
+  /** INSTALLING A CLI. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2090, condition: isOnboarding })
   installCli(): string {
     return [
@@ -162,7 +162,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10 — CONFIG (write_workspace_config mounts). */
+  /** CONFIG (write_workspace_config mounts). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2100, condition: isOnboarding })
   config(): string {
     return [
@@ -179,7 +179,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10b — SETUP SCRIPT (write_setup_script; runs on every cold bring-up). */
+  /** SETUP SCRIPT (write_setup_script; runs on every cold bring-up). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2105, condition: isOnboarding })
   setupScript(): string {
     return [
@@ -197,7 +197,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10c — MCP SERVERS (propose_mcp_servers; owner-approved, stack-matched). */
+  /** MCP SERVERS (propose_mcp_servers; owner-approved, stack-matched). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2108, condition: isOnboarding })
   mcpServers(): string {
     return [
@@ -244,8 +244,8 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10c2 — SKILLS (reuse a maintained skill, else author a repo-idiom one; owner-approved). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2108.5, condition: isOnboarding })
+  /** SKILLS — reuse a maintained skill, else author a repo-idiom one; owner-approved. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2112, condition: isOnboarding })
   skills(): string {
     return [
       'SKILLS — a skill is a reusable `SKILL.md` (+ optional references/scripts) that a build/brain/review session',
@@ -279,8 +279,8 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10d — HOUSE STYLE (propose_convention_profile; owner-approved, stack-matched). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2109, condition: isOnboarding })
+  /** HOUSE STYLE (propose_convention_profile; owner-approved, stack-matched). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2114, condition: isOnboarding })
   houseStyle(): string {
     return [
       'HOUSE STYLE — the org may define reusable "house-style" profiles (a NestJS+Next.js folder-structure',
@@ -296,8 +296,8 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 11 — RESET / PROVE-IT-COLD-BOOTS. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2110, condition: isOnboarding })
+  /** RESET / PROVE-IT-COLD-BOOTS. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2116, condition: isOnboarding })
   reset(): string {
     return [
       'RESET / PROVE-IT-COLD-BOOTS — a stack that runs right now might only run because of ephemeral container',

@@ -10,7 +10,7 @@ import { isBuildBrain } from '../conditions';
 
 @FragmentGroup()
 export class ContextGroup {
-  /** normal block 15 — the /context shared folder. */
+  /** The /context shared folder. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1150, condition: isBuildBrain })
   contextFolder(): string {
     return [

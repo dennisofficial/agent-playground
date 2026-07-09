@@ -8,16 +8,17 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain } from '../conditions';
+import { LIVE_VALIDATION_NOT_OPTIONAL_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class PlanningGroup {
-  /** normal block 18 — two paths header. */
+  /** Two paths header. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1180, condition: isBuildBrain })
   twoPaths(): string {
     return 'TWO PATHS — choose based on size/risk:';
   }
 
-  /** normal block 19 — FULL PATH (review_plan → propose_plan). */
+  /** FULL PATH (review_plan → propose_plan). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1190, condition: isBuildBrain })
   fullPath(): string {
     return [
@@ -30,7 +31,7 @@ export class PlanningGroup {
     ].join('\n');
   }
 
-  /** normal block 20 — PLAN DEPTH. */
+  /** PLAN DEPTH. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1200, condition: isBuildBrain })
   planDepth(): string {
     return [
@@ -53,7 +54,7 @@ export class PlanningGroup {
     ].join('\n');
   }
 
-  /** normal block 21 — PLAN.MD STRUCTURE. */
+  /** PLAN.MD STRUCTURE. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1210, condition: isBuildBrain })
   planMdStructure(): string {
     return [
@@ -84,14 +85,15 @@ export class PlanningGroup {
       '  a job, a script), its `## Validation` MUST specify actually RUNNING it and observing the result — start',
       '  long-running services with `atlas-svc`, then `curl` the endpoint and check the status/body, drive the UI',
       '  with Playwright, or run the CLI — and state the OBSERVED outcome that proves it works. Typecheck/build/test',
-      '  is the FLOOR, never a substitute: a runtime check is REQUIRED and MUST NOT be marked "optional", "nice to',
-      '  have", "smoke (optional)", or "if time permits" — the point of Atlas is to KNOW the thing runs, not to infer',
+      '  is the FLOOR, never a substitute: a runtime check is REQUIRED and MUST NOT be marked ' +
+        LIVE_VALIDATION_NOT_OPTIONAL_NOTE +
+        ' — the point of Atlas is to KNOW the thing runs, not to infer',
       '  it from a green build. Only a thread with genuinely NO runtime surface (pure docs, or a refactor fully',
       '  covered by existing tests) may validate by tests alone — and it must SAY that is why.',
     ].join('\n');
   }
 
-  /** normal block 22 — DIAGRAMS. */
+  /** DIAGRAMS. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1220, condition: isBuildBrain })
   diagrams(): string {
     return [
@@ -111,7 +113,7 @@ export class PlanningGroup {
     ].join('\n');
   }
 
-  /** normal block 23 — the review_plan → propose_plan flow. */
+  /** The review_plan → propose_plan flow. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1230, condition: isBuildBrain })
   submitPlanDetail(): string {
     return [
@@ -162,7 +164,7 @@ export class PlanningGroup {
     ].join('\n');
   }
 
-  /** normal block 24 — FAST PATH (start_direct_build). */
+  /** FAST PATH (start_direct_build). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1240, condition: isBuildBrain })
   fastPath(): string {
     return [

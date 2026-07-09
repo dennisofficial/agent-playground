@@ -121,8 +121,9 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('the sole-author invariant reaches every file-touching / operator-facing agent, exactly once', () => {
-    // brain (feature + onboarding), worker orchestrator, and the fan-out writer.
-    for (const agent of [Agent.WORKER, Agent.FAN_OUT]) {
+    // brain (feature + onboarding), worker orchestrator, the fan-out writer, and the ship master review
+    // (it edits + commits the merged diff, so it owns the checkout too).
+    for (const agent of [Agent.WORKER, Agent.FAN_OUT, Agent.MASTER_REVIEW]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(SOLE_AUTHOR_NOTE).length - 1, String(agent)).toBe(1);
     }
