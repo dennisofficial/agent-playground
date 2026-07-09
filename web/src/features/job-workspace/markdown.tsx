@@ -464,6 +464,57 @@ function ToolBtn({
   );
 }
 
+/**
+ * Single source of truth for rendering an inline/block `<code>`: a ```mermaid fence → diagram, a fenced
+ * block → {@link CodeBlock}, else a plain inline code chip. When `resolveFileLink` is provided (spec/plan
+ * panes), an inline span that names a manifest-verified repo file becomes a clickable {@link FilePill}
+ * instead of a plain chip. Both `COMPONENTS.code` and the file-link override delegate here so chip styling
+ * and block detection never drift.
+ */
+function renderCode({
+  className,
+  children,
+  resolveFileLink,
+}: {
+  className?: string;
+  children?: ReactNode;
+  resolveFileLink?: (
+    raw: string,
+  ) => { url: string; onSelect: () => void } | null;
+}) {
+  const cls = className ?? "";
+  const match = /language-(\w+)/.exec(cls);
+  // A ```mermaid fence becomes a rendered diagram instead of a code frame.
+  if (match?.[1] === "mermaid")
+    return <Mermaid chart={nodeText(children).replace(/\n$/, "")} />;
+  // rehype-highlight tags fenced block code (and only block code) with `hljs`; fall back to a
+  // newline sniff for the rare un-highlighted block.
+  const isBlock =
+    cls.includes("hljs") ||
+    Boolean(match) ||
+    String(children ?? "").includes("\n");
+  if (isBlock) return <CodeBlock lang={match?.[1]}>{children}</CodeBlock>;
+  // Inline span: linkify a manifest-verified file path into a pill (spec/plan panes only).
+  if (resolveFileLink) {
+    const raw = nodeText(children);
+    const link = LOOKS_LIKE_PATH.test(raw) ? resolveFileLink(raw) : null;
+    if (link)
+      return (
+        <FilePill url={link.url} onSelect={link.onSelect}>
+          {children}
+        </FilePill>
+      );
+  }
+  return (
+    <code
+      className="rounded-[3px] px-[5px] py-px font-mono text-[12px]"
+      style={{ background: "var(--surface-3)" }}
+    >
+      {children}
+    </code>
+  );
+}
+
 const COMPONENTS: Components = {
   h1: ({ children }) => (
     <h1 className="mb-1 mt-1 font-disp text-[21px] font-bold leading-tight tracking-[-0.02em] text-text">
@@ -539,28 +590,7 @@ const COMPONENTS: Components = {
       {children}
     </td>
   ),
-  code: ({ className, children }) => {
-    const cls = className ?? "";
-    const match = /language-(\w+)/.exec(cls);
-    // A ```mermaid fence becomes a rendered diagram instead of a code frame.
-    if (match?.[1] === "mermaid")
-      return <Mermaid chart={nodeText(children).replace(/\n$/, "")} />;
-    // rehype-highlight tags fenced block code (and only block code) with `hljs`; fall back to a
-    // newline sniff for the rare un-highlighted block.
-    const isBlock =
-      cls.includes("hljs") ||
-      Boolean(match) ||
-      String(children ?? "").includes("\n");
-    if (isBlock) return <CodeBlock lang={match?.[1]}>{children}</CodeBlock>;
-    return (
-      <code
-        className="rounded-[3px] px-[5px] py-px font-mono text-[12px]"
-        style={{ background: "var(--surface-3)" }}
-      >
-        {children}
-      </code>
-    );
-  },
+  code: ({ className, children }) => renderCode({ className, children }),
   pre: ({ children }) => <>{children}</>,
 };
 
@@ -692,33 +722,8 @@ export const Markdown = memo(function Markdown({
       };
     }
     if (resolveFileLink) {
-      next.code = ({ className, children }) => {
-        const cls = className ?? "";
-        const match = /language-(\w+)/.exec(cls);
-        if (match?.[1] === "mermaid")
-          return <Mermaid chart={nodeText(children).replace(/\n$/, "")} />;
-        const isBlock =
-          cls.includes("hljs") ||
-          Boolean(match) ||
-          String(children ?? "").includes("\n");
-        if (isBlock) return <CodeBlock lang={match?.[1]}>{children}</CodeBlock>;
-        const raw = nodeText(children);
-        const link = LOOKS_LIKE_PATH.test(raw) ? resolveFileLink(raw) : null;
-        if (link)
-          return (
-            <FilePill url={link.url} onSelect={link.onSelect}>
-              {children}
-            </FilePill>
-          );
-        return (
-          <code
-            className="rounded-[3px] px-[5px] py-px font-mono text-[12px]"
-            style={{ background: "var(--surface-3)" }}
-          >
-            {children}
-          </code>
-        );
-      };
+      next.code = ({ className, children }) =>
+        renderCode({ className, children, resolveFileLink });
     }
     return next;
   }, [resolveRelativeLink, resolveFileLink]);

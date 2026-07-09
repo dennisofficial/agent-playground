@@ -99,6 +99,7 @@ export function useSelectedNode(): SelectedNode {
         key = NODE_PARAM;
         qs.set(NODE_PARAM, node);
         qs.delete(SUB_PARAM); // a new base detail resets the stacked sub-agent
+        qs.delete(FILE_PARAM); // ...and the stacked file view
       } else {
         key = LANE_PARAM;
         qs.set(LANE_PARAM, node);
