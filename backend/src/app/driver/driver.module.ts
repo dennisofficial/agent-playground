@@ -160,6 +160,14 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
         await this.lifecycle.reconcileOnBoot();
         // Finish any job stranded in `deleting` (crash between the delete claim and teardown completing).
         await this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
+        // Reclaim leaked `-net`/`-dind` artifacts BEFORE resuming jobs — a resumed drive calls `ensureContainer`
+        // → `ensureNetwork`, which fails ("all predefined address pools have been fully subnetted") if the pool
+        // is still exhausted by networks orphaned across prior restarts. `reconcileOnBoot` above nulled DB
+        // `container_id`s, but the sweep checks LIVE docker container names, so a still-running sandbox's network
+        // is protected. Awaited (bounded, cheap); never blocks promotion on failure.
+        await this.lifecycle
+          .reapOrphanedSandboxArtifacts()
+          .catch((err) => this.logger.warn(`boot orphan-artifact sweep failed: ${err}`));
       }
       // Best-effort: register the GitHub delivery webhooks for already-connected repos so the fast path is
       // live without a re-connect. Once per process, fire-and-forget — never blocks resume, and skips
@@ -190,7 +198,8 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
    * merged/closed (reclaims container + worktree). unref so it never keeps the process alive. The GitHub
    * PR-state observation itself now rides the fast `startPollTimer` heartbeat, NOT this slow sweep — this
    * timer keeps only idle-reap + the `pollPrClosures` merge/close-teardown backstop (teardown is already
-   * real-time via the `/webhooks/github/state` webhook) + the stranded-job re-drive backstop.
+   * real-time via the `/webhooks/github/state` webhook) + the stranded-job re-drive backstop + the
+   * orphaned-artifact sweep (leaked `-net`/`-dind` reclaim, so the Docker address pool can't exhaust).
    */
   private startReapTimer(): void {
     if (this.reapTimer) return;
@@ -204,6 +213,10 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       void this.lifecycle.reapIdle().catch(() => undefined);
       void this.lifecycle.pollPrClosures().catch(() => undefined);
       void this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
+      // Reclaim leaked per-sandbox `-net`/`-dind` artifacts so Docker's address pool can't be exhausted by
+      // networks orphaned across restarts/crashes. Decoupled from MAX_CONCURRENT_SANDBOXES (the softCapCheck
+      // gate that previously left this sweep unscheduled in prod).
+      void this.lifecycle.reapOrphanedSandboxArtifacts().catch(() => undefined);
     }, everyMs);
     this.reapTimer.unref?.();
   }

@@ -51,6 +51,36 @@ systemctl enable --now docker
 usermod -aG docker $USER
 ```
 
+**Enlarge Docker's network address pool (required).** Atlas gives every job sandbox its own isolated
+bridge network (`atlas-sbx-thread-<id>-net`). Docker's built-in default pool only yields ~31 subnets, so a
+busy box exhausts it and sandbox creation fails with:
+
+> (HTTP code 400) unexpected - all predefined address pools have been fully subnetted
+
+Install the repo's `infra/daemon.json` (base `172.20.0.0/14`, /24 subnets → 1024 networks) before starting
+Atlas. This restarts the daemon, so do it now (nothing else is running yet) or during a maintenance window:
+
+```bash
+# Merge into an existing /etc/docker/daemon.json if one is already present (don't blindly overwrite).
+sudo cp infra/daemon.json /etc/docker/daemon.json
+sudo systemctl restart docker                              # restarts ALL containers
+docker system info | grep -A4 'Default Address Pools'      # verify: 172.20.0.0/14, size 24
+```
+
+If the box already uses `172.20–172.23.x.x` on its host/LAN/VPN, pick another free RFC1918 range in
+`daemon.json` first (e.g. `{ "base": "10.100.0.0/16", "size": 24 }` → 256 networks).
+
+**Emergency reclaim (if the pool is already exhausted on a running box):** leaked, unused sandbox networks
+can be dropped without a daemon restart — `prune` only removes networks with no attached container:
+
+```bash
+docker network prune -f
+docker network ls | grep atlas-sbx        # confirm the leaked -net's are gone
+```
+
+The backend now also sweeps leaked `atlas-sbx-*-net` networks automatically (leader-gated reap timer + once
+on leadership acquisition), so this manual reclaim is only for pre-fix boxes or a one-off wedge.
+
 ### 2. Create directory structure
 
 ```bash
