@@ -12,8 +12,6 @@ describe('reserved-mcp-names', () => {
       'atlasbridge',
       'atlas-lsp-ts',
       'context7',
-      'graphify',
-      'cocoindex',
     ]) {
       expect(RESERVED_MCP_SERVER_NAMES).toContain(name);
     }

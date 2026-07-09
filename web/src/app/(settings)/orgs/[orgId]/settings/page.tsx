@@ -8,7 +8,7 @@ import type { SettingsSection } from "@/lib/routes";
 const SECTIONS = new Set<SettingsSection>([
   "general",
   "credentials",
-  "worktree-secrets",
+  "workspace-secrets",
   "mcp-servers",
   "convention-profiles",
   "skills",

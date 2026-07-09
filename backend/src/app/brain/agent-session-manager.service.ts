@@ -82,7 +82,7 @@ import { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } fr
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
 import { SkillFileWriter, SkillResolver, WorkspaceSkillStore } from '../skills';
-import { WorkspaceProfileService } from '../workspace-profile';
+import { WorkspaceProfileService, detectRepoManifests } from '../workspace-profile';
 import {
   isExternalMountPath,
   isReservedContainerPath,
@@ -1881,19 +1881,22 @@ export class AgentSessionManager
     // spawns in-container gets the same envelope (Layer B).
     const repoConventions =
       (await this.conventions?.resolveForRepo(stimulus.orgId, stimulus.repoId)) ?? null;
-    // The CURRENT state of this repo's Workspace Profile, rendered for the brain prompt so it can keep the
-    // seven provisioning dimensions current (see `workspace-profile.group`). Null when the service is
-    // absent (unit tests) or the render is empty → the group prints "nothing recorded yet".
-    // The CURRENT state + any host-derived GAPS (e.g. an approved MCP server with an unfilled secret
-    // slot the brain can't otherwise see). Gaps render ONLY when present, so a healthy profile adds
-    // nothing — upkeep is a concrete conditional signal, not standing prompt prose.
+    // The CURRENT state of this repo's Workspace Profile + any host-derived GAPS (an approved MCP server
+    // with an unfilled secret slot, or a new dependency manifest the profile hasn't acknowledged) the
+    // brain can't otherwise see. Gaps render ONLY when present, so a healthy profile adds nothing — upkeep
+    // is a concrete conditional signal, not standing prompt prose. Null when the service is absent (unit
+    // tests) or the render is empty → the group prints "nothing recorded yet".
     let workspaceProfile: string | null = null;
     if (this.workspaceProfile) {
       const rendered = this.workspaceProfile.render(
         await this.workspaceProfile.describe(stimulus.orgId, stimulus.repoId),
       );
       const gaps = this.workspaceProfile.renderGaps(
-        await this.workspaceProfile.computeGaps(stimulus.orgId, stimulus.repoId),
+        await this.workspaceProfile.computeGaps(
+          stimulus.orgId,
+          stimulus.repoId,
+          detectRepoManifests(sandbox.worktreePath),
+        ),
       );
       workspaceProfile = gaps ? `${rendered}\n\n${gaps}` : rendered;
     }
@@ -3930,6 +3933,12 @@ export class AgentSessionManager
       const script = String(args['script'] ?? '').trim() ? String(args['script']) : null;
       try {
         await this.configStore.setSetupScript(stimulus.orgId, stimulus.repoId, script);
+        // Recording a setup script is an "I've addressed the stack" moment — acknowledge the worktree's
+        // current dependency manifests so a manifest already present stops reading as a NEW stack.
+        if (script) {
+          const sandbox = await this.lifecycle.findSandbox(stimulus.jobId, stimulus.orgId);
+          if (sandbox) await this.refreshSeenManifests(stimulus.orgId, stimulus.repoId, sandbox.worktreePath);
+        }
         await this.store.appendSystemEvent(
           stimulus.jobId,
           script
@@ -3942,6 +3951,20 @@ export class AgentSessionManager
         return { ok: false, reason: errText(err) };
       }
     };
+  }
+
+  /**
+   * Record the worktree's current dependency manifests as ACKNOWLEDGED (`repos.profile_seen_manifests`) —
+   * the baseline the new-stack gap diffs against (see `WorkspaceProfileService.computeGaps`). Seeded when
+   * onboarding finishes (the bulk pass saw the whole stack) and refreshed when a setup script is recorded.
+   * Best-effort: never throws into the caller.
+   */
+  private async refreshSeenManifests(orgId: string, repoId: string, worktreePath: string): Promise<void> {
+    try {
+      await this.configStore.setSeenManifests(orgId, repoId, detectRepoManifests(worktreePath));
+    } catch (err) {
+      this.logger.warn(`refreshSeenManifests failed for org=${orgId} repo=${repoId}: ${err}`);
+    }
   }
 
   /**
@@ -4625,6 +4648,9 @@ export class AgentSessionManager
         // Secrets + workspace config are already durably live (encrypted grants / DB rows) the instant
         // they were written — onboarding is marked done regardless of whether there's a code diff to ship.
         await this.lifecycle.markRepoOnboarded(stimulus.orgId, stimulus.repoId);
+        // Seed the new-stack baseline: the bulk pass has seen the whole stack, so acknowledge every
+        // dependency manifest now — future jobs only flag manifests that appear AFTER this.
+        await this.refreshSeenManifests(stimulus.orgId, stimulus.repoId, sandbox.worktreePath);
 
         const hasChanges = await this.git.hasChanges(sandbox.worktreePath);
         if (!hasChanges) {

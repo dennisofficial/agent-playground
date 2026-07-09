@@ -67,6 +67,16 @@ export class RepoEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   setup_script!: string | null;
 
+  /**
+   * The dependency-manifest filenames the Workspace Profile has ACKNOWLEDGED for this repo (e.g.
+   * `["package.json","go.mod"]`) — seeded at `finish_onboarding` (the bulk pass looked at the whole
+   * stack) and refreshed when the brain records a setup script. `WorkspaceProfileService.computeGaps`
+   * compares the worktree's current manifests against this to flag a NEW stack the profile hasn't
+   * covered (suggest a skill/MCP). NULL = never seeded (no new-stack gap emitted until it is).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  profile_seen_manifests!: string[] | null;
+
   /** Named GitHub-token override; null → the org default token. */
   @Column({ type: 'text', nullable: true })
   token_name!: string | null;

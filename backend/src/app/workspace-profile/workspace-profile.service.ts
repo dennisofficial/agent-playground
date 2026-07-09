@@ -28,11 +28,12 @@ export interface WorkspaceProfileSnapshot {
 /**
  * A host-DERIVED gap in the Workspace Profile — a misconfiguration the brain cannot see from the
  * snapshot alone, surfaced conditionally so upkeep is a concrete signal rather than standing prompt
- * prose. v1 covers unfilled MCP secret slots (an approved server that silently can't authenticate);
- * broken-auth detection and new-stack ("noticed a new package") detection are planned follow-ups.
+ * prose. Covers: an approved MCP server with an unfilled secret slot (silently can't authenticate), and
+ * a NEW dependency manifest the profile hasn't acknowledged (a stack that may want a skill/MCP).
+ * Broken-auth detection is a planned follow-up.
  */
 export interface ProfileGap {
-  kind: 'unfilled_mcp_secret';
+  kind: 'unfilled_mcp_secret' | 'new_stack';
   /** Human-readable, secret-SAFE (names only) description including the tool to fix it. */
   detail: string;
 }
@@ -93,11 +94,19 @@ export class WorkspaceProfileService {
   /**
    * Host-derived gaps in the profile — misconfigurations the brain cannot see from the snapshot. Cheap,
    * conditional: returns [] when the profile is healthy, so the caller renders nothing (no prompt bloat).
-   * v1: an approved MCP server with a declared secret slot that has never been filled (it silently fails
-   * auth). Returns secret-SAFE strings only (slot names, never values).
+   * Sources: (1) an approved MCP server with a declared secret slot that has never been filled (silently
+   * fails auth); (2) a NEW dependency manifest present in the worktree that the profile hasn't yet
+   * acknowledged (`repos.profile_seen_manifests`) — the "noticed a new package" signal. Pass
+   * `currentManifests` (from `detectRepoManifests`) to enable (2); omit it to skip the worktree-dependent
+   * check. Returns secret-SAFE strings only.
    */
-  async computeGaps(orgId: string, repoId: string): Promise<ProfileGap[]> {
+  async computeGaps(
+    orgId: string,
+    repoId: string,
+    currentManifests?: string[],
+  ): Promise<ProfileGap[]> {
     const gaps: ProfileGap[] = [];
+
     const unfilled = await this.mcp.unfilledSecretSlots(orgId, repoId);
     for (const u of unfilled) {
       gaps.push({
@@ -105,6 +114,23 @@ export class WorkspaceProfileService {
         detail: `MCP server "${u.name}" [${u.scope}] has unfilled secret slot(s): ${u.slots.join(', ')} — it cannot authenticate until filled via request_secret({ mcp: { server, slot, key } }).`,
       });
     }
+
+    // New-stack: only once the profile has been SEEDED (seen !== null) — an un-onboarded repo never
+    // nags. A manifest present now but not acknowledged means a stack the profile hasn't covered.
+    if (currentManifests && currentManifests.length > 0) {
+      const seen = await this.workspaceConfig.getSeenManifests(orgId, repoId);
+      if (seen) {
+        const seenSet = new Set(seen);
+        const fresh = currentManifests.filter((m) => !seenSet.has(m));
+        if (fresh.length > 0) {
+          gaps.push({
+            kind: 'new_stack',
+            detail: `New dependency manifest(s) not yet reflected in the profile: ${fresh.join(', ')} — consider whether this stack wants a skill (propose_skill) or an MCP server (propose_mcp_servers), and record any bring-up in write_setup_script.`,
+          });
+        }
+      }
+    }
+
     return gaps;
   }
 

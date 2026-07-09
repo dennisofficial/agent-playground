@@ -5,19 +5,16 @@
  * would win). Enforced in three places that must agree: the sandbox render
  * (`user-mcp-bridge-options.ts`), the `propose_mcp_servers` tool validation, and the owner approve
  * endpoint (`web-surface.controller.ts`). Kept here — pure strings, safe to bundle into the sandbox
- * entrypoint — so the three can't drift (they previously did: the sandbox copy was missing
- * `graphify`/`cocoindex`).
+ * entrypoint — so the three can't drift.
  */
 
-/** Names the system owns: the two in-process host bridges, the Codex bridge, and the system-tier servers. */
+/** Names the system owns: the two in-process host bridges, the Codex bridge, and the built-in servers. */
 export const RESERVED_MCP_SERVER_NAMES: readonly string[] = [
   'atlas-host-bridge', // the general host tool bridge (Claude)
   'workspace-profile', // the dedicated Workspace Profile bridge (Claude)
   'atlasbridge', // the Codex tool bridge
   'atlas-lsp-ts', // TS LSP bridge
   'context7', // remote docs bridge
-  'graphify', // system-tier server
-  'cocoindex', // system-tier server
 ];
 
 /** Case-insensitive membership set for validation (`name.toLowerCase()`). */

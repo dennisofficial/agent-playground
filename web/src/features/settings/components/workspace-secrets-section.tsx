@@ -3,57 +3,57 @@
 import { useState } from "react";
 import { FileKey, Plus, Trash2 } from "lucide-react";
 import {
-  useDeleteWorktreeSecretFile,
-  useSaveWorktreeSecretFile,
-  useWorktreeSecrets,
-  type WorktreeSecretFile,
+  useDeleteWorkspaceSecretFile,
+  useSaveWorkspaceSecretFile,
+  useWorkspaceSecrets,
+  type WorkspaceSecretFile,
 } from "@/lib/api/orgs";
 import { useOrgRepos } from "@/lib/api/job-queries";
 
 /**
- * Worktree secret files — per-repo, encrypted files (`.env`, `.env.keys`, a service-account JSON, …) the
+ * Workspace secret files — per-repo, encrypted files (`.env`, `.env.keys`, a service-account JSON, …) the
  * worktree hydrator renders into a thread's sandbox. The list is refs-only (repo + path + label; values
  * are never returned). One entry IS the value AND the authority: a file renders only where an owner has
- * added it, for a specific repo + destination path (worktree config — mounts — is a separate, DB-backed
+ * added it, for a specific repo + destination path (workspace config — mounts — is a separate, DB-backed
  * record and never carries secrets; see docs/adr/0003-worktree-config-db-not-git.md). Files are added
  * here, or during repo onboarding by the secure secret/file prompt. Owner-only writes (the server
  * enforces it; members get a read-only view).
  */
-export function WorktreeSecretsSection({
+export function WorkspaceSecretsSection({
   orgId,
   role,
 }: {
   orgId: string;
   role: string;
 }) {
-  const { data, isLoading, isError } = useWorktreeSecrets(orgId);
+  const { data, isLoading, isError } = useWorkspaceSecrets(orgId);
   const isOwner = role === "owner";
 
   if (isLoading)
-    return <p className="text-[13px] text-faint">Loading worktree secrets…</p>;
+    return <p className="text-[13px] text-faint">Loading workspace secrets…</p>;
   if (isError || !data)
     return (
-      <p className="text-[13px] text-red">Couldn’t load worktree secrets.</p>
+      <p className="text-[13px] text-red">Couldn’t load workspace secrets.</p>
     );
 
   return (
     <>
       <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">
-        Worktree secrets
+        Workspace secrets
       </h1>
       <p className="mb-7 mt-1.5 text-[13px] leading-relaxed text-dim">
         Encrypted files the build renders into a thread’s sandbox for a specific
         repo and path (e.g.{" "}
         <code className="font-mono text-[12px]">.env.keys</code>). Encrypted at
         rest — values are never shown. A file only exists where you add it; the
-        entry itself is the authority (separate, DB-backed worktree config
+        entry itself is the authority (separate, DB-backed workspace config
         carries mounts only, never secrets). The destination must be gitignored.
         Atlas also adds these for you during repo onboarding.
       </p>
 
       {!isOwner ? (
         <div className="mb-5 rounded-md border border-border-2 bg-surface-2 px-3.5 py-2.5 text-[12px] text-dim">
-          Only org owners can manage worktree secret files.
+          Only org owners can manage workspace secret files.
         </div>
       ) : null}
 
@@ -68,12 +68,12 @@ function SecretFilesCard({
   canManage,
 }: {
   orgId: string;
-  files: WorktreeSecretFile[];
+  files: WorkspaceSecretFile[];
   canManage: boolean;
 }) {
   const { data: repos } = useOrgRepos(orgId);
-  const save = useSaveWorktreeSecretFile(orgId);
-  const del = useDeleteWorktreeSecretFile(orgId);
+  const save = useSaveWorkspaceSecretFile(orgId);
+  const del = useDeleteWorkspaceSecretFile(orgId);
   const [adding, setAdding] = useState(false);
   const [repoId, setRepoId] = useState("");
   const [path, setPath] = useState("");
@@ -139,7 +139,7 @@ function SecretFilesCard({
 
       {sorted.length === 0 && !adding ? (
         <p className="mt-3.5 font-mono text-[12px] text-faint">
-          No worktree secret files yet.
+          No workspace secret files yet.
         </p>
       ) : (
         <ul className="mt-3.5 flex flex-col gap-2">

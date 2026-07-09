@@ -45,6 +45,20 @@ export class WorkspaceConfigStore {
     );
   }
 
+  /** The dependency manifests the Workspace Profile has acknowledged (`repos.profile_seen_manifests`),
+   *  or null when never seeded — see {@link RepoEntity.profile_seen_manifests}. */
+  async getSeenManifests(orgId: string, repoId: string): Promise<string[] | null> {
+    const row = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    return row?.profile_seen_manifests ?? null;
+  }
+
+  /** Record the manifest set the profile has now acknowledged (seeded at onboarding, refreshed when the
+   *  brain records a setup script). Sorted + de-duped so the new-stack diff is stable. */
+  async setSeenManifests(orgId: string, repoId: string, manifests: string[]): Promise<void> {
+    const unique = Array.from(new Set(manifests)).sort();
+    await this.repos.update({ id: repoId, org_id: orgId }, { profile_seen_manifests: unique });
+  }
+
   /** All mounts for a repo. */
   async listMounts(orgId: string, repoId: string): Promise<MountSpec[]> {
     const rows = await this.mounts.find({ where: { org_id: orgId, repo_id: repoId } });

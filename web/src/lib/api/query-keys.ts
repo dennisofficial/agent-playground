@@ -8,9 +8,9 @@ export const qk = {
   orgMembers: (orgId: string) => ["org-members", orgId] as const,
   /** One org's credential presence flags (`GET /web/orgs/:orgId/credentials`). */
   orgCredentials: (orgId: string) => ["org-credentials", orgId] as const,
-  /** One org's worktree secret names + grants (`GET /web/orgs/:orgId/worktree-secrets`). */
-  orgWorktreeSecrets: (orgId: string) =>
-    ["org-worktree-secrets", orgId] as const,
+  /** One org's workspace secret names + grants (`GET /web/orgs/:orgId/workspace-secrets`). */
+  orgWorkspaceSecrets: (orgId: string) =>
+    ["org-workspace-secrets", orgId] as const,
   /** One org's user-defined MCP servers + the read-only system tier (`GET /web/orgs/:orgId/mcp-servers`). */
   orgMcpServers: (orgId: string) => ["org-mcp-servers", orgId] as const,
   /** One org's connected repos (`GET /web/orgs/:orgId/repos`) — the create-job picker. */

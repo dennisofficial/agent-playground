@@ -11,11 +11,13 @@ function make(overrides?: {
   slug?: string | null;
   conventionName?: string | null;
   unfilledSlots?: { name: string; scope: string; slots: string[] }[];
+  seenManifests?: string[] | null;
 }): WorkspaceProfileService {
   const o = overrides ?? {};
   const workspaceConfig = {
     listMounts: async () => o.mounts ?? [],
     getSetupScript: async () => o.setupScript ?? null,
+    getSeenManifests: async () => o.seenManifests ?? null,
   };
   const secretFiles = { list: async () => o.secretFiles ?? [] };
   const mcp = {
@@ -108,5 +110,24 @@ describe('WorkspaceProfileService.computeGaps / renderGaps', () => {
     expect(rendered).toContain('github');
     expect(rendered).toContain('header:Authorization');
     expect(rendered).toContain('request_secret');
+  });
+
+  it('flags a NEW manifest not yet acknowledged, once the profile is seeded', async () => {
+    const svc = make({ seenManifests: ['package.json'] });
+    const gaps = await svc.computeGaps('org1', 'repo-1', ['package.json', 'go.mod']);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].kind).toBe('new_stack');
+    expect(gaps[0].detail).toContain('go.mod');
+    expect(gaps[0].detail).not.toContain('package.json'); // already acknowledged
+  });
+
+  it('never flags a new stack before the profile is seeded (seen === null)', async () => {
+    const svc = make({ seenManifests: null });
+    expect(await svc.computeGaps('org1', 'repo-1', ['package.json', 'go.mod'])).toEqual([]);
+  });
+
+  it('no new-stack gap when every current manifest is already acknowledged', async () => {
+    const svc = make({ seenManifests: ['package.json', 'go.mod'] });
+    expect(await svc.computeGaps('org1', 'repo-1', ['package.json'])).toEqual([]);
   });
 });

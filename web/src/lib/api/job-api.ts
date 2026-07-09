@@ -419,7 +419,7 @@ export interface RepoView {
   threadCount: number;
   /** The repo's current onboarding thread id (`kind='onboarding'`), or null if never started. */
   onboardingThreadId: string | null;
-  /** When onboarding completed (worktree config live), ISO; null until then — drives "Set up" vs "Re-run". */
+  /** When onboarding completed (workspace config live), ISO; null until then — drives "Set up" vs "Re-run". */
   onboardedAt: string | null;
 }
 
