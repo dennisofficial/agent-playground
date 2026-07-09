@@ -1632,7 +1632,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       await h.driver.dispatch(state.job);
       // The trail is rendered under `<contextDirHost>/generated/threads/<ordinal>-<slug>/` — here `010-backend`.
       const trail = join(ctxDir, 'generated', 'threads', '010-backend', 'completion.md');
-      await flushUntil(() => existsSync(trail));
+      // Wait for the CONTENT, not just the file's existence: `writeFile` truncates-then-writes, so the
+      // file briefly exists empty — polling `existsSync` alone races that window and reads '' under load.
+      await flushUntil(() => existsSync(trail) && readFileSync(trail, 'utf8').includes('# Thread halted:'));
 
       expect(existsSync(trail)).toBe(true);
       expect(readFileSync(trail, 'utf8')).toContain('# Thread halted: Backend');
