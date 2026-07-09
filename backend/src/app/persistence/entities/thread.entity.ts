@@ -89,9 +89,12 @@ export class ThreadEntity extends TimestampedEntity {
   brief!: string;
 
   /**
-   * The scope TYPE of this thread (backend/frontend/docs/testing/analytics/infra/…) — selects the
-   * review agents that check it. A fixed vocabulary (THREAD_TYPES) with an allow-other escape hatch;
-   * defaults to 'general' for arg-less callers (bugfix/direct build).
+   * The scope TYPE of this thread — the deterministic routing key that selects the review agents that
+   * check it. A CLOSED vocabulary (THREAD_TYPES: backend | frontend | docs | testing | infra | data |
+   * general), enforced at write via `coerceThreadType`; 'general' is the total fallback for arg-less
+   * callers (bugfix/direct build) and any unrecognized value. Stays a `text` column (no DB enum) — the
+   * app layer is the validator, so legacy rows with off-vocabulary values are tolerated and coerce to
+   * 'general' at selection time.
    */
   @Column({ type: 'text', default: 'general' })
   type!: string;

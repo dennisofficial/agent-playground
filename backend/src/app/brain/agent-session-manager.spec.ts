@@ -680,6 +680,27 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(persistArgs.stepsByThread).toBeUndefined();
   });
 
+  it('(a) propose_plan: an off-vocabulary thread `type` coerces to the `general` fallback', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'o',
+      decisions: [],
+      threadTitles: ['S', 'T', 'U'],
+    });
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'some overview',
+      threads: [
+        { title: 'S', type: 'analytics' }, // dropped legacy label → general
+        { title: 'T', type: 'BACKEND' }, // valid, case-insensitive → backend
+        { title: 'U' }, // absent → general
+      ],
+    });
+    expect(result).toMatchObject({ ok: true });
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(persistArgs.threadTypes).toEqual(['general', 'backend', 'general']);
+  });
+
   it('(a) propose_plan: returns error if overview is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['propose_plan']({

@@ -83,6 +83,7 @@ import {
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/render-plan';
+import { coerceThreadType, type ThreadType } from '../thread-kind/thread-types';
 import {
   LIVE_VERIFICATION_JUDGE,
   type LiveVerificationJudge,
@@ -7037,9 +7038,9 @@ function errText(err: unknown): string {
  */
 function normalizeThreads(
   raw: unknown,
-): { title: string; type: string; steps: PlannedStep[] }[] {
+): { title: string; type: ThreadType; steps: PlannedStep[] }[] {
   const arr = Array.isArray(raw) ? raw : [];
-  const out: { title: string; type: string; steps: PlannedStep[] }[] = [];
+  const out: { title: string; type: ThreadType; steps: PlannedStep[] }[] = [];
   for (const s of arr) {
     if (!s || typeof s !== 'object') continue;
     const o = s as {
@@ -7050,12 +7051,9 @@ function normalizeThreads(
     };
     const title = String(o.title ?? o.brief ?? '').trim();
     if (!title) continue;
-    // Scope type selects the review agents (THREAD_TYPES), but allow-other — a non-enum value is stored
-    // verbatim (lowercased); default 'general' when absent (the prompt asks the brain to set one).
-    const type =
-      String(o.type ?? '')
-        .trim()
-        .toLowerCase() || 'general';
+    // Scope type is the deterministic routing key for review-lens selection: coerced to the closed
+    // THREAD_TYPES vocabulary, with any unrecognized/empty value falling back to 'general'.
+    const type = coerceThreadType(o.type);
     const stepsRaw = Array.isArray(o.steps) ? o.steps : [];
     const steps: PlannedStep[] = [];
     for (const p of stepsRaw) {
