@@ -11,7 +11,7 @@ source_decision: "d5"
 supersedes: []
 superseded_by: null
 governs_paths: ["backend/src/app/driver/thread-driver.service.ts", "backend/src/app/driver/driver-store.service.ts", "backend/src/app/brain/agent-session-manager.service.ts"]
-last_reconciled: 2026-07-09T01:57:51.032Z
+last_reconciled: 2026-07-09T03:02:39.770Z
 ---
 # A halted job is never auto-driven; halt clears only on budget-aware recovery
 
