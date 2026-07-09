@@ -327,6 +327,12 @@ export interface ToolBridgeOptions {
    * on the host. The dispatch layer enforces `jobId` scoping before calling these.
    */
   tools: Record<string, ToolImpl>;
+  /**
+   * Host-side error sink: invoked with a formatted line when a bridged tool throws, so the real
+   * cause (message + stack) reaches host logs even though only the bounded `.message` rides back to
+   * the sandbox. Falls back to `console.error` when unset (standalone paths).
+   */
+  onToolError?: (line: string) => void;
 }
 
 /**

@@ -6,7 +6,28 @@
  * `ToolBridgeHost` class + stdin/stdout framing were removed at the Redis cutover — ADR 0001.)
  */
 
+import { inspect } from 'node:util';
+
 import type { HostFrame, ToolBridgeOptions, ToolRequestFrame } from './engine.types';
+
+/**
+ * Never-empty, BOUNDED error text for a thrown tool value — safe to send back through the sandbox
+ * reader/proxy to the model/UI (no full stack; the stack goes only to the host-side `onToolError` sink).
+ * A bare `Error:` in the operator UI is what this exists to prevent (an empty `.message` on a thrown
+ * error would otherwise ride back verbatim). Uses `inspect` (NOT `JSON.stringify`, which throws on
+ * circular/BigInt — and this runs inside `dispatchToolRequest`'s never-throw catch).
+ */
+export function formatToolError(err: unknown): string {
+  if (err instanceof Error) {
+    const m = (err.message ?? '').trim();
+    if (m) return m;
+    if (err.name) return err.name; // e.g. "QueryFailedError"
+    if (err.stack) return err.stack.split('\n')[0].trim();
+    return inspect(err);
+  }
+  const s = String(err ?? '').trim();
+  return s || inspect(err) || 'unknown tool error (empty)';
+}
 
 /**
  * Normalise the arguments a bridged tool call arrives with. The in-sandbox proxy registers EVERY host tool
@@ -67,6 +88,13 @@ export async function dispatchToolRequest(
     const result = await impl(args);
     return { t: 'tool_response', id, result };
   } catch (err) {
-    return { t: 'tool_error', id, message: err instanceof Error ? err.message : String(err) };
+    // Bounded message rides back to the sandbox; the FULL stack goes only to the host log so a real
+    // cause (e.g. a bare `QueryFailedError`) is never swallowed into an empty `Error:` in the UI.
+    const message = formatToolError(err);
+    const detail = err instanceof Error ? (err.stack ?? err.message) : inspect(err);
+    (bridge.onToolError ?? ((l: string) => console.error(l)))(
+      `[tool-bridge] tool '${name}' (job ${bridge.jobId}) failed: ${detail}`,
+    );
+    return { t: 'tool_error', id, message };
   }
 }

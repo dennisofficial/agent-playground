@@ -302,6 +302,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
     done: { value: boolean },
   ): Promise<void> {
     const consumer = `host-${turnId.slice(0, 8)}`;
+    // Route bridged-tool throws to the real Logger so the true cause (message + stack) lands in the
+    // host logs — the sandbox only ever sees a bounded `.message`, so without this an empty/opaque
+    // handler error is invisible except as a bare `Error:` in the operator UI.
+    bridge.onToolError ??= (line: string) => this.logger.error(`turn ${turnId}: ${line}`);
     let claimedPending = false;
     while (!done.value) {
       try {

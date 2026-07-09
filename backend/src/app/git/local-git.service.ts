@@ -438,31 +438,12 @@ export class LocalGitService {
 
   /**
    * THE HOST NEVER COMMITS. Every commit on a feature branch is authored by Atlas's own in-sandbox session
-   * (builders commit per-step; the open-PR turn commits any remaining uncommitted work — including the
-   * host-written `.atlas/decisions/` ledger files — before it pushes). There is intentionally no host
-   * `commitAll` primitive: a host-identity commit would read as robotic in the git history, and the
-   * hydrated-secret leak-scan ({@link scanBranchForForbidden}) already runs host-side as a HARD pre-ship gate
-   * over both the branch commits AND the working tree, so no host commit is needed to make that check sound.
+   * (builders commit per-step; the open-PR turn commits any remaining uncommitted work before it pushes).
+   * There is intentionally no host `commitAll` primitive: a host-identity commit would read as robotic in
+   * the git history, and the hydrated-secret leak-scan ({@link scanBranchForForbidden}) already runs
+   * host-side as a HARD pre-ship gate over both the branch commits AND the working tree, so no host commit
+   * is needed to make that check sound.
    */
-
-  /**
-   * True when nothing is pending under `.atlas/decisions/` — i.e. the ledger files the host wrote into the
-   * worktree have been COMMITTED (by the brain's ship turn). This is the positive proof used to stamp the
-   * ledger-promotion spine `complete` now that the host no longer commits the ledger itself: if it's not
-   * clean, the row is left for the boot reconciler rather than marked done. Best-effort — a git error returns
-   * `false` (treat as "not yet committed", the safe direction for the durability stamp).
-   */
-  async ledgerClean(worktreePath: string): Promise<boolean> {
-    try {
-      const status = await this.git(
-        ['status', '--porcelain', '--', '.atlas/decisions/'],
-        { cwd: worktreePath },
-      );
-      return status.trim().length === 0;
-    } catch {
-      return false;
-    }
-  }
 
   /**
    * Guard for a HARD sandbox reset (which deletes + re-cuts the worktree). Returns whether it is safe to

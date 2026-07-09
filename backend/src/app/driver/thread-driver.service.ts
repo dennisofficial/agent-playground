@@ -156,14 +156,9 @@ function isTransientDriveError(err: unknown): boolean {
 const TRANSIENT_ERROR_RE =
   /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
 
-/** The narrow brain surface the driver needs (ship-time ledger promotion + Phase-3 halt wake) — resolved
+/** The narrow brain surface the driver needs (Phase-3 halt wake) — resolved
  *  lazily to avoid the brain⇄driver module cycle. */
 interface BrainSurface {
-  promoteDurableDecisionsAtShip(
-    jobId: string,
-    orgId: string,
-    repoId: string,
-  ): Promise<void>;
   /** Wake the job brain to triage a halted thread (ADR 0004 rider 4). The brain loads the job + terminal
    *  record itself and runs a trusted harness turn; a no-op if the thread is no longer owed a wake. */
   notifyThreadHalted(
@@ -212,7 +207,7 @@ export class ThreadDriver implements JobDispatcher {
     // The durable registry of in-flight Redis-transport turns — lets a build batch RE-ATTACH its still-live
     // engine stream after a restart (like the brain) instead of re-running. @Global via SandboxModule.
     private readonly turnRegistry: TurnRegistry,
-    // Lazily resolves the brain (AgentSessionManager) for the server-initiated ledger-promotion turn,
+    // Lazily resolves the brain (AgentSessionManager) for the Phase-3 halt wake,
     // dodging the brain⇄driver constructor cycle.
     private readonly moduleRef: ModuleRef,
     // The ADR-0005 live-verification judge — gates `complete_thread`'s `done` claim (see `gateLiveVerification`).
@@ -959,10 +954,10 @@ export class ThreadDriver implements JobDispatcher {
 
   /** Render + write the durable halt trail to `<contextDirHost>/generated/threads/<ordinal>-<slug>/completion.md`
    *  (host-written projection like the other `/context/generated` renders — `decision-record.md`,
-   *  `deviations.md` — read-only in-sandbox and surfaced in the operator UI; NOT the committed
-   *  `.atlas/decisions/` ledger, so it never lands in the git worktree). NOT committed (the halted batch is
-   *  un-committed + resumable; the DB `terminal_record` is the durable source, this is its human-readable
-   *  projection). Best-effort; never blocks the halt. */
+   *  `deviations.md` — read-only in-sandbox and surfaced in the operator UI, a host-side projection, so it
+   *  never lands in the git worktree). NOT committed (the halted batch is un-committed + resumable; the
+   *  DB `terminal_record` is the durable source, this is its human-readable projection). Best-effort; never
+   *  blocks the halt. */
   private async writeCompletionMd(
     job: Job,
     thread: DriverThread,
@@ -2879,12 +2874,11 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * FINALIZE THE BUILD. After all threads: promote durable decisions into `.atlas/decisions/`, then run
-   * the terminal `ship` sequence — Atlas opens the PR ITSELF in-sandbox (git push + `gh pr create`),
-   * followed by Master Review as a check on the open PR. The host opens NOTHING; it only kicks the ship
-   * turn, then flips the job `done` once it ran (the reconciler backfills `pr_url`/`pr_number` on
-   * discovery). Idempotent + resumable — a re-entered finalize just re-promotes and re-ships (ship finds
-   * the existing PR). Threads stacked on one branch ⇒ one PR.
+   * FINALIZE THE BUILD. After all threads: run the terminal `ship` sequence — Atlas opens the PR ITSELF
+   * in-sandbox (git push + `gh pr create`), followed by Master Review as a check on the open PR. The host
+   * opens NOTHING; it only kicks the ship turn, then flips the job `done` once it ran (the reconciler
+   * backfills `pr_url`/`pr_number` on discovery). Idempotent + resumable — a re-entered finalize just
+   * re-ships (ship finds the existing PR). Threads stacked on one branch ⇒ one PR.
    */
   private async finalizeBuild(
     job: Job,
@@ -2893,74 +2887,17 @@ export class ThreadDriver implements JobDispatcher {
     repo: ResolvedRepo,
     sandbox: FeatureSandbox,
   ): Promise<void> {
-    this.logger.log(
-      `job=${job.id} all threads done — promoting decisions + shipping`,
-    );
-    // Promote durable decisions into `.atlas/decisions/` BEFORE shipping, so they ride the build commit.
-    // `promoteLedger` HONORS the claim: if the ledger is already claimed/complete (a concurrent finalize or
-    // a prior attempt), it SKIPS the promote turn rather than re-firing it — this is what stops the
-    // ship-tail (promote → open-PR → review) from looping.
-    const promoted = await this.promoteLedger(job);
+    this.logger.log(`job=${job.id} all threads done — shipping`);
     // `ship` runs the terminal in-sandbox steps: Atlas opens the PR ITSELF (git push + `gh pr create`), then
     // reports its url back so `ship` latches `pr_url`/`pr_number` (flipping the job `done`), then Master
     // Review runs as a check on the open PR. See BuildShipService.ship / openPrInSandbox.
-    const outcome = await this.ship.ship({
+    await this.ship.ship({
       job,
       record,
       repo,
       sandbox,
       notify: (m) => this.post(route, m),
     });
-    // Finalize the ledger spine off what THIS call actually did, never leaving the row stuck `running`:
-    //  • promoted here AND ship ran the sandbox ship turn (`opened`) AND the ledger is actually COMMITTED
-    //    (`ledgerClean` — nothing pending under `.atlas/decisions/`) ⇒ COMPLETE. The host no longer commits
-    //    the ledger; the brain's awaited open-PR turn commits + pushes it, so we require POSITIVE proof it
-    //    landed rather than trusting `opened` alone. `ledgerClean` after an awaited `openPrAtShip` means the
-    //    files were committed (and pushed in that same turn), independent of `prConfirmed` — which only
-    //    reflects a GitHub API lookup that can lag right after `gh pr create`.
-    //  • promoted but not clean/opened ⇒ leave for the boot backstop (`reconcileLedgerPromotion`), which
-    //    re-promotes + re-ships the now-`done`, pr_url-set row onto its open PR. Mark FAILED when ship never
-    //    ran at all (e.g. missing token) so the claim is re-winnable next drive.
-    //  • NOT promoted here ⇒ the claim was already `complete`, or a crashed `running` the backstop reconciles.
-    if (promoted && outcome.opened && (await this.git.ledgerClean(sandbox.worktreePath))) {
-      await this.store.markLedgerPromoted(job.id);
-    } else if (promoted && !outcome.opened) {
-      await this.store
-        .setLedgerPromotionStatus(job.id, 'failed')
-        .catch(() => undefined);
-    }
-  }
-
-  /**
-   * Run the SERVER-INITIATED ledger promotion turn (full path). Claims the spine (`running`), then asks
-   * the brain — lazily, to avoid the brain⇄driver module cycle — to distill THIS thread's durable
-   * decisions into the worktree's `.atlas/decisions/`. Best-effort: a failure marks the spine `failed`
-   * (boot backstop retries) and returns false so the PR ships regardless.
-   */
-  private async promoteLedger(job: Job): Promise<boolean> {
-    // HONOR the claim: only run the promote turn when THIS caller won it (`null|pending|failed → running`).
-    // A row already `running`/`complete` means a concurrent finalize or a prior attempt owns it — re-firing
-    // the promote turn here is exactly the loop that made shipped jobs re-run promote_decisions endlessly.
-    const won = await this.store.claimLedgerPromotion(job.id);
-    if (!won) {
-      this.logger.log(
-        `job=${job.id}: ledger promotion already claimed/complete — skipping the promote turn`,
-      );
-      return false;
-    }
-    try {
-      const brain = await this.brain();
-      await brain.promoteDurableDecisionsAtShip(job.id, job.orgId, job.repoId);
-      return true;
-    } catch (err) {
-      this.logger.warn(
-        `ledger promotion turn failed for ${job.id} (shipping anyway): ${err}`,
-      );
-      await this.store
-        .setLedgerPromotionStatus(job.id, 'failed')
-        .catch(() => undefined);
-      return false;
-    }
   }
 
   /** Lazily resolve the brain — a dynamic import keeps the brain⇄driver dependency out of module load. */

@@ -127,10 +127,6 @@ function makeStore(state: StoreState): {
     clearShipApproval: vi.fn(async (_id: string) => {
       state.job.shipReviewApprovedAt = null;
     }),
-    // Decision-ledger promotion spine (no-op fakes — the ledger turn itself is stubbed via ModuleRef).
-    claimLedgerPromotion: vi.fn(async () => true),
-    setLedgerPromotionStatus: vi.fn(async () => undefined),
-    markLedgerPromoted: vi.fn(async () => undefined),
     decisionRecord: vi.fn(async () => state.record),
     threadsForJob: vi.fn(async () => state.threads.map((s) => ({ ...s }))),
     getThread: vi.fn(async (id: string) => {
@@ -424,9 +420,6 @@ function makeGit(): {
     // (below) advances `sha` to simulate the writer's commit, so `headSha` returns the fresh sha the driver
     // stamps. `hasChanges` reports a CLEAN tree by default (the writer committed) — no dirty-tree nudge.
     hasChanges: vi.fn(async () => false),
-    // The ledger is committed by the brain's ship turn (host never commits); `ledgerClean` = true means the
-    // `.atlas/decisions/` files landed, gating the `markLedgerPromoted` stamp in `finalizeBuild`.
-    ledgerClean: vi.fn(async () => true),
     push: vi.fn(async (sandbox: FeatureSandbox) => {
       pushed.push(sandbox.branch);
     }),
@@ -864,12 +857,11 @@ function assemble(
   // Records each seeded open-PR turn (`BuildShipService` → `brain.openPrAtShip`). Replaces the old proxy of
   // "an engine execute/claude call happened" now that the ship step is a brain turn, not a separate session.
   const shipSeeds: Array<{ jobId: string; branch: string }> = [];
-  // ModuleRef: the lazy brain lookup shared by the driver (halt wakes + ledger promotion) AND BuildShipService
+  // ModuleRef: the lazy brain lookup shared by the driver (halt wakes) AND BuildShipService
   // (the seeded open-PR turn). A stub brain records `notifyThreadHalted` wakes + `openPrAtShip` seeds (the
   // seeded turns themselves are exercised in the brain specs — here the host latches by branch discovery).
   const brainModuleRef = {
     get: () => ({
-      promoteDurableDecisionsAtShip: async () => undefined,
       openPrAtShip: async (input: { jobId: string; branch: string }) => {
         shipSeeds.push({ jobId: input.jobId, branch: input.branch });
       },
@@ -963,7 +955,7 @@ function assemble(
     (opts.turnRegistry ?? {
       listRunning: async () => [],
     }) as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
-    // ModuleRef: the lazy brain lookup (halt wakes + ledger promotion), shared with BuildShipService above.
+    // ModuleRef: the lazy brain lookup (halt wakes), shared with BuildShipService above.
     brainModuleRef,
     judge,
     taskSink,

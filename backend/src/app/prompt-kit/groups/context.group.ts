@@ -1,6 +1,6 @@
 /**
  * prompt-kit / groups / context — the durable authoring surfaces the normal brain writes into: the
- * `/context` shared folder (specs/generated/artifacts) and the repo-level decision ledger.
+ * `/context` shared folder (specs/generated/artifacts).
  *
  * TOPIC bucket: context / authored artifacts (normal brain only).
  */
@@ -40,24 +40,6 @@ export class ContextGroup {
       '  • `/context/artifacts/` — OUTPUTS for the human: preview HTML, screenshots, reports (never the repo).',
       'Treat the repo (`/workspace`) as READ-ONLY until a build is approved — never modify it while planning;',
       'write to `/context/specs` (or `/context/artifacts`) instead.',
-    ].join('\n');
-  }
-
-  /** normal block 17 — the decision ledger. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1170, condition: isBuildBrain })
-  decisionLedger(): string {
-    return [
-      'DECISION LEDGER — `/workspace/.atlas/decisions/` is the DURABLE, repo-level record of the cross-cutting',
-      'architecture calls that OUTLIVE one feature ("money-out requires SUPER_ADMIN", "credits via Stripe',
-      'balance, no internal ledger"). It is committed in the repo, so every thread inherits it.',
-      '  • WHILE GRILLING: read `/workspace/.atlas/decisions/` FIRST (and its `index.md`). Any decision file',
-      "    present there is ALREADY SETTLED — it is on this thread's base branch. Do NOT relitigate it; build",
-      '    on it. If your new work genuinely CONTRADICTS one, say so to the operator and supersede it',
-      '    explicitly at promotion (do not silently diverge).',
-      '  • AT SHIP (after approval, when the build is committing): call `promote_decisions` to write the',
-      "    DURABLE subset of THIS thread's decisions into the ledger. This is SELECTIVE and DISTILLED — see",
-      '    `promote_decisions` below. It is separate from `/context/generated/decision-record.md`, which keeps',
-      '    the full per-feature record; the ledger holds only the distilled durable invariant.',
     ].join('\n');
   }
 }

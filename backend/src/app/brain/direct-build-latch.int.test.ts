@@ -29,8 +29,8 @@ import { AgentSessionManager } from './agent-session-manager.service';
  * `discoverOpenPr` → the real `setPrReady` UPDATE against live Postgres.
  *
  * Proves the "direct build stuck RUNNING" symptom is fixed at runtime: after the finalize turn ends, the
- * `jobs` row flips `status: running → done` with `pr_url`/`pr_number` recorded and `pr_state: 'open'`, and
- * the ledger-promotion turn is kicked (fire-and-forget) — all without the 30-min reconciler.
+ * `jobs` row flips `status: running → done` with `pr_url`/`pr_number` recorded and `pr_state: 'open'` —
+ * all without the 30-min reconciler.
  */
 const TEAM_ID = '44444444-4444-4444-8444-444444444444'; // sentinel org uuid
 const PROJECT_SLUG = 'direct-latch-it';
@@ -157,8 +157,8 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
     expect(fakePr.opened.some((o) => (o.args as { head?: string }).head === LIVE_BRANCH)).toBe(true);
     expect(fakePr.opened.some((o) => (o.args as { head?: string }).head === FEATURE_BRANCH)).toBe(false);
 
-    // Ledger promotion is NOT re-run at turn-end — `finalize_build` stamps it complete inline, so the latch
-    // only records the PR + flips status. The flag was consumed — a subsequent turn-end must not re-latch.
+    // The latch only records the PR + flips status. The flag was consumed — a subsequent turn-end must
+    // not re-latch.
     expect(
       (manager as unknown as { directBuildShipPending: Map<string, boolean> }).directBuildShipPending.has(
         jobId,

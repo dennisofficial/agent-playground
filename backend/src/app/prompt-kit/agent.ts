@@ -30,8 +30,8 @@ export enum Agent {
   AUTOFIX_FIX = 'autofix_fix',
   /** The Codex plan-review turn's system prompt (its per-run task is `plan-review.service.renderPlanForReview`). */
   META_PLAN_REVIEW = 'meta_plan_review',
-  // NOTE: the in-sandbox open-PR turn (`ship-open-pr`) + the ledger-promotion turn are NOT agents — they are
-  // `prompt-kit/turns/` messages. The decision-class classifier, thread-titler, and live-verification judge
+  // NOTE: the in-sandbox open-PR turn (`ship-open-pr`) is NOT an agent — it is a
+  // `prompt-kit/turns/` message. The decision-class classifier, thread-titler, and live-verification judge
   // are host-side LangChain chains — their prompts live WITH those chains, not in prompt-kit at all.
 }
 

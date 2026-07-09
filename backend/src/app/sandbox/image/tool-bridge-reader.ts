@@ -127,7 +127,7 @@ export class ToolBridgeReader {
     if (e.idle) clearTimeout(e.idle);
     this.pending.delete(frame.id);
     if (frame.t === 'tool_response') e.resolve(frame.result);
-    else e.reject(new Error(frame.message));
+    else e.reject(new Error(frame.message || 'host tool error (no message)'));
   }
 
   private async loop(): Promise<void> {
