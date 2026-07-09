@@ -162,6 +162,9 @@ function makeService(opts: {
   } as unknown as JobLifecycleService;
   const jobs = {
     findOne: async () => ({ id: 'job-1', repo_id: 'repo-1' }),
+    // persistRow mirrors the review status onto jobs.review_running via syncReviewRunning — the fake must
+    // accept the update (the live sync is asserted end-to-end in web-surface.halt.int.test.ts).
+    update: vi.fn(async () => ({ affected: 1 })),
   } as unknown as Repository<JobEntity>;
   // The render-only `plan_review` thread row is best-effort — a no-op stub is enough for these tests.
   const threads = {
