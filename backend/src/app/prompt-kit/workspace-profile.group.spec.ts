@@ -20,7 +20,7 @@ describe('workspace-profile.group — the named provisioning umbrella', () => {
       // Each dimension's upkeep tool is named so the brain knows how to maintain it.
       for (const tool of [
         'request_secret',
-        'write_worktree_config',
+        'write_workspace_config',
         'write_setup_script',
         'propose_mcp_servers',
         'propose_skill',

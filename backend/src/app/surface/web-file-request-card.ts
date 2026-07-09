@@ -3,7 +3,7 @@
  * `request_file` tool when it needs the operator to UPLOAD a file whose contents can't be typed (a
  * service-account JSON, a keystore/`.pem`, a gitignored `.env.keys`). The web client renders a file
  * picker; the operator's file is read as text and POSTed to `…/jobs/:jobId/provide-file`, which writes
- * the contents straight to the encrypted `WorktreeSecretFileStore` (as this repo's secret file) and creates the
+ * the contents straight to the encrypted `WorkspaceSecretFileStore` (as this repo's secret file) and creates the
  * owner grant that renders it to `path` in future build threads. The contents are therefore NEVER part
  * of this card, the transcript, or any brain tool I/O — the card holds only the request metadata +
  * lifecycle timestamps, and once provided the client renders a compact "✓ path uploaded" state.

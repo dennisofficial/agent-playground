@@ -38,7 +38,7 @@ function makeController(threadOrgId: string) {
     { available: false } as never, // realtime
     { isLeader: () => true, getState: () => 'leader', isDraining: () => false } as never, // election
     { dispatch: async () => undefined } as never, // dispatcher (JOB_DISPATCHER)
-    { write: async () => undefined, list: async () => [], listForRepo: async () => [], read: async () => null } as never, // secrets (WorktreeSecretFileStore)
+    { write: async () => undefined, list: async () => [], listForRepo: async () => [], read: async () => null } as never, // secrets (WorkspaceSecretFileStore)
     {} as never, // store (BrainStoreService)
     { stopTurn: async () => false } as never, // brain (AgentSessionManager)
     {} as never, // mcpStore (McpServerStore)

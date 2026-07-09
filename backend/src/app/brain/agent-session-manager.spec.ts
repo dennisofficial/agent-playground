@@ -35,7 +35,8 @@ import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import type { EventStimulus } from '../domain';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
-import type { CredentialResolver, WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
+import type { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
+import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
 import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
@@ -147,12 +148,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     list: vi.fn().mockResolvedValue([]),
     listForRepo: vi.fn().mockResolvedValue([]),
     read: vi.fn().mockResolvedValue(null),
-  } as unknown as WorktreeSecretFileStore;
+  } as unknown as WorkspaceSecretFileStore;
 
   const mockConfigStore = {
     listMounts: vi.fn().mockResolvedValue([]),
     upsertMount: vi.fn().mockResolvedValue(undefined),
-  } as unknown as WorktreeConfigStore;
+  } as unknown as WorkspaceConfigStore;
 
   const mockGit = {
     hasChanges: vi.fn().mockResolvedValue(false),
@@ -760,7 +761,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.preShip).not.toHaveBeenCalled();
   });
 
-  it('write_worktree_config UPSERTS mounts straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
+  it('write_workspace_config UPSERTS mounts straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
     // What the ceremony (or an earlier amendment) already recorded, per the config store.
     (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([
       { path: '.gcloud', mode: 'shared-rw' },
@@ -770,7 +771,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const tools = manager.buildTools(fakeStimulus);
 
     // A build thread discovers it needs ONE new mount — it does NOT resend the existing ones.
-    const result = await tools['write_worktree_config']({
+    const result = await tools['write_workspace_config']({
       mounts: [{ path: '.stripe', mode: 'shared-rw' }],
     });
 
@@ -784,23 +785,23 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(notice).toMatch(/3 mount/);
   });
 
-  it('write_worktree_config upserts by path — re-recording the same path replaces its mode, not a duplicate call', async () => {
+  it('write_workspace_config upserts by path — re-recording the same path replaces its mode, not a duplicate call', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
-    await tools['write_worktree_config']({
+    await tools['write_workspace_config']({
       mounts: [{ path: '.gcloud', mode: 'shared-rw' }], // corrects the mode for an existing path
     });
 
-    // The upsert-by-path semantics live in the store itself (see worktree-config.store.spec.ts); the tool's
+    // The upsert-by-path semantics live in the store itself (see workspace-config.store.spec.ts); the tool's
     // job is just to call it once per entry with the normalized path/mode.
     expect(mockConfigStore.upsertMount).toHaveBeenCalledOnce();
     expect(mockConfigStore.upsertMount).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, '.gcloud', 'shared-rw');
   });
 
-  it('write_worktree_config accepts an ABSOLUTE (external) mount and drops one targeting a reserved container path', async () => {
+  it('write_workspace_config accepts an ABSOLUTE (external) mount and drops one targeting a reserved container path', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
-    const result = await tools['write_worktree_config']({
+    const result = await tools['write_workspace_config']({
       mounts: [
         { path: '/root/.config/gcloud', mode: 'shared-rw' }, // external → recorded verbatim
         { path: '/etc/foo', mode: 'shared-rw' }, // reserved container path → dropped + warned
@@ -812,18 +813,18 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect((result as { warnings?: string[] }).warnings?.some((w) => w.includes('/etc/foo'))).toBe(true);
   });
 
-  it('write_worktree_config rejects a `secrets` field — secrets never go through this tool', async () => {
+  it('write_workspace_config rejects a `secrets` field — secrets never go through this tool', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    const result = await tools['write_worktree_config']({ secrets: [{ name: 'x' }] });
+    const result = await tools['write_workspace_config']({ secrets: [{ name: 'x' }] });
     expect(result).toMatchObject({ ok: false });
     expect(mockConfigStore.upsertMount).not.toHaveBeenCalled();
   });
 
-  it('write_worktree_config NEVER throws on a store failure — warns and hands Atlas the real error to act on', async () => {
+  it('write_workspace_config NEVER throws on a store failure — warns and hands Atlas the real error to act on', async () => {
     (mockConfigStore.upsertMount as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('connect ECONNREFUSED'));
     const tools = manager.buildTools(fakeStimulus);
 
-    const result = await tools['write_worktree_config']({ mounts: [{ path: '.gcloud', mode: 'shared-rw' }] });
+    const result = await tools['write_workspace_config']({ mounts: [{ path: '.gcloud', mode: 'shared-rw' }] });
 
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('ECONNREFUSED') });
     // No misleading "success" notice was posted for a write that never landed.
@@ -927,6 +928,19 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const result = await tools['finish_onboarding']({ summary: 'done', verified: 'too short' });
     expect(result).toMatchObject({ ok: false });
     expect(mockLifecycle.markRepoOnboarded).not.toHaveBeenCalled();
+  });
+
+  // Drift guard: every name the workspace-profile bridge routes MUST be a real, registered tool, or the
+  // entrypoint would advertise a tool that doesn't dispatch. Onboarding is the superset (includes the
+  // convention tools), so it's the right toolset to check membership against.
+  it('WORKSPACE_PROFILE_TOOL_NAMES all resolve to registered tools (no bridge/registration drift)', () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    for (const name of WORKSPACE_PROFILE_TOOL_NAMES) {
+      expect(typeof tools[name], `profile tool "${name}" must be registered`).toBe('function');
+    }
+    // Conversely, reset_sandbox is a real tool but deliberately NOT on the profile bridge.
+    expect(typeof tools['reset_sandbox']).toBe('function');
+    expect(WORKSPACE_PROFILE_TOOL_NAMES as readonly string[]).not.toContain('reset_sandbox');
   });
 
   it('finish_onboarding: no repo diff → marks onboarded, does NOT ship a PR', async () => {
@@ -1691,11 +1705,11 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         list: async () => [],
         listForRepo: async () => [],
         read: async () => null,
-      } as unknown as WorktreeSecretFileStore,
+      } as unknown as WorkspaceSecretFileStore,
       {
         listMounts: async () => [],
         upsertMount: async () => undefined,
-      } as unknown as WorktreeConfigStore,
+      } as unknown as WorkspaceConfigStore,
       { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
@@ -2163,7 +2177,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const opts = reattach.mock.calls[0][2] as { toolBridge: { tools: Record<string, unknown> } };
     const names = Object.keys(opts.toolBridge.tools);
     expect(names).toContain('finish_onboarding');
-    expect(names).toContain('write_worktree_config');
+    expect(names).toContain('write_workspace_config');
     expect(names).not.toContain('propose_plan');
   });
 
@@ -2199,7 +2213,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(tools.request_secret).toBeDefined();
     expect(tools.request_file).toBeDefined();
     expect(tools.derive_secret).toBeDefined();
-    expect(tools.write_worktree_config).toBeDefined();
+    expect(tools.write_workspace_config).toBeDefined();
     expect(tools.finish_onboarding).toBeUndefined();
   });
 
@@ -2410,11 +2424,11 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         list: async () => [],
         listForRepo: async () => [],
         read: async () => null,
-      } as unknown as WorktreeSecretFileStore,
+      } as unknown as WorkspaceSecretFileStore,
       {
         listMounts: async () => [],
         upsertMount: async () => undefined,
-      } as unknown as WorktreeConfigStore,
+      } as unknown as WorkspaceConfigStore,
       { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
@@ -2568,8 +2582,8 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
         list: async () => [],
         listForRepo: async () => [],
         read: async () => null,
-      } as unknown as WorktreeSecretFileStore,
-      { listMounts: async () => [], upsertMount: async () => undefined } as unknown as WorktreeConfigStore,
+      } as unknown as WorkspaceSecretFileStore,
+      { listMounts: async () => [], upsertMount: async () => undefined } as unknown as WorkspaceConfigStore,
       { hasChanges: async () => false, currentBranch: async () => null } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)

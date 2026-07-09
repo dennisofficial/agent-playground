@@ -71,8 +71,9 @@ import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { OrganizationService } from '../org/organization.service';
-import { WorktreeSecretFileStore } from '../onboarding';
+import { WorkspaceSecretFileStore } from '../onboarding';
 import { McpServerStore } from '../mcp/mcp-server.store';
+import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
 import { ConventionProfileResolver } from '../conventions';
 import { SkillFileWriter, WorkspaceSkillStore } from '../skills';
 import { McpProbeService } from '../mcp/mcp-probe.service';
@@ -534,7 +535,7 @@ export class WebSurfaceController {
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
     // Repo onboarding: the ONLY place a `request_secret` plaintext value lands — straight to the
     // encrypted store + a grant, never the transcript (owner-gated; see `provideSecret`).
-    private readonly secrets: WorktreeSecretFileStore,
+    private readonly secrets: WorkspaceSecretFileStore,
     // The brain's store — used here for the atomic `markQuestionAnswered` gate (resolved ambiently from
     // the @Global BrainModule, same as the approval services this module already depends on).
     private readonly store: BrainStoreService,
@@ -1180,7 +1181,7 @@ export class WebSurfaceController {
   /**
    * `POST …/threads/:jobId/provide-secret` — provide the value for a brain `request_secret` card during
    * repo onboarding. THE ONLY PLACE A SECRET VALUE LIVES: it goes straight to the encrypted
-   * `WorktreeSecretFileStore` as this repo's secret file at (repo, path), and is NEVER written to the
+   * `WorkspaceSecretFileStore` as this repo's secret file at (repo, path), and is NEVER written to the
    * card, the transcript, or any brain tool I/O. OWNER-ONLY (`OrgOwnerGuard`) — writing a secret file is
    * an Administer action everywhere
    * else. Gated on the thread's durable `awaiting_secret_id`; stamps the card `provided_at` (not the value)
@@ -1354,14 +1355,6 @@ export class WebSurfaceController {
       return { ok: true, committed: card.committed ?? [] };
     }
     // Defensive: never let an approval shadow a reserved system server, even if a stale card slipped one in.
-    const RESERVED = new Set([
-      'atlas-host-bridge',
-      'atlasbridge',
-      'atlas-lsp-ts',
-      'context7',
-      'graphify',
-      'cocoindex',
-    ]);
     // Registration scope from the card: 'org' → the '*' sentinel (every repo), else this thread's repo.
     // The owner (this endpoint) is the trust boundary — the brain proposes the scope, the owner approves it.
     const dbScope = card.scope === 'org' ? '*' : thread.repo_id;
@@ -1371,7 +1364,7 @@ export class WebSurfaceController {
     if (card.mode === 'remove') {
       const removed: string[] = [];
       for (const name of card.removeNames ?? []) {
-        if (!name || RESERVED.has(name.toLowerCase())) continue;
+        if (!name || isReservedMcpName(name)) continue;
         await this.mcpStore.delete(org.id, dbScope, name);
         removed.push(name);
       }
@@ -1389,7 +1382,7 @@ export class WebSurfaceController {
     const committed: string[] = [];
     const needSecrets: string[] = [];
     for (const s of card.servers) {
-      if (!s.name || RESERVED.has(s.name.toLowerCase())) continue;
+      if (!s.name || isReservedMcpName(s.name)) continue;
       await this.mcpStore.write(org.id, dbScope, s.name, this.mcpProposalToInput(s));
       committed.push(s.name);
       const secretSlots = [

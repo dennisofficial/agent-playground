@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LocalGitService } from '../git';
 import { readForbiddenPaths } from '../git';
-import type { WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
+import type { WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import type { MountSpec } from '../sandbox/container-paths';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 
@@ -22,7 +22,7 @@ interface SecretWorld {
   /** Per-repo secret files (repoId defaults to REPO). `value` absent → row exists but read returns null. */
   files?: Array<{ path: string; value?: string; updatedAt?: number; label?: string | null; repoId?: string }>;
 }
-function fakeSecrets(world: SecretWorld): WorktreeSecretFileStore {
+function fakeSecrets(world: SecretWorld): WorkspaceSecretFileStore {
   const forRepo = (repoId: string) => (world.files ?? []).filter((f) => (f.repoId ?? REPO) === repoId);
   return {
     read: async (orgId: string, repoId: string, path: string) =>
@@ -35,26 +35,26 @@ function fakeSecrets(world: SecretWorld): WorktreeSecretFileStore {
         path: f.path,
         label: f.label ?? null,
       })),
-  } as unknown as WorktreeSecretFileStore;
+  } as unknown as WorkspaceSecretFileStore;
 }
 
 interface ConfigWorld {
   mounts?: MountSpec[];
 }
 /** The org+repo-scoped mounts config, DB-backed in prod — faked in-memory here. */
-function fakeConfig(world: ConfigWorld): WorktreeConfigStore {
+function fakeConfig(world: ConfigWorld): WorkspaceConfigStore {
   return {
     listMounts: async () => world.mounts ?? [],
-  } as unknown as WorktreeConfigStore;
+  } as unknown as WorkspaceConfigStore;
 }
 
 /** A config store that always rejects — simulates a Postgres hiccup on the worktree-config read path. */
-function failingConfig(message = 'connect ECONNREFUSED'): WorktreeConfigStore {
+function failingConfig(message = 'connect ECONNREFUSED'): WorkspaceConfigStore {
   return {
     listMounts: async () => {
       throw new Error(message);
     },
-  } as unknown as WorktreeConfigStore;
+  } as unknown as WorkspaceConfigStore;
 }
 
 describe('WorktreeHydrator', () => {
@@ -215,7 +215,7 @@ describe('WorktreeHydrator', () => {
     expect(a).not.toBe(b);
   });
 
-  it('computeSig changes when a mount is added (so write_worktree_config re-triggers hydration)', async () => {
+  it('computeSig changes when a mount is added (so write_workspace_config re-triggers hydration)', async () => {
     const before = new WorktreeHydrator(fakeGit(new Set()), fakeSecrets({}), fakeConfig({}));
     const after = new WorktreeHydrator(
       fakeGit(new Set()),
@@ -247,7 +247,7 @@ describe('WorktreeHydrator', () => {
       const { forbiddenPaths, notices } = await h.hydrateFiles({
         worktreePath: wt, orgId: ORG, repoDbId: REPO,
       });
-      // Secrets are independent of worktree config — a config-store outage doesn't block secret rendering.
+      // Secrets are independent of workspace config — a config-store outage doesn't block secret rendering.
       expect(forbiddenPaths).toEqual(['.env.keys']);
       expect(notices.some((n) => n.includes('ECONNREFUSED'))).toBe(true);
     });

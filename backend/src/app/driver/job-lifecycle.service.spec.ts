@@ -378,6 +378,7 @@ describe('JobLifecycleService.applyGithubPrState', () => {
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
+      { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
     svc.closeJob = vi.fn(async () => {
       order.push('closeJob');

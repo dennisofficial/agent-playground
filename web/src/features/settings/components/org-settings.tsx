@@ -23,7 +23,7 @@ import { useOrg, useOrgs, type OrgSummary } from "@/lib/api/me";
 import { orgSwatch, orgInitials, roleLabel } from "@/lib/org-display";
 import { GeneralSection } from "./general-section";
 import { CredentialsSection } from "./credentials-section";
-import { WorktreeSecretsSection } from "./worktree-secrets-section";
+import { WorkspaceSecretsSection } from "./workspace-secrets-section";
 import { McpSection } from "./mcp-section";
 import { ConventionProfilesSection } from "./convention-profiles-section";
 import { SkillsSection } from "./skills-section";
@@ -34,7 +34,7 @@ const NAV: { id: SettingsSection; label: string; icon: typeof SettingsIcon }[] =
   [
     { id: "general", label: "General", icon: SettingsIcon },
     { id: "credentials", label: "Credentials", icon: KeyRound },
-    { id: "worktree-secrets", label: "Worktree secrets", icon: FileKey },
+    { id: "workspace-secrets", label: "Workspace secrets", icon: FileKey },
     { id: "mcp-servers", label: "MCP servers", icon: Plug },
     { id: "convention-profiles", label: "Convention profiles", icon: Layers },
     { id: "skills", label: "Skills", icon: Sparkles },
@@ -177,8 +177,8 @@ export function OrgSettings({
               <GeneralSection org={org} />
             ) : section === "credentials" ? (
               <CredentialsSection orgId={org.id} />
-            ) : section === "worktree-secrets" ? (
-              <WorktreeSecretsSection orgId={org.id} role={org.role} />
+            ) : section === "workspace-secrets" ? (
+              <WorkspaceSecretsSection orgId={org.id} role={org.role} />
             ) : section === "mcp-servers" ? (
               <McpSection orgId={org.id} role={org.role} />
             ) : section === "convention-profiles" ? (

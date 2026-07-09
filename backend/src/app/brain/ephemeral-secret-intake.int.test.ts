@@ -8,7 +8,7 @@ import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
-import { WorktreeSecretFileStore } from '../onboarding';
+import { WorkspaceSecretFileStore } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { SANDBOX_PROVIDER } from '../sandbox';
 import {
@@ -25,7 +25,7 @@ import { BrainStoreService } from './brain-store.service';
 
 /**
  * The EPHEMERAL secret lane's core invariant: a one-time value (an OAuth code) is delivered STRAIGHT into
- * the running sandbox and NEVER persisted — no `org_worktree_secret_files` row, not in the transcript.
+ * the running sandbox and NEVER persisted — no `org_workspace_secret_files` row, not in the transcript.
  * Drives the real `provide-secret` controller path with a fake SANDBOX_PROVIDER that records the delivered
  * value, against live Postgres. Contrast with `secret-intake.int.test.ts`, which asserts the DURABLE lane
  * DOES write the encrypted store + grant.
@@ -62,7 +62,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
   let app: NestExpressApplication;
   let controller: WebSurfaceController;
   let store: BrainStoreService;
-  let secrets: WorktreeSecretFileStore;
+  let secrets: WorkspaceSecretFileStore;
   let ds: DataSource;
   let provider: FakeSandboxProvider;
   let jobId: string;
@@ -95,7 +95,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
 
     controller = app.get(WebSurfaceController);
     store = app.get(BrainStoreService);
-    secrets = app.get(WorktreeSecretFileStore);
+    secrets = app.get(WorkspaceSecretFileStore);
     ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
     await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]);
@@ -155,7 +155,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
     expect(await secrets.read(ORG_ID, repoId, DELIVER_TO)).toBeNull();
     expect(await secrets.list(ORG_ID, repoId)).toHaveLength(0);
     const storeRows = await ds.query(
-      `SELECT count(*)::int AS n FROM org_worktree_secret_files WHERE org_id = $1`,
+      `SELECT count(*)::int AS n FROM org_workspace_secret_files WHERE org_id = $1`,
       [ORG_ID],
     );
     expect(storeRows[0].n).toBe(0);

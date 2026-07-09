@@ -431,7 +431,12 @@ export interface RunEngineArgs {
    * is read-only without it). Only 'execute' may write.
    */
   mode: SessionMode;
-  /** How this run authenticates. Unset → the engine falls back to its ambient env. */
+  /**
+   * How this run authenticates. Callers MAY leave this unset: `RedisEngineRunner.run` resolves the per-org
+   * subscription secret from `sandboxKey.orgId` + `engine` at the single dispatch seam (so no call site can
+   * forget it). An explicitly-supplied `auth` still wins. If the org has no secret it stays undefined and the
+   * in-sandbox `EngineCore.resolveAuth` throws — there is no ambient-env fallback.
+   */
   auth?: EngineAuth;
   /**
    * NON-SECRET gate telling the in-container Codex engine to READ its refreshed `auth.json` overlay back

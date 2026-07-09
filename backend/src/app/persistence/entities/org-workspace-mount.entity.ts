@@ -6,17 +6,17 @@ import { RepoEntity } from './repo.entity';
 /**
  * A cache/state directory a repo's sandbox binds at `path`, DB-backed so it propagates to every job's
  * NEXT hydration instantly — no PR, no merge, no rebase (see docs/adr/0003). Composite PK
- * (org_id, repo_id, path) makes `write_worktree_config` an idempotent upsert-by-path: recording the same
+ * (org_id, repo_id, path) makes `write_workspace_config` an idempotent upsert-by-path: recording the same
  * path again just replaces `mode`, it can never duplicate or clobber an unrelated mount.
  *
- * Mirrors {@link OrgWorktreeSecretFileEntity} exactly — same ownership model (org+repo scoped,
+ * Mirrors {@link OrgWorkspaceSecretFileEntity} exactly — same ownership model (org+repo scoped,
  * cascade-deleted with either), same reasoning for why a repo-controlled file plays no part in
  * authority: the DB row IS the mount, not a request for one.
  */
-@Entity({ name: 'org_worktree_mounts' })
+@Entity({ name: 'org_workspace_mounts' })
 @Index(['org_id'])
 @Index(['org_id', 'repo_id'])
-export class OrgWorktreeMountEntity extends TimestampedEntity {
+export class OrgWorkspaceMountEntity extends TimestampedEntity {
   /** The owning org (FK → organizations). */
   @PrimaryColumn({ type: 'uuid' })
   org_id!: string;

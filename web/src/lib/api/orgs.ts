@@ -120,33 +120,33 @@ export function useSaveCredentials(orgId: string) {
   });
 }
 
-// ── Worktree secret files (per-repo encrypted files rendered into a thread's sandbox) ──────────────
+// ── Workspace secret files (per-repo encrypted files rendered into a thread's sandbox) ──────────────
 // GET returns file refs (repo + path + label) only, never values. Writes (PUT/DELETE /files) are
 // owner-only server-side. One row IS the value + the authority + the render instruction: a file renders
-// only when an owner-created (repo, path) row exists (worktree config — mounts — is a separate DB record
+// only when an owner-created (repo, path) row exists (workspace config — mounts — is a separate DB record
 // and never carries secrets; see docs/adr/0003-worktree-config-db-not-git.md).
 
-export interface WorktreeSecretFile {
+export interface WorkspaceSecretFile {
   repoId: string;
   path: string;
   label?: string | null;
 }
-export interface WorktreeSecretsView {
-  files: WorktreeSecretFile[];
+export interface WorkspaceSecretsView {
+  files: WorkspaceSecretFile[];
 }
 
-export function useWorktreeSecrets(orgId: string) {
+export function useWorkspaceSecrets(orgId: string) {
   return useQuery({
-    queryKey: qk.orgWorktreeSecrets(orgId),
+    queryKey: qk.orgWorkspaceSecrets(orgId),
     queryFn: () =>
-      webJson<WorktreeSecretsView>(`/orgs/${orgId}/worktree-secrets`),
+      webJson<WorkspaceSecretsView>(`/orgs/${orgId}/workspace-secrets`),
     enabled: Boolean(orgId),
     staleTime: 15_000,
   });
 }
 
 /** Owner-only: create/replace a repo's secret file at a destination path. */
-export function useSaveWorktreeSecretFile(orgId: string) {
+export function useSaveWorkspaceSecretFile(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: {
@@ -155,26 +155,26 @@ export function useSaveWorktreeSecretFile(orgId: string) {
       value: string;
       label?: string;
     }) =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/files`, {
+      webJson<{ ok: boolean }>(`/orgs/${orgId}/workspace-secrets/files`, {
         method: "PUT",
         body: JSON.stringify(body),
       }),
     onSuccess: () =>
-      void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
+      void qc.invalidateQueries({ queryKey: qk.orgWorkspaceSecrets(orgId) }),
   });
 }
 
 /** Owner-only: delete a repo's secret file. */
-export function useDeleteWorktreeSecretFile(orgId: string) {
+export function useDeleteWorkspaceSecretFile(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { repoId: string; path: string }) =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/files`, {
+      webJson<{ ok: boolean }>(`/orgs/${orgId}/workspace-secrets/files`, {
         method: "DELETE",
         body: JSON.stringify(body),
       }),
     onSuccess: () =>
-      void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
+      void qc.invalidateQueries({ queryKey: qk.orgWorkspaceSecrets(orgId) }),
   });
 }
 

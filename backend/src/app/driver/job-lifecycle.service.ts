@@ -811,7 +811,7 @@ export class JobLifecycleService {
 
   /**
    * Stamp a repo's `onboarded_at` — proof its worktree provisioning config is live. Called from exactly
-   * one place: the brain's `finish_onboarding`, synchronously — secrets and worktree config (mounts/seed)
+   * one place: the brain's `finish_onboarding`, synchronously — secrets and workspace config (mounts/seed)
    * are DB-backed now (see docs/adr/0003), so there is no PR-merge event to wait on. Idempotent (only
    * stamps when currently null).
    */

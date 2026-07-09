@@ -355,9 +355,11 @@ export const REPORT_ONLY_NOTE =
  * onboarding personas.
  */
 export const TOOL_QUALIFICATION_NOTE = (server: string): string =>
-  `Every host tool is served by the "${server}" MCP server and MUST be called by its FULLY-QUALIFIED name ` +
-  `"mcp__${server}__<tool>" — that is the ONLY name that works; the bare name (e.g. \`submit_plan\`) is not a ` +
-  `registered tool and fails with "No such tool available".`;
+  `Every host tool MUST be called by its FULLY-QUALIFIED "mcp__<server>__<tool>" name exactly as listed ` +
+  `below — that is the ONLY name that works; the bare name (e.g. \`submit_plan\`) is not a registered tool ` +
+  `and fails with "No such tool available". Most tools are on the "${server}" server; the Workspace Profile ` +
+  `tools (secrets, mounts, setup script, MCP/skill/house-style proposals) are on a separate ` +
+  `"workspace-profile" server — call them with the "mcp__workspace-profile__" prefix shown below.`;
 
 /**
  * SCRATCH SPACE — where throwaway work goes so it never pollutes the diff/PR. Shared by the worker execute

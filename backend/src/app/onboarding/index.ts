@@ -21,10 +21,10 @@ export {
   type CredentialPresence,
 } from './tenant-credential.store';
 export {
-  WorktreeSecretFileStore,
-  type WorktreeSecretFileRef,
-} from './worktree-secret.store';
-export { WorktreeConfigStore } from './worktree-config.store';
+  WorkspaceSecretFileStore,
+  type WorkspaceSecretFileRef,
+} from './workspace-secret.store';
+export { WorkspaceConfigStore } from './workspace-config.store';
 export {
   loadLegacyManifestFile,
   type WorktreeManifest,

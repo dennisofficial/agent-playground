@@ -2,24 +2,24 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { OrgWorktreeMountEntity, RepoEntity } from '../persistence/entities';
+import { OrgWorkspaceMountEntity, RepoEntity } from '../persistence/entities';
 import type { MountMode, MountSpec } from '../sandbox/container-paths';
 import { loadLegacyManifestFile } from './legacy-worktree-manifest';
 
 /**
- * The org+repo-scoped store for a repo's worktree config — cache/auth `mounts` — DB-backed so a
- * `write_worktree_config` call from any thread reaches every OTHER in-flight job's very next hydration
- * instantly, no PR/merge/rebase lag (see docs/adr/0003). Mirrors {@link WorktreeSecretFileStore}'s
+ * The org+repo-scoped store for a repo's workspace config — cache/auth `mounts` — DB-backed so a
+ * `write_workspace_config` call from any thread reaches every OTHER in-flight job's very next hydration
+ * instantly, no PR/merge/rebase lag (see docs/adr/0003). Mirrors {@link WorkspaceSecretFileStore}'s
  * find-then-save idiom exactly — this codebase has no `.upsert()`/`.exist()` precedent, so this store
  * doesn't introduce either.
  */
 @Injectable()
-export class WorktreeConfigStore {
-  private readonly logger = new Logger(WorktreeConfigStore.name);
+export class WorkspaceConfigStore {
+  private readonly logger = new Logger(WorkspaceConfigStore.name);
 
   constructor(
-    @InjectRepository(OrgWorktreeMountEntity, DB_CONNECTION)
-    private readonly mounts: Repository<OrgWorktreeMountEntity>,
+    @InjectRepository(OrgWorkspaceMountEntity, DB_CONNECTION)
+    private readonly mounts: Repository<OrgWorkspaceMountEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
   ) {}
@@ -43,6 +43,20 @@ export class WorktreeConfigStore {
       `${trimmed ? 'set' : 'cleared'} setup script org=${orgId} repo=${repoId}` +
         (trimmed ? ` (${trimmed.length} chars)` : ''),
     );
+  }
+
+  /** The dependency manifests the Workspace Profile has acknowledged (`repos.profile_seen_manifests`),
+   *  or null when never seeded — see {@link RepoEntity.profile_seen_manifests}. */
+  async getSeenManifests(orgId: string, repoId: string): Promise<string[] | null> {
+    const row = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    return row?.profile_seen_manifests ?? null;
+  }
+
+  /** Record the manifest set the profile has now acknowledged (seeded at onboarding, refreshed when the
+   *  brain records a setup script). Sorted + de-duped so the new-stack diff is stable. */
+  async setSeenManifests(orgId: string, repoId: string, manifests: string[]): Promise<void> {
+    const unique = Array.from(new Set(manifests)).sort();
+    await this.repos.update({ id: repoId, org_id: orgId }, { profile_seen_manifests: unique });
   }
 
   /** All mounts for a repo. */
