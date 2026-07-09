@@ -41,6 +41,12 @@ function dbOpts() {
   };
 }
 
+async function purge(ds: DataSource): Promise<void> {
+  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID]);
+  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]);
+  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]);
+}
+
 describe('restored schema indexes (live Postgres)', () => {
   let mod: TestingModule;
   let ds: DataSource;
@@ -50,9 +56,11 @@ describe('restored schema indexes (live Postgres)', () => {
       imports: [TypeOrmModule.forRoot(dbOpts())],
     }).compile();
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
+    await purge(ds);
   });
 
   afterAll(async () => {
+    if (ds) await purge(ds).catch(() => undefined);
     await mod?.close();
   });
 
