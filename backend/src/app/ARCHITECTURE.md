@@ -225,14 +225,20 @@ and split by event set + downstream behavior — named by behavior so the purpos
   (`workflow_run` / `check_run` / `check_suite`), `pull_request_review`, review / issue comments (`WORK_EVENTS`,
   `git/github-pr.service.ts`) — run through `StimulusIntake.intakeEvent`, which ROUTES to the job that owns the
   event's PR/branch and DROPS anything unowned (route-only, **d6** — §7 above). This wakes the owning job's brain.
-- **`/webhooks/github/state` — pure state facts (silent).** A `pull_request` event (opened / closed / merged /
-  reopened) is a *fact* about a PR, not a task: `GithubNotificationSource` classifies it as a `pr-sync` delta
-  (`ingress/ingress-http.ts` `runPrWebhook`) applied by `GithubPrStateSync` →
-  `JobLifecycleService.applyGithubPrState` (`driver/job-lifecycle.service.ts`), which writes the sync columns
-  DIRECTLY — `pr_state`; plus `pr_url` / `pr_number` / `status:'done'` when the branch is owned by a job
-  (opened); sandbox teardown on close/merge; `pr_state` back to `open` on reopen. It NEVER touches
-  `StimulusIntake` — a state fact must not wake the brain or seed a job (decision **d2**), and its hook is
-  distinct from the work-events hook (decision **d5**).
+- **`/webhooks/github/state` — pure state facts (silent).** Carries two `STATE_EVENTS`:
+  - A `pull_request` event (opened / closed / merged / reopened) is a *fact* about a PR, not a task:
+    `GithubNotificationSource` classifies it as a `pr-sync` delta (`ingress/ingress-http.ts` `runPrWebhook`)
+    applied by `GithubPrStateSync` → `JobLifecycleService.applyGithubPrState` (`driver/job-lifecycle.service.ts`),
+    which writes the sync columns DIRECTLY — `pr_state`; plus `pr_url` / `pr_number` / `status:'done'` when the
+    branch is owned by a job (opened); sandbox teardown on close/merge; `pr_state` back to `open` on reopen.
+  - A `push` to the repo's **DEFAULT branch** is the real-time base-move-conflict unlock: `GithubNotificationSource`
+    emits a `repo-push` outcome → `GitStateReconciler.markRepoDue` stamps every OPEN PR on that repo `next_poll_at =
+    now()`, so the fast heartbeat re-checks mergeability within seconds. This catches a base-induced conflict —
+    the one PR-state change GitHub emits **no** webhook for (a moved base silently makes an open PR `dirty`).
+    Non-default-branch pushes are ignored (a feature head moving is the PR's own commit — the ~45s cadence has it).
+
+  This door NEVER touches `StimulusIntake` — a state fact must not wake the brain or seed a job (decision **d2**),
+  and its hook is distinct from the work-events hook (decision **d5**).
 
 > The generic first-party `/ingress/webhook` endpoint (PostHog/Sentry/cron template) was **removed** — it was
 > wired but never registered/used, and could only seed. Re-add cleanly when a real integration needs it.
@@ -246,16 +252,26 @@ and split by event set + downstream behavior — named by behavior so the purpos
    of waiting on the poll (decision **d3**). Fire-and-forget, to avoid a per-job turn-queue deadlock. Full-path
    `dispatch_build` behavior is unchanged. There is **no** brain-reported-PR-URL tool (decision **d1**);
    host-side branch discovery (`findOpenPullByHead`) stays the mechanism by which Atlas learns of an opened PR.
-3. **Backstop — the 30-min poll.** `pollPrClosures` + `GitStateReconciler` on the reap timer are retained
-   **UNCHANGED** as the guaranteed *pull* path for missed / undelivered webhooks and for local runs. The
-   webhook fast path and the poll call the SAME `applyGithubPrState`, so they can't drift.
-4. **Delivery — per-repo auto-registration.** Atlas auto-registers the hooks per repo on connect / revalidate
+3. **Adaptive near-real-time poll — `GitStateReconciler.tick`.** The reconciler's flagship job is the ONE
+   PR-state signal no webhook emits: a **base-move merge conflict** (`mergeable_state → dirty`). It runs on a
+   fast **~15s leader heartbeat** (`driver.module.ts` `startPollTimer`), but reconciles only jobs whose durable
+   `jobs.next_poll_at` clock is DUE, then re-stamps that clock by an **adaptive cadence** (`CADENCE_MS`): ~8s
+   while GitHub is still computing mergeability (the conflict window), ~45s for a settled open PR, ~3min for a
+   branch still building with no PR yet, and CLEARED once the PR is merged / closed / gone (teardown owns it).
+   The clock is DB-durable (not an in-memory timer) so it survives the constant prod restarts that starved the
+   old fixed 30-min sweep AND survives leader failover; a default-branch push (`markRepoDue`, layer above) marks
+   the repo's open PRs due-now with one `UPDATE`. Conflict routing goes through `StimulusIntake.intakeEvent`
+   (route-only) to the owning job's brain, deduped per conflicting head SHA.
+4. **Backstop — the 30-min reap timer.** `pollPrClosures` (merge/close teardown — already real-time via the
+   state webhook) + idle-sandbox reap + the stranded-job re-drive stay on the slow 30-min timer. The webhook
+   fast path and `pollPrClosures` call the SAME `applyGithubPrState`, so they can't drift.
+5. **Delivery — per-repo auto-registration.** Atlas auto-registers the hooks per repo on connect / revalidate
    (+ a one-time boot backfill for `access_ok` repos), idempotently, always re-PATCHing the secret (GitHub
    hides the stored one, so drift is undetectable). Registration is **SKIPPED** when `BACKEND_HOST` is
    unset / localhost / non-public-https (Atlas running locally — GitHub can't deliver there; debug-log, no
    warning), and degrades gracefully (a checklist warning) when the PAT lacks `admin:repo_hook`. Per-repo (not
    org-level) because the PAT spans several GitHub orgs with no 1:1 Atlas→org mapping. Webhooks are a
-   best-effort accelerator — layer 3 is always the backstop, never bypassed.
+   best-effort accelerator — the adaptive poll (layer 3) is always the backstop, never bypassed.
 
 ## 8. Known divergences & tech debt
 

@@ -62,13 +62,16 @@ export type PrStateDelta = {
  * `rejected` (verification/routing failure). `pr-sync` is a SILENT authoritative PR-state delta
  * (open/merged/closed/reopened) applied directly to the owning job's row — it never seeds a stimulus.
  * For the GitHub adapter this is emitted only by `handlePrWebhook` (the `/webhooks/github/state` front
- * door), never by `handle` (the `/webhooks/github/events` work-events front door).
+ * door), never by `handle` (the `/webhooks/github/events` work-events front door). `repo-push` is a
+ * verified push to a repo's DEFAULT branch — the state door marks that repo's open PRs due-now so the
+ * reconciler catches a base-move-induced conflict in seconds (GitHub emits no webhook for one).
  */
 export type IngressResult =
   | { outcome: 'accepted'; event: ParsedEvent }
   | { outcome: 'ignored'; reason: IngressRejectionReason; detail?: string }
   | { outcome: 'rejected'; reason: IngressRejectionReason; detail?: string }
-  | { outcome: 'pr-sync'; delta: PrStateDelta };
+  | { outcome: 'pr-sync'; delta: PrStateDelta }
+  | { outcome: 'repo-push'; orgId: string; repoId: string };
 
 /**
  * The inbound-only port every gateway adapter implements. One method: take a `RawNotification`, do
