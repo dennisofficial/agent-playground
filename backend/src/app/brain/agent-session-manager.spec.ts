@@ -124,6 +124,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     loadJob: vi.fn(),
     getThread: vi.fn(),
     getTerminalRecord: vi.fn(),
+    resolveSessionAnchor: vi.fn().mockResolvedValue(undefined),
     claimHaltFixAttempt: vi.fn(),
     markHaltWaked: vi.fn(),
   } as unknown as DriverStoreService;
@@ -260,6 +261,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       reason: '',
       via: 'rule',
     });
+
+    // resetAllMocks wiped the file-scope default — re-arm it so notifyThreadHalted's anchor resolve returns a
+    // Promise (not undefined) for the tests that don't stub it themselves.
+    (mockDriverStore.resolveSessionAnchor as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     // Passive-awareness defaults (resetAllMocks wiped the resolved values) — append is a no-op promise.
     (mockAwareness.appendMarker as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -1848,6 +1853,44 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(stim.body).toContain('retry_thread'); // the fix instruction
       expect(stim.body).toContain('JSON vs plain text'); // the record detail…
       expect(stim.body).toContain('<untrusted'); // …fenced as data (the <untrusted> tag)
+      spy.mockRestore();
+    });
+
+    it('notifyThreadHalted carries the transcript anchor (atlas-tx line + Leg) resolved from steps/legs', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'response format' });
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
+        status: 'blocked',
+        summary: 'blocked on a missing secret',
+        blocked: { reason: 'needs_env', detail: 'no API key' },
+      });
+      fn(mockDriverStore.resolveSessionAnchor).mockResolvedValue({ sessionId: 'sess-abc', legOrdinal: 2 });
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 1);
+
+      const stim = spy.mock.calls[0][0] as ChatStimulus;
+      expect(stim.body).toContain('atlas-tx show sess-abc');
+      expect(stim.body).toContain('session sess-abc');
+      expect(stim.body).toContain('Leg 2');
+      // The forensic orientation bullet appears in the framing.
+      expect(stim.body).toMatch(/READ THE HALTED LANE'S OWN TRANSCRIPT/);
+      // The d2 autonomy boundary is stated explicitly.
+      expect(stim.body).toMatch(/may NOT edit\/push code or ship without the operator/);
+      spy.mockRestore();
+    });
+
+    it('notifyThreadHalted still carries the transcript anchor for an INCOMPLETE halt (null terminal record)', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'ran out of budget' });
+      // The `incomplete` class ends WITHOUT a terminal record — the anchor must come from steps/legs, not term.
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue(null);
+      fn(mockDriverStore.resolveSessionAnchor).mockResolvedValue({ sessionId: 'sess-inc' });
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadHalted('job1', 'th-x', 'incomplete', 0);
+
+      const stim = spy.mock.calls[0][0] as ChatStimulus;
+      expect(stim.body).toContain('atlas-tx show sess-inc');
+      expect(stim.body).toContain('no terminal record');
       spy.mockRestore();
     });
 

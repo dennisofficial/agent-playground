@@ -190,6 +190,19 @@ export class ThreadEntity extends TimestampedEntity {
 }
 
 /**
+ * The transcript anchor for a thread's halted/completed lane — the engine `sessionId` (and, when the thread
+ * rotated, which Leg) the wake hands the brain so it can read the builder's raw JSONL via
+ * `atlas-tx show <sessionId>`. HOST-populated at halt/notable time from `steps.session_id` / `build_legs`
+ * (the host has ground truth) — NEVER builder-self-reported.
+ */
+export interface SessionAnchor {
+  /** The halted/completed lane's engine session id (from `steps.session_id` / the active `build_legs` row). */
+  sessionId: string;
+  /** Which Leg (1..N) the session belongs to, for "Leg N" framing when the thread rotated. */
+  legOrdinal?: number;
+}
+
+/**
  * A thread's typed terminal assertion (see {@link ThreadEntity.terminal_record}). The orchestrator writes
  * exactly one at the end of its work; the driver reads it to branch done / blocked / failed / incomplete.
  */
@@ -215,6 +228,10 @@ export interface ThreadTerminalRecord {
     exitCode?: number;
     stderrTail?: string;
   };
+  /** HOST-populated at halt/notable time from `steps.session_id` / `build_legs` — the transcript anchor the
+   *  wake hands the brain (read via `atlas-tx show <sessionId>`). Not builder-self-reported; the host has
+   *  ground truth. Durably written back by {@link DriverStoreService.mergeTerminalSessionAnchor}. */
+  sessionAnchor?: SessionAnchor;
   /** The ADR-0005 live-verification judge's verdict on this claim, when the gate ran. The basis for the
    *  `blocked`/`unverified` downgrade above (also recorded when the claim passed, for observability). */
   liveVerification?: {

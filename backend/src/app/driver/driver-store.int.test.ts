@@ -605,6 +605,55 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     });
   });
 
+  // ── Transcript anchor (the halt-wake's session pointer) ────────────────────────────────────────────
+
+  it('resolveSessionAnchor returns the MOST-RECENT Leg\'s session id + ordinal (no terminal record needed)', async () => {
+    const { threadId, anchorStepId } = await seedJobThreadStep('sess-1');
+    await store.recordActiveLeg(anchorStepId, 'sess-1', 100_000); // leg 1
+    await store.completeLegRotation({ anchorStepId, handoff: 'h', seed: 's' }); // bumps to leg 2
+    await store.recordActiveLeg(anchorStepId, 'sess-2', 120_000); // leg 2
+
+    // No terminal_record was ever written — the anchor must resolve from steps/legs regardless.
+    expect(await store.getTerminalRecord(threadId)).toBeNull();
+    expect(await store.resolveSessionAnchor(threadId)).toEqual({
+      sessionId: 'sess-2',
+      legOrdinal: 2,
+    });
+  });
+
+  it('resolveSessionAnchor falls back to the anchor step session when no Leg row exists', async () => {
+    const { threadId } = await seedJobThreadStep('sess-step-only');
+    expect(await store.getLegs(threadId)).toEqual([]);
+    expect(await store.resolveSessionAnchor(threadId)).toEqual({
+      sessionId: 'sess-step-only',
+      legOrdinal: 1,
+    });
+  });
+
+  it('resolveSessionAnchor is undefined when the thread never got a session', async () => {
+    const { threadId } = await seedJobThreadStep(null);
+    expect(await store.resolveSessionAnchor(threadId)).toBeUndefined();
+  });
+
+  it('mergeTerminalSessionAnchor writes the anchor onto an EXISTING record (read-modify-write)', async () => {
+    const { threadId } = await seedJobThreadStep('sess-merge');
+    await store.recordThreadTermination(threadId, {
+      status: 'blocked',
+      summary: 'blocked on env',
+      blocked: { reason: 'needs_env', detail: 'no key' },
+    });
+    await store.mergeTerminalSessionAnchor(threadId);
+    const rec = await store.getTerminalRecord(threadId);
+    expect(rec?.sessionAnchor).toEqual({ sessionId: 'sess-merge', legOrdinal: 1 });
+    expect(rec?.summary).toBe('blocked on env'); // existing fields preserved
+  });
+
+  it('mergeTerminalSessionAnchor is a no-op when there is no terminal record (the incomplete class)', async () => {
+    const { threadId } = await seedJobThreadStep('sess-none');
+    await store.mergeTerminalSessionAnchor(threadId);
+    expect(await store.getTerminalRecord(threadId)).toBeNull();
+  });
+
   // ── Regression: the prod `get_pipeline_state` "empty Error" incident (missing `AddJobHalt` migration) ──
 
   // Regression tripwire for the prod `get_pipeline_state` "empty Error" incident: the handler reads the

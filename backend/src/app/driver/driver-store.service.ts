@@ -23,7 +23,12 @@ import {
   JobEntity,
   CodexReviewEntity,
 } from '../persistence/entities';
-import type { DeviationEntry, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
+import type {
+  DeviationEntry,
+  SessionAnchor,
+  TaskItem,
+  ThreadTerminalRecord,
+} from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
 import { isDriverExecutableKind, laneDefaultFooter, threadKindSpec } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
@@ -851,6 +856,54 @@ export class DriverStoreService {
       order: { ordinal: 'ASC' },
     });
     return rows.map(toStep);
+  }
+
+  /**
+   * The AUTHORITATIVE transcript anchor for a thread — the engine `sessionId` (+ Leg ordinal) the wake hands
+   * the brain to read the halted/completed lane's raw JSONL (`atlas-tx show <sessionId>`). Resolved from the
+   * most-recent `build_legs` row with a non-null `session_id` (preferred — carries the Leg ordinal), else the
+   * latest `steps.session_id`. Read from steps/legs — which exist for EVERY thread that ran a turn — NOT from
+   * `terminal_record`, so it works even for an `incomplete` halt whose record is null. The host has ground
+   * truth here; a builder-written value is never trusted. `undefined` only when the thread never got a session
+   * (e.g. halted in provisioning).
+   */
+  async resolveSessionAnchor(threadId: string): Promise<SessionAnchor | undefined> {
+    const legs = await this.getLegs(threadId);
+    const legWithSession = [...legs]
+      .reverse()
+      .find((l) => l.session_id != null);
+    if (legWithSession?.session_id) {
+      return {
+        sessionId: legWithSession.session_id,
+        legOrdinal: legWithSession.ordinal,
+      };
+    }
+    const steps = await this.stepsForThread(threadId);
+    const stepWithSession = [...steps]
+      .reverse()
+      .find((s) => s.sessionId != null);
+    if (stepWithSession?.sessionId) {
+      return {
+        sessionId: stepWithSession.sessionId,
+        legOrdinal: stepWithSession.legOrdinal,
+      };
+    }
+    return undefined;
+  }
+
+  /**
+   * DURABILITY convenience: resolve the anchor via {@link resolveSessionAnchor} and, WHEN a `terminal_record`
+   * exists, write `.sessionAnchor` onto it (read-modify-write; safe — the thread has ended, no concurrent
+   * writer). No-op when the record or the anchor is absent. Keeps `completion.md` / observability consistent,
+   * but it is NOT the wake's source of truth: the wake resolves the anchor directly so an `incomplete` halt
+   * (null record) still carries it. Thread 3 (completion wake) reuses this for the notable/final case.
+   */
+  async mergeTerminalSessionAnchor(threadId: string): Promise<void> {
+    const anchor = await this.resolveSessionAnchor(threadId);
+    if (!anchor) return;
+    const record = await this.getTerminalRecord(threadId);
+    if (!record) return;
+    await this.recordThreadTermination(threadId, { ...record, sessionAnchor: anchor });
   }
 
   /**

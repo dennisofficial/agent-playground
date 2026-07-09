@@ -50,7 +50,12 @@ import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
-import type { ActiveTurnEntity, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
+import type {
+  ActiveTurnEntity,
+  SessionAnchor,
+  TaskItem,
+  ThreadTerminalRecord,
+} from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
@@ -947,6 +952,16 @@ export class ThreadDriver implements JobDispatcher {
           ),
         );
     }
+    // Durably persist the transcript anchor onto the terminal record (when one exists) BEFORE writing
+    // completion.md, so the durable record and the file agree. The wake itself resolves the anchor directly
+    // (independent of the record), so this is a consistency convenience — never the wake's source of truth.
+    await this.store
+      .mergeTerminalSessionAnchor(thread.id)
+      .catch((e) =>
+        this.logger.warn(
+          `could not persist sessionAnchor for thread=${thread.id}: ${e}`,
+        ),
+      );
     await this.writeCompletionMd(job, thread, haltOutcome, term).catch((e) =>
       this.logger.warn(`could not write completion.md for thread=${thread.id}: ${e}`),
     );
@@ -971,9 +986,14 @@ export class ThreadDriver implements JobDispatcher {
       threadDirName(thread),
     );
     await mkdir(dir, { recursive: true });
+    // Resolve the anchor DIRECTLY (not off `term`) so the Transcript line renders even for an `incomplete`
+    // halt whose terminal record is null.
+    const anchor = await this.store
+      .resolveSessionAnchor(thread.id)
+      .catch(() => undefined);
     await writeFile(
       join(dir, 'completion.md'),
-      renderCompletionMd(thread, outcome, term, new Date().toISOString()),
+      renderCompletionMd(thread, outcome, term, new Date().toISOString(), anchor),
       'utf8',
     );
   }
@@ -3213,6 +3233,7 @@ export function renderCompletionMd(
   outcome: 'blocked' | 'incomplete' | 'failed',
   term: ThreadTerminalRecord | null,
   at: string,
+  anchor?: SessionAnchor,
 ): string {
   const lines: string[] = [
     `# Thread halted: ${thread.brief}`,
@@ -3221,6 +3242,12 @@ export function renderCompletionMd(
     `- **Thread:** \`${thread.id}\` (ordinal ${thread.ordinal})`,
     `- **When:** ${at}`,
   ];
+  if (anchor)
+    lines.push(
+      `- **Transcript:** session \`${anchor.sessionId}\`${
+        anchor.legOrdinal ? ` (Leg ${anchor.legOrdinal})` : ''
+      } — \`atlas-tx show ${anchor.sessionId}\``,
+    );
   if (term?.summary) lines.push(``, `## Summary`, term.summary);
   if (term?.blocked) {
     lines.push(
