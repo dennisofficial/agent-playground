@@ -763,6 +763,7 @@ function buildLogItems(
             card={c.card}
             jobRef={jobRef}
             onOpenPlan={onOpenPlan}
+            onSelectNode={onSelectNode}
           />,
         );
         break;

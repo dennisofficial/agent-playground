@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ArrowRight,
@@ -9,7 +10,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
-import { useApprove } from "@/lib/api/job-queries";
+import { makeResolveFileLink } from "./repo-file-links";
+import { useApprove, useRepoTree } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import {
   APPROVE_ACTION_ID,
@@ -37,10 +39,12 @@ export function ApprovalCardView({
   card,
   jobRef,
   onOpenPlan,
+  onSelectNode,
 }: {
   card: WebApprovalCard;
   jobRef: JobRef;
   onOpenPlan?: () => void;
+  onSelectNode?: (node: string) => void;
 }) {
   // The ship-review gate reuses this same `approval_card` payload (discriminated by `kind: 'ship'`) but
   // is a much smaller card — a title/summary + a single "Ship it" button, rendered generically off
@@ -48,6 +52,34 @@ export function ApprovalCardView({
   if (card.kind === "ship") {
     return <ShipCardView card={card} jobRef={jobRef} />;
   }
+  return (
+    <PlanApprovalCardView
+      card={card}
+      jobRef={jobRef}
+      onOpenPlan={onOpenPlan}
+      onSelectNode={onSelectNode}
+    />
+  );
+}
+
+function PlanApprovalCardView({
+  card,
+  jobRef,
+  onOpenPlan,
+  onSelectNode,
+}: {
+  card: WebApprovalCard;
+  jobRef: JobRef;
+  onOpenPlan?: () => void;
+  onSelectNode?: (node: string) => void;
+}) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const repoTree = useRepoTree(jobRef);
+  const fileSet = useMemo(
+    () => new Set(repoTree.data?.files ?? []),
+    [repoTree.data],
+  );
 
   const value =
     card.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ??
@@ -85,7 +117,20 @@ export function ApprovalCardView({
         <h3 className="text-[14px] font-semibold text-text">{card.title}</h3>
         {card.summary ? (
           <div className="mt-1.5">
-            <Markdown>{card.summary}</Markdown>
+            <Markdown
+              resolveFileLink={
+                onSelectNode
+                  ? makeResolveFileLink(
+                      fileSet,
+                      pathname,
+                      searchParams,
+                      onSelectNode,
+                    )
+                  : undefined
+              }
+            >
+              {card.summary}
+            </Markdown>
           </div>
         ) : null}
       </div>

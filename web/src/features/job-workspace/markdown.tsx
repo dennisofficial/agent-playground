@@ -496,8 +496,7 @@ function renderCode({
   if (isBlock) return <CodeBlock lang={match?.[1]}>{children}</CodeBlock>;
   // Inline span: linkify a manifest-verified file path into a pill (spec/plan panes only).
   if (resolveFileLink) {
-    const raw = nodeText(children);
-    const link = LOOKS_LIKE_PATH.test(raw) ? resolveFileLink(raw) : null;
+    const link = resolveFileLink(nodeText(children));
     if (link)
       return (
         <FilePill url={link.url} onSelect={link.onSelect}>
@@ -648,12 +647,6 @@ function ExternalAnchor({
     </a>
   );
 }
-
-/** Cheap pre-filter for a file-path-shaped inline span (has an extension OR a slash; optional `:line`/
- *  `:line-range` suffix). Authority is still the manifest inside `resolveFileLink` — this only avoids
- *  calling the resolver on obvious non-paths. */
-const LOOKS_LIKE_PATH =
-  /^[\w./-]+(?:\.[A-Za-z0-9]+|\/[\w./-]+)(?::\d+(?:-\d+)?)?$/;
 
 /** A relative link (no scheme, not an anchor, not site-absolute) — e.g. `sections/01-backend.md`. */
 function isRelativeHref(href: string | undefined): href is string {

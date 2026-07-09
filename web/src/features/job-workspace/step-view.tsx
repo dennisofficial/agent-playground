@@ -37,7 +37,7 @@ import {
 } from "./subagents";
 import { useLiveTurn, type LiveTurn } from "@/lib/api/job-stream";
 import { threadLane } from "./phases";
-import { fileNode, parseLegNode } from "./node-registry";
+import { parseLegNode } from "./node-registry";
 import { codexReviewLane } from "./codex-review";
 import { resolveNode } from "./node-resolution";
 import { TranscriptView } from "./conversation";
@@ -47,6 +47,7 @@ import { ServiceLogView, serviceHeaderSubtitle } from "./service-log-view";
 import { TicketsRaisedPane } from "./tickets-raised-pane";
 import { useCommentableRef } from "./use-text-selection";
 import { useReviewComments } from "./review-comments";
+import { makeResolveFileLink } from "./repo-file-links";
 import {
   contextRawUrl,
   pipelineJob,
@@ -60,30 +61,6 @@ import {
   type PipelineState,
   type WebApprovalCard,
 } from "@/lib/api/types";
-
-/** Build a `resolveFileLink` for the spec/plan Markdown: linkify an inline-code span ONLY when it (minus an
- *  optional `:line`/`:range` suffix) exactly matches a tracked repo file. Returns the `{url,onSelect}` that
- *  opens the stacked `?file=` view, or null (plain chip) — zero false-positive links. */
-function makeResolveFileLink(
-  fileSet: Set<string>,
-  pathname: string,
-  searchParams: URLSearchParams,
-  onSelectNode: (node: string) => void,
-) {
-  return (raw: string): { url: string; onSelect: () => void } | null => {
-    const m = /^(.*?)(?::(\d+(?:-\d+)?))?$/.exec(raw);
-    const path = m?.[1] ?? raw;
-    const lines = m?.[2] || undefined;
-    if (!fileSet.has(path)) return null;
-    const node = fileNode(path, lines);
-    const qs = new URLSearchParams(searchParams);
-    qs.set("file", node.slice("file:".length));
-    return {
-      url: `${pathname}?${qs.toString()}`,
-      onSelect: () => onSelectNode(node),
-    };
-  };
-}
 
 /**
  * Step mode — the work column when a navigator node is selected. The plan / decision docs and the build
@@ -1131,6 +1108,7 @@ function FileView({
     () => new Set(repoTree.data?.files ?? []),
     [repoTree.data],
   );
+  const linkRepoFiles = path.startsWith("specs/");
   // HTML artifacts render full-bleed: the sandboxed iframe fills the whole pane body, bypassing the padded,
   // max-width prose wrapper that letterboxes every other file type.
   if (data?.mime === "text/html") {
@@ -1151,7 +1129,12 @@ function FileView({
             }
           />
         ) : data ? (
-          <FileBody file={data} onSelectNode={onSelectNode} fileSet={fileSet} />
+          <FileBody
+            file={data}
+            onSelectNode={onSelectNode}
+            fileSet={fileSet}
+            linkRepoFiles={linkRepoFiles}
+          />
         ) : null}
       </div>
     </div>
@@ -1165,6 +1148,7 @@ function FileView({
  */
 /** Stable empty fallback for `FileBody`'s `fileSet` prop (no tracked-file manifest available). */
 const EMPTY_FILE_SET: Set<string> = new Set();
+const MAX_HIGHLIGHTED_FILE_LINES = 500;
 
 function contextNodeForLink(fromPath: string, href: string): string | null {
   const parts = fromPath.split("/");
@@ -1192,11 +1176,14 @@ function FileBody({
   file,
   onSelectNode,
   fileSet = EMPTY_FILE_SET,
+  linkRepoFiles = false,
 }: {
   file: ContextFileContent;
   onSelectNode?: (node: string) => void;
   /** The job worktree's tracked-file manifest — used to linkify a spec's inline-code file-path spans. */
   fileSet?: Set<string>;
+  /** Opt-in for spec markdown only; generated/artifact markdown keeps ordinary inline code chips. */
+  linkRepoFiles?: boolean;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1240,13 +1227,8 @@ function FileBody({
             : undefined
         }
         resolveFileLink={
-          onSelectNode
-            ? makeResolveFileLink(
-                fileSet,
-                pathname,
-                searchParams,
-                onSelectNode,
-              )
+          linkRepoFiles && onSelectNode
+            ? makeResolveFileLink(fileSet, pathname, searchParams, onSelectNode)
             : undefined
         }
       >
@@ -1490,14 +1472,19 @@ function RepoFileBody({
 
   // Parse "18" / "18-24" → the active line-number set + the first line to scroll to.
   const { activeNos, firstLine } = useMemo(() => {
-    if (!lines)
-      return {
-        activeNos: undefined as Set<number> | undefined,
-        firstLine: null as number | null,
-      };
-    const [a, b] = lines.split("-").map((n) => Number(n));
-    const start = a;
-    const end = Number.isFinite(b) ? b : a;
+    const empty = {
+      activeNos: undefined as Set<number> | undefined,
+      firstLine: null as number | null,
+    };
+    if (!lines) return empty;
+    const m = /^(\d+)(?:-(\d+))?$/.exec(lines);
+    if (!m) return empty;
+    const start = Number(m[1]);
+    if (!Number.isSafeInteger(start) || start < 1) return empty;
+    const rawEnd = m[2] ? Number(m[2]) : start;
+    const endCandidate =
+      Number.isSafeInteger(rawEnd) && rawEnd >= start ? rawEnd : start;
+    const end = Math.min(endCandidate, start + MAX_HIGHLIGHTED_FILE_LINES - 1);
     const set = new Set<number>();
     for (let n = start; n <= end; n++) set.add(n);
     return { activeNos: set, firstLine: start };
@@ -1505,7 +1492,9 @@ function RepoFileBody({
 
   useEffect(() => {
     if (!data || firstLine == null) return;
-    const el = containerRef.current?.querySelector(`[data-line="${firstLine}"]`);
+    const el = containerRef.current?.querySelector(
+      `[data-line="${firstLine}"]`,
+    );
     el?.scrollIntoView({ block: "center" });
   }, [data, firstLine]);
 
