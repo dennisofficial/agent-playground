@@ -21,7 +21,7 @@ const WORKSPACE_PROFILE_DIMENSIONS = [
   '  3. Cache folders  — write_workspace_config (a shared-rw mount); most caches already persist under HOME',
   '  4. Setup script   — write_setup_script — the idempotent bring-up commands a cold sandbox needs',
   '  5. MCP servers    — propose_mcp_servers (owner-approved)',
-  '  6. Skills         — propose_skill (owner-approved reusable SKILL.md)',
+  '  6. Skills         — propose_skill_install (reuse a maintained skill) · propose_skill (author a repo-idiom one)',
   '  7. House style    — propose_convention_profile (owner-approved)',
 ].join('\n');
 
@@ -49,7 +49,9 @@ export class WorkspaceProfileGroup {
       '',
       'KEEPING IT CURRENT IS YOUR JOB TOO — onboarding did a bulk pass ONCE; when THIS job hits a gap it did',
       'not cover (a new stack, a missing secret, a cache, a tool worth an MCP server or skill), fix it in the',
-      'profile with the SAME tools so every FUTURE job inherits it instead of silently working around it. Any',
+      'profile with the SAME tools so every FUTURE job inherits it instead of silently working around it. A new',
+      'stack is often best filled by INSTALLING a maintained skill (propose_skill_install from a known marketplace)',
+      'rather than authoring one from memory — reuse before you write. Any',
       'gap the host can detect (e.g. an unfilled MCP secret slot) is flagged inline above as PROFILE GAPS.',
       'Persistence, by kind: (a) a CLI the image does not ship (run `command -v` first — the sandbox bakes a',
       'broad toolkit) → drop it in `~/.local/bin` (on PATH, durable); (b) a tool credential/cache → it already',
@@ -242,26 +244,37 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10c2 — SKILLS (propose_skill; owner-approved reusable SKILL.md). */
+  /** onboarding block 10c2 — SKILLS (reuse a maintained skill, else author a repo-idiom one; owner-approved). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2108.5, condition: isOnboarding })
   skills(): string {
     return [
-      'SKILLS — a skill is a short, reusable `SKILL.md` (like a Claude Code skill) that a build/brain/review',
-      'session on this repo loads ON DEMAND to shape how it works — e.g. "how we write migrations here", "the',
-      'house test-harness recipe", "the deploy runbook". While you have the stack mapped, decide whether a repo',
-      'would benefit from one or two SHORT, high-signal skills (do NOT invent a long speculative library). Call',
-      'propose_skill({ name, description, body, scope?, surfaces? }): `description` is the trigger blurb the model',
-      'reads to decide WHEN to load it (keep it a crisp "Use when …"); `body` is the markdown instruction; `scope`',
-      'is "repo" (this repo only, the default) or "org" (every repo in the org); `surfaces` defaults to build.',
-      'You do NOT register skills yourself — this posts an owner-approvable card; the OWNER approves it, which',
-      'writes the skill so every future build on a matching repo inherits it. Skip it entirely if nothing clearly',
-      'fits. Like MCP servers, a newly-approved skill loads on the NEXT fresh session — reset_sandbox to pick it up.',
-      'propose_skill only CREATES — it refuses if the name already exists. Skills are real, possibly multi-file',
-      'directories (SKILL.md + references/scripts/assets) that stay READ-ONLY once created: to edit one, call',
-      'request_skill_edit_access({ skill, rationale }) and wait for the owner to grant it, then Edit/Write its',
-      'files directly (granular, no re-pasting the whole body). If the skill is installed from git, approval',
-      'forks it to a local custom copy first (the original stays clean and keeps auto-updating) and the grant',
-      'applies to the fork — the confirmation names the exact skill to edit. To REMOVE an obsolete skill,',
+      'SKILLS — a skill is a reusable `SKILL.md` (+ optional references/scripts) that a build/brain/review session',
+      'loads ON DEMAND to shape how it works. Two families are worth having, and — like the "Claude Code Setup"',
+      'plugin — you scan the stack and suggest the few HIGHEST-IMPACT ones, not a generic list:',
+      '  (a) FRAMEWORK / PACKAGE best-practice skills for THIS stack (e.g. nestjs, nextjs, typeorm, stripe, the',
+      '      test runner) — the same category the org already has (web-state-redux-toolkit, playwright-cli).',
+      '  (b) REPO-IDIOM playbooks — "how we write migrations here", the house test-harness recipe, the deploy runbook.',
+      'REUSE BEFORE YOU AUTHOR. For family (a) especially, do NOT hand-write a best-practice skill from memory — it',
+      'goes STALE on recent majors. Instead search the known skill marketplaces — github.com/anthropics/skills and',
+      'github.com/agents-inc/skills (browse their `.claude-plugin/marketplace.json` or `skills/` dir with WebFetch)',
+      '— for a maintained skill that fits, then propose_skill_install({ sourceUrl, subpath, ref?, scope?, rationale }):',
+      '`subpath` points at the ONE skill dir (its SKILL.md); the card previews the exact skill + any name clash for the',
+      'owner. It installs from git and STAYS UP TO DATE — always preferred over a copy you would have to maintain.',
+      'ONLY AUTHOR (family b, or an (a) with no good marketplace match) when it is genuinely repo-specific. Author it',
+      'as REAL FILES, not a tool arg: use your built-in `run-skill-generator` skill to scaffold and write the folder',
+      '(SKILL.md + any references/scripts) under `/context/skill-drafts/<name>/` with normal Read/Write/Edit, then',
+      'propose_skill({ name, description, scope?, rationale }) to submit the folder you authored (there is NO `body`',
+      'argument — the tool reads your files and freezes them for the owner to review).',
+      '`scope` is "repo" (this repo only, the default) or "org" (every repo in the org). A newly-approved skill is',
+      'available on ALL lanes (brain/build/review) — you do not pick lanes; its "Use when …" description already gates',
+      'when it loads. You do NOT register skills yourself: both propose tools post an owner-approvable card; the OWNER',
+      'approves, which installs/writes the skill so every future build on a matching repo inherits it. It loads on the',
+      'NEXT fresh session — reset_sandbox to pick it up. Skip skills entirely if nothing clearly fits.',
+      'Both propose tools only CREATE — they refuse a name that already exists. Once created a skill dir is READ-ONLY:',
+      'to edit one, call request_skill_edit_access({ skill, rationale }) and wait for the owner to grant it, then',
+      'Edit/Write its files in the durable store directly (granular, multi-file). If the skill was installed from git,',
+      'approval forks it to a local custom copy first (the git original stays clean and keeps auto-updating) and the',
+      'grant applies to the fork — the confirmation names the exact skill to edit. To REMOVE an obsolete skill,',
       'propose_skill_removal({ name, scope, rationale }) (also owner-approved). list_skills shows what exists.',
     ].join('\n');
   }

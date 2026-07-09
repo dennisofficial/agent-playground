@@ -307,6 +307,18 @@ export function approveMcpProposal(
   });
 }
 
+// ── Skill-proposal approval (owner-only) ───────────────────────────────────────────────────────────
+/** Approve a brain skill proposal — installs (git) / vendors the authored draft / removes, per the card's
+ *  mode (owner-only on the server). */
+export function approveSkillProposal(
+  ref: JobRef,
+  requestId: string,
+): Promise<{ ok: boolean; name: string; ts?: string }> {
+  return webJson(threadPath(ref, `/skill-proposals/${requestId}/approve`), {
+    method: "POST",
+  });
+}
+
 // ── Secure file upload (repo onboarding) ─────────────────────────────────────────────────────────
 export interface ProvideFileBody {
   /** The file-request card's id (its message ts). */

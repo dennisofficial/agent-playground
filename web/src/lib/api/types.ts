@@ -279,6 +279,36 @@ export interface WebTicketCard {
   originDecisionSummary: string | null;
 }
 
+/**
+ * An owner-approvable SKILL proposal the brain posts. `install` = reuse a maintained skill from a git
+ * marketplace (`installPreview` shows the exact resolved skill + any overwrite); `create` = a skill the brain
+ * AUTHORED as real files (`preview` shows SKILL.md + the file tree); `remove` = delete a registered skill.
+ * The OWNER approves at `…/jobs/:jobId/skill-proposals/:requestId/approve`. Mirrors the backend card.
+ */
+export interface WebSkillProposalCard {
+  type: "skill_proposal_card";
+  jobId: string;
+  requestId: string;
+  repoId: string;
+  scope: "org" | "repo";
+  name: string;
+  description: string;
+  surfaces: ("brain" | "build" | "review")[];
+  mode: "create" | "install" | "remove";
+  rationale: string;
+  stagingPath?: string;
+  preview?: { skillMd: string; files: string[] };
+  sourceUrl?: string;
+  sourceRef?: string;
+  sourceSubpath?: string;
+  installPreview?: {
+    rows: { name: string; description: string; overwrites: boolean }[];
+  };
+  priorBody?: string;
+  approved_at?: string;
+  dismissed_at?: string;
+}
+
 export type WebCard =
   | WebApprovalCard
   | WebVerdictCard
@@ -288,6 +318,7 @@ export type WebCard =
   | WebReviewCommentsCard
   | WebAttachmentsCard
   | WebMcpProposalCard
+  | WebSkillProposalCard
   | WebTicketCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────

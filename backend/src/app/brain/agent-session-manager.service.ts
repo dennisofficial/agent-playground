@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -19,6 +20,7 @@ import type {
   EventStimulus,
   Job,
   JobKind,
+  JobStatus,
   SeedRow,
 } from '../domain';
 import { MemoryStore } from '../memory';
@@ -66,9 +68,7 @@ import { DriverStoreService } from '../driver/driver-store.service';
 import { BuildShipService } from '../driver/build-ship.service';
 import { threadDirName } from '../driver/thread-dir-name';
 import { Agent, PromptService } from '../prompt-kit';
-// The ledger-promotion prompt is delivered as a TASK message (`body:`), not a system prompt; the brain's
-// system prompt is assembled from fragments via `PromptService.generate`.
-import { LEDGER_PROMOTION_TURN, decisionsBlock, shipOpenPrBody } from '../prompt-kit';
+import { decisionsBlock, shipOpenPrBody } from '../prompt-kit';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -92,7 +92,7 @@ import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
-import { SkillFileWriter, SkillResolver, WorkspaceSkillStore } from '../skills';
+import { SkillFileWriter, SkillInstallerService, SkillResolver, WorkspaceSkillStore } from '../skills';
 import { WorkspaceProfileService, detectRepoManifests } from '../workspace-profile';
 import {
   isExternalMountPath,
@@ -119,15 +119,6 @@ import type { Decision } from '../domain';
 import { nextDecisionId, DECISION_CLASS_IDS, HALT_FIX_ATTEMPT_CAP } from '../domain';
 import type { DecisionClass } from '../domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
-import {
-  DecisionLedgerService,
-  LedgerValidationError,
-  type LedgerEntryInput,
-} from './decision-ledger.service';
-import {
-  RepoDecisionManifestService,
-  type PromotedManifestInput,
-} from './repo-decision-manifest.service';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
 import {
@@ -242,7 +233,7 @@ export class AgentSessionManager
    *  operator turn, so a stale arm can't fire a later reset the operator didn't just ask for. */
   private readonly pendingHardReset = new Set<string>();
   /** Set by `finalize_build` when a direct-build ship is committed and about to open its PR inline; consumed
-   *  by the turn-end latch in `runChatTurn` (records the PR + flips done + promotes the ledger promptly). */
+   *  by the turn-end latch in `runChatTurn` (records the PR + flips done promptly). */
   private readonly directBuildShipPending = new Map<string, boolean>();
   /** Per-job resolved git auth (repo url + org PAT) for in-sandbox push/fetch — cached; see resolveBrainGitAuth. */
   private readonly gitAuthByJob = new Map<string, { gitUrl: string; token?: string }>();
@@ -295,10 +286,6 @@ export class AgentSessionManager
     private readonly mcp: McpResolver,
     // Singleton-leadership gate: boot crash-recovery sweeps + new-turn intake run only on the leader.
     private readonly election: LeaderElectionService,
-    // Durable decision ledger — writes promoted cross-cutting decisions into `.atlas/decisions/`.
-    private readonly ledger: DecisionLedgerService,
-    // Phase 2 manifest — the graph + freshness truth over the ledger (proposed→accepted, edit detection).
-    private readonly manifest: RepoDecisionManifestService,
     // Crash recovery: back-fill brain turns that completed in-container but never reached `finish()`.
     private readonly turnRecovery: TurnRecoveryService,
     // Repo onboarding: the encrypted per-org secret store + grants the secure `request_secret` flow writes.
@@ -340,6 +327,9 @@ export class AgentSessionManager
     // Reads a skill's current SKILL.md body for `propose_skill`'s `priorBody` (the registry row carries no
     // content). @Optional for unit tests; DI (@Global SkillsModule) supplies it live.
     @Optional() private readonly skillFiles?: SkillFileWriter,
+    // Dry-run PREVIEW of a `propose_skill_install` source (resolve the real name + overwrite conflict) — the
+    // approval install path lives in the controller. @Optional for unit tests; DI (@Global SkillsModule) live.
+    @Optional() private readonly skillInstaller?: SkillInstallerService,
     // Read-only for `list_mcp_servers` (the write path is the owner-gated approve endpoint). @Optional for
     // unit tests (undefined → the tool reports none); DI (@Global McpModule) supplies it live.
     @Optional() private readonly mcpStore?: McpServerStore,
@@ -636,45 +626,6 @@ export class AgentSessionManager
       this.logger.warn(`chat-delivery reconciliation failed: ${err}`);
     }
 
-    // Decision-ledger reconciliation: SHIPPED threads whose durable decisions never finished promoting
-    // (crash after ship but before the ledger commit/stamp, or a direct build that skipped it). The
-    // driver's own resume covers a crash WHILE building (status still `running`); this covers the
-    // post-ship window. Re-promote each while its worktree is still live. Best-effort, fail-soft.
-    try {
-      const awaiting = await this.store.threadsAwaitingLedgerPromotion();
-      if (awaiting.length > 0) {
-        this.logger.log(
-          `Boot: reconciling ledger promotion for ${awaiting.length} shipped thread(s)`,
-        );
-      }
-      for (const thread of awaiting) {
-        void this.reconcileLedgerPromotion(thread).catch((err) =>
-          this.logger.warn(
-            `boot ledger reconcile failed for thread=${thread.id}: ${err}`,
-          ),
-        );
-      }
-    } catch (err) {
-      this.logger.warn(`Boot ledger reconciliation failed: ${err}`);
-    }
-
-    // Phase 2 manifest reconcile: re-derive every repo's `repo_decisions` from its MERGED base checkout —
-    // flips merged proposed→accepted (a merge the host missed) + flags any human edits. Best-effort.
-    try {
-      const repos = await this.manifest.reposWithGit();
-      for (const { orgId, repoId } of repos) {
-        void this.manifest
-          .reconcileFromBaseCheckout(orgId, repoId)
-          .catch((err) =>
-            this.logger.warn(
-              `boot manifest reconcile failed for repo=${repoId}: ${err}`,
-            ),
-          );
-      }
-    } catch (err) {
-      this.logger.warn(`Boot manifest reconciliation failed: ${err}`);
-    }
-
     // GROUND-TRUTH JSONL backstop (LAST — runs after Redis re-attach so it only sweeps up turns the primary
     // path missed). Back-fills any brain turn present in a thread's SDK session JSONL but absent from
     // `messages` — e.g. a mid-turn interrupt the watchdog finalized before re-attach, or one superseded by a
@@ -690,33 +641,9 @@ export class AgentSessionManager
   }
 
   /**
-   * SERVER-INITIATED ledger promotion (the full-path + boot-recovery seam). Runs a HARNESS turn that asks
-   * the brain to distill THIS thread's durable, cross-cutting decisions into `.atlas/decisions/` via
-   * `promote_decisions`. The brain reconstructs them from `/context/generated/decision-record.md` (so it
-   * is cold-resume safe) and writes the files into the worktree; the CALLER commits them. Idempotent.
-   */
-  async promoteDurableDecisionsAtShip(
-    jobId: string,
-    orgId: string,
-    repoId: string,
-  ): Promise<void> {
-    const stimulus = harnessDeliveryStimulus({
-      jobId,
-      orgId,
-      repoId,
-      body: LEDGER_PROMOTION_TURN.task,
-      seedRow: {
-        label: 'Distilling this thread’s decisions into the durable ledger.',
-        chunkKey: `seed:ledger:${jobId}`,
-      },
-    });
-    await this.handleChatTurn(stimulus);
-  }
-
-  /**
    * SERVER-INITIATED open-PR turn (the ship step). Seeds the job-brain session with the ship turn-prompt
-   * (reconcile the branch against its base → push → author the PR body → `gh pr create`) exactly like
-   * {@link promoteDurableDecisionsAtShip}. The brain runs it in ITS OWN sandbox on the feature branch with
+   * (reconcile the branch against its base → push → author the PR body → `gh pr create`) as a harness turn.
+   * The brain runs it in ITS OWN sandbox on the feature branch with
    * its already-resolved engine auth + git auth — no separate `engine.run` session — and the HOST records
    * the opened PR afterward by branch discovery (`BuildShipService.latchPr` / the git-state reconciler), so
    * this turn needs no `report_pr_opened` tool. Idempotent: a re-seed on an already-open PR just `gh pr edit`s.
@@ -796,8 +723,8 @@ export class AgentSessionManager
   /**
    * WAKE the job brain because the repo's cold-boot SETUP SCRIPT failed on a fresh sandbox bring-up. Called
    * by `JobLifecycleService` (via ModuleRef) at `createJob` provisioning — a brand-new job has no turn yet, so
-   * without this the failure would sit until the operator happened to message. Runs a TRUSTED harness turn
-   * (like {@link promoteDurableDecisionsAtShip}); the SPECIFIC error is delivered as a system notice on this
+   * without this the failure would sit until the operator happened to message. Runs a TRUSTED harness turn;
+   * the SPECIFIC error is delivered as a system notice on this
    * turn (drained from `job_sandboxes.setup_error` in {@link handleChatTurn}), so this body stays generic to
    * avoid duplicating it. Concurrency-safe via `handleChatTurn` (steers into a live turn / queues behind one).
    */
@@ -818,50 +745,6 @@ export class AgentSessionManager
       },
     });
     await this.handleChatTurn(stimulus);
-  }
-
-  /**
-   * Boot-recovery for one shipped-but-unpromoted thread: re-run the promotion turn, then commit + push the
-   * ledger onto the EXISTING PR branch (ship is idempotent — it finds the open PR). Skips silently when the
-   * worktree is gone (the PR already merged + the thread closed), since there's nothing left to write.
-   *
-   * This is the RECOVERY AUTHORITY for a ledger row stuck non-`complete` (incl. a `running` row a crash left
-   * behind — which `claimLedgerPromotion` can't reclaim). It deliberately does NOT claim: it must be able to
-   * re-promote a stale `running`. That's safe here — it only runs at boot (`bootReconciled`-guarded, single
-   * leader) over `pr_url IS NOT NULL` (i.e. `done`) rows, which are disjoint from the `running` jobs the
-   * driver's own resume re-drives, so it can't race a live finalize. It only marks the row complete when the
-   * PR re-confirms (below); an unconfirmable PR is left for the next boot's pass (a real problem, not a loop).
-   */
-  private async reconcileLedgerPromotion(thread: Job): Promise<void> {
-    const sandbox = await this.lifecycle.findSandbox(thread.id, thread.orgId);
-    if (!sandbox) {
-      // Worktree torn down (PR merged/closed + thread reaped) — promotion is no longer POSSIBLE. Close the
-      // spine so this row stops being re-selected on every boot; the durable-decision promotion for this
-      // thread is abandoned (best-effort — the per-feature decision-record.md still holds the full set).
-      // Without this, a row left `running` by a crash whose worktree was later reaped would be stuck
-      // `running` forever with no recovery path.
-      await this.store.markLedgerPromoted(thread.id).catch(() => undefined);
-      return;
-    }
-    await this.promoteDurableDecisionsAtShip(
-      thread.id,
-      thread.orgId,
-      thread.repoId,
-    );
-    const repo = await this.repos.resolve(thread);
-    const rec = (await this.driverStore
-      .getDecisionRecord(thread.id)
-      .catch(() => null)) as { overview: string; decisions: Decision[] } | null;
-    // No `notify` — a silent recovery ship must not re-post "PR ready".
-    const outcome = await this.ship.ship({ job: thread, record: rec, repo, sandbox });
-    // Stamp complete only once the ledger is PROVEN committed. The host no longer commits the ledger; the
-    // brain's `openPrAtShip` turn (awaited inside `ship()`) commits + pushes the `.atlas/decisions/` files.
-    // `ledgerClean` (nothing pending under `.atlas/decisions/`) after that awaited turn is positive proof the
-    // files landed — stronger than `opened` alone (which only means the turn ran). If not clean, leave the row
-    // for the next boot's reconcile pass rather than falsely marking it complete.
-    if (outcome.opened && (await this.git.ledgerClean(sandbox.worktreePath))) {
-      await this.store.markLedgerPromoted(thread.id);
-    }
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────────────────────────
@@ -1560,10 +1443,6 @@ export class AgentSessionManager
    * now exists. Record it + flip `running → done` PROMPTLY here, instead of waiting on the 30-min
    * `GitStateReconciler` discovery. Runs only when the pending flag was set for this job (consumed here); a
    * latch MISS leaves the job `running` for that same reconciler backstop.
-   *
-   * Ledger promotion is intentionally NOT done here: `finalize_build` already stamped the promotion spine
-   * complete (the brain promotes via `promote_decisions` before ship), so re-seeding it would just re-fire a
-   * redundant promote + open-PR turn against the already-open PR.
    */
   private async latchDirectBuildAtTurnEnd(stimulus: ChatStimulus): Promise<void> {
     if (!this.directBuildShipPending.delete(stimulus.jobId)) return;
@@ -1579,23 +1458,6 @@ export class AgentSessionManager
     // on `sandbox.branch`, so hand it the live branch, mirroring the full ship path.
     const liveSandbox = { ...sandbox, branch: job.currentBranch ?? sandbox.branch };
     await this.ship.latchPr(job, repo, liveSandbox).catch(() => undefined);
-
-    // STAMP the ledger-promotion spine COMPLETE now — at TURN END, the direct-build turn has already committed
-    // + pushed everything it wrote this turn (the code changes AND the host-written `.atlas/decisions/` ledger
-    // files), because `finalize_build` returned `shipOpenPrBody` and the brain committed+pushed+opened the PR
-    // inline before this `finally` runs. The host no longer commits the ledger, so we require POSITIVE proof
-    // it landed: `ledgerClean` (nothing pending under `.atlas/decisions/`). If clean, stamp so the boot
-    // backstop never re-fires a redundant promote+open-PR turn against the already-open PR; if NOT clean (the
-    // brain skipped/failed the commit), leave the row for `reconcileLedgerPromotion` to re-promote at boot.
-    if (await this.git.ledgerClean(sandbox.worktreePath)) {
-      await this.store
-        .markLedgerPromoted(job.id)
-        .catch((err) =>
-          this.logger.warn(
-            `markLedgerPromoted failed for direct build=${job.id} (harmless — boot backstop would re-fire): ${err}`,
-          ),
-        );
-    }
   }
 
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
@@ -2621,6 +2483,30 @@ export class AgentSessionManager
         };
       },
 
+      withdraw_plan: async (args) => {
+        const reason = String(args['reason'] ?? '').trim();
+        const res = await this.store.withdrawPlan(stimulus.jobId, reason || undefined);
+        if (!res.withdrawn) {
+          return {
+            ok: false,
+            message:
+              'No plan is currently awaiting the operator’s approval — nothing to withdraw. ' +
+              '(If it was already approved or denied, work from that instead.)',
+          };
+        }
+        this.approvals.cancel(stimulus.jobId, reason || 'plan withdrawn by Atlas');
+        await this.store.appendAtlasMessage(
+          stimulus.jobId,
+          `Withdrew the plan from approval${reason ? `: ${reason}` : ''}. Still working — I’ll re-propose when ready.`,
+        );
+        return {
+          ok: true,
+          message:
+            'Plan withdrawn — the approve button is cleared and the job is back in planning. ' +
+            'Re-propose with propose_plan when the plan is ready.',
+        };
+      },
+
       // Classify (or re-classify) THIS job's kind — e.g. this is a PR review, not a build. The next turn's
       // system prompt reflects the new kind automatically (it's read fresh each turn). Operator/system kinds
       // ('event'/'onboarding') are NOT settable here. Prefer letting propose_plan/start_direct_build carry
@@ -2847,27 +2733,6 @@ export class AgentSessionManager
         // plan straight to `awaiting_approval` and posts the approval card — the operator is the FINAL gate.
         // GATED on a review having RUN for THIS plan version (mandatory-run, advisory-to-pass).
 
-        // REATTACH IDEMPOTENCY (durable): a host death mid-propose_plan (before the tool reply was acked)
-        // makes claimStale RE-RUN this tool on reboot. persistPlan already flipped the job to
-        // `awaiting_approval` on the first run, so short-circuit here — do NOT persist a second decision
-        // record or post a second approval card. The durable status is the dedup key (the in-memory pending
-        // map is gone after a restart, so the check must live on the persisted job, not the handle).
-        const existing = await this.store
-          .loadJob(stimulus.jobId)
-          .catch(() => null);
-        if (
-          existing &&
-          existing.status === 'awaiting_approval' &&
-          existing.decisionRecordId
-        ) {
-          return {
-            ok: true,
-            jobId: existing.id,
-            decisionRecordId: existing.decisionRecordId,
-            message: 'This plan is already awaiting the operator’s approval.',
-          };
-        }
-
         const overview = String(args['overview'] ?? '').trim();
         // The one-line goal — the SAME text Atlas writes as plan.md's `# <H1>`. Becomes the thread title
         // (durable + live `thread_meta` frame, repainted inside requestApprovalAndAct).
@@ -2919,6 +2784,14 @@ export class AgentSessionManager
               'again (the reviewed version no longer matches).',
           };
         }
+
+        // REATTACH IDEMPOTENCY (durable) + clean re-propose: if a proposal is already pending, durably
+        // retract it (flip → planning, supersede the draft) BEFORE persisting the new one — so a re-run
+        // (host death mid-propose) or a deliberate revise-and-repropose always ends with exactly ONE
+        // pending proposal, never a no-op and never an orphaned live handle. Run this ONLY after all
+        // validation/gates above have passed, so a rejected re-propose never retracts an approvable card.
+        const prep = await this.prepareRepropose(stimulus.jobId);
+        if (prep.refuse) return { ok: false, reason: prep.refuse };
 
         // Persist STRAIGHT to `awaiting_approval` (no `plan_review`): persistPlan supersedes drafts + titles
         // in one transaction. `thread_meta` repaint happens inside requestApprovalAndAct (single source).
@@ -3076,6 +2949,7 @@ export class AgentSessionManager
             reason: 'summary is required (what you will change, directly)',
           };
         }
+
         const changeOutline = Array.isArray(args['changeOutline'])
           ? args['changeOutline'].map((c) => String(c).trim()).filter(Boolean)
           : [];
@@ -3111,6 +2985,12 @@ export class AgentSessionManager
               `Lock it with the operator first, or use submit_plan for the full ceremony.`,
           };
         }
+
+        // Clean re-propose: durably retract any pending proposal (flip → planning, supersede the draft)
+        // ONLY after the always-ask safety gate has passed — so an uncovered always-ask class refuses
+        // WITHOUT first destroying an approvable card, always ending with exactly ONE pending proposal.
+        const prep = await this.prepareRepropose(stimulus.jobId);
+        if (prep.refuse) return { ok: false, reason: prep.refuse };
 
         // Persist a MINIMAL record (overview = summary, any locked decisions, NO threads) and post the
         // lightweight approval card. The build runs only after approval (kind: 'direct').
@@ -3271,10 +3151,9 @@ export class AgentSessionManager
         // HOST PRE-SHIP GATE only (no-token + leak-scan — the host NEVER commits). We are ALREADY inside this
         // brain turn, so we cannot seed a nested open-PR turn (that is the driver/boot ship path). Hand
         // `shipOpenPrBody` back as the tool result so the brain — still in THIS turn — commits anything
-        // uncommitted (its code changes AND the host-written `.atlas/decisions/` ledger files), reconciles,
-        // pushes, and opens the PR itself. The git-state reconciler then records `pr_url` + flips the job
-        // `done` on discovery, and `latchDirectBuildAtTurnEnd` latches the PR + stamps the ledger complete
-        // once the turn's commit is proven landed (`ledgerClean`).
+        // uncommitted, reconciles, pushes, and opens the PR itself. The git-state reconciler then records
+        // `pr_url` + flips the job `done` on discovery, and `latchDirectBuildAtTurnEnd` latches the PR the
+        // moment the turn completes.
         const pre = await this.ship.preShip(job, repo, sandbox, (m) => this.say(stimulus, m));
 
         if (!pre.ok) {
@@ -3298,9 +3177,7 @@ export class AgentSessionManager
 
         // The brain opens the PR inline later in THIS turn; flag the job so the turn-end latch
         // (`latchDirectBuildAtTurnEnd`) records the PR + flips running→done the moment the turn completes,
-        // rather than waiting on the reconciler. That same latch stamps the ledger-promotion spine complete
-        // (gated on `ledgerClean`) — the ledger is committed by the brain's inline open-PR push, so the stamp
-        // must wait until AFTER this turn's commit lands. A latch miss leaves the job for the boot backstop.
+        // rather than waiting on the reconciler. A latch miss leaves the job for the boot backstop.
         this.directBuildShipPending.set(jobId, true);
         return {
           ok: true,
@@ -3312,82 +3189,6 @@ export class AgentSessionManager
             decisionsBlock: decisionsBlock(rec?.decisions ?? []),
           }),
         };
-      },
-
-      promote_decisions: async (args) => {
-        // Distill the DURABLE, cross-cutting decisions from this thread into the committed
-        // `.atlas/decisions/` ledger (the host writes the files into the worktree; the next ship commit
-        // sweeps them). The brain decides WHAT is durable + authors the prose; the host only writes +
-        // validates + keeps the supersession graph consistent. Idempotent on stable slugs.
-        const rawList = Array.isArray(args['decisions'])
-          ? args['decisions']
-          : [];
-        if (rawList.length === 0) {
-          // Not an error: a thread may have no durable, cross-cutting calls worth promoting.
-          return {
-            ok: true,
-            written: [],
-            message: 'No durable decisions to promote — nothing written.',
-          };
-        }
-        const sandbox = await this.lifecycle.findSandbox(
-          stimulus.jobId,
-          stimulus.orgId,
-        );
-        if (!sandbox)
-          return {
-            ok: false,
-            reason: 'No sandbox for this thread — cannot write the ledger',
-          };
-
-        let entries: LedgerEntryInput[];
-        try {
-          entries = rawList.map((r) =>
-            normalizeLedgerEntry(r, stimulus.jobId),
-          );
-        } catch (err) {
-          return { ok: false, reason: errText(err) };
-        }
-        try {
-          const result = await this.ledger.promote(
-            sandbox.worktreePath,
-            entries,
-          );
-          // Phase 2: record the promotion-time baseline in the manifest (proposed rows) so the merge hook
-          // can flip them to accepted + detect later human edits. Best-effort — the files are the truth.
-          const manifestRows: PromotedManifestInput[] = entries.map((e) => ({
-            slug: e.slug,
-            title: e.title,
-            contentHash: result.hashes[e.slug] ?? '',
-            tags: e.tags ?? [],
-            sourceThread: e.sourceThread ?? stimulus.jobId,
-            supersedes: e.supersedes ?? [],
-            supersededBy: null,
-            governsPaths: e.governsPaths ?? [],
-          }));
-          await this.manifest
-            .recordPromoted(stimulus.orgId, stimulus.repoId, manifestRows)
-            .catch((err) =>
-              this.logger.warn(
-                `manifest recordPromoted failed (continuing): ${err}`,
-              ),
-            );
-          return {
-            ok: true,
-            written: result.written,
-            superseded: result.superseded,
-            message:
-              `Promoted ${result.written.length} decision(s) to .atlas/decisions/` +
-              (result.superseded.length
-                ? ` (superseded ${result.superseded.join(', ')})`
-                : '') +
-              '. They will be committed with the build.',
-          };
-        } catch (err) {
-          if (err instanceof LedgerValidationError)
-            return { ok: false, reason: err.message };
-          return { ok: false, reason: errText(err) };
-        }
       },
 
       create_job: async (args) => {
@@ -3694,6 +3495,7 @@ export class AgentSessionManager
       // by any job, not just onboarding: list what exists + propose new/edited ones (owner-approved).
       list_skills: this.buildListSkillsTool(stimulus),
       propose_skill: this.buildProposeSkillTool(stimulus),
+      propose_skill_install: this.buildProposeSkillInstallTool(stimulus),
       request_skill_edit_access: this.buildRequestSkillEditAccessTool(stimulus),
       propose_skill_removal: this.buildProposeSkillRemovalTool(stimulus),
       list_mcp_servers: this.buildListMcpServersTool(stimulus),
@@ -4381,8 +4183,8 @@ export class AgentSessionManager
    * ATTACHES an existing one to a repo). A house-style change is cross-cutting — it affects EVERY repo and
    * job in the org — so the brain NEVER writes it: this posts an owner-approvable card, and only the OWNER's
    * approval at `…/jobs/:jobId/convention-edit-proposals/:requestId/approve` upserts the profile. Use this when
-   * you notice the reusable convention itself is wrong/outdated (NOT for a this-repo-only decision — that
-   * belongs in the `.atlas/decisions/` ledger). If `slug` matches an existing profile it's an EDIT (the card
+   * you notice the reusable convention itself is wrong/outdated (NOT for a this-repo-only durable fact — that
+   * belongs in repo memory via `remember`). If `slug` matches an existing profile it's an EDIT (the card
    * shows the prior body); a new `slug` is a CREATE. org/repo/job come from the closure (never tool args).
    */
   private buildProposeConventionProfileChangeTool(stimulus: ChatStimulus): ToolImpl {
@@ -4506,39 +4308,35 @@ export class AgentSessionManager
   }
 
   /**
-   * `propose_skill({ name, description, body, scope?, surfaces?, rationale })` — propose CREATING a new
-   * reusable SKILL.md (a short instruction a build/brain/review session loads on demand). CREATE-ONLY: a
-   * `name` that already exists in that scope is refused — a skill shapes how every future build behaves, so
-   * once it exists the brain never blanket-replaces its body; it calls `request_skill_edit_access` and edits
-   * it granularly via `Edit`/`Write` instead (multi-file capable, no re-pasting the whole file for a small
-   * change). The brain never writes a NEW skill directly either: this posts an owner-approvable card, and
-   * only the OWNER's approval at `…/jobs/:jobId/skill-proposals/:requestId/approve` writes it via
-   * `WorkspaceSkillStore`. `scope` is `'repo'` (this repo only, the default) or `'org'` (every repo).
-   * org/repo/job come from the closure (never tool args) — tenant safety.
+   * `propose_skill({ name, description, scope?, rationale })` — SUBMIT a skill the brain AUTHORED as real
+   * files (via its built-in `run-skill-generator` skill) under `/context/skill-drafts/<name>/` for owner
+   * approval. NO `body` — a skill is a multi-file dir (SKILL.md + references/scripts/assets), authored with
+   * `Read`/`Write`/`Edit` in the writable `/context` scratch area, NOT crammed into a tool arg. This tool
+   * FREEZES that draft into an immutable request-scoped staging dir (the brain cannot mutate it after) and
+   * posts an owner-approvable card with a preview; only the OWNER's approval at
+   * `…/jobs/:jobId/skill-proposals/:requestId/approve` vendors the frozen copy into the store and removes the
+   * draft. CREATE-ONLY: a `name` that already exists is refused — to change one, `request_skill_edit_access`
+   * and Edit/Write it in place. `scope` is `'repo'` (default) or `'org'`. All lanes (brain/build/review) get
+   * the skill — on-demand description-match already gates loading, so there is no per-lane knob. org/repo/job
+   * come from the closure (never tool args) — tenant safety.
    */
   private buildProposeSkillTool(stimulus: ChatStimulus): ToolImpl {
     const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-    const SURFACES: McpSurface[] = ['brain', 'build', 'review'];
+    const ALL_SURFACES: McpSurface[] = ['brain', 'build', 'review'];
     return async (args) => {
       const name = String(args['name'] ?? '').trim();
       const description = String(args['description'] ?? '').trim();
-      const body = String(args['body'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
       const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
-      const surfacesArg = Array.isArray(args['surfaces'])
-        ? (args['surfaces'] as unknown[]).map((s) => String(s)).filter((s): s is McpSurface =>
-            (SURFACES as string[]).includes(s),
-          )
-        : [];
-      const surfaces: McpSurface[] = surfacesArg.length > 0 ? surfacesArg : ['build'];
 
       if (!NAME_RE.test(name)) {
         return { ok: false, reason: 'name must be lowercase letters/digits/_/- (e.g. house-migrations)' };
       }
       if (!description) return { ok: false, reason: 'description (the "Use when …" trigger blurb) is required' };
-      if (!body) return { ok: false, reason: 'body (the SKILL.md markdown) is required' };
       if (!rationale) return { ok: false, reason: 'rationale — why this skill helps builds here — is required' };
-      if (!this.skillStore) return { ok: false, reason: 'skills are not configured for this org' };
+      if (!this.skillStore || !this.skillFiles) {
+        return { ok: false, reason: 'skills are not configured for this org' };
+      }
       try {
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
         const existing = await this.skillStore.get(stimulus.orgId, dbScope, name);
@@ -4551,7 +4349,21 @@ export class AgentSessionManager
               'then Edit/Write its files directly.',
           };
         }
+        // The brain authors the skill as real files here first (with its built-in run-skill-generator).
+        const draftDir = join(this.lifecycle.contextDirHost(stimulus.jobId, stimulus.orgId), 'skill-drafts', name);
+        if (!existsSync(join(draftDir, 'SKILL.md'))) {
+          return {
+            ok: false,
+            reason:
+              `no authored skill found at /context/skill-drafts/${name}/SKILL.md. Author it FIRST — use your ` +
+              'built-in run-skill-generator skill to scaffold and write the folder (SKILL.md + any ' +
+              'references/scripts) under /context/skill-drafts/' + name + '/, then call propose_skill again.',
+          };
+        }
         const requestId = `skill-${randomUUID()}`;
+        // Freeze exactly what exists now — approval vendors this immutable copy, not the still-writable draft.
+        const stagingPath = this.skillFiles.freezeDraft(draftDir, stimulus.orgId, requestId);
+        const preview = this.skillFiles.previewDir(stagingPath) ?? undefined;
         const card = webSkillProposalCard({
           jobId: stimulus.jobId,
           requestId,
@@ -4559,26 +4371,100 @@ export class AgentSessionManager
           scope,
           name,
           description,
-          body,
-          surfaces,
+          surfaces: ALL_SURFACES,
           mode: 'create',
           rationale,
+          stagingPath,
+          preview,
         });
         const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
-        if (!opened.ok) return { ok: false, reason: 'Could not open the skill proposal (thread not found).' };
+        if (!opened.ok) {
+          this.skillFiles.removeStaging(stimulus.orgId, requestId);
+          return { ok: false, reason: 'Could not open the skill proposal (thread not found).' };
+        }
         return {
           ok: true,
           requestId,
           mode: 'create',
           message:
-            `Posted a skill creation proposal for "${name}" (${scope}-scoped). Only the OWNER can approve it ` +
-            '— you cannot register it yourself. Once approved it loads on the next fresh session ' +
+            `Posted a skill creation proposal for "${name}" (${scope}-scoped) from your authored files. Only the ` +
+            'OWNER can approve it — you cannot register it yourself. On approval it moves into the durable skill ' +
+            'store (every future job inherits it) and the draft is removed; it loads on the next fresh session ' +
             '(reset_sandbox to pick it up). Mention the proposal, then continue.',
         };
       } catch (err) {
         this.logger.warn(
           `propose_skill failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
         );
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `propose_skill_install({ sourceUrl, ref?, subpath?, scope?, rationale })` — propose INSTALLING a
+   * maintained skill from a git marketplace (e.g. `github.com/anthropics/skills`,
+   * `github.com/agents-inc/skills`) instead of authoring one from stale memory. SINGLE-skill only: `subpath`
+   * MUST point at one skill dir (a `SKILL.md`), not a marketplace root. The tool DRY-RUNS the source
+   * (`SkillInstallerService.preview`) to resolve the REAL frontmatter name/description and detect an overwrite
+   * conflict, so the owner's card shows exactly what will land. The brain never installs directly — only the
+   * OWNER's approval routes to `SkillInstallerService.install` (`provenance:'git'`, auto-updating). `scope` is
+   * `'repo'` (default) or `'org'`. org/repo/job come from the closure (never tool args) — tenant safety.
+   */
+  private buildProposeSkillInstallTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const sourceUrl = String(args['sourceUrl'] ?? '').trim();
+      const ref = String(args['ref'] ?? '').trim() || undefined;
+      const subpath = String(args['subpath'] ?? '').trim() || undefined;
+      const rationale = String(args['rationale'] ?? '').trim();
+      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+
+      if (!/^https:\/\/\S+$/.test(sourceUrl)) {
+        return { ok: false, reason: 'sourceUrl must be an https git URL (e.g. https://github.com/anthropics/skills)' };
+      }
+      if (!rationale) return { ok: false, reason: 'rationale — why this skill helps builds here — is required' };
+      if (!this.skillStore || !this.skillInstaller) {
+        return { ok: false, reason: 'skills are not configured for this org' };
+      }
+      try {
+        const dbScope = scope === 'org' ? '*' : stimulus.repoId;
+        let rows;
+        try {
+          rows = await this.skillInstaller.preview({ orgId: stimulus.orgId, scope: dbScope, sourceUrl, ref, subpath });
+        } catch (err) {
+          return { ok: false, reason: `could not resolve that skill source: ${errText(err)}` };
+        }
+        const resolved = rows[0];
+        if (!resolved) return { ok: false, reason: 'that source resolved no installable skill' };
+        const requestId = `skill-${randomUUID()}`;
+        const card = webSkillProposalCard({
+          jobId: stimulus.jobId,
+          requestId,
+          repoId: stimulus.repoId,
+          scope,
+          name: resolved.name,
+          description: resolved.description,
+          surfaces: ['brain', 'build', 'review'],
+          mode: 'install',
+          rationale,
+          sourceUrl,
+          sourceRef: ref,
+          sourceSubpath: subpath,
+          installPreview: { rows },
+        });
+        const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
+        if (!opened.ok) return { ok: false, reason: 'Could not open the skill install proposal (thread not found).' };
+        return {
+          ok: true,
+          requestId,
+          mode: 'install',
+          message:
+            `Posted an install proposal for the "${resolved.name}" skill (${scope}-scoped)${resolved.overwrites ? ' — NOTE it would overwrite an existing skill of that name' : ''}. ` +
+            'Only the OWNER can approve it. On approval it installs from git (kept up to date) and loads on the ' +
+            'next fresh session (reset_sandbox to pick it up). Mention the proposal, then continue.',
+        };
+      } catch (err) {
+        this.logger.warn(`propose_skill_install failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
@@ -4683,7 +4569,6 @@ export class AgentSessionManager
           scope,
           name,
           description: '',
-          body: '',
           surfaces: existing.surfaces,
           mode: 'remove',
           priorBody: this.skillFiles?.readSkillBody(stimulus.orgId, dbScope, name),
@@ -4929,17 +4814,6 @@ export class AgentSessionManager
         const pre = await this.ship.preShip(job, repo, sandbox, (m) =>
           this.store.appendSystemEvent(stimulus.jobId, m),
         );
-        // Onboarding threads never get `promote_decisions` (see `buildTools`) — there is nothing to
-        // promote by design. Stamp complete here so the boot backstop's `threadsAwaitingLedgerPromotion`
-        // sweep (which only looks at `pr_url`/`ledger_promotion_status`, not thread kind) never picks this
-        // thread up and fires an impossible `promote_decisions` harness turn against it.
-        await this.store
-          .markLedgerPromoted(stimulus.jobId)
-          .catch((err) =>
-            this.logger.debug(
-              `markLedgerPromoted failed for onboarding thread=${stimulus.jobId} (harmless — boot backstop would just no-op): ${err}`,
-            ),
-          );
         if (!pre.ok) {
           if (pre.reason === 'leak-scan') {
             // Hard security block — a hydrated secret/seed path was committed on the onboarding branch.
@@ -5084,6 +4958,37 @@ export class AgentSessionManager
   // ── Approval flow ──────────────────────────────────────────────────────────────────────────────
 
   /**
+   * Prepare a (re)proposal: refuse if the job already moved past the gate; if a proposal is pending,
+   * durably retract it (flip → planning, supersede the draft) BEFORE returning, then drop the live handle.
+   * Returns a refusal reason to bail with, or null to proceed. After this returns null the job is in
+   * 'planning'/'open', so no in-flight click can approve the old plan.
+   */
+  private async prepareRepropose(jobId: string): Promise<{ refuse?: string }> {
+    const existing = await this.store.loadJob(jobId).catch(() => null);
+    if (!existing) return {};
+    // Statuses past the approval gate (post-`awaiting_approval`) — never (re)propose over these. A build
+    // FAILURE is now the orthogonal `halt` axis (JobStatus has no 'failed'/'paused'); a failed/paused job
+    // keeps its phase (typically 'running'), so it's still caught here.
+    const pastGate: JobStatus[] = ['running', 'awaiting_ship_review', 'done', 'cancelled', 'deleting'];
+    if (pastGate.includes(existing.status)) {
+      return { refuse: `This job is already '${existing.status}' — can’t (re)propose a plan for it.` };
+    }
+    if (existing.status === 'awaiting_approval' && existing.decisionRecordId) {
+      const res = await this.store.withdrawPlan(jobId, 'superseded by a re-proposed plan');
+      if (!res.withdrawn) {
+        const now = await this.store.loadJob(jobId).catch(() => null);
+        return {
+          refuse:
+            `This job just moved to '${now?.status ?? 'a non-planning state'}' (an approval or cancel raced ` +
+            `in) — nothing was changed. Re-check the state before proposing again.`,
+        };
+      }
+      this.approvals.cancel(jobId, 'superseded by a re-proposed plan');
+    }
+    return {};
+  }
+
+  /**
    * Post the approval card and act on the verdict — mirrors the old `ConversationalBrainService`
    * flow but without blocking the session turn on it.
    */
@@ -5147,11 +5052,18 @@ export class AgentSessionManager
     resolution: ApprovalResolution,
   ): Promise<void> {
     if (resolution.verdict === 'approve') {
-      const running = await this.store.approve(
-        job.id,
-        decisionRecordId,
-        resolution.ruledBy,
-      );
+      // Prefer the record the OPERATOR clicked (the version pin); fall back to the handle's closure
+      // record when a caller didn't supply one (e.g. a test, or a client that omitted decisionRecordId).
+      const recId = resolution.clickedDecisionRecordId ?? decisionRecordId;
+      const running = await this.store.approve(job.id, recId, resolution.ruledBy);
+      if (!running) {
+        await this.say(
+          stimulus,
+          'That plan was withdrawn or updated since you clicked — nothing was approved. ' +
+            'Re-propose the current version and approve that.',
+        );
+        return;
+      }
       if (isDirect) {
         // FAST PATH: the brain implements it ITSELF in an autonomous in-sandbox turn (no driver).
         await this.store.appendAtlasMessage(
@@ -5225,6 +5137,7 @@ export class AgentSessionManager
     verdict: ApprovalVerdict,
     ruledBy: string,
     note?: string,
+    clickedDecisionRecordId?: string,
   ): Promise<boolean> {
     const job = await this.store.loadJob(jobId).catch(() => null);
     if (!job || job.status !== 'awaiting_approval' || !job.decisionRecordId)
@@ -5253,6 +5166,7 @@ export class AgentSessionManager
         verdict,
         ruledBy,
         ...(note ? { note } : {}),
+        ...(clickedDecisionRecordId ? { clickedDecisionRecordId } : {}),
       },
     );
     return true;
@@ -6139,7 +6053,7 @@ const COMPACTION_SYSTEM = [
 
 /**
  * The compaction INSTRUCTION (the turn task) — adapted from the Claude Code `/compact` structure, but LEAN
- * for Atlas: the plan, decisions, and step state are already DURABLE (`/context/specs`, `.atlas/decisions/`,
+ * for Atlas: the plan, decisions, and step state are already DURABLE (`/context/specs`,
  * the pipeline state), so the summary must NOT re-transcribe them — it captures the conversational residue a
  * fresh session can't reconstruct from disk, plus pointers to re-read. Security-relevant constraints are
  * preserved verbatim so they survive the boundary.
@@ -6148,7 +6062,7 @@ const COMPACTION_INSTRUCTION = [
   'Write a HANDOFF SUMMARY of this conversation for a fresh continuation of your own session. The build is',
   'now running from the approved, durable plan — so most of the heavy planning transcript is redundant with',
   'state already on disk. Do NOT re-transcribe the plan, the decision record, or step details: the fresh',
-  'session will re-read `/context/specs` and `.atlas/decisions/` and call `get_pipeline_state` for those.',
+  'session will re-read `/context/specs` and call `get_pipeline_state` for those.',
   'Capture ONLY what a fresh session could NOT reconstruct from durable state, under these headings:',
   '',
   '1. Operator Intent & Voice — what the operator ultimately asked for, in their words where it matters, and',
@@ -6172,7 +6086,7 @@ const CONTINUATION_PREAMBLE = [
   '<session_compacted>',
   'Your previous session was compacted to keep the context lean while the build runs. It is summarized below.',
   'Treat it as your own recovered memory. Re-read the durable artifacts it points to (`/context/specs`,',
-  '`.atlas/decisions/`, `get_pipeline_state`) as needed, and continue from where you left off — do not restart',
+  '`get_pipeline_state`) as needed, and continue from where you left off — do not restart',
   'planning and do not re-ask the operator anything already settled.',
   '</session_compacted>',
 ].join('\n');
@@ -6511,70 +6425,6 @@ function normalizeDecisions(raw: unknown): Decision[] {
     });
   }
   return out;
-}
-
-/**
- * Coerce one raw `promote_decisions` entry into a {@link LedgerEntryInput}. Tolerant of the model's slug
- * format (the SDK exposes a generic tool schema, so it guesses) — normalize to strict kebab-case so a
- * natural guess just works; the same normalization applies to `supersedes` so back-links resolve. Throws
- * on a missing required field (surfaced as a tool error). `sourceThread` defaults to the current thread.
- */
-function normalizeLedgerEntry(
-  raw: unknown,
-  jobId: string,
-): LedgerEntryInput {
-  if (typeof raw !== 'object' || raw === null)
-    throw new Error('each promoted decision must be an object');
-  const r = raw as Record<string, unknown>;
-  const slug = ledgerSlug(String(r['slug'] ?? ''));
-  const title = String(r['title'] ?? '').trim();
-  const context = String(r['context'] ?? '').trim();
-  const decision = String(r['decision'] ?? '').trim();
-  if (!slug || !title || !context || !decision) {
-    throw new Error(
-      'each promoted decision needs slug, title, context, and decision',
-    );
-  }
-  const authored = String(r['authoredBy'] ?? '').trim();
-  const supersedes = (strArray(r['supersedes']) ?? [])
-    .map(ledgerSlug)
-    .filter(Boolean);
-  return {
-    slug,
-    title,
-    context,
-    decision,
-    ...(optStr(r['consequences'])
-      ? { consequences: String(r['consequences']) }
-      : {}),
-    ...(optStr(r['alternatives'])
-      ? { alternatives: String(r['alternatives']) }
-      : {}),
-    ...(strArray(r['tags']) ? { tags: strArray(r['tags']) } : {}),
-    authoredBy:
-      authored === 'operator' || authored === 'human-edit' ? authored : 'atlas',
-    confirmedByOperator: r['confirmedByOperator'] === true,
-    sourceThread:
-      typeof r['sourceThread'] === 'string' && r['sourceThread'].trim()
-        ? String(r['sourceThread']).trim()
-        : jobId,
-    ...(optStr(r['sourceDecision'])
-      ? { sourceDecision: String(r['sourceDecision']).trim() }
-      : {}),
-    ...(supersedes.length ? { supersedes } : {}),
-    ...(strArray(r['governsPaths'])
-      ? { governsPaths: strArray(r['governsPaths']) }
-      : {}),
-  };
-}
-
-/** Normalize a free-form slug to strict kebab-case (a-z, 0-9, single hyphens; trimmed). */
-function ledgerSlug(v: string): string {
-  return v
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
 }
 
 /** A short job title from a summary line. */

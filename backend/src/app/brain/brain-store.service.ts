@@ -1632,22 +1632,59 @@ export class BrainStoreService {
     };
   }
 
-  /** Mark a decision record approved + flip its thread to `running` (the dispatch precondition). */
+  /**
+   * Approve a decision record ATOMICALLY: a single guarded UPDATE requires the job to still be
+   * `awaiting_approval` AND still pointing at the CLICKED record (the version pin), so a withdrawn,
+   * re-proposed (superseded), or already-approved job fails the guard — returns `null` rather than
+   * approving the wrong plan. On success, stamps the record `approved` and flips the job to `running`
+   * in the same transaction.
+   */
   async approve(
     jobId: string,
-    decisionRecordId: string,
+    clickedDecisionRecordId: string,
     approvedBy: string,
-  ): Promise<Job> {
-    const now = new Date();
-    await this.records.update(
-      { id: decisionRecordId },
-      { status: 'approved', approved_by: approvedBy, approved_at: now },
-    );
-    // A freshly approved plan is an explicit operator action that supersedes any stale halt, so the
-    // dispatch that follows isn't refused by the halt-invariant guard (halt is cleared here, at the
-    // operator transition, never inside dispatch()).
-    await this.jobs.update({ id: jobId }, { status: 'running', halt: null });
-    return this.loadJob(jobId);
+  ): Promise<Job | null> {
+    return this.dataSource.transaction(async (m) => {
+      const now = new Date();
+      // A freshly approved plan is an explicit operator action that supersedes any stale halt, so the
+      // dispatch that follows isn't refused by the halt-invariant guard (halt is cleared here, at the
+      // operator transition, never inside dispatch()).
+      const jobRes = await m.getRepository(JobEntity).update(
+        { id: jobId, status: 'awaiting_approval', decision_record_id: clickedDecisionRecordId },
+        { status: 'running', halt: null },
+      );
+      if ((jobRes.affected ?? 0) !== 1) return null;
+      await m.getRepository(DecisionRecordEntity).update(
+        { id: clickedDecisionRecordId },
+        { status: 'approved', approved_by: approvedBy, approved_at: now },
+      );
+      // Read the flipped row through the TRANSACTION manager (not this.loadJob, which reads on a
+      // separate pooled connection and can't see the uncommitted 'running' write) so the returned Job
+      // reflects the just-committed status.
+      const row = await m.getRepository(JobEntity).findOneOrFail({ where: { id: jobId } });
+      return toThread(row);
+    });
+  }
+
+  /**
+   * Retract a pending proposal ATOMICALLY: flip awaiting_approval → planning and supersede the draft
+   * decision record, but ONLY while the job is still awaiting approval (so it can't race the operator's
+   * approve click — exactly one of {withdraw, approve} wins). Returns { withdrawn:false } when there is
+   * no pending proposal (job not awaiting_approval).
+   */
+  async withdrawPlan(jobId: string, reason?: string): Promise<{ withdrawn: boolean }> {
+    return this.dataSource.transaction(async (m) => {
+      const res = await m.getRepository(JobEntity).update(
+        { id: jobId, status: 'awaiting_approval' },
+        { status: 'planning' },
+      );
+      if ((res.affected ?? 0) !== 1) return { withdrawn: false };
+      await m.getRepository(DecisionRecordEntity).update(
+        { job_id: jobId, status: 'draft' },
+        { status: 'superseded' },
+      );
+      return { withdrawn: true };
+    });
   }
 
   /** Flip a thread back to `planning` (a rejected / change-requested plan returns to the grill). */
@@ -1670,47 +1707,6 @@ export class BrainStoreService {
   async loadJob(jobId: string): Promise<Job> {
     const row = await this.jobs.findOneOrFail({ where: { id: jobId } });
     return toThread(row);
-  }
-
-  // ── decision-ledger promotion spine (boot backstop + direct-path stamp) ──────────────────────────
-
-  /** Mark a thread's ledger promotion COMPLETE — stamped only after the promotion turn + commit succeed. */
-  async markLedgerPromoted(jobId: string): Promise<void> {
-    await this.jobs.update(
-      { id: jobId },
-      { ledger_promotion_status: 'complete', ledger_promoted_at: new Date() },
-    );
-  }
-
-  /**
-   * Boot backstop: SHIPPED threads (PR opened) whose ledger promotion never reached `complete` — the
-   * crash window after ship but before the ledger commit/stamp, plus a direct build whose brain skipped
-   * promotion. The startup sweep re-promotes each (idempotent) while its worktree is still live; once the
-   * PR merges + the worktree is torn down, there's nothing to write and the sweep skips it.
-   */
-  async threadsAwaitingLedgerPromotion(): Promise<Job[]> {
-    // `status: Not('running')` ENFORCES the backstop⇄driver disjointness invariant at the query level: a
-    // `running` job is owned by the driver's `resume()`, so excluding it here guarantees the backstop can
-    // never act on a job a live drive is finalizing (even if some future path set `pr_url` on a still-
-    // `running` row). Every legitimately-shipped row is `done` (`setPrReady` sets both atomically).
-    const rows = await this.jobs.find({
-      where: {
-        pr_url: Not(IsNull()),
-        status: Not('running'),
-        ledger_promotion_status: Not('complete'),
-      },
-    });
-    // `Not('complete')` excludes NULLs in SQL, so add the never-started rows explicitly.
-    const nullRows = await this.jobs.find({
-      where: { pr_url: Not(IsNull()), status: Not('running'), ledger_promotion_status: IsNull() },
-    });
-    // Onboarding threads never get `promote_decisions` (see `buildTools`) — there is nothing durable
-    // for them to promote by design, so they can never legitimately reach `complete`. Excluded here
-    // (not just left to `finish_onboarding`'s own stamp) so no future onboarding-ship path can
-    // resurrect the impossible `promote_decisions` harness turn against one.
-    return [...rows, ...nullRows]
-      .filter((row) => row.kind !== 'onboarding')
-      .map(toThread);
   }
 
   // ── create_job tool ───────────────────────────────────────────────────────────────────────────

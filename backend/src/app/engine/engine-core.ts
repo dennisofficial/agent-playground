@@ -24,6 +24,7 @@ import { Agent } from '../prompt-kit/agent';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
 import { context7Enabled, qualifyContext7ToolNames } from './context7-tools';
 import {
+  BG_TASK_CAP_NOTICE,
   EngineAuthError,
   isAuthErrorMessage,
   UNRESUMABLE_SESSION_MARKER,
@@ -100,6 +101,84 @@ function steerUserMessage(content: string, priority?: 'now' | 'next' | 'later'):
     parent_tool_use_id: null,
     ...(priority ? { priority } : {}),
   } as SDKUserMessage;
+}
+
+/**
+ * The atlas-svc nudge (see the PostToolUse hook in `run`): does this Bash command look like a long-running
+ * SERVICE that should run under the `atlas-svc` supervisor (dev server / `docker compose up` / watcher /
+ * bare-backgrounded), rather than a one-shot the model should just run directly? Returns a short label for
+ * the matched smell, or null.
+ *
+ * Precision is load-bearing: a false positive tells Atlas to wrap a one-shot like `pnpm test` in atlas-svc,
+ * which is WRONG advice. So we match a curated allowlist of long-running smells and bias toward
+ * under-matching — the token-delta throttle on the hook makes a rare miss cheap. A command already using
+ * atlas-svc is skipped outright (it's already doing the right thing).
+ */
+export function detectLongRunningCommand(command: string): string | null {
+  const cmd = command.trim();
+  if (!cmd) return null;
+  if (/\batlas-svc\b/.test(cmd)) return null;
+
+  const smells: Array<[RegExp, string]> = [
+    // Explicit backgrounding markers.
+    [/\bnohup\b/, 'nohup'],
+    [/(^|[^&])&\s*$/, 'trailing & (backgrounded)'],
+    // Docker long-running.
+    [/\bdocker(-compose|\s+compose)\s+up\b/, 'docker compose up'],
+    [/\bdocker\s+run\b(?=[^|&;]*\s(-d|--detach)\b)/, 'docker run -d'],
+    // Package-runner dev/serve/watch scripts (NOT test/build/lint/install — those are one-shots).
+    [/\b(pnpm|npm|yarn|bun|npx)\b[^|&;]*\b(dev|serve|watch)\b/, 'dev/serve/watch script'],
+    [/\b(pnpm|npm|yarn|bun)\s+start\b/, 'start script'],
+    // Bare dev servers / watchers.
+    [/\bnext\s+dev\b/, 'next dev'],
+    [/\bvite\b(?!\s+build)/, 'vite'],
+    [/\bnodemon\b/, 'nodemon'],
+    [/\bwebpack(-dev-server)?\s+serve\b/, 'webpack serve'],
+    [/\bng\s+serve\b/, 'ng serve'],
+    [/\brails\s+s(erver)?\b/, 'rails server'],
+    [/\bflask\s+run\b/, 'flask run'],
+    [/\b(uvicorn|gunicorn|daphne|hypercorn)\b/, 'python app server'],
+    [/\bpython[0-9.]*\s+-m\s+http\.server\b/, 'python http.server'],
+  ];
+  for (const [re, label] of smells) if (re.test(cmd)) return label;
+  return null;
+}
+
+const SVC_NUDGE_TEXT =
+  'this looks like a long-running process. If it is a dev server / `docker compose up` / watcher, do NOT ' +
+  "run it bare — start it under the supervisor so it survives the turn and shows in the operator's SERVICES " +
+  'sidebar with live logs: `atlas-svc run --name <id> -- <cmd>` (then `atlas-svc logs -f <id>`, `atlas-svc ' +
+  'ps`, `atlas-svc stop <id>`). Anything started with a bare `&`/nohup/`-d` is invisible to the operator and ' +
+  'gets reaped between turns. (One-off commands like `pnpm test`/`build` are fine to run directly with Bash.)';
+
+/** The atlas-svc nudge appended to a matching Bash tool result via PostToolUse `additionalContext`. */
+function renderSvcNudge(command: string): string {
+  const shown = command.length > 120 ? `${command.slice(0, 117)}…` : command;
+  return `[atlas-svc reminder] You just ran \`${shown}\` — ${SVC_NUDGE_TEXT}`;
+}
+
+/**
+ * Throttle predicate for the atlas-svc nudge: fire on the FIRST match (`last === null`), then only once the
+ * context has grown by at least `delta` tokens since the last nudge. Keeps back-to-back matching commands
+ * from spamming the reminder. Pure — the caller latches `last` on a true result.
+ */
+export function svcNudgeShouldFire(last: number | null, now: number, delta: number): boolean {
+  return last === null || now - last >= delta;
+}
+
+/** Throttle window (context-token growth) between atlas-svc nudges; env-overridable. Default ~40k. */
+const DEFAULT_SVC_NUDGE_DELTA_TOKENS = 40_000;
+function resolveSvcNudgeDeltaTokens(): number {
+  const raw = process.env.SVC_NUDGE_DELTA_TOKENS;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return DEFAULT_SVC_NUDGE_DELTA_TOKENS;
+}
+function svcNudgeDisabled(): boolean {
+  const v = process.env.SVC_NUDGE_DISABLED;
+  return v === '1' || v === 'true';
 }
 
 /**
@@ -616,6 +695,45 @@ export class EngineCore {
       cancelEnd();
       endTimer = setTimeout(() => input.end(), STEER_IDLE_GRACE_MS);
     };
+    // BACKGROUND-TASK HOLD (SDK `run_in_background` Bash): a tool-native background task closes the turn's
+    // first `result` immediately (terminal_reason=completed), which would let the STEER_IDLE_GRACE close the
+    // input and force the SDK to KILL the still-running shell. Instead we hold the query() session open while
+    // any task is in flight so the task's `task_notification` AND the model's auto-continuation land in THIS
+    // turn. The hold is bounded by HOLD_CAP_MS (a stuck/endless task can't wedge the turn forever); after the
+    // cap we steer the agent with BG_TASK_CAP_NOTICE and give it CAP_ACK_GRACE_MS to acknowledge before an
+    // unconditional close. Read from process.env so the container path works and tests can shrink them.
+    const HOLD_CAP_MS = Number(process.env.BG_TASK_MAX_HOLD_MS) > 0 ? Number(process.env.BG_TASK_MAX_HOLD_MS) : 600_000;
+    const CAP_ACK_GRACE_MS = Number(process.env.BG_TASK_CAP_ACK_GRACE_MS) > 0 ? Number(process.env.BG_TASK_CAP_ACK_GRACE_MS) : 15_000;
+    const liveBgTasks = new Set<string>();
+    let holdTimer: ReturnType<typeof setTimeout> | undefined;
+    let capKillTimer: ReturnType<typeof setTimeout> | undefined;
+    let capping = false;
+    const clearHold = (): void => {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = undefined;
+      }
+    };
+    // Cap fired: warn the agent IN-TURN (mirrors injectRotationNudge), stop the loop from cancelling closes
+    // (`capping`), and arm an UNCONDITIONAL backstop close that a late progress frame can never undo.
+    const onCap = (): void => {
+      if (!input || turnEnded || capping) return;
+      capping = true;
+      onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background task exceeded ${HOLD_CAP_MS}ms` });
+      cancelEnd();
+      input.push(steerUserMessage(BG_TASK_CAP_NOTICE, 'now'));
+      capKillTimer = setTimeout(() => {
+        if (!turnEnded) input.end();
+      }, CAP_ACK_GRACE_MS);
+    };
+    const armHoldTimer = (): void => {
+      clearHold();
+      holdTimer = setTimeout(onCap, HOLD_CAP_MS);
+    };
+    const resetHoldTimer = (): void => {
+      if (liveBgTasks.size > 0) armHoldTimer();
+      else clearHold();
+    };
     const steerIter = streaming ? steerInput![Symbol.asyncIterator]() : undefined;
     // A priority:'now' steer pushed BEFORE the model commits its first assistant message makes the SDK
     // abort the whole turn (result_type=user, terminal_reason=aborted_streaming, subtype=error_during_
@@ -631,6 +749,11 @@ export class EngineCore {
     // the post-result close. `firedNudgeLevel` is the highest delta-band injected (-1 before soft; 0 = soft).
     let firedNudgeLevel = -1;
     let injectRotationNudge = (_text: string): void => {}; // real impl set below when streaming
+    // ENGINE-LOCAL atlas-svc nudge throttle (see the PostToolUse hook below): the context-token occupancy at
+    // which we last nudged Atlas to wrap a long-running command in `atlas-svc`. null = never nudged (first
+    // matching command always fires); then at most once per `svcNudgeDeltaTokens` of context growth. Per-turn
+    // scope like `firedNudgeLevel` — a relapse in a fresh turn re-arms the first-hit fire.
+    let lastSvcNudgeTokens: number | null = null;
     if (input) {
       input.push(steerUserMessage(task));
       // Drain operator steers into the live turn until the turn ends. Each steer carries its stimulus `id`;
@@ -734,6 +857,12 @@ export class EngineCore {
       this.managedGitSkillsRoot(),
     );
 
+    // atlas-svc nudge (PostToolUse hook, added to `options` below): enabled by default for every Claude turn,
+    // env kill-switch + tunable throttle window. Reads the live `contextTokens` (declared after `options`;
+    // the hook only fires during the query loop, after it is initialized) and the per-turn `lastSvcNudgeTokens`.
+    const svcNudgeEnabled = !svcNudgeDisabled();
+    const svcNudgeDeltaTokens = resolveSvcNudgeDeltaTokens();
+
     const options: Options = {
       cwd,
       systemPrompt,
@@ -792,6 +921,41 @@ export class EngineCore {
       // Leg rotation's HARD threshold (200k) depends on there being headroom ABOVE it to author the handoff
       // (see the context-rot plan). The SDK forwards `anthropic-beta: context-1m-2025-08-07`.
       betas: ['context-1m-2025-08-07'],
+      // atlas-svc nudge: when Atlas runs a Bash command that smells long-running (dev server / `docker
+      // compose up` / watcher / bare-backgrounded), append a reminder to that command's result pointing it at
+      // the `atlas-svc` supervisor. Uses PostToolUse `additionalContext` (a free-form string yielded to the
+      // model after the tool result — verified against the shipped CLI; `updatedToolOutput` is shape-validated
+      // against Bash's output and would error). Throttled by context-token growth so back-to-back commands
+      // don't spam. Fires post-execution and only ATTACHES context — never alters the command or its output.
+      ...(svcNudgeEnabled
+        ? {
+            hooks: {
+              PostToolUse: [
+                {
+                  matcher: 'Bash',
+                  hooks: [
+                    async (input) => {
+                      const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
+                      if (inp.tool_name !== 'Bash') return {};
+                      const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
+                      if (!detectLongRunningCommand(cmd)) return {};
+                      const now = contextTokens ?? 0;
+                      // First matching command always fires; then at most once per delta of context growth.
+                      if (!svcNudgeShouldFire(lastSvcNudgeTokens, now, svcNudgeDeltaTokens)) return {};
+                      lastSvcNudgeTokens = now;
+                      return {
+                        hookSpecificOutput: {
+                          hookEventName: 'PostToolUse' as const,
+                          additionalContext: renderSvcNudge(cmd),
+                        },
+                      };
+                    },
+                  ],
+                },
+              ],
+            },
+          }
+        : {}),
       // Rich streaming (the thread brain): partial-message stream → token-level deltas, and extended
       // thinking → thinking blocks. Adaptive lets Claude decide thinking depth per turn.
       // forwardSubagentText: forward a subagent's FULL text+thinking (not just its tool calls) tagged with
@@ -825,12 +989,30 @@ export class EngineCore {
         prompt: streaming ? input!.stream : task,
         options,
       })) {
-        // Model is actively producing (or a steer is being processed) → don't close input under it.
-        if (streaming && message.type !== 'result') cancelEnd();
+        // Model is actively producing (or a steer is being processed) → don't close input under it. Once
+        // `capping` latches, a late task_progress/task_updated frame must NOT undo the forced close.
+        if (streaming && !capping && message.type !== 'result') cancelEnd();
         if (message.type === 'system' && message.subtype === 'init') {
           resolvedSession = message.session_id;
           // Surface the resume handle the instant the session exists, so a mid-turn halt is recoverable.
           if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });
+        } else if (message.type === 'system' && message.subtype === 'task_started') {
+          // An SDK run_in_background Bash task began — track it so the turn holds its input open until the
+          // task settles (its `task_notification`) instead of closing on the immediate first `result`.
+          if (message.task_id) liveBgTasks.add(message.task_id);
+          onEvent?.({
+            kind: 'bg_task',
+            taskId: message.task_id,
+            status: 'started',
+            detail: message.description,
+            taskType: message.task_type,
+          });
+        } else if (message.type === 'system' && message.subtype === 'task_notification') {
+          // The task settled (completed/failed/stopped). Drop it from the live set; a settlement +
+          // auto-continuation is imminent, so restart the hold window (or clear it if none remain).
+          if (message.task_id) liveBgTasks.delete(message.task_id);
+          onEvent?.({ kind: 'bg_task', taskId: message.task_id, status: message.status, detail: message.summary });
+          resetHoldTimer();
         } else if (richStream && message.type === 'stream_event') {
           // LIVE token-by-token deltas (partial-message stream). Authoritative full blocks still arrive
           // on the `assistant` message below — these are for live rendering only, not persistence. Carry
@@ -979,23 +1161,42 @@ export class EngineCore {
           resolvedSession = message.session_id;
           if (message.subtype === 'success') {
             result = message.result;
-            usage = extractClaudeUsage(message as Record<string, unknown>, model);
+            // A background-task hold produces ≥2 results per turn (the immediate first result + the
+            // auto-continuation after the task settles). SUM the billing tokens across results; the
+            // contextTokens/contextModel/model/modelUsage below all reflect the LATEST result (turn-end
+            // occupancy). The `result` string keeps the last result too — the final answer.
+            const u = extractClaudeUsage(message as Record<string, unknown>, model);
+            usage = usage ? addClaudeUsage(usage, u) : u;
             // Attach the per-call context occupancy (+ its model) onto the billing usage. The cumulative
-            // `inputTokens` stays the billing number; `contextTokens` is the real window occupancy.
+            // `inputTokens` stays the billing number; `contextTokens` is the real window occupancy. Runs for
+            // EVERY result so the FINAL result's occupancy wins.
             if (usage && contextTokens !== undefined) {
               usage.contextTokens = contextTokens;
               if (contextModel) usage.contextModel = contextModel;
             }
-            // Streaming-input mode: arm the end-of-turn close ONLY on a genuinely-completed result. A
-            // paused/interrupted success result (rate-limit / retry / budget) is not the end of the turn —
-            // cancel any pending close and keep input OPEN, because the CLI will resume and may still call
-            // host tools (closing stdin under it orphans the call → "Stream closed"). See decision d1.
-            // Single-message mode ends naturally when the generator closes.
+            // Streaming-input mode: decide whether this success result ends the turn.
             if (streaming) {
-              if (isTurnGenuinelyDone(message as { terminal_reason?: string; stop_reason?: string | null })) {
+              if (capping) {
+                // The agent acked the cap notice with this result → close NOW, directly (skip the backstop).
+                if (capKillTimer) {
+                  clearTimeout(capKillTimer);
+                  capKillTimer = undefined;
+                }
+                input!.end();
+              } else if (
+                !isTurnGenuinelyDone(message as { terminal_reason?: string; stop_reason?: string | null })
+              ) {
+                // A paused/interrupted success result (rate-limit / retry / budget) is NOT the end of the
+                // turn — keep input OPEN so the CLI can resume and may still call host tools (closing stdin
+                // under an in-flight call orphans it → "Stream closed"). See #65.
+                cancelEnd();
+              } else if (liveBgTasks.size === 0) {
+                // Genuinely done and no background task in flight — close after the short steer grace.
                 scheduleEnd();
               } else {
-                cancelEnd();
+                // Genuinely done, but a background task is still in flight — hold input open, bounded by
+                // HOLD_CAP_MS (armHoldTimer → onCap).
+                armHoldTimer();
               }
             }
           } else {
@@ -1034,6 +1235,11 @@ export class EngineCore {
       // Stop feeding/consuming input so the detached steer consumer + entrypoint generator unwind.
       turnEnded = true;
       cancelEnd();
+      clearHold();
+      if (capKillTimer) {
+        clearTimeout(capKillTimer);
+        capKillTimer = undefined;
+      }
       input?.end();
       void steerIter?.return?.(undefined);
     }
@@ -1377,6 +1583,61 @@ export function makeCanUseTool(
     }
     return { behavior: 'allow', updatedInput: input };
   };
+}
+
+/**
+ * Fold one result's {@link EngineUsage} into a running accumulator. A background-task hold yields ≥2
+ * results per turn (the immediate first result + the post-settlement auto-continuation), so the BILLING
+ * token fields are SUMMED across results, including the per-model breakdown. Occupancy-and-label fields
+ * (`contextTokens`/`contextModel`/`model`) reflect the LATEST result (the turn-end window), so `next`
+ * overwrites when it carries them. `next` undefined (a result with no usage) leaves `acc` unchanged.
+ */
+export function addClaudeUsage(acc: EngineUsage, next: EngineUsage | undefined): EngineUsage {
+  if (!next) return acc;
+  const inputTokens = (acc.inputTokens ?? 0) + (next.inputTokens ?? 0);
+  const outputTokens = (acc.outputTokens ?? 0) + (next.outputTokens ?? 0);
+  const cacheReadTokens = (acc.cacheReadTokens ?? 0) + (next.cacheReadTokens ?? 0);
+  const cacheWriteTokens = (acc.cacheWriteTokens ?? 0) + (next.cacheWriteTokens ?? 0);
+  const reasoningTokens = (acc.reasoningTokens ?? 0) + (next.reasoningTokens ?? 0);
+  const bothCostAbsent = acc.costUsd === undefined && next.costUsd === undefined;
+  const costUsd = bothCostAbsent ? undefined : (acc.costUsd ?? 0) + (next.costUsd ?? 0);
+  const modelUsage = addClaudeModelUsage(acc.modelUsage, next.modelUsage);
+  return {
+    ...acc,
+    inputTokens,
+    outputTokens,
+    ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
+    ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    // Occupancy + labels track the LATEST result.
+    ...(next.model ? { model: next.model } : {}),
+    ...(next.contextTokens !== undefined ? { contextTokens: next.contextTokens } : {}),
+    ...(next.contextModel ? { contextModel: next.contextModel } : {}),
+    ...(modelUsage ? { modelUsage } : {}),
+  };
+}
+
+function addClaudeModelUsage(
+  acc: Record<string, ModelUsageBreakdown> | undefined,
+  next: Record<string, ModelUsageBreakdown> | undefined,
+): Record<string, ModelUsageBreakdown> | undefined {
+  if (!acc && !next) return undefined;
+  const out: Record<string, ModelUsageBreakdown> = {};
+  for (const [model, usage] of Object.entries(acc ?? {})) out[model] = { ...usage };
+  for (const [model, usage] of Object.entries(next ?? {})) {
+    const prior = out[model];
+    const webSearchRequests = (prior?.webSearchRequests ?? 0) + (usage.webSearchRequests ?? 0);
+    out[model] = {
+      inputTokens: (prior?.inputTokens ?? 0) + usage.inputTokens,
+      outputTokens: (prior?.outputTokens ?? 0) + usage.outputTokens,
+      cacheReadTokens: (prior?.cacheReadTokens ?? 0) + usage.cacheReadTokens,
+      cacheWriteTokens: (prior?.cacheWriteTokens ?? 0) + usage.cacheWriteTokens,
+      costUsd: (prior?.costUsd ?? 0) + usage.costUsd,
+      ...(webSearchRequests > 0 ? { webSearchRequests } : {}),
+    };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** Extract token usage from a Claude success result. Convention: inputTokens = total INCLUDING cache. */

@@ -54,6 +54,7 @@ function makeController(threadOrgId: string) {
     {} as never, // conventions (ConventionProfileResolver)
     {} as never, // skillStore (WorkspaceSkillStore)
     {} as never, // skillFiles (SkillFileWriter)
+    {} as never, // skillInstaller (SkillInstallerService)
   );
   return { controller, threads, threadLifecycle };
 }

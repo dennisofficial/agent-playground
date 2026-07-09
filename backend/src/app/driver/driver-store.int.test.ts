@@ -604,4 +604,27 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       context_tokens_peak: 120_000,
     });
   });
+
+  // ── Regression: the prod `get_pipeline_state` "empty Error" incident (missing `AddJobHalt` migration) ──
+
+  // Regression tripwire for the prod `get_pipeline_state` "empty Error" incident: the handler reads the
+  // `halt` column added by the `AddJobHalt` migration (job.status split). This asserts the read model maps
+  // it AND doubles as a guard that the test DB is migrated. (The prod cause — a DB missing this column — is
+  // NOT reproduced here: dropping a column on the shared, parallel `_test` DB breaks other suites; the
+  // never-empty error-serialization that surfaces such a throw is covered by tool-bridge-host.spec.ts.)
+  it('maps the nullable `halt` column (tripwire: the test DB is migrated for the job.status split)', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'halt tripwire',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const state = (await store.getPipelineState(job.id, ORG_ID)) as { halt: unknown };
+    expect(state.halt).toBeNull();
+  });
 });

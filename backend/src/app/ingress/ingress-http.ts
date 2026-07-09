@@ -13,7 +13,7 @@ import type {
   RawNotification,
 } from '../domain';
 import type { IntakeOutcome, StimulusIntake } from '../stimulus';
-import type { GithubPrStateSync } from '../driver';
+import type { GithubPrStateSync, GitStateReconciler } from '../driver';
 import type { GithubNotificationSource } from './github-notification.source';
 
 /** Express request shape the ingress controllers read (rawBody enabled on the Nest app). */
@@ -51,12 +51,13 @@ export function toRawNotification(req: RawBodyRequest): RawNotification {
  * verify → intake → status plumbing so every gateway controller behaves identically.
  *
  * Status mapping (a webhook caller reads these):
- *  - accepted + admitted  → 202 { status:'accepted', stimulusId, jobId }
- *  - accepted + deduped   → 202 { status:'deduped', reason }
- *  - ignored              → 202 { status:'ignored', reason }   (verified but no action — a success)
+ *  - accepted + admitted   → 202 { status:'accepted', stimulusId, jobId }
+ *  - admitted:false no-owner → 202 { status:'ignored', reason:'no-owner' }  (route-only: nothing owns it)
+ *  - admitted:false dup/rate → 202 { status:'deduped', reason }
+ *  - ignored               → 202 { status:'ignored', reason }   (verified but no action — a success)
  *  - rejected:bad-signature / unverifiable → 401
- *  - rejected:unroutable  → 404
- *  - rejected:malformed   → 400
+ *  - rejected:unroutable   → 404
+ *  - rejected:malformed    → 400
  *
  * A `pr-sync` outcome can never reach this path — `adapter.handle()` no longer emits one (see
  * `runPrWebhook`, the silent PR-state front door's counterpart).
@@ -84,7 +85,10 @@ export async function runIngress(
 
   const outcome: IntakeOutcome = await intake.intakeEvent(result.event);
   if (!outcome.admitted) {
-    return { status: 'deduped', reason: outcome.reason, detail: outcome.detail };
+    // 'no-owner' = a verified event nothing owns → a deliberate no-op (route-only, d6), reported as a
+    // success like 'ignored'. 'duplicate'/'rate-limited' = collapsed by the firehose filter → 'deduped'.
+    const status = outcome.reason === 'no-owner' ? 'ignored' : 'deduped';
+    return { status, reason: outcome.reason, detail: outcome.detail };
   }
   return {
     status: 'accepted',
@@ -94,15 +98,18 @@ export async function runIngress(
 }
 
 /**
- * Run the GitHub adapter's PR-state front door (`/webhooks/github`): verify + route, parse a
- * `pull_request` event into a `PrStateDelta`, and dispatch it straight to the silent
- * `GithubPrStateSync` — this path never touches `StimulusIntake`.
+ * Run the GitHub adapter's PR-state front door (`/webhooks/github/state`): verify + route, then dispatch
+ * by outcome — a `pull_request` event's `PrStateDelta` goes straight to the silent `GithubPrStateSync`,
+ * and a `repo-push` (a push to the repo's default branch) marks the repo's open PRs due-now via
+ * `GitStateReconciler.markRepoDue` so the fast heartbeat catches a base-move conflict in seconds. This
+ * path never touches `StimulusIntake`.
  */
 export async function runPrWebhook(
   logger: Logger,
   adapter: GithubNotificationSource,
   req: RawBodyRequest,
   prSync: GithubPrStateSync,
+  reconciler: GitStateReconciler,
 ): Promise<Record<string, unknown>> {
   const result: IngressResult = await adapter.handlePrWebhook(toRawNotification(req));
 
@@ -117,6 +124,10 @@ export async function runPrWebhook(
   if (result.outcome === 'pr-sync') {
     await prSync.dispatch(result.delta);
     return { status: 'accepted' };
+  }
+  if (result.outcome === 'repo-push') {
+    const marked = await reconciler.markRepoDue(result.orgId, result.repoId);
+    return { status: 'accepted', marked };
   }
 
   return { status: 'ignored', reason: 'unsupported' };

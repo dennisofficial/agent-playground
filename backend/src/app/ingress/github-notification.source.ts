@@ -43,10 +43,10 @@ export class GithubNotificationSource implements NotificationSource {
   ) {}
 
   /**
-   * `/ingress/github` front door — work-events→job intake ONLY. Verifies + routes the request, then
-   * summarizes it into a triage stimulus. `pull_request` is deliberately not actionable here
-   * (`summarizeGithubEvent` returns null for it) — that event drives the silent PR-state sync via
-   * `handlePrWebhook` instead, never this method.
+   * `/webhooks/github/events` front door — WORK-EVENTS intake ONLY. Verifies + routes the request, then
+   * summarizes it into a triage stimulus (routed to the owning job by `StimulusIntake`). `pull_request`
+   * is deliberately not actionable here (`summarizeGithubEvent` returns null for it) — that event drives
+   * the silent PR-state sync via `handlePrWebhook` instead, never this method.
    */
   async handle(raw: RawNotification): Promise<IngressResult> {
     const g = await this.verifyAndRoute(raw);
@@ -72,13 +72,16 @@ export class GithubNotificationSource implements NotificationSource {
   }
 
   /**
-   * `/webhooks/github` front door — silent PR-state sync ONLY. Verifies + routes the request same as
+   * `/webhooks/github/state` front door — silent PR-state sync ONLY. Verifies + routes the request same as
    * `handle`, but only ever parses `pull_request` events into a `PrStateDelta`; every other verified
    * event type is ignored (this endpoint never feeds `StimulusIntake`).
    */
   async handlePrWebhook(raw: RawNotification): Promise<IngressResult> {
     const g = await this.verifyAndRoute(raw);
     if ('outcome' in g) return g;
+    if (g.eventType === 'push') {
+      return this.parsePush(g.route, g.body);
+    }
     if (g.eventType !== 'pull_request') {
       return { outcome: 'ignored', reason: 'unsupported', detail: `github ${g.eventType} (not a pull_request event)` };
     }
@@ -153,12 +156,30 @@ export class GithubNotificationSource implements NotificationSource {
     };
     return { outcome: 'pr-sync', delta };
   }
+
+  /**
+   * Parse a `push` webhook: only a push to the repo's DEFAULT branch is a base-move that can silently
+   * conflict its open PRs (`ref === refs/heads/<default_branch>`). Emit `repo-push` for those (the state
+   * door then marks the repo's open PRs due-now); ignore every other push (feature-branch pushes are the
+   * PR's own head moving — GitHub recomputes + the ~45s cadence already catches those). Deletes
+   * (`ref` gone / no default_branch) are ignored.
+   */
+  private parsePush(route: { orgId: string; repoId: string }, body: GithubWebhookBody): IngressResult {
+    const ref = body.ref;
+    const defaultBranch = body.repository?.default_branch;
+    if (!ref || !defaultBranch || ref !== `refs/heads/${defaultBranch}`) {
+      return { outcome: 'ignored', reason: 'unsupported', detail: `github push to non-default ref ${ref ?? '?'}` };
+    }
+    return { outcome: 'repo-push', orgId: route.orgId, repoId: route.repoId };
+  }
 }
 
 /** The subset of a GitHub webhook body the adapter reads. */
 interface GithubWebhookBody {
   action?: string;
-  repository?: { full_name?: string };
+  /** The `push` event's fully-qualified ref, e.g. `refs/heads/main` (default-branch pushes matter). */
+  ref?: string;
+  repository?: { full_name?: string; default_branch?: string };
   workflow_run?: {
     id?: number;
     name?: string;

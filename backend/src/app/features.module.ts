@@ -35,8 +35,8 @@ import { ThreadKindModule } from './thread-kind';
  *    `Stimulus` currency here; mechanical dedup/rate-limit on events; notification-seeds-a-thread; the
  *    chat bridge (subscribes `CHAT_SURFACE.inbound$` → `ChatStimulus`). A logging no-op consumer is
  *    bound until W3 plugs in real triage;
- *  - `IngressModule` (W2) — the HTTP edge: per-gateway `NotificationSource` adapters + controllers
- *    (`POST /ingress/github`, `POST /ingress/webhook`).
+ *  - `IngressModule` (W2) — the GitHub webhook HTTP edge: `NotificationSource` adapter + controllers
+ *    (`POST /webhooks/github/events` → route to owning job, `POST /webhooks/github/state` → silent PR-state sync).
  *  - `BrainModule` (W3) — the brain: the `BRAIN_SINK` binding (chat → its session, event → a harness-message delivery), the
  *    conversational grill, the decision-record approval gate. It injects `JOB_DISPATCHER` (bound by W4).
  *  - `DriverModule` (W4) — the deterministic, resumable thread/step driver. Binds the REAL

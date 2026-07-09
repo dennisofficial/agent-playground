@@ -6,7 +6,7 @@
  * Real: HMAC signature verify (GithubNotificationSource), repo routing (ProjectRoutingService), intake
  * routing (StimulusIntake), and the owning-job SQL finders (StimulusStoreService) against atlas_test.
  * Stubbed: the brain sink (captures deliverEvent — we assert routing, not an LLM turn), the announcer,
- * and the titler. Drives the actual GithubIngressController front door with a signed raw body.
+ * and the titler. Drives the actual GithubEventsWebhookController front door with a signed raw body.
  */
 
 import { createHmac } from 'node:crypto';
@@ -44,11 +44,12 @@ import { SurfaceOrchestration } from '../stimulus/surface-orchestration.service'
 import { BRAIN_SINK } from '../stimulus/stimulus-consumer';
 import { JobTitler } from '../titling';
 import { GithubPrStateSync } from '../driver/github-pr-state-sync.service';
+import { GitStateReconciler } from '../driver/git-state-reconciler.service';
 import { GithubNotificationSource } from './github-notification.source';
 import {
-  GithubIngressController,
+  GithubEventsWebhookController,
   GithubStateWebhookController,
-} from './github-ingress.controller';
+} from './github-webhook.controller';
 import type { RawBodyRequest } from './ingress-http';
 
 const ORG_ID = '31111111-1111-4111-8111-111111111111';
@@ -105,10 +106,10 @@ function failedCheckRun(headBranch: string, runId: number) {
   };
 }
 
-describe('GithubIngressController return-path (live Postgres)', () => {
+describe('GithubEventsWebhookController return-path (live Postgres)', () => {
   let mod: TestingModule;
   let ds: DataSource;
-  let controller: GithubIngressController;
+  let controller: GithubEventsWebhookController;
   let jobs: Repository<JobEntity>;
   let messages: Repository<MessageEntity>;
   let stimuli: Repository<StimulusEntity>;
@@ -121,7 +122,7 @@ describe('GithubIngressController return-path (live Postgres)', () => {
         TypeOrmModule.forRoot(dbOpts()),
         TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
       ],
-      controllers: [GithubIngressController],
+      controllers: [GithubEventsWebhookController],
       providers: [
         ProjectRoutingService,
         StimulusStoreService,
@@ -155,7 +156,7 @@ describe('GithubIngressController return-path (live Postgres)', () => {
       ],
     }).compile();
 
-    controller = mod.get(GithubIngressController);
+    controller = mod.get(GithubEventsWebhookController);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     messages = mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION));
@@ -219,7 +220,7 @@ describe('GithubIngressController return-path (live Postgres)', () => {
     expect(delivered[0].jobId).toBe(owner.id);
   });
 
-  it('seeds a NEW event thread when nothing owns the branch (external CI)', async () => {
+  it('DROPS (no-owner) when nothing owns the branch — never seeds a job (route-only, d6)', async () => {
     const res = await controller.receive(
       signedReq(
         failedCheckRun('someone-elses-branch', 202),
@@ -228,13 +229,10 @@ describe('GithubIngressController return-path (live Postgres)', () => {
       ),
     );
 
-    expect(res).toMatchObject({ status: 'accepted' });
-    // A brand-new event-origin job was seeded (nothing pre-existed).
-    const seeded = await jobs.findOne({ where: { origin: 'event' } });
-    expect(seeded).toBeTruthy();
-    expect((res as { jobId: string }).jobId).toBe(seeded!.id);
-    expect(delivered).toHaveLength(1);
-    expect(delivered[0].jobId).toBe(seeded!.id);
+    // Route-only: a verified event nothing owns is a deliberate no-op — NOT a new job.
+    expect(res).toMatchObject({ status: 'ignored', reason: 'no-owner' });
+    expect(await jobs.count()).toBe(0); // nothing seeded
+    expect(delivered).toHaveLength(0); // nothing delivered to any brain
   });
 
   it('rejects a bad signature (401) before any routing', async () => {
@@ -273,7 +271,10 @@ describe('GithubStateWebhookController PR-state path', () => {
     const prSync = {
       dispatch: vi.fn(async () => undefined),
     } as unknown as GithubPrStateSync;
-    const controller = new GithubStateWebhookController(adapter, prSync);
+    const reconciler = {
+      markRepoDue: vi.fn(async () => 0),
+    } as unknown as GitStateReconciler;
+    const controller = new GithubStateWebhookController(adapter, prSync, reconciler);
 
     const res = await controller.receive({ body: {}, headers: {} });
 
@@ -287,5 +288,24 @@ describe('GithubStateWebhookController PR-state path', () => {
       url: 'https://github.com/acme/web/pull/7',
       merged: true,
     });
+    expect(reconciler.markRepoDue).not.toHaveBeenCalled();
+  });
+
+  it('dispatches a default-branch push (repo-push) to GitStateReconciler.markRepoDue, never prSync', async () => {
+    const adapter = {
+      source: 'github',
+      handlePrWebhook: async () => ({ outcome: 'repo-push' as const, orgId: ORG_ID, repoId: 'repo-1' }),
+    } as unknown as GithubNotificationSource;
+    const prSync = { dispatch: vi.fn(async () => undefined) } as unknown as GithubPrStateSync;
+    const reconciler = {
+      markRepoDue: vi.fn(async () => 2),
+    } as unknown as GitStateReconciler;
+    const controller = new GithubStateWebhookController(adapter, prSync, reconciler);
+
+    const res = await controller.receive({ body: {}, headers: {} });
+
+    expect(res).toEqual({ status: 'accepted', marked: 2 });
+    expect(reconciler.markRepoDue).toHaveBeenCalledWith(ORG_ID, 'repo-1');
+    expect(prSync.dispatch).not.toHaveBeenCalled();
   });
 });

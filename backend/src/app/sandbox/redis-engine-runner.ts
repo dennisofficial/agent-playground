@@ -13,7 +13,7 @@ import {
 } from '../engine';
 import { dispatchToolRequest } from '../engine/tool-bridge-host';
 import { SPEC_VERBATIM_KEYS, pickKeys } from '../engine/engine.types';
-import type { ToolBridgeOptions, ToolRequestFrame, TurnSpec } from '../engine/engine.types';
+import type { HostFrame, ToolBridgeOptions, ToolRequestFrame, TurnSpec } from '../engine/engine.types';
 import { gitAuthEnv } from '../git';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
@@ -40,6 +40,10 @@ type EventFrame =
 
 /** How long the host waits with NO new event/heartbeat before checking container liveness (safety net). */
 export const TAIL_IDLE_TIMEOUT_MS = 120_000;
+
+/** How often the host pings a tool call's liveness while its handler is awaited. The in-container
+ *  reader treats a GAP of several of these (see TOOL_HEARTBEAT_GAP_MS) as a host-side hang. */
+const TOOL_HEARTBEAT_INTERVAL_MS = Number(process.env['TOOL_HEARTBEAT_INTERVAL_MS']) || 10_000;
 
 /** Absolute ceiling on extended patience for a container that's still `running` past the idle timeout —
  *  covers a real (if unusual) live-verification turn that starves the heartbeat under heavy CPU/IO, without
@@ -298,6 +302,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
     done: { value: boolean },
   ): Promise<void> {
     const consumer = `host-${turnId.slice(0, 8)}`;
+    // Route bridged-tool throws to the real Logger so the true cause (message + stack) lands in the
+    // host logs — the sandbox only ever sees a bounded `.message`, so without this an empty/opaque
+    // handler error is invisible except as a bare `Error:` in the operator UI.
+    bridge.onToolError ??= (line: string) => this.logger.error(`turn ${turnId}: ${line}`);
     let claimedPending = false;
     while (!done.value) {
       try {
@@ -311,8 +319,27 @@ export class RedisEngineRunner implements EngineRunnerPort {
           const req = entry.data as ToolRequestFrame;
           // Idempotency: a redelivered request (crash after execute, before ack) re-posts the cached
           // reply instead of re-running the (often side-effecting) tool.
+          // `getToolReply` returns the reply as a plain decoded-JSON record (its storage shape), not the
+          // narrower `HostFrame` union — cast here as the dispatch path below already does for the write.
           const cached = await this.registry.getToolReply(turnId, req.id).catch(() => null);
-          const reply = cached ?? (await dispatchToolRequest(bridge, req));
+          let reply: HostFrame | null = cached as HostFrame | null;
+          if (!reply) {
+            // Emit an IMMEDIATE heartbeat on pickup (before starting the interval) so the in-container
+            // reader's idle timer is refreshed the moment the host begins the call, then keep beating on
+            // an interval while the (possibly long-running) handler is awaited.
+            const beat = () =>
+              void this.redis
+                .xadd(keys.replies, { t: 'tool_progress', id: req.id, ts: Date.now() })
+                .catch(() => undefined);
+            beat();
+            const hb = setInterval(beat, TOOL_HEARTBEAT_INTERVAL_MS);
+            if (typeof hb.unref === 'function') hb.unref();
+            try {
+              reply = await dispatchToolRequest(bridge, req);
+            } finally {
+              clearInterval(hb);
+            }
+          }
           if (!cached) {
             // Record the reply BEFORE acking so the dedup row exists if we die before the ack lands.
             await this.registry

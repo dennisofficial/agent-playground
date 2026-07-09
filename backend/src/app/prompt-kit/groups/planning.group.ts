@@ -1,7 +1,7 @@
 /**
  * prompt-kit / groups / planning — the two build paths and everything under them (normal brain only):
- * FULL PATH (review_plan/propose_plan), plan depth, plan.md structure, diagrams, the review loop, FAST PATH
- * (start_direct_build), and promote_decisions.
+ * FULL PATH (review_plan/propose_plan), plan depth, plan.md structure, diagrams, the review loop, and FAST
+ * PATH (start_direct_build).
  *
  * TOPIC bucket: planning & the build paths.
  */
@@ -155,6 +155,10 @@ export class PlanningGroup {
       'anchors, concrete code/signatures for the hard edits, runnable verification — with ZERO further questions',
       'to you? is it grounded in files you actually opened (not guessed)? is the `goal` a single clear line? Do',
       'NOT add an "investigate the codebase" thread — threads are real build work.',
+      'PROPOSING KEEPS YOU IN CONTROL: sending the card does not freeze the plan. If you resume revising or pivot',
+      'while it is still pending, call `withdraw_plan` to clear the pending approval (or just call `propose_plan`',
+      'again — it cleanly supersedes the old one). Never leave a stale, no-longer-current plan sitting there',
+      'approvable while you keep working.',
     ].join('\n');
   }
 
@@ -173,30 +177,10 @@ export class PlanningGroup {
       '`/workspace`, then VERIFY AND LIVE-VALIDATE — clear the typecheck/build/test floor AND, if the change has',
       'any runtime surface, actually RUN it and exercise it as a caller would (start services with `atlas-svc`,',
       '`curl` the endpoint, drive the UI) to confirm the OBSERVED behavior before you claim done; a green build is',
-      'not enough. Then — if this change settled any DURABLE cross-cutting decision — call `promote_decisions`',
-      '(see below) BEFORE `finalize_build` so the ledger lands in the same commit. Then call `finalize_build` to',
-      'commit, review, and open the PR.',
-    ].join('\n');
-  }
-
-  /** normal block 25 — promote_decisions. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1250, condition: isBuildBrain })
-  promoteDecisions(): string {
-    return [
-      'PROMOTE_DECISIONS — write durable decisions into `/workspace/.atlas/decisions/`. Call it AT SHIP (direct',
-      'path: right before `finalize_build`; full path: I will ask you to in a dedicated turn after the build).',
-      'Args: { decisions: [{ slug, title, context, decision, consequences?, alternatives?, tags?,',
-      '  confirmedByOperator?, sourceDecision?, supersedes?: string[], governsPaths?: string[] }] }.',
-      '  • THE BAR — promote ONLY a decision that OUTLIVES this feature: it establishes/changes a reusable',
-      '    primitive or shared mechanism, is a data-model / source-of-truth call, is a one-way door, or sets a',
-      '    scope boundary another effort depends on. Do NOT promote feature shape, this-build scope, or pure',
-      '    implementation mechanics — those stay in the per-feature decision record. Most threads promote 0–3.',
-      "  • DISTILL, don't copy: the ledger entry is the durable INVARIANT in your own words (Context/Decision/",
-      '    Consequences/Alternatives), not a paste of the decision-record entry. `slug` = a stable kebab topic',
-      '    id (the filename). `sourceDecision` = the `dN` id it distills. `confirmedByOperator` = true only if',
-      '    the operator actually chose it. `governsPaths` = globs the decision constrains. To replace an',
-      '    existing ledger entry, list its slug in `supersedes`. Calling with an empty list is fine (nothing',
-      '    durable to record). Idempotent — re-promoting the same slug overwrites.',
+      'not enough. Then call `finalize_build` to commit, review, and open the PR.',
+      'Same control here as the full path: proposing does not freeze anything. If you keep revising the change',
+      'before it is approved, call `withdraw_plan` to clear the pending card (or just call `start_direct_build`',
+      'again to cleanly supersede it) — never leave a stale approvable card up while you keep working.',
     ].join('\n');
   }
 }

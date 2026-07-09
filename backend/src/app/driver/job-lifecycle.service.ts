@@ -118,7 +118,7 @@ export class JobLifecycleService {
     private readonly provisioner: WorktreeProvisioner,
     private readonly tickets: TicketService,
     private readonly turnRegistry: TurnRegistry,
-    // Lazily resolves the brain-module decision-ledger manifest for merge-time reconcile (avoids cycle).
+    // Lazily resolves brain-module services (e.g. the onboarding + wake handlers) to avoid a load cycle.
     private readonly moduleRef: ModuleRef,
     private readonly skillUpdater: SkillUpdaterService,
   ) {}
@@ -545,10 +545,10 @@ export class JobLifecycleService {
 
   /**
    * Apply an authoritative GitHub PR state to a job: terminal `pr_state` write (authoritative sidebar
-   * glyph) FIRST, then ledger reconcile on merge, then sandbox teardown. Ordering is load-bearing:
-   * `reconcileLedgerOnMerge` reads the base checkout (not the worktree) so it must run pre-teardown;
-   * `closeJob` is last. Idempotent — an `open` state is a no-op; `gone` (PR/repo deleted) folds to `closed`.
-   * Shared by the `pull_request` webhook (fast path) and `pollPrClosures` (30-min backstop) so they can't drift.
+   * glyph) FIRST, then sandbox teardown. Ordering is load-bearing — the write is the authoritative
+   * observer so purple/red are immediate; `closeJob` is last. Idempotent — an `open` state is a no-op;
+   * `gone` (PR/repo deleted) folds to `closed`. Shared by the `pull_request` webhook (fast path) and
+   * `pollPrClosures` (30-min backstop) so they can't drift.
    */
   async applyGithubPrState(
     job: JobEntity,
@@ -557,7 +557,6 @@ export class JobLifecycleService {
     if (state === 'open') return 'noop';
     const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
     await this.jobs.update({ id: job.id }, { pr_state: prState });
-    if (state === 'merged') await this.reconcileLedgerOnMerge(job.org_id, job.repo_id);
     await this.closeJob(job.id, job.org_id);
     return 'closed';
   }
@@ -594,23 +593,6 @@ export class JobLifecycleService {
     }
     if (closed) this.logger.log(`pollPrClosures: closed ${closed} merged/closed thread(s)`);
     return closed;
-  }
-
-  /**
-   * Reconcile a repo's decision-ledger manifest after one of its threads' PRs merged — flips merged
-   * `proposed` decisions to `accepted` and flags any human edits. Lazily resolved (the manifest lives in
-   * the brain module; a dynamic import keeps it out of the driver's module-load cycle). Best-effort.
-   */
-  private async reconcileLedgerOnMerge(orgId: string, repoId: string): Promise<void> {
-    try {
-      const { RepoDecisionManifestService } = await import(
-        '../brain/repo-decision-manifest.service.js'
-      );
-      const manifest = this.moduleRef.get(RepoDecisionManifestService, { strict: false });
-      await manifest.reconcileFromBaseCheckout(orgId, repoId);
-    } catch (err) {
-      this.logger.debug(`ledger merge-reconcile failed for repo=${repoId} (continuing): ${err}`);
-    }
   }
 
   /**

@@ -226,6 +226,19 @@ export class JobEntity extends TimestampedEntity {
   pr_state!: string | null;
 
   /**
+   * The DURABLE adaptive-poll clock — "re-check this PR's GitHub state at/after this instant". Owned by
+   * the `GitStateReconciler`: its fast heartbeat selects only DUE jobs (`next_poll_at IS NULL OR <= now()`),
+   * reconciles each, then re-stamps this by an adaptive cadence — ~8s while GitHub is still computing
+   * `mergeable_state`, ~45s for a settled open PR, ~3min for a branch still building with no PR yet, and
+   * CLEARED (null) once the PR is merged/closed/gone (teardown owns it). Durable (not an in-memory timer)
+   * so it survives the constant prod restarts that starved the old fixed sweep, survives leader failover,
+   * AND lets a base-branch push mark every open PR on a repo due-now with one `UPDATE` (the real-time
+   * base-move-conflict unlock). Null = due immediately (a fresh row is polled on the next heartbeat).
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  next_poll_at!: Date | null;
+
+  /**
    * The MAIN brain session's own LLM-authored task list (the navigator's Main-row checklist), folded from
    * its `TaskCreate`/`TaskUpdate` calls on the `main` lane. LITERAL default — a function default loops
    * `migration:generate` (see the jsonb-default-loop memory).
@@ -262,26 +275,6 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', default: [] })
   pending_decisions!: Decision[];
-
-  /**
-   * DURABLE DECISION-LEDGER PROMOTION SPINE — the lifecycle marker for promoting this thread's durable
-   * decisions into the committed `.atlas/decisions/` ledger at ship time. SEPARATE from
-   * {@link ledger_promoted_at} on purpose: a single field can't both CLAIM the work and PROVE it
-   * finished (a crash after claim, before the ledger commit, would look done forever). Mirrors the
-   * `plan_reviews` spine (status + a completion timestamp). Values: `pending | running | complete |
-   * failed`; null = never started. Claimed atomically (null/pending/failed → `running`); the resumable
-   * driver (`finalizeBuild`) + a fail-soft boot backstop re-run anything stuck in `running`.
-   */
-  @Column({ type: 'text', nullable: true })
-  ledger_promotion_status!: string | null;
-
-  /**
-   * Stamped ONLY after the promotion turn AND the ledger commit both succeed — the proof-of-completion
-   * half of the spine (see {@link ledger_promotion_status}). Null until then; its presence is what tells
-   * recovery the ledger is already written so it must not re-run.
-   */
-  @Column({ type: 'timestamptz', nullable: true })
-  ledger_promoted_at!: Date | null;
 
   /**
    * The PHASE-PRESERVING HALT — the orthogonal failure/pause axis. `status` stays the pure build phase;

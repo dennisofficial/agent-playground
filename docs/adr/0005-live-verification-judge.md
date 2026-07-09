@@ -31,7 +31,7 @@ Add an explicit live-verification instruction: for any change that touches a run
 
 ### 2. The credential/env probe (removes the false-blocker excuse)
 
-Render a durable, discoverable listing at turn start — `/context/generated/available-secrets.md` (files-as-store, matching the decision-ledger convention already used elsewhere), populated by `WorktreeHydratorService.hydrateFiles` alongside the values it already writes: granted secret **names and paths only**, never values (values are already on disk where hydration put them; the manifest solves *discoverability*, not access). The prompt instructs: before writing `needsEnv` into a `block_thread` call, read this file — an env gap is only real if the manifest confirms it's actually ungranted. No new host tool needed; this is strictly cheaper than a `check_credentials` tool round-trip and matches the existing pattern (decision ledger, specs) of durable files over bespoke tools.
+Render a durable, discoverable listing at turn start — `/context/generated/available-secrets.md` (a files-as-store pattern), populated by `WorktreeHydratorService.hydrateFiles` alongside the values it already writes: granted secret **names and paths only**, never values (values are already on disk where hydration put them; the manifest solves *discoverability*, not access). The prompt instructs: before writing `needsEnv` into a `block_thread` call, read this file — an env gap is only real if the manifest confirms it's actually ungranted. No new host tool needed; this is strictly cheaper than a `check_credentials` tool round-trip and matches the existing pattern (specs) of durable files over bespoke tools.
 
 ### 3. The judge (enforcement — the actual Phase 2 gate)
 

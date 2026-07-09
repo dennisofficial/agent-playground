@@ -104,6 +104,21 @@ export type EngineEvent =
       contextTokens: number;
       contextModel?: string;
       contextLimit: number;
+    }
+  /**
+   * Lifecycle of an SDK `run_in_background` Bash task, surfaced to the operator. The engine holds the turn's
+   * query() session open while any such task is in flight (see the `bg_task` handling in engine-core), so the
+   * task's completion and the model's auto-continuation arrive in the SAME turn. `status:'started'` is emitted
+   * on `system/task_started`; the settlement statuses (`completed`/`failed`/`stopped`) mirror
+   * `system/task_notification`; `capped` is emitted when the hold hit BG_TASK_MAX_HOLD_MS and the turn was
+   * force-finalized (the task was still running and gets killed). Live-only — not part of the durable transcript.
+   */
+  | {
+      kind: 'bg_task';
+      taskId?: string;
+      status: 'started' | 'completed' | 'failed' | 'stopped' | 'capped';
+      detail?: string;
+      taskType?: string;
     };
 
 /**
@@ -281,8 +296,17 @@ export interface ToolErrorFrame {
   message: string;
 }
 
+/** Host liveness ping for an in-flight tool call — emitted periodically while impl() is awaited.
+ *  Carries no result; the client uses it only to reset that call's heartbeat-gap idle timer. */
+export interface ToolProgressFrame {
+  t: 'tool_progress';
+  /** Matches the originating tool_request.id. */
+  id: string;
+  ts: number;
+}
+
 /** Union of frames the host may write to the exec's stdin (one per line). */
-export type HostFrame = ToolResponseFrame | ToolErrorFrame;
+export type HostFrame = ToolResponseFrame | ToolErrorFrame | ToolProgressFrame;
 
 /** A host-side tool implementation. Receives parsed args, returns a serializable result. */
 export type ToolImpl = (args: Record<string, unknown>) => Promise<unknown>;
@@ -303,6 +327,12 @@ export interface ToolBridgeOptions {
    * on the host. The dispatch layer enforces `jobId` scoping before calling these.
    */
   tools: Record<string, ToolImpl>;
+  /**
+   * Host-side error sink: invoked with a formatted line when a bridged tool throws, so the real
+   * cause (message + stack) reaches host logs even though only the bounded `.message` rides back to
+   * the sandbox. Falls back to `console.error` when unset (standalone paths).
+   */
+  onToolError?: (line: string) => void;
 }
 
 /**
@@ -319,6 +349,22 @@ export const SANDBOX_RESET_NOTICE = [
   'see which supervised services are now `stopped`, and restart the ones you need with `atlas-svc run`.',
   'Before relying on any server, verify it is actually up (curl/health-check). Do not assume anything you',
   'started in a previous turn is still alive.',
+].join(' ');
+
+/**
+ * Injected IN-TURN as a steer message when a `run_in_background` Bash task keeps the turn held past
+ * BG_TASK_MAX_HOLD_MS. The engine ends the SDK session right after (killing the still-running task), so this
+ * reaches the agent in the exact context where it backgrounded the task — steering it to `atlas-svc` for any
+ * genuinely long-running process. In the spirit of {@link SANDBOX_RESET_NOTICE}: a one-time signal, not part
+ * of the byte-stable system prompt.
+ */
+export const BG_TASK_CAP_NOTICE = [
+  '[background task capped] A Bash task you started with run_in_background was still running when this turn',
+  'hit its maximum hold time, so it was ended and is NO LONGER RUNNING. run_in_background is only for SHORT,',
+  'finite work (a build, a migration, a test suite) that finishes on its own. Long-running processes — dev',
+  'servers, file/test watchers, headless browsers, docker compose services — belong under atlas-svc: start',
+  'them with `atlas-svc run …` (supervised, survives across turns) and check them with `atlas-svc ps`. Do',
+  'not rely on the capped task having completed; re-run its work under atlas-svc if you still need it.',
 ].join(' ');
 
 /**

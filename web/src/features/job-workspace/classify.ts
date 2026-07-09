@@ -6,6 +6,7 @@ import type {
   WebQuestionCard,
   WebReviewCommentsCard,
   WebSecretInputCard,
+  WebSkillProposalCard,
   WebTicketCard,
   WebVerdictCard,
 } from "@/lib/api/types";
@@ -32,6 +33,8 @@ export type ClassifiedMessage =
   | { kind: "file"; message: JobMessage; card: WebFileRequestCard }
   /** A stack-matched MCP-server recommendation (repo onboarding) — owner approves to register. */
   | { kind: "mcp_proposal"; message: JobMessage; card: WebMcpProposalCard }
+  /** A skill proposal (install a maintained skill / author a repo-idiom one / remove) — owner approves. */
+  | { kind: "skill_proposal"; message: JobMessage; card: WebSkillProposalCard }
   /** Atlas raised a ticket mid-job (`create_ticket`) — a callout relayed live, links to the board. */
   | { kind: "ticket"; message: JobMessage; card: WebTicketCard }
   /** A sent inline-highlight review-comment batch — rendered as a distinct card, prose (if any) underneath. */
@@ -131,6 +134,9 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
   }
   if (message.card?.type === "mcp_proposal_card") {
     return { kind: "mcp_proposal", message, card: message.card };
+  }
+  if (message.card?.type === "skill_proposal_card") {
+    return { kind: "skill_proposal", message, card: message.card };
   }
   if (message.card?.type === "ticket_card") {
     return { kind: "ticket", message, card: message.card };

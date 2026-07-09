@@ -21,7 +21,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { createReadStream, readFileSync, readdirSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
@@ -75,7 +75,7 @@ import { WorkspaceSecretFileStore } from '../onboarding';
 import { McpServerStore } from '../mcp/mcp-server.store';
 import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
 import { ConventionProfileResolver } from '../conventions';
-import { SkillFileWriter, WorkspaceSkillStore } from '../skills';
+import { SkillFileWriter, SkillInstallerService, WorkspaceSkillStore } from '../skills';
 import { McpProbeService } from '../mcp/mcp-probe.service';
 import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -87,6 +87,7 @@ import {
 } from '../persistence/entities';
 import { deriveNeedsYou } from '../domain/job';
 import type { JobKind } from '../domain/job';
+import type { McpSurface } from '../persistence/entities';
 import {
   RealtimeService,
   realtimeDisabledStream,
@@ -333,6 +334,11 @@ interface ApproveDto {
   value: string;
   note?: string;
 }
+interface ApproveResult {
+  ok: boolean;
+  jobId?: string;
+  message?: string;
+}
 interface AnswerQuestionDto {
   /** The question card's id (its message `ts`). */
   questionId: string;
@@ -556,6 +562,8 @@ export class WebSurfaceController {
     // skill dir on the host store.
     private readonly skillStore: WorkspaceSkillStore,
     private readonly skillFiles: SkillFileWriter,
+    // Vendors a maintained skill from git on an `install`-mode proposal approval (provenance:'git'). @Global.
+    private readonly skillInstaller: SkillInstallerService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -1028,8 +1036,9 @@ export class WebSurfaceController {
   async approve(
     @CurrentOrg() org: CurrentOrgCtx,
     @CurrentUser() user: UserEntity,
+    @Param('jobId') jobId: string,
     @Body() body: ApproveDto,
-  ): Promise<{ ok: boolean; jobId?: string }> {
+  ): Promise<ApproveResult> {
     const { actionId, value, note } = body;
     if (!actionId || !value) {
       throw new BadRequestException('actionId and value are required');
@@ -1042,13 +1051,50 @@ export class WebSurfaceController {
       throw new BadRequestException(
         'value is not a valid ApprovalActionMeta JSON',
       );
+    if (meta.jobId !== jobId) {
+      throw new BadRequestException(
+        'approval value does not match the route job',
+      );
+    }
     // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
-    await this.requireThread(meta.jobId, org.id);
+    const thread = await this.requireThread(meta.jobId, org.id);
+    if (actionId !== SHIP_ACTION_ID) {
+      const mismatch =
+        thread.status !== 'awaiting_approval' ||
+        !meta.decisionRecordId ||
+        thread.decision_record_id !== meta.decisionRecordId;
+      if (mismatch) {
+        const message =
+          'This plan changed or was withdrawn before the approval landed. Refresh and approve the current plan.';
+        await this.postSystemOperatorNotice(
+          thread.repo_id,
+          thread.id,
+          org.id,
+          message,
+        );
+        return { ok: false, jobId: meta.jobId, message };
+      }
+    }
     // Stamp the AUTHENTICATED operator (a real user uuid, FK-valid for `decision_records.approved_by`) as
     // the approver — never the client-sent `ruledBy` (untrusted, and a label like "U-OPERATOR" is not a
     // uuid, which previously made `store.approve` throw and the verdict silently no-op).
     this.surface.receiveApprovalClick(actionId, value, user.id, note);
     return { ok: true, jobId: meta.jobId };
+  }
+
+  private async postSystemOperatorNotice(
+    repoId: string,
+    jobId: string,
+    orgId: string,
+    text: string,
+  ): Promise<void> {
+    const meta = { source: 'system_operator' };
+    await this.surface
+      .post(repoId, text, { threadTs: jobId, orgId, meta })
+      .catch((err) => {
+        this.logger.warn(`failed to post approval notice: ${err}`);
+      });
+    await this.store.appendSystemOperatorMessage(jobId, text, meta);
   }
 
   /**
@@ -1510,18 +1556,42 @@ export class WebSurfaceController {
       return { ok: true, name: card.name };
     }
     const dbScope = card.scope === 'org' ? '*' : card.repoId;
+    // Skills are available to every lane — on-demand description-match already gates loading, so there is no
+    // per-lane surface knob on the proposal path.
+    const ALL_SURFACES: McpSurface[] = ['brain', 'build', 'review'];
     if (card.mode === 'remove') {
       await this.skillStore.delete(org.id, dbScope, card.name);
       this.skillFiles.removeSkillDir(org.id, dbScope, card.name);
+    } else if (card.mode === 'install') {
+      // Vendor the maintained skill from git (provenance:'git', auto-updating). The brain's propose is
+      // single-skill (a marketplace-root subpath is rejected at propose time), so this lands exactly one row.
+      await this.skillInstaller.install({
+        orgId: org.id,
+        scope: dbScope,
+        sourceUrl: card.sourceUrl ?? '',
+        ref: card.sourceRef,
+        subpath: card.sourceSubpath,
+        surfaces: ALL_SURFACES,
+      });
     } else {
-      // Registry row (metadata only) + the actual SKILL.md content — a brain-authored skill is always
-      // 'custom' provenance (no remote source).
+      // create — vendor the FROZEN staging copy (immutable since propose time), NOT the still-writable
+      // /context draft, then remove both. A brain-authored skill is always 'custom' provenance.
+      const srcDir = card.stagingPath;
+      if (!srcDir || !existsSync(join(srcDir, 'SKILL.md'))) {
+        throw new BadRequestException('the authored skill draft is missing — ask the brain to propose it again');
+      }
+      this.skillFiles.vendorDir(srcDir, org.id, dbScope, card.name);
       await this.skillStore.write(org.id, dbScope, card.name, {
         description: card.description,
         provenance: 'custom',
-        surfaces: card.surfaces,
+        surfaces: ALL_SURFACES,
       });
-      this.skillFiles.writeSkillMd(org.id, dbScope, card.name, card.description, card.body);
+      this.skillFiles.removeStaging(org.id, requestId);
+      // Drop the now-stale /context draft so the brain edits the durable store copy (via edit-access) instead.
+      rmSync(join(this.threadLifecycle.contextDirHost(jobId, org.id), 'skill-drafts', card.name), {
+        recursive: true,
+        force: true,
+      });
     }
     await this.store.markSkillProposalApproved(jobId, requestId);
     const notice =

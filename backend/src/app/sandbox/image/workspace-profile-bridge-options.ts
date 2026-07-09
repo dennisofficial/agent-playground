@@ -35,6 +35,7 @@ export const WORKSPACE_PROFILE_TOOL_NAMES = [
   // Skills
   'list_skills',
   'propose_skill',
+  'propose_skill_install',
   'request_skill_edit_access',
   'propose_skill_removal',
   // MCP servers
