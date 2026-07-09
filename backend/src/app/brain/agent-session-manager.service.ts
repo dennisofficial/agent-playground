@@ -224,6 +224,9 @@ export class AgentSessionManager
   private readonly pendingResetVerify = new Set<string>();
   /** Consecutive autonomous resets — incremented by the tool, cleared ONLY on an operator turn (loop guard). */
   private readonly consecutiveResets = new Map<string, number>();
+  /** Set by `finalize_build` when a direct-build ship is committed and about to open its PR inline; consumed
+   *  by the turn-end latch in `runChatTurn` (records the PR + flips done + promotes the ledger promptly). */
+  private readonly directBuildShipPending = new Map<string, boolean>();
   /** Per-job resolved git auth (repo url + org PAT) for in-sandbox push/fetch — cached; see resolveBrainGitAuth. */
   private readonly gitAuthByJob = new Map<string, { gitUrl: string; token?: string }>();
   /**
@@ -1529,10 +1532,38 @@ export class AgentSessionManager
     try {
       await this.runChatTurnInner(stimulus, opts);
     } finally {
+      await this.latchDirectBuildAtTurnEnd(stimulus);
       await this.store
         .setTurnActive(stimulus.jobId, false)
         .catch(() => undefined);
     }
+  }
+
+  /**
+   * DIRECT-BUILD TURN-END LATCH (decision d3). A `finalize_build` in this turn committed the change and
+   * handed the brain `shipOpenPrBody` — the brain then reconciled/pushed/`gh pr create`d inline, so the PR
+   * now exists. Record it + flip `running → done` PROMPTLY here, instead of waiting on the 30-min
+   * `GitStateReconciler` discovery. Runs only when the pending flag was set for this job (consumed here); a
+   * latch MISS leaves the job `running` for that same reconciler backstop.
+   *
+   * Ledger promotion is intentionally NOT done here: `finalize_build` already stamped the promotion spine
+   * complete (the brain promotes via `promote_decisions` before ship), so re-seeding it would just re-fire a
+   * redundant promote + open-PR turn against the already-open PR.
+   */
+  private async latchDirectBuildAtTurnEnd(stimulus: ChatStimulus): Promise<void> {
+    if (!this.directBuildShipPending.delete(stimulus.jobId)) return;
+    const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+    // Mirror the `finalize_build` refusal gate: only a `running` build with an owning feature branch latches.
+    if (!job || job.status !== 'running' || !job.featureBranch) return;
+    const sandbox = await this.lifecycle
+      .findSandbox(job.id, job.orgId)
+      .catch(() => null);
+    const repo = sandbox ? await this.repos.resolve(job).catch(() => null) : null;
+    if (!sandbox || !repo) return;
+    // Follow the LIVE branch (the agent may have `git checkout -b …` mid-build) — `discoverOpenPr` matches
+    // on `sandbox.branch`, so hand it the live branch, mirroring the full ship path.
+    const liveSandbox = { ...sandbox, branch: job.currentBranch ?? sandbox.branch };
+    await this.ship.latchPr(job, repo, liveSandbox).catch(() => undefined);
   }
 
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
@@ -3142,6 +3173,11 @@ export class AgentSessionManager
             ),
           );
 
+        // The brain opens the PR inline later in THIS turn; flag the job so the turn-end latch records the
+        // PR + flips running→done the moment the turn completes (decision d3), rather than waiting on the
+        // 30-min reconciler. Ledger promotion is NOT redone at turn-end — it was just stamped complete above.
+        // A latch miss leaves the job running for the reconciler backstop.
+        this.directBuildShipPending.set(jobId, true);
         return {
           ok: true,
           jobId,

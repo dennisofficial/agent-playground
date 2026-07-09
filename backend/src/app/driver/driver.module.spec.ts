@@ -7,6 +7,7 @@ import type { GitStateReconciler } from './git-state-reconciler.service';
 import type { LeaderElectionService } from '../cluster';
 import type { EnvService } from '@core/config/env/env.service';
 import type { ChatSurface } from '../surface';
+import type { OnboardingService } from '../onboarding';
 
 /**
  * The promote/demote wiring is the load-bearing pair for the leadership-fenced drive: because a fenced drive
@@ -37,8 +38,11 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     } as unknown as LeaderElectionService;
     const env = { get: vi.fn(() => undefined) } as unknown as EnvService;
     const surface = { resumeRequests$: undefined } as unknown as ChatSurface;
-    const mod = new DriverModule(driver, env, lifecycle, reconciler, election, surface);
-    return { mod, driver, lifecycle, reconciler, promote: () => promoteCb!() };
+    const onboarding = {
+      ensureWebhooksForActiveRepos: vi.fn(async () => undefined),
+    } as unknown as OnboardingService;
+    const mod = new DriverModule(driver, env, lifecycle, reconciler, election, surface, onboarding);
+    return { mod, driver, lifecycle, reconciler, onboarding, promote: () => promoteCb!() };
   }
 
   afterEach(() => {
