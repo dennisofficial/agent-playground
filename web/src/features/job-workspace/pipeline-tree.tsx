@@ -16,6 +16,7 @@ import type {
   TaskItem,
   JobStatus,
   ThreadStatus,
+  ThreadCondition,
 } from "@/lib/api/types";
 
 /**
@@ -55,7 +56,14 @@ export function Divider({
 
 /** The halt thread for a failed job: the furthest in-flight (non-done, non-pending) thread, else the
  *  last non-done one. Exported so the navigator's halt banner derives the same index. */
-export function haltThreadIdx(threads: { status: ThreadStatus }[]): number {
+export function haltThreadIdx(
+  threads: { status: ThreadStatus; condition: ThreadCondition }[],
+): number {
+  // A halted/paused/failed lane carries a non-none condition — that's the row that owns the job halt.
+  for (let i = threads.length - 1; i >= 0; i -= 1) {
+    if (threads[i].condition !== "none") return i;
+  }
+  // Fallbacks (no lane flagged a condition): the furthest in-flight, else the last non-done step.
   for (let i = threads.length - 1; i >= 0; i -= 1) {
     const st = threads[i].status;
     if (st !== "done" && st !== "pending") return i;
@@ -71,12 +79,16 @@ export function haltThreadIdx(threads: { status: ThreadStatus }[]): number {
  *  so a thread parked on `block_thread`/a question doesn't masquerade as a live turn. */
 type LaneState = "draft" | "in_progress" | "blocked" | "done" | "failed";
 
-function laneState(s: ThreadStatus, drafted: boolean): LaneState {
+function laneState(
+  s: ThreadStatus,
+  condition: ThreadCondition,
+  drafted: boolean,
+): LaneState {
   if (drafted || s === "pending") return "draft";
+  if (condition === "failed" || condition === "incomplete") return "failed"; // terminal halts (nothing shipped)
+  if (condition === "paused") return "blocked"; // halted, waiting on the operator — NOT a running turn
   if (s === "done") return "done";
-  if (s === "failed" || s === "incomplete") return "failed"; // both are terminal halts (nothing shipped)
-  if (s === "awaiting_input") return "blocked"; // halted, waiting on the operator — NOT a running turn
-  return "in_progress"; // planning / reviewing / awaiting_approval / executing / auto_fixing
+  return "in_progress"; // planning / reviewing / executing / auto_fixing
 }
 
 /** The open accordion's state-colored left rail + soft wash (handoff §State colors). */
@@ -331,7 +343,7 @@ function ThreadFold({
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const state = laneState(s.status, drafted);
+  const state = laneState(s.status, s.condition, drafted);
   const children = s.children ?? [];
   const reviewLenses = children.filter((c) => c.kind === "review_lens");
   const postReview = children.find((c) => c.kind === "post_review") ?? null;
@@ -634,13 +646,16 @@ function BlockedRing({ size = 13 }: { size?: number }) {
 /** The design's agent states — a review child's wire `ThreadStatus` folds onto these. */
 type AgentDisplay = "pending" | "in_progress" | "done" | "skipped" | "failed";
 
-/** Map a review CHILD thread's `ThreadStatus` to its navigator display state. */
-function childDisplay(status: ThreadStatus): AgentDisplay {
-  if (status === "failed") return "failed"; // the lens did NOT run (e.g. engine/auth error) — surface it
+/** Map a review CHILD thread's step + condition to its navigator display state. */
+function childDisplay(
+  status: ThreadStatus,
+  condition: ThreadCondition,
+): AgentDisplay {
+  if (condition === "failed") return "failed"; // the lens did NOT run (e.g. engine/auth error) — surface it
+  if (condition === "skipped") return "skipped"; // nothing to do (unknown lens / no diff) — terminal, not a failure
   if (status === "done") return "done"; // terminal — the lens ran clean
-  if (status === "skipped") return "skipped";
   if (status === "pending") return "pending";
-  return "in_progress"; // planning / reviewing / executing / auto_fixing / awaiting_*
+  return "in_progress"; // planning / reviewing / executing / auto_fixing
 }
 
 function ReviewAgentsBody({
@@ -667,7 +682,7 @@ function ReviewAgentsBody({
       ))}
       {postReview ? (
         <PostReviewFixesRow
-          state={postReviewState(postReview.status)}
+          state={postReviewState(postReview.status, postReview.condition)}
           selected={laneNode === postReview.id}
           onOpen={() => onSelectNode(postReview.id)}
         />
@@ -760,9 +775,12 @@ function LegRow({
   );
 }
 
-/** The post-review fix child's `ThreadStatus` → its row's display states. */
-function postReviewState(status: ThreadStatus): "queued" | "running" | "done" | "failed" {
-  if (status === "failed") return "failed"; // the fix turn errored out — don't paint it done
+/** The post-review fix child's step + condition → its row's display states. */
+function postReviewState(
+  status: ThreadStatus,
+  condition: ThreadCondition,
+): "queued" | "running" | "done" | "failed" {
+  if (condition === "failed") return "failed"; // the fix turn errored out — don't paint it done
   if (status === "pending") return "queued";
   if (
     status === "executing" ||
@@ -786,7 +804,7 @@ function AgentRow({
   selected: boolean;
   onOpen: () => void;
 }) {
-  const d = childDisplay(c.status);
+  const d = childDisplay(c.status, c.condition);
   const word =
     d === "failed"
       ? "failed"

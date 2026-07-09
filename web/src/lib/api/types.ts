@@ -25,28 +25,30 @@ export type WireJobKind =
   | "event"
   | "review";
 
-/** The lane (Thread) status — one build lane within a Job. */
+/** The lane (Thread) PURE LINEAR STEP — one build lane within a Job. Pause/failure/skip are NOT steps;
+ *  they live on the orthogonal {@link ThreadCondition} overlay. Mirrors backend `ThreadStatus`. */
 export type ThreadStatus =
   | "pending"
   | "planning"
   | "reviewing"
-  | "awaiting_approval"
   | "executing"
-  | "awaiting_input"
   | "auto_fixing"
-  | "skipped" // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
-  | "done"
-  | "incomplete"
-  | "failed";
+  | "done";
+
+/**
+ * The orthogonal condition overlay on a lane (a lightweight denormalized tag, like job-level `halt.kind`),
+ * independent of the linear {@link ThreadStatus} step. Detail (stderr, block reason, verification) stays in
+ * the backend `terminal_record`/`halt_outcome`. Mirrors backend `ThreadCondition`.
+ */
+export type ThreadCondition =
+  | "none"
+  | "paused" // a mid-build pause (request_operator_input / thread-level approval) — the step is preserved
+  | "incomplete" // halted without asserting completion (ADR 0004)
+  | "failed" // crashed / errored out
+  | "skipped"; // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
 
 /** Per-step status (the execute folder's leaves). Mirrors backend `StepStatus` in `domain/thread.ts`. */
-export type StepStatus =
-  | "pending"
-  | "building"
-  | "reviewing"
-  | "done"
-  | "failed"
-  | "skipped";
+export type StepStatus = "pending" | "building" | "reviewing" | "done";
 
 // ── Approval / verdict cards ───────────────────────────────────────────────────────────────────
 export const APPROVE_ACTION_ID = "atlas_approval:approve";
@@ -334,6 +336,8 @@ export interface PipelineReviewChild {
   kind: "review_lens" | "post_review";
   brief: string;
   status: ThreadStatus;
+  /** The orthogonal condition overlay (skipped/failed/…) — independent of the linear {@link status} step. */
+  condition: ThreadCondition;
   /** The lens id (`best_practices`/…) for a `review_lens` child; absent for `post_review`. */
   lensId?: string;
   /** Findings this lens surfaced, or null until it has run (`post_review` is always null). */
@@ -388,6 +392,8 @@ export interface PipelineThread {
   /** The thread's scope type (backend/frontend/docs/…). */
   type: string;
   status: ThreadStatus;
+  /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
+  condition: ThreadCondition;
   /** The thread KIND (`builder` | `master_review`) — the single differentiator. */
   kind?: string;
   /** True for the whole-diff Codex master-review thread (derived from `kind`) — rendered "Master review"
