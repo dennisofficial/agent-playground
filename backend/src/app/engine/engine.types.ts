@@ -5,6 +5,7 @@
  * v1 concepts are dropped (engines run vanilla). Zero v1 imports.
  */
 import type { SessionEngine, SessionMode } from '../domain';
+import type { EngineHomeKey } from './engine-home';
 
 /**
  * How an engine (SDK harness) turn authenticates — ALWAYS a subscription secret. The api_key mode was
@@ -358,17 +359,45 @@ export interface ResolvedMcpServer {
 
 /**
  * A resolved SKILL, ready to serialize onto the turn spec. `SkillResolver.resolveForTurn` produces these
- * from the `workspace_skills` rows for the turn's org/repo/surface; the in-container entrypoint renders
- * each into a `SKILL.md` on disk the Claude SDK discovers. No secrets — a skill is plain markdown, so it
- * crosses the wire verbatim (unlike `ResolvedMcpServer`, whose secret values ride in inlined).
+ * from the `workspace_skills` rows for the turn's org/repo/surface; the per-turn skills-compose step in
+ * `engine-core.ts` symlinks each `dirPath` into `<CLAUDE_CONFIG_DIR>/skills/<name>` (write-through — no
+ * copy). No secrets, no file content — a skill is a real directory living on the host/mounted store, so
+ * only its NAME and LOCATION cross the wire (unlike `ResolvedMcpServer`, whose secret values ride in
+ * inlined verbatim).
  */
 export interface ResolvedSkill {
-  /** Skill name — the on-disk skill dir under the discovered skills root. */
+  /** Skill name — the on-disk skill dir under the discovered skills root, and the symlink name under
+   *  `<CLAUDE_CONFIG_DIR>/skills/`. */
   name: string;
-  /** The SKILL.md frontmatter `description` — the trigger blurb the model reads to decide when to load it. */
+  /**
+   * `description` for display only (e.g. a future "skills" section of the Workspace Profile snapshot) —
+   * NOT re-injected into the system prompt; the SDK reads it straight from the skill's own `SKILL.md`
+   * frontmatter once symlinked in. See `WorkspaceProfileService.render()`'s dropped skills-names line.
+   */
   description: string;
-  /** The SKILL.md markdown body. */
-  body: string;
+  /**
+   * The skill's dir, relative to whichever root `managed` selects (see below) — `<name>` for an org-scoped
+   * or managed skill, `repos/<repoId>/<name>` for a repo-scoped one. See `skills/skill-store-paths.ts`
+   * `skillRelativeDir` / `skills/system-skill-store-paths.ts` `managedSkillRelativeDir` (whichever produced
+   * it).
+   */
+  dirPath: string;
+  /**
+   * True for a code-defined Atlas-managed (system-tier) STATIC skill (`SkillResolver`'s merge of a
+   * `system-skill-registry.ts` entry with no `git` source) — `dirPath` is then relative to the MANAGED
+   * skills root (`CONTAINER_SKILLS_MANAGED` in-sandbox, the repo-committed `backend/skills-managed/`).
+   * Absent/false → the ordinary org/repo (`workspace_skills`) tier, relative to `CONTAINER_SKILLS_STORE` —
+   * UNLESS {@link managedGit} is set instead. Mutually exclusive with `managedGit`.
+   */
+  managed?: boolean;
+  /**
+   * True for a code-defined Atlas-managed (system-tier) GIT-SOURCED skill (a `system-skill-registry.ts`
+   * entry WITH a `git` source, synced by `ManagedSkillSyncService`) — `dirPath` is then relative to the
+   * git-managed skills root (`CONTAINER_SKILLS_MANAGED_GIT` in-sandbox), a different global, read-only
+   * root than {@link managed}'s (repo-committed content vs. synced-from-upstream). Mutually exclusive
+   * with `managed`.
+   */
+  managedGit?: boolean;
 }
 
 export interface RunEngineArgs {
@@ -389,10 +418,11 @@ export interface RunEngineArgs {
   /** The system prompt / persona for this turn (Codex seeds it as a first-turn preamble). */
   systemPrompt: string;
   /**
-   * Stable per-feature key that namespaces the engine's isolated CLAUDE_CONFIG_DIR / CODEX_HOME, so
-   * two concurrent features never share engine state. Use the feature/sandbox key.
+   * The structured key that namespaces the engine's isolated CLAUDE_CONFIG_DIR / CODEX_HOME — see
+   * {@link EngineHomeKey} for the resulting nested `<org>/<repo>/<job>/<type>/[<subId>]` layout. Two
+   * concurrent surfaces (or two jobs) never share engine state.
    */
-  sandboxKey: string;
+  sandboxKey: EngineHomeKey;
   /** A prior engine session/thread id to resume, if any. */
   sessionId?: string;
   /**
@@ -401,7 +431,12 @@ export interface RunEngineArgs {
    * is read-only without it). Only 'execute' may write.
    */
   mode: SessionMode;
-  /** How this run authenticates. Unset → the engine falls back to its ambient env. */
+  /**
+   * How this run authenticates. Callers MAY leave this unset: `RedisEngineRunner.run` resolves the per-org
+   * subscription secret from `sandboxKey.orgId` + `engine` at the single dispatch seam (so no call site can
+   * forget it). An explicitly-supplied `auth` still wins. If the org has no secret it stays undefined and the
+   * in-sandbox `EngineCore.resolveAuth` throws — there is no ambient-env fallback.
+   */
   auth?: EngineAuth;
   /**
    * NON-SECRET gate telling the in-container Codex engine to READ its refreshed `auth.json` overlay back
@@ -429,13 +464,25 @@ export interface RunEngineArgs {
    */
   repoConventions?: { name: string; body: string } | null;
   /**
-   * This repo's skills, RESOLVED host-side (`SkillResolver.resolveForTurn` from the `workspace_skills` rows
-   * whose `surfaces` include this turn's surface). Crosses the wire VERBATIM (plain markdown, no secrets) —
-   * the in-container engine renders each into a `SKILL.md` under a local plugin dir and loads it via the SDK
-   * `plugins` option, independent of `settingSources` (which stays `[]` for isolation). Empty/omitted → no
-   * skills this turn (byte-identical to today). See `engine-core` `renderSkillsPlugin`.
+   * This turn's skills, RESOLVED host-side (`SkillResolver.resolveForTurn`) as `{name, description, dirPath,
+   * managed?}` — dirs, not bodies. Merges the code-defined SYSTEM tier (`managed: true`) with the
+   * `workspace_skills` rows whose `surfaces` include this turn's surface, base-layer-then-overrides (see
+   * `SkillResolver`'s doc). The per-turn skills-compose step in `engine-core.ts` idempotently
+   * wipes+rewrites `<CLAUDE_CONFIG_DIR>/skills/` with a write-through symlink per skill (joining `dirPath`
+   * against `CONTAINER_SKILLS_STORE`, or `CONTAINER_SKILLS_MANAGED` when `managed`), which the SDK loads
+   * NATIVELY (`settingSources: ['user']` + `skills: 'all'`) — no synthetic plugin. Empty/omitted → no
+   * skills this turn (the wipe still runs, so a prior turn's skills don't linger).
    */
   skills?: ResolvedSkill[];
+  /**
+   * Skill NAMES this SESSION has been granted live `Edit`/`Write` access to, via the brain's
+   * `request_skill_edit_access` tool + an owner approval (`AgentSessionManager`'s in-memory per-job grant
+   * set — see `skillEditGrantsByJob`). Resolved host-side at turn-build time (the grant lives on the host;
+   * the in-container `canUseTool` has no DB/host-state access of its own), so it rides the SAME verbatim
+   * channel as `skills` itself. Absent/empty → every skill stays read-only for `Edit`/`Write`/`NotebookEdit`
+   * (`makeCanUseTool`'s default-deny), which is the common case — most turns never request an edit.
+   */
+  grantedSkills?: string[];
   /** Override the model for this run. Falls back to the engine's env/default when unset. */
   model?: string;
   /**
@@ -539,7 +586,7 @@ export type SpecVerbatimKey = Exclude<keyof RunEngineArgs, HostOnlyArgKey | Tran
  *  `_SPEC_VERBATIM_KEYS_EXHAUSTIVE` check below rejects a MISSING one. Together ⇒ exact coverage. */
 export const SPEC_VERBATIM_KEYS = [
   'engine', 'task', 'systemPrompt', 'sandboxKey', 'sessionId', 'mode',
-  'userMcpServers', 'repoConventions', 'skills', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
+  'userMcpServers', 'repoConventions', 'skills', 'grantedSkills', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
 ] as const satisfies readonly SpecVerbatimKey[];
 
 // COMPILE-TIME CONTRACT: if a verbatim field is missing from SPEC_VERBATIM_KEYS this is a non-`never` tuple

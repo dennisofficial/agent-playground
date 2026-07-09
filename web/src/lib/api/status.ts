@@ -39,8 +39,7 @@ export const STATUS_META: Record<JobStatus, StatusMeta> = {
   },
   done: { label: "Done", color: "var(--green)", pulse: false },
   triaging: { label: "Triaging", color: "var(--slate)", pulse: true },
-  paused: { label: "Paused", color: "var(--faint)", pulse: false },
-  failed: { label: "Failed", color: "var(--red)", pulse: false },
+  cancelled: { label: "Cancelled", color: "var(--faint)", pulse: false },
   // Transient: the job is being torn down and will vanish from the list momentarily.
   deleting: { label: "Deleting…", color: "var(--faint)", pulse: true },
 };
@@ -59,7 +58,7 @@ export const KIND_META: Record<JobKind, KindMeta> = {
   review: { label: "REVIEW", color: "var(--dim)" },
 };
 
-/** Wire JobStatus → UI JobStatus. (`cancelled` reads as paused-terminal in the UI.) */
+/** Wire JobStatus → UI JobStatus. */
 export function toJobStatus(status: WireJobStatus): JobStatus {
   switch (status) {
     case "running":
@@ -74,11 +73,8 @@ export function toJobStatus(status: WireJobStatus): JobStatus {
       return "awaiting_ship_review";
     case "done":
       return "done";
-    case "paused":
     case "cancelled":
-      return "paused";
-    case "failed":
-      return "failed";
+      return "cancelled";
     case "deleting":
       return "deleting";
     default:

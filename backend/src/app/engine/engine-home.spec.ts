@@ -2,30 +2,60 @@ import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { atlasAgentHomeBase, atlasEngineHomeDir, safeHomeKey } from './engine-home';
+import {
+  atlasAgentHomeBase,
+  atlasEngineHomeDir,
+  engineHomeKeyString,
+  safeHomeKey,
+  type EngineHomeKey,
+} from './engine-home';
 
 const root = join(tmpdir(), `atlas-home-${process.pid}`);
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
+const brainKey: EngineHomeKey = {
+  orgId: 'acme',
+  repoId: 'atlas',
+  jobId: 'feat-x',
+  type: 'brain',
+};
+
 describe('atlasEngineHomeDir (isolated agent home, never ~/.claude)', () => {
-  it('creates <root>/<sandboxKey>/<engine> and returns the absolute path', () => {
-    const dir = atlasEngineHomeDir(root, 'claude', 'acme--atlas/feat-x');
-    expect(dir).toBe(join(root, 'acme--atlas_feat-x', 'claude'));
+  it('creates <root>/<org>/<repo>/<job>/<type>/<engine> and returns the absolute path', () => {
+    const dir = atlasEngineHomeDir(root, 'claude', brainKey);
+    expect(dir).toBe(join(root, 'acme', 'atlas', 'feat-x', 'brain', 'claude'));
     expect(existsSync(dir)).toBe(true);
     expect(dir).not.toContain('.claude'); // not the personal home
   });
 
-  it('sanitizes a key so it can never escape the base dir', () => {
-    const dir = atlasEngineHomeDir(root, 'codex', '../../etc/passwd');
+  it('sanitizes every part so a key can never escape the base dir', () => {
+    const dir = atlasEngineHomeDir(root, 'codex', {
+      orgId: '../../etc',
+      repoId: 'passwd',
+      jobId: 'job',
+      type: 'build',
+    });
     expect(dir.startsWith(join(root))).toBe(true);
     expect(dir).not.toContain('..');
   });
 
-  it('keeps two sandboxes separate', () => {
-    const a = atlasEngineHomeDir(root, 'claude', 'feat-a');
-    const b = atlasEngineHomeDir(root, 'claude', 'feat-b');
+  it('keeps two jobs separate', () => {
+    const a = atlasEngineHomeDir(root, 'claude', { ...brainKey, jobId: 'feat-a' });
+    const b = atlasEngineHomeDir(root, 'claude', { ...brainKey, jobId: 'feat-b' });
     expect(a).not.toBe(b);
+  });
+
+  it('keeps two surfaces of the SAME job separate (brain vs build vs autofix)', () => {
+    const brain = atlasEngineHomeDir(root, 'claude', { ...brainKey, type: 'brain' });
+    const build = atlasEngineHomeDir(root, 'claude', { ...brainKey, type: 'build' });
+    expect(brain).not.toBe(build);
+  });
+
+  it('keeps two subId sub-sessions of the same (org,repo,job,type) separate', () => {
+    const lensA = atlasEngineHomeDir(root, 'claude', { ...brainKey, type: 'autofix', subId: 'review-l1' });
+    const lensB = atlasEngineHomeDir(root, 'claude', { ...brainKey, type: 'autofix', subId: 'review-l2' });
+    expect(lensA).not.toBe(lensB);
   });
 
   it('atlasAgentHomeBase defaults under the repo-relative .atlas-state when no root', () => {
@@ -35,34 +65,42 @@ describe('atlasEngineHomeDir (isolated agent home, never ~/.claude)', () => {
   });
 });
 
-describe('safeHomeKey (collapse pathological multi-UUID keys to one short token)', () => {
-  const org = '6899f4d7-2a30-4def-a170-fb182d1841f7';
-  const repo = '78fd45e1-452c-4195-a9e8-a241ba0ecae5';
-  const thread = 'c394f6e2-dc54-4fcb-a3fe-5fda32d17449';
-  const brainKey = `brain-${org}-${repo}-${thread}`;
-
-  it('passes short keys through unchanged', () => {
-    expect(safeHomeKey('brain-feat-x')).toBe('brain-feat-x');
-    expect(safeHomeKey('plan-review-abc')).toBe('plan-review-abc');
+describe('engineHomeKeyString (cache-key stringification, not a filesystem path)', () => {
+  it('is stable for the same key and distinct for different jobs', () => {
+    expect(engineHomeKeyString(brainKey)).toBe(engineHomeKeyString({ ...brainKey }));
+    expect(engineHomeKeyString(brainKey)).not.toBe(engineHomeKeyString({ ...brainKey, jobId: 'feat-y' }));
   });
 
-  it('collapses a brain-<org>-<repo>-<thread> key to a short, single-component token', () => {
-    const key = safeHomeKey(brainKey);
+  it('distinguishes a subId sub-session from its parent', () => {
+    const parent = engineHomeKeyString({ ...brainKey, type: 'autofix' });
+    const child = engineHomeKeyString({ ...brainKey, type: 'autofix', subId: 'fix' });
+    expect(parent).not.toBe(child);
+  });
+});
+
+describe('safeHomeKey (sanitize + collapse ONE path segment)', () => {
+  const uuid = '6899f4d7-2a30-4def-a170-fb182d1841f7';
+
+  it('passes short segments through unchanged', () => {
+    expect(safeHomeKey('feat-x')).toBe('feat-x');
+    expect(safeHomeKey(uuid)).toBe(uuid); // a real UUID (36 chars) is untouched
+  });
+
+  it('collapses a pathological long segment to a short, single-component token', () => {
+    const long = `${uuid}-${uuid}-${uuid}`;
+    const key = safeHomeKey(long);
     expect(key.length).toBeLessThanOrEqual(40);
-    // ONE path component — no internal separators a model could split the spill path on.
-    expect(key).not.toContain('/');
-    expect(key.startsWith('brain_')).toBe(true);
+    expect(key).not.toContain('/'); // ONE path component — no separator a model could split on
   });
 
-  it('is stable for the same key and distinct for different threads', () => {
-    expect(safeHomeKey(brainKey)).toBe(safeHomeKey(brainKey));
-    const other = `brain-${org}-${repo}-00000000-0000-0000-0000-000000000000`;
-    expect(safeHomeKey(brainKey)).not.toBe(safeHomeKey(other));
+  it('is stable for the same input and distinct for different input', () => {
+    const long = `${uuid}-${uuid}-${uuid}`;
+    expect(safeHomeKey(long)).toBe(safeHomeKey(long));
+    expect(safeHomeKey(long)).not.toBe(safeHomeKey(`${long}-x`));
   });
 
-  it('produces a home dir that is a single component under the base', () => {
-    const dir = atlasEngineHomeDir(root, 'claude', brainKey);
-    const rel = dir.slice(root.length + 1); // strip "<root>/"
-    expect(rel.split('/')).toEqual([safeHomeKey(brainKey), 'claude']);
+  it('never lets a segment escape the base dir', () => {
+    expect(safeHomeKey('../../etc/passwd')).not.toContain('..');
+    expect(safeHomeKey('../../etc/passwd')).not.toContain('/');
   });
 });

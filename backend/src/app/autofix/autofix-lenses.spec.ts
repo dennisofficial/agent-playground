@@ -11,7 +11,7 @@ import type { AutoFixContext, ReviewFinding } from './autofix.types';
 
 const ctx: AutoFixContext = {
   worktreePath: '/tmp/wt',
-  sandboxKey: 'acme--feat',
+  sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'autofix' },
   diff: 'diff --git a/x.ts b/x.ts\n+const y = 1;',
   changedFiles: ['src/x.ts'],
   intent: 'add a y constant',

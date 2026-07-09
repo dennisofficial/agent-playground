@@ -17,10 +17,15 @@ import {
 } from '../autofix';
 import type { DecisionRecord, Step, Job, SessionEngine, ThreadStatus } from '../domain';
 import { HALT_FIX_ATTEMPT_CAP } from '../domain';
+import { TICKET_AUTO_SKIP_SIM, TICKET_TERMINAL_STATUSES } from '../domain/ticket';
 import {
   EngineAuthError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
+  unwrapBridgeArgs,
+  type EngineEvent,
+  type EngineHomeKey,
+  type EngineHomeType,
   type ToolBridgeOptions,
   type ToolImpl,
 } from '../engine';
@@ -44,12 +49,12 @@ import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
+import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import type { ActiveTurnEntity, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
   Agent,
-  LEDGER_COMMIT_MESSAGE,
   renderAgentPrompt,
   ROTATION_PREAMBLE,
   ROTATION_SOFT_NUDGE,
@@ -64,6 +69,11 @@ import {
   type LiveVerificationJudge,
   type LiveVerificationVerdict,
 } from './live-verification-judge';
+import {
+  NON_RUNTIME_FILE_RE,
+  renderLockedDecisionsSummary,
+  renderTerminalRecordSummary,
+} from './live-verification-support';
 import {
   DriverStoreService,
   type DriverThread,
@@ -284,6 +294,14 @@ export class ThreadDriver implements JobDispatcher {
     this.logger.log(
       `dispatch thread=${job.id} kind=${job.kind} title="${job.title}"`,
     );
+    // HALT INVARIANT: never drive a halted job. dispatch does NOT clear the halt — only an explicit operator
+    // re-engagement (retry/resumePaused) or a brain re-drive (redriveThread) may un-halt and re-drive.
+    if (job.halt != null) {
+      this.logger.warn(
+        `dispatch job=${job.id} halted (${job.halt.kind}) — not driving`,
+      );
+      return;
+    }
     // A fresh build cycle (a new plan approval) — clear any prior ship-review approval so this build's ship
     // re-gates. A re-drive AFTER ship-approval goes through `drive()` directly (not `dispatch`), preserving it.
     await this.store.clearShipApproval(job.id).catch(() => undefined);
@@ -327,21 +345,23 @@ export class ThreadDriver implements JobDispatcher {
    */
   async resumePaused(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
-    if (!job || job.status !== 'paused') {
+    if (!job || job.halt?.kind !== 'blocked_credentials') {
       this.logger.warn(
-        `resumePaused job=${jobId}: not paused (${job?.status ?? 'gone'}) — ignoring`,
+        `resumePaused job=${jobId}: not a credential halt (${job?.halt?.kind ?? 'gone'}) — ignoring`,
       );
       return;
     }
     this.logger.log(
-      `resumePaused job=${jobId} — re-driving the paused session`,
+      `resumePaused job=${jobId} — re-driving the halted session`,
     );
     // OPERATOR RE-ARM: a human resume re-grants Atlas's autonomous re-drive budget for any thread it exhausted
-    // (a `blocked` thread `haltJob` rested to `paused`). Boot `resume()` never re-arms — only explicit pings.
+    // (a `blocked` thread `haltJob` rested). Boot `resume()` never re-arms — only explicit pings.
     const rearmed = await this.store.rearmHaltedThreads(jobId).catch(() => 0);
     if (rearmed) {
       this.logger.log(`resumePaused job=${jobId} — re-armed ${rearmed} halted thread(s)`);
     }
+    // Clear the halt (only retry/resumePaused/redriveThread may un-halt) then re-drive the preserved phase.
+    await this.store.clearJobHalt(jobId);
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
@@ -367,13 +387,13 @@ export class ThreadDriver implements JobDispatcher {
       this.logger.warn(`retry job=${jobId}: thread not found — ignoring`);
       return;
     }
-    if (job.status !== 'failed' && job.status !== 'paused') {
+    if (!job.halt) {
       this.logger.warn(
-        `retry job=${jobId}: not retryable (status=${job.status}) — ignoring`,
+        `retry job=${jobId}: not retryable (not halted) — ignoring`,
       );
       return;
     }
-    this.logger.log(`retry job=${jobId} — re-driving from ${job.status}`);
+    this.logger.log(`retry job=${jobId} — re-driving a ${job.halt.kind} halt`);
     // OPERATOR RE-ARM: an explicit human retry re-grants Atlas its autonomous re-drive budget for any thread
     // it exhausted (a `blocked` thread rested by `haltJob`). Only the explicit operator paths re-arm — NOT
     // boot `resume()` — so the halt loop can't self-perpetuate.
@@ -381,6 +401,10 @@ export class ThreadDriver implements JobDispatcher {
     if (rearmed) {
       this.logger.log(`retry job=${jobId} — re-armed ${rearmed} halted thread(s)`);
     }
+    // Clear the halt (the invariant: only retry/resumePaused/redriveThread may un-halt) and re-drive. The
+    // status flip is a no-op in practice — a halt is only ever recorded mid-drive, i.e. while `running` — but
+    // it self-heals any drifted/backfilled phase so `runJob`'s `running` gate lets the re-drive through.
+    await this.store.clearJobHalt(jobId);
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
@@ -439,6 +463,9 @@ export class ThreadDriver implements JobDispatcher {
     }
     await this.store.clearTerminalRecord(threadId).catch(() => undefined);
     await this.store.clearHalt(threadId).catch(() => undefined);
+    // Clear the JOB-level phase-preserving halt too (budget-aware recovery path): the brain's authorized
+    // re-drive must lift the halt or `runJob`/`drive`'s halt gate would refuse to re-drive.
+    await this.store.clearJobHalt(jobId).catch(() => undefined);
     await this.store.setThreadStatus(threadId, 'executing').catch(() => undefined);
     if (guidance) {
       await this.store.setThreadOrientation(threadId, guidance).catch(() => undefined);
@@ -522,19 +549,31 @@ export class ThreadDriver implements JobDispatcher {
         return;
       }
       if (err instanceof EngineAuthError) {
-        // A credential/401 halt — PAUSE (don't fail): the unfinished step's session_id is persisted, so
-        // a ping (`resumePaused`) continues the SAME session once creds are fixed. Re-driving now would
-        // just 401 again, so we wait for the human.
+        // A credential/401 halt — HALT (don't fail): the phase is preserved and the unfinished step's
+        // session_id is persisted, so a ping (`resumePaused`) continues the SAME session once creds are
+        // fixed. Re-driving now would just 401 again, so we wait for the human.
         this.logger.warn(
-          `job=${jobId} paused on credential error: ${err.message}`,
+          `job=${jobId} halted on credential error: ${err.message}`,
         );
-        await this.store.setJobStatus(jobId, 'paused').catch(() => undefined);
+        await this.store
+          .setJobHalt(jobId, {
+            kind: 'blocked_credentials',
+            reason: err.message,
+            at: new Date().toISOString(),
+          })
+          .catch(() => undefined);
         await this.relayPaused(jobId, err);
       } else {
         this.logger.error(
           `job=${jobId} failed: ${err instanceof Error ? err.stack : err}`,
         );
-        await this.store.setJobStatus(jobId, 'failed').catch(() => undefined);
+        await this.store
+          .setJobHalt(jobId, {
+            kind: 'failed',
+            reason: shortReason(err),
+            at: new Date().toISOString(),
+          })
+          .catch(() => undefined);
         // RELAY the failure into the thread — a failed job must never dead-end silently (issue #2).
         await this.relayFailure(jobId, err);
       }
@@ -648,6 +687,14 @@ export class ThreadDriver implements JobDispatcher {
       );
       return;
     }
+    // HALT INVARIANT: a halted job is NEVER driven — the single chokepoint. `halt` is cleared only by an
+    // operator re-engagement (retry/resumePaused) or a brain re-drive (redriveThread), which re-enter here.
+    if (job.halt != null) {
+      this.logger.warn(
+        `job=${jobId} halted (${job.halt.kind}) — not driving`,
+      );
+      return;
+    }
     const record = await this.store.decisionRecord(job.decisionRecordId);
     const route = await this.store.route(job);
     const repo = await this.repos.resolve(job);
@@ -665,6 +712,19 @@ export class ThreadDriver implements JobDispatcher {
     // CHILDREN of their builder, never entered here. `threadsForJob` returns every row, so this gate is what
     // keeps the non-executable rows out of the section loop once they exist.
     const executable = allSections.filter((s) => isDriverExecutableKind(s.kind));
+    // DIRECT-BUILD / NON-DRIVER GUARD: a job with NO driver-executable threads (`builder`/`master_review`) is
+    // not a driver build — it's a brain-owned DIRECT build (only a render-only `main` thread), which implements
+    // and opens its OWN PR via the `finalize_build` tool. The driver must not touch it: a reconciler re-drive
+    // (boot `resume()`, `retry`, etc.) of a still-`running` direct build would otherwise fall through the empty
+    // thread loop to the SHIP GATE and wrongly PARK it at `awaiting_ship_review` (a spurious "Ship it" card) —
+    // or, past the gate, re-ship it. Every legitimately-dispatched driver build always carries >=1 builder + a
+    // master_review, so this only ever short-circuits brain-owned jobs the driver has nothing to build/ship for.
+    if (executable.length === 0) {
+      this.logger.log(
+        `job=${jobId} has no driver-executable threads (brain-owned/direct build) — driver yielding, nothing to build or ship`,
+      );
+      return;
+    }
     // Cap the BUILDER lanes at MAX_SECTIONS, but NEVER drop the master-review thread (it rides on top of the
     // builders and must always run last) — partition by kind, cap the builders, re-append the review last.
     const featureSections = executable.filter((s) => s.kind === 'builder');
@@ -717,7 +777,7 @@ export class ThreadDriver implements JobDispatcher {
         // HALT the build (ADR 0004): an unfinished thread must not ship. Relay a durable card, flip the job
         // to a needs-you state, record the owed brain wake + trail, and SKIP finalizeBuild — no PR on an
         // unfinished build. The brain wake fires from `drive()` once the job leaves the active window.
-        await this.haltJob(job, route, thread, res.outcome, sandbox);
+        await this.haltJob(job, route, thread, res.outcome);
         return;
       }
       handoff = res.handoff;
@@ -815,7 +875,6 @@ export class ThreadDriver implements JobDispatcher {
     route: JobRoute,
     thread: DriverThread,
     outcome: ThreadOutcome,
-    sandbox: FeatureSandbox,
   ): Promise<void> {
     const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
     const haltOutcome = outcome as 'blocked' | 'incomplete' | 'failed';
@@ -827,29 +886,38 @@ export class ThreadDriver implements JobDispatcher {
     // it has no budget left to fix (the pre-fix behavior — a wasted brain turn on every boot). `paused` also
     // lights the needs-you dot; `resumePaused`/`retry` re-arm the budget when the operator re-engages.
     let owedWake = true;
+    const at = new Date().toISOString();
     if (outcome === 'failed') {
-      await this.store.setJobStatus(job.id, 'failed').catch(() => undefined);
       const why = term?.failure
         ? `${term.failure.kind} failed${term.failure.command ? ` (\`${term.failure.command}\`)` : ''}${
             term.failure.stderrTail ? `:\n${term.failure.stderrTail.slice(0, 500)}` : ''
           }`
         : (term?.summary ?? 'the thread reported a failure');
+      await this.store
+        .setJobHalt(job.id, { kind: 'failed', reason: why, at })
+        .catch(() => undefined);
       text = `:x: Build failed in *${thread.brief}* — ${why}\n_The job is marked failed; reply in this thread to retry or adjust._`;
       severity = 'error';
     } else if (outcome === 'blocked') {
       const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
       if (spent >= HALT_FIX_ATTEMPT_CAP) {
         // Autonomous budget exhausted → rest the job for the operator (no more brain wakes owed).
-        await this.store.setJobStatus(job.id, 'paused').catch(() => undefined);
+        const reason = term?.blocked?.detail ?? 'needs your input';
+        await this.store
+          .setJobHalt(job.id, { kind: 'budget_exhausted', reason, at })
+          .catch(() => undefined);
         owedWake = false;
-        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
+        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${reason}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
       } else {
         // Budget remains: job stays `running`; the thread is `awaiting_input` (Phase 3 wakes the brain to fix).
         text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
       }
     } else {
       // incomplete
-      await this.store.setJobStatus(job.id, 'paused').catch(() => undefined);
+      const reason = `${thread.brief} ended without asserting completion (no complete_thread)`;
+      await this.store
+        .setJobHalt(job.id, { kind: 'incomplete', reason, at })
+        .catch(() => undefined);
       text = `:warning: Build halted — *${thread.brief}* ended without asserting completion (no \`complete_thread\`), so nothing shipped. Ping to retry, or open the thread to see what it did.`;
     }
     await this.blockSink
@@ -884,23 +952,29 @@ export class ThreadDriver implements JobDispatcher {
           ),
         );
     }
-    await this.writeCompletionMd(sandbox, thread, haltOutcome, term).catch((e) =>
+    await this.writeCompletionMd(job, thread, haltOutcome, term).catch((e) =>
       this.logger.warn(`could not write completion.md for thread=${thread.id}: ${e}`),
     );
   }
 
-  /** Render + write the durable halt trail to `<worktree>/.atlas/threads/<ordinal>-<slug>/completion.md`
-   *  (files-as-store, mirroring the decision ledger's plain `mkdir`+`writeFile`). A LIVE worktree artifact
-   *  the brain/operator read on the wake — NOT committed (the halted batch is un-committed + resumable; the
-   *  DB `terminal_record` is the durable source, this is its human-readable projection). Best-effort; never
-   *  blocks the halt. */
+  /** Render + write the durable halt trail to `<contextDirHost>/generated/threads/<ordinal>-<slug>/completion.md`
+   *  (host-written projection like the other `/context/generated` renders — `decision-record.md`,
+   *  `deviations.md` — read-only in-sandbox and surfaced in the operator UI; NOT the committed
+   *  `.atlas/decisions/` ledger, so it never lands in the git worktree). NOT committed (the halted batch is
+   *  un-committed + resumable; the DB `terminal_record` is the durable source, this is its human-readable
+   *  projection). Best-effort; never blocks the halt. */
   private async writeCompletionMd(
-    sandbox: FeatureSandbox,
+    job: Job,
     thread: DriverThread,
     outcome: 'blocked' | 'incomplete' | 'failed',
     term: ThreadTerminalRecord | null,
   ): Promise<void> {
-    const dir = join(sandbox.worktreePath, '.atlas', 'threads', threadDirName(thread));
+    const dir = join(
+      this.threadLifecycle.contextDirHost(job.id, job.orgId),
+      'generated',
+      'threads',
+      threadDirName(thread),
+    );
     await mkdir(dir, { recursive: true });
     await writeFile(
       join(dir, 'completion.md'),
@@ -1100,7 +1174,7 @@ export class ThreadDriver implements JobDispatcher {
     // The shared review context — derive the diff ONCE and share it across every lens + the fix turn.
     const baseCtx: AutoFixContext = {
       worktreePath: sandbox.worktreePath,
-      sandboxKey: sandboxKey(sandbox),
+      sandboxKey: jobHomeKey(job, 'autofix'),
       ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
       intent: `${record?.overview ?? ''}\n\nSection: ${thread.brief}`.trim(),
       label: thread.brief,
@@ -1533,6 +1607,25 @@ export class ThreadDriver implements JobDispatcher {
           const dup = existing.find((t) => t.title.trim().toLowerCase() === title.toLowerCase());
           if (dup) {
             return { ok: true, ticketId: dup.id, number: dup.number, alreadyCaptured: true };
+          }
+          // Semantic guard on top of the exact-title one: the builder has no human in the loop, so at the
+          // HIGH auto-skip bar collapse a near-identical capture into an existing OPEN ticket rather than
+          // filing a "same bug, one word off" duplicate (the #6/#7 case). Restricted to non-terminal
+          // statuses so a done/cancelled match never suppresses a fresh capture. Fail-soft (no key → skip).
+          const semantic = await this.tickets
+            .findSimilar({
+              orgId: job.orgId,
+              repoId: job.repoId,
+              title,
+              body,
+              minSim: TICKET_AUTO_SKIP_SIM,
+              limit: 1,
+              excludeStatuses: [...TICKET_TERMINAL_STATUSES],
+            })
+            .catch(() => ({ queryVector: null, matches: [] }));
+          const near = semantic.matches[0];
+          if (near) {
+            return { ok: true, ticketId: near.id, number: near.number, alreadyCaptured: true };
           }
           const ticket = await this.tickets.create({
             orgId: job.orgId,
@@ -2129,6 +2222,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id, // resumes the writer's persisted session — same conversation as its build turn
           sandbox,
@@ -2327,6 +2421,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id,
           sandbox,
@@ -2582,7 +2677,7 @@ export class ThreadDriver implements JobDispatcher {
    * exactly like a batch resume) after it claims `done`, hands it a directive to run a real diagnostics +
    * typecheck pass over what it changed and fix what it finds, and reads back a structured verdict via the
    * `report_verification` host tool — never trusting prose. Called from `runBatch` for Claude worker
-   * batches only, right before `commitAll`.
+   * batches only, right before the builder commits its batch.
    *
    * Skips (passes through) when there's no `sectionStartSha` (best-effort, mirrors `gateLiveVerification`)
    * or no changed TS/JS file (nothing to typecheck — an empty diff never reaches the gate, same cheap
@@ -2648,7 +2743,10 @@ export class ThreadDriver implements JobDispatcher {
       if (verdict?.passed) return { passed: true };
       priorErrors = verdict?.remaining?.length
         ? verdict.remaining
-        : ['the orchestrator ended the turn without calling report_verification'];
+        : [
+            'no report_verification verdict was recorded for this gate turn' +
+              ' (the orchestrator ended the turn without calling it, or its verdict could not be recovered on resume)',
+          ];
     }
     return { passed: false, detail: priorErrors.join('\n') || 'verification gate exhausted its budget' };
   }
@@ -2673,7 +2771,10 @@ export class ThreadDriver implements JobDispatcher {
         containerId: row.container_id!,
         jobId: job.id,
         stepId: anchorStepId,
-        onEvent: (e) => harness.onEvent(e),
+        onEvent: (e) => {
+          harness.onEvent(e);
+          this.recoverGateVerdictFromReplay(e, toolBridge);
+        },
         toolBridge,
       });
       await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
@@ -2685,6 +2786,29 @@ export class ThreadDriver implements JobDispatcher {
       this.logger.warn(`re-attach gate turn ${row.turn_id} failed; re-running the iteration: ${err}`);
       return null;
     }
+  }
+
+  /** Recover the gate verdict from the REPLAYED events log on a gate reattach. The gate's verdict lives only
+   *  in an in-process closure driven by the tools-bridge channel, which is consumed-once + acked — so a
+   *  `report_verification` call made before an engine-detach is NOT redelivered on reattach, and the gate
+   *  would falsely halt with "…without calling report_verification" even though the call demonstrably
+   *  happened. But the authoritative events log IS replayed from the start on reattach (to rebuild the
+   *  transcript), so the call's `tool_use` event still arrives here — drive the matching bridge handler with
+   *  it to restore the verdict. Guarded to the MAIN agent (a subagent's `tool_use` must not drive the gate).
+   *  Safe ONLY because the gate's sole bridged tool (`report_verification`) is pure — do NOT reuse this on a
+   *  batch reattach, whose tools have real side effects a genuinely-pending live redelivery must own. */
+  private recoverGateVerdictFromReplay(e: EngineEvent, toolBridge: ToolBridgeOptions): void {
+    if (e.kind !== 'tool_use' || e.parentToolUseId) return;
+    const prefix = `mcp__${BRIDGE_SERVER_NAME}__`;
+    const bareName = e.name.startsWith(prefix) ? e.name.slice(prefix.length) : e.name;
+    const impl = toolBridge.tools[bareName];
+    if (!impl) return;
+    // The replayed `tool_use` carries `block.input` verbatim — the model's raw (often MIS-NESTED) payload:
+    // the proxy tools use a generic `{ args }` schema and the model double-wraps / stringifies against it
+    // (`{ args: { args: { passed: true } } }`, `{ args: "{…}" }`). Normalise it the same way the live dispatch
+    // does (`unwrapBridgeArgs`), or the handler reads `args['passed']` off a wrapper → undefined → a false
+    // `passed:false` → the gate falsely halts even though the orchestrator reported passed.
+    void impl(unwrapBridgeArgs(e.input));
   }
 
   /** KICK a fresh gate-iteration turn — resumes the orchestrator's persisted session (via `stepId`) with the
@@ -2715,6 +2839,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       result = await this.runTurnBounded(
         {
+          orgId: job.orgId,
           jobId: job.id,
           stepId: anchor.id, // resumes the persisted engine session — same conversation as the build turn
           sandbox,
@@ -2784,26 +2909,22 @@ export class ThreadDriver implements JobDispatcher {
       record,
       repo,
       sandbox,
-      // Sweep the freshly-written ledger files into one commit (a no-op when nothing was promoted).
-      commitMessage: LEDGER_COMMIT_MESSAGE,
       notify: (m) => this.post(route, m),
     });
     // Finalize the ledger spine off what THIS call actually did, never leaving the row stuck `running`:
-    //  • promoted here AND ship at least ran the sandbox ship turn (`opened`) ⇒ COMPLETE. The ledger commit
-    //    happens unconditionally inside `ship()` BEFORE it even attempts the PR (see `BuildShipService.ship`),
-    //    and the branch push is part of that same sandbox turn — so the ledger files are on the remote branch
-    //    regardless of `prConfirmed`. `prConfirmed` only reflects a GitHub API lookup that can lag right after
-    //    `gh pr create` (or a turn interrupted before `report_pr_opened`) — gating on it here just re-fires
-    //    the promote turn on an empty ledger delta once GitHub catches up, which is the endless-loop failure
-    //    mode this spine exists to prevent.
-    //  • promoted here but ship never ran (`!opened`, e.g. missing token) ⇒ FAILED, so the claim is
-    //    re-winnable next drive (nothing was shipped at all).
-    //  • NOT promoted here ⇒ the claim was already `complete` (nothing to do), OR a crashed `running` from a
-    //    prior attempt whose promote turn may not have written the files. The boot backstop
-    //    (`reconcileLedgerPromotion`) re-promotes the now-`done`, pr_url-set row onto its open PR instead.
-    if (promoted && outcome.opened) {
+    //  • promoted here AND ship ran the sandbox ship turn (`opened`) AND the ledger is actually COMMITTED
+    //    (`ledgerClean` — nothing pending under `.atlas/decisions/`) ⇒ COMPLETE. The host no longer commits
+    //    the ledger; the brain's awaited open-PR turn commits + pushes it, so we require POSITIVE proof it
+    //    landed rather than trusting `opened` alone. `ledgerClean` after an awaited `openPrAtShip` means the
+    //    files were committed (and pushed in that same turn), independent of `prConfirmed` — which only
+    //    reflects a GitHub API lookup that can lag right after `gh pr create`.
+    //  • promoted but not clean/opened ⇒ leave for the boot backstop (`reconcileLedgerPromotion`), which
+    //    re-promotes + re-ships the now-`done`, pr_url-set row onto its open PR. Mark FAILED when ship never
+    //    ran at all (e.g. missing token) so the claim is re-winnable next drive.
+    //  • NOT promoted here ⇒ the claim was already `complete`, or a crashed `running` the backstop reconciles.
+    if (promoted && outcome.opened && (await this.git.ledgerClean(sandbox.worktreePath))) {
       await this.store.markLedgerPromoted(job.id);
-    } else if (promoted) {
+    } else if (promoted && !outcome.opened) {
       await this.store
         .setLedgerPromotionStatus(job.id, 'failed')
         .catch(() => undefined);
@@ -3146,7 +3267,7 @@ export const COMMIT_AND_PUSH_INSTRUCTION =
   ` without committing, your work is treated as unfinished.`;
 
 /**
- * Render the durable halt trail for `.atlas/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
+ * Render the durable halt trail for `/context/generated/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
  * — every section is guarded on presence and tails are already length-capped in the record. The brain reads
  * this on its wake turn (alongside the fenced record in the wake body) to triage the halt.
  */
@@ -3278,40 +3399,6 @@ export function renderGateTask(
     .join('\n');
 }
 
-/** Deterministic non-runtime file patterns — the ADR-0005 §2f pre-filter. A changed-file list that is
- *  EMPTY or matches entirely against this never reaches the live-verification judge, in any mode. */
-const NON_RUNTIME_FILE_RE =
-  /(^|\/)docs\/|\.md$|\.spec\.ts$|\.test\.ts$|(^|\/)package(-lock)?\.json$|pnpm-lock\.yaml$|yarn\.lock$|(^|\/)\.gitignore$|(^|\/)\.github\//i;
-
-/** Compact rendering of a candidate terminal record for the live-verification judge's input — untrusted,
- *  fenced by the caller. */
-function renderTerminalRecordSummary(r: ThreadTerminalRecord): string {
-  const parts = [`Summary: ${r.summary}`];
-  parts.push(
-    r.changes?.length
-      ? `Changes:\n${r.changes.map((c) => `- ${c}`).join('\n')}`
-      : 'Changes: (none reported)',
-  );
-  parts.push(
-    r.verification?.length
-      ? `Verification:\n${r.verification
-          .map((v) => `- [${v.kind}] ${v.command} (exit ${v.exitCode}): ${v.outputTail.slice(0, 300)}`)
-          .join('\n')}`
-      : 'Verification: (none reported)',
-  );
-  if (r.deviations?.length) parts.push(`Deviations:\n${r.deviations.map((d) => `- ${d}`).join('\n')}`);
-  if (r.gaps?.length) parts.push(`Gaps:\n${r.gaps.map((g) => `- ${g}`).join('\n')}`);
-  return parts.join('\n\n');
-}
-
-/** Compact rendering of the locked decisions for the live-verification judge's input — same shape as
- *  {@link renderBatchTask}'s decisions block. */
-function renderLockedDecisionsSummary(record: DecisionRecord | null): string {
-  return record?.decisions.length
-    ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
-    : '(none)';
-}
-
 /**
  * Pull a `<repo-orientation>…</repo-orientation>` cheat-sheet out of some engine output — the trimmed inner
  * text (length-capped), or null when the block is absent/empty. A future orientation pass can persist this
@@ -3326,8 +3413,10 @@ export function extractOrientation(text: string | undefined): string | null {
   return body.length > 1500 ? `${body.slice(0, 1500)}…` : body;
 }
 
-function sandboxKey(sandbox: FeatureSandbox): string {
-  return `${sandbox.repoId}--${sandbox.branch}`;
+/** A job's engine-home key for a given surface `type` — STABLE across every thread/step/lens of the job (all
+ *  its turns of that type share the job's own nested engine home), keyed by (org,repo,job), never per-branch. */
+function jobHomeKey(job: Job, type: EngineHomeType): EngineHomeKey {
+  return { orgId: job.orgId, repoId: job.repoId, jobId: job.id, type };
 }
 
 /** The ship-review gate applies only to the driver builds the operator drives to a PR — `feature` + `bugfix`.

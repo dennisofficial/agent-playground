@@ -16,11 +16,15 @@ import { SPEC_VERBATIM_KEYS, pickKeys } from '../engine/engine.types';
 import type { ToolBridgeOptions, ToolRequestFrame, TurnSpec } from '../engine/engine.types';
 import { gitAuthEnv } from '../git';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import {
   CONTAINER_AGENT_HOME,
   CONTAINER_CONTEXT,
   CONTAINER_PLAYGROUND,
+  CONTAINER_SKILLS_MANAGED,
+  CONTAINER_SKILLS_MANAGED_GIT,
+  CONTAINER_SKILLS_STORE,
   CONTAINER_WORKTREE,
 } from './container-paths';
 import { SandboxActivityRegistry } from './sandbox-activity.registry';
@@ -79,12 +83,27 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // Optional so direct-instantiation unit tests (and any runner built without the onboarding module)
     // still construct — absent → the auth-refresh write-back is simply skipped.
     @Optional() @Inject(AUTH_REFRESH_SINK) private readonly authRefreshSink?: AuthRefreshSink,
+    // Optional for the same reason (direct-instantiation tests). Absent → auth resolution is skipped and a
+    // turn relies on the caller-supplied `args.auth` exactly as before. In the real (@Global onboarding) app
+    // it is always present, so this seam authoritatively resolves per-org auth for EVERY engine turn.
+    @Optional() private readonly creds?: CredentialResolver,
   ) {}
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
     const target = args.target;
     if (!target?.containerId) {
       throw new Error('RedisEngineRunner requires args.target.containerId (docker sandbox mode)');
+    }
+
+    // Resolve the per-org subscription secret HERE — the single seam EVERY engine turn flows through — so no
+    // individual call site (builder, review lens, brain, gate, autofix fix) can forget it: a claude turn is a
+    // claude turn, authenticated the same way regardless of who dispatched it. Keyed by the turn's own org
+    // (`sandboxKey.orgId`, always present) + engine; an explicit caller-supplied `args.auth` still wins. When
+    // the org has no secret this stays undefined and the in-sandbox `EngineCore.resolveAuth` throws the clear
+    // "no credential" error — same outcome as before, just no longer dependent on each caller remembering.
+    if (!args.auth && this.creds) {
+      const auth = await this.creds.engineAuth(args.sandboxKey.orgId, args.engine);
+      if (auth) args = { ...args, auth };
     }
 
     const turnId = randomUUID();
@@ -489,6 +508,16 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // Engine subscription auth is NOT injected via env — it rides the turn spec as explicit `args.auth`
     // (resolved per-org by CredentialResolver.engineAuth). There is no ambient-env fallback.
     e.AGENT_HOME_ROOT = CONTAINER_AGENT_HOME;
+    // The central skills store is bind-mounted (this org's whole subtree) at CONTAINER_SKILLS_STORE — see
+    // SandboxManager's orgSkillsDir bind. The engine joins each resolved skill's `dirPath` against this.
+    e.SKILLS_ROOT = CONTAINER_SKILLS_STORE;
+    // Atlas's own MANAGED (system-tier) skills — ONE fixed dir bind-mounted read-only at this path (see
+    // SandboxManager's managedSkillsDir bind). The engine joins a `managed: true` skill's `dirPath` here.
+    e.SKILLS_MANAGED_ROOT = CONTAINER_SKILLS_MANAGED;
+    // Atlas's GIT-SOURCED managed skills — ManagedSkillSyncService's sync target, bind-mounted read-only
+    // (see SandboxManager's managedGitSkillsDir bind). The engine joins a `managedGit: true` skill's
+    // `dirPath` here.
+    e.SKILLS_MANAGED_GIT_ROOT = CONTAINER_SKILLS_MANAGED_GIT;
     // Redis transport: the engine reads its spec from / writes events to Redis under this turn id.
     e.ENGINE_TRANSPORT = 'redis';
     e.TURN_ID = turnId;

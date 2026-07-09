@@ -7,6 +7,7 @@ export * from './driver.module';
 export * from './thread-driver.service';
 export * from './driver-store.service';
 export * from './job-lifecycle.service';
+export * from './github-pr-state-sync.service';
 export { WorktreeProvisioner } from './worktree-provisioner.service';
 export { WorktreeHydrator } from './worktree-hydrator.service';
 export { type MountSpec, type MountMode } from '../sandbox/container-paths';
@@ -33,3 +34,11 @@ export {
   type LiveVerificationJudge,
   type LiveVerificationVerdict,
 } from './live-verification-judge';
+export { LiveVerificationModule } from './live-verification.module';
+export {
+  NON_RUNTIME_FILE_RE,
+  renderLockedDecisionsSummary,
+  renderTerminalRecordSummary,
+  type TerminalRecordSummaryInput,
+  type VerificationEvidence,
+} from './live-verification-support';

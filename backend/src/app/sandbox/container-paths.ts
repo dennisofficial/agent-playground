@@ -36,6 +36,37 @@ export const CONTAINER_WORKTREE = '/workspace';
 export const CONTAINER_GIT_COMMON = `${CONTAINER_AGENT_HOME}/git-common`;
 
 /**
+ * The central skills store's mount path INSIDE the sandbox — the host bind-mounts ONE org's whole skills
+ * subtree here (`orgSkillsRootHost`, see `skills/skill-store-paths.ts`), read-write, mirroring `/refs`
+ * (read-only cross-repo reference library) but for this org's own skill dirs. `SkillResolver.resolveForTurn`
+ * puts an org-agnostic `dirPath` (relative to this root) on each `ResolvedSkill`; the per-turn skills-compose
+ * step in `engine-core.ts` joins it here to build write-through symlinks under `<CLAUDE_CONFIG_DIR>/skills/`.
+ * Read-write (not `:ro`) because a future session-scoped edit grant (Skill P3) writes THROUGH the mount to
+ * the canonical host file — enforcement is `canUseTool`-side, not a mount flag.
+ */
+export const CONTAINER_SKILLS_STORE = '/skills';
+
+/**
+ * The mount path INSIDE the sandbox for Atlas's own MANAGED (system-tier) skills — a SINGLE fixed host
+ * dir (`backend/skills-managed/`, see `skills/system-skill-store-paths.ts`'s `managedSkillsRootHost`),
+ * bind-mounted READ-ONLY. Unlike {@link CONTAINER_SKILLS_STORE} this is NOT per-org — Atlas-authored,
+ * identical for every sandbox. `SkillResolver`'s `managed: true` entries put a `dirPath` relative to this
+ * root on `ResolvedSkill`; the same per-turn skills-compose step in `engine-core.ts` joins it here.
+ */
+export const CONTAINER_SKILLS_MANAGED = '/skills-managed';
+
+/**
+ * The mount path INSIDE the sandbox for Atlas's GIT-SOURCED managed (system-tier) skills — a SINGLE fixed
+ * host dir (`_managed` under the central skills store, see `skills/skill-store-paths.ts`'s
+ * `managedGitSkillsRootHost`), kept current by `ManagedSkillSyncService` and bind-mounted READ-ONLY.
+ * Distinct from {@link CONTAINER_SKILLS_MANAGED} (that one is committed to the repo; this one is synced
+ * from upstream git remotes) but the SAME trust tier — global, org-agnostic, read-only base layer.
+ * `SkillResolver`'s git-sourced `managedGit: true` entries put a `dirPath` relative to this root on
+ * `ResolvedSkill`; the per-turn skills-compose step in `engine-core.ts` joins it here.
+ */
+export const CONTAINER_SKILLS_MANAGED_GIT = '/skills-managed-git';
+
+/**
  * The in-sandbox path of the SHARED pnpm content-addressable store — explicitly pointed here regardless
  * of which pnpm version a repo's `packageManager` field (or corepack's own resolution) ends up running,
  * via TWO mechanisms baked in the sandbox Dockerfile (verified live against both): `npm_config_store_dir`
@@ -52,7 +83,7 @@ export const CONTAINER_PNPM_STORE = `${CONTAINER_AGENT_HOME}/pnpm-store`;
 
 /**
  * Worktree-relative paths the SYSTEM already binds under {@link CONTAINER_WORKTREE} on its own, OR that
- * must never be mounted into a worktree at all. A repo's worktree config must NOT request a cache mount
+ * must never be mounted into a worktree at all. A repo's workspace config must NOT request a cache mount
  * at one of these, or (for a genuine system bind) two binds would land on the same container target and
  * Docker hard-fails container creation ("Duplicate mount point"), wedging every turn on the thread.
  * `.pnpm-store` no longer lives under `/workspace` (see {@link CONTAINER_PNPM_STORE}, now under
@@ -86,7 +117,7 @@ export interface MountSpec {
 }
 
 /**
- * Max length for a worktree-relative mount/seed path recorded in the DB-backed worktree config. This is
+ * Max length for a worktree-relative mount/seed path recorded in the DB-backed workspace config. This is
  * now the ONLY size guard on that data (there is no committed file to re-parse under a byte/entry cap),
  * so it is enforced at write-time by the brain's tool-input normalizers.
  */

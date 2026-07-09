@@ -122,6 +122,55 @@ describe('GithubNotificationSource.handle', () => {
     expect(res.event.body).toContain('failure');
   });
 
+  it('collapses one commit\'s CI fan-out (workflow_run + check_suite + check_run) onto a single ci:<sha> key', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const SHA = 'abc123def456';
+    const events: Array<[string, unknown]> = [
+      [
+        'workflow_run',
+        {
+          repository: { full_name: 'Acme/Web' },
+          workflow_run: { id: 99, name: 'CI', status: 'completed', conclusion: 'failure', head_branch: 'main', head_sha: SHA },
+        },
+      ],
+      [
+        'check_suite',
+        {
+          repository: { full_name: 'Acme/Web' },
+          check_suite: { id: 5, status: 'completed', conclusion: 'failure', head_branch: 'main', head_sha: SHA },
+        },
+      ],
+      [
+        'check_run',
+        {
+          repository: { full_name: 'Acme/Web' },
+          check_run: { id: 7, name: 'Typecheck', status: 'completed', conclusion: 'failure', head_sha: SHA, check_suite: { head_branch: 'main' } },
+        },
+      ],
+    ];
+    for (const [eventType, body] of events) {
+      const json = JSON.stringify(body);
+      const res = await src.handle(raw(body, { 'x-hub-signature-256': sign(json), 'x-github-event': eventType }));
+      expect(res.outcome).toBe('accepted');
+      if (res.outcome !== 'accepted') throw new Error('expected accepted');
+      // All three collapse to the SAME key so the intake seeds/attaches ONE job, not one per event type.
+      expect(res.event.dedupeKey).toBe(`ci:${SHA}`);
+    }
+  });
+
+  it('falls back to check_suite.id (not conclusion) when a check_suite carries no head_sha', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const body = {
+      repository: { full_name: 'Acme/Web' },
+      check_suite: { id: 42, status: 'completed', conclusion: 'failure', head_branch: 'main' },
+    };
+    const json = JSON.stringify(body);
+    const res = await src.handle(raw(body, { 'x-hub-signature-256': sign(json), 'x-github-event': 'check_suite' }));
+    expect(res.outcome).toBe('accepted');
+    if (res.outcome !== 'accepted') throw new Error('expected accepted');
+    expect(res.event.dedupeKey).toBe('check_suite:42');
+  });
+
   it('rejects an unroutable repo (no atlas_project)', async () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(null));
     const json = JSON.stringify(failedWorkflow);
@@ -210,5 +259,98 @@ describe('GithubNotificationSource.handle', () => {
     const json = JSON.stringify(payload);
     const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'issue_comment' }));
     expect(res).toMatchObject({ outcome: 'ignored' });
+  });
+
+  it('ignores a pull_request event (no longer pr-sync) — that lives on handlePrWebhook', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      action: 'opened',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: { number: 5, html_url: 'http://pr/5', merged: false, head: { ref: 'feat/x' } },
+    };
+    const json = JSON.stringify(payload);
+    const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }));
+    expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
+  });
+});
+
+describe('GithubNotificationSource.handlePrWebhook', () => {
+  const openedPr = {
+    action: 'opened',
+    repository: { full_name: 'Acme/Web' },
+    pull_request: { number: 5, html_url: 'http://pr/5', merged: false, head: { ref: 'feat/x' } },
+  };
+
+  it('rejects when no webhook secret is configured (unverifiable)', async () => {
+    const src = new GithubNotificationSource(fakeEnv({ GITHUB_WEBHOOK_SECRET: undefined }), fakeRouting(ROUTE));
+    const json = JSON.stringify(openedPr);
+    const res = await src.handlePrWebhook(
+      raw(openedPr, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }),
+    );
+    expect(res).toMatchObject({ outcome: 'rejected', reason: 'unverifiable' });
+  });
+
+  it('rejects a bad signature (bad-signature)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const res = await src.handlePrWebhook(
+      raw(openedPr, { 'x-hub-signature-256': 'sha256=deadbeef', 'x-github-event': 'pull_request' }),
+    );
+    expect(res).toMatchObject({ outcome: 'rejected', reason: 'bad-signature' });
+  });
+
+  it('rejects an unroutable repo (no atlas_project)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(null));
+    const json = JSON.stringify(openedPr);
+    const res = await src.handlePrWebhook(
+      raw(openedPr, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }),
+    );
+    expect(res).toMatchObject({ outcome: 'rejected', reason: 'unroutable' });
+  });
+
+  it('maps a verified pull_request opened → pr-sync delta', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const json = JSON.stringify(openedPr);
+    const res = await src.handlePrWebhook(
+      raw(openedPr, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }),
+    );
+    expect(res).toMatchObject({
+      outcome: 'pr-sync',
+      delta: {
+        orgId: 'T1',
+        repoId: 'web',
+        action: 'opened',
+        prNumber: 5,
+        headRef: 'feat/x',
+        url: 'http://pr/5',
+        merged: false,
+      },
+    });
+  });
+
+  it('ignores a non-pull_request event type (not a pull_request event)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const workflow = {
+      repository: { full_name: 'Acme/Web' },
+      workflow_run: { id: 99, name: 'CI', status: 'completed', conclusion: 'failure' },
+    };
+    const json = JSON.stringify(workflow);
+    const res = await src.handlePrWebhook(
+      raw(workflow, { 'x-hub-signature-256': sign(json), 'x-github-event': 'workflow_run' }),
+    );
+    expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
+  });
+
+  it('ignores an unactionable pull_request action (e.g. synchronize)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const synced = {
+      action: 'synchronize',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: { number: 5, html_url: 'http://pr/5', merged: false, head: { ref: 'feat/x' } },
+    };
+    const json = JSON.stringify(synced);
+    const res = await src.handlePrWebhook(
+      raw(synced, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }),
+    );
+    expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
   });
 });

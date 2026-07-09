@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -10,6 +10,15 @@ function envStub(reposRoot: string) {
   return {
     get: (key: string) => (key === 'REPOS_ROOT' ? reposRoot : undefined),
   } as never;
+}
+
+/** Commit the worktree via raw git (the HOST no longer has a commit primitive — Atlas owns commits — so
+ *  tests that need branch history make it directly). Returns the new HEAD sha. */
+function commit(worktree: string, msg: string): string {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@t' };
+  execFileSync('git', ['-C', worktree, 'add', '-A']);
+  execFileSync('git', ['-C', worktree, 'commit', '-m', msg], { env });
+  return execFileSync('git', ['-C', worktree, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 }
 
 /** Make a bare "origin" repo with one commit on `main` — the clone source for the tests. */
@@ -87,16 +96,13 @@ describe('LocalGitService (host git, daemon-free)', () => {
     expect(b.worktreePath).toBe(a.worktreePath);
   });
 
-  it('commits staged changes and reports the new sha; no-op when clean', async () => {
+  it('detects a dirty worktree; clean after a commit', async () => {
     const r = await repo();
     const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
-    // Clean worktree → nothing to commit.
-    expect(await svc.commitAll(sandbox.worktreePath, 'noop')).toBeNull();
-    // Add a change → commit returns a sha.
+    expect(await svc.hasChanges(sandbox.worktreePath)).toBe(false);
     writeFileSync(join(sandbox.worktreePath, 'GATE.md'), 'gate\n');
     expect(await svc.hasChanges(sandbox.worktreePath)).toBe(true);
-    const sha = await svc.commitAll(sandbox.worktreePath, 'feat: gate');
-    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+    commit(sandbox.worktreePath, 'feat: gate');
     expect(await svc.hasChanges(sandbox.worktreePath)).toBe(false);
   });
 
@@ -104,7 +110,7 @@ describe('LocalGitService (host git, daemon-free)', () => {
     const r = await repo();
     const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
     writeFileSync(join(sandbox.worktreePath, 'GATE.md'), 'gate\n');
-    await svc.commitAll(sandbox.worktreePath, 'feat: gate');
+    commit(sandbox.worktreePath, 'feat: gate');
     await svc.push(sandbox);
     // The bare origin now has the feature branch.
     const branches = execFileSync('git', ['-C', originUrl, 'branch', '--list', 'atlas/feature-x'], {
@@ -117,13 +123,55 @@ describe('LocalGitService (host git, daemon-free)', () => {
     expect(svc.reposRoot()).toContain('repos');
   });
 
+  // ── ledgerClean — positive proof the `.atlas/decisions/` ledger was committed (gates the promote stamp
+  // now the host no longer commits it). ────────────────────────────────────────────────────────────────
+  describe('ledgerClean', () => {
+    it('false while `.atlas/decisions` has pending changes; true once committed', async () => {
+      const r = await repo();
+      const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
+      mkdirSync(join(sandbox.worktreePath, '.atlas', 'decisions'), { recursive: true });
+      writeFileSync(join(sandbox.worktreePath, '.atlas', 'decisions', 'index.md'), '# decisions\n');
+      expect(await svc.ledgerClean(sandbox.worktreePath)).toBe(false);
+      commit(sandbox.worktreePath, 'record decisions');
+      expect(await svc.ledgerClean(sandbox.worktreePath)).toBe(true);
+    });
+  });
+
+  // ── worktreeSafeToRecut — the hard-reset guard: is it safe to delete + re-cut this worktree without
+  // losing committed work? Linked worktree = always (shared common dir); full clone = only if pushed. ───
+  describe('worktreeSafeToRecut', () => {
+    it('a LINKED worktree is always safe — its objects survive in the shared common dir', async () => {
+      const r = await repo();
+      const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
+      writeFileSync(join(sandbox.worktreePath, 'F.md'), 'x\n');
+      commit(sandbox.worktreePath, 'unpushed local commit'); // never pushed — still safe for a linked worktree
+      expect(await svc.worktreeSafeToRecut(sandbox.worktreePath, 'atlas/feature-x')).toBe(true);
+    });
+
+    it('a FULL CLONE with unpushed commits is UNSAFE (rm -rf would lose them)', async () => {
+      const r = await repo();
+      const base = await svc.createBaseClone(r, 'job-unsafe'); // full clone (`.git` is a dir)
+      const sb = await svc.switchBranch(base, r, 'atlas/feat-y');
+      writeFileSync(join(sb.worktreePath, 'F.md'), 'x\n');
+      commit(sb.worktreePath, 'unpushed'); // origin/atlas/feat-y does not exist → unsafe
+      expect(await svc.worktreeSafeToRecut(sb.worktreePath, 'atlas/feat-y')).toBe(false);
+    });
+
+    it('a FULL CLONE whose branch is fully pushed is safe', async () => {
+      const r = await repo();
+      const base = await svc.createBaseClone(r, 'job-safe');
+      const sb = await svc.switchBranch(base, r, 'atlas/feat-z');
+      await svc.push(sb); // origin/atlas/feat-z now exists at HEAD — nothing ahead
+      expect(await svc.worktreeSafeToRecut(sb.worktreePath, 'atlas/feat-z')).toBe(true);
+    });
+  });
+
   // Regression: a stray/concurrent external git process (e.g. the sandbox's own engine turn) can hold the
   // worktree's OS-level index.lock. The in-process mutex can't see it — `git()` must retry past it instead
   // of failing the whole build (this is the "index.lock: File exists" error surfaced to the operator).
   it('retries past a transient index.lock held by another process', async () => {
     const r = await repo();
     const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
-    writeFileSync(join(sandbox.worktreePath, 'GATE.md'), 'gate\n');
 
     const lockPath = execFileSync(
       'git',
@@ -133,8 +181,10 @@ describe('LocalGitService (host git, daemon-free)', () => {
     writeFileSync(lockPath, ''); // simulate another process mid-write
     setTimeout(() => rmSync(lockPath, { force: true }), 400); // released before retries exhaust
 
-    const sha = await svc.commitAll(sandbox.worktreePath, 'feat: gate');
-    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+    // `switchBranch` runs `git checkout -b …` through `svc.git()`, which takes the index.lock and must retry
+    // past the held lock instead of failing (the "index.lock: File exists" resilience the retry exists for).
+    const switched = await svc.switchBranch(sandbox, r, 'atlas/feature-y');
+    expect(switched.branch).toBe('atlas/feature-y');
   });
 
   // ── changedFileNames (ADR 0005 §2c) — the per-thread diff signal `complete_thread` reads BEFORE commit:
@@ -145,7 +195,7 @@ describe('LocalGitService (host git, daemon-free)', () => {
       const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
       const base = await svc.headSha(sandbox.worktreePath);
       writeFileSync(join(sandbox.worktreePath, 'README.md'), '# origin\nedited\n');
-      await svc.commitAll(sandbox.worktreePath, 'edit readme');
+      commit(sandbox.worktreePath, 'edit readme');
 
       expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual(['README.md']);
     });

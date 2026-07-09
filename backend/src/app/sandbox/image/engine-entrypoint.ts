@@ -17,6 +17,11 @@ import { randomUUID } from 'node:crypto';
 import { EngineCore } from '../../engine/engine-core';
 import type { EngineEvent, RunEngineArgs, TurnSpec } from '../../engine/engine.types';
 import { BRIDGE_SERVER_NAME, buildBridgeClaudeOptions, type BridgeClaudeOptions } from './bridge-options';
+import {
+  WORKSPACE_PROFILE_BRIDGE_NAME,
+  partitionWorkspaceProfileTools,
+  qualifyWorkspaceProfileToolNames,
+} from './workspace-profile-bridge-options';
 import { buildLspBridgeOptions } from './lsp-bridge-options';
 import { buildContext7BridgeOptions } from './context7-bridge-options';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
@@ -75,7 +80,12 @@ async function runOverRedis(turnId: string): Promise<void> {
       codexSdk,
       // Engine subscription auth arrives per-turn as the spec's explicit `args.auth` (resolved per-org on
       // the host) — never from ambient env, so no oauth tokens are threaded into the core config here.
-      { homeRoot: process.env.AGENT_HOME_ROOT },
+      {
+        homeRoot: process.env.AGENT_HOME_ROOT,
+        skillsRoot: process.env.SKILLS_ROOT,
+        managedSkillsRoot: process.env.SKILLS_MANAGED_ROOT,
+        managedGitSkillsRoot: process.env.SKILLS_MANAGED_GIT_ROOT,
+      },
       { warn: (m) => process.stderr.write(`[engine-core] ${m}\n`) },
     );
 
@@ -85,6 +95,7 @@ async function runOverRedis(turnId: string): Promise<void> {
     // its OWN reply-reader — so we must NOT also run one here for Codex (two readers would race for the
     // same `turn:{T}:replies` stream).
     let bridge: BridgeClaudeOptions | undefined;
+    let workspaceProfileBridge: BridgeClaudeOptions | undefined;
     if (spec.engine === 'claude' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
       const pending = new Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>();
       // A SEPARATE connection blocks on the replies stream (a blocking read can't share the main client).
@@ -118,7 +129,9 @@ async function runOverRedis(turnId: string): Promise<void> {
       })().catch(() => undefined);
 
       const z = (await import('zod/v4')).z;
-      const mcpTools = spec.toolBridgeTools.map((toolName: string) =>
+      // One proxy per tool — identical transport (XADD a `tool_request` by BARE name); which server
+      // it is registered under is purely presentational. Reused for both bridges below.
+      const makeProxyTool = (toolName: string) =>
         claudeSdk.tool(
           toolName,
           `Host-side tool '${toolName}' proxied via the Atlas tool bridge.`,
@@ -138,16 +151,34 @@ async function runOverRedis(turnId: string): Promise<void> {
               return { content: [{ type: 'text' as const, text: `Error: ${message}` }], isError: true };
             }
           },
-        ),
+        );
+      // Split the flat host tool list into the general host bridge and the dedicated Workspace
+      // Profile bridge, so the brain sees the seven provisioning dimensions as one section.
+      const { host: hostToolNames, profile: profileToolNames } = partitionWorkspaceProfileTools(
+        spec.toolBridgeTools,
       );
       const server = claudeSdk.createSdkMcpServer({
         name: BRIDGE_SERVER_NAME,
         version: '1.0.0',
         instructions: 'Atlas host tools. Call these to interact with the host harness.',
-        tools: mcpTools,
+        tools: hostToolNames.map(makeProxyTool),
         alwaysLoad: true,
       });
-      bridge = buildBridgeClaudeOptions(server, spec.toolBridgeTools);
+      bridge = buildBridgeClaudeOptions(server, hostToolNames);
+      if (profileToolNames.length > 0) {
+        const profileServer = claudeSdk.createSdkMcpServer({
+          name: WORKSPACE_PROFILE_BRIDGE_NAME,
+          version: '1.0.0',
+          instructions:
+            'Atlas Workspace Profile — provision and maintain this repo\'s durable workspace: secret files, mounts, setup script, MCP servers, skills, and house style.',
+          tools: profileToolNames.map(makeProxyTool),
+          alwaysLoad: true,
+        });
+        workspaceProfileBridge = {
+          extraClaudeOptions: { mcpServers: { [WORKSPACE_PROFILE_BRIDGE_NAME]: profileServer } },
+          bridgeToolNames: qualifyWorkspaceProfileToolNames(profileToolNames),
+        };
+      }
     }
 
     // ── LSP bridge (atlas-lsp-ts, external stdio MCP server) ────────────────────────────────────
@@ -218,12 +249,14 @@ async function runOverRedis(turnId: string): Promise<void> {
     // merged into ONE object here, not passed as two separate `extraClaudeOptions`.
     const mergedMcpServers = {
       ...(bridge?.extraClaudeOptions.mcpServers ?? {}),
+      ...(workspaceProfileBridge?.extraClaudeOptions.mcpServers ?? {}),
       ...(lsp?.extraClaudeOptions.mcpServers ?? {}),
       ...(context7?.extraClaudeOptions.mcpServers ?? {}),
       ...(userMcp?.extraClaudeOptions.mcpServers ?? {}),
     };
     const mergedToolNames = [
       ...(bridge?.bridgeToolNames ?? []),
+      ...(workspaceProfileBridge?.bridgeToolNames ?? []),
       ...(lsp?.lspToolNames ?? []),
       ...(context7?.context7ToolNames ?? []),
       ...(userMcp?.userMcpToolNames ?? []),

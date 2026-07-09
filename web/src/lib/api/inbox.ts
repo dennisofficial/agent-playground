@@ -8,6 +8,7 @@ import { toJobStatus, toJobKind } from "./status";
 import type {
   WireJobStatus,
   WireJobKind,
+  WireJobHalt,
   JobStatus,
   JobKind,
   InboxPr,
@@ -34,9 +35,14 @@ export interface RawInboxThread {
   status: string;
   /** Server-derived: the thread is awaiting the operator (AI idle, not terminal). */
   needsYou: boolean;
+  /** An unresolved turn-failure box is outstanding — the sidebar renders the failed-style ✕ glyph
+   *  regardless of `status`, and `needsYou` is already true. */
+  halted: boolean;
   createdAt: string;
   /** The observed PR (null until one exists) — drives the sidebar PR-status glyph. */
   pr?: InboxPr | null;
+  /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
+  halt?: WireJobHalt | null;
   org: { id: string; slug?: string; name?: string };
   repo: { id: string; name?: string };
 }
@@ -49,10 +55,14 @@ export interface InboxThread {
   status: JobStatus;
   /** The alert dot: this thread is waiting on you. */
   needsYou: boolean;
+  /** A turn-stopping error is outstanding — the sidebar shows the failed ✕ glyph over the status pie. */
+  halted: boolean;
   createdAt: string;
   /** The observed PR (null until one exists) — when present the sidebar shows a PR-status glyph
    *  instead of the build `status` pie. */
   pr: InboxPr | null;
+  /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
+  halt: WireJobHalt | null;
   org: { id: string; slug: string; name: string };
   repo: { id: string; name: string };
 }
@@ -80,8 +90,10 @@ export function normalize(r: RawInboxThread): InboxThread {
     kind: deriveInboxKind(r),
     status: uiStatus(r.status, r.origin),
     needsYou: r.needsYou,
+    halted: r.halted ?? false,
     createdAt: r.createdAt,
     pr: r.pr ?? null,
+    halt: r.halt ?? null,
     org: {
       id: r.org.id,
       slug: r.org.slug ?? r.org.id,

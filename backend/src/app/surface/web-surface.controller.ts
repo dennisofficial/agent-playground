@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Inject,
   Logger,
   NotFoundException,
@@ -70,10 +71,11 @@ import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { OrganizationService } from '../org/organization.service';
-import { WorktreeSecretFileStore } from '../onboarding';
+import { WorkspaceSecretFileStore } from '../onboarding';
 import { McpServerStore } from '../mcp/mcp-server.store';
+import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
 import { ConventionProfileResolver } from '../conventions';
-import { WorkspaceSkillStore } from '../skills';
+import { SkillFileWriter, WorkspaceSkillStore } from '../skills';
 import { McpProbeService } from '../mcp/mcp-probe.service';
 import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -538,7 +540,7 @@ export class WebSurfaceController {
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
     // Repo onboarding: the ONLY place a `request_secret` plaintext value lands — straight to the
     // encrypted store + a grant, never the transcript (owner-gated; see `provideSecret`).
-    private readonly secrets: WorktreeSecretFileStore,
+    private readonly secrets: WorkspaceSecretFileStore,
     // The brain's store — used here for the atomic `markQuestionAnswered` gate (resolved ambiently from
     // the @Global BrainModule, same as the approval services this module already depends on).
     private readonly store: BrainStoreService,
@@ -553,8 +555,12 @@ export class WebSurfaceController {
     // `propose_convention_profile` here (the only place a brain-originated attach lands). @Global ConventionsModule.
     private readonly conventions: ConventionProfileResolver,
     // Skills — the owner-gated `skill-proposals/:id/approve` endpoint COMMITS a brain `propose_skill` here
-    // (the only place a brain-originated skill write lands). @Global SkillsModule.
+    // (the only place a brain-originated skill write lands); `skill-edit-access/:id/approve` grants live
+    // Edit/Write (forking a git skill to custom first, via `forkSkillToCustom`). @Global SkillsModule.
+    // `skillStore` writes the registry ROW (metadata only); `skillFiles` writes/removes/copies the actual
+    // skill dir on the host store.
     private readonly skillStore: WorkspaceSkillStore,
+    private readonly skillFiles: SkillFileWriter,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -593,11 +599,14 @@ export class WebSurfaceController {
         origin: t.origin,
         kind: t.kind, // job kind ('feature'/'bugfix'/'onboarding'/'event'/'review'/null) — drives the web badge
         status: t.status,
+        halt: t.halt ?? null,
         turnActive: t.turn_active,
+        halted: t.halted,
         needsYou: deriveNeedsYou(
           t.status,
           t.turn_active,
           t.open_question_count > 0,
+          t.halted || t.halt != null,
         ),
         createdAt: t.created_at,
         // The observed PR (null until one exists) — drives the sidebar's PR-status glyph. `mergeable`
@@ -658,11 +667,14 @@ export class WebSurfaceController {
       title: t.title,
       origin: t.origin,
       status: t.status,
+      halt: t.halt ?? null,
       turnActive: t.turn_active,
+      halted: t.halted,
       needsYou: deriveNeedsYou(
         t.status,
         t.turn_active,
         t.open_question_count > 0,
+        t.halted || t.halt != null,
       ),
       baseBranch: t.base_branch,
       createdAt: t.created_at,
@@ -1083,10 +1095,11 @@ export class WebSurfaceController {
   }
 
   /**
-   * `POST …/threads/:jobId/retry` — the halted-build "Retry" button. Re-drives a `failed`/`paused`
-   * build through the deterministic, resumable driver (`JOB_DISPATCHER.retry` → flips back to `running`,
-   * fast-forwards finished work, continues at the first unfinished step). No-op if the thread isn't in a
-   * retryable state. Scoped to the caller's org via the membership guard + `requireThread`.
+   * `POST …/threads/:jobId/retry` — the halted-build "Retry" button. Re-drives a HALTED build (a job
+   * carrying a `halt`) through the deterministic, resumable driver (`JOB_DISPATCHER.retry` → flips back to
+   * `running`, fast-forwards finished work, continues at the first unfinished step). `status` (the build
+   * phase) is untouched by the halt, so retry resumes it in place. No-op if the thread isn't halted.
+   * Scoped to the caller's org via the membership guard + `requireThread`.
    */
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/retry')
   @UseGuards(OrgMembershipGuard)
@@ -1095,7 +1108,7 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
   ): Promise<{ ok: boolean; status: string }> {
     const thread = await this.requireThread(jobId, org.id);
-    if (thread.status !== 'failed' && thread.status !== 'paused') {
+    if (!thread.halt) {
       // Idempotent / not-applicable: nothing to retry (already running, done, or pre-build).
       return { ok: false, status: thread.status };
     }
@@ -1106,7 +1119,7 @@ export class WebSurfaceController {
   /**
    * `POST …/threads/:jobId/retry-turn` — the "Resume" button on a `retryable` system→operator error box
    * (a brain chat-turn that hit a transient engine failure, e.g. a 529). Distinct from `/retry` (which only
-   * re-drives a `failed`/`paused` BUILD track) — a chat-turn failure never touches job status, so that
+   * re-drives a HALTED build) — a chat-turn failure never touches job status, so that
    * endpoint would no-op here. Seeds a NON-persisted system turn (`seedSystemNotification` — same seam
    * `provide-secret`/`answer-question` already use) that resumes the SAME engine session
    * (`resume: sessionId`, already the default across turns) with a minimal harness-authored nudge — never
@@ -1214,7 +1227,7 @@ export class WebSurfaceController {
   /**
    * `POST …/threads/:jobId/provide-secret` — provide the value for a brain `request_secret` card during
    * repo onboarding. THE ONLY PLACE A SECRET VALUE LIVES: it goes straight to the encrypted
-   * `WorktreeSecretFileStore` as this repo's secret file at (repo, path), and is NEVER written to the
+   * `WorkspaceSecretFileStore` as this repo's secret file at (repo, path), and is NEVER written to the
    * card, the transcript, or any brain tool I/O. OWNER-ONLY (`OrgOwnerGuard`) — writing a secret file is
    * an Administer action everywhere
    * else. Gated on the thread's durable `awaiting_secret_id`; stamps the card `provided_at` (not the value)
@@ -1388,14 +1401,6 @@ export class WebSurfaceController {
       return { ok: true, committed: card.committed ?? [] };
     }
     // Defensive: never let an approval shadow a reserved system server, even if a stale card slipped one in.
-    const RESERVED = new Set([
-      'atlas-host-bridge',
-      'atlasbridge',
-      'atlas-lsp-ts',
-      'context7',
-      'graphify',
-      'cocoindex',
-    ]);
     // Registration scope from the card: 'org' → the '*' sentinel (every repo), else this thread's repo.
     // The owner (this endpoint) is the trust boundary — the brain proposes the scope, the owner approves it.
     const dbScope = card.scope === 'org' ? '*' : thread.repo_id;
@@ -1405,7 +1410,7 @@ export class WebSurfaceController {
     if (card.mode === 'remove') {
       const removed: string[] = [];
       for (const name of card.removeNames ?? []) {
-        if (!name || RESERVED.has(name.toLowerCase())) continue;
+        if (!name || isReservedMcpName(name)) continue;
         await this.mcpStore.delete(org.id, dbScope, name);
         removed.push(name);
       }
@@ -1423,7 +1428,7 @@ export class WebSurfaceController {
     const committed: string[] = [];
     const needSecrets: string[] = [];
     for (const s of card.servers) {
-      if (!s.name || RESERVED.has(s.name.toLowerCase())) continue;
+      if (!s.name || isReservedMcpName(s.name)) continue;
       await this.mcpStore.write(org.id, dbScope, s.name, this.mcpProposalToInput(s));
       committed.push(s.name);
       const secretSlots = [
@@ -1550,12 +1555,16 @@ export class WebSurfaceController {
     const dbScope = card.scope === 'org' ? '*' : card.repoId;
     if (card.mode === 'remove') {
       await this.skillStore.delete(org.id, dbScope, card.name);
+      this.skillFiles.removeSkillDir(org.id, dbScope, card.name);
     } else {
+      // Registry row (metadata only) + the actual SKILL.md content — a brain-authored skill is always
+      // 'custom' provenance (no remote source).
       await this.skillStore.write(org.id, dbScope, card.name, {
         description: card.description,
-        body: card.body,
+        provenance: 'custom',
         surfaces: card.surfaces,
       });
+      this.skillFiles.writeSkillMd(org.id, dbScope, card.name, card.description, card.body);
     }
     await this.store.markSkillProposalApproved(jobId, requestId);
     const notice =
@@ -1568,6 +1577,80 @@ export class WebSurfaceController {
       seedRow: { label: notice, chunkKey: `seed:skill-approve:${jobId}:${requestId}` },
     });
     return { ok: true, name: card.name, ts };
+  }
+
+  /**
+   * `POST …/jobs/:jobId/skill-edit-access/:requestId/approve` — the OWNER approves a brain
+   * `request_skill_edit_access` card, unlocking live `Edit`/`Write` on that skill for the REST of this
+   * session. For a `git`-provenance skill this FORKS it to a new `custom` skill first (the original stays
+   * untouched — clean and still auto-updatable) and grants the fork instead, so a re-approve after the fork
+   * already exists picks the SAME fork rather than minting another. Idempotent (a re-approve on an
+   * already-approved card is a no-op). Owner-only — unlocking a skill for live edits is as consequential as
+   * creating one.
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/skill-edit-access/:requestId/approve')
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
+  async approveSkillEditAccess(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('requestId') requestId: string,
+  ): Promise<{ ok: boolean; name: string; grantedAs?: string; ts?: string }> {
+    const thread = await this.requireThread(jobId, org.id);
+    const card = await this.store.getSkillEditAccessCard(jobId, requestId);
+    if (!card) throw new BadRequestException('no such skill edit-access request on this thread');
+    if (card.approved_at) {
+      return { ok: true, name: card.name, ...(card.forkedTo ? { grantedAs: card.forkedTo } : {}) };
+    }
+    const dbScope = card.scope === 'org' ? '*' : card.repoId;
+    const row = await this.skillStore.get(org.id, dbScope, card.name);
+    if (!row) {
+      // The skill was deleted/renamed since the request was posted — nothing to grant. Stamp approved
+      // (the card is terminal either way) and tell the brain rather than silently wedging the request.
+      await this.store.markSkillEditAccessApproved(jobId, requestId);
+      const gone = `The operator approved edit access to "${card.name}", but that skill no longer exists — nothing to edit. Call list_skills to see what's registered.`;
+      const goneTs = this.surface.seedSystemNotification(thread.repo_id, jobId, gone, {
+        orgId: org.id,
+        seedRow: { label: gone, chunkKey: `seed:skill-edit-approve:${jobId}:${requestId}` },
+      });
+      return { ok: true, name: card.name, ts: goneTs };
+    }
+    // git → fork-to-custom (§P3): the original stays clean + updatable; the grant applies to the fork.
+    const forkedTo = row.provenance === 'git' ? await this.forkSkillToCustom(org.id, dbScope, card.name) : undefined;
+    const grantName = forkedTo ?? card.name;
+    this.brain.grantSkillEditAccess(jobId, grantName);
+    await this.store.markSkillEditAccessApproved(jobId, requestId, forkedTo);
+    const notice = forkedTo
+      ? `The operator approved edit access to "${card.name}" — since it's installed from git, it was forked ` +
+        `to a new custom skill "${forkedTo}" (the original stays clean and keeps auto-updating). Edit/Write ` +
+        `files under "${forkedTo}" directly for the rest of this session.`
+      : `The operator approved edit access to "${card.name}" — Edit/Write its files directly for the rest of ` +
+        'this session.';
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+      orgId: org.id,
+      seedRow: { label: notice, chunkKey: `seed:skill-edit-approve:${jobId}:${requestId}` },
+    });
+    return { ok: true, name: card.name, ...(forkedTo ? { grantedAs: forkedTo } : {}), ts };
+  }
+
+  /** Fork a `git`-provenance skill to a fresh `custom` copy in the same scope — `<name>-custom`, or
+   *  `<name>-custom-2`/`-3`/… on a name collision (a prior fork, or an unrelated skill of that name). Copies
+   *  the dir (full fidelity) then writes the new registry row (`forked_from` the original's name). Returns
+   *  the fork's name. */
+  private async forkSkillToCustom(orgId: string, dbScope: string, name: string): Promise<string> {
+    let forkName = `${name}-custom`;
+    for (let n = 2; await this.skillStore.get(orgId, dbScope, forkName); n++) {
+      forkName = `${name}-custom-${n}`;
+    }
+    const source = await this.skillStore.get(orgId, dbScope, name);
+    this.skillFiles.forkSkillDir(orgId, dbScope, name, forkName);
+    await this.skillStore.write(orgId, dbScope, forkName, {
+      description: source?.description ?? `Forked from ${name}`,
+      provenance: 'custom',
+      forked_from: name,
+      surfaces: source?.surfaces,
+      enabled: true,
+    });
+    return forkName;
   }
 
   /** Map a proposal-card server (non-secret defn) to the store's `McpServerInput`: secret slots become empty
@@ -1758,6 +1841,51 @@ export class WebSurfaceController {
     if (!relPath) throw new BadRequestException('path is required');
     const root = this.threadLifecycle.contextDirHost(jobId, org.id);
     const abs = resolveUploadFilePath(root, relPath);
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(abs);
+    } catch {
+      throw new NotFoundException('file not found');
+    }
+    if (!st.isFile()) throw new NotFoundException('not a file');
+    const ext = extname(abs).toLowerCase();
+    const mime =
+      MIME_BY_EXT[ext]?.mime ??
+      (ext === '.pdf' ? 'application/pdf' : 'application/octet-stream');
+    return new StreamableFile(createReadStream(abs), {
+      type: mime,
+      length: st.size,
+    });
+  }
+
+  /**
+   * `GET …/jobs/:jobId/context/raw/<bucket-relative-path>` — STREAM one `/context` file (specs/ +
+   * generated/ + artifacts/) as raw bytes with the correct `Content-Type`, so a browser can render it
+   * directly — e.g. an `<iframe>` HTML preview of an artifact. Deliberately PATH-based (the file path lives
+   * in the URL path, not a `?path=` query) so an HTML document's own RELATIVE sub-resource URLs
+   * (`style.css`, `chart.png`) resolve against the document URL and get fetched here too. Same bucket +
+   * traversal guard as the base64 `contextFile` endpoint (`resolveContextFilePath`); distinct from
+   * `contextFileRaw` above, which stays scoped to `uploads/`. Express 5 hands the `*path` wildcard as an
+   * array of already-decoded path segments.
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/context/raw/*path')
+  // Enforce the sandbox SERVER-SIDE, not only via the viewer's <iframe sandbox>: a CSP `sandbox`
+  // response header forces this document into an opaque origin (scripts allowed, no same-origin) no
+  // matter how it is loaded — including a top-level navigation straight to this URL — so agent-authored
+  // HTML can never read the session cookie or call the API as the operator. nosniff pins the type.
+  @Header('Content-Security-Policy', 'sandbox allow-scripts')
+  @Header('X-Content-Type-Options', 'nosniff')
+  @UseGuards(OrgMembershipGuard)
+  async contextRaw(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('path') segments: string[] | string,
+  ): Promise<StreamableFile> {
+    await this.requireThread(jobId, org.id);
+    const relPath = (Array.isArray(segments) ? segments : [segments]).join('/');
+    if (!relPath) throw new BadRequestException('path is required');
+    const root = this.threadLifecycle.contextDirHost(jobId, org.id);
+    const abs = resolveContextFilePath(root, relPath);
     let st: ReturnType<typeof statSync>;
     try {
       st = statSync(abs);

@@ -1,6 +1,8 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import type { JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
+import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
@@ -103,7 +105,7 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   kind!: string | null;
 
-  // 'open' | 'planning' | 'awaiting_approval' | 'running' | 'awaiting_ship_review' | 'paused' | 'done' | 'failed' | 'cancelled'
+  // 'open' | 'planning' | 'plan_review' | 'awaiting_approval' | 'running' | 'awaiting_ship_review' | 'done' | 'cancelled' | 'deleting'
   @Column({ type: 'text', default: 'open' })
   status!: string;
 
@@ -129,6 +131,16 @@ export class JobEntity extends TimestampedEntity {
   turn_active!: boolean;
 
   /**
+   * Whether an unresolved TURN-FAILURE operator box is outstanding (a stop-the-world engine error the
+   * operator must Resume or reply past). A SEPARATE axis from `status`/`turn_active`: chat-turn failures
+   * never touch `status`, so this is what makes a stopped thread render as errored. Set in
+   * `saySystemOperator`, cleared when the next turn starts (`runChatTurn`). UNLIKE `turn_active` it is NOT
+   * reset on boot — a real unresolved error must survive a process restart.
+   */
+  @Column({ type: 'boolean', default: false })
+  halted!: boolean;
+
+  /**
    * The durable HUMAN-INPUT GATE: how many `ask_question` cards on this thread are still awaiting an
    * operator answer. Each card carries its OWN lifecycle (`answer`/`answeredAt`/`deliveredAt`) — there is
    * NO single-slot pointer, so the brain may have several questions open at once, answerable in any order.
@@ -145,7 +157,7 @@ export class JobEntity extends TimestampedEntity {
    * operator value for, or null. Kept SEPARATE so the two human-input lanes don't collide and so secret
    * delivery keeps its own crash-safe lifecycle (still single-slot — at most one secret request at a time). Set
    * atomically with the secret card by `request_secret` (`BrainStoreService.openSecretRequest`). The value
-   * itself NEVER lands here or in the transcript — it goes straight to the encrypted `WorktreeSecretFileStore`
+   * itself NEVER lands here or in the transcript — it goes straight to the encrypted `WorkspaceSecretFileStore`
    * via the `provide-secret` endpoint, which stamps the card `provided_at`; this gate is cleared only once
    * the masked-confirmation delivery turn succeeds (so a crash mid-delivery re-delivers on boot).
    */
@@ -270,4 +282,26 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'timestamptz', nullable: true })
   ledger_promoted_at!: Date | null;
+
+  /**
+   * The PHASE-PRESERVING HALT — the orthogonal failure/pause axis. `status` stays the pure build phase;
+   * when the build halts (a failure, a credential/budget block, or an incomplete turn) this is populated
+   * and the phase is preserved, so the sidebar renders the job under the phase it halted in with a red
+   * mark. Null when healthy; cleared only on operator re-engagement (retry/resume) or a brain re-drive.
+   * Job-scoped mirror of `ThreadEntity.terminal_record` (nullable jsonb, no default — a `() => '...'::jsonb`
+   * default makes `migration:generate` loop forever; nullable avoids a default entirely).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  halt!: JobHalt | null;
+
+  /**
+   * The ADR-0005 LIVE-VERIFICATION verdict for the DIRECT-BUILD ship path (the brain-owned
+   * `finalize_build` gate — the direct-path analog of a driver thread's `terminal_record.liveVerification`).
+   * Written on BOTH the pass and the refusal path so the same prod audit SQL that surfaced the direct-build
+   * gap can confirm the fix: a direct-build job with a runtime diff now shows a verdict here, and a
+   * validation-skipping ship is blocked at `finalize_build` with `liveVerificationAdequate: false`. Null for
+   * jobs that never ran a direct build (driver builds record their verdict on the thread terminal record).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  direct_build_verification!: { verdict: LiveVerificationVerdict; at: string } | null;
 }

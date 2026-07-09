@@ -41,7 +41,6 @@ import { codexReviewNode } from "./codex-review";
 import {
   NavigatorApproveButton,
   NavigatorShipButton,
-  NavigatorShipCallout,
 } from "./spec-approval";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
@@ -115,6 +114,7 @@ export function Navigator({
   onRename,
   onDelete,
   deleting,
+  directBuild,
 }: {
   meta: JobMeta;
   pipeline: PipelineState | undefined;
@@ -139,6 +139,8 @@ export function Navigator({
   onRename?: (title: string) => void;
   onDelete?: () => void;
   deleting?: boolean;
+  /** True when the awaiting approval is a direct build — flips the approve CTA to "Approve Direct Build". */
+  directBuild?: boolean;
 }) {
   const job = pipelineJob(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
@@ -158,9 +160,7 @@ export function Navigator({
     !hasPr &&
     meta.status !== "done" &&
     meta.status !== "running" &&
-    meta.status !== "awaiting_ship_review" &&
-    meta.status !== "paused" &&
-    meta.status !== "failed";
+    meta.status !== "awaiting_ship_review";
   const [editing, setEditing] = useState(false);
 
   // Tickets Atlas raised FROM this job — the header "Tickets raised" entry appears only once there's ≥1.
@@ -361,7 +361,11 @@ export function Navigator({
         {/* Approve — pinned as the last header item while the plan is awaiting approval. */}
         {st === "awaiting_approval" && approveValue ? (
           <div className="mt-2">
-            <NavigatorApproveButton jobRef={jobRef} value={approveValue} />
+            <NavigatorApproveButton
+              jobRef={jobRef}
+              value={approveValue}
+              directBuild={directBuild}
+            />
           </div>
         ) : null}
         {/* Ship it — the SECOND human gate, pinned the same way once the build + master review finish. */}
@@ -377,7 +381,6 @@ export function Navigator({
              selected `.nav-selected` band + left accent bar can run flush to the rail edge. ─────────── */}
       <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto py-3">
         <StateBanner
-          status={st}
           job={job}
           jobRef={jobRef}
           onConversation={onConversation}
@@ -413,12 +416,6 @@ export function Navigator({
 
         {/* The whole-diff master review is now just another thread in the THREADS list above (rendered
             "Master review", no pinned region) — see the master-review-as-thread change. */}
-
-        {/* Ship-review callout — pinned above OUTPUTS (the diff/artifacts region it's about), mirroring
-            where the plan-approval callout is meant to sit above SPECS. */}
-        {st === "awaiting_ship_review" && shipValue ? (
-          <NavigatorShipCallout jobRef={jobRef} value={shipValue} />
-        ) : null}
 
         {/* OUTPUTS — specs / artifacts / generated, merged. Open in the RIGHT pane (blue highlight). */}
         <OutputsRegion
@@ -920,12 +917,10 @@ function PortsRegion({
 // ── state banners (failed / paused / awaiting) ─────────────────────────────────────────────────────
 
 function StateBanner({
-  status,
   job,
   jobRef,
   onConversation,
 }: {
-  status: JobStatus;
   job: PipelineJob | null;
   jobRef: JobRef;
   onConversation: () => void;
@@ -935,7 +930,12 @@ function StateBanner({
   const onRetry = () => {
     retry.mutate(undefined, { onSuccess: onConversation });
   };
-  if (status === "failed") {
+  if (
+    job?.halt &&
+    (job.halt.kind === "failed" ||
+      job.halt.kind === "budget_exhausted" ||
+      job.halt.kind === "incomplete")
+  ) {
     const haltNo = job ? haltSectionNo(job) : null;
     return (
       <div
@@ -968,7 +968,7 @@ function StateBanner({
       </div>
     );
   }
-  if (status === "paused") {
+  if (job?.halt?.kind === "blocked_credentials") {
     return (
       <div
         className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"

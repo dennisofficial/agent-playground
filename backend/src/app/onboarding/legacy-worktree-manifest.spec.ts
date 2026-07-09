@@ -100,7 +100,7 @@ describe('loadLegacyManifestFile', () => {
 
   it('drops ABSOLUTE (external) mount paths — a committed file may not introduce external mounts', () => {
     // External mounts (absolute container paths) are a privileged capability reserved for Atlas's validated
-    // write_worktree_config calls; a repo-committed legacy file must never gain it.
+    // write_workspace_config calls; a repo-committed legacy file must never gain it.
     writeManifest(
       JSON.stringify({
         mounts: [

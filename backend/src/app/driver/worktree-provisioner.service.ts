@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { type FeatureSandbox } from '../git';
 import { McpResolver } from '../mcp';
-import { WorktreeConfigStore } from '../onboarding';
+import { WorkspaceConfigStore } from '../onboarding';
 import { SANDBOX_PROVIDER, type SandboxMilestoneStage, type SandboxProvider } from '../sandbox';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { WorktreeHydrator } from './worktree-hydrator.service';
@@ -46,7 +46,7 @@ export class WorktreeProvisioner {
   constructor(
     private readonly hydrator: WorktreeHydrator,
     private readonly awareness: PipelineAwarenessStore,
-    private readonly config: WorktreeConfigStore,
+    private readonly config: WorkspaceConfigStore,
     private readonly mcp: McpResolver,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
   ) {}
@@ -65,7 +65,7 @@ export class WorktreeProvisioner {
     if (repoDbId) {
       await this.config
         .importLegacyIfEmpty(orgId, repoDbId, worktreePath)
-        .catch((err) => this.logger.debug(`legacy worktree config import skipped (continuing): ${err}`));
+        .catch((err) => this.logger.debug(`legacy workspace config import skipped (continuing): ${err}`));
     }
 
     // Mounts are cheap to (re)compute and must be passed on EVERY attach (a cold recreate needs them).
@@ -86,14 +86,14 @@ export class WorktreeProvisioner {
         orgId,
         repoDbId,
       });
-      // Surface a bad/incomplete worktree config to the OPERATOR (it never errors the build). The
+      // Surface a bad/incomplete workspace config to the OPERATOR (it never errors the build). The
       // passive-awareness marker is drained into the next operator turn so the brain can relay it — no
       // wake, no spam (this only fires on a (re)hydration, i.e. at thread creation or a config change).
       if (notices.length) {
         await this.awareness
           .appendMarker(jobId, {
             id: 'worktree-hydration-issues',
-            text: `⚠ worktree config — ${notices.length} issue(s): ${notices.join('; ')}`,
+            text: `⚠ workspace config — ${notices.length} issue(s): ${notices.join('; ')}`,
             at: new Date().toISOString(),
           })
           .catch((err) => this.logger.debug(`worktree notice append failed (continuing): ${err}`));

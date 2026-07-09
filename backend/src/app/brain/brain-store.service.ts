@@ -10,11 +10,13 @@ import type {
   WebMcpProposalCard,
   WebQuestionCard,
   WebSecretInputCard,
+  WebSkillEditAccessCard,
   WebSkillProposalCard,
 } from '../surface';
 // Direct leaf import (not the '../surface' barrel): brain-store otherwise only TYPE-imports from surface,
 // and a runtime value import of the whole barrel would add a surface→brain→brain-store→surface cycle.
 import { webTicketCard } from '../surface/web-ticket-card';
+import { nextQuestionId } from '../surface/web-question-card';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -435,6 +437,17 @@ export class BrainStoreService {
       (m) =>
         (m.card as Record<string, unknown> | null)?.type === 'question_card',
     );
+  }
+
+  /**
+   * Allocate the next stable brain question id for this job — `q1`, `q2`, … — over the existing question
+   * card ids (see {@link nextQuestionId}). Scans the durable card rows so numbering survives a restart and
+   * never reuses a withdrawn id. Race-safe in practice: one brain turn runs at a time and its `ask_question`
+   * tool calls are awaited in order, so each `openQuestion` lands before the next id is allocated.
+   */
+  async nextQuestionId(jobId: string): Promise<string> {
+    const cards = await this.questionCards(jobId);
+    return nextQuestionId(cards.map((m) => m.ts ?? ''));
   }
 
   /**
@@ -1187,6 +1200,56 @@ export class BrainStoreService {
     });
   }
 
+  // ── skill edit-access requests (owner-gated `request_skill_edit_access`; grants live Edit/Write) ──────
+
+  /** Post an owner-approvable skill EDIT-ACCESS card. PER-CARD (like `request_file`) — several may be
+   *  open at once, no single-slot pointer. */
+  async openSkillEditAccessRequest(
+    jobId: string,
+    input: { requestId: string; card: WebSkillEditAccessCard },
+  ): Promise<{ ok: boolean }> {
+    const thread = await this.jobs.findOne({ where: { id: jobId } });
+    if (!thread) return { ok: false };
+    await this.messages.save(
+      this.messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: `Requested edit access to the "${input.card.name}" skill`,
+        kind: 'card',
+        ts: input.requestId,
+        card: input.card as unknown as Record<string, unknown>,
+      }),
+    );
+    return { ok: true };
+  }
+
+  /** Fetch one thread's skill-edit-access card by id (the card's `ts`); null if absent / wrong type. */
+  async getSkillEditAccessCard(
+    jobId: string,
+    requestId: string,
+  ): Promise<WebSkillEditAccessCard | null> {
+    const row = await this.messages.findOne({
+      where: { job_id: jobId, ts: requestId, kind: 'card' },
+    });
+    const card = row?.card as WebSkillEditAccessCard | undefined;
+    return card?.type === 'skill_edit_access_card' ? card : null;
+  }
+
+  /** Stamp a skill-edit-access card APPROVED — `forkedTo` set only when the underlying skill was forked
+   *  to a custom copy (the grant target, distinct from the card's original `name`). */
+  async markSkillEditAccessApproved(
+    jobId: string,
+    requestId: string,
+    forkedTo?: string,
+  ): Promise<void> {
+    await this.updateCardMessage(jobId, requestId, {
+      approved_at: new Date().toISOString(),
+      ...(forkedTo ? { forkedTo } : {}),
+    });
+  }
+
   // ── pending decisions (the grilling working set; snapshotted into a record by submit_plan) ──────────
 
   /** Read a thread's working-set decisions logged so far (the `pending_decisions` jsonb). */
@@ -1264,6 +1327,30 @@ export class BrainStoreService {
   }
 
   /**
+   * Mark whether an unresolved turn-failure operator box is outstanding for this thread — the durable
+   * `halted` axis of the "needs you" signal (see `deriveNeedsYou`). Set when `saySystemOperator` posts a
+   * turn-failure box, cleared when the next turn starts. Best-effort — a write failure must never break
+   * the turn (the caller swallows errors). Deliberately NOT reset on boot (unlike `turn_active`).
+   */
+  async setHalted(jobId: string, halted: boolean): Promise<void> {
+    await this.jobs.update({ id: jobId }, { halted });
+  }
+
+  /**
+   * Persist the ADR-0005 live-verification verdict for this job's DIRECT-BUILD ship (the brain's
+   * `finalize_build` gate). Written on BOTH the pass and the refusal path so direct-build verdicts are
+   * queryable (`jobs.direct_build_verification`) — the observability hook the prod audit needs. Overwrites
+   * on retry (the last `finalize_build` attempt wins). Best-effort — a write failure must never break the
+   * ship turn (the caller decides how to handle it).
+   */
+  async recordDirectBuildVerification(
+    jobId: string,
+    payload: JobEntity['direct_build_verification'],
+  ): Promise<void> {
+    await this.jobs.update({ id: jobId }, { direct_build_verification: payload });
+  }
+
+  /**
    * The threads with a `turn_active` flag still set — i.e. a conversational turn was streaming when the
    * process died. Captured on boot BEFORE {@link resetAllTurnActive} clears the flags, so crash recovery
    * knows which threads have a possibly-orphaned engine still finishing in the container (to watch them to
@@ -1328,17 +1415,23 @@ export class BrainStoreService {
     await this.jobs.update({ id: jobId }, { kind });
   }
 
-  /** Anchor the upfront grill: flip the thread into the build lifecycle (`planning`) + set intent/title. */
+  /**
+   * Anchor the upfront grill: flip the thread into the build lifecycle (`planning`) + set intent/kind.
+   * The `title` is OPTIONAL: an empty/absent title leaves the thread's existing title untouched rather
+   * than clobbering it (e.g. `review_plan` anchors the job without a meaningful title — the authoritative
+   * rename happens later in `persistPlan` from the plan `goal`, via the titler).
+   */
   async openJob(input: {
     orgId: string;
     repoId: string;
     jobId: string;
-    title: string;
+    title?: string | null;
     kind: JobKind;
   }): Promise<string> {
+    const title = input.title?.trim();
     await this.jobs.update(
       { id: input.jobId },
-      { kind: input.kind, status: 'planning', title: input.title },
+      { kind: input.kind, status: 'planning', ...(title ? { title } : {}) },
     );
     return input.jobId;
   }
@@ -1553,9 +1646,12 @@ export class BrainStoreService {
   ): Promise<Job | null> {
     return this.dataSource.transaction(async (m) => {
       const now = new Date();
+      // A freshly approved plan is an explicit operator action that supersedes any stale halt, so the
+      // dispatch that follows isn't refused by the halt-invariant guard (halt is cleared here, at the
+      // operator transition, never inside dispatch()).
       const jobRes = await m.getRepository(JobEntity).update(
         { id: jobId, status: 'awaiting_approval', decision_record_id: clickedDecisionRecordId },
-        { status: 'running' },
+        { status: 'running', halt: null },
       );
       if ((jobRes.affected ?? 0) !== 1) return null;
       await m.getRepository(DecisionRecordEntity).update(
@@ -1705,6 +1801,7 @@ function toThread(row: JobEntity): Job {
     baseBranch: row.base_branch,
     kind: row.kind as JobKind | null,
     status: row.status as Job['status'],
+    halt: row.halt ?? null,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
     currentBranch: row.current_branch,

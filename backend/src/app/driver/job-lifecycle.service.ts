@@ -9,6 +9,7 @@ import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver, OnboardingService } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, JobEntity, JobSandboxEntity } from '../persistence/entities';
+import { SkillUpdaterService } from '../skills/skill-updater.service';
 import {
   hostExecUser,
   SANDBOX_PROVIDER,
@@ -119,6 +120,7 @@ export class JobLifecycleService {
     private readonly turnRegistry: TurnRegistry,
     // Lazily resolves the brain-module decision-ledger manifest for merge-time reconcile (avoids cycle).
     private readonly moduleRef: ModuleRef,
+    private readonly skillUpdater: SkillUpdaterService,
   ) {}
 
   /**
@@ -183,6 +185,10 @@ export class JobLifecycleService {
 
     // Provision the sandbox on the base branch.
     const sandboxRow = await this.provisionSandbox(thread, project, baseBranch);
+
+    // Fire-and-forget "on job start" skill-update check (the plan's second update trigger, alongside the
+    // updater's own cadence) — never awaited, so a slow/unreachable skill source can't delay job creation.
+    this.skillUpdater.reconcileOrgAsync(orgId);
 
     return {
       jobId: thread.id,
@@ -538,6 +544,25 @@ export class JobLifecycleService {
   }
 
   /**
+   * Apply an authoritative GitHub PR state to a job: terminal `pr_state` write (authoritative sidebar
+   * glyph) FIRST, then ledger reconcile on merge, then sandbox teardown. Ordering is load-bearing:
+   * `reconcileLedgerOnMerge` reads the base checkout (not the worktree) so it must run pre-teardown;
+   * `closeJob` is last. Idempotent — an `open` state is a no-op; `gone` (PR/repo deleted) folds to `closed`.
+   * Shared by the `pull_request` webhook (fast path) and `pollPrClosures` (30-min backstop) so they can't drift.
+   */
+  async applyGithubPrState(
+    job: JobEntity,
+    state: 'open' | 'merged' | 'closed' | 'gone',
+  ): Promise<'closed' | 'noop'> {
+    if (state === 'open') return 'noop';
+    const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
+    await this.jobs.update({ id: job.id }, { pr_state: prState });
+    if (state === 'merged') await this.reconcileLedgerOnMerge(job.org_id, job.repo_id);
+    await this.closeJob(job.id, job.org_id);
+    return 'closed';
+  }
+
+  /**
    * Poll the PR of every thread that has one (the PR lives on the THREAD now) whose sandbox isn't
    * `closed`; when it has merged or closed (or was deleted), `closeJob` to reclaim the container +
    * worktree. Best-effort per thread. Returns how many threads were closed.
@@ -558,21 +583,9 @@ export class JobLifecycleService {
           repo: parsed.repo,
           number: thread.pr_number,
         });
-        if (state !== 'open') {
+        const outcome = await this.applyGithubPrState(thread, state);
+        if (outcome === 'closed') {
           this.logger.log(`thread ${thread.id} PR #${thread.pr_number} is ${state} — closing thread`);
-          // Latch the terminal PR lifecycle for the sidebar glyph (purple merged / red closed) BEFORE the
-          // sandbox teardown — this is the authoritative observer, so purple/red are immediate and don't
-          // wait on a separately-fired reconcile pass. `gone` (PR/repo deleted) reads as closed. The JOB
-          // ROW SURVIVES — only the sandbox is torn down (see closeJob); merged jobs stay as "truly done".
-          const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
-          await this.jobs.update({ id: thread.id }, { pr_state: prState });
-          // On MERGE, the thread's promoted decisions are now canonical on the default branch: reconcile
-          // the repo's ledger manifest (proposed→accepted + human-edit detection). Reads the base checkout,
-          // not this thread's worktree, so it's safe to run before closeJob tears the worktree down.
-          if (state === 'merged') {
-            await this.reconcileLedgerOnMerge(thread.org_id, thread.repo_id);
-          }
-          await this.closeJob(thread.id, thread.org_id);
           closed++;
         }
       } catch (err) {
@@ -740,7 +753,9 @@ export class JobLifecycleService {
       // Host-named canonical branch: honors the repo's optional `branch_prefix` (falling back to the
       // historical `atlas/thread-` default) so a repo can enforce its own convention (e.g. `feat/`).
       const featureBranch = computeFeatureBranchName(project, thread.id);
-      const baseSandboxInput = await this.git.createBaseWorktree(projectRepo, thread.id);
+      const baseSandboxInput = (await this.git.hasSubmodules(projectRepo))
+        ? await this.git.createBaseClone(projectRepo, thread.id)
+        : await this.git.createBaseWorktree(projectRepo, thread.id);
       const branched = await this.git.switchBranch(baseSandboxInput, projectRepo, featureBranch);
 
       // Populate git submodules into the freshly cut worktree (no-op without a `.gitmodules`) so the
@@ -796,7 +811,7 @@ export class JobLifecycleService {
 
   /**
    * Stamp a repo's `onboarded_at` — proof its worktree provisioning config is live. Called from exactly
-   * one place: the brain's `finish_onboarding`, synchronously — secrets and worktree config (mounts/seed)
+   * one place: the brain's `finish_onboarding`, synchronously — secrets and workspace config (mounts/seed)
    * are DB-backed now (see docs/adr/0003), so there is no PR-merge event to wait on. Idempotent (only
    * stamps when currently null).
    */
@@ -845,21 +860,76 @@ export class JobLifecycleService {
    */
   private async ensureWorktree(row: JobSandboxEntity, projectRepo: ProjectRepo): Promise<void> {
     if (row.worktree_path && existsSync(row.worktree_path)) return;
+    const sb = await this.recutWorktree(row, projectRepo);
+    this.logger.log(`restored missing worktree for thread ${row.job_id} at ${sb.worktreePath}`);
+  }
+
+  /**
+   * Cut the job's durable worktree from scratch on its OWN branch (`current_branch` → `feature_branch`),
+   * restoring the branch from origin for a full clone ({@link LocalGitService.switchBranch}), and re-populate
+   * submodules. Sets `row.worktree_path` and returns the resulting sandbox. Shared by {@link ensureWorktree}
+   * (crash recovery) and {@link hardResetSandbox} (operator/onboarding from-scratch reset). A submodule repo
+   * is cut as a full clone here (`hasSubmodules ? createBaseClone : createBaseWorktree`), so a hard reset also
+   * heals a checkout that was previously mis-cut as a linked worktree.
+   */
+  private async recutWorktree(row: JobSandboxEntity, projectRepo: ProjectRepo): Promise<FeatureSandbox> {
     const thread = await this.jobs.findOne({ where: { id: row.job_id } });
-    const base = await this.git.createBaseWorktree(projectRepo, row.job_id);
+    const base = (await this.git.hasSubmodules(projectRepo))
+      ? await this.git.createBaseClone(projectRepo, row.job_id)
+      : await this.git.createBaseWorktree(projectRepo, row.job_id);
     const desired = thread?.current_branch ?? thread?.feature_branch ?? null;
     const target =
-      desired &&
-      (await this.git.refExists(projectRepo.repoPath, `refs/heads/${desired}`))
+      desired && (await this.git.refExists(base.worktreePath, `refs/heads/${desired}`))
         ? desired
         : (thread?.feature_branch ?? null);
     const sb = target
       ? await this.git.switchBranch(base, projectRepo, target)
       : base;
-    // A restored worktree is freshly cut → re-populate its submodules (no-op without a `.gitmodules`).
+    // A freshly cut worktree needs its submodules re-populated (no-op without a `.gitmodules`).
     await this.git.ensureSubmodules(sb.worktreePath, projectRepo);
     row.worktree_path = sb.worktreePath;
-    this.logger.log(`restored missing worktree for thread ${row.job_id} at ${sb.worktreePath}`);
+    return sb;
+  }
+
+  /**
+   * HARD RESET of a job's sandbox: re-provision the whole thing FROM SCRATCH — a fresh worktree (deleted +
+   * re-cut) AND a fresh container — exactly as if the job were just created, while KEEPING the coding session
+   * (the `session_id` is untouched, so the next attach resumes the same brain history) and the durable
+   * per-job `/context` + `/playground` mounts (separate host mounts re-bound by `provisionAndAttach`, never
+   * touched here). This is the primitive behind the brain's `reset_sandbox({ hard:true })` — for onboarding
+   * ("prove the WHOLE stack, incl. worktree hydration, cold-boots") and operator recovery ("do a hard reset"
+   * to unstick a job, e.g. one whose worktree was mis-cut as a linked worktree).
+   *
+   * Mechanically this is {@link resetContainer} PLUS deleting the worktree: it tears the container down
+   * (flip to `detached`) and `removeSandbox`-es the worktree directory, then STOPS. The heavy lifting — re-cut
+   * the worktree ({@link ensureContainer} → {@link ensureWorktree} → {@link recutWorktree}, which cuts a
+   * submodule repo as a full clone, healing a mis-cut linked worktree), force-hydrate it, and cold-attach a
+   * fresh container with `wasReset` (so the brain is told to re-verify) — all happens on the NEXT
+   * `ensureContainer`, exactly the crash-recovery path. `session_id` is left untouched (session resumes); the
+   * `/context` + `/playground` mounts are separate and survive.
+   *
+   * The HOST NEVER COMMITS, so it cannot rescue uncommitted work: the caller (`reset_sandbox`) refuses on a
+   * dirty tree / unpushed full-clone commits BEFORE arming this. Refuses a `busy` container (a live turn would
+   * be killed mid-flight). `removeSandbox` is mode-aware (`rm -rf` a full clone / `git worktree remove` a
+   * linked worktree); the branch ref survives (restored from origin for a clone on the re-cut).
+   */
+  async hardResetSandbox(
+    jobId: string,
+    orgId: string,
+  ): Promise<{ reset: true } | { reset: false; reason: 'no-container' | 'busy' }> {
+    const row = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
+    if (!row || row.lifecycle === 'closed') return { reset: false, reason: 'no-container' };
+    if (row.container_id && this.activity.isBusy(row.container_id)) {
+      return { reset: false, reason: 'busy' };
+    }
+    const projectRepo = await this.repoForRow(row);
+
+    // Tear the container down (best-effort → `detached`), then blow the worktree away. The next
+    // `ensureContainer` sees the missing worktree, re-cuts + force-hydrates it, and cold-attaches (`wasReset`).
+    await this.detachContainer(row, 'reset');
+    await this.git.removeSandbox(projectRepo, row.worktree_path);
+    this.logger.log(`hard-reset sandbox for thread ${jobId} — worktree removed; next attach re-cuts from scratch`);
+    return { reset: true };
   }
 
   /**

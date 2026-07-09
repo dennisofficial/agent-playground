@@ -19,7 +19,7 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
     const config = {
       importLegacyIfEmpty: vi.fn(async () => undefined),
       getSetupScript: vi.fn(async () => null),
-    } as unknown as import('../onboarding').WorktreeConfigStore;
+    } as unknown as import('../onboarding').WorkspaceConfigStore;
     const attach = vi.fn(async () => ({ repoId: 'proj', branch: 'main', worktreePath: '/wt', gitUrl: '' }));
     const kickMcpHubRefresh = vi.fn(async () => undefined);
     const sandboxProvider = { attach, kickMcpHubRefresh } as unknown as import('../sandbox').SandboxProvider;

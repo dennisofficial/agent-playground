@@ -76,9 +76,10 @@ export const ROUTES = {
 export type SettingsSection =
   | "general"
   | "credentials"
-  | "worktree-secrets"
+  | "workspace-secrets"
   | "mcp-servers"
   | "convention-profiles"
+  | "skills"
   | "members"
   | "repos";
 

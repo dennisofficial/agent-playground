@@ -11,13 +11,30 @@
 
 import { createHmac } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
-import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import {
+  TypeOrmModule,
+  getDataSourceToken,
+  getRepositoryToken,
+} from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ENTITIES, JobEntity, MessageEntity, StimulusEntity } from '../persistence/entities';
+import {
+  ENTITIES,
+  JobEntity,
+  MessageEntity,
+  StimulusEntity,
+} from '../persistence/entities';
 import type { EventStimulus } from '../domain';
 import { EventFilterService } from '../stimulus/event-filter.service';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
@@ -26,8 +43,12 @@ import { StimulusIntake } from '../stimulus/stimulus-intake.service';
 import { SurfaceOrchestration } from '../stimulus/surface-orchestration.service';
 import { BRAIN_SINK } from '../stimulus/stimulus-consumer';
 import { JobTitler } from '../titling';
+import { GithubPrStateSync } from '../driver/github-pr-state-sync.service';
 import { GithubNotificationSource } from './github-notification.source';
-import { GithubIngressController } from './github-ingress.controller';
+import {
+  GithubIngressController,
+  GithubStateWebhookController,
+} from './github-ingress.controller';
 import type { RawBodyRequest } from './ingress-http';
 
 const ORG_ID = '31111111-1111-4111-8111-111111111111';
@@ -52,7 +73,11 @@ function dbOpts() {
 }
 
 /** A signed raw-body request the way the front door receives it (HMAC over the EXACT bytes). */
-function signedReq(payload: unknown, eventType: string, deliveryId: string): RawBodyRequest {
+function signedReq(
+  payload: unknown,
+  eventType: string,
+  deliveryId: string,
+): RawBodyRequest {
   const json = JSON.stringify(payload);
   const sig = `sha256=${createHmac('sha256', SECRET).update(Buffer.from(json)).digest('hex')}`;
   return {
@@ -92,7 +117,10 @@ describe('GithubIngressController return-path (live Postgres)', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
+      imports: [
+        TypeOrmModule.forRoot(dbOpts()),
+        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
+      ],
       controllers: [GithubIngressController],
       providers: [
         ProjectRoutingService,
@@ -100,8 +128,21 @@ describe('GithubIngressController return-path (live Postgres)', () => {
         EventFilterService,
         StimulusIntake,
         GithubNotificationSource,
-        { provide: EnvService, useValue: { get: (k: string) => (k === 'GITHUB_WEBHOOK_SECRET' ? SECRET : undefined) } },
-        { provide: SurfaceOrchestration, useValue: { announceEvent: async () => 'ts' } },
+        {
+          provide: GithubPrStateSync,
+          useValue: { dispatch: async () => undefined },
+        },
+        {
+          provide: EnvService,
+          useValue: {
+            get: (k: string) =>
+              k === 'GITHUB_WEBHOOK_SECRET' ? SECRET : undefined,
+          },
+        },
+        {
+          provide: SurfaceOrchestration,
+          useValue: { announceEvent: async () => 'ts' },
+        },
         { provide: JobTitler, useValue: { titleFor: async (t: string) => t } },
         {
           provide: BRAIN_SINK,
@@ -156,7 +197,9 @@ describe('GithubIngressController return-path (live Postgres)', () => {
       }),
     );
 
-    const res = await controller.receive(signedReq(failedCheckRun(OWNED_BRANCH, 101), 'check_run', 'd-1'));
+    const res = await controller.receive(
+      signedReq(failedCheckRun(OWNED_BRANCH, 101), 'check_run', 'd-1'),
+    );
 
     // Front door accepted + routed to the existing job — NOT a fresh seed.
     expect(res).toMatchObject({ status: 'accepted', jobId: owner.id });
@@ -164,15 +207,26 @@ describe('GithubIngressController return-path (live Postgres)', () => {
     expect(await jobs.count()).toBe(1);
     // The event was attached to the owning job (message + stimulus rows), and delivered to its brain.
     const attachedMsg = await messages.findOne({ where: { job_id: owner.id } });
-    expect(attachedMsg?.meta).toMatchObject({ source: 'system_event', eventSource: 'github' });
-    const attachedStim = await stimuli.findOne({ where: { job_id: owner.id, kind: 'event' } });
+    expect(attachedMsg?.meta).toMatchObject({
+      source: 'system_event',
+      eventSource: 'github',
+    });
+    const attachedStim = await stimuli.findOne({
+      where: { job_id: owner.id, kind: 'event' },
+    });
     expect(attachedStim?.dedupe_key).toBe('check_run:101');
     expect(delivered).toHaveLength(1);
     expect(delivered[0].jobId).toBe(owner.id);
   });
 
   it('seeds a NEW event thread when nothing owns the branch (external CI)', async () => {
-    const res = await controller.receive(signedReq(failedCheckRun('someone-elses-branch', 202), 'check_run', 'd-2'));
+    const res = await controller.receive(
+      signedReq(
+        failedCheckRun('someone-elses-branch', 202),
+        'check_run',
+        'd-2',
+      ),
+    );
 
     expect(res).toMatchObject({ status: 'accepted' });
     // A brand-new event-origin job was seeded (nothing pre-existed).
@@ -192,7 +246,46 @@ describe('GithubIngressController return-path (live Postgres)', () => {
         'x-github-delivery': 'd-3',
       },
     };
-    await expect(controller.receive(bad)).rejects.toMatchObject({ status: 401 });
+    await expect(controller.receive(bad)).rejects.toMatchObject({
+      status: 401,
+    });
     expect(await jobs.count()).toBe(0);
+  });
+});
+
+describe('GithubStateWebhookController PR-state path', () => {
+  it('dispatches pull_request deltas via handlePrWebhook, with no StimulusIntake wired at all', async () => {
+    const adapter = {
+      source: 'github',
+      handlePrWebhook: async () => ({
+        outcome: 'pr-sync' as const,
+        delta: {
+          orgId: ORG_ID,
+          repoId: 'repo-1',
+          action: 'closed' as const,
+          prNumber: 7,
+          headRef: 'atlas/thread-deadbeef',
+          url: 'https://github.com/acme/web/pull/7',
+          merged: true,
+        },
+      }),
+    } as unknown as GithubNotificationSource;
+    const prSync = {
+      dispatch: vi.fn(async () => undefined),
+    } as unknown as GithubPrStateSync;
+    const controller = new GithubStateWebhookController(adapter, prSync);
+
+    const res = await controller.receive({ body: {}, headers: {} });
+
+    expect(res).toEqual({ status: 'accepted' });
+    expect(prSync.dispatch).toHaveBeenCalledWith({
+      orgId: ORG_ID,
+      repoId: 'repo-1',
+      action: 'closed',
+      prNumber: 7,
+      headRef: 'atlas/thread-deadbeef',
+      url: 'https://github.com/acme/web/pull/7',
+      merged: true,
+    });
   });
 });
