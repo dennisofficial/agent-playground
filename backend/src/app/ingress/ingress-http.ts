@@ -13,7 +13,7 @@ import type {
   RawNotification,
 } from '../domain';
 import type { IntakeOutcome, StimulusIntake } from '../stimulus';
-import type { GithubPrStateSync } from '../driver';
+import type { GithubPrStateSync, GitStateReconciler } from '../driver';
 import type { GithubNotificationSource } from './github-notification.source';
 
 /** Express request shape the ingress controllers read (rawBody enabled on the Nest app). */
@@ -98,15 +98,18 @@ export async function runIngress(
 }
 
 /**
- * Run the GitHub adapter's PR-state front door (`/webhooks/github/state`): verify + route, parse a
- * `pull_request` event into a `PrStateDelta`, and dispatch it straight to the silent
- * `GithubPrStateSync` — this path never touches `StimulusIntake`.
+ * Run the GitHub adapter's PR-state front door (`/webhooks/github/state`): verify + route, then dispatch
+ * by outcome — a `pull_request` event's `PrStateDelta` goes straight to the silent `GithubPrStateSync`,
+ * and a `repo-push` (a push to the repo's default branch) marks the repo's open PRs due-now via
+ * `GitStateReconciler.markRepoDue` so the fast heartbeat catches a base-move conflict in seconds. This
+ * path never touches `StimulusIntake`.
  */
 export async function runPrWebhook(
   logger: Logger,
   adapter: GithubNotificationSource,
   req: RawBodyRequest,
   prSync: GithubPrStateSync,
+  reconciler: GitStateReconciler,
 ): Promise<Record<string, unknown>> {
   const result: IngressResult = await adapter.handlePrWebhook(toRawNotification(req));
 
@@ -121,6 +124,10 @@ export async function runPrWebhook(
   if (result.outcome === 'pr-sync') {
     await prSync.dispatch(result.delta);
     return { status: 'accepted' };
+  }
+  if (result.outcome === 'repo-push') {
+    const marked = await reconciler.markRepoDue(result.orgId, result.repoId);
+    return { status: 'accepted', marked };
   }
 
   return { status: 'ignored', reason: 'unsupported' };
