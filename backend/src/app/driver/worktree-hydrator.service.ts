@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { LocalGitService, writeForbiddenPaths } from '../git';
-import { WorktreeConfigStore, WorktreeSecretFileStore } from '../onboarding';
+import { WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { isExternalMountPath, type MountSpec } from '../sandbox/container-paths';
 import { resolveExternalMountTarget, resolveSafeTarget } from './worktree-path-guard';
 
@@ -17,8 +17,8 @@ export interface HydrateInput {
 
 /**
  * Hydrates a worktree from two DB-backed sources — per-repo secret FILES (see
- * {@link WorktreeSecretFileStore}) and the org+repo-scoped worktree config (cache/auth mounts, see
- * {@link WorktreeConfigStore}) — never a committed file (see docs/adr/0003: a `write_worktree_config` call
+ * {@link WorkspaceSecretFileStore}) and the org+repo-scoped workspace config (cache/auth mounts, see
+ * {@link WorkspaceConfigStore}) — never a committed file (see docs/adr/0003: a `write_workspace_config` call
  * from ANY thread propagates to every other in-flight job's next hydration instantly, no PR/merge/rebase
  * lag). It renders each granted secret to its destination and returns the validated cache mounts for the
  * sandbox to bind. Every materialized path is gitignore-guarded (so a writer's `git add -A` can't sweep it
@@ -36,8 +36,8 @@ export class WorktreeHydrator {
 
   constructor(
     private readonly git: LocalGitService,
-    private readonly secrets: WorktreeSecretFileStore,
-    private readonly config: WorktreeConfigStore,
+    private readonly secrets: WorkspaceSecretFileStore,
+    private readonly config: WorkspaceConfigStore,
   ) {}
 
   /**
@@ -112,13 +112,13 @@ export class WorktreeHydrator {
       try {
         mounts = await this.config.listMounts(orgId, repoDbId);
       } catch (err) {
-        note(`worktree config unavailable — mounts skipped this hydration (will retry next attach): ${(err as Error).message}`);
+        note(`workspace config unavailable — mounts skipped this hydration (will retry next attach): ${(err as Error).message}`);
       }
     }
 
-    // ── secrets (category 1) — rendered from per-repo secret FILES, not worktree config ─────────
-    // A secret-file row IS the render instruction AND the authority (owner-authored). Worktree config
-    // (mounts) never carries secrets — so a `write_worktree_config` call can't read an org secret.
+    // ── secrets (category 1) — rendered from per-repo secret FILES, not workspace config ─────────
+    // A secret-file row IS the render instruction AND the authority (owner-authored). Workspace config
+    // (mounts) never carries secrets — so a `write_workspace_config` call can't read an org secret.
     // NOTE: EVERY thread (incl. onboarding) renders real secret values now. The brain has Bash and can
     // read them in-sandbox — that is INTENTIONAL and accepted: this is a private, trusted deployment where
     // Atlas is at least as capable as local Claude Code (which runs with the user's full unisolated creds).
@@ -129,17 +129,17 @@ export class WorktreeHydrator {
         try {
           target = resolveSafeTarget(worktreePath, f.path);
         } catch (err) {
-          note(`worktree secret "${f.path}" rejected (unsafe path): ${(err as Error).message}`);
+          note(`workspace secret "${f.path}" rejected (unsafe path): ${(err as Error).message}`);
           continue;
         }
         const value = await this.secrets.read(orgId, repoDbId, f.path);
         if (value == null) {
           // The row vanished between listForRepo and read (concurrent delete) — skip, self-heals next attach.
-          note(`worktree secret "${f.path}" disappeared before it could be rendered (concurrent change) — skipping`);
+          note(`workspace secret "${f.path}" disappeared before it could be rendered (concurrent change) — skipping`);
           continue;
         }
         if (!(await this.git.isIgnored(worktreePath, f.path))) {
-          note(`worktree secret target "${f.path}" is NOT gitignored — refusing to render (it would leak into the PR); add it to .gitignore`);
+          note(`workspace secret target "${f.path}" is NOT gitignored — refusing to render (it would leak into the PR); add it to .gitignore`);
           continue;
         }
         await this.writeAtomic(target, value, 0o600);

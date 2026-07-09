@@ -12,7 +12,7 @@ import { IsOptional, IsString, MinLength } from 'class-validator';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
-import { WorktreeSecretFileStore, type WorktreeSecretFileRef } from './worktree-secret.store';
+import { WorkspaceSecretFileStore, type WorkspaceSecretFileRef } from './workspace-secret.store';
 
 class SetFileDto {
   @IsString() @MinLength(1) repoId!: string;
@@ -27,7 +27,7 @@ class DeleteFileDto {
 }
 
 /**
- * `/web/orgs/:orgId/worktree-secrets` — manage the org's encrypted per-repo worktree secret FILES that
+ * `/web/orgs/:orgId/worktree-secrets` — manage the org's encrypted per-repo workspace secret FILES that
  * the hydrator renders into a repo's sandbox. GET returns file refs (repo + path + label) only — never
  * values — readable by any member. All mutations (PUT/DELETE `/files`) are an Administer action — owner
  * only (`OrgOwnerGuard`), mirroring {@link OrgCredentialsController}. A file row IS the authority:
@@ -36,13 +36,13 @@ class DeleteFileDto {
 @Controller('web/orgs/:orgId/worktree-secrets')
 @UseGuards(OrgMembershipGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
-export class WorktreeSecretsController {
-  constructor(private readonly store: WorktreeSecretFileStore) {}
+export class WorkspaceSecretsController {
+  constructor(private readonly store: WorkspaceSecretFileStore) {}
 
   @Get()
   async list(
     @CurrentOrg() org: CurrentOrgCtx,
-  ): Promise<{ files: WorktreeSecretFileRef[] }> {
+  ): Promise<{ files: WorkspaceSecretFileRef[] }> {
     return { files: await this.store.list(org.id) };
   }
 

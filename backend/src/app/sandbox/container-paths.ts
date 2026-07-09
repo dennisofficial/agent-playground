@@ -83,7 +83,7 @@ export const CONTAINER_PNPM_STORE = `${CONTAINER_AGENT_HOME}/pnpm-store`;
 
 /**
  * Worktree-relative paths the SYSTEM already binds under {@link CONTAINER_WORKTREE} on its own, OR that
- * must never be mounted into a worktree at all. A repo's worktree config must NOT request a cache mount
+ * must never be mounted into a worktree at all. A repo's workspace config must NOT request a cache mount
  * at one of these, or (for a genuine system bind) two binds would land on the same container target and
  * Docker hard-fails container creation ("Duplicate mount point"), wedging every turn on the thread.
  * `.pnpm-store` no longer lives under `/workspace` (see {@link CONTAINER_PNPM_STORE}, now under
@@ -117,7 +117,7 @@ export interface MountSpec {
 }
 
 /**
- * Max length for a worktree-relative mount/seed path recorded in the DB-backed worktree config. This is
+ * Max length for a worktree-relative mount/seed path recorded in the DB-backed workspace config. This is
  * now the ONLY size guard on that data (there is no committed file to re-parse under a byte/entry cap),
  * so it is enforced at write-time by the brain's tool-input normalizers.
  */

@@ -94,7 +94,7 @@ export class RepoEntity extends TimestampedEntity {
    * runnable org — the RE-SPAWN SUPPRESSION marker. Set the moment the onboarding thread is created (NOT
    * waiting for it to finish), so a reconnect/revalidate never spawns a second one. Null = never onboarded
    * (eligible to spawn). Distinct from {@link onboarded_at} on purpose: this marks "started", that marks
-   * "the worktree config is live". Cleared if the onboarding thread is deleted before finishing, so a
+   * "the workspace config is live". Cleared if the onboarding thread is deleted before finishing, so a
    * re-connect can re-spawn. Not a real FK (the thread may be deleted out from under it).
    */
   @Column({ type: 'uuid', nullable: true })

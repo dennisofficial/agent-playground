@@ -139,20 +139,25 @@ Everything a repo needs to be a **runnable, correctly-configured workspace** is 
 
 | Dimension | Storage | Upkeep tool |
 |---|---|---|
-| Secret files | `org_worktree_secret_files` | `request_secret` / `request_file` / `derive_secret` |
-| Mounts | `org_worktree_mounts` | `write_worktree_config` |
-| Cache folders | mounts (`shared-rw`) + fixed durable HOME binds | `write_worktree_config` |
+| Secret files | `org_workspace_secret_files` | `request_secret` / `request_file` / `derive_secret` |
+| Mounts | `org_workspace_mounts` | `write_workspace_config` |
+| Cache folders | mounts (`shared-rw`) + fixed durable HOME binds | `write_workspace_config` |
 | Setup / SDK installs | `repos.setup_script` | `write_setup_script` |
 | MCP servers | `mcp_servers` | `propose_mcp_servers` (owner-approved) |
 | Skills | `workspace_skills` | `propose_skill` (owner-approved reusable `SKILL.md`) |
 | House style | `convention_profiles` + `repos.convention_profile_slug` | `propose_convention_profile[_change]` (owner-approved) |
 
-The tables stay separate; the unification is at three seams:
+The tables stay separate; the unification is at four seams:
 
 - **Read-model** — `WorkspaceProfileService` (`workspace-profile/`) composes the seven per-dimension stores
-  into one snapshot (`describe` → `render`). No storage of its own; never exposes a secret *value*.
-- **Prompt** — the snapshot is injected into the brain every turn (`ctx.settings.workspaceProfile`) by the
-  single `workspace-profile.group` (was `environment.group`), which names the area, prints the current
+  into one snapshot (`describe` → `render`). No storage of its own; never exposes a secret *value*. It also
+  derives host-visible **gaps** (`computeGaps` → `renderGaps`) the brain can't see from the snapshot — v1:
+  an approved MCP server with an unfilled secret slot (it silently fails auth). Rendered only when present.
+- **Bridge** — every dimension's upkeep tool lives on a dedicated `workspace-profile` MCP bridge
+  (`sandbox/image/workspace-profile-bridge-options.ts`), so the brain addresses them as
+  `mcp__workspace-profile__*` — one coherent section, distinct from the general `atlas-host-bridge`.
+- **Prompt** — the snapshot (+ any gaps) is injected into the brain every turn (`ctx.settings.workspaceProfile`)
+  by the single `workspace-profile.group` (was `environment.group`), which names the area, prints the current
   state, and lists each dimension's upkeep tool.
 - **Lifecycle** — **onboarding is the first BULK pass** over the profile (`isOnboarding` fragments +
   `finish_onboarding`); **every job after keeps it current INCREMENTALLY** — the same upkeep tools live in

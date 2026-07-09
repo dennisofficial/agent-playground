@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { WorktreeConfigStore } from '../onboarding/worktree-config.store';
-import { WorktreeSecretFileStore } from '../onboarding/worktree-secret.store';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
+import { WorkspaceSecretFileStore } from '../onboarding/workspace-secret.store';
 import { McpServerStore } from '../mcp';
 import { WorkspaceSkillStore } from '../skills';
 import { ConventionProfileResolver } from '../conventions';
@@ -11,7 +11,7 @@ import { ConventionProfileResolver } from '../conventions';
  * after. A read-only projection: never a secret VALUE, only refs/metadata safe to show the brain.
  */
 export interface WorkspaceProfileSnapshot {
-  /** Durable bind mounts (cache/state dirs) — `write_worktree_config`. */
+  /** Durable bind mounts (cache/state dirs) — `write_workspace_config`. */
   mounts: { path: string; mode: string }[];
   /** The cold-boot setup script — `write_setup_script`. Presence + size only (the body can be long). */
   setupScript: { present: boolean; length: number };
@@ -26,6 +26,18 @@ export interface WorkspaceProfileSnapshot {
 }
 
 /**
+ * A host-DERIVED gap in the Workspace Profile — a misconfiguration the brain cannot see from the
+ * snapshot alone, surfaced conditionally so upkeep is a concrete signal rather than standing prompt
+ * prose. v1 covers unfilled MCP secret slots (an approved server that silently can't authenticate);
+ * broken-auth detection and new-stack ("noticed a new package") detection are planned follow-ups.
+ */
+export interface ProfileGap {
+  kind: 'unfilled_mcp_secret';
+  /** Human-readable, secret-SAFE (names only) description including the tool to fix it. */
+  detail: string;
+}
+
+/**
  * Read-model over the seven Workspace Profile dimensions. It COMPOSES the existing per-dimension stores —
  * it owns NO storage of its own — and renders a compact snapshot the brain sees every turn (see
  * `prompt-kit/groups/workspace-profile.group.ts`). This is what makes "keep it up to date" actionable:
@@ -36,8 +48,8 @@ export interface WorkspaceProfileSnapshot {
 @Injectable()
 export class WorkspaceProfileService {
   constructor(
-    private readonly worktreeConfig: WorktreeConfigStore,
-    private readonly secretFiles: WorktreeSecretFileStore,
+    private readonly workspaceConfig: WorkspaceConfigStore,
+    private readonly secretFiles: WorkspaceSecretFileStore,
     private readonly mcp: McpServerStore,
     private readonly skills: WorkspaceSkillStore,
     private readonly conventions: ConventionProfileResolver,
@@ -47,8 +59,8 @@ export class WorkspaceProfileService {
   async describe(orgId: string, repoId: string): Promise<WorkspaceProfileSnapshot> {
     const [mounts, setupScript, secretFiles, mcpRows, skillRows, houseStyleSlug, houseStyle] =
       await Promise.all([
-        this.worktreeConfig.listMounts(orgId, repoId),
-        this.worktreeConfig.getSetupScript(orgId, repoId),
+        this.workspaceConfig.listMounts(orgId, repoId),
+        this.workspaceConfig.getSetupScript(orgId, repoId),
         this.secretFiles.list(orgId, repoId),
         this.mcp.rowsForTurn(orgId, repoId),
         this.skills.rowsForTurn(orgId, repoId),
@@ -76,6 +88,30 @@ export class WorkspaceProfileService {
         ? { slug: houseStyleSlug, name: houseStyle?.name ?? null }
         : null,
     };
+  }
+
+  /**
+   * Host-derived gaps in the profile — misconfigurations the brain cannot see from the snapshot. Cheap,
+   * conditional: returns [] when the profile is healthy, so the caller renders nothing (no prompt bloat).
+   * v1: an approved MCP server with a declared secret slot that has never been filled (it silently fails
+   * auth). Returns secret-SAFE strings only (slot names, never values).
+   */
+  async computeGaps(orgId: string, repoId: string): Promise<ProfileGap[]> {
+    const gaps: ProfileGap[] = [];
+    const unfilled = await this.mcp.unfilledSecretSlots(orgId, repoId);
+    for (const u of unfilled) {
+      gaps.push({
+        kind: 'unfilled_mcp_secret',
+        detail: `MCP server "${u.name}" [${u.scope}] has unfilled secret slot(s): ${u.slots.join(', ')} — it cannot authenticate until filled via request_secret({ mcp: { server, slot, key } }).`,
+      });
+    }
+    return gaps;
+  }
+
+  /** Render gaps as a compact block appended after the snapshot. Returns '' when there are none. */
+  renderGaps(gaps: ProfileGap[]): string {
+    if (gaps.length === 0) return '';
+    return ['PROFILE GAPS (fix these so future jobs inherit a working profile):', ...gaps.map((g) => `- ${g.detail}`)].join('\n');
   }
 
   /** Render a snapshot as a compact markdown block for the brain prompt. Returns '' when totally empty. */

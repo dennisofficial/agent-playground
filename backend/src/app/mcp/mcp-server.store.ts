@@ -65,7 +65,7 @@ export interface RedactedMcpServer {
 
 /**
  * The encrypt-on-write / decrypt-on-read path for user-defined MCP servers. Mirrors
- * {@link WorktreeSecretFileStore} / {@link TenantCredentialStore}: AES-256-GCM via `secret-cipher`, the
+ * {@link WorkspaceSecretFileStore} / {@link TenantCredentialStore}: AES-256-GCM via `secret-cipher`, the
  * `SECRETS_ENCRYPTION_KEY` required to write/read a secret value, values NEVER logged or returned.
  *
  * `scope` is `'*'` for an org-wide server or a repo id for a repo-scoped one. The public API takes the
@@ -250,6 +250,33 @@ export class McpServerStore {
   /** Fetch one raw row (for a validation probe that needs the decrypted secrets). */
   async rawRow(orgId: string, dbScope: string, name: string): Promise<McpServerEntity | null> {
     return this.servers.findOne({ where: { org_id: orgId, scope: dbScope, name } });
+  }
+
+  /**
+   * For each ENABLED org/repo server, the declared secret slots (`header:<k>` / `env:<k>`) that have
+   * NO stored value yet — an approved MCP server that silently cannot authenticate until the operator
+   * fills them via `request_secret({ mcp })`. Surfaced as a Workspace Profile gap (see
+   * `WorkspaceProfileService.computeGaps`); NEVER returns any secret value, only the slot NAMES.
+   */
+  async unfilledSecretSlots(
+    orgId: string,
+    repoId: string,
+  ): Promise<{ name: string; scope: 'org' | string; slots: string[] }[]> {
+    const rows = await this.rowsForTurn(orgId, repoId);
+    const out: { name: string; scope: 'org' | string; slots: string[] }[] = [];
+    for (const r of rows) {
+      if (!r.enabled) continue;
+      const filled = this.decryptSecrets(r);
+      const slots: string[] = [];
+      // A secret slot shows as a `null` placeholder in `config`; it is unfilled when the encrypted blob
+      // has no value for that key.
+      for (const [k, v] of Object.entries(r.config.headers ?? {}))
+        if (v === null && filled.headers?.[k] == null) slots.push(`header:${k}`);
+      for (const [k, v] of Object.entries(r.config.env ?? {}))
+        if (v === null && filled.env?.[k] == null) slots.push(`env:${k}`);
+      if (slots.length > 0) out.push({ name: r.name, scope: McpServerStore.fromDbScope(r.scope), slots });
+    }
+    return out;
   }
 
   /** Decrypt a row's secret blob into `{ headers?, env? }`, or `{}` when it has none. */

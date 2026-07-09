@@ -76,7 +76,7 @@ class SetMcpServerDto {
  * `/web/orgs/:orgId/mcp-servers` — manage the org's user-defined MCP servers, in two writable tiers
  * (org-wide `scope='org'` + repo-scoped `scope=<repoId>`) plus a read-only SYSTEM tier. GET is readable by
  * any member and returns NO secret values (secret header/env slots show as `null`). All mutations are an
- * Administer action — owner only (`OrgOwnerGuard`), mirroring {@link WorktreeSecretsController}.
+ * Administer action — owner only (`OrgOwnerGuard`), mirroring {@link WorkspaceSecretsController}.
  */
 @Controller('web/orgs/:orgId/mcp-servers')
 @UseGuards(OrgMembershipGuard)

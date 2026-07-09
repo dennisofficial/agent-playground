@@ -8,7 +8,7 @@ import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
-import { WorktreeSecretFileStore } from '../onboarding';
+import { WorkspaceSecretFileStore } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   FakeClassifierLlm,
@@ -37,7 +37,7 @@ const SECRET_PATH = '.env';
 describe('repo onboarding — secure secret intake (live Postgres, leak assertion)', () => {
   let app: NestExpressApplication;
   let store: BrainStoreService;
-  let secrets: WorktreeSecretFileStore;
+  let secrets: WorkspaceSecretFileStore;
   let ds: DataSource;
   let jobId: string;
   let repoId: string;
@@ -66,7 +66,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     await app.init();
 
     store = app.get(BrainStoreService);
-    secrets = app.get(WorktreeSecretFileStore);
+    secrets = app.get(WorkspaceSecretFileStore);
     ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
     await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]);
@@ -123,7 +123,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
 
     // The encrypted column never contains the plaintext either.
     const enc = await ds.query(
-      `SELECT value_enc FROM org_worktree_secret_files WHERE org_id = $1 AND repo_id = $2 AND path = $3`,
+      `SELECT value_enc FROM org_workspace_secret_files WHERE org_id = $1 AND repo_id = $2 AND path = $3`,
       [ORG_ID, repoId, SECRET_PATH],
     );
     expect(enc[0].value_enc).not.toContain(SECRET_VALUE);

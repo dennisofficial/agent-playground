@@ -2,8 +2,8 @@ import { randomBytes } from 'node:crypto';
 import type { Repository } from 'typeorm';
 import type { EnvService } from '@core/config/env/env.service';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { OrgWorktreeSecretFileEntity } from '../persistence/entities';
-import { WorktreeSecretFileStore } from './worktree-secret.store';
+import type { OrgWorkspaceSecretFileEntity } from '../persistence/entities';
+import { WorkspaceSecretFileStore } from './workspace-secret.store';
 
 /** A tiny in-memory stand-in for a TypeORM repository (composite-key find/save/delete). */
 function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> {
@@ -30,12 +30,12 @@ function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> {
 const KEY = randomBytes(32).toString('hex');
 const env = { get: (k: string) => (k === 'SECRETS_ENCRYPTION_KEY' ? KEY : undefined) } as unknown as EnvService;
 
-describe('WorktreeSecretFileStore', () => {
-  let store: WorktreeSecretFileStore;
+describe('WorkspaceSecretFileStore', () => {
+  let store: WorkspaceSecretFileStore;
 
   beforeEach(() => {
-    store = new WorktreeSecretFileStore(
-      memRepo<OrgWorktreeSecretFileEntity>(['org_id', 'repo_id', 'path']),
+    store = new WorkspaceSecretFileStore(
+      memRepo<OrgWorkspaceSecretFileEntity>(['org_id', 'repo_id', 'path']),
       env,
     );
   });

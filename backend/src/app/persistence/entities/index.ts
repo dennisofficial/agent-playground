@@ -21,8 +21,8 @@ export * from './decision-record.entity';
 export * from './repo-decision.entity';
 export * from './memory.entity';
 export * from './org-credentials.entity';
-export * from './org-worktree-secret-file.entity';
-export * from './org-worktree-mount.entity';
+export * from './org-workspace-secret-file.entity';
+export * from './org-workspace-mount.entity';
 export * from './job-sandbox.entity';
 export * from './user.entity';
 export * from './ticket.entity';
@@ -51,8 +51,8 @@ import { DecisionRecordEntity } from './decision-record.entity';
 import { RepoDecisionEntity } from './repo-decision.entity';
 import { MemoryEntity } from './memory.entity';
 import { OrgCredentialsEntity } from './org-credentials.entity';
-import { OrgWorktreeSecretFileEntity } from './org-worktree-secret-file.entity';
-import { OrgWorktreeMountEntity } from './org-worktree-mount.entity';
+import { OrgWorkspaceSecretFileEntity } from './org-workspace-secret-file.entity';
+import { OrgWorkspaceMountEntity } from './org-workspace-mount.entity';
 import { JobSandboxEntity } from './job-sandbox.entity';
 import { UserEntity } from './user.entity';
 import { TicketEntity } from './ticket.entity';
@@ -83,8 +83,8 @@ export const ENTITIES = [
   RepoDecisionEntity,
   MemoryEntity,
   OrgCredentialsEntity,
-  OrgWorktreeSecretFileEntity,
-  OrgWorktreeMountEntity,
+  OrgWorkspaceSecretFileEntity,
+  OrgWorkspaceMountEntity,
   JobSandboxEntity,
   UserEntity,
   TicketEntity,
