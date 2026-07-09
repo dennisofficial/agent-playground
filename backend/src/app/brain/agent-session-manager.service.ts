@@ -2135,8 +2135,10 @@ export class AgentSessionManager
         .catch((err) => this.logger.warn(`setSessionResume failed: ${err}`));
       // Graceful finish, mirroring the normal success finish below — so the lane doesn't hang and the
       // transcript flushes — WITHOUT the halt-wake / secret / file success-tail writes (no triage happened).
+      // Do not pass `result.result`: on some SDK paths that final summary is the same printed limit line the
+      // engine suppressed from text blocks, and `finish()` would persist it as a normal chat fallback.
       await streamer.finish(
-        result.result,
+        undefined,
         result.usage
           ? {
               usage: result.usage,

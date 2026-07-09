@@ -685,7 +685,9 @@ function useResumeCountdown(resumeAt: string | undefined): string {
   }, [resumeAt]);
 
   if (!resumeAt) return "auto-resumes at reset";
-  const remaining = new Date(resumeAt).getTime() - now;
+  const resetMs = new Date(resumeAt).getTime();
+  if (!Number.isFinite(resetMs)) return "auto-resumes at reset";
+  const remaining = resetMs - now;
   if (remaining <= 0) return "auto-resuming…";
   return `auto-resumes in ${formatRemaining(remaining)}`;
 }
@@ -754,7 +756,8 @@ export function SystemOperatorNotice({
 }) {
   const retryable = message.meta?.retryable === true;
   const sessionLimit = message.meta?.sessionLimit === true;
-  const resumeAt = message.meta?.resumeAt as string | undefined;
+  const resumeAt =
+    typeof message.meta?.resumeAt === "string" ? message.meta.resumeAt : undefined;
   const isMain = (lane ?? MAIN_LANE) === MAIN_LANE;
   const retry = useRetryTurn(jobRef);
   return (

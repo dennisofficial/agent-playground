@@ -376,6 +376,11 @@ export class TurnRunnerService {
     if (stepId && result.sessionId) {
       await this.steps.update({ id: stepId }, { session_id: result.sessionId }).catch(() => undefined);
     }
+    if (result.sessionLimit) {
+      const { resetAt, rateLimitType } = result.sessionLimit;
+      const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
+      throw new EngineSessionLimitError(message, resetAt, rateLimitType, result.sessionId);
+    }
     return {
       report: result.result,
       ...(result.planText ? { planText: result.planText } : {}),

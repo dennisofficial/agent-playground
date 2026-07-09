@@ -32,15 +32,15 @@ const FETCH_TIMEOUT_MS = 10_000;
 const FALLBACK_CLAUDE_CODE_VERSION = '2.1.204';
 
 /** Per-org snapshot of windows harvested from live turns (`applyHarvest`), plus when it was last touched. */
-interface HarvestSnapshot {
+type HarvestSnapshot = {
   windows: Partial<Record<WindowKey, NonNullable<UsageWindow>>>;
   fetchedAt: number;
-}
+};
 
-interface LiveCacheEntry {
+type LiveCacheEntry = {
   usage: OrgUsage;
   fetchedAtMs: number;
-}
+};
 
 /**
  * Host-side snapshot of an org's Claude subscription usage — the backing service for

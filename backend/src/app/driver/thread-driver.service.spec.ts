@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ModuleRef } from '@nestjs/core';
-import { EngineAuthError } from '../engine';
+import { EngineAuthError, EngineSessionLimitError } from '../engine';
 import type { EngineRunnerPort, ToolBridgeOptions } from '../engine';
 import {
   ThreadDriver,
@@ -83,6 +83,7 @@ interface StoreState {
   steps: Step[];
   route: JobRoute;
   operatorInputCards: OperatorInputCard[];
+  systemNotices?: string[];
   /** A builder's materialized review children (review_lens + post_review rows). Lazily created. */
   reviewChildren?: ReviewChildRow[];
 }
@@ -107,6 +108,9 @@ function makeStore(state: StoreState): {
     }),
     clearJobHalt: vi.fn(async (_id: string) => {
       state.job.halt = null;
+    }),
+    hasRecentSystemOperatorNotice: vi.fn(async (_id: string, text: string) => {
+      return (state.systemNotices ?? []).includes(text);
     }),
     setSessionResume: vi.fn(async () => undefined),
     setFeatureBranch: vi.fn(async (_id: string, branch: string) => {
@@ -811,6 +815,11 @@ function assemble(
         },
       ) => {
         sunk.push({ jobId, block });
+        if ((block.meta as { source?: unknown } | null)?.source === 'system_operator' && block.text) {
+          const notices = state.systemNotices ?? [];
+          notices.push(block.text);
+          state.systemNotices = notices;
+        }
       },
     ),
     appendBlockOnce: vi.fn(
@@ -1868,6 +1877,48 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       h.posts.some((p) => /paused/i.test(p) && /credential|auth/i.test(p)),
     ).toBe(true);
     expect(h.opened).toHaveLength(0);
+  });
+
+  it('parks a build lane on a Claude session limit with one durable resume notice', async () => {
+    const resetAt = '2026-07-09T22:00:00.000Z';
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1', orgId: 'T1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new EngineSessionLimitError(
+        `Claude session limit (five_hour); resets ${resetAt}`,
+        resetAt,
+        'five_hour',
+        'sess-limit',
+      );
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'session_limit');
+
+    expect(state.job.halt).toMatchObject({
+      kind: 'session_limit',
+      resumeAt: resetAt,
+    });
+    expect(h.store.setSessionResume).toHaveBeenCalledWith(
+      state.job.id,
+      resetAt,
+      expect.objectContaining({ lane: 'build', resetSource: 'usage_api' }),
+    );
+    expect(h.sunk.filter((s) => s.block.meta?.sessionLimit === true)).toHaveLength(1);
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(1);
+
+    await h.driver.retry(state.job.id);
+    await flushUntil(() => (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls.length >= 2);
+
+    expect(h.sunk.filter((s) => s.block.meta?.sessionLimit === true)).toHaveLength(1);
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(1);
   });
 
   it('resumePaused re-drives a paused job to completion; no-ops if the job is not paused', async () => {

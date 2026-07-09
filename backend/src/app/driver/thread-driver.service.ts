@@ -705,24 +705,40 @@ export class ThreadDriver implements JobDispatcher {
    */
   private async relaySessionLimitPaused(jobId: string, resumeAt?: string): Promise<void> {
     const text = `You've hit your session limit — resets ${resumeAt ? fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`;
-    await this.blockSink
-      .appendBlock(jobId, {
-        kind: 'chat',
-        text,
-        meta: {
-          source: 'system_operator',
-          severity: 'warning',
-          sessionLimit: true,
-          ...(resumeAt ? { resumeAt } : {}),
-        },
-      })
-      .catch((e) =>
-        this.logger.error(`could not durably record session-limit park for job=${jobId}: ${e}`),
-      );
+    const alreadyPosted = await this.store
+      .hasRecentSystemOperatorNotice(jobId, text)
+      .catch(() => false);
+    if (!alreadyPosted) {
+      await this.blockSink
+        .appendBlock(jobId, {
+          kind: 'chat',
+          text,
+          meta: {
+            source: 'system_operator',
+            severity: 'warning',
+            sessionLimit: true,
+            ...(resumeAt ? { resumeAt } : {}),
+          },
+        })
+        .catch((e) =>
+          this.logger.error(`could not durably record session-limit park for job=${jobId}: ${e}`),
+        );
+    }
     try {
       const job = await this.store.loadJob(jobId);
       const route = await this.store.route(job);
-      await this.post(route, text);
+      if (route.channel && !alreadyPosted) {
+        await this.surface.post(route.channel, text, {
+          ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+          ...(route.orgId ? { orgId: route.orgId } : {}),
+          meta: {
+            source: 'system_operator',
+            severity: 'warning',
+            sessionLimit: true,
+            ...(resumeAt ? { resumeAt } : {}),
+          },
+        });
+      }
     } catch (e) {
       this.logger.warn(`could not live-relay session-limit park for job=${jobId}: ${e}`);
     }
@@ -2443,6 +2459,12 @@ export class ThreadDriver implements JobDispatcher {
         this.logger.warn(`re-attach turn ${row.turn_id} detached — leaving it for the next boot`);
         throw err;
       }
+      if (isSessionLimitError(err)) {
+        // The re-attached turn ended cleanly on a Claude session limit. End the live lane without a text
+        // fallback and propagate so the top-level drive parks the build on the durable resume clock.
+        await harness.abort();
+        throw err;
+      }
       // The engine turn already finished (streams reaped) or its container is gone — persist partials, end
       // the lane once, finalize the stale registry row (so the watchdog/reaper don't race it), and signal
       // the caller to re-run the batch (resuming the persisted session).
@@ -3510,4 +3532,3 @@ export function fmtReset(iso: string): string {
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
-
