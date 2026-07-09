@@ -129,7 +129,7 @@ async function runOverRedis(turnId: string): Promise<void> {
               const text = typeof result === 'string' ? result : JSON.stringify(result);
               return { content: [{ type: 'text' as const, text }] };
             } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
+              const message = (err instanceof Error ? err.message : String(err)) || 'host tool error (no message)';
               return { content: [{ type: 'text' as const, text: `Error: ${message}` }], isError: true };
             }
           },

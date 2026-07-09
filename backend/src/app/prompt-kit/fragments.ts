@@ -54,7 +54,7 @@ export const SOLE_AUTHOR_NOTE =
  * which ONE is under git. Fixes a real failure mode: the brain treated `/.atlas` supervisor state (atlas-svc
  * markers/logs) as a worktree leak and "flagged a deviation" adding `.atlas/` to `.gitignore`. `/.atlas`,
  * `/context`, `/playground` are separate binds OUTSIDE `/workspace` (see `sandbox/container-paths.ts`), so git
- * never sees them and they need no ignore rule; the ONLY in-worktree `.atlas` is the committed decision ledger.
+ * never sees them and they need no ignore rule.
  */
 export const SANDBOX_FILESYSTEM_MAP_NOTE = [
   'SANDBOX FILESYSTEM MAP — WHAT IS UNDER GIT AND WHAT IS NOT: your sandbox has four areas, and only ONE is a',
@@ -67,8 +67,6 @@ export const SANDBOX_FILESYSTEM_MAP_NOTE = [
   '  - `/context` — plan/spec/validation artifacts (e.g. `RESULTS.md`, smoke logs). Separate mount, OUTSIDE the',
   '    worktree, never in git.',
   '  - `/playground` — throwaway scratch. Separate mount, OUTSIDE the worktree, never in git.',
-  'ONE thing to disambiguate: `/workspace/.atlas/decisions/` IS inside the worktree and IS committed on purpose',
-  '(the decision ledger) — do not confuse it with the root `/.atlas` infra mount, and do not gitignore it either.',
   'RULE: never add `/.atlas`, `/context`, or `/playground` to a `.gitignore` "to keep the tree clean" — they are',
   'not in the tree. If `git status` in `/workspace` is clean, it already is clean. A `.gitignore` edit is',
   'warranted ONLY for genuine junk a build tool writes INTO `/workspace` itself.',

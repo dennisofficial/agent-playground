@@ -4,7 +4,7 @@
  * A "turn" is the SECOND category of prompt in this kit, distinct from the `groups/` fragment library
  * (assembled multi-fragment SYSTEM prompts addressed to an `Agent` audience via `renderAgentPrompt`). A turn is
  * a single server-driven mechanical action — the host fires ONE engine run to make the brain/engine do a
- * specific thing (open the PR, promote decisions to the ledger) — so it is NOT assembled, NOT reused across many
+ * specific thing (e.g. open the PR) — so it is NOT assembled, NOT reused across many
  * turns, and NOT an `Agent`. It is a plain, self-contained pair: an optional one-shot `system` prompt and the
  * `task` body delivered for that run.
  *

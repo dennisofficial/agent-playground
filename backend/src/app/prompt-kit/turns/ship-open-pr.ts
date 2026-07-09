@@ -1,6 +1,6 @@
 /**
- * prompt-kit / turns / ship-open-pr — the SHIP-TIME open-PR turn, delivered as a BRAIN harness-turn body
- * (like `LEDGER_PROMOTION_TURN`). The host seeds `shipOpenPrBody(...)` into the job-brain session, which
+ * prompt-kit / turns / ship-open-pr — the SHIP-TIME open-PR turn, delivered as a BRAIN harness-turn body.
+ * The host seeds `shipOpenPrBody(...)` into the job-brain session, which
  * reconciles the branch against its base, pushes, AUTHORS a Claude-Code-style PR body from the real diff +
  * its `/context/artifacts/` evidence bundle, and opens the PR with its own authenticated git + `gh`.
  *
@@ -58,8 +58,8 @@ export function shipOpenPrBody(args: ShipOpenPrArgs): string {
     `CONFLICTS, resolve them PROPERLY — understand both sides, never blindly take one — then commit the merge, ` +
     `and re-run the build/tests to confirm the tree still passes after reconciling. (No drift → skip straight ` +
     `to the push.)\n` +
-    `  2. Commit anything uncommitted — this INCLUDES any \`.atlas/decisions/\` ledger files that were just ` +
-    `written for this build (\`git add -A\` sweeps them in) — then \`git push -u origin ${branch}\`. Nothing ` +
+    `  2. Commit anything uncommitted (\`git add -A\` sweeps in everything you wrote for this build), then ` +
+    `\`git push -u origin ${branch}\`. Nothing ` +
     `uncommitted is left behind: the host does NOT commit on your behalf, so if you don't commit it, it ships nowhere.\n` +
     `  3. AUTHOR THE PR BODY yourself, from what you ACTUALLY shipped — run ` +
     `\`git diff origin/${defaultBranch}...HEAD\` for the real change and read \`/context/artifacts/RESULTS.md\` ` +

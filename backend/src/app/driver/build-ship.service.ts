@@ -10,9 +10,8 @@ import type { ResolvedRepo } from './repo-resolver';
  * its own sandbox (see {@link BuildShipService.ship}), and the HOST records the PR afterward by branch
  * discovery (`findOpenPullByHead` → `setPrReady`, backstopped by the git-state reconciler). `opened` means
  * the open-PR turn RAN; `prConfirmed` means the host latched `pr_url`/`pr_number` this pass. The open-PR turn
- * commits + pushes everything (the host NEVER commits), so callers gate the ledger `complete` stamp on
- * `opened` AND positive proof the ledger landed (`LocalGitService.ledgerClean`), and only treat a
- * `prConfirmed` result as "the PR is recorded".
+ * commits + pushes everything (the host NEVER commits), so callers only treat a `prConfirmed` result as
+ * "the PR is recorded".
  */
 export type ShipOutcome =
   | { opened: true; prConfirmed: true; url: string; number: number }
@@ -63,9 +62,8 @@ export interface ShipInput {
  *   `done`, so the merge poll watches it) → relay "PR ready".
  *
  * The HOST NEVER COMMITS. Every commit on the branch is authored by Atlas's own in-sandbox session (builders
- * commit per-step; the open-PR turn commits any remaining uncommitted work — incl. the host-written
- * `.atlas/decisions/` ledger files — before it pushes). This keeps the git history free of robotic
- * host-identity commits.
+ * commit per-step; the open-PR turn commits any remaining uncommitted work before it pushes). This keeps the
+ * git history free of robotic host-identity commits.
  *
  * The whole-diff review-and-fix runs UPSTREAM as the build's last thread (the Codex master-review builder —
  * see `thread-driver.service.ts`), so the branch reaching `ship` is already reviewed and fixed; `ship` just
@@ -114,7 +112,7 @@ export class BuildShipService {
 
     // OPEN THE PR — as a seeded turn on the job-brain session. The brain reconciles the branch against its
     // base, pushes, authors the body, and `gh pr create`s, all with its own authenticated git + `gh`. This
-    // AWAITS the brain turn to completion (like the ledger-promotion turn). No host "opening the PR" system
+    // AWAITS the brain turn to completion. No host "opening the PR" system
     // message here — the seeded turn renders on Main with its own "Opening the pull request." pill.
     const brain = await this.brain();
     await brain.openPrAtShip({

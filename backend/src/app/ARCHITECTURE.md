@@ -82,7 +82,7 @@ them (you observe them, and can interject the current build turn).
 
 **Job brain — the host tools** (`agent-session-manager.service.ts` `buildTools`). ~15 tools, grouped:
 - *read/plan:* `get_pipeline_state`, `get_decision_record`, `submit_plan`, `finalize_plan`, `dispatch_build`
-- *decisions/questions:* `create_decision`, `ask_question`, `answer`, `promote_decisions`
+- *decisions/questions:* `create_decision`, `ask_question`, `answer`
 - *memory:* `recall`, `remember`
 - *spin-off / intake:* `create_job` (a NEW independent job on this repo — own base branch, starts scoping),
   `create_ticket` (a note for LATER, no work starts), `request_secret` (onboarding)
@@ -242,8 +242,8 @@ and split by event set + downstream behavior — named by behavior so the purpos
 1. **Fast path — webhooks.** The two front doors deliver in near-real-time.
 2. **Direct-build turn-end latch.** When a `finalize_build` (direct-build) brain turn opens the PR, a turn-end
    hook immediately runs the existing branch-discovery latch (`BuildShipService.latchPr` → `setPrReady`) to
-   record `pr_url` / `pr_number`, flip `status` `running → done`, and seed the ledger-promotion turn — instead
-   of waiting on the poll (decision **d3**). Fire-and-forget, to avoid a per-job turn-queue deadlock. Full-path
+   record `pr_url` / `pr_number` and flip `status` `running → done` — instead of waiting on the poll
+   (decision **d3**). Fire-and-forget, to avoid a per-job turn-queue deadlock. Full-path
    `dispatch_build` behavior is unchanged. There is **no** brain-reported-PR-URL tool (decision **d1**);
    host-side branch discovery (`findOpenPullByHead`) stays the mechanism by which Atlas learns of an opened PR.
 3. **Backstop — the 30-min poll.** `pollPrClosures` + `GitStateReconciler` on the reap timer are retained

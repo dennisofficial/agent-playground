@@ -352,8 +352,8 @@ describe('JobLifecycleService — cold-boot setup_error stamping (ensureContaine
 
 describe('JobLifecycleService.applyGithubPrState', () => {
   /**
-   * Build a service whose `jobs.update` and `closeJob`/`reconcileLedgerOnMerge` (spied on the instance)
-   * all push a label into a shared `order` array, so tests can assert both invocation AND sequence.
+   * Build a service whose `jobs.update` and `closeJob` (spied on the instance) both push a label into
+   * a shared `order` array, so tests can assert both invocation AND sequence.
    */
   function makeServiceForApply() {
     const order: string[] = [];
@@ -383,10 +383,6 @@ describe('JobLifecycleService.applyGithubPrState', () => {
     svc.closeJob = vi.fn(async () => {
       order.push('closeJob');
     });
-    (svc as unknown as { reconcileLedgerOnMerge: (orgId: string, repoId: string) => Promise<void> }).reconcileLedgerOnMerge =
-      vi.fn(async () => {
-        order.push('reconcileLedgerOnMerge');
-      });
     return { svc, jobs, order };
   }
 
@@ -400,15 +396,15 @@ describe('JobLifecycleService.applyGithubPrState', () => {
     expect(svc.closeJob).not.toHaveBeenCalled();
   });
 
-  it("state='merged' writes pr_state=merged, reconciles the ledger, then closes — in that order", async () => {
+  it("state='merged' writes pr_state=merged, then closes — in that order", async () => {
     const { svc, jobs, order } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'merged');
     expect(result).toBe('closed');
     expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'merged' });
-    expect(order).toEqual(['update:merged', 'reconcileLedgerOnMerge', 'closeJob']);
+    expect(order).toEqual(['update:merged', 'closeJob']);
   });
 
-  it("state='closed' writes pr_state=closed, skips ledger reconcile, then closes", async () => {
+  it("state='closed' writes pr_state=closed, then closes", async () => {
     const { svc, jobs, order } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'closed');
     expect(result).toBe('closed');
