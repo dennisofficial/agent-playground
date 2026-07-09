@@ -15,6 +15,7 @@ import { useFileDrop } from "@/features/job-workspace/use-file-drop";
 import { AttachmentTray } from "@/features/job-workspace/attachment-tray";
 import { orgSwatch, orgInitials } from "@/lib/org-display";
 import { ROUTES, threadHref } from "@/lib/routes";
+import { isSubmitCombo } from "@/lib/keyboard";
 
 /**
  * Create-thread form — shared by the `@dialog` modal and the `/new` full-page fallback (single source).
@@ -269,9 +270,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           onKeyDown={(e) => {
             // ⌘+Enter (Mac) / Ctrl+Enter (Windows/Linux) submits, mirroring the Create thread button.
             // Plain Enter still inserts a newline. No-op while a create is in flight or there are no repos.
-            const submitCombo =
-              (e.metaKey || e.ctrlKey) && e.key === "Enter";
-            if (!submitCombo) return;
+            if (!isSubmitCombo(e)) return;
             e.preventDefault();
             if (create.isPending || repos.length === 0) return;
             submit();

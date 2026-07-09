@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
 import { useApprove } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
+import { isSubmitCombo } from "@/lib/keyboard";
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
@@ -262,6 +263,14 @@ export function VerdictButtons({
           autoFocus
           value={note}
           onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => {
+            // ⌘/Ctrl+Enter submits the verdict; plain Enter still inserts a newline.
+            if (!isSubmitCombo(e)) return;
+            e.preventDefault();
+            if (pending) return;
+            send(drafting, note);
+            setDrafting(null);
+          }}
           placeholder={NOTE_PROMPT[drafting] ?? "Add a note (optional)"}
           rows={2}
           className="w-full resize-y rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[12.5px] text-text outline-none placeholder:text-faint focus:border-accent"
