@@ -80,4 +80,19 @@ describe('DecisionApprovalService', () => {
     await expect(handle.verdict).rejects.toThrow('job dropped');
     expect(svc.pendingCount).toBe(0);
   });
+
+  it('cancel then resolve is a no-op — the withdraw-then-click race at the handle level', async () => {
+    const handle = await svc.request({ channel: 'C1' }, CARD);
+    svc.cancel('job-1', 'withdrawn');
+    await expect(handle.verdict).rejects.toThrow('withdrawn');
+    expect(svc.resolve('job-1', 'approve', 'U-dennis')).toBe(false); // no pending handle left to resolve
+    expect(svc.pendingCount).toBe(0);
+  });
+
+  it('threads the clicked decisionRecordId (the version pin) into the resolved ApprovalResolution', async () => {
+    const handle = await svc.request({ channel: 'C1' }, CARD);
+    expect(svc.resolve('job-1', 'approve', 'U-dennis', undefined, 'dr-clicked')).toBe(true);
+    const resolution = await handle.verdict;
+    expect(resolution.clickedDecisionRecordId).toBe('dr-clicked');
+  });
 });

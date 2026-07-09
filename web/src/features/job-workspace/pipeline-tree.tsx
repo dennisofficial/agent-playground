@@ -278,9 +278,9 @@ export function PipelineTree({
     status === "planning" ||
     status === "plan_review" ||
     status === "awaiting_approval";
-  // Failed: threads aren't persisted as `failed` (only the job flips), so derive the halt point — the
-  // in-flight thread (furthest non-`done`/non-`pending`) is where the run stopped; later ones never ran.
-  const haltIdx = status === "failed" ? haltThreadIdx(threads) : -1;
+  // Halted: threads aren't persisted with the halt (only the job carries it), so derive the halt point —
+  // the in-flight thread (furthest non-`done`/non-`pending`) is where the run stopped; later ones never ran.
+  const haltIdx = job.halt != null ? haltThreadIdx(threads) : -1;
 
   return (
     <>

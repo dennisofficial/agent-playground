@@ -43,10 +43,10 @@ export class GithubNotificationSource implements NotificationSource {
   ) {}
 
   /**
-   * `/ingress/github` front door — work-events→job intake ONLY. Verifies + routes the request, then
-   * summarizes it into a triage stimulus. `pull_request` is deliberately not actionable here
-   * (`summarizeGithubEvent` returns null for it) — that event drives the silent PR-state sync via
-   * `handlePrWebhook` instead, never this method.
+   * `/webhooks/github/events` front door — WORK-EVENTS intake ONLY. Verifies + routes the request, then
+   * summarizes it into a triage stimulus (routed to the owning job by `StimulusIntake`). `pull_request`
+   * is deliberately not actionable here (`summarizeGithubEvent` returns null for it) — that event drives
+   * the silent PR-state sync via `handlePrWebhook` instead, never this method.
    */
   async handle(raw: RawNotification): Promise<IngressResult> {
     const g = await this.verifyAndRoute(raw);
@@ -72,7 +72,7 @@ export class GithubNotificationSource implements NotificationSource {
   }
 
   /**
-   * `/webhooks/github` front door — silent PR-state sync ONLY. Verifies + routes the request same as
+   * `/webhooks/github/state` front door — silent PR-state sync ONLY. Verifies + routes the request same as
    * `handle`, but only ever parses `pull_request` events into a `PrStateDelta`; every other verified
    * event type is ignored (this endpoint never feeds `StimulusIntake`).
    */

@@ -70,6 +70,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
     hasRecentSystemOperatorNotice: vi.fn().mockResolvedValue(false),
     approve: vi.fn(),
+    withdrawPlan: vi.fn(),
     cancel: vi.fn(),
     reopenPlanning: vi.fn(),
     loadJob: vi.fn(),
@@ -138,6 +139,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
   const mockApprovals = {
     request: vi.fn(),
+    cancel: vi.fn(),
   } as unknown as DecisionApprovalService;
 
   const mockLifecycle = {
@@ -528,12 +530,21 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
   });
 
-  it('propose_plan: idempotent — already awaiting_approval short-circuits (no second persist/card)', async () => {
+  it('propose_plan: re-proposing over an already-pending plan durably WITHDRAWS it first (no hard no-op, no orphaned handle)', async () => {
+    // The old hard idempotency short-circuit is gone: `prepareRepropose` now durably retracts the
+    // pending proposal (atomic flip + supersede) and drops its live handle BEFORE persisting the fresh
+    // one, so re-proposing always ends with exactly one pending card — never a silent no-op.
     const tools = manager.buildTools(fakeStimulus);
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: FAKE_JOB_ID,
       status: 'awaiting_approval',
       decisionRecordId: FAKE_RECORD_ID,
+    });
+    (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: true });
+    (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'o',
+      decisions: [],
+      threadTitles: ['S'],
     });
 
     const result = await tools['propose_plan']({
@@ -542,9 +553,33 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       threads: [{ title: 'S', type: 'backend' }],
     });
 
+    expect(mockStore.withdrawPlan).toHaveBeenCalledWith(THREAD_ID, expect.any(String));
+    expect(mockApprovals.cancel).toHaveBeenCalledWith(THREAD_ID, expect.any(String));
+    expect(mockPlanReview.reviewForCurrentSpecs).toHaveBeenCalled();
+    expect(mockStore.persistPlan).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ ok: true, decisionRecordId: FAKE_RECORD_ID });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockApprovals.request).toHaveBeenCalledOnce();
+  });
+
+  it('propose_plan: prepareRepropose REFUSES (no persist, no card) when withdrawPlan loses the race (an approval/cancel landed first)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'awaiting_approval',
+      decisionRecordId: FAKE_RECORD_ID,
+    });
+    (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: false });
+
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'o',
+      threads: [{ title: 'S', type: 'backend' }],
+    });
+
+    expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
-    expect(mockPlanReview.reviewForCurrentSpecs).not.toHaveBeenCalled();
+    expect(mockApprovals.cancel).not.toHaveBeenCalled();
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
@@ -1315,6 +1350,35 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(raced).toMatchObject({ ok: false });
   });
 
+  it('(e4) buildTools() exposes withdraw_plan', () => {
+    const tools = manager.buildTools(fakeStimulus);
+    expect(tools['withdraw_plan']).toBeDefined();
+  });
+
+  it('(e5) withdraw_plan retracts a pending proposal — cancels the live handle + posts the notice; a non-awaiting job is a no-op', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+
+    // Happy path: the store won the guarded flip → cancel the live handle + append the durable notice.
+    (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: true });
+    const ok = await tools['withdraw_plan']({ reason: 'pivoting' });
+    expect(mockStore.withdrawPlan).toHaveBeenCalledWith(THREAD_ID, 'pivoting');
+    expect(ok).toMatchObject({ ok: true });
+    expect(mockApprovals.cancel as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      THREAD_ID,
+      expect.any(String),
+    );
+    expect(mockStore.appendAtlasMessage).toHaveBeenCalledWith(THREAD_ID, expect.any(String));
+
+    // No pending proposal → the store guard reports no winner → {ok:false}, no cancel/appendAtlasMessage.
+    (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: false });
+    (mockApprovals.cancel as ReturnType<typeof vi.fn>).mockClear();
+    (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockClear();
+    const notPending = await tools['withdraw_plan']({});
+    expect(notPending).toMatchObject({ ok: false });
+    expect(mockApprovals.cancel).not.toHaveBeenCalled();
+    expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+  });
+
   it('(f) create_decision attaches the most-recently-answered question and returns the resolved decision + id', async () => {
     // With no explicit questionId / delivery seedQuestionId, create_decision falls back to the newest
     // answered, not-yet-logged card (ordered by answeredAt) — its `ts` is the card it stamps consumed.
@@ -1649,6 +1713,99 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(acted).toBe(false);
     expect(mockStore.approve).not.toHaveBeenCalled();
     expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
+  it('(d4) actOnApprovalVerdict: store.approve returning null (withdrawn/superseded/stale click) posts the "withdrawn or updated" notice and does NOT dispatch', async () => {
+    const job = { id: FAKE_JOB_ID, kind: 'feature', title: 'rate limiting' };
+    (mockStore.approve as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+    (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+      jobId: FAKE_JOB_ID,
+      verdict: Promise.resolve({ verdict: 'approve', ruledBy: 'U-OP' }),
+    });
+
+    await manager.requestApprovalAndAct(
+      fakeStimulus,
+      job as never,
+      FAKE_RECORD_ID,
+      {
+        jobId: FAKE_JOB_ID,
+        decisionRecordId: FAKE_RECORD_ID,
+        title: 'rate limiting',
+        summary: 'x',
+        decisions: [],
+        threads: [],
+      } as never,
+    );
+
+    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(mockSurface.post as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      'C',
+      expect.stringContaining('withdrawn or updated'),
+      expect.anything(),
+    );
+  });
+
+  it("(d5) actOnApprovalVerdict prefers resolution.clickedDecisionRecordId (the version pin) over the handle's closure decisionRecordId for store.approve", async () => {
+    const runningJob = { id: FAKE_JOB_ID, kind: 'feature', title: 'rate limiting' };
+    (mockStore.approve as ReturnType<typeof vi.fn>).mockResolvedValue(runningJob);
+    (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+    (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+      jobId: FAKE_JOB_ID,
+      verdict: Promise.resolve({
+        verdict: 'approve',
+        ruledBy: 'U-OP',
+        clickedDecisionRecordId: 'rec-CLICKED',
+      }),
+    });
+
+    await manager.requestApprovalAndAct(
+      fakeStimulus,
+      runningJob as never,
+      FAKE_RECORD_ID, // the handle's closure record — must be IGNORED in favor of the clicked one
+      {
+        jobId: FAKE_JOB_ID,
+        decisionRecordId: FAKE_RECORD_ID,
+        title: 'rate limiting',
+        summary: 'x',
+        decisions: [],
+        threads: [],
+      } as never,
+    );
+
+    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, 'rec-CLICKED', 'U-OP');
+  });
+
+  type PrepareRepropose = { prepareRepropose(jobId: string): Promise<{ refuse?: string }> };
+
+  it('(d6) prepareRepropose refuses a job already past the approval gate, without touching withdrawPlan', async () => {
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'running',
+    });
+
+    const result = await (manager as unknown as PrepareRepropose).prepareRepropose(FAKE_JOB_ID);
+
+    expect(result.refuse).toEqual(expect.any(String));
+    expect(mockStore.withdrawPlan).not.toHaveBeenCalled();
+  });
+
+  it('(d7) prepareRepropose on an awaiting_approval job durably withdraws BEFORE dropping the live handle (order matters — closes the click window)', async () => {
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'awaiting_approval',
+      decisionRecordId: FAKE_RECORD_ID,
+    });
+    (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({ withdrawn: true });
+
+    const result = await (manager as unknown as PrepareRepropose).prepareRepropose(FAKE_JOB_ID);
+
+    expect(result.refuse).toBeUndefined();
+    expect(mockStore.withdrawPlan).toHaveBeenCalledWith(FAKE_JOB_ID, expect.any(String));
+    expect(mockApprovals.cancel).toHaveBeenCalledWith(FAKE_JOB_ID, expect.any(String));
+    const withdrawOrder = (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const cancelOrder = (mockApprovals.cancel as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    expect(withdrawOrder).toBeLessThan(cancelOrder);
   });
 
   // ── ADR 0004 Phase 3 — retry_thread tool + notifyThreadHalted wake ───────────────────────────────
