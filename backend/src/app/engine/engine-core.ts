@@ -1313,8 +1313,8 @@ export function makeCanUseTool(
 /**
  * Fold one result's {@link EngineUsage} into a running accumulator. A background-task hold yields ≥2
  * results per turn (the immediate first result + the post-settlement auto-continuation), so the BILLING
- * token fields are SUMMED across results. Occupancy-and-label fields (`contextTokens`/`contextModel`/
- * `model`/`modelUsage`) are NOT summed — they reflect the LATEST result (the turn-end window), so `next`
+ * token fields are SUMMED across results, including the per-model breakdown. Occupancy-and-label fields
+ * (`contextTokens`/`contextModel`/`model`) reflect the LATEST result (the turn-end window), so `next`
  * overwrites when it carries them. `next` undefined (a result with no usage) leaves `acc` unchanged.
  */
 export function addClaudeUsage(acc: EngineUsage, next: EngineUsage | undefined): EngineUsage {
@@ -1326,6 +1326,7 @@ export function addClaudeUsage(acc: EngineUsage, next: EngineUsage | undefined):
   const reasoningTokens = (acc.reasoningTokens ?? 0) + (next.reasoningTokens ?? 0);
   const bothCostAbsent = acc.costUsd === undefined && next.costUsd === undefined;
   const costUsd = bothCostAbsent ? undefined : (acc.costUsd ?? 0) + (next.costUsd ?? 0);
+  const modelUsage = addClaudeModelUsage(acc.modelUsage, next.modelUsage);
   return {
     ...acc,
     inputTokens,
@@ -1338,8 +1339,30 @@ export function addClaudeUsage(acc: EngineUsage, next: EngineUsage | undefined):
     ...(next.model ? { model: next.model } : {}),
     ...(next.contextTokens !== undefined ? { contextTokens: next.contextTokens } : {}),
     ...(next.contextModel ? { contextModel: next.contextModel } : {}),
-    ...(next.modelUsage ? { modelUsage: next.modelUsage } : {}),
+    ...(modelUsage ? { modelUsage } : {}),
   };
+}
+
+function addClaudeModelUsage(
+  acc: Record<string, ModelUsageBreakdown> | undefined,
+  next: Record<string, ModelUsageBreakdown> | undefined,
+): Record<string, ModelUsageBreakdown> | undefined {
+  if (!acc && !next) return undefined;
+  const out: Record<string, ModelUsageBreakdown> = {};
+  for (const [model, usage] of Object.entries(acc ?? {})) out[model] = { ...usage };
+  for (const [model, usage] of Object.entries(next ?? {})) {
+    const prior = out[model];
+    const webSearchRequests = (prior?.webSearchRequests ?? 0) + (usage.webSearchRequests ?? 0);
+    out[model] = {
+      inputTokens: (prior?.inputTokens ?? 0) + usage.inputTokens,
+      outputTokens: (prior?.outputTokens ?? 0) + usage.outputTokens,
+      cacheReadTokens: (prior?.cacheReadTokens ?? 0) + usage.cacheReadTokens,
+      cacheWriteTokens: (prior?.cacheWriteTokens ?? 0) + usage.cacheWriteTokens,
+      costUsd: (prior?.costUsd ?? 0) + usage.costUsd,
+      ...(webSearchRequests > 0 ? { webSearchRequests } : {}),
+    };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** Extract token usage from a Claude success result. Convention: inputTokens = total INCLUDING cache. */

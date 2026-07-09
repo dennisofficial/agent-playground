@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
-import { claudeSessionExists, EngineCore, extractClaudeUsage } from './engine-core';
+import { addClaudeUsage, claudeSessionExists, EngineCore, extractClaudeUsage } from './engine-core';
 import { atlasEngineHomeDir } from './engine-home';
 import { isUnresumableSessionMessage, UNRESUMABLE_SESSION_MARKER } from './engine.types';
 import type { EngineEvent } from './engine.types';
@@ -914,6 +914,66 @@ describe('EngineCore — unresumable session detection', () => {
 });
 
 describe('extractClaudeUsage — per-model breakdown', () => {
+  it('sums per-model usage across multiple Claude result frames', () => {
+    const usage = addClaudeUsage(
+      {
+        inputTokens: 10,
+        outputTokens: 2,
+        cacheReadTokens: 4,
+        costUsd: 1,
+        modelUsage: {
+          opus: { inputTokens: 8, outputTokens: 2, cacheReadTokens: 4, cacheWriteTokens: 0, costUsd: 8 },
+          haiku: {
+            inputTokens: 1,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            costUsd: 1,
+            webSearchRequests: 1,
+          },
+        },
+      },
+      {
+        inputTokens: 20,
+        outputTokens: 5,
+        cacheWriteTokens: 3,
+        costUsd: 2,
+        modelUsage: {
+          opus: {
+            inputTokens: 12,
+            outputTokens: 5,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 3,
+            costUsd: 12,
+            webSearchRequests: 2,
+          },
+          sonnet: { inputTokens: 6, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 6 },
+        },
+      },
+    );
+
+    expect(usage).toMatchObject({ inputTokens: 30, outputTokens: 7, cacheReadTokens: 4, cacheWriteTokens: 3, costUsd: 3 });
+    expect(usage.modelUsage).toEqual({
+      opus: {
+        inputTokens: 20,
+        outputTokens: 7,
+        cacheReadTokens: 4,
+        cacheWriteTokens: 3,
+        costUsd: 20,
+        webSearchRequests: 2,
+      },
+      haiku: {
+        inputTokens: 1,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 1,
+        webSearchRequests: 1,
+      },
+      sonnet: { inputTokens: 6, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 6 },
+    });
+  });
+
   it('preserves the FULL modelUsage map (all models), normalizing SDK field names', () => {
     const usage = extractClaudeUsage(
       {
