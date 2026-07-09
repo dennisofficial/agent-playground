@@ -473,6 +473,7 @@ export class ThreadDriver implements JobDispatcher {
     // re-drive must lift the halt or `runJob`/`drive`'s halt gate would refuse to re-drive.
     await this.store.clearJobHalt(jobId).catch(() => undefined);
     await this.store.setThreadStatus(threadId, 'executing').catch(() => undefined);
+    await this.store.setThreadCondition(threadId, 'none').catch(() => undefined);
     if (guidance) {
       await this.store.setThreadOrientation(threadId, guidance).catch(() => undefined);
     }

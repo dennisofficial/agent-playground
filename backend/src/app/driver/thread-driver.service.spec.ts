@@ -2707,6 +2707,29 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.job.status).toBe('done'); // shipped after the fix
   });
 
+  it('redriveThread clears a stale condition before the asynchronous drive observes the row', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    vi.spyOn(
+      h.driver as unknown as { drive: (jobId: string) => Promise<void> },
+      'drive',
+    ).mockResolvedValue(undefined);
+
+    const result = await h.driver.redriveThread(state.job.id, 'sec-be', 'retry now');
+
+    expect(result.ok).toBe(true);
+    expect(state.threads[0].status).toBe('executing');
+    expect(state.threads[0].condition).toBe('none');
+    expect(h.store.setThreadCondition).toHaveBeenCalledWith('sec-be', 'none');
+  });
+
   it('a Phase-2 judge DOWNGRADE does NOT latch — the orchestrator adds evidence and re-completes in the same turn', async () => {
     const state: StoreState = {
       job: makeJob(),
