@@ -153,6 +153,15 @@ export interface SandboxProvider {
    */
   teardownByIdentity(input: SandboxAttachInput): Promise<void>;
   /**
+   * Reclaim FULLY ORPHANED per-sandbox artifacts — `-net` networks and `-dind` volumes whose owning container
+   * no longer exists (leaks from crashes / `kill -9` / a swallowed `removeNetwork` "active endpoints" race, or
+   * the restart path that nulls `container_id` while the real container keeps its network). Never touches an
+   * artifact attached to a live container OR one whose create is still in flight. Best-effort; returns counts
+   * reclaimed. Optional on the port so test fakes needn't implement it; `SandboxManager` (the only real
+   * binding) always does. Scheduled by the driver's leader-gated reap timer + once on leadership acquisition.
+   */
+  reapOrphanedArtifacts?(): Promise<{ networks: number; volumes: number }>;
+  /**
    * Pipe a value into a path inside a thread's LIVE container over exec stdin (never argv/env, so it can't
    * leak into `docker inspect`/process lists), bounded by `timeoutMs`. The delivery lane for EPHEMERAL
    * secrets (an OAuth code, a 2FA code): the target is typically a FIFO the brain wired a waiting process to

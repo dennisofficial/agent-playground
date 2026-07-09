@@ -622,6 +622,7 @@ const SECTION_COLOR: Record<JobSection, string> = {
   planning: "var(--blue)",
   awaiting: "var(--slate)",
   building: "var(--accent)",
+  ready_to_ship: "var(--green)",
   done: "var(--green)",
   pr_open: "var(--green)",
   merged: "var(--purple)",

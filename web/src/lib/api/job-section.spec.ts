@@ -27,13 +27,13 @@ describe("sectionOf", () => {
     }
   });
 
-  it("maps awaiting-family statuses to awaiting", () => {
-    for (const status of [
-      "awaiting_approval",
-      "awaiting_ship_review",
-    ] as JobStatus[]) {
-      expect(sectionOf(makeThread({ status }))).toBe("awaiting");
-    }
+  it("maps awaiting_approval to awaiting and awaiting_ship_review to ready_to_ship", () => {
+    expect(sectionOf(makeThread({ status: "awaiting_approval" as JobStatus }))).toBe(
+      "awaiting",
+    );
+    expect(
+      sectionOf(makeThread({ status: "awaiting_ship_review" as JobStatus })),
+    ).toBe("ready_to_ship");
   });
 
   it("d1: a running job with pr.state='open' still lands in building, not pr_open", () => {
@@ -97,14 +97,37 @@ describe("groupThreadsBySection", () => {
     expect(groupThreadsBySection(threads)).toEqual([]);
   });
 
-  it("groups multiple threads into the same section together", () => {
+  it("groups multiple threads sharing a section together", () => {
     const threads = [
-      makeThread({ id: "a1", status: "awaiting_approval" }),
-      makeThread({ id: "a2", status: "awaiting_ship_review" }),
+      makeThread({ id: "p1", status: "planning" }),
+      makeThread({ id: "p2", status: "plan_review" }),
     ];
     const groups = groupThreadsBySection(threads);
     expect(groups).toEqual([
-      { section: "awaiting", threads: [threads[0], threads[1]] },
+      { section: "planning", threads: [threads[0], threads[1]] },
+    ]);
+  });
+
+  it("splits the two awaiting gates into separate ordered sections", () => {
+    const threads = [
+      makeThread({ id: "a2", status: "awaiting_ship_review" }),
+      makeThread({ id: "a1", status: "awaiting_approval" }),
+    ];
+    const groups = groupThreadsBySection(threads);
+    expect(groups.map((g) => g.section)).toEqual(["awaiting", "ready_to_ship"]);
+  });
+
+  it("orders ready_to_ship between building and done", () => {
+    const threads = [
+      makeThread({ id: "d1", status: "done", pr: null }),
+      makeThread({ id: "s1", status: "awaiting_ship_review" }),
+      makeThread({ id: "b1", status: "running" }),
+    ];
+    const groups = groupThreadsBySection(threads);
+    expect(groups.map((g) => g.section)).toEqual([
+      "building",
+      "ready_to_ship",
+      "done",
     ]);
   });
 });
