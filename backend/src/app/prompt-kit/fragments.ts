@@ -406,14 +406,24 @@ export const EVIDENCE_ARTIFACTS_NOTE =
 
 /**
  * SPIKE FIRST — for planning + workers. Prove a risky/unverified assumption (especially an SDK or library
- * capability) with a tiny throwaway spike BEFORE committing to a plan that rests on it.
+ * capability) with a tiny throwaway spike BEFORE committing to a plan that rests on it. Covers BOTH
+ * directions of a capability claim: building ON one you assume works, AND ruling OUT a path because you
+ * assume it "can't be done" — the negative claim is the more dangerous one, since it silently steers the
+ * design toward a workaround and never trips the "before you build on it" guardrails.
  */
 export const SPIKE_FIRST_NOTE =
   'SPIKE BEFORE YOU COMMIT to an approach that rests on an UNVERIFIED assumption — above all a claim about ' +
   'what an SDK, library, API, or tool can actually do ("does X support Y?", "can this be called ' +
-  'mid-stream?"). Rather than design several steps on top of a guess and discover the premise was false, ' +
-  'write the smallest throwaway spike that calls the real thing and RUN it to prove the assumption first. ' +
-  'A five-minute spike beats a derailed plan. Keep spikes in throwaway scratch space; never commit them.';
+  'mid-stream?"). A claim that something CANNOT be done — "not expressible", "not supported", "the library ' +
+  'can\'t do this", so you reach for a workaround — is the MOST dangerous version of this and carries the ' +
+  'HIGHEST burden of proof, not the lowest: you cannot prove a negative from memory, and "I don\'t recall a ' +
+  'way" is not "there is no way". Treat any impossibility claim that would change your approach exactly like ' +
+  '"does X support Y?" — verify it against the actual current docs/source for the installed version (or a ' +
+  'spike) and CITE what you found (a doc URL or source path:line) before you let it steer the design; an ' +
+  'uncited "can\'t" does not get to rule out a path. Rather than design several steps on top of a guess and ' +
+  'discover the premise was false, write the smallest throwaway spike that calls the real thing and RUN it ' +
+  'to prove the assumption first. A five-minute spike beats a derailed plan. Keep spikes in throwaway ' +
+  'scratch space; never commit them.';
 
 /**
  * BASELINE FIRST — for planning. Reproduce and observe the CURRENT behavior of the thing you're about to
