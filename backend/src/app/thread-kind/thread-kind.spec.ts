@@ -4,6 +4,7 @@ import {
   THREAD_KIND_SPECS,
   driverExecutableKinds,
   isDriverExecutableKind,
+  laneDefaultFooter,
   threadKindSpec,
   validateThreadKinds,
 } from './registry';
@@ -78,6 +79,12 @@ describe('thread-kind registry', () => {
       },
     ];
     expect(() => validateThreadKinds(bad)).toThrow(/unknown kind "ghost"/);
+  });
+
+  it("laneDefaultFooter surfaces each kind's reasoning effort — 'high' for the Claude lanes, 'xhigh' for master review", () => {
+    expect(laneDefaultFooter('main').effort).toBe('high');
+    expect(laneDefaultFooter('builder').effort).toBe('high');
+    expect(laneDefaultFooter('master_review').effort).toBe('xhigh');
   });
 
   it('validateThreadKinds rejects a duplicate kind', () => {

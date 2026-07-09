@@ -4,12 +4,12 @@ import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '../domain';
 import { ENGINE_RUNNER, EngineAuthError, SANDBOX_RESET_NOTICE, pickKeys, type EngineRunnerPort } from '../engine';
 import type {
-  CodexReasoningEffort,
   EngineAuth,
   EngineEvent,
   EngineHomeKey,
   EngineRunResult,
   EngineUsage,
+  ReasoningEffort,
   ResolvedMcpServer,
   ResolvedSkill,
   ToolBridgeOptions,
@@ -39,9 +39,9 @@ export interface RunTurnInput {
   systemPrompt: string;
   /** Override the engine model for this turn. */
   model?: string;
-  /** Codex-only reasoning effort (maps to the engine's `modelReasoningEffort`). The master-review thread
-   *  pins `'xhigh'`; ignored by Claude turns. */
-  modelReasoningEffort?: CodexReasoningEffort;
+  /** Engine-agnostic reasoning effort, forwarded to `RunEngineArgs.modelReasoningEffort`. The
+   *  master-review thread pins `'xhigh'`. */
+  modelReasoningEffort?: ReasoningEffort;
   /** How the turn authenticates (defaults derived from env by the EngineRunner). */
   auth?: EngineAuth;
   /**

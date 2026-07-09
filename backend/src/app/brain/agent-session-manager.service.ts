@@ -140,6 +140,7 @@ import type {
   EngineRunResult,
 } from '../engine/engine.types';
 import type { EngineHomeKey } from '../engine/engine-home';
+import { threadKindSpec } from '../thread-kind';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import type {
@@ -1862,6 +1863,9 @@ export class AgentSessionManager
       ...(grantedSkills && grantedSkills.size > 0 ? { grantedSkills: Array.from(grantedSkills) } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
+      ...(threadKindSpec('main').reasoningEffort
+        ? { modelReasoningEffort: threadKindSpec('main').reasoningEffort }
+        : {}),
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       steerable: true, // streaming-input mode: operator messages steer this turn mid-flight (priority:'now')
       ...(sessionId ? { sessionId } : {}),

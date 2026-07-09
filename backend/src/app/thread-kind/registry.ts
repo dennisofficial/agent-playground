@@ -11,7 +11,7 @@ import { Agent, renderAgentPrompt } from '../prompt-kit';
 import { THREAD_REGISTRY } from '../surface/thread-registry';
 import { DEFAULT_LENSES } from '../autofix/autofix-lenses';
 import type { SessionEngine } from '../domain';
-import type { CodexReasoningEffort } from '../engine';
+import type { ReasoningEffort } from '../engine';
 import type { ThreadKindSpec, ThreadRowKind } from './spec';
 
 /**
@@ -37,6 +37,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
+    reasoningEffort: 'high',
     gates: { verification: false, liveVerification: false },
     laneKind: 'main',
     inputPolicy: 'operator',
@@ -51,6 +52,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'execute',
     execution: 'top-level',
+    reasoningEffort: 'high',
     gates: { verification: true, liveVerification: true },
     laneKind: 'builder',
     inputPolicy: 'none',
@@ -94,6 +96,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'review',
     execution: 'child',
+    reasoningEffort: 'high',
     gates: { verification: false, liveVerification: false },
     laneKind: 'autofix-lens',
     inputPolicy: 'none',
@@ -107,6 +110,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'execute',
     execution: 'child',
+    reasoningEffort: 'high',
     gates: { verification: false, liveVerification: false },
     laneKind: 'autofix-fix',
     inputPolicy: 'none',
@@ -157,8 +161,8 @@ export interface LaneDefaultFooter {
   engine: SessionEngine;
   /** The Claude model id (`'opus'`) for claude kinds; omitted for codex (no pinned model). */
   model?: string;
-  /** Codex reasoning effort, when the kind runs at one. */
-  effort?: CodexReasoningEffort;
+  /** Reasoning effort, when the kind runs at one. */
+  effort?: ReasoningEffort;
 }
 
 /**

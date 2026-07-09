@@ -1213,6 +1213,56 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
   });
 
+  it('a claude builder turn — AND its follow-up GATE turn — both forward modelReasoningEffort: "high"', async () => {
+    // The registry pins the `builder` thread-kind to 'high' reasoning effort; both the primary execute
+    // turn and the diagnostics done-gate's follow-up turn (kind:'gate') read it off the same spec, so
+    // both must forward the SAME value to the engine.
+    const runs: Array<{ engine: string; effort?: string; gateKind?: string }> = [];
+    const { turn: baseTurn } = makeTurn({});
+    const turn = {
+      runTurn: vi.fn(
+        async (input: {
+          mode: string;
+          engine: string;
+          modelReasoningEffort?: string;
+          stepId?: string | null;
+          jobId: string;
+          toolBridge?: ToolBridgeOptions;
+          turnMeta?: { kind?: string };
+        }) => {
+          runs.push({
+            engine: input.engine,
+            effort: input.modelReasoningEffort,
+            gateKind: input.turnMeta?.kind,
+          });
+          return (baseTurn.runTurn as unknown as (i: typeof input) => Promise<unknown>)(input);
+        },
+      ),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { turn });
+    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']); // a .ts change kicks the gate
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    const builderRuns = runs.filter((r) => r.gateKind !== 'gate');
+    const gateRuns = runs.filter((r) => r.gateKind === 'gate');
+    expect(builderRuns.length).toBeGreaterThan(0);
+    expect(gateRuns.length).toBeGreaterThan(0);
+    expect(builderRuns.every((r) => r.engine === 'claude' && r.effort === 'high')).toBe(true);
+    expect(gateRuns.every((r) => r.engine === 'claude' && r.effort === 'high')).toBe(true);
+  });
+
   it('build turns ride the shared transcript spine: richStream on, blocks tagged meta.phaseId, a build_anchor per thread batch', async () => {
     const seen: Array<{ mode: string; richStream?: boolean }> = [];
     const turn = {

@@ -7,6 +7,7 @@ import { TurnHarnessFactory, type TurnHarness } from '../surface/turn-harness.se
 import { laneFor } from '../surface/thread-registry';
 import { Agent, renderAgentPrompt } from '../prompt-kit';
 import { ConventionProfileResolver } from '../conventions';
+import { threadKindSpec } from '../thread-kind';
 import {
   buildFixPrompt,
   buildReviewPrompt,
@@ -308,6 +309,9 @@ export class AutoFixStage {
         ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
+        ...(threadKindSpec('review_lens').reasoningEffort
+          ? { modelReasoningEffort: threadKindSpec('review_lens').reasoningEffort }
+          : {}),
       });
       await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
       if (ctx.jobId) {
@@ -432,6 +436,9 @@ export class AutoFixStage {
         ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
+        ...(threadKindSpec('post_review').reasoningEffort
+          ? { modelReasoningEffort: threadKindSpec('post_review').reasoningEffort }
+          : {}),
       });
     } catch (err) {
       await harness?.abort().catch(() => undefined);
