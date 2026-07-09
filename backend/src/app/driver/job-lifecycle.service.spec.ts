@@ -420,3 +420,104 @@ describe('JobLifecycleService.applyGithubPrState', () => {
     expect(order).toEqual(['update:closed', 'closeJob']);
   });
 });
+
+describe('JobLifecycleService.closeJobPullRequest', () => {
+  /** Build a service whose `projects`/`creds`/`pr` are controllable, for closeJobPullRequest tests. */
+  function makeServiceForClose(repo: Partial<RepoEntity> | null) {
+    const projects = {
+      findOne: vi.fn().mockResolvedValue(repo),
+    } as unknown as Repository<RepoEntity>;
+    const closePullRequest = vi.fn().mockResolvedValue(undefined);
+    const githubToken = vi.fn().mockResolvedValue('TOK');
+    const svc = new JobLifecycleService(
+      { findOne: vi.fn() } as unknown as Repository<JobEntity>,
+      { findOne: vi.fn(), save: vi.fn(), create: vi.fn() } as unknown as Repository<JobSandboxEntity>,
+      projects,
+      {} as unknown as LocalGitService,
+      { closePullRequest } as unknown as GithubPrService,
+      { githubToken } as unknown as CredentialResolver,
+      { get: vi.fn() } as unknown as EnvService,
+      new SandboxActivityRegistry(),
+      { resolve: vi.fn() } as unknown as DriverRepoResolver,
+      { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
+      { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
+      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
+      { get: vi.fn() } as unknown as ModuleRef,
+      { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    );
+    return { svc, projects, closePullRequest, githubToken };
+  }
+
+  it('no-ops (never calls pr.closePullRequest) when the job has no open PR', async () => {
+    const { svc, closePullRequest } = makeServiceForClose({
+      id: 'repo-1',
+      git_url: 'https://github.com/acme/app.git',
+    });
+
+    await svc.closeJobPullRequest({
+      id: 'job-1',
+      org_id: 'T1',
+      repo_id: 'repo-1',
+      pr_state: 'merged',
+      pr_number: 9,
+    } as JobEntity);
+
+    expect(closePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('no-ops when pr_state is open but pr_number is null', async () => {
+    const { svc, closePullRequest } = makeServiceForClose({
+      id: 'repo-1',
+      git_url: 'https://github.com/acme/app.git',
+    });
+
+    await svc.closeJobPullRequest({
+      id: 'job-1',
+      org_id: 'T1',
+      repo_id: 'repo-1',
+      pr_state: 'open',
+      pr_number: null,
+    } as JobEntity);
+
+    expect(closePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('resolves the repo + token and closes the PR when pr_state is open', async () => {
+    const { svc, projects, closePullRequest, githubToken } = makeServiceForClose({
+      id: 'repo-1',
+      git_url: 'https://github.com/acme/app.git',
+    });
+
+    await svc.closeJobPullRequest({
+      id: 'job-1',
+      org_id: 'T1',
+      repo_id: 'repo-1',
+      pr_state: 'open',
+      pr_number: 9,
+    } as JobEntity);
+
+    expect(projects.findOne).toHaveBeenCalledWith({ where: { id: 'repo-1' } });
+    expect(githubToken).toHaveBeenCalledWith('T1');
+    expect(closePullRequest).toHaveBeenCalledWith('TOK', {
+      owner: 'acme',
+      repo: 'app',
+      number: 9,
+    });
+  });
+
+  it('throws when the repo or token cannot be resolved', async () => {
+    const { svc, closePullRequest } = makeServiceForClose(null);
+
+    await expect(
+      svc.closeJobPullRequest({
+        id: 'job-1',
+        org_id: 'T1',
+        repo_id: 'repo-1',
+        pr_state: 'open',
+        pr_number: 9,
+      } as JobEntity),
+    ).rejects.toThrow(/job-1/);
+    expect(closePullRequest).not.toHaveBeenCalled();
+  });
+});
