@@ -47,7 +47,7 @@ export interface ThreadPipelineAwareness {
  */
 @Entity({ name: 'jobs' })
 @Index(['org_id', 'repo_id'])
-@Index('uq_threads_ticket_id', ['ticket_id'], { unique: true, where: 'ticket_id IS NOT NULL' })
+@Index('uq_threads_ticket_id', ['ticket_id'], { unique: true, where: '"ticket_id" IS NOT NULL' })
 export class JobEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
