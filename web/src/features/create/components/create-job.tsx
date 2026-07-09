@@ -321,6 +321,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           disabled={repos.length === 0}
         >
           Create thread
+          <ShortcutHint />
         </Button>
       </div>
     </div>
@@ -461,6 +462,32 @@ function NoRepos({ orgId, onDone }: { orgId: string; onDone?: () => void }) {
         Open Repos settings
       </Link>
     </div>
+  );
+}
+
+/**
+ * The ⌘↵ / Ctrl↵ affordance shown inside the Create thread button — it mirrors the keyboard shortcut on
+ * the First message field. Renders nothing until mounted so the server HTML and first client render match
+ * (platform is only knowable in the browser); the modifier symbol then resolves per platform.
+ */
+function ShortcutHint() {
+  const [isMac, setIsMac] = useState<boolean | null>(null);
+  useEffect(() => {
+    const p =
+      typeof navigator !== "undefined"
+        ? navigator.platform || navigator.userAgent
+        : "";
+    setIsMac(/mac|iphone|ipad|ipod/i.test(p));
+  }, []);
+  if (isMac === null) return null;
+  return (
+    <kbd
+      aria-hidden="true"
+      className="inline-flex items-center gap-0.5 rounded border border-white/30 px-1.5 py-0.5 font-mono text-[10px] font-medium leading-none text-white/85"
+    >
+      {isMac ? "⌘" : "Ctrl"}
+      <span>↵</span>
+    </kbd>
   );
 }
 
