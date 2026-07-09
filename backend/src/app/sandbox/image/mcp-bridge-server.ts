@@ -35,10 +35,12 @@ const TOOL_SCHEMAS: Record<string, { description: string; inputSchema: Record<st
       'Report the verification you ran for a DIRECT BUILD before shipping. Pass passed:true only once ' +
       'diagnostics + the repo typecheck are clean AND — if you touched a runtime surface (HTTP endpoint, UI ' +
       'page/component, CLI entry point, or background job) — you have ACTUALLY EXERCISED IT LIVE (booted the ' +
-      'process and curled the endpoint / drove the UI / ran the CLI for real). Include that live evidence in ' +
-      '`verification` (the real command, its exit code, a tail of its output). finalize_build runs a ' +
-      'live-verification judge over this evidence and refuses to ship a runtime change you only typechecked. ' +
-      'If you cannot get things clean, pass passed:false with `remaining` listing the specific errors.',
+      'process and curled the endpoint / drove the UI / ran the CLI for real). For internal plumbing whose ' +
+      'effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), a capture ' +
+      'from the booted process proving the changed value was passed at runtime counts instead. Include that ' +
+      'live evidence in `verification` (the real command, its exit code, a tail of its output). finalize_build ' +
+      'runs a live-verification judge over this evidence and refuses to ship a runtime change you only ' +
+      'typechecked. If you cannot get things clean, pass passed:false with `remaining` listing the specific errors.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -52,7 +54,8 @@ const TOOL_SCHEMAS: Record<string, { description: string; inputSchema: Record<st
           type: 'array',
           description:
             'Live-verification evidence — the real commands you ran and their results (curl / UI drive / CLI ' +
-            'run, plus diagnostics/typecheck). Typecheck/build/lint/tests alone are NOT live verification.',
+            'run — or, for internal plumbing, a booted-process log capture proving the changed value was passed ' +
+            'at runtime; plus diagnostics/typecheck). Typecheck/build/lint/tests alone are NOT live verification.',
           items: {
             type: 'object',
             properties: {

@@ -377,7 +377,9 @@ export const VALIDATE_BY_RUNNING_NOTE =
   'green build: actually run it and exercise it the way a caller would before you report done. Start ' +
   'long-running services with the `atlas-svc` supervisor (`run`/`logs`/`ps`) so they outlive the turn, ' +
   'then hit them — `curl` the endpoint and check the status/body, drive the UI with Playwright, or run ' +
-  "the repo's own e2e/smoke tooling — and confirm the OBSERVED behavior matches the intent.";
+  "the repo's own e2e/smoke tooling — and confirm the OBSERVED behavior matches the intent. If the change " +
+  'is internal plumbing whose effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed ' +
+  'to an SDK), instead capture a log line from the booted process proving the changed value was passed at runtime.';
 
 /**
  * EVIDENCE ARTIFACTS — the human-facing PROOF that live-validation actually happened. Shared by the build
@@ -438,7 +440,9 @@ export const AUTHOR_LIVE_VALIDATION_NOTE =
   'PROVE IT BY RUNNING IT — Atlas knows work is done because it SAW it run, not because the build was green. ' +
   'When a change has ANY runtime surface (an endpoint, a UI, a CLI, a job, a script), the proof is actually ' +
   'RUNNING it and observing the result — `curl` the endpoint and check the body, drive the UI, run the CLI — ' +
-  'and typecheck/build/test is only the FLOOR beneath that. This holds both ways: in a PLAN, author each ' +
+  'and typecheck/build/test is only the FLOOR beneath that. For internal plumbing whose effect is never echoed ' +
+  'in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), the proof is a log line from the booted ' +
+  'process showing the changed value was passed at runtime. This holds both ways: in a PLAN, author each ' +
   "thread's `## Validation` as that live run and NEVER mark it \"optional\"/\"nice to have\"/\"smoke (optional)\"; " +
   'and on a DIRECT build you run yourself, live-validate before you finalize. The only work that validates by ' +
   'tests alone is work with genuinely no runtime surface — and then say that is why.';

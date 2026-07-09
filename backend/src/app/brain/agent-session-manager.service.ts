@@ -82,6 +82,7 @@ import {
   type LiveVerificationVerdict,
 } from '../driver/live-verification-judge';
 import {
+  clampEvidenceOutput,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
   renderTerminalRecordSummary,
@@ -2344,7 +2345,7 @@ export class AgentSessionManager
                   kind: String(o['kind'] ?? '').trim(),
                   command: String(o['command'] ?? '').trim(),
                   exitCode: Number.isFinite(Number(o['exitCode'])) ? Number(o['exitCode']) : -1,
-                  outputTail: String(o['outputTail'] ?? '').slice(0, 2000),
+                  outputTail: clampEvidenceOutput(String(o['outputTail'] ?? '')),
                 };
               })
               .filter((v) => v.command)
@@ -2354,7 +2355,7 @@ export class AgentSessionManager
                   kind: 'reported',
                   command: '(see outputTail)',
                   exitCode: 0,
-                  outputTail: (args['verification'] as string).trim().slice(0, 2000),
+                  outputTail: clampEvidenceOutput((args['verification'] as string).trim()),
                 },
               ]
             : [];
@@ -3147,8 +3148,10 @@ export class AgentSessionManager
             jobId,
             reason:
               `Live validation inadequate — ${detail}. Actually exercise the changed runtime surface ` +
-              `(curl the endpoint / drive the UI / run the CLI), re-report_verification with the captured ` +
-              `evidence, then finalize_build again.`,
+              `(curl the endpoint / drive the UI / run the CLI) — or, if the change is internal plumbing ` +
+              `never echoed in an HTTP/UI/CLI surface, boot the process and capture a log line proving the ` +
+              `changed value was passed at runtime. Then re-report_verification with the captured evidence, ` +
+              `then finalize_build again.`,
           };
         }
 
@@ -5523,8 +5526,10 @@ export class AgentSessionManager
       'run `mcp__atlas-lsp-ts__diagnostics` on the files you changed and the repo\'s own typecheck, and fix ' +
       'anything they find. Then — if your change touched a runtime surface (an HTTP endpoint/route, a UI ' +
       'page/component, a CLI entry point, or a background job) — ACTUALLY EXERCISE IT LIVE: boot the process ' +
-      'and curl the endpoint / drive the UI / run the CLI for real. Typecheck, build, lint, and the test ' +
-      'suite are NOT live verification on their own. Report what you ran with ' +
+      'and curl the endpoint / drive the UI / run the CLI for real. If the change is internal plumbing whose ' +
+      'effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), instead boot ' +
+      'the process and capture a log line proving the changed value was passed at runtime. Typecheck, build, ' +
+      'lint, and the test suite are NOT live verification on their own. Report what you ran with ' +
       '`report_verification({ passed: true, verification: [{ kind, command, exitCode, outputTail }, …] })` — ' +
       'capture the real command, its exit code, and a tail of its output. `finalize_build` now runs a ' +
       'live-verification judge over that evidence and REFUSES to ship a runtime change you only typechecked. ' +

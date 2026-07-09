@@ -42,6 +42,7 @@ export {
 } from './live-verification-judge';
 export { LiveVerificationModule } from './live-verification.module';
 export {
+  clampEvidenceOutput,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
   renderTerminalRecordSummary,

@@ -76,6 +76,7 @@ import {
   type LiveVerificationVerdict,
 } from './live-verification-judge';
 import {
+  clampEvidenceOutput,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
   renderTerminalRecordSummary,
@@ -1460,7 +1461,7 @@ export class ThreadDriver implements JobDispatcher {
                     kind: String(o['kind'] ?? '').trim(),
                     command: String(o['command'] ?? '').trim(),
                     exitCode: Number.isFinite(Number(o['exitCode'])) ? Number(o['exitCode']) : -1,
-                    outputTail: String(o['outputTail'] ?? '').slice(0, 2000),
+                    outputTail: clampEvidenceOutput(String(o['outputTail'] ?? '')),
                   };
                 })
                 .filter((v) => v.command)
@@ -1470,7 +1471,7 @@ export class ThreadDriver implements JobDispatcher {
                     kind: 'reported',
                     command: '(see outputTail)',
                     exitCode: 0,
-                    outputTail: args['verification'].trim().slice(0, 2000),
+                    outputTail: clampEvidenceOutput(args['verification'].trim()),
                   },
                 ]
               : undefined;
