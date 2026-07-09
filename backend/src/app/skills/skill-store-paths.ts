@@ -69,6 +69,17 @@ export function managedGitSkillDirHost(root: string | undefined, name: string): 
   return join(managedGitSkillsRootHost(root), safe(name));
 }
 
+/**
+ * The HOST dir where a `propose_skill` proposal's FROZEN draft is staged at propose time, keyed by
+ * `(orgId, requestId)`. A reserved `.pending` subtree of the central store, SIBLING of `orgs/`/`_managed`
+ * — deliberately OUTSIDE `orgSkillsRootHost`, so it is NOT bind-mounted into any sandbox and the brain
+ * cannot mutate it after proposing (freezes exactly what the owner reviews; approval vendors from here).
+ * Removed on approve OR dismiss so no orphaned copies accumulate.
+ */
+export function pendingSkillDirHost(root: string | undefined, orgId: string, requestId: string): string {
+  return join(skillsStoreRoot(root), '.pending', safe(orgId), safe(requestId));
+}
+
 /** A git-sourced managed skill's dir, relative to whichever git-managed root the consumer resolves
  *  locally — the host's {@link managedGitSkillsRootHost} or the sandbox's `CONTAINER_SKILLS_MANAGED_GIT`.
  *  Mirrors `system-skill-store-paths.ts`'s `managedSkillRelativeDir` for the static managed tier. */

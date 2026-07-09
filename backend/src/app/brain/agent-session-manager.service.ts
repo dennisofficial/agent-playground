@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -92,7 +93,7 @@ import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
-import { SkillFileWriter, SkillResolver, WorkspaceSkillStore } from '../skills';
+import { SkillFileWriter, SkillInstallerService, SkillResolver, WorkspaceSkillStore } from '../skills';
 import { WorkspaceProfileService, detectRepoManifests } from '../workspace-profile';
 import {
   isExternalMountPath,
@@ -340,6 +341,9 @@ export class AgentSessionManager
     // Reads a skill's current SKILL.md body for `propose_skill`'s `priorBody` (the registry row carries no
     // content). @Optional for unit tests; DI (@Global SkillsModule) supplies it live.
     @Optional() private readonly skillFiles?: SkillFileWriter,
+    // Dry-run PREVIEW of a `propose_skill_install` source (resolve the real name + overwrite conflict) — the
+    // approval install path lives in the controller. @Optional for unit tests; DI (@Global SkillsModule) live.
+    @Optional() private readonly skillInstaller?: SkillInstallerService,
     // Read-only for `list_mcp_servers` (the write path is the owner-gated approve endpoint). @Optional for
     // unit tests (undefined → the tool reports none); DI (@Global McpModule) supplies it live.
     @Optional() private readonly mcpStore?: McpServerStore,
@@ -3694,6 +3698,7 @@ export class AgentSessionManager
       // by any job, not just onboarding: list what exists + propose new/edited ones (owner-approved).
       list_skills: this.buildListSkillsTool(stimulus),
       propose_skill: this.buildProposeSkillTool(stimulus),
+      propose_skill_install: this.buildProposeSkillInstallTool(stimulus),
       request_skill_edit_access: this.buildRequestSkillEditAccessTool(stimulus),
       propose_skill_removal: this.buildProposeSkillRemovalTool(stimulus),
       list_mcp_servers: this.buildListMcpServersTool(stimulus),
@@ -4506,39 +4511,35 @@ export class AgentSessionManager
   }
 
   /**
-   * `propose_skill({ name, description, body, scope?, surfaces?, rationale })` — propose CREATING a new
-   * reusable SKILL.md (a short instruction a build/brain/review session loads on demand). CREATE-ONLY: a
-   * `name` that already exists in that scope is refused — a skill shapes how every future build behaves, so
-   * once it exists the brain never blanket-replaces its body; it calls `request_skill_edit_access` and edits
-   * it granularly via `Edit`/`Write` instead (multi-file capable, no re-pasting the whole file for a small
-   * change). The brain never writes a NEW skill directly either: this posts an owner-approvable card, and
-   * only the OWNER's approval at `…/jobs/:jobId/skill-proposals/:requestId/approve` writes it via
-   * `WorkspaceSkillStore`. `scope` is `'repo'` (this repo only, the default) or `'org'` (every repo).
-   * org/repo/job come from the closure (never tool args) — tenant safety.
+   * `propose_skill({ name, description, scope?, rationale })` — SUBMIT a skill the brain AUTHORED as real
+   * files (via its built-in `run-skill-generator` skill) under `/context/skill-drafts/<name>/` for owner
+   * approval. NO `body` — a skill is a multi-file dir (SKILL.md + references/scripts/assets), authored with
+   * `Read`/`Write`/`Edit` in the writable `/context` scratch area, NOT crammed into a tool arg. This tool
+   * FREEZES that draft into an immutable request-scoped staging dir (the brain cannot mutate it after) and
+   * posts an owner-approvable card with a preview; only the OWNER's approval at
+   * `…/jobs/:jobId/skill-proposals/:requestId/approve` vendors the frozen copy into the store and removes the
+   * draft. CREATE-ONLY: a `name` that already exists is refused — to change one, `request_skill_edit_access`
+   * and Edit/Write it in place. `scope` is `'repo'` (default) or `'org'`. All lanes (brain/build/review) get
+   * the skill — on-demand description-match already gates loading, so there is no per-lane knob. org/repo/job
+   * come from the closure (never tool args) — tenant safety.
    */
   private buildProposeSkillTool(stimulus: ChatStimulus): ToolImpl {
     const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-    const SURFACES: McpSurface[] = ['brain', 'build', 'review'];
+    const ALL_SURFACES: McpSurface[] = ['brain', 'build', 'review'];
     return async (args) => {
       const name = String(args['name'] ?? '').trim();
       const description = String(args['description'] ?? '').trim();
-      const body = String(args['body'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
       const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
-      const surfacesArg = Array.isArray(args['surfaces'])
-        ? (args['surfaces'] as unknown[]).map((s) => String(s)).filter((s): s is McpSurface =>
-            (SURFACES as string[]).includes(s),
-          )
-        : [];
-      const surfaces: McpSurface[] = surfacesArg.length > 0 ? surfacesArg : ['build'];
 
       if (!NAME_RE.test(name)) {
         return { ok: false, reason: 'name must be lowercase letters/digits/_/- (e.g. house-migrations)' };
       }
       if (!description) return { ok: false, reason: 'description (the "Use when …" trigger blurb) is required' };
-      if (!body) return { ok: false, reason: 'body (the SKILL.md markdown) is required' };
       if (!rationale) return { ok: false, reason: 'rationale — why this skill helps builds here — is required' };
-      if (!this.skillStore) return { ok: false, reason: 'skills are not configured for this org' };
+      if (!this.skillStore || !this.skillFiles) {
+        return { ok: false, reason: 'skills are not configured for this org' };
+      }
       try {
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
         const existing = await this.skillStore.get(stimulus.orgId, dbScope, name);
@@ -4551,7 +4552,21 @@ export class AgentSessionManager
               'then Edit/Write its files directly.',
           };
         }
+        // The brain authors the skill as real files here first (with its built-in run-skill-generator).
+        const draftDir = join(this.lifecycle.contextDirHost(stimulus.jobId, stimulus.orgId), 'skill-drafts', name);
+        if (!existsSync(join(draftDir, 'SKILL.md'))) {
+          return {
+            ok: false,
+            reason:
+              `no authored skill found at /context/skill-drafts/${name}/SKILL.md. Author it FIRST — use your ` +
+              'built-in run-skill-generator skill to scaffold and write the folder (SKILL.md + any ' +
+              'references/scripts) under /context/skill-drafts/' + name + '/, then call propose_skill again.',
+          };
+        }
         const requestId = `skill-${randomUUID()}`;
+        // Freeze exactly what exists now — approval vendors this immutable copy, not the still-writable draft.
+        const stagingPath = this.skillFiles.freezeDraft(draftDir, stimulus.orgId, requestId);
+        const preview = this.skillFiles.previewDir(stagingPath) ?? undefined;
         const card = webSkillProposalCard({
           jobId: stimulus.jobId,
           requestId,
@@ -4559,26 +4574,100 @@ export class AgentSessionManager
           scope,
           name,
           description,
-          body,
-          surfaces,
+          surfaces: ALL_SURFACES,
           mode: 'create',
           rationale,
+          stagingPath,
+          preview,
         });
         const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
-        if (!opened.ok) return { ok: false, reason: 'Could not open the skill proposal (thread not found).' };
+        if (!opened.ok) {
+          this.skillFiles.removeStaging(stimulus.orgId, requestId);
+          return { ok: false, reason: 'Could not open the skill proposal (thread not found).' };
+        }
         return {
           ok: true,
           requestId,
           mode: 'create',
           message:
-            `Posted a skill creation proposal for "${name}" (${scope}-scoped). Only the OWNER can approve it ` +
-            '— you cannot register it yourself. Once approved it loads on the next fresh session ' +
+            `Posted a skill creation proposal for "${name}" (${scope}-scoped) from your authored files. Only the ` +
+            'OWNER can approve it — you cannot register it yourself. On approval it moves into the durable skill ' +
+            'store (every future job inherits it) and the draft is removed; it loads on the next fresh session ' +
             '(reset_sandbox to pick it up). Mention the proposal, then continue.',
         };
       } catch (err) {
         this.logger.warn(
           `propose_skill failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
         );
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `propose_skill_install({ sourceUrl, ref?, subpath?, scope?, rationale })` — propose INSTALLING a
+   * maintained skill from a git marketplace (e.g. `github.com/anthropics/skills`,
+   * `github.com/agents-inc/skills`) instead of authoring one from stale memory. SINGLE-skill only: `subpath`
+   * MUST point at one skill dir (a `SKILL.md`), not a marketplace root. The tool DRY-RUNS the source
+   * (`SkillInstallerService.preview`) to resolve the REAL frontmatter name/description and detect an overwrite
+   * conflict, so the owner's card shows exactly what will land. The brain never installs directly — only the
+   * OWNER's approval routes to `SkillInstallerService.install` (`provenance:'git'`, auto-updating). `scope` is
+   * `'repo'` (default) or `'org'`. org/repo/job come from the closure (never tool args) — tenant safety.
+   */
+  private buildProposeSkillInstallTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const sourceUrl = String(args['sourceUrl'] ?? '').trim();
+      const ref = String(args['ref'] ?? '').trim() || undefined;
+      const subpath = String(args['subpath'] ?? '').trim() || undefined;
+      const rationale = String(args['rationale'] ?? '').trim();
+      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+
+      if (!/^https:\/\/\S+$/.test(sourceUrl)) {
+        return { ok: false, reason: 'sourceUrl must be an https git URL (e.g. https://github.com/anthropics/skills)' };
+      }
+      if (!rationale) return { ok: false, reason: 'rationale — why this skill helps builds here — is required' };
+      if (!this.skillStore || !this.skillInstaller) {
+        return { ok: false, reason: 'skills are not configured for this org' };
+      }
+      try {
+        const dbScope = scope === 'org' ? '*' : stimulus.repoId;
+        let rows;
+        try {
+          rows = await this.skillInstaller.preview({ orgId: stimulus.orgId, scope: dbScope, sourceUrl, ref, subpath });
+        } catch (err) {
+          return { ok: false, reason: `could not resolve that skill source: ${errText(err)}` };
+        }
+        const resolved = rows[0];
+        if (!resolved) return { ok: false, reason: 'that source resolved no installable skill' };
+        const requestId = `skill-${randomUUID()}`;
+        const card = webSkillProposalCard({
+          jobId: stimulus.jobId,
+          requestId,
+          repoId: stimulus.repoId,
+          scope,
+          name: resolved.name,
+          description: resolved.description,
+          surfaces: ['brain', 'build', 'review'],
+          mode: 'install',
+          rationale,
+          sourceUrl,
+          sourceRef: ref,
+          sourceSubpath: subpath,
+          installPreview: { rows },
+        });
+        const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
+        if (!opened.ok) return { ok: false, reason: 'Could not open the skill install proposal (thread not found).' };
+        return {
+          ok: true,
+          requestId,
+          mode: 'install',
+          message:
+            `Posted an install proposal for the "${resolved.name}" skill (${scope}-scoped)${resolved.overwrites ? ' — NOTE it would overwrite an existing skill of that name' : ''}. ` +
+            'Only the OWNER can approve it. On approval it installs from git (kept up to date) and loads on the ' +
+            'next fresh session (reset_sandbox to pick it up). Mention the proposal, then continue.',
+        };
+      } catch (err) {
+        this.logger.warn(`propose_skill_install failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
@@ -4683,7 +4772,6 @@ export class AgentSessionManager
           scope,
           name,
           description: '',
-          body: '',
           surfaces: existing.surfaces,
           mode: 'remove',
           priorBody: this.skillFiles?.readSkillBody(stimulus.orgId, dbScope, name),

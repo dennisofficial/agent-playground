@@ -7,6 +7,7 @@ import {
   provideSecret,
   provideFile,
   approveMcpProposal,
+  approveSkillProposal,
   approveThread,
   createJob,
   createJobWithFiles,
@@ -369,6 +370,19 @@ export function useApproveMcpProposal(ref: JobRef) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
       void qc.invalidateQueries({ queryKey: qk.orgMcpServers(ref.orgId) });
+    },
+  });
+}
+
+/** Approve a skill proposal (owner-only). Installs/vendors/removes per the card's mode; the card flips to
+ *  "approved" and the brain continues. Refreshes the org skills list too. */
+export function useApproveSkillProposal(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (requestId: string) => approveSkillProposal(ref, requestId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.orgSkills(ref.orgId) });
     },
   });
 }

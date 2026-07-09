@@ -26,6 +26,7 @@ import { ApprovalCardView, VerdictCardView } from "./approval-card";
 import { QuestionCardView } from "./question-card";
 import { SecretCardView } from "./secret-card";
 import { McpProposalCard } from "./mcp-proposal-card";
+import { SkillProposalCard } from "./skill-proposal-card";
 import { TicketCardView } from "./ticket-card";
 import { FileCardView } from "./file-card";
 import { ReviewCommentsCardView } from "./review-comments-card";
@@ -778,6 +779,9 @@ function buildLogItems(
         break;
       case "mcp_proposal":
         push(<McpProposalCard key={message.ts} card={c.card} jobRef={jobRef} />);
+        break;
+      case "skill_proposal":
+        push(<SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
       case "ticket":
         push(<TicketCardView key={message.ts} card={c.card} jobRef={jobRef} />);

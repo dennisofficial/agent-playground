@@ -2,7 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Injectable } from '@nestjs/common';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
-import { skillDirHost } from './skill-store-paths';
+import { pendingSkillDirHost, skillDirHost } from './skill-store-paths';
 
 /**
  * Writes a CUSTOM skill's `SKILL.md` to the central host store — the minimal slice of "authoring" the
@@ -54,6 +54,48 @@ export class SkillFileWriter {
       .filter((rel) => statSync(join(dir, rel)).isFile())
       .map((rel) => rel.split(sep).join('/'))
       .sort();
+  }
+
+  /**
+   * FREEZE a `propose_skill` draft: copy the whole authored draft dir (from the brain's writable
+   * `/context/skill-drafts/<name>`) into the immutable, request-scoped `.pending/<orgId>/<requestId>`
+   * staging dir the brain cannot touch, and return that staging path. Approval vendors from THIS copy, so
+   * the owner reviews and installs exactly what existed at propose time (no TOCTOU on the live draft).
+   */
+  freezeDraft(srcDir: string, orgId: string, requestId: string): string {
+    const dest = pendingSkillDirHost(this.root(), orgId, requestId);
+    rmSync(dest, { recursive: true, force: true });
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(srcDir, dest, { recursive: true });
+    return dest;
+  }
+
+  /** Remove a proposal's frozen staging dir (on approve OR dismiss). No-op if nothing's there. */
+  removeStaging(orgId: string, requestId: string): void {
+    rmSync(pendingSkillDirHost(this.root(), orgId, requestId), { recursive: true, force: true });
+  }
+
+  /** Vendor an already-authored skill dir (the frozen staging copy) into the durable store at
+   *  `(orgId, scope, name)`, full fidelity — the `propose_skill` approval's write path (replaces the old
+   *  single-file `writeSkillMd(body)` create). Overwrites any prior copy at that name. */
+  vendorDir(srcDir: string, orgId: string, scope: string, name: string): void {
+    const dest = skillDirHost(this.root(), orgId, scope, name);
+    rmSync(dest, { recursive: true, force: true });
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(srcDir, dest, { recursive: true });
+  }
+
+  /** A read-only preview of an authored skill dir (the frozen staging copy) for the owner's approve card:
+   *  the `SKILL.md` text + every file path (POSIX-relative, sorted). null when the dir has no `SKILL.md`. */
+  previewDir(dir: string): { skillMd: string; files: string[] } | null {
+    const skillMd = join(dir, 'SKILL.md');
+    if (!existsSync(skillMd)) return null;
+    const entries = existsSync(dir) ? (readdirSync(dir, { recursive: true }) as string[]) : [];
+    const files = entries
+      .filter((rel) => statSync(join(dir, rel)).isFile())
+      .map((rel) => rel.split(sep).join('/'))
+      .sort();
+    return { skillMd: readFileSync(skillMd, 'utf8'), files };
   }
 
   /**

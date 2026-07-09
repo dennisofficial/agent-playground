@@ -57,3 +57,60 @@ describe('SkillFileWriter — forkSkillDir (fork-to-custom)', () => {
     expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain('description: no name field here');
   });
 });
+
+describe('SkillFileWriter — draft freeze / vendor / preview (file-based authoring)', () => {
+  let storeRoot: string;
+  let draftRoot: string;
+  let writer: SkillFileWriter;
+
+  beforeEach(() => {
+    storeRoot = mkdtempSync(join(tmpdir(), 'atlas-skill-draft-store-'));
+    draftRoot = mkdtempSync(join(tmpdir(), 'atlas-skill-draft-ctx-'));
+    const env = { get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined) } as never;
+    writer = new SkillFileWriter(env);
+  });
+
+  afterEach(() => {
+    rmSync(storeRoot, { recursive: true, force: true });
+    rmSync(draftRoot, { recursive: true, force: true });
+  });
+
+  /** Author a multi-file draft under a /context-like scratch dir. */
+  function authorDraft(name: string, body: string): string {
+    const dir = join(draftRoot, 'skill-drafts', name);
+    mkdirSync(join(dir, 'references'), { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: Use when X\n---\n\n${body}\n`);
+    writeFileSync(join(dir, 'references', 'r.md'), '# ref\n');
+    return dir;
+  }
+
+  it('freeze → preview → vendor promotes exactly the FROZEN copy, immune to later draft edits (no TOCTOU)', () => {
+    const draft = authorDraft('house-migrations', 'Version A.');
+    const staging = writer.freezeDraft(draft, 'org1', 'req-1');
+
+    // Preview reflects what was frozen.
+    const preview = writer.previewDir(staging);
+    expect(preview?.skillMd).toContain('Version A.');
+    expect(preview?.files.sort()).toEqual(['SKILL.md', 'references/r.md']);
+
+    // The brain keeps editing the LIVE draft after proposing — must not change what installs.
+    writeFileSync(join(draft, 'SKILL.md'), '---\nname: house-migrations\ndescription: Use when X\n---\n\nVersion B (mutated).\n');
+
+    // Approval vendors the frozen staging copy, NOT the mutated live draft.
+    writer.vendorDir(staging, 'org1', '*', 'house-migrations');
+    const dest = skillDirHost(storeRoot, 'org1', '*', 'house-migrations');
+    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain('Version A.');
+    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).not.toContain('Version B');
+    expect(existsSync(join(dest, 'references', 'r.md'))).toBe(true); // full multi-file fidelity
+
+    // removeStaging cleans up the frozen copy.
+    writer.removeStaging('org1', 'req-1');
+    expect(writer.previewDir(staging)).toBeNull();
+  });
+
+  it('previewDir returns null when the dir has no SKILL.md', () => {
+    const dir = join(draftRoot, 'empty');
+    mkdirSync(dir, { recursive: true });
+    expect(writer.previewDir(dir)).toBeNull();
+  });
+});

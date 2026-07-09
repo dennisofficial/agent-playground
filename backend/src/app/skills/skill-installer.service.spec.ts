@@ -232,6 +232,26 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
     );
   });
 
+  it('preview() resolves the real frontmatter name/description WITHOUT writing, and flags an overwrite ' +
+     'conflict only once the name already exists', async () => {
+    const sourceUrl = makeSingleSkillRepo(tmp);
+
+    const before = await installer.preview({ orgId: 'org1', scope: '*', sourceUrl });
+    expect(before).toEqual([{ name: 'my-skill', description: 'Use when doing the thing', overwrites: false }]);
+    // Read-only: nothing landed in the store or the registry.
+    expect(existsSync(skillDirHost(storeRoot, 'org1', '*', 'my-skill'))).toBe(false);
+    expect(await store.get('org1', '*', 'my-skill')).toBeNull();
+
+    await installer.install({ orgId: 'org1', scope: '*', sourceUrl });
+    const after = await installer.preview({ orgId: 'org1', scope: '*', sourceUrl });
+    expect(after[0]).toMatchObject({ name: 'my-skill', overwrites: true });
+  });
+
+  it('preview() rejects a marketplace-root subpath — the brain install path is single-skill only', async () => {
+    const sourceUrl = makeMarketplaceRepo(tmp);
+    await expect(installer.preview({ orgId: 'org1', scope: '*', sourceUrl })).rejects.toThrow(/marketplace root/);
+  });
+
   it('re-installing (the update path) re-vendors content and bumps installed_sha on a new commit', async () => {
     const work = join(tmp, 'single-work');
     initRepo(work);
