@@ -1,0 +1,46 @@
+[Unit]
+# Templated systemd unit — one instance per runner: actions-runner@1, @2, @3, ...
+# Each instance %i maps to a runner layout at /opt/actions-runner-%i registered with
+# the `self-hosted,atlas-box` label. Enable with:
+#   systemctl enable --now actions-runner@1 actions-runner@2 actions-runner@3
+Description=GitHub Actions self-hosted runner (Atlas box) — instance %i
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=gha-runner
+Group=gha-runner
+WorkingDirectory=/opt/actions-runner-%i
+
+# Canonical entrypoint from the pinned runner's service template
+# (actions/runner v2.335.1 src/Misc/layoutbin/actions.runner.service.template): the
+# template's root runsvc.sh is just a wrapper that execs ./bin/runsvc.sh — which is the
+# file shipped in the tarball — so point straight at it. Stop semantics match the
+# template: SIGTERM the runner process, give it up to 5 minutes to drain.
+ExecStart=/opt/actions-runner-%i/bin/runsvc.sh
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+
+Restart=always
+RestartSec=5s
+
+# ── Hardening ────────────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+# ProtectSystem=strict makes system paths read-only; the runner needs read-write on its
+# own layout dir (work dirs, _diag) and /srv/atlas (deploy state, secrets). Carve out
+# exactly what is needed via ReadWritePaths.
+ProtectSystem=strict
+ReadWritePaths=/opt/actions-runner-%i /srv/atlas /tmp /var/run/docker.sock
+PrivateTmp=true
+# The docker group gives access to /var/run/docker.sock — do not add PrivateDevices
+# or RestrictNamespaces since docker exec needs them.
+
+# Environment: ensure HOME is set so `docker login` and GHCR creds work.
+Environment="HOME=/home/gha-runner"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target

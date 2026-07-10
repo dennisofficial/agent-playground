@@ -28,7 +28,7 @@ jobs:
   # a push here is always code-bearing. Globs mirror on.push.paths-ignore.
   changes:
     name: Detect changes
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, atlas-box]
     # paths-filter reads the PR's changed-file list from the GitHub API, which needs
     # pull-requests:read (the repo's default GITHUB_TOKEN is restricted to contents:read).
     permissions:
@@ -54,7 +54,7 @@ jobs:
   # ── Typecheck ─────────────────────────────────────────────────────────────────
   typecheck:
     name: Typecheck
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, atlas-box]
     needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
@@ -76,7 +76,7 @@ jobs:
   # than the suite's wall time saved. Vitest still parallelizes across the runner's cores.
   unit-tests:
     name: Unit tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, atlas-box]
     needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
@@ -98,7 +98,7 @@ jobs:
   # code job (docs-only change) is treated as passing; only a real `failure` blocks.
   ci-gate:
     name: Typecheck + unit tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, atlas-box]
     needs: [typecheck, unit-tests]
     if: always()
     steps:
@@ -113,7 +113,7 @@ jobs:
   # Only runs on push to main (not PRs) and requires typecheck + unit tests to pass.
   build-images:
     name: Build + push Docker images
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, atlas-box]
     needs: [typecheck, unit-tests]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
