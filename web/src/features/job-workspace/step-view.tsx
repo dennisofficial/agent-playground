@@ -43,6 +43,7 @@ import { resolveNode } from "./node-resolution";
 import { TranscriptView } from "./conversation";
 import { Composer, type ComposerFooter } from "./composer";
 import { DetailTopBar } from "./detail-top-bar";
+import { ImageViewer } from "./image-viewer";
 import { ServiceLogView, serviceHeaderSubtitle } from "./service-log-view";
 import { TicketsRaisedPane } from "./tickets-raised-pane";
 import { useCommentableRef } from "./use-text-selection";
@@ -1202,14 +1203,7 @@ function FileBody({
       file.encoding === "base64"
         ? `data:${file.mime};base64,${file.content}`
         : `data:${file.mime};utf8,${encodeURIComponent(file.content)}`;
-    // eslint-disable-next-line @next/next/no-img-element -- a data: URL, not a remote asset for next/image
-    return (
-      <img
-        src={src}
-        alt={file.name}
-        className="max-w-full rounded-md border border-border"
-      />
-    );
+    return <ImageViewer src={src} alt={file.name} />;
   }
   if (file.content.trim() === "") {
     return (
@@ -1535,12 +1529,7 @@ function RepoFileBody({
         : `data:${data.mime};utf8,${encodeURIComponent(data.content)}`;
     return (
       <div className="h-full overflow-y-auto px-8 py-7">
-        {/* eslint-disable-next-line @next/next/no-img-element -- a data: URL, not a remote asset for next/image */}
-        <img
-          src={src}
-          alt={data.name}
-          className="max-w-full rounded-md border border-border"
-        />
+        <ImageViewer src={src} alt={data.name} />
       </div>
     );
   }
