@@ -927,6 +927,10 @@ export class AgentSessionManager
       label: 'A harness system notification was delivered to Atlas.',
       chunkKey: `seed:generic:${stimulus.jobId}:${createHash('sha1').update(stimulus.body).digest('hex').slice(0, 16)}`,
     };
+    // Carry the raw payload the engine actually received so the console can reveal it on row-expand — but
+    // only when it differs from the short `label` (curated notices whose label already IS the full body
+    // don't need a redundant copy). See decision d1/d2.
+    const fullBody = stimulus.body !== row.label ? stimulus.body : undefined;
     void this.store
       .recordSystemChunk?.({
         jobId: stimulus.jobId,
@@ -935,6 +939,7 @@ export class AgentSessionManager
         chunkKey: row.chunkKey,
         ...(row.untrustedSource ? { untrustedSource: row.untrustedSource } : {}),
         ...(row.severity ? { severity: row.severity } : {}),
+        ...(fullBody ? { fullBody } : {}),
       })
       ?.catch((err: unknown) =>
         this.logger.debug(`persistSeedRow failed (best-effort): ${err}`),
