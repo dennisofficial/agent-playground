@@ -19,7 +19,7 @@ export default function CoordinatorPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-5xl px-9 py-8">
+      <div className="mx-auto max-w-5xl px-4 py-8 sm:px-9">
         <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">
           All organizations
         </h1>
