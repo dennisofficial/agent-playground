@@ -79,6 +79,9 @@ export class GithubNotificationSource implements NotificationSource {
   async handlePrWebhook(raw: RawNotification): Promise<IngressResult> {
     const g = await this.verifyAndRoute(raw);
     if ('outcome' in g) return g;
+    if (g.eventType === 'push') {
+      return this.parsePush(g.route, g.body);
+    }
     if (g.eventType !== 'pull_request') {
       return { outcome: 'ignored', reason: 'unsupported', detail: `github ${g.eventType} (not a pull_request event)` };
     }
@@ -153,12 +156,30 @@ export class GithubNotificationSource implements NotificationSource {
     };
     return { outcome: 'pr-sync', delta };
   }
+
+  /**
+   * Parse a `push` webhook: only a push to the repo's DEFAULT branch is a base-move that can silently
+   * conflict its open PRs (`ref === refs/heads/<default_branch>`). Emit `repo-push` for those (the state
+   * door then marks the repo's open PRs due-now); ignore every other push (feature-branch pushes are the
+   * PR's own head moving — GitHub recomputes + the ~45s cadence already catches those). Deletes
+   * (`ref` gone / no default_branch) are ignored.
+   */
+  private parsePush(route: { orgId: string; repoId: string }, body: GithubWebhookBody): IngressResult {
+    const ref = body.ref;
+    const defaultBranch = body.repository?.default_branch;
+    if (!ref || !defaultBranch || ref !== `refs/heads/${defaultBranch}`) {
+      return { outcome: 'ignored', reason: 'unsupported', detail: `github push to non-default ref ${ref ?? '?'}` };
+    }
+    return { outcome: 'repo-push', orgId: route.orgId, repoId: route.repoId };
+  }
 }
 
 /** The subset of a GitHub webhook body the adapter reads. */
 interface GithubWebhookBody {
   action?: string;
-  repository?: { full_name?: string };
+  /** The `push` event's fully-qualified ref, e.g. `refs/heads/main` (default-branch pushes matter). */
+  ref?: string;
+  repository?: { full_name?: string; default_branch?: string };
   workflow_run?: {
     id?: number;
     name?: string;

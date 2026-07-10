@@ -36,7 +36,7 @@ function fakeRepo<T extends { id?: string }>(prefix: string) {
  */
 function fakeDataSource(
   rowsFor: (Entity: unknown) => { id?: string }[],
-  opts: { failOn?: unknown } = {},
+  opts: { failOn?: unknown; failWith?: unknown } = {},
 ) {
   let seq = 0;
   const transaction = vi.fn(async (cb: (m: unknown) => Promise<unknown>) => {
@@ -47,7 +47,8 @@ function fakeDataSource(
         const { __entity, ...rest } = e as { __entity: unknown };
         // Inject a write failure INSIDE the callback (like a real failed INSERT) so the callback throws
         // and the flush below never runs → nothing commits.
-        if (opts.failOn !== undefined && __entity === opts.failOn) throw new Error('stimulus write failed');
+        if (opts.failOn !== undefined && __entity === opts.failOn)
+          throw opts.failWith ?? new Error('stimulus write failed');
         const saved = { ...rest, id: `tx-${++seq}`, created_at: new Date() } as { id?: string };
         staged.push({ Entity: __entity, saved });
         return saved;
@@ -120,6 +121,97 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     // The orphaned thread + message were cleaned up.
     expect(threads.deleted).toHaveLength(1);
     expect(messages.deleted).toHaveLength(1);
+  });
+
+  it('attachEventToJob persists the system_event card + event stimulus atomically on an existing job', async () => {
+    const threads = fakeRepo<JobEntity>('thread');
+    const messages = fakeRepo<MessageEntity>('msg');
+    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const ds = fakeDataSource((Entity) =>
+      Entity === MessageEntity ? messages.rows : stimuli.rows,
+    );
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds);
+
+    const event = await store.attachEventToJob({
+      jobId: 'job-7',
+      orgId: 'T1',
+      repoId: 'web',
+      source: 'github',
+      dedupeKey: 'ci:abc',
+      severity: 'critical',
+      body: 'CI failed',
+    });
+
+    expect(threads.repo.save).not.toHaveBeenCalled(); // attach reuses the job — no new thread
+    expect((ds.transaction as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1); // both writes in ONE tx
+    // The operator-visible card carries system_event provenance.
+    expect(messages.rows[0]).toMatchObject({
+      job_id: 'job-7',
+      text: 'CI failed',
+      meta: { source: 'system_event', eventSource: 'github', severity: 'critical' },
+    });
+    expect(stimuli.rows[0]).toMatchObject({ kind: 'event', trust: 'untrusted', job_id: 'job-7', dedupe_key: 'ci:abc' });
+    expect(event).toMatchObject({ kind: 'event', trust: 'untrusted', jobId: 'job-7', source: 'github', severity: 'critical' });
+  });
+
+  it('attachEventToJob is ATOMIC — a failed stimulus write leaves NO orphan event card', async () => {
+    // The invariant: a visible EVENT card must never outlive a missing stimulus row (which the at-least-once
+    // sweep, keyed on stimuli.delivered_at, could never recover — the card would render with no brain reaction).
+    const threads = fakeRepo<JobEntity>('thread');
+    const messages = fakeRepo<MessageEntity>('msg');
+    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const ds = fakeDataSource(
+      (Entity) => (Entity === MessageEntity ? messages.rows : stimuli.rows),
+      { failOn: StimulusEntity },
+    );
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds);
+
+    await expect(
+      store.attachEventToJob({
+        jobId: 'job-7',
+        orgId: 'T1',
+        repoId: 'web',
+        source: 'github',
+        dedupeKey: 'ci:abc',
+        severity: 'critical',
+        body: 'CI failed',
+      }),
+    ).rejects.toThrow('stimulus write failed');
+
+    // Neither row committed — the card was rolled back with the stimulus.
+    expect(messages.rows).toHaveLength(0);
+    expect(stimuli.rows).toHaveLength(0);
+  });
+
+  it('attachEventToJob throws DuplicateStimulusError on a unique violation, committing neither row', async () => {
+    const threads = fakeRepo<JobEntity>('thread');
+    const messages = fakeRepo<MessageEntity>('msg');
+    const stimuli = fakeRepo<StimulusEntity>('stim');
+    // The stimulus INSERT (second write in the tx) hits the (org, repo, source, dedupe_key) unique index.
+    const uniqueErr = new QueryFailedError('insert', [], new Error('dup')) as QueryFailedError & { code?: string };
+    uniqueErr.code = '23505';
+    const ds = fakeDataSource(
+      (Entity) => (Entity === MessageEntity ? messages.rows : stimuli.rows),
+      { failOn: StimulusEntity, failWith: uniqueErr },
+    );
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds);
+
+    await expect(
+      store.attachEventToJob({
+        jobId: 'job-7',
+        orgId: 'T1',
+        repoId: 'web',
+        source: 'github',
+        dedupeKey: 'ci:abc',
+        severity: 'info',
+        body: 'dup',
+      }),
+    ).rejects.toBeInstanceOf(DuplicateStimulusError);
+
+    // The transaction rolled back both rows — no manual message cleanup needed.
+    expect(messages.rows).toHaveLength(0);
+    expect(stimuli.rows).toHaveLength(0);
+    expect(messages.deleted).toHaveLength(0);
   });
 
   it('recordChatStimulus persists a chat message + chat stimulus (no thread, no dedupe)', async () => {
