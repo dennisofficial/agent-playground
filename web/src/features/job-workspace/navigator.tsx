@@ -176,7 +176,8 @@ export function Navigator({
     !hasPr &&
     meta.status !== "done" &&
     meta.status !== "running" &&
-    meta.status !== "awaiting_ship_review";
+    meta.status !== "awaiting_ship_review" &&
+    meta.status !== "amending";
   const [editing, setEditing] = useState(false);
 
   // Tickets Atlas raised FROM this job — the header "Tickets raised" entry appears only once there's ≥1.

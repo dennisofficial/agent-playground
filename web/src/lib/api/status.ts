@@ -36,6 +36,9 @@ export const STATUS_META: Record<JobStatus, StatusMeta> = {
     color: "var(--slate)",
     pulse: false,
   },
+  // Ship review was retracted — the built work is being amended, not re-planned. Same restrained slate
+  // dot as every other "needs you" gate (the amber lives on the sidebar GROUP swatch, not the row dot).
+  amending: { label: "Amending", color: "var(--slate)", pulse: false },
   done: { label: "Done", color: "var(--green)", pulse: false },
   triaging: { label: "Triaging", color: "var(--slate)", pulse: true },
   cancelled: { label: "Cancelled", color: "var(--faint)", pulse: false },
@@ -70,6 +73,8 @@ export function toJobStatus(status: WireJobStatus): JobStatus {
       return "awaiting_approval";
     case "awaiting_ship_review":
       return "awaiting_ship_review";
+    case "amending":
+      return "amending";
     case "done":
       return "done";
     case "cancelled":

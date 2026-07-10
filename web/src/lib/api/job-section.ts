@@ -4,6 +4,7 @@ export type JobSection =
   | "planning"
   | "awaiting"
   | "building"
+  | "amending"
   | "ready_to_ship"
   | "done"
   | "pr_open"
@@ -13,6 +14,7 @@ export const SECTION_ORDER: JobSection[] = [
   "planning",
   "awaiting",
   "building",
+  "amending",
   "ready_to_ship",
   "done",
   "pr_open",
@@ -23,6 +25,7 @@ export const SECTION_LABEL: Record<JobSection, string> = {
   planning: "Planning",
   awaiting: "Awaiting Approval",
   building: "Building",
+  amending: "Amending",
   ready_to_ship: "Ready to Ship",
   done: "Done",
   pr_open: "PR Open",
@@ -38,6 +41,8 @@ export function sectionOf(t: InboxThread): JobSection | null {
       return "planning";
     case "awaiting_approval":
       return "awaiting";
+    case "amending":
+      return "amending";
     case "awaiting_ship_review":
       return "ready_to_ship";
     case "running":
