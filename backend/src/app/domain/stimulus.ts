@@ -119,7 +119,7 @@ export interface ChatStimulus extends BaseStimulus {
    * turn's SUCCESS TAIL (a swallowed engine error / guard-hit / detach leaves it un-waked, letting the
    * periodic + boot sweeps retry it — at-least-once, mirroring {@link seedHaltWake}). In-memory only.
    */
-  seedDoneWake?: { threadId: string; reason: 'final' | 'notable' };
+  seedDoneWake?: { threadId: string; reason: 'final' | 'notable'; gen: number };
   /**
    * SEED RENDER COMMAND (see {@link SeedRow}): how this seed turn shows in the transcript. Read by the
    * central `persistSeedRow` at turn intake. In-memory only — never persisted on the stimulus row.

@@ -4,6 +4,7 @@ export * from './admin';
 export * from './branching';
 export * from './host-tools';
 export * from './job-status';
+export * from './usage';
 
 export type IMetricsEventType =
   | 'plan_submitted'

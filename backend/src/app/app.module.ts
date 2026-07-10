@@ -1,3 +1,4 @@
+import { ScheduleModule } from '@nestjs/schedule';
 import { EnvService } from '@core/config/env/env.service';
 import { envConfigValidation } from '@core/config/env/validation';
 import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
@@ -24,6 +25,9 @@ import { PersistenceModule } from './persistence/persistence.module';
 @CreateModule({
   imports: [
     LoggerModule,
+    // Register @nestjs/schedule once at the root so leader-gated interval timers can register/unregister
+    // themselves via SchedulerRegistry (add/deleteInterval) from their onPromote/onDemote hooks.
+    ScheduleModule.forRoot(),
     EnvModule.forRoot({
       envService: EnvService,
       validationSchema: envConfigValidation,

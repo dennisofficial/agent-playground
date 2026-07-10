@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ModuleRef } from '@nestjs/core';
-import { EngineAuthError } from '../engine';
+import { EngineAuthError, EngineSessionLimitError } from '../engine';
 import type { EngineRunnerPort, ToolBridgeOptions } from '../engine';
 import {
   ThreadDriver,
@@ -30,6 +30,7 @@ import type { TurnRunnerService } from '../runner';
 import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
 import { TurnHarnessFactory } from '../surface';
 import type { CredentialResolver } from '../onboarding';
+import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import type { LeaderElectionService } from '../cluster';
 import type { EnvService } from '@core/config/env/env.service';
 import type {
@@ -83,6 +84,7 @@ interface StoreState {
   steps: Step[];
   route: JobRoute;
   operatorInputCards: OperatorInputCard[];
+  systemNotices?: string[];
   /** A builder's materialized review children (review_lens + post_review rows). Lazily created. */
   reviewChildren?: ReviewChildRow[];
 }
@@ -112,6 +114,10 @@ function makeStore(state: StoreState): {
     clearJobHalt: vi.fn(async (_id: string) => {
       state.job.halt = null;
     }),
+    hasRecentSystemOperatorNotice: vi.fn(async (_id: string, text: string) => {
+      return (state.systemNotices ?? []).includes(text);
+    }),
+    setSessionResume: vi.fn(async () => undefined),
     setFeatureBranch: vi.fn(async (_id: string, branch: string) => {
       state.job.featureBranch = branch;
     }),
@@ -370,6 +376,10 @@ function makeStore(state: StoreState): {
     haltFixAttempts: vi.fn(async (threadId: string) => {
       const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
       return s?.halt_fix_attempts ?? 0;
+    }),
+    haltOutcome: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
+      return (s?.halt_outcome as 'blocked' | 'incomplete' | 'failed' | null) ?? null;
     }),
     rearmHaltedThreads: vi.fn(async (jobId: string) => {
       let n = 0;
@@ -811,7 +821,7 @@ function assemble(
   } as unknown as EnvService;
   // The shared transcript spine over a fake live store + a capturing durable sink — so build turns persist
   // their transcript (and the `build_anchor`) through the same path production uses, and tests can assert it.
-  const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
+  const liveTurns = { push: vi.fn(), end: vi.fn(), snapshot: vi.fn(() => null) } as unknown as LiveTurnStore;
   const sunk: Array<{
     jobId: string;
     block: {
@@ -831,6 +841,11 @@ function assemble(
         },
       ) => {
         sunk.push({ jobId, block });
+        if ((block.meta as { source?: unknown } | null)?.source === 'system_operator' && block.text) {
+          const notices = state.systemNotices ?? [];
+          notices.push(block.text);
+          state.systemNotices = notices;
+        }
       },
     ),
     appendBlockOnce: vi.fn(
@@ -867,7 +882,8 @@ function assemble(
       },
     ),
   } as unknown as TaskEventSink;
-  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink);
+  const usage = { applyHarvest: vi.fn().mockResolvedValue(undefined) } as unknown as OauthUsageService;
+  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink, usage);
   // BuildShipService's direct ENGINE_RUNNER dependency (the PR Review orchestrator) — separate from the
   // `turn`/`calls` fake above (TurnRunnerService, used by per-thread build turns) so PR Review's one
   // execute turn doesn't inflate the per-thread `execTurns` count.
@@ -939,6 +955,8 @@ function assemble(
       githubToken: async () => undefined,
       engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
+    // OauthUsageService: the session-limit park reads getResetAt; default → no harvested window.
+    { getResetAt: () => undefined, applyHarvest: vi.fn().mockResolvedValue(undefined) } as unknown as OauthUsageService,
     // McpResolver: no user-defined MCP servers in tests.
     { resolveForTurn: async () => [], resolveForSandbox: async () => [] } as never,
     // McpOAuthService: no OAuth servers in tests (and the fake SANDBOX_PROVIDER has no kickMcpHubRefresh anyway).
@@ -1887,6 +1905,48 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.opened).toHaveLength(0);
   });
 
+  it('parks a build lane on a Claude session limit with one durable resume notice', async () => {
+    const resetAt = '2026-07-09T22:00:00.000Z';
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1', orgId: 'T1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new EngineSessionLimitError(
+        `Claude session limit (five_hour); resets ${resetAt}`,
+        resetAt,
+        'five_hour',
+        'sess-limit',
+      );
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'session_limit');
+
+    expect(state.job.halt).toMatchObject({
+      kind: 'session_limit',
+      resumeAt: resetAt,
+    });
+    expect(h.store.setSessionResume).toHaveBeenCalledWith(
+      state.job.id,
+      resetAt,
+      expect.objectContaining({ lane: 'build', resetSource: 'usage_api' }),
+    );
+    expect(h.sunk.filter((s) => s.block.meta?.sessionLimit === true)).toHaveLength(1);
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(1);
+
+    await h.driver.retry(state.job.id);
+    await flushUntil(() => (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls.length >= 2);
+
+    expect(h.sunk.filter((s) => s.block.meta?.sessionLimit === true)).toHaveLength(1);
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(1);
+  });
+
   it('resumePaused re-drives a paused job to completion; no-ops if the job is not paused', async () => {
     // no-op path: a non-paused job is left alone.
     const running: StoreState = {
@@ -2031,6 +2091,81 @@ function stubChangedFileNames(
   (git as unknown as { changedFileNames: ReturnType<typeof vi.fn> }).changedFileNames =
     vi.fn(impl);
 }
+
+describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread blocked → Holding." spam)', () => {
+  // A blocked thread leaves the JOB `running`, so the 30-min reap's resume() re-drives it and re-enters the
+  // "already blocked → re-halt" short-circuit. It must NOT re-post the card or re-arm the owed wake once the
+  // halt was already delivered — except for a `judge_unavailable` transient hold, whose periodic re-wake IS
+  // its recovery. And it MUST still notify if haltJob never ran (halt_outcome missing → wake would be lost).
+  function blockedState(o: {
+    reason?: 'unverified' | 'judge_unavailable' | 'question';
+    haltOutcome?: 'blocked' | null;
+    haltWakedAt?: Date | null;
+    haltFixAttempts?: number;
+  }): StoreState {
+    const t = thread('sec-be', 10, 'Backend', 'executing', false, 'paused');
+    (t as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record = {
+      status: 'blocked',
+      summary: 'blocked',
+      blocked: { reason: o.reason ?? 'unverified', detail: 'needs your input' },
+    };
+    const h = t as HaltFields;
+    h.halt_outcome = o.haltOutcome ?? null;
+    h.halt_waked_at = o.haltWakedAt ?? null;
+    h.halt_fix_attempts = o.haltFixAttempts ?? 0;
+    return {
+      job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
+      record: makeRecord(),
+      threads: [t],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+  }
+  const blockedCards = (h: { sunk: Array<{ block: { text?: string } }> }) =>
+    h.sunk.filter((s) => s.block.text?.includes('Thread blocked'));
+
+  it('already-notified block (owed-wake row exists + delivered) → re-drive re-posts NOTHING and does not re-arm', async () => {
+    // haltJob already ran on the first block: halt_outcome set, wake delivered (halt_waked_at stamped).
+    const state = blockedState({ reason: 'unverified', haltOutcome: 'blocked', haltWakedAt: new Date() });
+    const h = assemble(state);
+    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
+
+    await h.driver.resume();
+    await flush();
+
+    expect(blockedCards(h)).toHaveLength(0); // no re-posted "Thread blocked" card
+    expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // no re-arm
+    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(0); // stays acked
+  });
+
+  it('REGRESSION: blocked record but halt_outcome MISSING (crash before haltJob) → re-drive still runs haltJob ONCE', async () => {
+    // The block_thread terminal record persisted, but haltJob never created the owed-wake row. A re-drive must
+    // NOT suppress — else `threadsAwaitingHaltWake` has nothing to deliver and the brain is never woken.
+    const state = blockedState({ reason: 'unverified', haltOutcome: null, haltWakedAt: null });
+    const h = assemble(state);
+
+    await h.driver.resume();
+    await flush();
+
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // owed-wake row created
+    expect(blockedCards(h).length).toBeGreaterThan(0); // the card posts (the FIRST notification)
+    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(1);
+  });
+
+  it('judge_unavailable transient hold KEEPS re-arming on re-drive (its only recovery path)', async () => {
+    // Already delivered, but judge_unavailable must re-wake the brain to retry_thread when the judge recovers.
+    const state = blockedState({ reason: 'judge_unavailable', haltOutcome: 'blocked', haltWakedAt: new Date() });
+    const h = assemble(state);
+    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
+
+    await h.driver.resume();
+    await flush();
+
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // re-armed
+    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(1); // owed again
+  });
+});
 
 describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — no rollout dial)', () => {
   it('touched + adequate verification → done (judge consulted, never gates)', async () => {
@@ -3694,6 +3829,14 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     expect(freshTask).toContain('<session_rotated>');
     expect(freshTask).toContain('FAILED: `pnpm build` → TS2345');
     expect(freshTask).toContain('\n\n---\n\n'); // seed folded ahead of the original batch task
+    // Recency ordering: the handoff/preamble lead (PRIMACY, top), the original batch task sits in the middle, and
+    // the operative resume directive trails LAST (RECENCY slot) — see foldLegSeed / ROTATION_RESUME_TAIL.
+    const iPreamble = freshTask.indexOf('<session_rotated>');
+    const iBaseTask = freshTask.indexOf('Feature overview:');
+    const iResume = freshTask.indexOf('<resume_here>');
+    expect(iResume).toBeGreaterThan(-1);
+    expect(iPreamble).toBeLessThan(iBaseTask);
+    expect(iBaseTask).toBeLessThan(iResume);
     // The thread + job finished cleanly on the fresh Leg.
     expect(state.threads[0].status).toBe('done');
     expect(state.job.status).toBe('done');

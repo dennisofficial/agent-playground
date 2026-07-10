@@ -1,7 +1,7 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import type { ModuleRef } from '@nestjs/core';
 import { describe, expect, it } from 'vitest';
 import type { DataSource, Repository } from 'typeorm';
+import type { JobTeardownPort } from '../driver/job-teardown.port';
 import { OrganizationService } from './organization.service';
 import type {
   OrgInviteEntity,
@@ -83,15 +83,14 @@ function makeSvc(
   const users = {} as unknown as Repository<UserEntity>;
   const env = { get: () => 'http://host' } as never;
 
-  // Records the per-thread deep deletes so the deleteOrg test can assert on them. `JobLifecycleService`
-  // is pulled lazily via `ModuleRef.get(...)` in `deleteOrg`, so the mock ref just hands back this fake.
+  // Records the per-thread deep deletes so the deleteOrg test can assert on them. `deleteOrg` reaches the
+  // driver's physical teardown through the injected `JOB_TEARDOWN` port; the fake implements that port.
   const deepDeleted: Array<{ jobId: string; orgId: string }> = [];
-  const threadLifecycle = {
+  const jobTeardown: JobTeardownPort = {
     deleteJobDeep: async (jobId: string, orgId: string) => {
       deepDeleted.push({ jobId, orgId });
     },
   };
-  const moduleRef = { get: () => threadLifecycle } as unknown as ModuleRef;
 
   const deletes: Array<{ entity: string; criteria: Record<string, unknown> }> = [];
   const manager = {
@@ -114,7 +113,7 @@ function makeSvc(
     invites,
     users,
     dataSource,
-    moduleRef,
+    jobTeardown,
     env,
   );
   return { svc, inviteRows, memberRows, orgRows, deepDeleted, deletes, orgDeletes };

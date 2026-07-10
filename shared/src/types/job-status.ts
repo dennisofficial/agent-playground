@@ -43,13 +43,20 @@ export type JobStatus =
  * `kind` distinguishes consumer behavior: `blocked_credentials` drives request-secret / needs-you;
  * `failed`/`incomplete` are build failures; `budget_exhausted` is a rest-until-re-armed halt.
  */
-export type JobHaltKind = 'failed' | 'blocked_credentials' | 'budget_exhausted' | 'incomplete';
+export type JobHaltKind =
+  | 'failed'
+  | 'blocked_credentials'
+  | 'budget_exhausted'
+  | 'incomplete'
+  | 'session_limit'; // parked on a Claude session/usage limit; auto-resumes at resumeAt
 export type JobHalt = {
   kind: JobHaltKind;
   /** Short human string (what `relayFailure` already computes via `shortReason`). */
   reason: string;
   /** ISO timestamp the halt was recorded. */
   at: string;
+  /** ISO reset timestamp; when set, the lane auto-resumes once it passes (session_limit halts). */
+  resumeAt?: string;
 };
 
 /**

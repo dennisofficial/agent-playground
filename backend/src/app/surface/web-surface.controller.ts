@@ -1127,6 +1127,9 @@ export class WebSurfaceController {
    * `running`, fast-forwards finished work, continues at the first unfinished step). `status` (the build
    * phase) is untouched by the halt, so retry resumes it in place. No-op if the thread isn't halted.
    * Scoped to the caller's org via the membership guard + `requireThread`.
+   *
+   * Also the build-lane FORCE-resume for a `session_limit` park: `ThreadDriver.retry` un-halts any halt kind
+   * (session_limit included) and clears the auto-resume clock, so this same endpoint resumes a parked build early.
    */
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/retry')
   @UseGuards(OrgMembershipGuard)
@@ -1171,6 +1174,9 @@ export class WebSurfaceController {
         chunkKey: `seed:retry:${jobId}:${Date.now()}`,
       },
     });
+    // Force-resume of a Main-lane session-limit park: clear the durable auto-resume clock so the leader sweep
+    // never re-fires the resume it has now been done early. Harmless when the thread wasn't parked (no-op update).
+    await this.store.setSessionResume(jobId, null, null);
     return { ok: true };
   }
 

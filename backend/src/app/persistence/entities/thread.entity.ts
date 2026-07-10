@@ -205,6 +205,17 @@ export class ThreadEntity extends TimestampedEntity {
   done_waked_at!: Date | null;
 
   /**
+   * Completion-wake GENERATION token (mirrors {@link halt_fix_attempts}) — the wake-stamp CAS key AND the
+   * partial-supersede key. Atomically bumped by `claimDoneWakeGen` at each delivery START; the fresh value
+   * tags every durable block of that delivery (`meta.doneWakeGen` / `meta.doneWakeThreadId` via the harness
+   * `metaTag`) and keys `markDoneWaked`'s CAS. So a stale (crashed mid-stream) attempt's late stamp matches
+   * zero rows, and its truncated partial rows are deleted by the next attempt's `supersedeDoneWakeMessages`.
+   * Never resets — a `done` thread is never re-driven.
+   */
+  @Column({ type: 'int', default: 0 })
+  done_wake_gen!: number;
+
+  /**
    * The thread's START HEAD — the feature-branch sha captured ONCE, the first time the thread begins
    * executing. The post-build review scopes its diff by `start_sha..HEAD` and commit-recording compares
    * HEAD against it (thread-driver `:1733`); RE-capturing it on every (re)entry lets a RESUME grab it AFTER

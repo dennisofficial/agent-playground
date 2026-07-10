@@ -1,9 +1,11 @@
 import { EnvService } from '@core/config/env/env.service';
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
+import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
+// Leaf port path (NOT the '../driver' barrel) — a zero-import token file, so injecting it forms no
+// org ↔ driver ES module cycle. The @Global DriverModule binds it to JobLifecycleService.
+import { JOB_TEARDOWN, type JobTeardownPort } from '../driver/job-teardown.port';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   OrgInviteEntity,
@@ -80,12 +82,11 @@ export class OrganizationService {
     private readonly users: Repository<UserEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
-    // `JobLifecycleService` is resolved LAZILY in `deleteOrg` via this ref + a dynamic `import()`.
-    // A STATIC import of the driver service would close an ES module cycle
-    // (organization.service → driver/job-lifecycle → onboarding barrel → onboarding controllers →
-    // org-membership.guard → organization.service), which leaves `OrganizationService` undefined at boot.
-    // `ModuleRef` is core (no module dependency) and the dynamic import is evaluated after boot.
-    private readonly moduleRef: ModuleRef,
+    // Physical job teardown (container + worktree reclaim), used by `deleteOrg`. Injected as a typed
+    // port token rather than statically importing `JobLifecycleService` — a static import would close an
+    // ES module cycle (org → driver/job-lifecycle → onboarding barrel → onboarding controllers →
+    // org-membership.guard → org). The @Global DriverModule binds JOB_TEARDOWN to that service.
+    @Inject(JOB_TEARDOWN) private readonly jobTeardown: JobTeardownPort,
     private readonly env: EnvService,
   ) {}
 
@@ -128,9 +129,8 @@ export class OrganizationService {
    *
    *   1. PHYSICAL teardown per thread — `deleteJobDeep` reclaims each thread's container + git worktree
    *      (side effects no DB cascade can do) and deletes the thread row, which cascades that thread's
-   *      children. Resolve the driver service lazily (see the constructor note on the module cycle);
-   *      `strict: false` searches the whole app. The `.js` extension: a relative dynamic `import()` carries
-   *      ESM semantics under `moduleResolution: nodenext`, which requires the explicit extension.
+   *      children. Reached through the injected `JOB_TEARDOWN` port (see the constructor note on the
+   *      module cycle) rather than a static import of the driver service.
    *   2. Delete the org row — the `ON DELETE CASCADE` FKs (RestoreReferentialIntegrity migration) sweep
    *      every remaining org-scoped row: repos, org_credentials, org_invites, organization_members,
    *      org-scoped memory, and any stimuli/decision_records NEVER tied to a thread (events parked on the
@@ -145,10 +145,8 @@ export class OrganizationService {
       .getRepository(JobEntity)
       .find({ where: { org_id: orgId }, select: { id: true } });
 
-    const { JobLifecycleService } = await import('../driver/job-lifecycle.service.js');
-    const threadLifecycle = this.moduleRef.get(JobLifecycleService, { strict: false });
     for (const { id } of threads) {
-      await threadLifecycle.deleteJobDeep(id, orgId);
+      await this.jobTeardown.deleteJobDeep(id, orgId);
     }
 
     // The org row delete cascades all remaining org-scoped rows via FK ON DELETE CASCADE.

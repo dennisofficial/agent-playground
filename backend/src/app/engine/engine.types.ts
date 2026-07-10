@@ -6,6 +6,9 @@
  */
 import type { SessionEngine, SessionMode } from '../domain';
 import type { EngineHomeKey } from './engine-home';
+import type { SessionLimitHit } from './session-limit';
+
+export type { SessionLimitHit } from './session-limit';
 
 /**
  * How an engine (SDK harness) turn authenticates — ALWAYS a subscription secret. The api_key mode was
@@ -104,6 +107,16 @@ export type EngineEvent =
       contextTokens: number;
       contextModel?: string;
       contextLimit: number;
+    }
+  /** A subscription rate-limit frame harvested from the SDK's `rate_limit_event` stream (claude.ai plans only).
+   *  Carries the raw window info so the host can update the per-org usage snapshot AND (when status==='rejected')
+   *  park the lane. Live-only; never persisted as a transcript block. */
+  | {
+      kind: 'rate_limit';
+      status: 'allowed' | 'allowed_warning' | 'rejected';
+      resetsAt?: number;        // epoch ms, verbatim from the SDK
+      rateLimitType?: string;
+      utilization?: number;
     }
   /**
    * Lifecycle of an SDK `run_in_background` Bash task, surfaced to the operator. The engine holds the turn's
@@ -717,6 +730,12 @@ export interface EngineRunResult {
    * a rotting snapshot. Contains a SECRET — never log it. Absent on the common (no-refresh) path.
    */
   refreshedAuthSecret?: string;
+  /**
+   * Set when the turn ended because the org hit a Claude subscription session/usage limit (structured
+   * `rate_limit_event` status:'rejected', or the printed-line fallback). The turn was ended CLEANLY (no
+   * held-open resume) — the caller parks the lane + schedules an auto-resume at `resetAt`.
+   */
+  sessionLimit?: SessionLimitHit;
 }
 
 /**
@@ -786,6 +805,32 @@ export class EngineAuthError extends Error {
     super(message);
     this.name = 'EngineAuthError';
   }
+}
+
+/**
+ * The turn ended because the org hit a Claude subscription SESSION/USAGE limit (not a crash, not a 401).
+ * The build lane throws this so its halt-classification chokepoint parks the lane on a durable resume clock
+ * instead of failing the job. Carries the resume metadata + the engine `sessionId` to continue the SAME
+ * session on resume (mirrors {@link EngineAuthError}).
+ */
+export class EngineSessionLimitError extends Error {
+  readonly isSessionLimit = true;
+  constructor(
+    message: string,
+    readonly resetAt?: string,
+    readonly rateLimitType?: string,
+    readonly sessionId?: string,
+  ) {
+    super(message);
+    this.name = 'EngineSessionLimitError';
+  }
+}
+
+export function isSessionLimitError(err: unknown): boolean {
+  return (
+    err instanceof EngineSessionLimitError ||
+    (err as { isSessionLimit?: boolean })?.isSessionLimit === true
+  );
 }
 
 /**

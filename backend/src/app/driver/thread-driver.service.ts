@@ -26,6 +26,8 @@ import { HALT_FIX_ATTEMPT_CAP } from '../domain';
 import { TICKET_AUTO_SKIP_SIM, TICKET_TERMINAL_STATUSES } from '../domain/ticket';
 import {
   EngineAuthError,
+  EngineSessionLimitError,
+  isSessionLimitError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
   type EngineEvent,
@@ -34,6 +36,7 @@ import {
   type ToolBridgeOptions,
   type ToolImpl,
 } from '../engine';
+import { defaultResumeAt } from '../engine/session-limit';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
   CHAT_SURFACE,
@@ -47,6 +50,7 @@ import {
   webShipReviewCard,
 } from '../surface';
 import { CredentialResolver } from '../onboarding';
+import { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { McpResolver, McpOAuthService } from '../mcp';
 import { ConventionProfileResolver, type ResolvedConventions } from '../conventions';
 import { SkillResolver } from '../skills';
@@ -69,6 +73,7 @@ import {
   COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
   ROTATION_PREAMBLE,
+  ROTATION_RESUME_TAIL,
   ROTATION_SOFT_NUDGE,
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
@@ -142,6 +147,13 @@ interface BatchResult {
 interface ThreadResult {
   outcome: ThreadOutcome;
   handoff: string | null;
+  /** Set ONLY by the "already blocked → re-halt" short-circuit, and ONLY when the durable owed-wake row
+   *  already exists (`halt_outcome` set → `haltJob` already posted the card + persisted the wake) AND this
+   *  is not a `judge_unavailable` transient hold. When true, `runJob` SKIPS `haltJob` — no re-post, no
+   *  re-arm — which stops the every-reap "Thread blocked → Holding." spam. Left unset for a fresh block, for
+   *  a `judge_unavailable` hold (whose periodic re-wake IS its recovery), and when `halt_outcome` is still
+   *  missing (crash between `block_thread`'s record write and `haltJob`) so `haltJob` runs once to create it. */
+  suppressHaltNotify?: boolean;
 }
 
 /**
@@ -154,6 +166,7 @@ interface ThreadResult {
  */
 function isTransientDriveError(err: unknown): boolean {
   if (err instanceof EngineAuthError) return false; // → paused
+  if (err instanceof EngineSessionLimitError) return false; // → parked on session limit
   if (isEngineDetachedError(err)) return false; // → leave running for boot re-attach
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   if (msg.includes(UNRESUMABLE_SESSION_MARKER.toLowerCase())) return false; // session gone — retry futile
@@ -208,6 +221,9 @@ export class ThreadDriver implements JobDispatcher {
     private readonly env: EnvService,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
     private readonly creds: CredentialResolver,
+    // Host-side subscription usage snapshot — the session-limit park reads `getResetAt(orgId, rateLimitType)`
+    // to seed the resume clock when the engine didn't surface a precise reset instant. @Global OnboardingModule.
+    private readonly usage: OauthUsageService,
     private readonly mcp: McpResolver,
     // Host-authoritative MCP OAuth: before a build drive, refresh any near-expiry OAuth tokens and, if one
     // rotated, re-write the sandbox hub config so a long-lived warm sandbox picks up the fresh Bearer.
@@ -361,9 +377,11 @@ export class ThreadDriver implements JobDispatcher {
    */
   async resumePaused(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
-    if (!job || job.halt?.kind !== 'blocked_credentials') {
+    // Resumes a credential/401 halt OR a session-limit park (the auto-resume sweep + the operator ping both
+    // route here). Any other halt kind (or none) is ignored.
+    if (!job || !['blocked_credentials', 'session_limit'].includes(job.halt?.kind ?? '')) {
       this.logger.warn(
-        `resumePaused job=${jobId}: not a credential halt (${job?.halt?.kind ?? 'gone'}) — ignoring`,
+        `resumePaused job=${jobId}: not a resumable halt (${job?.halt?.kind ?? 'gone'}) — ignoring`,
       );
       return;
     }
@@ -378,6 +396,9 @@ export class ThreadDriver implements JobDispatcher {
     }
     // Clear the halt (only retry/resumePaused/redriveThread may un-halt) then re-drive the preserved phase.
     await this.store.clearJobHalt(jobId);
+    // Clear the durable auto-resume clock too, so the leader sweep never re-fires this resume (no-op for a
+    // credential resume that was never parked on the clock).
+    await this.store.setSessionResume(jobId, null, null);
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
@@ -421,6 +442,9 @@ export class ThreadDriver implements JobDispatcher {
     // status flip is a no-op in practice — a halt is only ever recorded mid-drive, i.e. while `running` — but
     // it self-heals any drifted/backfilled phase so `runJob`'s `running` gate lets the re-drive through.
     await this.store.clearJobHalt(jobId);
+    // A Force-resume of a session-limit park routes through here — clear the durable auto-resume clock so the
+    // leader sweep never re-fires (harmless no-op for a non-parked retry).
+    await this.store.setSessionResume(jobId, null, null);
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
@@ -609,6 +633,52 @@ export class ThreadDriver implements JobDispatcher {
           })
           .catch(() => undefined);
         await this.relayPaused(jobId, err);
+      } else if (isSessionLimitError(err)) {
+        // A Claude subscription SESSION/USAGE limit — PARK (don't fail): the phase is preserved and the
+        // unfinished step's session_id was persisted at the throw, so the lane resumes the SAME session. It
+        // auto-resumes once the reset passes (the leader `SessionResumeSweep` → `resumePaused`) or on an
+        // operator Force-resume (`POST …/retry`). Do NOT consume `halt_fix_attempts` — this isn't a build failure.
+        const limit = err as EngineSessionLimitError;
+        this.logger.warn(`job=${jobId} parked on session limit: ${limit.message}`);
+        const job = await this.store.loadJob(jobId).catch(() => null);
+        const orgId = job?.orgId;
+        // Resume-clock precedence (d5): the engine's precise reset instant → the org's harvested usage window.
+        const resumeAt =
+          limit.resetAt ?? (orgId ? await this.usage.getResetAt(orgId, limit.rateLimitType) : undefined);
+        // When neither yields a precise instant, park on a BOUNDED default clock (now + shortest window) so the
+        // leader sweep still auto-resumes — a null clock would only ever be Force-resumed by hand.
+        const resumeClock = resumeAt ?? defaultResumeAt();
+        // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
+        // reset — this also covers the text-fallback path, which carries no `rate_limit_event` frame to harvest.
+        if (orgId)
+          void this.usage
+            .applyHarvest(orgId, {
+              status: 'rejected',
+              rateLimitType: limit.rateLimitType,
+              resetsAt: new Date(resumeClock).getTime(),
+              utilization: 100,
+            })
+            .catch(() => undefined);
+        // A structured `rateLimitType` means the reset came from the usage frame/API; its absence means the
+        // engine fell back to parsing the CLI's printed "resets …" string.
+        const resetSource: 'usage_api' | 'parsed_string' = limit.rateLimitType ? 'usage_api' : 'parsed_string';
+        const at = new Date().toISOString();
+        await this.store
+          .setJobHalt(jobId, {
+            kind: 'session_limit',
+            reason: limit.message,
+            at,
+            resumeAt: resumeClock,
+          })
+          .catch(() => undefined);
+        await this.store
+          .setSessionResume(jobId, resumeClock, {
+            lane: 'build',
+            reason: limit.message,
+            resetSource,
+          })
+          .catch(() => undefined);
+        await this.relaySessionLimitPaused(jobId, resumeAt);
       } else {
         this.logger.error(
           `job=${jobId} failed: ${err instanceof Error ? err.stack : err}`,
@@ -687,6 +757,53 @@ export class ThreadDriver implements JobDispatcher {
       await this.post(route, text);
     } catch (e) {
       this.logger.warn(`could not live-relay pause for job=${jobId}: ${e}`);
+    }
+  }
+
+  /**
+   * Post a "parked on a session/usage limit" notice (build lane). Mirrors {@link relayPaused} (durable-first
+   * via the block sink, best-effort live post on top) but marks the block `sessionLimit` so the UI can render
+   * the park + its Force-resume affordance. The text is STABLE (no live now-timestamp) so a re-drive that
+   * re-parks the same limit dedupes against the last notice instead of stacking near-identical boxes.
+   */
+  private async relaySessionLimitPaused(jobId: string, resumeAt?: string): Promise<void> {
+    const text = `You've hit your session limit — resets ${resumeAt ? fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`;
+    const alreadyPosted = await this.store
+      .hasRecentSystemOperatorNotice(jobId, text)
+      .catch(() => false);
+    if (!alreadyPosted) {
+      await this.blockSink
+        .appendBlock(jobId, {
+          kind: 'chat',
+          text,
+          meta: {
+            source: 'system_operator',
+            severity: 'warning',
+            sessionLimit: true,
+            ...(resumeAt ? { resumeAt } : {}),
+          },
+        })
+        .catch((e) =>
+          this.logger.error(`could not durably record session-limit park for job=${jobId}: ${e}`),
+        );
+    }
+    try {
+      const job = await this.store.loadJob(jobId);
+      const route = await this.store.route(job);
+      if (route.channel && !alreadyPosted) {
+        await this.surface.post(route.channel, text, {
+          ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+          ...(route.orgId ? { orgId: route.orgId } : {}),
+          meta: {
+            source: 'system_operator',
+            severity: 'warning',
+            sessionLimit: true,
+            ...(resumeAt ? { resumeAt } : {}),
+          },
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`could not live-relay session-limit park for job=${jobId}: ${e}`);
     }
   }
 
@@ -830,7 +947,15 @@ export class ThreadDriver implements JobDispatcher {
         // HALT the build (ADR 0004): an unfinished thread must not ship. Relay a durable card, flip the job
         // to a needs-you state, record the owed brain wake + trail, and SKIP finalizeBuild — no PR on an
         // unfinished build. The brain wake fires from `drive()` once the job leaves the active window.
-        await this.haltJob(job, route, thread, res.outcome);
+        //
+        // EXCEPT a re-halt of an already-notified brain-owned block (`suppressHaltNotify`): the card was
+        // already posted and the owed-wake row persists in the DB (delivered→acked stays acked; never
+        // delivered stays owed and the 30s sweep still delivers it once). Skipping `haltJob` here kills the
+        // every-30-min "Thread blocked → Holding." spam without dropping a genuine first wake. A fresh block
+        // or a `judge_unavailable` re-halt still notifies.
+        if (!res.suppressHaltNotify) {
+          await this.haltJob(job, route, thread, res.outcome);
+        }
         return;
       }
       handoff = res.handoff;
@@ -1122,13 +1247,29 @@ export class ThreadDriver implements JobDispatcher {
     // thread. (Live-observed on job 43705139 — the master review "blocked again" hundreds of times.)
     const prior = await this.store.getTerminalRecord(thread.id).catch(() => null);
     if (prior?.status === 'blocked') {
+      // Suppress the redundant re-notify (re-posted card + re-armed brain wake) ONLY when the durable
+      // owed-wake row already exists (`halt_outcome` set → `haltJob` already ran) AND this isn't the
+      // transient `judge_unavailable` hold. If `halt_outcome` is still missing (crash between
+      // `block_thread`'s terminal-record write and `haltJob`), fall through so `haltJob` runs once and
+      // creates it — else `threadsAwaitingHaltWake` has nothing to deliver and the wake is lost forever. A
+      // `judge_unavailable` hold recovers ONLY via the periodic re-wake driving the brain to `retry_thread`
+      // (no judge health-poll exists), so it must keep re-arming.
+      const owedHaltExists =
+        (await this.store.haltOutcome(thread.id).catch(() => null)) != null;
+      const transientHold = prior.blocked?.reason === 'judge_unavailable';
+      const suppressHaltNotify = owedHaltExists && !transientHold;
       this.logger.log(
-        `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)`,
+        `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)` +
+          (suppressHaltNotify
+            ? ' [suppressing redundant re-notify]'
+            : transientHold
+              ? ' [judge_unavailable: re-arming wake]'
+              : ' [owed-wake row missing: running haltJob to create it]'),
       );
       await this.store
         .setThreadCondition(thread.id, 'paused')
         .catch(() => undefined);
-      return { outcome: 'blocked', handoff: null };
+      return { outcome: 'blocked', handoff: null, suppressHaltNotify };
     }
 
     // A thread already `done` must NOT be re-run. The runJob loop skips `done` threads from its start-of-run
@@ -2063,7 +2204,7 @@ export class ThreadDriver implements JobDispatcher {
     // instead of restarting the batch. The seed is cleared the instant the fresh session is born (turn-runner
     // clear-on-birth). Mirrors the brain's `pending_compaction_seed` fold in `runChatTurnInner`.
     const legSeed = await this.store.getPendingLegSeed(anchor.id);
-    const task = legSeed ? `${legSeed}\n\n---\n\n${baseTask}` : baseTask;
+    const task = this.foldLegSeed(legSeed, baseTask);
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2178,7 +2319,7 @@ export class ThreadDriver implements JobDispatcher {
           );
           result = null;
           const seed = await this.store.getPendingLegSeed(anchor.id);
-          legTask = seed ? `${seed}\n\n---\n\n${baseTask}` : baseTask;
+          legTask = this.foldLegSeed(seed, baseTask);
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
           rotationState.softReached = false;
@@ -2192,7 +2333,7 @@ export class ThreadDriver implements JobDispatcher {
         // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
         result = null;
         const seed = await this.store.getPendingLegSeed(anchor.id);
-        legTask = seed ? `${seed}\n\n---\n\n${baseTask}` : baseTask;
+        legTask = this.foldLegSeed(seed, baseTask);
       }
       report = result!.report;
 
@@ -2358,7 +2499,7 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const spec = threadKindSpec(thread.kind);
     const metaTag = { phaseId: anchor.id, commitNudge: attempt };
-    const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
     const task =
       `You have UNCOMMITTED changes in the working tree, but the thread is otherwise finished. Commit them` +
       ` now: run \`git add -A\` (your \`.gitignore\` governs what's tracked — if build/cache junk appears,` +
@@ -2458,6 +2599,7 @@ export class ThreadDriver implements JobDispatcher {
     );
     const harness = this.turnHarness.create({
       jobId: job.id,
+      orgId: job.orgId,
       channel: row.channel,
       lane,
       metaTag,
@@ -2481,6 +2623,12 @@ export class ThreadDriver implements JobDispatcher {
         // Persist nothing, finalize nothing (the row + streams are the next boot's re-attach anchor), and
         // crucially do NOT return null: that would re-kick a live engine's session. Propagate instead.
         this.logger.warn(`re-attach turn ${row.turn_id} detached — leaving it for the next boot`);
+        throw err;
+      }
+      if (isSessionLimitError(err)) {
+        // The re-attached turn ended cleanly on a Claude session limit. End the live lane without a text
+        // fallback and propagate so the top-level drive parks the build on the durable resume clock.
+        await harness.abort();
         throw err;
       }
       // The engine turn already finished (streams reaped) or its container is gone — persist partials, end
@@ -2517,7 +2665,7 @@ export class ThreadDriver implements JobDispatcher {
     rotation: { state: LegRotationRunState; thresholds: LegRotationThresholds } | null,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const anchor = steps[0];
-    const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
     // Engine / persona / reasoning effort come from the thread-kind spec (the prompt-kit `Agent` binding).
     // The master-review kind runs CODEX in execute mode over the whole diff (review + fix + verify) with a
     // dedicated persona + high reasoning effort; a builder runs Claude with the WORKER persona. `jobKind` is
@@ -2750,6 +2898,16 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
+   * Fold a rotation seed into the fresh Leg's turn task. The seed ({@link buildLegSeed} — preamble + handoff +
+   * carried checklist) leads so it lands in the PRIMACY slot; the original batch task sits in the middle; and the
+   * {@link ROTATION_RESUME_TAIL} operative directive trails LAST, in the RECENCY slot where LLM recall is highest.
+   * A non-rotated Leg (no seed) gets the bare batch task unchanged.
+   */
+  private foldLegSeed(seed: string | null, baseTask: string): string {
+    return seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask;
+  }
+
+  /**
    * Persist the closing Leg's handoff as a DURABLE FILE at `/context/generated/handoffs/leg-<N>.md` — a
    * legible, inspectable artifact that lives OUTSIDE the git worktree (so it never becomes a dirty commit or
    * a PR file). `/context/generated` is the host-written bucket (mounted READ-ONLY into the container), so the
@@ -2914,7 +3072,7 @@ export class ThreadDriver implements JobDispatcher {
     anchorStepId: string,
     toolBridge: ToolBridgeOptions,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>> | null> {
-    const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
     try {
       const result = await this.turn.reattach({
         turnId: row.turn_id,
@@ -2976,7 +3134,7 @@ export class ThreadDriver implements JobDispatcher {
     toolBridge: ToolBridgeOptions,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const metaTag = { phaseId: anchor.id, gateIteration: iteration };
-    const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
     // Surface this gate iteration's directive (the verify/fix task the orchestrator resumes with) on the
     // build lane, inline before its activity — the gate resumes the build session with no anchor of its own,
     // so without this the operator sees the fix work but never what was asked. Keyed per (step, iteration)
@@ -3532,4 +3690,12 @@ export function shortReason(err: unknown): string {
     .filter(Boolean)
     .join(' | ');
   return detail.length > 500 ? `${detail.slice(0, 497)}...` : detail || 'unknown error';
+}
+
+/** Render a session-limit reset instant as a short human time (e.g. "3:20 PM"); falls back to the raw ISO
+ *  string if it can't be parsed. Kept simple + STABLE so the park notice dedupes on exact text. */
+export function fmtReset(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }

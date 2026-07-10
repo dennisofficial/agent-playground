@@ -133,6 +133,7 @@ export class AutoFixStage {
       : autofixLensLane(ctx.autofixId, sub.lensId);
     return this.turnHarness.create({
       jobId: ctx.jobId,
+      orgId: ctx.orgId,
       channel: ctx.channel,
       lane,
       metaTag: {
