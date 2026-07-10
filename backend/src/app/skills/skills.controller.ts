@@ -63,6 +63,8 @@ class SetSkillDto implements SkillInput {
   @IsOptional() @IsIn(UPDATE_POLICIES) update_policy?: SkillUpdatePolicy | null;
   @IsOptional() @IsString() forked_from?: string | null;
   @IsOptional() @IsArray() @IsIn(SURFACES, { each: true }) surfaces?: McpSurface[];
+  @IsOptional() @IsArray() @IsString({ each: true }) reviewForTypes?: string[];
+  @IsOptional() @IsArray() @IsString({ each: true }) reviewForGlobs?: string[];
   @IsOptional() @IsBoolean() enabled?: boolean;
   /** A custom skill's `SKILL.md` body (frontmatter-stripped) — console create/edit only; a git skill's
    *  content comes from the installer, never this endpoint. */
@@ -189,6 +191,8 @@ export class SkillsController {
       provenance: 'custom',
       forked_from: name,
       surfaces: source.surfaces,
+      reviewForTypes: source.reviewForTypes,
+      reviewForGlobs: source.reviewForGlobs,
       enabled: true,
     });
     const skill = await this.store.get(org.id, dbScope, forkName);

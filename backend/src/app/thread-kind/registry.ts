@@ -9,7 +9,6 @@
  */
 import { Agent, renderAgentPrompt } from '../prompt-kit';
 import { THREAD_REGISTRY } from '../surface/thread-registry';
-import { DEFAULT_LENSES } from '../autofix/autofix-lenses';
 import type { SessionEngine } from '../domain';
 import type { ReasoningEffort } from '../engine';
 import type { ThreadKindSpec, ThreadRowKind } from './spec';
@@ -58,14 +57,9 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     inputPolicy: 'none',
     taskScope: 'thread',
     runner: 'execute-turn',
+    // Lens SELECTION is owned by the driver (`reviewAgentsForThread`, type-routed) — this factory owns
+    // only the post_review child, materialized alongside the driver-computed `review_lens` rows.
     children: () => [
-      // One review_lens per default lens — each becomes its OWN row (no shared jsonb → no lost-update race).
-      ...DEFAULT_LENSES.map((lens) => ({
-        kind: 'review_lens' as ThreadRowKind,
-        brief: lens.label,
-        config: { lensId: lens.id },
-      })),
-      // The single fix pass that reads the sibling lenses' deduped findings and applies them.
       {
         kind: 'post_review' as ThreadRowKind,
         brief: 'Post-review fixes',

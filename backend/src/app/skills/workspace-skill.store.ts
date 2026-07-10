@@ -29,6 +29,10 @@ export interface SkillInput {
   update_policy?: SkillUpdatePolicy | null;
   forked_from?: string | null;
   surfaces?: McpSurface[];
+  /** Applicability for the framework-conformance review lens — see `WorkspaceSkillEntity.review_for_types`. */
+  reviewForTypes?: string[];
+  /** Applicability for the framework-conformance review lens — see `WorkspaceSkillEntity.review_for_globs`. */
+  reviewForGlobs?: string[];
   enabled?: boolean;
 }
 
@@ -46,6 +50,10 @@ export interface SkillView {
   update_policy: SkillUpdatePolicy | null;
   forked_from: string | null;
   surfaces: McpSurface[];
+  /** Applicability for the framework-conformance review lens. */
+  reviewForTypes: string[];
+  /** Applicability for the framework-conformance review lens. */
+  reviewForGlobs: string[];
   enabled: boolean;
   /** Set by `SkillUpdaterService` for a `pinned`/`manual` git skill whose remote has moved past
    *  `installed_sha` — the console's "update available" badge. Always false for non-git skills. */
@@ -101,6 +109,8 @@ export class WorkspaceSkillStore {
       update_policy: r.update_policy,
       forked_from: r.forked_from,
       surfaces: r.surfaces,
+      reviewForTypes: Array.isArray(r.review_for_types) ? r.review_for_types : [],
+      reviewForGlobs: Array.isArray(r.review_for_globs) ? r.review_for_globs : [],
       enabled: r.enabled,
       update_available: r.update_available,
     };
@@ -122,6 +132,8 @@ export class WorkspaceSkillStore {
     row.update_policy = input.update_policy ?? null;
     row.forked_from = input.forked_from ?? null;
     row.surfaces = input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['build'];
+    row.review_for_types = input.reviewForTypes ?? [];
+    row.review_for_globs = input.reviewForGlobs ?? [];
     row.enabled = input.enabled ?? true;
     await this.skills.save(row);
     this.logger.log(`wrote skill org=${orgId} scope=${dbScope} name=${name}`);

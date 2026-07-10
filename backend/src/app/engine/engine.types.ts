@@ -482,6 +482,15 @@ export interface ResolvedSkill {
    * with `managed`.
    */
   managedGit?: boolean;
+  /**
+   * The review-lens applicability axes (thread types / file globs), populated by
+   * `SkillResolver.resolveForTurn` from the system-tier fields or the workspace row's
+   * `review_for_types`/`review_for_globs` columns. Consumed by `resolveReviewSkillsForThread` to pick which
+   * skills' bodies get injected into a review turn — meaningless (and unused) for a non-review surface.
+   */
+  reviewForTypes?: string[];
+  /** See {@link reviewForTypes}. */
+  reviewForGlobs?: string[];
 }
 
 export interface RunEngineArgs {

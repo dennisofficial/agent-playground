@@ -914,6 +914,8 @@ function SkillFormDialog({
           description: description.trim(),
           provenance: isCustom ? "custom" : undefined,
           surfaces,
+          reviewForTypes: existing?.reviewForTypes,
+          reviewForGlobs: existing?.reviewForGlobs,
           enabled,
           updatePolicy: isCustom ? undefined : updatePolicy,
           body: isCustom ? body : undefined,
