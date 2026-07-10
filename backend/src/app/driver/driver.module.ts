@@ -4,6 +4,7 @@ import {
   Inject,
   Logger,
   Module,
+  Optional,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
@@ -39,6 +40,7 @@ import { JobLifecycleService } from './job-lifecycle.service';
 import { GithubPrStateSync } from './github-pr-state-sync.service';
 import { GithubCiStateSync } from './github-ci-state-sync.service';
 import { OnboardingService } from '../onboarding';
+import { ExposureService } from '../exposure';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -132,6 +134,10 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly onboarding: OnboardingService,
+    // Sandbox-preview reconciler — swept on the leader's reap timer so a missed webhook / restart
+    // self-heals Caddy's preview routes. From the @Global ExposureModule; inert when disabled. @Optional
+    // so the module's direct-construction unit test compiles without a trailing argument.
+    @Optional() private readonly exposure?: ExposureService,
   ) {}
 
   /**
@@ -220,6 +226,8 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       // networks orphaned across restarts/crashes. Decoupled from MAX_CONCURRENT_SANDBOXES (the softCapCheck
       // gate that previously left this sweep unscheduled in prod).
       void this.lifecycle.reapOrphanedSandboxArtifacts().catch(() => undefined);
+      // Converge Caddy's sandbox-preview routes to the live set (self-heals missed webhooks / restarts).
+      void this.exposure?.reconcileAll().catch(() => undefined);
     }, everyMs);
     this.reapTimer.unref?.();
   }

@@ -156,6 +156,13 @@ export interface ContainerEngine {
    */
   connectNetwork(id: string, network: string): Promise<void>;
 
+  /**
+   * Detach a container from a network (idempotent — a container not on the network resolves quietly).
+   * Used to UNBRIDGE the Caddy container from a sandbox's `-net` when its previews are torn down (the
+   * inverse of {@link connectNetwork}).
+   */
+  disconnectNetwork(id: string, network: string): Promise<void>;
+
   /** True if an image with this tag exists locally. */
   imageExists(tag: string): Promise<boolean>;
 

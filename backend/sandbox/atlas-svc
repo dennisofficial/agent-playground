@@ -15,7 +15,7 @@ SVC_DIR="${ATLAS_SUPERVISOR_DIR:-/.atlas/supervisor}"
 mkdir -p "$SVC_DIR" 2>/dev/null || true
 
 usage() {
-  echo "usage: atlas-svc run --name <id> -- <cmd...>" >&2
+  echo "usage: atlas-svc run --name <id> [--port <n>] [--no-expose] -- <cmd...>" >&2
   echo "       atlas-svc logs <id> [-n N] [-f]" >&2
   echo "       atlas-svc ps" >&2
   echo "       atlas-svc stop <id>" >&2
@@ -40,10 +40,12 @@ is_alive() { # <pgid> — a process group is alive if kill -0 on the negative pg
 }
 
 cmd_run() {
-  local name=""
+  local name="" port="" no_expose=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --name) name="${2:-}"; shift 2 || { usage; return 2; } ;;
+      --port) port="${2:-}"; shift 2 || { usage; return 2; } ;;
+      --no-expose) no_expose=1; shift ;;
       --) shift; break ;;
       *) echo "atlas-svc run: unexpected arg '$1' (did you forget '--' before the command?)" >&2; return 2 ;;
     esac
@@ -51,6 +53,11 @@ cmd_run() {
   if [ -z "$name" ] || [ $# -eq 0 ]; then usage; return 2; fi
   if ! [[ "$name" =~ ^[a-z0-9_-]+$ ]]; then
     echo "atlas-svc: name must be [a-z0-9_-]+" >&2; return 2
+  fi
+  if [ -n "$port" ]; then
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+      echo "atlas-svc: --port must be an integer 1-65535" >&2; return 2
+    fi
   fi
   local marker="$SVC_DIR/$name.json" log="$SVC_DIR/$name.log"
   local cmd="$*"
@@ -70,8 +77,12 @@ cmd_run() {
   setsid bash -lc "$cmd" >>"$log" 2>&1 &
   local pid=$!   # for a setsid leader, the process-group id equals this pid.
 
-  printf '{"name":%s,"cmd":%s,"pid":%d,"pgid":%d,"startedAt":"%s"}\n' \
-    "$(json_str "$name")" "$(json_str "$cmd")" "$pid" "$pid" "$(date -u +%FT%TZ)" > "$marker"
+  # `port` defaults to null (not an HTTP service); `expose` defaults to true unless --no-expose. Old
+  # markers without these fields still parse — the backend treats a missing port as null / missing expose
+  # as true.
+  printf '{"name":%s,"cmd":%s,"pid":%d,"pgid":%d,"startedAt":"%s","port":%s,"expose":%s}\n' \
+    "$(json_str "$name")" "$(json_str "$cmd")" "$pid" "$pid" "$(date -u +%FT%TZ)" \
+    "${port:-null}" "$([ "$no_expose" = 1 ] && echo false || echo true)" > "$marker"
   echo "atlas-svc: started '$name' (pid $pid) — tail with: atlas-svc logs -f $name"
 }
 

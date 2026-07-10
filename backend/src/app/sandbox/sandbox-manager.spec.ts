@@ -34,6 +34,7 @@ function fakeEngine(state: {
   const engine: ContainerEngine = {
     ensureNetwork: vi.fn(),
     connectNetwork: vi.fn(),
+    disconnectNetwork: vi.fn(),
     execDetached: vi.fn(),
     imageExists: vi.fn(),
     imageId: vi.fn(),
@@ -270,6 +271,7 @@ describe('SandboxManager.teardownByIdentity', () => {
     const engine: ContainerEngine = {
       ensureNetwork: vi.fn(),
       connectNetwork: vi.fn(),
+      disconnectNetwork: vi.fn(),
       execDetached: vi.fn(),
       imageExists: vi.fn(),
       imageId: vi.fn(),
@@ -340,6 +342,7 @@ describe('SandboxManager.attach — onMilestone', () => {
     const engine: ContainerEngine = {
       ensureNetwork: vi.fn(),
       connectNetwork: vi.fn(),
+      disconnectNetwork: vi.fn(),
       execDetached: vi.fn(),
       imageExists: vi.fn(async () => true),
       imageId: vi.fn(async () => IMAGE_ID),

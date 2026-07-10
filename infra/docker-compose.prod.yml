@@ -66,6 +66,16 @@ x-backend-common: &backend-common
     # sandbox create fails with "OCI runtime create failed ... not a directory". bundleMcpHub() mirrors the
     # bundle here on boot, same as the engine and bridge bundles.
     MCP_HUB_BUNDLE_PATH: /srv/atlas/data/engine/mcp-hub-server.mjs
+    # Sandbox preview exposure (thread 2). Setting PREVIEW_BASE_DOMAIN turns the feature ON: the backend
+    # auto-registers a Caddy route (`<previewId>-<svc>.atlas.dltechnologies.co`) for every supervised
+    # service that declares a --port, bridges atlas-caddy into that sandbox's own `-net`, and injects
+    # ATLAS_PREVIEW_ID/ATLAS_PREVIEW_DOMAIN into each sandbox so the agent can compute URLs before boot.
+    # Routes are programmed over the admin unix socket mounted below (never TCP). PREVIEW_ID_SECRET (the
+    # HMAC key for the unguessable previewId token) rides the encrypted atlas.env; unset → derived from
+    # SECRETS_ENCRYPTION_KEY.
+    PREVIEW_BASE_DOMAIN: atlas.dltechnologies.co
+    CADDY_ADMIN_SOCKET: /srv/atlas/caddy/admin/admin.sock
+    CADDY_CONTAINER_NAME: atlas-caddy
     # CORS origin for the Atlas web console
     FRONTEND_HOST: https://atlas.dltechnologies.co
     # This backend's own public origin — used to build self-referential URLs, notably the MCP OAuth
