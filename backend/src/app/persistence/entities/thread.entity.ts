@@ -113,9 +113,13 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   handoff_out!: string | null;
 
-  // 'pending' | 'planning' | 'reviewing' | 'awaiting_approval' | 'executing' | 'awaiting_input' | 'auto_fixing' | 'done' | 'failed'
+  // 'pending' | 'planning' | 'reviewing' | 'executing' | 'auto_fixing' | 'done' — the PURE LINEAR step (pause/failure/skip live on `condition`)
   @Column({ type: 'text', default: 'pending' })
   status!: string;
+
+  // 'none' | 'paused' | 'incomplete' | 'failed' | 'skipped' — the orthogonal condition overlay (ADR-0004 detail stays in terminal_record/halt_outcome)
+  @Column({ type: 'text', default: 'none' })
+  condition!: string;
 
   /**
    * The thread's LLM-authored task list — folded incrementally from the orchestrating session's
@@ -239,8 +243,14 @@ export interface ThreadTerminalRecord {
   deviations?: string[];
   /** Honest known gaps / things to know — routed to the brain + next-thread orientation. */
   gaps?: string[];
-  /** Set when status='blocked' (Phase 3 `block_thread`, or the ADR-0005 live-verification judge downgrade). */
-  blocked?: { reason: 'question' | 'needs_env' | 'decision' | 'unverified'; detail: string };
+  /** Set when status='blocked' (Phase 3 `block_thread`, or the ADR-0005 live-verification judge downgrade).
+   *  `judge_unavailable` is distinct from `unverified`: the work may well be verified, but the judge itself
+   *  was UNREACHABLE (transient Anthropic outage / key rate-or-credit limit) — a done thread must HOLD and
+   *  retry when the service recovers, NOT burn its autonomous fix budget and rest as `budget_exhausted`. */
+  blocked?: {
+    reason: 'question' | 'needs_env' | 'decision' | 'unverified' | 'judge_unavailable';
+    detail: string;
+  };
   /** Set when status='failed' — the structured failure the driver relays. */
   failure?: {
     kind: 'build' | 'verification';

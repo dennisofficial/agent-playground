@@ -36,6 +36,7 @@ import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
+import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
 import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
@@ -1139,6 +1140,30 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(WORKSPACE_PROFILE_TOOL_NAMES as readonly string[]).not.toContain('reset_sandbox');
   });
 
+  // Drift guard for the shared backend↔web contract (`ATLAS_HOST_BRIDGE_TOOLS` in @workspace/shared).
+  // The host-bridge tool set is `Object.keys(buildTools())` MINUS the workspace-profile server's tools,
+  // unioned across every session kind. This asserts the contract equals what the backend actually
+  // registers — so adding/renaming/removing a host tool fails CI unless the contract (and, being an
+  // exhaustive Record, the web label map) is updated in lockstep.
+  it('ATLAS_HOST_BRIDGE_TOOLS matches the host-bridge tools registered across all session kinds', () => {
+    const profile = new Set<string>(WORKSPACE_PROFILE_TOOL_NAMES);
+    const registered = new Set<string>();
+    for (const kind of [undefined, 'onboarding', 'review'] as const) {
+      for (const name of Object.keys(manager.buildTools(fakeStimulus, kind))) {
+        if (!profile.has(name)) registered.add(name);
+      }
+    }
+    const contract = new Set<string>(ATLAS_HOST_BRIDGE_TOOLS);
+    // Every registered host-bridge tool is in the contract (nothing unlisted)…
+    for (const name of registered) {
+      expect(contract.has(name), `registered host tool "${name}" missing from ATLAS_HOST_BRIDGE_TOOLS`).toBe(true);
+    }
+    // …and every contract entry is really registered (no stale name like the old `log_decision`).
+    for (const name of contract) {
+      expect(registered.has(name), `ATLAS_HOST_BRIDGE_TOOLS lists "${name}" but no kind registers it`).toBe(true);
+    }
+  });
+
   it('finish_onboarding: no repo diff → marks onboarded, does NOT ship a PR', async () => {
     (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: '/wt' });
     (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(false);
@@ -1684,7 +1709,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const acted = await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
 
     expect(acted).toBe(true);
-    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, FAKE_RECORD_ID, 'U-OP');
+    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, FAKE_RECORD_ID, 'U-OP', 'plan');
     expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(runningJob);
   });
 
@@ -1762,7 +1787,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       } as never,
     );
 
-    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, 'rec-CLICKED', 'U-OP');
+    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, 'rec-CLICKED', 'U-OP', 'plan');
   });
 
   type PrepareRepropose = { prepareRepropose(jobId: string): Promise<{ refuse?: string }> };
@@ -3186,66 +3211,172 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     severity: 'warning',
   };
 
-  /** A manager wired with only the two deps `deliverEvent` touches; everything else is an inert stub. */
-  function makeManager() {
+  /** A manager wired with only the deps the event pump (`deliverEvent`/`pumpEvent`/`sweepUndeliveredEvents`)
+   *  touches; everything else is an inert stub. Mirrors the chat-pump harness. */
+  function makeManager(opts: { events?: EventStimulus[] } = {}) {
+    const stimulusStore = {
+      leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
+      markChatDelivered: vi.fn().mockResolvedValue(undefined),
+      eligiblePendingEvents: vi.fn().mockResolvedValue(opts.events ?? []),
+      resetEventLeases: vi.fn().mockResolvedValue(undefined),
+    };
     const stimulusRows = {
       findOne: vi.fn().mockResolvedValue(null), // not yet delivered
       update: vi.fn().mockResolvedValue(undefined),
       find: vi.fn().mockResolvedValue([]),
     };
+    const runningBrainTurn = vi.fn().mockResolvedValue(null);
+    const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
+    const steer = vi.fn().mockResolvedValue(undefined);
+    const engineRunner = { run: vi.fn(), steer } as unknown as EngineRunnerPort;
+    const getState = vi.fn().mockReturnValue('leader');
+    const election = { getState } as unknown as LeaderElectionService;
     const inert = {} as never;
     const manager = new AgentSessionManager(
-      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // store … surface + turnRegistry (10)
+      inert, inert, inert, inert, inert, // store, driverStore, memory, approvals, lifecycle (5)
+      engineRunner, // engineRunner (6)
+      turnRegistry, // turnRegistry (7)
+      inert, inert, inert, // planReview, dispatcher, surface (10)
       inert, // sandboxRows (11)
       stimulusRows as never, // stimulusRows (12)
-      inert, // stimulusStore (13)
-      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 14 … 28 (incl. secretStore, configStore, mcp, git)
+      stimulusStore as never, // stimulusStore (13)
+      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
+      inert, // mcp (McpResolver, 21)
+      election, // election (22)
+      inert, inert, inert, inert, inert, inert, // ledger…git (27)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     );
-    return { manager, stimulusRows };
+    return { manager, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
   }
 
-  it('runs ONE harness turn with the framed + UNTRUSTED-fenced body, then stamps delivered_at', async () => {
-    const { manager, stimulusRows } = makeManager();
-    const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+  it('a LIVE brain turn: steers the event (event-row id = steer id, leased first), never a fresh turn, NEVER stamps on the bare XADD', async () => {
+    const { manager, stimulusStore, stimulusRows, runningBrainTurn, steer } = makeManager();
+    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live' });
+    const runChatTurnSpy = vi.spyOn(manager as never as { runChatTurn: () => void }, 'runChatTurn');
 
     await manager.deliverEvent(eventStimulus);
 
-    expect(spy).toHaveBeenCalledOnce();
-    const delivered = spy.mock.calls[0][0] as ChatStimulus;
-    expect(delivered.jobId).toBe('th-evt-001');
-    expect(delivered.seed).toBe(true); // a seed turn → no duplicate operator bubble
+    // Leased BEFORE steering; steer id is the DURABLE event-row id so the engine `input_ack` can stamp THIS row.
+    expect(stimulusStore.leaseChatStimuli).toHaveBeenCalledWith(['stim-evt-001']);
+    expect(steer).toHaveBeenCalledOnce();
+    const [turnId, steerId, body] = steer.mock.calls[0] as [string, string, string];
+    expect(turnId).toBe('turn-live');
+    expect(steerId).toBe('stim-evt-001');
     // Trusted framing OUTSIDE the fence, the untrusted event body INSIDE it.
-    expect(delivered.body).toMatch(/no human sent it/i);
-    expect(delivered.body).toContain('<untrusted');
-    expect(delivered.body).toContain('CI job #42 failed');
-    // delivered_at stamped ONLY after the turn completed (at-least-once).
-    expect(stimulusRows.update).toHaveBeenCalledWith(
-      { id: 'stim-evt-001' },
-      expect.objectContaining({ delivered_at: expect.any(Date) }),
-    );
+    expect(body).toMatch(/no human sent it/i);
+    expect(body).toContain('<untrusted');
+    expect(body).toContain('CI job #42 failed');
+    expect(runChatTurnSpy).not.toHaveBeenCalled();
+    // The steer is a bare XADD — delivery is NOT stamped here; only the engine's input_ack marks it delivered.
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
+    expect(stimulusRows.update).not.toHaveBeenCalled();
   });
 
-  it('is idempotent: an already-delivered event runs no second turn', async () => {
-    const { manager, stimulusRows } = makeManager();
-    stimulusRows.findOne.mockResolvedValue({ delivered_at: new Date() });
-    const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+  it('SWALLOWED-STEER RACE: a live turn steered but no input_ack → the event stays UNDELIVERED (regression)', async () => {
+    // The reported bug: an event steered into a just-finishing turn is swallowed, yet the old path stamped
+    // delivered anyway. Now a bare steer NEVER stamps — only input_ack does — so the row stays null and the
+    // sweep re-drives it.
+    const { manager, stimulusStore, stimulusRows, runningBrainTurn, steer } = makeManager();
+    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-ending' });
+    steer.mockResolvedValue(undefined); // XADD ok, but the turn ends before consuming it → no input_ack fires
 
     await manager.deliverEvent(eventStimulus);
 
-    expect(spy).not.toHaveBeenCalled();
+    expect(steer).toHaveBeenCalledOnce();
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled(); // never stamped without an ack
     expect(stimulusRows.update).not.toHaveBeenCalled();
   });
 
-  it('a FAILED delivery turn leaves delivered_at unstamped (so the boot sweep re-delivers)', async () => {
-    const { manager, stimulusRows } = makeManager();
-    vi.spyOn(manager, 'handleChatTurn').mockRejectedValue(new Error('turn crashed mid-delivery'));
+  it('HAPPY steer path: the engine input_ack (on the event-row id) stamps delivered exactly once', async () => {
+    const { manager, stimulusStore, runningBrainTurn, steer } = makeManager();
+    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live' });
+    await manager.deliverEvent(eventStimulus);
+    expect(steer).toHaveBeenCalledOnce();
 
-    await expect(manager.deliverEvent(eventStimulus)).rejects.toThrow('turn crashed');
-    // The stamp is AFTER the awaited turn → a crash never reaches it; the row stays null → re-deliverable.
-    expect(stimulusRows.update).not.toHaveBeenCalled();
+    const stamp = (manager as never as { stampInputAck: (e: EngineEvent) => void }).stampInputAck.bind(manager);
+    stamp({ kind: 'input_ack', id: 'stim-evt-001' });
+    await Promise.resolve();
+
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('stim-evt-001');
+  });
+
+  it('NO live turn: runs a fresh turn (framed body, event-row id), leased first, stamped at registration', async () => {
+    const { manager, stimulusStore } = makeManager();
+    const runChatTurnSpy = vi
+      .spyOn(manager as never as { runChatTurn: (...a: unknown[]) => Promise<void> }, 'runChatTurn')
+      .mockResolvedValue(undefined);
+
+    await manager.deliverEvent(eventStimulus);
+
+    expect(runChatTurnSpy).toHaveBeenCalledOnce();
+    const [delivery, deliveryOpts] = runChatTurnSpy.mock.calls[0] as [ChatStimulus, TurnDeliveryOptsLike];
+    expect(delivery.id).toBe('stim-evt-001'); // the DURABLE event-row id, not a synthetic uuid
+    expect(delivery.jobId).toBe('th-evt-001');
+    expect(delivery.seed).toBe(true); // a seed turn → no duplicate operator bubble
+    expect(delivery.body).toMatch(/no human sent it/i);
+    expect(delivery.body).toContain('<untrusted');
+    expect(delivery.body).toContain('CI job #42 failed');
+    // Leased before dispatch so a concurrent sweep can't re-drive a duplicate during a long turn.
+    expect(stimulusStore.leaseChatStimuli).toHaveBeenCalledWith(['stim-evt-001']);
+    // Nothing stamped delivered YET — only at the registration hand-off (restart-survivable point).
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
+
+    deliveryOpts.onRegistered!();
+    await Promise.resolve();
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('stim-evt-001');
+  });
+
+  it('a turn appears BETWEEN the pump check and the fresh-turn dispatch: steers instead of double-starting', async () => {
+    const { manager, runningBrainTurn, steer } = makeManager();
+    runningBrainTurn
+      .mockResolvedValueOnce(null) // pumpEvent's own check
+      .mockResolvedValueOnce({ turn_id: 'turn-appeared' }); // deliverEventViaFreshTurn's re-check
+    const runChatTurnSpy = vi.spyOn(manager as never as { runChatTurn: () => void }, 'runChatTurn');
+
+    await manager.deliverEvent(eventStimulus);
+
+    expect(steer).toHaveBeenCalledWith('turn-appeared', 'stim-evt-001', expect.stringContaining('CI job #42 failed'));
+    expect(runChatTurnSpy).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent: an already-delivered event runs no turn and no steer', async () => {
+    const { manager, stimulusRows, steer } = makeManager();
+    stimulusRows.findOne.mockResolvedValue({ delivered_at: new Date() });
+    const runChatTurnSpy = vi.spyOn(manager as never as { runChatTurn: () => void }, 'runChatTurn');
+
+    await manager.deliverEvent(eventStimulus);
+
+    expect(steer).not.toHaveBeenCalled();
+    expect(runChatTurnSpy).not.toHaveBeenCalled();
+  });
+
+  describe('sweepUndeliveredEvents (the leader periodic + boot re-drive)', () => {
+    it('LEADER: pumps every eligible undelivered event; a no-live-turn event self-heals via a fresh turn', async () => {
+      const { manager, stimulusStore } = makeManager({ events: [eventStimulus] });
+      const runChatTurnSpy = vi
+        .spyOn(manager as never as { runChatTurn: (...a: unknown[]) => Promise<void> }, 'runChatTurn')
+        .mockResolvedValue(undefined);
+
+      await (manager as never as { sweepUndeliveredEvents: () => Promise<void> }).sweepUndeliveredEvents();
+      // Flush the fire-and-forget pumpEvent chain (findOne → runningBrainTurn → queue → fresh turn).
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(stimulusStore.eligiblePendingEvents).toHaveBeenCalled();
+      expect(runChatTurnSpy).toHaveBeenCalledOnce();
+      const [delivery] = runChatTurnSpy.mock.calls[0] as [ChatStimulus];
+      expect(delivery.body).toContain('CI job #42 failed');
+    });
+
+    it('a FOLLOWER never sweeps events', async () => {
+      const { manager, stimulusStore, getState } = makeManager({ events: [eventStimulus] });
+      getState.mockReturnValue('follower');
+
+      await (manager as never as { sweepUndeliveredEvents: () => Promise<void> }).sweepUndeliveredEvents();
+
+      expect(stimulusStore.eligiblePendingEvents).not.toHaveBeenCalled();
+    });
   });
 });
 

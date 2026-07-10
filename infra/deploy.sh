@@ -79,6 +79,17 @@ fi
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 log() { echo "[deploy] $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"; }
 
+# Advisory-only: warn (never fail/restart) if Docker's address pool wasn't enlarged. Atlas creates one
+# bridge network per sandbox; the built-in ~31-subnet default pool exhausts on a busy box ("all predefined
+# address pools have been fully subnetted"). See infra/daemon.json + the README bootstrap step. We do NOT
+# restart docker from a deploy — that's a manual maintenance action.
+check_address_pool() {
+    if ! docker system info 2>/dev/null | grep -q 'Default Address Pools'; then
+        log "WARN: Docker has no custom default-address-pools — sandbox networks may exhaust the pool."
+        log "WARN: install infra/daemon.json + 'systemctl restart docker' (see infra/README.md §1)."
+    fi
+}
+
 active_color() {
     if [[ -f "$STATE_DIR/active-color" ]]; then
         cat "$STATE_DIR/active-color"
@@ -189,6 +200,7 @@ if [[ "$ROLLBACK" == "true" ]]; then
 fi
 
 # ── 1. Pull new images ───────────────────────────────────────────────────────────
+check_address_pool
 log "Pulling images for tag $TAG ..."
 ATLAS_IMAGE_TAG="$TAG" DC pull \
     "backend-${STANDBY}" web

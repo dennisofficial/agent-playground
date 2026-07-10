@@ -338,17 +338,16 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   );
 }
 
-/** Thread statuses that count as "currently running" for the open-a-job default — a lane doing active work
- *  (executing / auto-fixing / reviewing / generating its just-in-time plan) or one blocked waiting on you.
- *  `pending` (queued, not started) and `awaiting_approval` (the plan gate — that flow lives on Main) are
- *  deliberately excluded, as are the terminal `done`/`incomplete`/`failed`. */
+/** The STEP values that count as "currently running" for the open-a-job default — a lane doing active work
+ *  (executing / auto-fixing / reviewing / generating its just-in-time plan). `pending` (queued) and the
+ *  terminal `done` are excluded; a lane halted with a `failed`/`incomplete` condition is filtered out at the
+ *  call site (a `paused` lane still counts — it's parked mid-build, waiting on you). */
 const RUNNING_THREAD_STATUSES: ReadonlySet<ThreadStatus> =
   new Set<ThreadStatus>([
     "planning",
     "reviewing",
     "executing",
     "auto_fixing",
-    "awaiting_input",
   ]);
 
 /** The `?lane=` id of the build lane to open when a job is first opened, or `null` to stay on Main. Picks the
@@ -358,6 +357,7 @@ function runningLane(job: PipelineJob): string | null {
   let pick: PipelineJob["threads"][number] | null = null;
   for (const t of job.threads) {
     if (!RUNNING_THREAD_STATUSES.has(t.status)) continue;
+    if (t.condition === "failed" || t.condition === "incomplete") continue; // terminal halt — not running
     if (!pick || t.ordinal > pick.ordinal) pick = t;
   }
   return pick?.id ?? null;
