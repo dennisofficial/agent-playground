@@ -7,6 +7,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, MessageEntity, ThreadEntity } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
 import { type TaskScope, taskScopeForLane } from './thread-registry';
+import { OauthUsageService } from '../onboarding/oauth-usage.service';
 
 /**
  * The durable destination for a turn's transcript blocks — a narrow port (just `appendBlock`) so a
@@ -193,11 +194,17 @@ export interface TurnHarness {
   finish(finalText?: string, turnMeta?: TurnEndMeta): Promise<void>;
   /** Persist whatever partials accumulated (no fallback) and end the live lane — for error/timeout paths. */
   abort(): Promise<void>;
+  /** End the live lane and persist NOTHING — for a benign abort that will be RE-DELIVERED in full, so the
+   *  truncated partial never becomes a durable half-message. */
+  discard(): Promise<void>;
 }
 
 export interface TurnHarnessOptions {
   /** The thread whose durable log + live stream this turn writes to. */
   jobId: string;
+  /** The org this turn runs under — the key `rate_limit` frames harvest into {@link OauthUsageService}.
+   *  Optional: when absent (e.g. an org-less internal turn), rate-limit frames are simply not harvested. */
+  orgId?: string;
   /** The repo channel the LiveTurnStore keys its stream by. */
   channel: string;
   /** Which lane this turn streams on. `'main'` = the brain; `'phase:<stepId>'` = a build turn. Default `'main'`. */
@@ -230,6 +237,7 @@ export class TurnHarnessFactory {
     private readonly liveTurns: LiveTurnStore,
     @Inject(BLOCK_SINK) private readonly sink: BlockSink,
     @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
+    private readonly usage: OauthUsageService,
   ) {}
 
   /**
@@ -241,7 +249,7 @@ export class TurnHarnessFactory {
   }
 
   create(options: TurnHarnessOptions): TurnHarness {
-    const { jobId, channel } = options;
+    const { jobId, orgId, channel } = options;
     const lane = options.lane ?? 'main';
     const metaTag = options.metaTag;
 
@@ -396,6 +404,21 @@ export class TurnHarnessFactory {
             }
             break;
           }
+          case 'rate_limit': {
+            // Harvest-only: fold this org's window straight into the usage snapshot. No durable block, no
+            // extra live frame beyond the `liveTurns.push` above — the ring/popover reads it via `get()`.
+            if (orgId) {
+              void this.usage
+                .applyHarvest(orgId, {
+                  status: e.status,
+                  resetsAt: e.resetsAt,
+                  rateLimitType: e.rateLimitType,
+                  utilization: e.utilization,
+                })
+                .catch(() => undefined);
+            }
+            break;
+          }
           default:
             break; // session / result / *_delta — live-only, not part of the durable transcript
         }
@@ -440,6 +463,12 @@ export class TurnHarnessFactory {
           const ctxLimit =
             turnMeta.contextLimit ??
             (ctxTokens != null ? resolveContextLimit(u.contextModel ?? u.model, u.engine) : null);
+          // How long the turn actually worked: `now − startedAt`, read from the still-live turn state (the
+          // SAME clock that drove the "Atlas is working… 19m 24s" indicator, so the footer matches the last
+          // reading). `snapshot` is valid here — `persistAll()` ends the live lane only afterwards; a turn
+          // that pushed no events (no snapshot) simply carries no duration.
+          const startedAt = this.liveTurns.snapshot(channel, jobId, lane)?.startedAt;
+          const workedMs = startedAt != null ? Math.max(0, Date.now() - startedAt) : undefined;
           blocks.push({
             kind: 'turn_meta',
             emittedAt: stamp(),
@@ -448,6 +477,7 @@ export class TurnHarnessFactory {
               usage: turnMeta.usage as unknown as Record<string, unknown>,
               contextTokens: ctxTokens,
               contextLimit: ctxLimit,
+              ...(workedMs != null ? { workedMs } : {}),
             },
           });
         }
@@ -458,6 +488,15 @@ export class TurnHarnessFactory {
         if (closed) return;
         closed = true;
         await persistAll();
+      },
+
+      discard: async () => {
+        if (closed) return;
+        closed = true;
+        // End the live lane WITHOUT persisting the accumulated blocks — the caller is about to re-deliver
+        // this turn in full (a benign stream abort on an at-least-once wake), so a flushed partial would
+        // become a durable truncated half-message alongside the complete re-run.
+        this.liveTurns.end(channel, jobId, lane);
       },
     };
   }

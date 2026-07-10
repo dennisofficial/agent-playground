@@ -32,12 +32,15 @@ jobs:
       packages: read
 
     steps:
-      - name: Checkout infra (deploy scripts only)
+      - name: Checkout (full)
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-          sparse-checkout: infra
-          sparse-checkout-cone-mode: false
+          # Full checkout (was sparse `infra` only): the atlas-box runners are shared with
+          # CI, which needs a full checkout. actions/checkout@v4 does NOT clear a leftover
+          # sparse cone, so a sparse deploy would pin the runner's _work and break the next
+          # CI job's `.github/actions` resolution. Deploy only uses infra/, but a full
+          # checkout keeps every runner's tree uniform. See infra/runner/README.md.
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

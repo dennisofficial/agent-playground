@@ -21,6 +21,11 @@ export type JobStatus =
   // the operator to eyeball it and click "Ship it" before the PR is opened. The SECOND human gate (after
   // `awaiting_approval` at the plan stage) — a needs-you state. Only driver builds (feature/bugfix) reach
   // it; the direct-build fast path and `review` jobs never do. Approval flips back to `running` + re-drives.
+  | 'amending' // ship review was RETRACTED (withdraw_ship / "Amend build") — the build EXISTS and is being
+  // tweaked or extended, not re-planned. Reached only from `awaiting_ship_review`. A quiescent,
+  // brain-controlled state: OPERATOR-owned when idle (steer Atlas), never auto-driven. Atlas amends
+  // in place or dispatches a follow-up (propose_plan/start_direct_build allowed here); on completion the
+  // job returns to `running` and the ship gate re-arms. NOT terminal.
   | 'done' // one PR opened, all tracks handed off
   | 'cancelled'
   | 'deleting'; // terminal-bound: the operator deleted the job; container + worktree teardown is in
@@ -38,13 +43,20 @@ export type JobStatus =
  * `kind` distinguishes consumer behavior: `blocked_credentials` drives request-secret / needs-you;
  * `failed`/`incomplete` are build failures; `budget_exhausted` is a rest-until-re-armed halt.
  */
-export type JobHaltKind = 'failed' | 'blocked_credentials' | 'budget_exhausted' | 'incomplete';
+export type JobHaltKind =
+  | 'failed'
+  | 'blocked_credentials'
+  | 'budget_exhausted'
+  | 'incomplete'
+  | 'session_limit'; // parked on a Claude session/usage limit; auto-resumes at resumeAt
 export type JobHalt = {
   kind: JobHaltKind;
   /** Short human string (what `relayFailure` already computes via `shortReason`). */
   reason: string;
   /** ISO timestamp the halt was recorded. */
   at: string;
+  /** ISO reset timestamp; when set, the lane auto-resumes once it passes (session_limit halts). */
+  resumeAt?: string;
 };
 
 /**

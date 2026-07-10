@@ -3,10 +3,17 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
-import { addClaudeUsage, claudeSessionExists, EngineCore, extractClaudeUsage } from './engine-core';
+import {
+  addClaudeUsage,
+  claudeSessionExists,
+  EngineCore,
+  extractClaudeUsage,
+  toClaudeEffort,
+  toCodexEffort,
+} from './engine-core';
 import { atlasEngineHomeDir, type EngineHomeKey } from './engine-home';
 import { isUnresumableSessionMessage, UNRESUMABLE_SESSION_MARKER } from './engine.types';
-import type { EngineEvent } from './engine.types';
+import type { EngineEvent, ReasoningEffort } from './engine.types';
 
 const HOME_ROOT = join(tmpdir(), `atlas-engine-core-spec-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
@@ -236,6 +243,31 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(res.result).toBe('done');
     expect(res.sessionId).toBe('sess-1');
     expect(res.usage).toMatchObject({ inputTokens: 12, outputTokens: 4, costUsd: 0.01 });
+  });
+
+  it('threads modelReasoningEffort to the Claude SDK Options.effort (mapping minimal→low, omitting when unset)', async () => {
+    const runWith = async (modelReasoningEffort?: ReasoningEffort) => {
+      const { sdk, captured } = fakeClaudeSdk();
+      const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+      await core.run({
+        engine: 'claude',
+        task: 'do it',
+        cwd: '/tmp/wt',
+        systemPrompt: 'persona',
+        sandboxKey: TEST_KEY,
+        mode: 'execute',
+        auth: { secret: 'oauth-tok' },
+        ...(modelReasoningEffort ? { modelReasoningEffort } : {}),
+      });
+      return captured.options!;
+    };
+
+    // The Claude thread-kinds ('high') land verbatim on the SDK's top-level Options.effort.
+    expect((await runWith('high')).effort).toBe('high');
+    // Claude's EffortLevel has no 'minimal' → mapped to the nearest ('low').
+    expect((await runWith('minimal')).effort).toBe('low');
+    // No effort requested → the key is omitted entirely (SDK default applies).
+    expect('effort' in (await runWith(undefined))).toBe(false);
   });
 
   it('writer subagents (implement/implement-deep) are spawnable ONLY on execute turns, not plan/review', async () => {
@@ -1103,5 +1135,19 @@ describe('extractClaudeUsage — per-model breakdown', () => {
     expect(usage?.model).toBe('opus');
     // modelUsage is untouched — the full per-model breakdown (incl. the Haiku helper) still survives.
     expect(Object.keys(usage?.modelUsage ?? {})).toEqual(['claude-haiku-4-5', 'claude-opus-4-8']);
+  });
+});
+
+describe('toClaudeEffort / toCodexEffort — engine-agnostic effort mapped to each SDK boundary type', () => {
+  it("toClaudeEffort maps 'minimal' to Claude's nearest floor ('low'), passes other levels through, and undefined stays undefined", () => {
+    expect(toClaudeEffort('minimal')).toBe('low');
+    expect(toClaudeEffort('high')).toBe('high');
+    expect(toClaudeEffort(undefined)).toBeUndefined();
+  });
+
+  it("toCodexEffort clamps 'max' to Codex's ceiling ('xhigh'), passes other levels through, and undefined stays undefined", () => {
+    expect(toCodexEffort('max')).toBe('xhigh');
+    expect(toCodexEffort('high')).toBe('high');
+    expect(toCodexEffort(undefined)).toBeUndefined();
   });
 });

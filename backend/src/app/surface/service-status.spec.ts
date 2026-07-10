@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ServiceLivenessProbe } from '../sandbox';
-import { serviceStatus } from './web-surface.controller';
+import { serviceStatus } from '../exposure/service-markers';
 
 /**
  * Unit tests for the marker → live-status mapping — the load-bearing generation gate that keeps a

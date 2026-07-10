@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync }
 import { join, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { structuredPatch as diffStructuredPatch } from 'diff';
 import { applyClaudeAuth } from './claude-auth';
+import { detectSessionLimitText, limitFromRateEvent, parseResetAt, type SessionLimitHit } from './session-limit';
 import { atlasEngineHomeDir, engineHomeKeyString, type EngineHomeKey } from './engine-home';
 import {
   assertValidCodexAuthJson,
@@ -33,6 +34,7 @@ import {
   type EngineRunResult,
   type EngineUsage,
   type ModelUsageBreakdown,
+  type ReasoningEffort,
   type RunEngineArgs,
   type StructuredPatchHunk,
   resolveContextLimit,
@@ -247,6 +249,17 @@ function isTurnGenuinelyDone(m: { terminal_reason?: string; stop_reason?: string
   if (m.terminal_reason === 'completed') return true;
   if (m.terminal_reason == null && m.stop_reason === 'end_turn') return true;
   return false;
+}
+
+// Claude's Options.effort has no 'minimal'; map it to the nearest ('low'). Others pass through.
+export function toClaudeEffort(e?: ReasoningEffort): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined {
+  if (!e) return undefined;
+  return e === 'minimal' ? 'low' : e;
+}
+// Codex's effort has no 'max'; clamp to its ceiling ('xhigh'). Others pass through.
+export function toCodexEffort(e?: ReasoningEffort): CodexReasoningEffort | undefined {
+  if (!e) return undefined;
+  return e === 'max' ? 'xhigh' : e;
 }
 
 /**
@@ -621,10 +634,10 @@ export class EngineCore {
   /**
    * Stamp display-only provenance the engine paths don't carry themselves onto the returned usage: the
    * `engine` that ran (so a Codex turn with no `model` still labels as "Codex") and the `reasoningEffort`
-   * the run was given (a Codex-only input, never surfaced by the SDK). Applied at BOTH dispatch wrappers
-   * (`run` / `runWithExtras`) so every engine turn — build, Codex review, autofix — is covered without
-   * touching `runClaude`/`runCodex` internals or any transcript `metaTag` call site. `??=` so a path that
-   * ever populates these itself wins. No-op when the run produced no usage.
+   * the run was given (engine-agnostic — Codex AND Claude, never surfaced by either SDK's result). Applied
+   * at BOTH dispatch wrappers (`run` / `runWithExtras`) so every engine turn — build, Codex review, autofix —
+   * is covered without touching `runClaude`/`runCodex` internals or any transcript `metaTag` call site.
+   * `??=` so a path that ever populates these itself wins. No-op when the run produced no usage.
    */
   private stampUsageProvenance(res: EngineRunResult, args: RunEngineArgs): EngineRunResult {
     if (res.usage) {
@@ -863,6 +876,8 @@ export class EngineCore {
     const svcNudgeEnabled = !svcNudgeDisabled();
     const svcNudgeDeltaTokens = resolveSvcNudgeDeltaTokens();
 
+    const claudeEffort = toClaudeEffort(args.modelReasoningEffort);
+
     const options: Options = {
       cwd,
       systemPrompt,
@@ -916,6 +931,7 @@ export class EngineCore {
       stderr: captureStderr,
       ...(sessionId ? { resume: sessionId } : {}),
       ...(model ? { model } : {}),
+      ...(claudeEffort ? { effort: claudeEffort } : {}),
       // Enable the 1M-token context window explicitly. Opus 4.x and Sonnet 5 negotiate it automatically, but
       // we pass the beta as belt-and-suspenders so a builder session that fills past 200k does NOT truncate —
       // Leg rotation's HARD threshold (200k) depends on there being headroom ABOVE it to author the handoff
@@ -984,6 +1000,10 @@ export class EngineCore {
     // in their OWN context on cheaper models, so they're excluded.
     let contextTokens: number | undefined;
     let contextModel: string | undefined;
+    // Set the instant we detect a Claude subscription session/usage-limit wall (structured
+    // `rate_limit_event` status:'rejected', or the printed-line fallback). Its presence flips the turn from
+    // "hold input open + resume" to "end CLEANLY" so we never auto-resume straight back into the wall.
+    let sessionLimit: SessionLimitHit | undefined;
     try {
       for await (const message of this.claudeSdk.query({
         prompt: streaming ? input!.stream : task,
@@ -1013,6 +1033,20 @@ export class EngineCore {
           if (message.task_id) liveBgTasks.delete(message.task_id);
           onEvent?.({ kind: 'bg_task', taskId: message.task_id, status: message.status, detail: message.summary });
           resetHoldTimer();
+        } else if (message.type === 'rate_limit_event') {
+          // Harvest the subscription window state ALWAYS (the host updates its per-org usage snapshot from
+          // every frame, not just the wall). A `rejected` frame is the HARD limit — latch it so the result
+          // frame below ends the turn cleanly instead of holding input open to resume into the wall.
+          const info = message.rate_limit_info;
+          onEvent?.({
+            kind: 'rate_limit',
+            status: info.status,
+            ...(info.resetsAt != null ? { resetsAt: info.resetsAt } : {}),
+            ...(info.rateLimitType ? { rateLimitType: info.rateLimitType } : {}),
+            ...(info.utilization != null ? { utilization: info.utilization } : {}),
+          });
+          const hit = limitFromRateEvent(info);
+          if (hit) sessionLimit = hit;
         } else if (richStream && message.type === 'stream_event') {
           // LIVE token-by-token deltas (partial-message stream). Authoritative full blocks still arrive
           // on the `assistant` message below — these are for live rendering only, not persistence. Carry
@@ -1114,7 +1148,14 @@ export class EngineCore {
             thinking?: string;
           }>) {
             if (block.type === 'text' && block.text) {
-              onEvent?.({ kind: 'text', text: block.text, ...sub });
+              // Suppress the printed limit line at the source (kills the bare/doubled limit line). If the
+              // structured frame hasn't already latched the hit, latch it here from the text.
+              const isLimitLine = detectSessionLimitText(block.text);
+              if (isLimitLine) {
+                if (!sessionLimit) sessionLimit = { resetAt: parseResetAt(block.text) };
+              } else {
+                onEvent?.({ kind: 'text', text: block.text, ...sub });
+              }
             } else if (block.type === 'thinking' && block.thinking) {
               if (richStream) onEvent?.({ kind: 'thinking', text: block.thinking, ...sub });
             } else if (block.type === 'tool_use' && block.name) {
@@ -1188,8 +1229,11 @@ export class EngineCore {
               ) {
                 // A paused/interrupted success result (rate-limit / retry / budget) is NOT the end of the
                 // turn — keep input OPEN so the CLI can resume and may still call host tools (closing stdin
-                // under an in-flight call orphans it → "Stream closed"). See #65.
-                cancelEnd();
+                // under an in-flight call orphans it → "Stream closed"). See #65. EXCEPT when we've hit a
+                // subscription session limit: resuming would drive straight back into the wall, so end the
+                // turn CLEANLY (the caller parks the lane + auto-resumes at resetAt) instead of holding open.
+                if (sessionLimit) scheduleEnd();
+                else cancelEnd();
               } else if (liveBgTasks.size === 0) {
                 // Genuinely done and no background task in flight — close after the short steer grace.
                 scheduleEnd();
@@ -1217,7 +1261,15 @@ export class EngineCore {
               r.errors?.length ? `errors=${r.errors.join(' | ')}` : '',
               stderrTail.length ? `stderr(tail)=${stderrTail.join('').slice(-2000)}` : '',
             ].filter(Boolean);
-            throw new Error(parts.join('; '));
+            const errorMessage = parts.join('; ');
+            // A non-success end that is really a subscription session-limit wall must NOT throw the generic
+            // engine error — it is a clean park, not a failure. Latch it (from the text if the structured
+            // frame didn't already) and break so the normal return path carries `sessionLimit` back.
+            if (sessionLimit || detectSessionLimitText(errorMessage)) {
+              sessionLimit ??= { resetAt: parseResetAt(errorMessage) };
+              break;
+            }
+            throw new Error(errorMessage);
           }
         }
       }
@@ -1253,6 +1305,7 @@ export class EngineCore {
       sessionId: resolvedSession,
       ...(planText ? { planText } : {}),
       ...(usage ? { usage } : {}),
+      ...(sessionLimit ? { sessionLimit } : {}),
     };
   }
 
@@ -1332,7 +1385,7 @@ export class EngineCore {
         : undefined;
 
     const client = this.getCodex(sandboxKey, auth, bridge, extraMcpServers);
-    const opts = this.codexThreadOptions(cwd, model, args.modelReasoningEffort);
+    const opts = this.codexThreadOptions(cwd, model, toCodexEffort(args.modelReasoningEffort));
     const thread = sessionId ? client.resumeThread(sessionId, opts) : client.startThread(opts);
 
     // Codex has no systemPrompt option — seed the persona as a first-turn preamble. Resumes already

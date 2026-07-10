@@ -33,6 +33,12 @@ export interface SystemSkill {
   surfaces: McpSurface[];
   /** Present → git-sourced (see above); absent → static/in-repo. */
   git?: SystemSkillGitSource;
+  /** Applicability for the framework-conformance review lens — only meaningful for a skill whose
+   *  `surfaces` includes `'review'`. Same shape as `WorkspaceSkillEntity.review_for_types`. */
+  reviewForTypes?: string[];
+  /** Applicability for the framework-conformance review lens — only meaningful for a skill whose
+   *  `surfaces` includes `'review'`. Same shape as `WorkspaceSkillEntity.review_for_globs`. */
+  reviewForGlobs?: string[];
 }
 
 /**
@@ -58,6 +64,15 @@ export function buildSystemSkills(): SystemSkill[] {
         '"empty state," "no data," "zero results," "no results found," "nothing here," "first run," ' +
         '"blank screen," "error state," "loading state," "skeleton," or onboarding for a feature\'s first use.',
       surfaces: ['brain', 'build'],
+    },
+    {
+      name: 'react-review-checklist',
+      description:
+        'React/Next.js conformance rules for reviewing frontend changes — hook dependencies, list keys, ' +
+        'effect cleanup, and render-time purity. Applied by the framework-conformance review lens on ' +
+        'frontend threads.',
+      surfaces: ['review'],
+      reviewForTypes: ['frontend'],
     },
     {
       name: 'playwright-cli',

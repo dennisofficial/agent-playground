@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, MoreThan, Not, Repository } from 'typeorm';
+import { DataSource, In, IsNull, MoreThan, Not, Repository } from 'typeorm';
 import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type {
@@ -20,6 +20,7 @@ import { nextQuestionId } from '../surface/web-question-card';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { coerceThreadType } from '../thread-kind';
 import {
   CodexReviewEntity,
   DecisionRecordEntity,
@@ -1367,6 +1368,25 @@ export class BrainStoreService {
   }
 
   /**
+   * Set (or clear) the durable auto-resume clock the Main lane parks on when it hits a Claude session/usage
+   * limit. `resumeAt=null` (with `meta=null`) clears the clock so the leader sweep never re-fires — called on
+   * the force-resume path (`/retry-turn`). See {@link JobEntity.session_resume_at}.
+   */
+  async setSessionResume(
+    jobId: string,
+    resumeAt: string | null,
+    meta: JobEntity['session_resume'],
+  ): Promise<void> {
+    await this.jobs.update(
+      { id: jobId },
+      {
+        session_resume_at: resumeAt ? new Date(resumeAt) : null,
+        session_resume: meta,
+      },
+    );
+  }
+
+  /**
    * Persist the ADR-0005 live-verification verdict for this job's DIRECT-BUILD ship (the brain's
    * `finalize_build` gate). Written on BOTH the pass and the refusal path so direct-build verdicts are
    * queryable (`jobs.direct_build_verification`) — the observability hook the prod audit needs. Overwrites
@@ -1418,12 +1438,13 @@ export class BrainStoreService {
   }
 
   /**
-   * If this thread is already being scoped (`status='planning'`), return its id — so a multi-turn grill
-   * continues ONE build rather than re-anchoring per message. Null otherwise.
+   * If this thread is already being SHAPED — `status='planning'` (upfront grill) OR `status='amending'`
+   * (post-ship-retract) — return its id, so a multi-turn grill/amendment continues ONE build rather than
+   * re-anchoring per message. Null otherwise.
    */
   async openJobOnThread(jobId: string): Promise<string | null> {
     const row = await this.jobs.findOne({
-      where: { id: jobId, status: 'planning' },
+      where: { id: jobId, status: In(['planning', 'amending']) },
     });
     return row?.id ?? null;
   }
@@ -1552,7 +1573,7 @@ export class BrainStoreService {
           ordinal: (i + 1) * ORDINAL_GAP,
           brief,
           // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
-          type: input.threadTypes?.[i] ?? 'general',
+          type: coerceThreadType(input.threadTypes?.[i]),
           // Feature threads are `builder` kind; the master-review row below is `master_review`. The `kind`
           // column is the first-class differentiator (subsumes `is_master_review`).
           kind: 'builder',

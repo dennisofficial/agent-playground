@@ -1,12 +1,13 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
-import type { EngineEvent, ExecutionTarget } from '../engine';
+import type { EngineEvent, ExecutionTarget, RunEngineArgs } from '../engine';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { LocalGitService } from '../git';
 import { TurnHarnessFactory, type TurnHarness } from '../surface/turn-harness.service';
 import { laneFor } from '../surface/thread-registry';
 import { Agent, renderAgentPrompt } from '../prompt-kit';
 import { ConventionProfileResolver } from '../conventions';
+import { threadKindSpec } from '../thread-kind';
 import {
   buildFixPrompt,
   buildReviewPrompt,
@@ -117,6 +118,17 @@ export class AutoFixStage {
     };
   }
 
+  private reasoningEffortFor(
+    kind: 'review_lens' | 'post_review',
+    engine: AutoFixOptions['engine'],
+  ): Pick<RunEngineArgs, 'modelReasoningEffort'> {
+    const spec = threadKindSpec(kind);
+    const actualEngine = engine ?? 'claude';
+    return spec.engine === actualEngine && spec.reasoningEffort
+      ? { modelReasoningEffort: spec.reasoningEffort }
+      : {};
+  }
+
   /**
    * A {@link TurnHarness} bound to one auto-fix turn's lane — or `undefined` when the context carries no
    * streaming identity (jobId + channel), in which case the caller runs the engine directly with no
@@ -133,6 +145,7 @@ export class AutoFixStage {
       : autofixLensLane(ctx.autofixId, sub.lensId);
     return this.turnHarness.create({
       jobId: ctx.jobId,
+      orgId: ctx.orgId,
       channel: ctx.channel,
       lane,
       metaTag: {
@@ -308,6 +321,7 @@ export class AutoFixStage {
         ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
+        ...this.reasoningEffortFor('review_lens', engine),
       });
       await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
       if (ctx.jobId) {
@@ -432,6 +446,7 @@ export class AutoFixStage {
         ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
+        ...this.reasoningEffortFor('post_review', engine),
       });
     } catch (err) {
       await harness?.abort().catch(() => undefined);

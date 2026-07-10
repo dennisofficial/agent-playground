@@ -5,6 +5,16 @@
 
 {
     email admin@dltechnologies.co  # TODO: replace with a real email for Let's Encrypt
+
+    # Admin API on a UNIX SOCKET, never a TCP listener: the backend programs per-preview
+    # routes through this socket over a shared same-path volume mount, so no sandbox on any
+    # network can reach it (an unauthenticated TCP admin API would be a hole). The host dir
+    # /srv/atlas/caddy/admin is mounted into both the caddy and backend containers at the
+    # same path (see docker-compose.prod.yml).
+    # The `|0660` suffix sets group-rw perms on the socket so the backend container
+    # (a different UID sharing a compatible gid) can connect(); Caddy otherwise creates
+    # it owner-only and the backend's connect() would fail with EACCES.
+    admin unix//srv/atlas/caddy/admin/admin.sock|0660
 }
 
 # ── Backend API ─────────────────────────────────────────────────────────────────
@@ -51,4 +61,21 @@ atlas.dltechnologies.co {
     # Compress responses. Next.js standalone already gzip-compresses JS/CSS, but
     # encode handles any uncompressed responses (API routes, SSR HTML).
     encode gzip zstd
+}
+
+# ── Sandbox preview exposures (wildcard) ─────────────────────────────────────────
+# Obtains and manages the ONE `*.atlas.dltechnologies.co` wildcard cert via the ACME
+# DNS-01 challenge (Cloudflare), so every ephemeral `<previewId>-<svc>.atlas...` route
+# the backend adds through the admin API reuses this single cert — no per-host issuance,
+# no Let's Encrypt rate-limit risk. Wildcard certs REQUIRE DNS-01 (CA policy), hence the
+# caddy-dns/cloudflare module baked into infra/caddy.Dockerfile.
+#
+# This block itself only (a) provisions/holds the wildcard cert and (b) is the catch-all
+# 404 for any subdomain with no live preview route. The backend inserts each exact-host
+# preview route ahead of this fallback via the admin API (routes match in authored order).
+*.atlas.dltechnologies.co {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    respond "no such preview" 404
 }

@@ -153,6 +153,11 @@ export interface ChatSurface {
     channel: string,
     jobId: string,
     body: string,
-    opts?: { orgId?: string; deliveredQuestionId?: string; deliveredFileId?: string },
+    opts?: {
+      orgId?: string;
+      deliveredQuestionId?: string;
+      deliveredFileId?: string;
+      seedRow?: SeedRow;
+    },
   ): string;
 }

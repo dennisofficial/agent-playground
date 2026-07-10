@@ -6,6 +6,9 @@
  */
 import type { SessionEngine, SessionMode } from '../domain';
 import type { EngineHomeKey } from './engine-home';
+import type { SessionLimitHit } from './session-limit';
+
+export type { SessionLimitHit } from './session-limit';
 
 /**
  * How an engine (SDK harness) turn authenticates — ALWAYS a subscription secret. The api_key mode was
@@ -105,6 +108,16 @@ export type EngineEvent =
       contextModel?: string;
       contextLimit: number;
     }
+  /** A subscription rate-limit frame harvested from the SDK's `rate_limit_event` stream (claude.ai plans only).
+   *  Carries the raw window info so the host can update the per-org usage snapshot AND (when status==='rejected')
+   *  park the lane. Live-only; never persisted as a transcript block. */
+  | {
+      kind: 'rate_limit';
+      status: 'allowed' | 'allowed_warning' | 'rejected';
+      resetsAt?: number;        // epoch ms, verbatim from the SDK
+      rateLimitType?: string;
+      utilization?: number;
+    }
   /**
    * Lifecycle of an SDK `run_in_background` Bash task, surfaced to the operator. The engine holds the turn's
    * query() session open while any such task is in flight (see the `bg_task` handling in engine-core), so the
@@ -180,11 +193,11 @@ export interface EngineUsage {
    */
   engine?: SessionEngine;
   /**
-   * The reasoning effort the run used, when one was passed (Codex-only input — see
-   * {@link RunEngineArgs.modelReasoningEffort}; undefined for Claude, which has no effort knob).
-   * Display-only: threads through to the composer footer as the "· xHigh" suffix.
+   * The reasoning effort the run used, when one was passed — see {@link RunEngineArgs.modelReasoningEffort}.
+   * Stamped engine-agnostically (Codex and Claude both). Display-only: threads through to the composer
+   * footer as the "· xHigh" suffix.
    */
-  reasoningEffort?: CodexReasoningEffort;
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -399,6 +412,10 @@ export type CodexReasoningEffort =
   | 'high'
   | 'xhigh';
 
+/** Engine-agnostic reasoning effort. Superset of Codex's (adds 'max') and Claude's (adds 'minimal')
+ *  value spaces; mapped to each engine's own type at the SDK boundary. */
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 /**
  * A user-defined MCP server, fully RESOLVED host-side (secret header/env values already inlined) and
  * ready to serialize onto the turn spec. `McpResolver.resolveForTurn` produces these from the
@@ -465,6 +482,15 @@ export interface ResolvedSkill {
    * with `managed`.
    */
   managedGit?: boolean;
+  /**
+   * The review-lens applicability axes (thread types / file globs), populated by
+   * `SkillResolver.resolveForTurn` from the system-tier fields or the workspace row's
+   * `review_for_types`/`review_for_globs` columns. Consumed by `resolveReviewSkillsForThread` to pick which
+   * skills' bodies get injected into a review turn — meaningless (and unused) for a non-review surface.
+   */
+  reviewForTypes?: string[];
+  /** See {@link reviewForTypes}. */
+  reviewForGlobs?: string[];
 }
 
 export interface RunEngineArgs {
@@ -553,11 +579,12 @@ export interface RunEngineArgs {
   /** Override the model for this run. Falls back to the engine's env/default when unset. */
   model?: string;
   /**
-   * Codex-only: the reasoning effort for this run (maps to the SDK's `ThreadOptions.modelReasoningEffort`).
-   * Unset → the account/CLI default. The plan-review turn pins `'xhigh'` so the reviewer reasons hard.
-   * (A ChatGPT-account token REJECTS an explicit `model`, but ACCEPTS this knob — verified by spike.)
+   * Reasoning effort for this run. Codex → `ThreadOptions.modelReasoningEffort`; Claude → the Agent SDK
+   * `Options.effort`. Unset → the account/CLI default. The plan-review turn pins `'xhigh'` so the
+   * reviewer reasons hard. (A ChatGPT-account token REJECTS an explicit `model`, but ACCEPTS this knob —
+   * verified by spike.)
    */
-  modelReasoningEffort?: CodexReasoningEffort;
+  modelReasoningEffort?: ReasoningEffort;
   /** Called for each progress event as the run streams. */
   onEvent?: (e: EngineEvent) => void;
   /**
@@ -717,6 +744,12 @@ export interface EngineRunResult {
    * a rotting snapshot. Contains a SECRET — never log it. Absent on the common (no-refresh) path.
    */
   refreshedAuthSecret?: string;
+  /**
+   * Set when the turn ended because the org hit a Claude subscription session/usage limit (structured
+   * `rate_limit_event` status:'rejected', or the printed-line fallback). The turn was ended CLEANLY (no
+   * held-open resume) — the caller parks the lane + schedules an auto-resume at `resetAt`.
+   */
+  sessionLimit?: SessionLimitHit;
 }
 
 /**
@@ -786,6 +819,32 @@ export class EngineAuthError extends Error {
     super(message);
     this.name = 'EngineAuthError';
   }
+}
+
+/**
+ * The turn ended because the org hit a Claude subscription SESSION/USAGE limit (not a crash, not a 401).
+ * The build lane throws this so its halt-classification chokepoint parks the lane on a durable resume clock
+ * instead of failing the job. Carries the resume metadata + the engine `sessionId` to continue the SAME
+ * session on resume (mirrors {@link EngineAuthError}).
+ */
+export class EngineSessionLimitError extends Error {
+  readonly isSessionLimit = true;
+  constructor(
+    message: string,
+    readonly resetAt?: string,
+    readonly rateLimitType?: string,
+    readonly sessionId?: string,
+  ) {
+    super(message);
+    this.name = 'EngineSessionLimitError';
+  }
+}
+
+export function isSessionLimitError(err: unknown): boolean {
+  return (
+    err instanceof EngineSessionLimitError ||
+    (err as { isSessionLimit?: boolean })?.isSessionLimit === true
+  );
 }
 
 /**

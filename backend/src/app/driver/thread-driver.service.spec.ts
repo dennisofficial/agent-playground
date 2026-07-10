@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ModuleRef } from '@nestjs/core';
-import { EngineAuthError } from '../engine';
+import { EngineAuthError, EngineSessionLimitError } from '../engine';
 import type { EngineRunnerPort, ToolBridgeOptions } from '../engine';
 import {
   ThreadDriver,
@@ -30,6 +30,7 @@ import type { TurnRunnerService } from '../runner';
 import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
 import { TurnHarnessFactory } from '../surface';
 import type { CredentialResolver } from '../onboarding';
+import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import type { LeaderElectionService } from '../cluster';
 import type { EnvService } from '@core/config/env/env.service';
 import type {
@@ -41,7 +42,7 @@ import type {
   ThreadCondition,
   Job,
 } from '../domain';
-import type { ThreadTerminalRecord } from '../persistence/entities';
+import type { TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type { LiveVerificationJudge, LiveVerificationVerdict } from './live-verification-judge';
 import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 
@@ -83,6 +84,7 @@ interface StoreState {
   steps: Step[];
   route: JobRoute;
   operatorInputCards: OperatorInputCard[];
+  systemNotices?: string[];
   /** A builder's materialized review children (review_lens + post_review rows). Lazily created. */
   reviewChildren?: ReviewChildRow[];
 }
@@ -112,6 +114,10 @@ function makeStore(state: StoreState): {
     clearJobHalt: vi.fn(async (_id: string) => {
       state.job.halt = null;
     }),
+    hasRecentSystemOperatorNotice: vi.fn(async (_id: string, text: string) => {
+      return (state.systemNotices ?? []).includes(text);
+    }),
+    setSessionResume: vi.fn(async () => undefined),
     setFeatureBranch: vi.fn(async (_id: string, branch: string) => {
       state.job.featureBranch = branch;
     }),
@@ -306,7 +312,23 @@ function makeStore(state: StoreState): {
     getPendingLegSeed: vi.fn(async (_anchorStepId: string) => null),
     completeLegRotation: vi.fn(async () => null),
     recordBuildSystemChunk: vi.fn(async () => undefined),
-    getThreadTasks: vi.fn(async (_threadId: string) => []),
+    getThreadTasks: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as { tasks?: TaskItem[] } | undefined;
+      return Array.isArray(s?.tasks) ? s!.tasks! : [];
+    }),
+    dropOpenThreadTasks: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as { tasks?: TaskItem[] } | undefined;
+      if (!Array.isArray(s?.tasks)) return 0;
+      let dropped = 0;
+      s!.tasks = s!.tasks!.map((t) => {
+        if (t.status === 'pending' || t.status === 'in_progress') {
+          dropped++;
+          return { ...t, status: 'dropped' as const };
+        }
+        return t;
+      });
+      return dropped;
+    }),
     recordActiveLeg: vi.fn(async () => undefined),
     getLegsForJob: vi.fn(async (_jobId: string) => []),
     threadJobId: vi.fn(async (threadId: string) => {
@@ -370,6 +392,10 @@ function makeStore(state: StoreState): {
     haltFixAttempts: vi.fn(async (threadId: string) => {
       const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
       return s?.halt_fix_attempts ?? 0;
+    }),
+    haltOutcome: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
+      return (s?.halt_outcome as 'blocked' | 'incomplete' | 'failed' | null) ?? null;
     }),
     rearmHaltedThreads: vi.fn(async (jobId: string) => {
       let n = 0;
@@ -752,6 +778,7 @@ function thread(
   status: ThreadStatus = 'pending',
   isMasterReview = false,
   condition: ThreadCondition = 'none',
+  type: Thread['type'] = 'general',
 ): DriverThread {
   return {
     id,
@@ -766,6 +793,7 @@ function thread(
     status,
     condition,
     kind: isMasterReview ? 'master_review' : 'builder',
+    type,
     parentThreadId: null,
     startSha: null,
   };
@@ -811,7 +839,7 @@ function assemble(
   } as unknown as EnvService;
   // The shared transcript spine over a fake live store + a capturing durable sink — so build turns persist
   // their transcript (and the `build_anchor`) through the same path production uses, and tests can assert it.
-  const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
+  const liveTurns = { push: vi.fn(), end: vi.fn(), snapshot: vi.fn(() => null) } as unknown as LiveTurnStore;
   const sunk: Array<{
     jobId: string;
     block: {
@@ -831,6 +859,11 @@ function assemble(
         },
       ) => {
         sunk.push({ jobId, block });
+        if ((block.meta as { source?: unknown } | null)?.source === 'system_operator' && block.text) {
+          const notices = state.systemNotices ?? [];
+          notices.push(block.text);
+          state.systemNotices = notices;
+        }
       },
     ),
     appendBlockOnce: vi.fn(
@@ -867,7 +900,8 @@ function assemble(
       },
     ),
   } as unknown as TaskEventSink;
-  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink);
+  const usage = { applyHarvest: vi.fn().mockResolvedValue(undefined) } as unknown as OauthUsageService;
+  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink, usage);
   // BuildShipService's direct ENGINE_RUNNER dependency (the PR Review orchestrator) — separate from the
   // `turn`/`calls` fake above (TurnRunnerService, used by per-thread build turns) so PR Review's one
   // execute turn doesn't inflate the per-thread `execTurns` count.
@@ -931,6 +965,10 @@ function assemble(
       brainTranscriptProjectsDir: () => null,
       supervisorDirHost: () => null,
       probeLiveness: async () => ({ status: 'unknown' as const }),
+      sandboxContainerName: () => 'atlas-sbx-thread-test',
+      bridgeCaddyToSandbox: async () => undefined,
+      unbridgeCaddyFromSandbox: async () => undefined,
+      listLiveThreadJobIds: async () => [],
     },
     // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.
     {
@@ -939,12 +977,14 @@ function assemble(
       githubToken: async () => undefined,
       engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
+    // OauthUsageService: the session-limit park reads getResetAt; default → no harvested window.
+    { getResetAt: () => undefined, applyHarvest: vi.fn().mockResolvedValue(undefined) } as unknown as OauthUsageService,
     // McpResolver: no user-defined MCP servers in tests.
     { resolveForTurn: async () => [], resolveForSandbox: async () => [] } as never,
     // McpOAuthService: no OAuth servers in tests (and the fake SANDBOX_PROVIDER has no kickMcpHubRefresh anyway).
     { refreshForSandbox: async () => ({ rotated: false }) } as never,
     // SkillResolver: no skills in tests.
-    { resolveForTurn: async () => [] } as never,
+    { resolveForTurn: async () => [], resolveReviewSkillsForThread: async () => [] } as never,
     // JobLifecycleService: returns the thread's pre-provisioned sandbox — the ONLY sandbox path now
     // (the brain provisions every thread before any build runs). Its branch is the source of truth.
     {
@@ -1246,6 +1286,56 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // spec declares no children), so it materializes none.
     expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(1);
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
+  });
+
+  it('a claude builder turn — AND its follow-up GATE turn — both forward modelReasoningEffort: "high"', async () => {
+    // The registry pins the `builder` thread-kind to 'high' reasoning effort; both the primary execute
+    // turn and the diagnostics done-gate's follow-up turn (kind:'gate') read it off the same spec, so
+    // both must forward the SAME value to the engine.
+    const runs: Array<{ engine: string; effort?: string; gateKind?: string }> = [];
+    const { turn: baseTurn } = makeTurn({});
+    const turn = {
+      runTurn: vi.fn(
+        async (input: {
+          mode: string;
+          engine: string;
+          modelReasoningEffort?: string;
+          stepId?: string | null;
+          jobId: string;
+          toolBridge?: ToolBridgeOptions;
+          turnMeta?: { kind?: string };
+        }) => {
+          runs.push({
+            engine: input.engine,
+            effort: input.modelReasoningEffort,
+            gateKind: input.turnMeta?.kind,
+          });
+          return (baseTurn.runTurn as unknown as (i: typeof input) => Promise<unknown>)(input);
+        },
+      ),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { turn });
+    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']); // a .ts change kicks the gate
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    const builderRuns = runs.filter((r) => r.gateKind !== 'gate');
+    const gateRuns = runs.filter((r) => r.gateKind === 'gate');
+    expect(builderRuns.length).toBeGreaterThan(0);
+    expect(gateRuns.length).toBeGreaterThan(0);
+    expect(builderRuns.every((r) => r.engine === 'claude' && r.effort === 'high')).toBe(true);
+    expect(gateRuns.every((r) => r.engine === 'claude' && r.effort === 'high')).toBe(true);
   });
 
   it('build turns ride the shared transcript spine: richStream on, blocks tagged meta.phaseId, a build_anchor per thread batch', async () => {
@@ -1887,6 +1977,48 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.opened).toHaveLength(0);
   });
 
+  it('parks a build lane on a Claude session limit with one durable resume notice', async () => {
+    const resetAt = '2026-07-09T22:00:00.000Z';
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1', orgId: 'T1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new EngineSessionLimitError(
+        `Claude session limit (five_hour); resets ${resetAt}`,
+        resetAt,
+        'five_hour',
+        'sess-limit',
+      );
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'session_limit');
+
+    expect(state.job.halt).toMatchObject({
+      kind: 'session_limit',
+      resumeAt: resetAt,
+    });
+    expect(h.store.setSessionResume).toHaveBeenCalledWith(
+      state.job.id,
+      resetAt,
+      expect.objectContaining({ lane: 'build', resetSource: 'usage_api' }),
+    );
+    expect(h.sunk.filter((s) => s.block.meta?.sessionLimit === true)).toHaveLength(1);
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(1);
+
+    await h.driver.retry(state.job.id);
+    await flushUntil(() => (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls.length >= 2);
+
+    expect(h.sunk.filter((s) => s.block.meta?.sessionLimit === true)).toHaveLength(1);
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(1);
+  });
+
   it('resumePaused re-drives a paused job to completion; no-ops if the job is not paused', async () => {
     // no-op path: a non-paused job is left alone.
     const running: StoreState = {
@@ -1998,6 +2130,111 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
   });
 });
 
+// ── Thread 3 — dynamic (type-routed) lens selection + the async-sema concurrency cap ────────────────
+
+describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurrency', () => {
+  function lensIdsMaterialized(state: StoreState): (string | undefined)[] {
+    return (state.reviewChildren ?? [])
+      .filter((c) => c.kind === 'review_lens')
+      .map((c) => (c.config as { lensId?: string }).lensId);
+  }
+
+  it('materializes the composed set (five always-on + data_safety) for a `data` thread', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-data', 10, 'Data migration', 'pending', false, 'none', 'data')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(lensIdsMaterialized(state).sort()).toEqual(
+      ['best_practices', 'correctness', 'consistency', 'minimalism', 'holistic', 'data_safety'].sort(),
+    );
+  });
+
+  it('drops correctness + minimalism for a `docs` thread', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-docs', 10, 'Docs pass', 'pending', false, 'none', 'docs')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    const lensIds = lensIdsMaterialized(state);
+    expect(lensIds).not.toContain('correctness');
+    expect(lensIds).not.toContain('minimalism');
+    expect(lensIds.sort()).toEqual(['best_practices', 'consistency', 'holistic'].sort());
+  });
+
+  it('bounds in-flight review-lens turns at the configured REVIEW_LENS_CONCURRENCY cap', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend', 'pending', false, 'none', 'general')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { env: { REVIEW_LENS_CONCURRENCY: '2' } });
+    let inFlight = 0;
+    let peak = 0;
+    h.autofix.runReviewLens.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return [];
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // Never exceeds the cap, but DID run more than one at a time (proves it's a real semaphore, not serial).
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  it('with cap >= lens count, ALL lenses start concurrently — the fixed-batch-of-3 barrier is gone', async () => {
+    // 'general' composes the five always-on lenses; the default cap (8) comfortably covers all five, so a
+    // real semaphore (vs. the old `concurrency = 3` batch loop) lets every lens acquire at once.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend', 'pending', false, 'none', 'general')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    let inFlight = 0;
+    let peak = 0;
+    h.autofix.runReviewLens.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return [];
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(peak).toBe(5);
+  });
+});
+
 // ── ADR 0005 — the live-verification judge gate inside `complete_thread` ───────────────────────────
 
 /** A judge fake that also captures each call's input, for the two Codex-requested regression cases below
@@ -2031,6 +2268,81 @@ function stubChangedFileNames(
   (git as unknown as { changedFileNames: ReturnType<typeof vi.fn> }).changedFileNames =
     vi.fn(impl);
 }
+
+describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread blocked → Holding." spam)', () => {
+  // A blocked thread leaves the JOB `running`, so the 30-min reap's resume() re-drives it and re-enters the
+  // "already blocked → re-halt" short-circuit. It must NOT re-post the card or re-arm the owed wake once the
+  // halt was already delivered — except for a `judge_unavailable` transient hold, whose periodic re-wake IS
+  // its recovery. And it MUST still notify if haltJob never ran (halt_outcome missing → wake would be lost).
+  function blockedState(o: {
+    reason?: 'unverified' | 'judge_unavailable' | 'question';
+    haltOutcome?: 'blocked' | null;
+    haltWakedAt?: Date | null;
+    haltFixAttempts?: number;
+  }): StoreState {
+    const t = thread('sec-be', 10, 'Backend', 'executing', false, 'paused');
+    (t as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record = {
+      status: 'blocked',
+      summary: 'blocked',
+      blocked: { reason: o.reason ?? 'unverified', detail: 'needs your input' },
+    };
+    const h = t as HaltFields;
+    h.halt_outcome = o.haltOutcome ?? null;
+    h.halt_waked_at = o.haltWakedAt ?? null;
+    h.halt_fix_attempts = o.haltFixAttempts ?? 0;
+    return {
+      job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
+      record: makeRecord(),
+      threads: [t],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+  }
+  const blockedCards = (h: { sunk: Array<{ block: { text?: string } }> }) =>
+    h.sunk.filter((s) => s.block.text?.includes('Thread blocked'));
+
+  it('already-notified block (owed-wake row exists + delivered) → re-drive re-posts NOTHING and does not re-arm', async () => {
+    // haltJob already ran on the first block: halt_outcome set, wake delivered (halt_waked_at stamped).
+    const state = blockedState({ reason: 'unverified', haltOutcome: 'blocked', haltWakedAt: new Date() });
+    const h = assemble(state);
+    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
+
+    await h.driver.resume();
+    await flush();
+
+    expect(blockedCards(h)).toHaveLength(0); // no re-posted "Thread blocked" card
+    expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // no re-arm
+    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(0); // stays acked
+  });
+
+  it('REGRESSION: blocked record but halt_outcome MISSING (crash before haltJob) → re-drive still runs haltJob ONCE', async () => {
+    // The block_thread terminal record persisted, but haltJob never created the owed-wake row. A re-drive must
+    // NOT suppress — else `threadsAwaitingHaltWake` has nothing to deliver and the brain is never woken.
+    const state = blockedState({ reason: 'unverified', haltOutcome: null, haltWakedAt: null });
+    const h = assemble(state);
+
+    await h.driver.resume();
+    await flush();
+
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // owed-wake row created
+    expect(blockedCards(h).length).toBeGreaterThan(0); // the card posts (the FIRST notification)
+    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(1);
+  });
+
+  it('judge_unavailable transient hold KEEPS re-arming on re-drive (its only recovery path)', async () => {
+    // Already delivered, but judge_unavailable must re-wake the brain to retry_thread when the judge recovers.
+    const state = blockedState({ reason: 'judge_unavailable', haltOutcome: 'blocked', haltWakedAt: new Date() });
+    const h = assemble(state);
+    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
+
+    await h.driver.resume();
+    await flush();
+
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // re-armed
+    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(1); // owed again
+  });
+});
 
 describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — no rollout dial)', () => {
   it('touched + adequate verification → done (judge consulted, never gates)', async () => {
@@ -2904,6 +3216,112 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.job.status).toBe('done');
   });
 
+  it('bounces the FIRST complete_thread when the checklist has an open task; the retry latches done once the model closes it', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as { tasks?: TaskItem[] }).tasks = [
+      { id: 'x1', subject: 'Add tests', status: 'in_progress' },
+    ];
+    const returns: Array<Record<string, unknown>> = [];
+    const turn = {
+      runTurn: vi.fn(
+        async (input: { mode: string; stepId?: string | null; jobId: string; toolBridge?: ToolBridgeOptions }) => {
+          const ct = input.toolBridge?.tools?.['complete_thread'];
+          if (ct) {
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
+            // The model heeds the one reminder and closes its task (its TaskUpdate folds onto threads.tasks)…
+            (state.threads[0] as { tasks?: TaskItem[] }).tasks = [
+              { id: 'x1', subject: 'Add tests', status: 'completed' },
+            ];
+            // …then re-asserts done — must reach the gate this time, not be nudged again.
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
+          }
+          return {
+            report: 'built',
+            session: {
+              id: 'sess', jobId: input.jobId, stepId: input.stepId ?? null,
+              engine: 'claude' as const, mode: input.mode as 'plan' | 'execute' | 'review',
+              branch: 'b', worktreePath: '/wt/b',
+            },
+          };
+        },
+      ),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+    const h = assemble(state, { turn });
+    stubChangedFileNames(h.git, async () => ['README.md']); // non-runtime → the done-gates short-circuit
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(String(returns[0]?.['warning'] ?? '')).toContain('open item'); // 1st: reminder, not latched
+    expect(returns[1]?.['warning']).toBeUndefined(); // 2nd: no second nudge — proceeded to the gate
+    const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }).terminal_record;
+    expect(term?.status).toBe('done');
+    expect(state.job.status).toBe('done');
+    // The model closed its own task, so the host had nothing to drop — it stays `completed`, not `dropped`.
+    const tasks = (state.threads[0] as { tasks?: TaskItem[] }).tasks ?? [];
+    expect(tasks.map((t) => t.status)).toEqual(['completed']);
+  });
+
+  it('accepts a re-asserted done with tasks STILL open, and the host flips the leftovers to `dropped` (not completed)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as { tasks?: TaskItem[] }).tasks = [
+      { id: 'x1', subject: 'Add tests', status: 'in_progress' },
+      { id: 'x2', subject: 'Update docs', status: 'pending' },
+    ];
+    const returns: Array<Record<string, unknown>> = [];
+    const turn = {
+      runTurn: vi.fn(
+        async (input: { mode: string; stepId?: string | null; jobId: string; toolBridge?: ToolBridgeOptions }) => {
+          const ct = input.toolBridge?.tools?.['complete_thread'];
+          if (ct) {
+            // First → nudged; second → still open, but accepted (never wedge a validated thread).
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
+          }
+          return {
+            report: 'built',
+            session: {
+              id: 'sess', jobId: input.jobId, stepId: input.stepId ?? null,
+              engine: 'claude' as const, mode: input.mode as 'plan' | 'execute' | 'review',
+              branch: 'b', worktreePath: '/wt/b',
+            },
+          };
+        },
+      ),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+    const h = assemble(state, { turn });
+    stubChangedFileNames(h.git, async () => ['README.md']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(String(returns[0]?.['warning'] ?? '')).toContain('open item');
+    expect(returns[1]?.['warning']).toBeUndefined();
+    const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }).terminal_record;
+    expect(term?.status).toBe('done');
+    expect(h.store.dropOpenThreadTasks).toHaveBeenCalledWith('sec-be');
+    // Both stragglers flipped to `dropped` — the host never claims they were completed.
+    const tasks = (state.threads[0] as { tasks?: TaskItem[] }).tasks ?? [];
+    expect(tasks.map((t) => t.status)).toEqual(['dropped', 'dropped']);
+    expect(state.job.status).toBe('done');
+  });
+
   it('a REATTACHED diagnostics done-gate recovers its report_verification verdict from the replayed events log (never falsely halts)', async () => {
     // REGRESSION: the gate verdict lives only in an in-process closure fed by the consume-once/acked
     // tools-bridge channel. When the gate turn engine-detaches AFTER `report_verification({passed:true})` and
@@ -3371,6 +3789,7 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
       status: 'pending',
       condition: 'none',
       kind: 'main',
+      type: 'general',
       parentThreadId: null,
       startSha: null,
     };
@@ -3694,6 +4113,14 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     expect(freshTask).toContain('<session_rotated>');
     expect(freshTask).toContain('FAILED: `pnpm build` → TS2345');
     expect(freshTask).toContain('\n\n---\n\n'); // seed folded ahead of the original batch task
+    // Recency ordering: the handoff/preamble lead (PRIMACY, top), the original batch task sits in the middle, and
+    // the operative resume directive trails LAST (RECENCY slot) — see foldLegSeed / ROTATION_RESUME_TAIL.
+    const iPreamble = freshTask.indexOf('<session_rotated>');
+    const iBaseTask = freshTask.indexOf('Feature overview:');
+    const iResume = freshTask.indexOf('<resume_here>');
+    expect(iResume).toBeGreaterThan(-1);
+    expect(iPreamble).toBeLessThan(iBaseTask);
+    expect(iBaseTask).toBeLessThan(iResume);
     // The thread + job finished cleanly on the fresh Leg.
     expect(state.threads[0].status).toBe('done');
     expect(state.job.status).toBe('done');

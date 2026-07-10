@@ -10,6 +10,7 @@ import {
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Subscription } from 'rxjs';
@@ -83,6 +84,7 @@ import {
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/render-plan';
+import { coerceThreadType, type ThreadType } from '../thread-kind/thread-types';
 import {
   LIVE_VERIFICATION_JUDGE,
   type LiveVerificationJudge,
@@ -97,6 +99,8 @@ import {
 } from '../driver/live-verification-support';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
+import { OauthUsageService } from '../onboarding/oauth-usage.service';
+import { defaultResumeAt } from '../engine/session-limit';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
 import { SkillFileWriter, SkillInstallerService, SkillResolver, WorkspaceSkillStore } from '../skills';
@@ -148,6 +152,7 @@ import type {
   EngineRunResult,
 } from '../engine/engine.types';
 import type { EngineHomeKey } from '../engine/engine-home';
+import { threadKindSpec } from '../thread-kind';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import type {
@@ -188,10 +193,10 @@ export class AgentSessionManager
   private leaderBootSub?: Subscription;
   /** The boot sweeps run ONCE per process — never on a mid-life re-promote (would clear active turns). */
   private bootSweepsDone = false;
-  /** Leader-only periodic chat-delivery sweep (started on promote, stopped on demote/shutdown). */
+  /** Leader-only periodic chat-delivery sweep (started on promote, stopped on demote/shutdown). The interval
+   *  itself is owned by @nestjs/schedule's SchedulerRegistry under CHAT_SWEEP_INTERVAL. */
   private chatSweepPromoteSub?: Subscription;
   private chatSweepDemoteSub?: Subscription;
-  private chatSweepTimer?: ReturnType<typeof setInterval>;
 
   /** Bounded in-memory dedup for the work-owed review backstop: last nudge time per jobId, so a job whose
    *  re-driven turn is still spinning up isn't re-nudged every sweep. Best-effort (per-process). */
@@ -256,6 +261,21 @@ export class AgentSessionManager
    */
   private readonly skillEditGrantsByJob = new Map<string, Set<string>>();
 
+  /**
+   * Steer-id → build-completion/halt wake payload, awaiting the engine's `input_ack` (the real consumption
+   * signal — the engine emits it only after it PUSHES the steer into the live SDK session, never on the Redis
+   * write). Populated when a wake is steered into an already-live brain turn (`steerIntoLiveBrainTurn`) and
+   * consumed in `stampInputAck`, which stamps `done_waked_at`/`halt_waked_at` there. Bounded + per-process — an
+   * unacked entry (turn died before the steer was injected, or a leader failover) is harmless: the owed flag
+   * stays set and the 30s owed-wake sweep re-fires. Mirrors the durable-operator-message ack path.
+   */
+  private readonly pendingWakeAcks = new Map<
+    string,
+    | { kind: 'done'; threadId: string; gen: number }
+    | { kind: 'halt'; threadId: string; gen: number }
+  >();
+  private static readonly MAX_PENDING_WAKE_ACKS = 512;
+
   constructor(
     private readonly store: BrainStoreService,
     private readonly driverStore: DriverStoreService,
@@ -311,6 +331,10 @@ export class AgentSessionManager
     // LiveVerificationModule). Gates the direct-build `finalize_build` ship: a runtime diff must be exercised
     // live (curl / drive / run), not merely typechecked, before the PR opens.
     @Inject(LIVE_VERIFICATION_JUDGE) private readonly liveVerificationJudge: LiveVerificationJudge,
+    // Host-side subscription usage snapshot — the Main-lane session-limit park reads `getResetAt(orgId,
+    // rateLimitType)` to seed the resume clock when the engine didn't surface a precise reset instant.
+    // @Global OnboardingModule.
+    private readonly usage: OauthUsageService,
     // Durable per-model usage/cost analytics (best-effort) for brain + compaction turns. @Optional so
     // unit tests can construct the manager without wiring analytics; DI (@Global) supplies it live.
     @Optional() private readonly usageProjector?: TurnUsageProjector,
@@ -341,6 +365,10 @@ export class AgentSessionManager
     // Read-only for `list_mcp_servers` (the write path is the owner-gated approve endpoint). @Optional for
     // unit tests (undefined → the tool reports none); DI (@Global McpModule) supplies it live.
     @Optional() private readonly mcpStore?: McpServerStore,
+    // @nestjs/schedule registry for the leader-gated chat-delivery sweep (registered on promote, deleted on
+    // demote). @Optional matching this constructor's convention — always present in prod (global
+    // ScheduleModule); unit tests never promote, so the sweep (and this registry) is never touched.
+    @Optional() private readonly scheduler?: SchedulerRegistry,
   ) {}
 
   /**
@@ -422,8 +450,11 @@ export class AgentSessionManager
   }
 
   private startChatDeliverySweep(): void {
-    if (this.chatSweepTimer) return;
-    this.chatSweepTimer = setInterval(() => {
+    // Prod always injects the scheduler (global ScheduleModule); unit tests omit it and never promote, so the
+    // sweep is a no-op there. Guard so an absent registry can't throw.
+    if (!this.scheduler) return;
+    if (this.scheduler.doesExist('interval', CHAT_SWEEP_INTERVAL)) return;
+    const iv = setInterval(() => {
       void this.sweepUndeliveredChat();
       // Same leader cadence re-drives any routed GitHub event whose brain delivery never landed (a steer
       // swallowed by a finishing turn, or a fresh turn that never registered). Events get the SAME periodic
@@ -444,13 +475,14 @@ export class AgentSessionManager
         .deliverOwedDoneWakes()
         .catch((err) => this.logger.warn(`periodic done-wake sweep failed: ${err}`));
     }, CHAT_SWEEP_INTERVAL_MS);
-    if (typeof this.chatSweepTimer.unref === 'function') this.chatSweepTimer.unref();
+    iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
+    this.scheduler.addInterval(CHAT_SWEEP_INTERVAL, iv);
   }
 
   private stopChatDeliverySweep(): void {
-    if (this.chatSweepTimer) {
-      clearInterval(this.chatSweepTimer);
-      this.chatSweepTimer = undefined;
+    // deleteInterval clears the interval AND removes it from the registry.
+    if (this.scheduler?.doesExist('interval', CHAT_SWEEP_INTERVAL)) {
+      this.scheduler.deleteInterval(CHAT_SWEEP_INTERVAL);
     }
   }
 
@@ -768,6 +800,16 @@ export class AgentSessionManager
     const thread = await this.driverStore.getThread(threadId).catch(() => null);
     if (!thread) return;
     const term = await this.driverStore.getTerminalRecord(threadId).catch(() => null);
+    // Claim a fresh completion-wake generation for THIS delivery, then supersede any prior (dead) attempt's
+    // truncated partial before we stream the fresh summary. `claimDoneWakeGen` returns null when the wake is
+    // no longer owed (already delivered by a racing sweep) → no-op. The supersede is deliberately NOT wrapped
+    // in `.catch()`: if the delete fails we must NOT go on to stamp `done_waked_at`, else the stale partial is
+    // orphaned with no later sweep to clean it — let it throw so the sweep's per-thread catch retries the
+    // whole delivery (owed stays true; the gen already bumped so the retry's higher-gen supersede still
+    // sweeps the earlier partial).
+    const gen = await this.driverStore.claimDoneWakeGen(threadId).catch(() => null);
+    if (gen == null) return;
+    await this.driverStore.supersedeDoneWakeMessages(jobId, threadId, gen);
     // Resolved DIRECTLY from steps/legs at delivery time (not stored) — mirrors `notifyThreadHalted`.
     const anchor = await this.driverStore.resolveSessionAnchor(threadId).catch(() => undefined);
     let perThreadGaps: { brief: string; gaps: string[] }[] | undefined;
@@ -786,7 +828,7 @@ export class AgentSessionManager
       orgId: job.orgId,
       repoId: job.repoId,
       body: renderDoneDelivery(thread, reason, term, anchor, perThreadGaps),
-      seedDoneWake: { threadId, reason },
+      seedDoneWake: { threadId, reason, gen },
       // The completed thread's own (untrusted) record → a visible `untrusted` pill.
       seedRow: {
         kind: 'untrusted',
@@ -996,7 +1038,57 @@ export class AgentSessionManager
       return true;
     }
     await this.stampSteeredSeedCard(stimulus);
+    // A completion/halt wake steered into a live turn is only marked delivered when the engine ACKS it (see
+    // `stampInputAck`) — stamping here on the XADD would drop the wake if the turn dies before injecting it,
+    // and a synthetic wake seed has no `stimuli` row to recover from. Record the payload keyed by the steer id
+    // so the ack can reach it; NOT recorded on the XADD-failure return above (that must stay owed for the sweep).
+    if (stimulus.seedDoneWake) {
+      this.rememberPendingWakeAck(stimulus.id, {
+        kind: 'done',
+        threadId: stimulus.seedDoneWake.threadId,
+        gen: stimulus.seedDoneWake.gen,
+      });
+    } else if (stimulus.seedHaltWake) {
+      this.rememberPendingWakeAck(stimulus.id, {
+        kind: 'halt',
+        threadId: stimulus.seedHaltWake.threadId,
+        gen: stimulus.seedHaltWake.gen,
+      });
+    }
     return true;
+  }
+
+  /** Remember a steered wake awaiting its `input_ack`, evicting the oldest entry past the bound (safe — an
+   *  evicted wake just degrades to sweep-driven re-fire). */
+  private rememberPendingWakeAck(
+    id: string,
+    wake:
+      | { kind: 'done'; threadId: string; gen: number }
+      | { kind: 'halt'; threadId: string; gen: number },
+  ): void {
+    this.pendingWakeAcks.set(id, wake);
+    while (this.pendingWakeAcks.size > AgentSessionManager.MAX_PENDING_WAKE_ACKS) {
+      const oldest = this.pendingWakeAcks.keys().next().value;
+      if (oldest === undefined) break;
+      this.pendingWakeAcks.delete(oldest);
+    }
+  }
+
+  /** SUCCESS-TAIL wake stamps (halt + completion), generation-keyed. Shared by `runChatTurnInner`'s tail and
+   *  the `reattachOne` success path — a reattached wake turn runs outside `runChatTurnInner`, so without this
+   *  it would never stamp and the sweeps would re-wake it forever. Best-effort; a failed stamp just leaves the
+   *  wake owed for the next sweep (at-least-once). */
+  private async stampWakeSuccessTails(stimulus: ChatStimulus): Promise<void> {
+    if (stimulus.seedHaltWake) {
+      await this.driverStore
+        .markHaltWaked(stimulus.seedHaltWake.threadId, stimulus.seedHaltWake.gen)
+        .catch((err) => this.logger.warn(`markHaltWaked failed: ${err}`));
+    }
+    if (stimulus.seedDoneWake) {
+      await this.driverStore
+        .markDoneWaked(stimulus.seedDoneWake.threadId, stimulus.seedDoneWake.gen)
+        .catch((err) => this.logger.warn(`markDoneWaked failed: ${err}`));
+    }
   }
 
   /**
@@ -1144,12 +1236,27 @@ export class AgentSessionManager
     }
   }
 
-  /** Stamp `delivered_at` when the engine acks a steered message (from either onEvent path). */
+  /** Stamp `delivered_at` when the engine acks a steered message (from either onEvent path). A steered
+   *  completion/halt wake is also marked delivered HERE — the ack is the real consumption signal, so a wake
+   *  whose steer was never injected (turn died, held pre-stream) stays owed for the sweep to re-fire. */
   private stampInputAck(e: EngineEvent): void {
     if (e.kind !== 'input_ack' || !e.id) return;
     void this.stimulusStore.markChatDelivered(e.id).catch((err) =>
       this.logger.debug(`input_ack stamp for ${e.id} failed (sweep will retry): ${err}`),
     );
+    const wake = this.pendingWakeAcks.get(e.id);
+    if (wake) {
+      this.pendingWakeAcks.delete(e.id);
+      if (wake.kind === 'done') {
+        void this.driverStore
+          .markDoneWaked(wake.threadId, wake.gen)
+          .catch((err) => this.logger.warn(`markDoneWaked (ack) failed: ${err}`));
+      } else {
+        void this.driverStore
+          .markHaltWaked(wake.threadId, wake.gen)
+          .catch((err) => this.logger.warn(`markHaltWaked (ack) failed: ${err}`));
+      }
+    }
   }
 
   /** LEADER periodic + boot re-drive of any operator message still undelivered (the at-least-once sweep). */
@@ -1384,7 +1491,7 @@ export class AgentSessionManager
       seed?: boolean;
       seedQuestionId?: string;
       seedHaltWake?: { threadId: string; gen: number };
-      seedDoneWake?: { threadId: string; reason: 'final' | 'notable' };
+      seedDoneWake?: { threadId: string; reason: 'final' | 'notable'; gen: number };
     };
     if (
       !row.container_id ||
@@ -1429,7 +1536,19 @@ export class AgentSessionManager
     const tools = this.buildTools(stimulus, reattachKind);
     const streamer = this.turnHarness.create({
       jobId: row.job_id,
+      orgId: row.org_id,
       channel: row.channel,
+      // Tag a reattached completion-wake turn's blocks with its generation, exactly like a fresh run — else
+      // the reattach's persisted summary is UNTAGGED, escapes `supersedeDoneWakeMessages`, and a later sweep
+      // leaves it as a duplicate alongside the sweep's own re-run.
+      ...(ctx.seedDoneWake
+        ? {
+            metaTag: {
+              doneWakeGen: ctx.seedDoneWake.gen,
+              doneWakeThreadId: ctx.seedDoneWake.threadId,
+            },
+          }
+        : {}),
     });
     const sandboxRow = await this.sandboxRows.findOne({
       where: { job_id: row.job_id, org_id: row.org_id },
@@ -1465,6 +1584,10 @@ export class AgentSessionManager
             }
           : undefined,
       );
+      // SUCCESS TAIL — reattach runs OUTSIDE `runChatTurnInner`, so stamp the wake dedup markers here too
+      // (the same shared helper), else a reattached halt/done wake never stamps and the sweeps re-wake it
+      // forever. (This also makes the `seedHaltWake`/`seedDoneWake` preserve-comments above actually true.)
+      await this.stampWakeSuccessTails(stimulus);
       void this.usageProjector?.record(
         {
           jobId: row.job_id,
@@ -1489,7 +1612,15 @@ export class AgentSessionManager
       this.logger.warn(
         `re-attached turn ${row.turn_id} ended in error: ${err}`,
       );
-      await streamer.finish();
+      // A benign stream abort on a WAKE turn (halt or completion) will be re-delivered in full by the owed-
+      // wake sweep (owed stays true — the success stamp above never ran), so DISCARD the truncated partial
+      // rather than persisting a durable half-message. Matches the fresh-run error tail. Any other error (or a
+      // non-wake turn) keeps its partial as context.
+      if (this.isBenignStreamAbort(err) && (ctx.seedHaltWake || ctx.seedDoneWake)) {
+        await streamer.discard();
+      } else {
+        await streamer.finish();
+      }
     } finally {
       await this.store
         .endTurnActivity(row.job_id)
@@ -1647,6 +1778,11 @@ export class AgentSessionManager
           stimulus,
           'This thread is closed — start a new one to keep working.',
         );
+        // Treat this pending chat as DELIVERED — else the 2-min at-least-once delivery sweep re-drives it and
+        // re-posts this identical "closed" notice every lease cycle (the endless spam). A closed sandbox is a
+        // terminal state for this message, not a transient un-delivery — mirror the ProvisioningNotReadyError
+        // branch below.
+        opts?.onRegistered?.();
         return;
       }
     } catch (err) {
@@ -1857,10 +1993,21 @@ export class AgentSessionManager
       jobId: stimulus.jobId,
     });
     const channel = route.channel ?? stimulus.replyRoute.jobRef;
-    // The brain streams on the default `main` lane (no metaTag) — its blocks ARE the conversation.
+    // The brain streams on the default `main` lane (no metaTag) — its blocks ARE the conversation. EXCEPT a
+    // completion-wake turn: tag its blocks with the wake generation so a later re-delivery can supersede this
+    // attempt's rows if it dies mid-stream (see `supersedeDoneWakeMessages`).
     const streamer = this.turnHarness.create({
       jobId: stimulus.jobId,
+      orgId: stimulus.orgId,
       channel,
+      ...(stimulus.seedDoneWake
+        ? {
+            metaTag: {
+              doneWakeGen: stimulus.seedDoneWake.gen,
+              doneWakeThreadId: stimulus.seedDoneWake.threadId,
+            },
+          }
+        : {}),
     });
     // One-shot guard so THIS turn's fully-assembled prompt (the operator body PLUS the invisible folded
     // prefixes: compaction seed / reset notice / awareness / open-questions) is surfaced exactly once, on
@@ -1950,6 +2097,9 @@ export class AgentSessionManager
       ...(grantedSkills && grantedSkills.size > 0 ? { grantedSkills: Array.from(grantedSkills) } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
+      ...(threadKindSpec('main').reasoningEffort
+        ? { modelReasoningEffort: threadKindSpec('main').reasoningEffort }
+        : {}),
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       steerable: true, // streaming-input mode: operator messages steer this turn mid-flight (priority:'now')
       ...(sessionId ? { sessionId } : {}),
@@ -2115,13 +2265,25 @@ export class AgentSessionManager
       this.logger.error(
         `in-sandbox turn failed for thread=${stimulus.jobId}: ${err}`,
       );
-      await streamer.finish();
+      // Classify BEFORE persisting so we can discard a partial that will be re-delivered in full. A benign
+      // `aborted_streaming` on a WAKE turn is re-fired by the owed-wake sweep (the stamp never landed, so the
+      // wake stays owed) — persisting its truncated partial would leave a durable half-message beside the
+      // complete re-run (the ship-gate duplicate). Discard it. A normal turn's benign abort still finishes
+      // (keeps its partial) and gets the continue-nudge below; a real failure always keeps its partial.
+      const benignAbort = this.isBenignStreamAbort(err);
+      const isWakeTurn = !!(stimulus.seedHaltWake || stimulus.seedDoneWake);
+      if (benignAbort && isWakeTurn) {
+        await streamer.discard();
+      } else {
+        await streamer.finish();
+      }
       // ADR 0004 Phase 3 / decision d1: a halt-wake OR done-wake turn is an internal, auto-retried delivery
       // (the periodic + boot sweeps re-fire it because the stamp only lands on the success tail). Don't post a
       // scary operator error box for it — that's noise the operator can't act on. Just log; the sweep will
-      // retry once the session settles. (This is the wake that could otherwise race `dispatch_build`'s
-      // compaction session-rewrite.)
-      if (stimulus.seedHaltWake || stimulus.seedDoneWake) {
+      // retry once the session settles. ORDERING is load-bearing: this wake early-return stays AHEAD of the
+      // benign continue-nudge branch, so a wake turn is re-delivered ONLY by the (gen-superseding) owed-wake
+      // sweep, never also by an untagged continue-nudge re-author.
+      if (isWakeTurn) {
         this.logger.warn(
           `wake turn failed for thread=${stimulus.jobId} (sweep will retry): ${err}`,
         );
@@ -2139,7 +2301,7 @@ export class AgentSessionManager
           stimulus,
           `${String(err)}\n\nThis thread can't continue — its engine session state is gone. Please start a new thread to pick this back up.`,
         );
-      } else if (this.isBenignStreamAbort(err)) {
+      } else if (benignAbort) {
         // A self-recovering SDK stream abort (`aborted_streaming`) — NOT a real failure the operator must
         // act on. The engine-side hold makes the startup-race variant impossible; this is the net for any
         // residual/other abort. Instead of a scary red box, silently resume the SAME session once (the same
@@ -2195,6 +2357,60 @@ export class AgentSessionManager
       await this.sandboxRows.save(sandboxRow);
     }
 
+    // SESSION/USAGE LIMIT PARK (Main lane): the engine ended the turn CLEANLY on a Claude subscription limit
+    // (not a crash). Park the lane on the durable resume clock — the Main lane has no `halt`, so the clock IS
+    // the park marker — finalize the live stream as a GRACEFUL end (the turn already ended; just flush, don't
+    // run the triage success tails), post ONE stable notice, and stop. The leader sweep auto-resumes at the
+    // reset (or the operator Force-resumes via `POST …/retry-turn`); every un-park path clears the clock.
+    if (result.sessionLimit) {
+      const rlType = result.sessionLimit.rateLimitType;
+      const resumeAt =
+        result.sessionLimit.resetAt ?? (await this.usage.getResetAt(stimulus.orgId, rlType));
+      // The Main lane has no `halt`, so the durable clock IS the park marker: when no precise reset is known,
+      // seed a BOUNDED default (now + shortest window) so the leader sweep auto-resumes and a process restart
+      // still has something to resume — a null clock would strand the lane on manual Force-resume only.
+      const resumeClock = resumeAt ?? defaultResumeAt();
+      // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
+      // reset — covers the text-fallback path too (no `rate_limit_event` frame was harvested).
+      void this.usage
+        .applyHarvest(stimulus.orgId, {
+          status: 'rejected',
+          rateLimitType: rlType,
+          resetsAt: new Date(resumeClock).getTime(),
+          utilization: 100,
+        })
+        .catch(() => undefined);
+      const resetSource: 'usage_api' | 'parsed_string' = rlType ? 'usage_api' : 'parsed_string';
+      const reason = `Claude session limit${rlType ? ` (${rlType})` : ''}${resumeAt ? `; resets ${resumeAt}` : ''}`;
+      await this.store
+        .setSessionResume(stimulus.jobId, resumeClock, { lane: 'main', reason, resetSource })
+        .catch((err) => this.logger.warn(`setSessionResume failed: ${err}`));
+      // Graceful finish, mirroring the normal success finish below — so the lane doesn't hang and the
+      // transcript flushes — WITHOUT the halt-wake / secret / file success-tail writes (no triage happened).
+      // Do not pass `result.result`: on some SDK paths that final summary is the same printed limit line the
+      // engine suppressed from text blocks, and `finish()` would persist it as a normal chat fallback.
+      await streamer.finish(
+        undefined,
+        result.usage
+          ? {
+              usage: result.usage,
+              contextTokens: result.usage.contextTokens ?? null,
+              contextLimit: resolveContextLimit(result.usage.contextModel ?? result.usage.model),
+            }
+          : undefined,
+      );
+      void this.usageProjector?.record(
+        { jobId: stimulus.jobId, orgId: stimulus.orgId, lane: 'main', kind: 'brain', engine: 'claude' },
+        result.usage,
+      );
+      await this.saySystemOperator(
+        stimulus,
+        `You've hit your session limit — resets ${resumeAt ? this.fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`,
+        { retryable: false, sessionLimit: true, ...(resumeAt ? { resumeAt } : {}) },
+      );
+      return;
+    }
+
     // Flush the durable transcript (persists any unpaired tool call + a text fallback if the turn emitted
     // no text block) + a `turn_meta` block (per-turn token usage + context-window occupancy, when the SDK
     // reported usage), then signal turn end so the client reconciles its live buffer against /messages.
@@ -2230,22 +2446,12 @@ export class AgentSessionManager
         );
     }
 
-    // SUCCESS TAIL — ADR 0004 Phase 3 halt wake: the brain actually TRIAGED the halt this turn, so stamp
-    // `halt_waked_at` (generation-keyed) now. Reached only on the happy path — a swallowed engine error /
-    // single-turn-guard hit / detach all `return` above WITHOUT stamping, so the periodic + boot sweeps
-    // re-fire the wake (at-least-once). This is why the driver no longer stamps at delivery time.
-    if (stimulus.seedHaltWake) {
-      await this.driverStore
-        .markHaltWaked(stimulus.seedHaltWake.threadId, stimulus.seedHaltWake.gen)
-        .catch((err) => this.logger.warn(`markHaltWaked failed: ${err}`));
-    }
-
-    // SUCCESS TAIL — decision d1 completion wake: mirrors the halt stamp above (no generation CAS needed).
-    if (stimulus.seedDoneWake) {
-      await this.driverStore
-        .markDoneWaked(stimulus.seedDoneWake.threadId)
-        .catch((err) => this.logger.warn(`markDoneWaked failed: ${err}`));
-    }
+    // SUCCESS TAIL — ADR 0004 Phase 3 halt wake + decision d1 completion wake: the brain actually TRIAGED /
+    // reviewed this wake this turn, so stamp its (generation-keyed) dedup marker now. Reached only on the
+    // happy path — a swallowed engine error / single-turn-guard hit / detach all `return` above WITHOUT
+    // stamping, so the periodic + boot sweeps re-fire the wake (at-least-once). Shared with the reattach
+    // success path (which runs outside this method) so both stamp identically.
+    await this.stampWakeSuccessTails(stimulus);
 
     // SUCCESS TAIL — same for the secure-secret gate: the masked confirmation reached the brain this turn.
     if (deliveredSecretId) {
@@ -2602,6 +2808,32 @@ export class AgentSessionManager
           message:
             'Plan withdrawn — the approve button is cleared and the job is back in planning. ' +
             'Re-propose with propose_plan when the plan is ready.',
+        };
+      },
+
+      // Retract the ship-review gate (READY TO SHIP) to `amending` — the tool sibling of the manual
+      // "Amend build" click. Calls the SAME `DriverStoreService.retractShip` CAS transition + card
+      // neutralization the click uses (already injected here as `driverStore` — no ThreadDriver import
+      // needed), so there is one authoritative retract regardless of who triggers it.
+      withdraw_ship: async (args) => {
+        const reason = String(args['reason'] ?? '').trim();
+        const acted = await this.driverStore.retractShip(stimulus.jobId);
+        if (!acted) {
+          return {
+            ok: false,
+            message:
+              'The job is not currently parked at the ship-review gate — nothing to retract.',
+          };
+        }
+        await this.store.appendAtlasMessage(
+          stimulus.jobId,
+          `↩︎ Ship-review retracted — amending the build${reason ? `: ${reason}` : ''}.`,
+        );
+        return {
+          ok: true,
+          message:
+            'Ship-review retracted — the job is now **amending**. Do the follow-up work; the ship gate ' +
+            're-arms automatically once it completes.',
         };
       },
 
@@ -5147,7 +5379,8 @@ export class AgentSessionManager
     if (!existing) return {};
     // Statuses past the approval gate (post-`awaiting_approval`) — never (re)propose over these. A build
     // FAILURE is now the orthogonal `halt` axis (JobStatus has no 'failed'/'paused'); a failed/paused job
-    // keeps its phase (typically 'running'), so it's still caught here.
+    // keeps its phase (typically 'running'), so it's still caught here. `amending` is deliberately NOT
+    // listed — like `planning`, it's a shaping state where a fresh propose_plan is allowed.
     const pastGate: JobStatus[] = ['running', 'awaiting_ship_review', 'done', 'cancelled', 'deleting'];
     if (pastGate.includes(existing.status)) {
       return { refuse: `This job is already '${existing.status}' — can’t (re)propose a plan for it.` };
@@ -6107,10 +6340,18 @@ export class AgentSessionManager
     return /aborted_streaming/.test(String(err));
   }
 
+  /** Render a session-limit reset instant as a short human time (e.g. "3:20 PM"); falls back to the raw ISO
+   *  string if unparseable. Mirrors the build lane's `fmtReset`; kept STABLE so the park notice dedupes. */
+  private fmtReset(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
   private async saySystemOperator(
     stimulus: ChatStimulus,
     text: string,
-    opts: { retryable?: boolean } = {},
+    opts: { retryable?: boolean; sessionLimit?: boolean; resumeAt?: string } = {},
   ): Promise<void> {
     const route = await this.store.route({
       orgId: stimulus.orgId,
@@ -6132,7 +6373,12 @@ export class AgentSessionManager
       await this.store.setHalted(stimulus.jobId, true).catch(() => undefined);
       return;
     }
-    const meta = { source: 'system_operator', ...(opts.retryable ? { retryable: true } : {}) };
+    const meta = {
+      source: 'system_operator',
+      ...(opts.retryable ? { retryable: true } : {}),
+      ...(opts.sessionLimit ? { sessionLimit: true } : {}),
+      ...(opts.resumeAt ? { resumeAt: opts.resumeAt } : {}),
+    };
     try {
       await this.surface.post(channel, text, {
         threadTs,
@@ -6171,6 +6417,8 @@ export class AgentSessionManager
  *  the buffer before the operator sees it. */
 /** How often the leader re-drives any operator message still undelivered (the at-least-once chat sweep). */
 const CHAT_SWEEP_INTERVAL_MS = 30_000;
+/** SchedulerRegistry interval name (process-unique) for the leader-gated chat-delivery sweep. */
+const CHAT_SWEEP_INTERVAL = 'brain:chat-delivery-sweep';
 
 /**
  * How long a `codex_reviews` row must sit `running` before the work-owed backstop treats it as STRANDED
@@ -6706,7 +6954,7 @@ function doneDeliveryStimulus(input: {
   orgId: string;
   repoId: string;
   body: string;
-  seedDoneWake: { threadId: string; reason: 'final' | 'notable' };
+  seedDoneWake: { threadId: string; reason: 'final' | 'notable'; gen: number };
   seedRow?: SeedRow;
 }): ChatStimulus {
   return {
@@ -6936,9 +7184,9 @@ function errText(err: unknown): string {
  */
 function normalizeThreads(
   raw: unknown,
-): { title: string; type: string; steps: PlannedStep[] }[] {
+): { title: string; type: ThreadType; steps: PlannedStep[] }[] {
   const arr = Array.isArray(raw) ? raw : [];
-  const out: { title: string; type: string; steps: PlannedStep[] }[] = [];
+  const out: { title: string; type: ThreadType; steps: PlannedStep[] }[] = [];
   for (const s of arr) {
     if (!s || typeof s !== 'object') continue;
     const o = s as {
@@ -6949,12 +7197,9 @@ function normalizeThreads(
     };
     const title = String(o.title ?? o.brief ?? '').trim();
     if (!title) continue;
-    // Scope type selects the review agents (THREAD_TYPES), but allow-other — a non-enum value is stored
-    // verbatim (lowercased); default 'general' when absent (the prompt asks the brain to set one).
-    const type =
-      String(o.type ?? '')
-        .trim()
-        .toLowerCase() || 'general';
+    // Scope type is the deterministic routing key for review-lens selection: coerced to the closed
+    // THREAD_TYPES vocabulary, with any unrecognized/empty value falling back to 'general'.
+    const type = coerceThreadType(o.type);
     const stepsRaw = Array.isArray(o.steps) ? o.steps : [];
     const steps: PlannedStep[] = [];
     for (const p of stepsRaw) {

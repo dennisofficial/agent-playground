@@ -207,6 +207,15 @@ export class DockerodeContainerEngine implements ContainerEngine {
     }
   }
 
+  async disconnectNetwork(id: string, network: string): Promise<void> {
+    try {
+      await this.docker.getNetwork(network).disconnect({ Container: id, Force: true });
+    } catch (err) {
+      // Not on the network / no such network/container → already in the desired state.
+      if (!/not connected|no such|is not connected|404/i.test(String(err))) throw err;
+    }
+  }
+
   async execDetached(
     id: string,
     argv: string[],

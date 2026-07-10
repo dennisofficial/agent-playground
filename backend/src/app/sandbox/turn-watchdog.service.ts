@@ -3,9 +3,11 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import type { Subscription } from 'rxjs';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { LeaderElectionService } from '../cluster';
@@ -16,6 +18,8 @@ import { TurnRegistry } from './turn-registry.service';
 const DEFAULT_STALE_MS = 90_000;
 /** How often the leader sweeps for dead turns. */
 const SWEEP_INTERVAL_MS = 30_000;
+/** SchedulerRegistry interval name (process-unique) for the leader-gated dead-turn sweep. */
+const WATCHDOG_INTERVAL = 'sandbox:turn-watchdog';
 
 /**
  * LEADER-ONLY watchdog for Redis-transport turns (`active_turns`). The ephemeral in-container engine
@@ -33,13 +37,15 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
   private readonly logger = new Logger(TurnWatchdogService.name);
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
-  private timer?: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly registry: TurnRegistry,
     private readonly election: LeaderElectionService,
     private readonly env: EnvService,
     @Inject(REDIS_STREAM_PORT) private readonly redis: RedisStreamPort,
+    // Prod always injects the scheduler (global ScheduleModule); unit tests omit it and never promote, so
+    // the watchdog never starts there.
+    @Optional() private readonly scheduler?: SchedulerRegistry,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -58,7 +64,8 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
   }
 
   private start(): void {
-    if (this.timer) return;
+    if (!this.scheduler) return;
+    if (this.scheduler.doesExist('interval', WATCHDOG_INTERVAL)) return;
     // Boot grace: stamp a fresh heartbeat on every running turn BEFORE the first sweep, then reconcile.
     // Heartbeats are relayed by an attached host, so a restart freezes them; without this, a turn whose
     // engine is alive but whose DB heartbeat aged past the stale window would be finalized the instant we
@@ -67,15 +74,16 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
       .touchAllRunningHeartbeats()
       .catch((err) => this.logger.debug(`watchdog boot heartbeat touch failed (ignored): ${err}`))
       .finally(() => void this.sweep());
-    this.timer = setInterval(() => void this.sweep(), SWEEP_INTERVAL_MS);
-    if (typeof this.timer.unref === 'function') this.timer.unref();
+    const iv = setInterval(() => void this.sweep(), SWEEP_INTERVAL_MS);
+    iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
+    this.scheduler.addInterval(WATCHDOG_INTERVAL, iv);
     this.logger.log('turn watchdog started (leader)');
   }
 
   private stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
+    // deleteInterval clears the interval AND removes it from the registry.
+    if (this.scheduler?.doesExist('interval', WATCHDOG_INTERVAL)) {
+      this.scheduler.deleteInterval(WATCHDOG_INTERVAL);
     }
   }
 
