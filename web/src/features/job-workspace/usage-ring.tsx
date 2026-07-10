@@ -17,6 +17,20 @@ function ringColor(pct: number): string {
   return "var(--accent)";
 }
 
+/** Compact "time since" for the panel's last-updated stamp. Returns null for missing/unparseable input. */
+function timeAgo(iso: string | undefined, now: number = Date.now()): string | null {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return null;
+  const secs = Math.max(0, Math.round((now - then) / 1000));
+  if (secs < 45) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 function Ring({
   pct,
   size,
@@ -154,11 +168,22 @@ export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }
             <WindowRow label="Opus (7d)" window={data?.sevenDayOpus ?? null} />
             <WindowRow label="Sonnet (7d)" window={data?.sevenDaySonnet ?? null} />
           </div>
-          {data && data.ok === false ? (
-            <div className="mt-2 text-[10px] text-faint">
-              Usage is unavailable right now.
-            </div>
-          ) : null}
+          {(() => {
+            const hasAnyWindow = Boolean(
+              data?.fiveHour ??
+                data?.sevenDay ??
+                data?.sevenDayOpus ??
+                data?.sevenDaySonnet,
+            );
+            const updated = hasAnyWindow ? timeAgo(data?.fetchedAt) : null;
+            return (
+              <div className="mt-2 border-t pt-1.5 text-[10px] text-faint" style={{ borderColor: "var(--border)" }}>
+                {hasAnyWindow
+                  ? `Updated ${updated ?? "recently"}`
+                  : "Usage is unavailable right now."}
+              </div>
+            );
+          })()}
         </div>
       ) : null}
     </div>

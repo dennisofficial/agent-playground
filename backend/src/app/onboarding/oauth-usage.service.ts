@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Injectable, Logger } from '@nestjs/common';
-import type { OrgUsage, UsageWindow } from '@workspace/shared';
+import type { ClaudeUsageWindowKey, OrgUsage, UsageWindow } from '@workspace/shared';
 import { resetEpochToIso } from '../engine/session-limit';
 import { CredentialResolver } from './credential-resolver.service';
+import { TenantCredentialStore } from './tenant-credential.store';
 
 /** The four subscription rate-limit windows the SDK/API report, in `OrgUsage`'s field names. */
-type WindowKey = 'fiveHour' | 'sevenDay' | 'sevenDayOpus' | 'sevenDaySonnet';
+type WindowKey = ClaudeUsageWindowKey;
 
 /** SDK/API `rateLimitType` string → the `OrgUsage` field it fills. */
 const RATE_LIMIT_TYPE_TO_WINDOW: Record<string, WindowKey> = {
@@ -32,12 +33,6 @@ const FETCH_TIMEOUT_MS = 10_000;
 
 const FALLBACK_CLAUDE_CODE_VERSION = '2.1.204';
 
-/** Per-org snapshot of windows harvested from live turns (`applyHarvest`), plus when it was last touched. */
-type HarvestSnapshot = {
-  windows: Partial<Record<WindowKey, NonNullable<UsageWindow>>>;
-  fetchedAt: number;
-};
-
 type LiveCacheEntry = {
   usage: OrgUsage;
   fetchedAtMs: number;
@@ -60,20 +55,22 @@ export class OauthUsageService {
   private readonly logger = new Logger(OauthUsageService.name);
   private readonly claudeCodeVersion = resolveClaudeCodeVersion();
 
-  private readonly harvested = new Map<string, HarvestSnapshot>();
   private readonly liveCache = new Map<string, LiveCacheEntry>();
 
-  constructor(private readonly credentials: CredentialResolver) {}
+  constructor(
+    private readonly credentials: CredentialResolver,
+    private readonly store: TenantCredentialStore,
+  ) {}
 
   /**
    * PRIMARY. Fold one SDK `rate_limit_event` frame (or the engine's `kind:'rate_limit'` mirror of it)
    * into the org's snapshot. Ignores frames that don't carry a recognized window + both fields — never
    * throws, since this rides the hot turn-event path.
    */
-  applyHarvest(
+  async applyHarvest(
     orgId: string,
     info: { status?: string; resetsAt?: number; rateLimitType?: string; utilization?: number },
-  ): void {
+  ): Promise<void> {
     try {
       // The SDK reports `resetsAt` in epoch SECONDS; `resetEpochToIso` normalizes that (and tolerates a
       // caller that already passes ms, e.g. the park sites). Drop frames with no usable reset instant.
@@ -89,10 +86,7 @@ export class OauthUsageService {
       if (!rateLimitType) return;
       const key = RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType];
       if (!key) return;
-      const snapshot = this.harvested.get(orgId) ?? { windows: {}, fetchedAt: 0 };
-      snapshot.windows[key] = { utilization, resetsAt };
-      snapshot.fetchedAt = Date.now();
-      this.harvested.set(orgId, snapshot);
+      await this.store.mergeClaudeUsageWindow(orgId, key, { utilization, resetsAt }, Date.now());
     } catch (err) {
       this.logger.warn(`applyHarvest failed org=${orgId}: ${err}`);
     }
@@ -142,19 +136,27 @@ export class OauthUsageService {
    * known from either source.
    */
   async get(orgId: string): Promise<OrgUsage> {
-    const snapshot = this.harvested.get(orgId);
+    const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
     const harvestWindows = snapshot?.windows ?? {};
     const harvestIsEmpty = Object.keys(harvestWindows).length === 0;
     const harvestIsStale = !snapshot || Date.now() - snapshot.fetchedAt >= LIVE_FLOOR_MS;
 
     const live = harvestIsEmpty || harvestIsStale ? await this.liveSnapshot(orgId) : undefined;
 
+    // `fetchedAt` is the "last updated" the UI shows — the instant the SERVED data was actually captured,
+    // NOT response-assembly time. Harvested windows take precedence, so their capture time (`snapshot.fetchedAt`)
+    // is the meaningful stamp; fall back to the live-fetch time (now) when there's no harvest to show.
+    const fetchedAt =
+      !harvestIsEmpty && snapshot
+        ? new Date(snapshot.fetchedAt).toISOString()
+        : new Date().toISOString();
+
     const merged: OrgUsage = {
       fiveHour: harvestWindows.fiveHour ?? live?.fiveHour ?? null,
       sevenDay: harvestWindows.sevenDay ?? live?.sevenDay ?? null,
       sevenDayOpus: harvestWindows.sevenDayOpus ?? live?.sevenDayOpus ?? null,
       sevenDaySonnet: harvestWindows.sevenDaySonnet ?? live?.sevenDaySonnet ?? null,
-      fetchedAt: new Date().toISOString(),
+      fetchedAt,
       source: !harvestIsEmpty ? 'harvested' : live?.ok ? 'usage_api' : 'stale',
       ok: !harvestIsEmpty || !!live?.ok,
     };
@@ -165,8 +167,8 @@ export class OauthUsageService {
    * The binding window's `resetsAt` for the park logic — prefers `rateLimitType`'s window, else
    * `fiveHour`. Pure snapshot read (no HTTP): the park path needs an answer NOW, not after a 10s probe.
    */
-  getResetAt(orgId: string, rateLimitType?: string): string | undefined {
-    const snapshot = this.harvested.get(orgId);
+  async getResetAt(orgId: string, rateLimitType?: string): Promise<string | undefined> {
+    const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
     if (!snapshot) return undefined;
     const key = (rateLimitType && RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType]) || 'fiveHour';
     return snapshot.windows[key]?.resetsAt;

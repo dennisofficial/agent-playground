@@ -17,3 +17,11 @@ export type OrgUsage = {
   /** false => degraded (both sources unavailable) → UI shows "unknown" instead of the windows. */
   ok: boolean;
 };
+
+export type StoredUsageWindow = { utilization: number; resetsAt: string };
+export type ClaudeUsageWindowKey = 'fiveHour' | 'sevenDay' | 'sevenDayOpus' | 'sevenDaySonnet';
+/** Durable per-credential-row usage snapshot (org_credentials.claude_usage_snapshot). fetchedAt = epoch ms. */
+export type ClaudeUsageSnapshot = {
+  windows: Partial<Record<ClaudeUsageWindowKey, StoredUsageWindow>>;
+  fetchedAt: number;
+};

@@ -1965,7 +1965,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       appendBlockOnce: vi.fn().mockResolvedValue(undefined),
     } as unknown as BlockSink;
     const taskSink = { applyTaskEvent: vi.fn().mockResolvedValue(undefined) } as unknown as TaskEventSink;
-    const usage = { applyHarvest: vi.fn() } as unknown as OauthUsageService;
+    const usage = { applyHarvest: vi.fn().mockResolvedValue(undefined) } as unknown as OauthUsageService;
     const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink, usage);
     const driverStore = {
       getPipelineState: vi.fn().mockResolvedValue({ status: 'no_job' }),

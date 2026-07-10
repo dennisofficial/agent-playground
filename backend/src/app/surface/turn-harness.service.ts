@@ -405,12 +405,14 @@ export class TurnHarnessFactory {
             // Harvest-only: fold this org's window straight into the usage snapshot. No durable block, no
             // extra live frame beyond the `liveTurns.push` above — the ring/popover reads it via `get()`.
             if (orgId) {
-              this.usage.applyHarvest(orgId, {
-                status: e.status,
-                resetsAt: e.resetsAt,
-                rateLimitType: e.rateLimitType,
-                utilization: e.utilization,
-              });
+              void this.usage
+                .applyHarvest(orgId, {
+                  status: e.status,
+                  resetsAt: e.resetsAt,
+                  rateLimitType: e.rateLimitType,
+                  utilization: e.utilization,
+                })
+                .catch(() => undefined);
             }
             break;
           }

@@ -2123,19 +2123,22 @@ export class AgentSessionManager
     // reset (or the operator Force-resumes via `POST …/retry-turn`); every un-park path clears the clock.
     if (result.sessionLimit) {
       const rlType = result.sessionLimit.rateLimitType;
-      const resumeAt = result.sessionLimit.resetAt ?? this.usage.getResetAt(stimulus.orgId, rlType);
+      const resumeAt =
+        result.sessionLimit.resetAt ?? (await this.usage.getResetAt(stimulus.orgId, rlType));
       // The Main lane has no `halt`, so the durable clock IS the park marker: when no precise reset is known,
       // seed a BOUNDED default (now + shortest window) so the leader sweep auto-resumes and a process restart
       // still has something to resume — a null clock would strand the lane on manual Force-resume only.
       const resumeClock = resumeAt ?? defaultResumeAt();
       // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
       // reset — covers the text-fallback path too (no `rate_limit_event` frame was harvested).
-      this.usage.applyHarvest(stimulus.orgId, {
-        status: 'rejected',
-        rateLimitType: rlType,
-        resetsAt: new Date(resumeClock).getTime(),
-        utilization: 100,
-      });
+      void this.usage
+        .applyHarvest(stimulus.orgId, {
+          status: 'rejected',
+          rateLimitType: rlType,
+          resetsAt: new Date(resumeClock).getTime(),
+          utilization: 100,
+        })
+        .catch(() => undefined);
       const resetSource: 'usage_api' | 'parsed_string' = rlType ? 'usage_api' : 'parsed_string';
       const reason = `Claude session limit${rlType ? ` (${rlType})` : ''}${resumeAt ? `; resets ${resumeAt}` : ''}`;
       await this.store

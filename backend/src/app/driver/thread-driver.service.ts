@@ -592,19 +592,21 @@ export class ThreadDriver implements JobDispatcher {
         const orgId = job?.orgId;
         // Resume-clock precedence (d5): the engine's precise reset instant → the org's harvested usage window.
         const resumeAt =
-          limit.resetAt ?? (orgId ? this.usage.getResetAt(orgId, limit.rateLimitType) : undefined);
+          limit.resetAt ?? (orgId ? await this.usage.getResetAt(orgId, limit.rateLimitType) : undefined);
         // When neither yields a precise instant, park on a BOUNDED default clock (now + shortest window) so the
         // leader sweep still auto-resumes — a null clock would only ever be Force-resumed by hand.
         const resumeClock = resumeAt ?? defaultResumeAt();
         // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
         // reset — this also covers the text-fallback path, which carries no `rate_limit_event` frame to harvest.
         if (orgId)
-          this.usage.applyHarvest(orgId, {
-            status: 'rejected',
-            rateLimitType: limit.rateLimitType,
-            resetsAt: new Date(resumeClock).getTime(),
-            utilization: 100,
-          });
+          void this.usage
+            .applyHarvest(orgId, {
+              status: 'rejected',
+              rateLimitType: limit.rateLimitType,
+              resetsAt: new Date(resumeClock).getTime(),
+              utilization: 100,
+            })
+            .catch(() => undefined);
         // A structured `rateLimitType` means the reset came from the usage frame/API; its absence means the
         // engine fell back to parsing the CLI's printed "resets …" string.
         const resetSource: 'usage_api' | 'parsed_string' = limit.rateLimitType ? 'usage_api' : 'parsed_string';

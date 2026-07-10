@@ -33,7 +33,7 @@ function setup() {
     }),
   };
   const taskSink: TaskEventSink = { applyTaskEvent: vi.fn(async () => undefined) };
-  const usage = { applyHarvest: vi.fn() } as unknown as OauthUsageService;
+  const usage = { applyHarvest: vi.fn().mockResolvedValue(undefined) } as unknown as OauthUsageService;
   return { live, persisted, taskSink, factory: new TurnHarnessFactory(live, sink, taskSink, usage) };
 }
 

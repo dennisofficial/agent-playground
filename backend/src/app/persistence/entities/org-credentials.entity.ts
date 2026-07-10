@@ -1,4 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
+import type { ClaudeUsageSnapshot } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 
@@ -50,4 +51,8 @@ export class OrgCredentialsEntity extends TimestampedEntity {
   /** When the Anthropic key was last validated (1-token probe); null until validated. */
   @Column({ type: 'timestamptz', nullable: true })
   llm_validated_at!: Date | null;
+
+  /** Durable Claude subscription usage snapshot (harvested from rate_limit_event frames). Plaintext — not a secret. */
+  @Column({ type: 'jsonb', nullable: true })
+  claude_usage_snapshot!: ClaudeUsageSnapshot | null;
 }
