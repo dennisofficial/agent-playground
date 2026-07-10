@@ -74,12 +74,20 @@ export class OauthUsageService {
     info: { status?: string; resetsAt?: number; rateLimitType?: string; utilization?: number },
   ): void {
     try {
-      if (!info.rateLimitType || info.utilization == null || info.resetsAt == null) return;
-      const key = RATE_LIMIT_TYPE_TO_WINDOW[info.rateLimitType];
+      if (info.resetsAt == null) return;
+      // A `rejected` frame IS the hard limit — the window is full by definition, so paint it 100% even
+      // when the frame omits `utilization`, and default an unlabeled rejection to the session window (the
+      // binding day-to-day one). Non-rejected frames still require a real `utilization` to record.
+      const rejected = info.status === 'rejected';
+      const utilization = rejected ? 100 : info.utilization;
+      if (utilization == null) return;
+      const rateLimitType = info.rateLimitType ?? (rejected ? 'five_hour' : undefined);
+      if (!rateLimitType) return;
+      const key = RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType];
       if (!key) return;
       const snapshot = this.harvested.get(orgId) ?? { windows: {}, fetchedAt: 0 };
       snapshot.windows[key] = {
-        utilization: info.utilization,
+        utilization,
         resetsAt: new Date(info.resetsAt).toISOString(),
       };
       snapshot.fetchedAt = Date.now();

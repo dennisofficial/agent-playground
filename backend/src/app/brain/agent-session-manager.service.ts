@@ -2128,6 +2128,14 @@ export class AgentSessionManager
       // seed a BOUNDED default (now + shortest window) so the leader sweep auto-resumes and a process restart
       // still has something to resume — a null clock would strand the lane on manual Force-resume only.
       const resumeClock = resumeAt ?? defaultResumeAt();
+      // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
+      // reset — covers the text-fallback path too (no `rate_limit_event` frame was harvested).
+      this.usage.applyHarvest(stimulus.orgId, {
+        status: 'rejected',
+        rateLimitType: rlType,
+        resetsAt: new Date(resumeClock).getTime(),
+        utilization: 100,
+      });
       const resetSource: 'usage_api' | 'parsed_string' = rlType ? 'usage_api' : 'parsed_string';
       const reason = `Claude session limit${rlType ? ` (${rlType})` : ''}${resumeAt ? `; resets ${resumeAt}` : ''}`;
       await this.store
