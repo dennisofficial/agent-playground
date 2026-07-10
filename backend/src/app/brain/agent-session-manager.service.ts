@@ -2807,8 +2807,8 @@ export class AgentSessionManager
         };
       },
 
-      // Retract the ship-review gate (READY TO SHIP) back to planning — the tool sibling of the manual
-      // "Back to building" click. Calls the SAME `DriverStoreService.retractShip` CAS transition + card
+      // Retract the ship-review gate (READY TO SHIP) to `amending` — the tool sibling of the manual
+      // "Amend build" click. Calls the SAME `DriverStoreService.retractShip` CAS transition + card
       // neutralization the click uses (already injected here as `driverStore` — no ThreadDriver import
       // needed), so there is one authoritative retract regardless of who triggers it.
       withdraw_ship: async (args) => {
@@ -2823,12 +2823,12 @@ export class AgentSessionManager
         }
         await this.store.appendAtlasMessage(
           stimulus.jobId,
-          `↩︎ Ship-review retracted — back to planning for changes${reason ? `: ${reason}` : ''}.`,
+          `↩︎ Ship-review retracted — amending the build${reason ? `: ${reason}` : ''}.`,
         );
         return {
           ok: true,
           message:
-            'Ship-review retracted — the job is back in planning. Do the follow-up work; the ship gate ' +
+            'Ship-review retracted — the job is now **amending**. Do the follow-up work; the ship gate ' +
             're-arms automatically once it completes.',
         };
       },
@@ -5375,7 +5375,8 @@ export class AgentSessionManager
     if (!existing) return {};
     // Statuses past the approval gate (post-`awaiting_approval`) — never (re)propose over these. A build
     // FAILURE is now the orthogonal `halt` axis (JobStatus has no 'failed'/'paused'); a failed/paused job
-    // keeps its phase (typically 'running'), so it's still caught here.
+    // keeps its phase (typically 'running'), so it's still caught here. `amending` is deliberately NOT
+    // listed — like `planning`, it's a shaping state where a fresh propose_plan is allowed.
     const pastGate: JobStatus[] = ['running', 'awaiting_ship_review', 'done', 'cancelled', 'deleting'];
     if (pastGate.includes(existing.status)) {
       return { refuse: `This job is already '${existing.status}' — can’t (re)propose a plan for it.` };

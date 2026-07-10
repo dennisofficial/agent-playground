@@ -116,6 +116,8 @@ const STATUS_SHAPE: Record<
   awaiting_approval: "waiting",
   // The ship-review gate — the second "your move" bullseye, same shape as the plan-approval gate.
   awaiting_ship_review: "waiting",
+  // Ship review retracted — the built work is being amended; another "your move" gate, same shape.
+  amending: "waiting",
   done: "done",
   // A genuine operator-chosen terminal state (plan denied) — same muted static ring as deleting.
   cancelled: "paused",
