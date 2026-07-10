@@ -142,6 +142,7 @@ import {
 import type {
   EngineEvent,
   EngineRunnerPort,
+  GitAuth,
   ToolImpl,
   RunEngineArgs,
   EngineRunResult,
@@ -243,7 +244,7 @@ export class AgentSessionManager
    *  by the turn-end latch in `runChatTurn` (records the PR + flips done promptly). */
   private readonly directBuildShipPending = new Map<string, boolean>();
   /** Per-job resolved git auth (repo url + org PAT) for in-sandbox push/fetch — cached; see resolveBrainGitAuth. */
-  private readonly gitAuthByJob = new Map<string, { gitUrl: string; token?: string }>();
+  private readonly gitAuthByJob = new Map<string, GitAuth>();
   /**
    * SESSION-scoped `Edit`/`Write` grants for skills (`request_skill_edit_access`), keyed by jobId — in-memory
    * on this manager, per `ARCHITECTURE.md`'s halt-and-resume model: the grant is recorded HOST-side when the
@@ -352,13 +353,17 @@ export class AgentSessionManager
    */
   private async resolveBrainGitAuth(
     jobId: string,
-  ): Promise<{ gitUrl: string; token?: string } | undefined> {
+  ): Promise<GitAuth | undefined> {
     const cached = this.gitAuthByJob.get(jobId);
     if (cached) return cached;
     try {
       const job = await this.store.loadJob(jobId);
       const repo = await this.repos.resolve(job);
-      const auth = { gitUrl: repo.projectRepo.gitUrl, token: repo.token };
+      const auth = {
+        gitUrl: repo.projectRepo.gitUrl,
+        token: repo.token,
+        ...(repo.identity ? { identity: repo.identity } : {}),
+      };
       if (auth.gitUrl && auth.token) this.gitAuthByJob.set(jobId, auth);
       return auth;
     } catch (err) {
@@ -927,6 +932,10 @@ export class AgentSessionManager
       label: 'A harness system notification was delivered to Atlas.',
       chunkKey: `seed:generic:${stimulus.jobId}:${createHash('sha1').update(stimulus.body).digest('hex').slice(0, 16)}`,
     };
+    // Carry the raw payload the engine actually received so the console can reveal it on row-expand — but
+    // only when it differs from the short `label` (curated notices whose label already IS the full body
+    // don't need a redundant copy). See decision d1/d2.
+    const fullBody = stimulus.body !== row.label ? stimulus.body : undefined;
     void this.store
       .recordSystemChunk?.({
         jobId: stimulus.jobId,
@@ -935,6 +944,7 @@ export class AgentSessionManager
         chunkKey: row.chunkKey,
         ...(row.untrustedSource ? { untrustedSource: row.untrustedSource } : {}),
         ...(row.severity ? { severity: row.severity } : {}),
+        ...(fullBody ? { fullBody } : {}),
       })
       ?.catch((err: unknown) =>
         this.logger.debug(`persistSeedRow failed (best-effort): ${err}`),

@@ -7,7 +7,7 @@
  * These shapes live in THIS subfolder, never `domain/index.ts`. Zero imports from `harness/**` or the
  * v1 `slack-app` surface — the stage talks only to W1's `EngineRunner` + `LocalGitService`.
  */
-import type { EngineAuth, EngineHomeKey } from '../engine';
+import type { EngineAuth, EngineHomeKey, GitAuth } from '../engine';
 import type { SessionEngine } from '../domain';
 
 /** How severe a finding is — drives whether the fix turn is even attempted (see `fixMinSeverity`). */
@@ -153,7 +153,7 @@ export interface AutoFixContext {
    * the same `{ gitUrl, token }` the builder/gate turns carry). Absent → the fix turn can't push (host-local
    * / unit-test path).
    */
-  gitAuth?: { gitUrl: string; token?: string };
+  gitAuth?: GitAuth;
 
   // ── streaming identity (optional) ────────────────────────────────────────────────────────────
   // When BOTH `jobId` and `channel` are present, each review lens + the fix turn rides the shared

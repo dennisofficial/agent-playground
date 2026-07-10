@@ -51,6 +51,9 @@ export interface ThreadRealtimeRow extends Row {
   prMergeable: string | null;
   /** Observed PR lifecycle ('open'|'merged'|'closed'|null) — drives the sidebar PR-status glyph. */
   prState: string | null;
+  /** True only while a "Ship it" is being finalized (PR opening). Shipping re-uses the `running` status,
+   *  so this distinguishes "opening PR" from "building threads" and keeps the card in "Ready to Ship". */
+  shipping: boolean;
   /** Null when healthy; when set, the sidebar renders a red halt overlay from it. */
   halt: JobHalt | null;
 }
@@ -107,6 +110,8 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     ciStatus: (raw.ci_status as string | null) ?? null,
     prMergeable: (raw.pr_mergeable as string | null) ?? null,
     prState: (raw.pr_state as string | null) ?? null,
+    // Small timestamp col, always present in the `SELECT *` snapshot / WAL new-row image (never TOASTed).
+    shipping: status === 'running' && raw.ship_review_approved_at != null,
     halt: (raw.halt as JobHalt | null) ?? null,
   };
 }

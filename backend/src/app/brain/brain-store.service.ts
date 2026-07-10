@@ -261,6 +261,12 @@ export class BrainStoreService {
     /** `<untrusted>` provenance/severity — surfaced on the web's untrusted pill. */
     untrustedSource?: string;
     severity?: string;
+    /**
+     * The full raw payload delivered to the engine, when it differs from the short collapsed `text` label.
+     * Stashed in `meta` and revealed on row-expand in the console (mirrors `meta.compactionSummary`), so the
+     * operator can inspect the actual context injected into Atlas. Omit when `text` already IS the full body.
+     */
+    fullBody?: string;
     createdAt?: Date;
   }): Promise<void> {
     const dup = await this.messages
@@ -287,6 +293,7 @@ export class BrainStoreService {
             ? { untrustedSource: input.untrustedSource }
             : {}),
           ...(input.severity ? { severity: input.severity } : {}),
+          ...(input.fullBody ? { fullBody: input.fullBody } : {}),
         },
         ...(input.createdAt ? { created_at: input.createdAt } : {}),
       }),

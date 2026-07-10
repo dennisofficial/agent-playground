@@ -449,7 +449,16 @@ export const EVIDENCE_ARTIFACTS_NOTE =
   '`page.screenshot`), any report the run produced, and a top-level `RESULTS.md` that INDEXES what you ' +
   'validated, HOW (the exact commands/flows), the OBSERVED result, and links to each evidence file. Name ' +
   'files by scenario so the panel reads cleanly (e.g. `server-presence/jest-integration.log`, ' +
-  '`boot.png`). EVIDENCE, NOT CLAIMS: prefer a captured artifact over prose, and where something genuinely ' +
+  '`boot.png`). INSPECT WHAT YOU CAPTURED — capturing an artifact is NOT the same as validating: a ' +
+  'screenshot or log is not proof until you have actually LOOKED at it. Open every screenshot you take ' +
+  '(Read it back — images render visually) and read the tail of every log, and confirm it shows the ' +
+  'INTENDED state — the real UI/output you were validating, populated, with no error overlay. A screenshot ' +
+  'of an error page, a blank or half-loaded screen, a "connection lost" / "can\'t reach the server" gate, a ' +
+  '4xx/5xx, or a login wall is evidence the check FAILED, not that it passed — it means your target was ' +
+  'not actually exercised (often the environment was not fully up, e.g. only the frontend booted and the ' +
+  'backend was unreachable). Report that as a validation FAILURE (or an environment to FIX), and NEVER cite ' +
+  'it — or fall back to a stand-in like a bundle-string grep — as if it proved the change works. EVIDENCE, ' +
+  'NOT CLAIMS: prefer a captured artifact you have inspected over prose, and where something genuinely ' +
   'cannot be validated in this Linux sandbox (a Windows GUI app, real device hardware), SAY SO plainly in ' +
   'RESULTS.md — validate everything you can and mark the honest remainder, never fabricate a result.';
 
@@ -510,7 +519,12 @@ export const AUTHOR_LIVE_VALIDATION_NOTE =
   'RUNNING it and observing the result — `curl` the endpoint and check the body, drive the UI, run the CLI — ' +
   'and typecheck/build/test is only the FLOOR beneath that. For internal plumbing whose effect is never echoed ' +
   'in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), the proof is a log line from the booted ' +
-  'process showing the changed value was passed at runtime. This holds both ways: in a PLAN, author each ' +
+  'process showing the changed value was passed at runtime. And "SAW it run" means you actually LOOKED at ' +
+  'the result — an artifact you (or a subagent you delegated to) captured but never opened is not ' +
+  'observation, and a screenshot/log that shows an error or "connection lost"/unreachable state is a ' +
+  'FAILING check, not a passing one: before you rely on captured evidence — your own or a subagent\'s — open ' +
+  'it and confirm it shows the intended state, and never finalize on an artifact you did not inspect. This ' +
+  'holds both ways: in a PLAN, author each ' +
   "thread's `## Validation` as that live run and NEVER mark it " +
   LIVE_VALIDATION_NOT_OPTIONAL_NOTE +
   '; and on a DIRECT build you run yourself, live-validate before you finalize. The only work that validates by ' +

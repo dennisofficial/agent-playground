@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ArrowRight, FileText, PanelRight } from "lucide-react";
+import { ArrowRight, Check, Copy, FileText, PanelRight } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatBytes } from "@/lib/format";
 import {
@@ -42,7 +42,7 @@ import { codexReviewLane } from "./codex-review";
 import { resolveNode } from "./node-resolution";
 import { TranscriptView } from "./conversation";
 import { Composer, type ComposerFooter } from "./composer";
-import { DetailTopBar } from "./detail-top-bar";
+import { DetailTopBar, TopBarActions, TopBarButton } from "./detail-top-bar";
 import { ImageViewer } from "./image-viewer";
 import { ServiceLogView, serviceHeaderSubtitle } from "./service-log-view";
 import { TicketsRaisedPane } from "./tickets-raised-pane";
@@ -295,6 +295,9 @@ export function PhaseView({
     subtitle = fileQuery.data
       ? `${filePath} · ${formatBytes(fileQuery.data.size)}`
       : filePath;
+    actions = (
+      <TopBarActions copySlot={<FileCopyButton file={fileQuery.data} />} />
+    );
     body = (
       <FileView jobRef={jobRef} path={filePath} onSelectNode={onSelectNode} />
     );
@@ -1117,14 +1120,21 @@ function FileView({
     [repoTree.data],
   );
   const linkRepoFiles = path.startsWith("specs/");
-  // HTML artifacts render full-bleed: the sandboxed iframe fills the whole pane body, bypassing the padded,
-  // max-width prose wrapper that letterboxes every other file type.
+  // HTML and images render full-bleed: they fill the whole pane body, bypassing the padded prose wrapper.
   if (data?.mime === "text/html") {
     return <HtmlFileBody file={data} jobRef={jobRef} />;
   }
+  if (data?.mime.startsWith("image/")) {
+    return <ImageFileBody file={data} />;
+  }
+  // Everything else fills the pane width; only markdown keeps the readable max-width so long prose lines
+  // don't sprawl edge-to-edge.
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
-      <div ref={contentRef} className="max-w-[820px]">
+      <div
+        ref={contentRef}
+        className={data?.mime === "text/markdown" ? "max-w-[820px]" : undefined}
+      >
         {isLoading ? (
           <p className="font-mono text-[11.5px] text-faint">Loading…</p>
         ) : error ? (
@@ -1198,13 +1208,6 @@ function FileBody({
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  if (file.mime.startsWith("image/")) {
-    const src =
-      file.encoding === "base64"
-        ? `data:${file.mime};base64,${file.content}`
-        : `data:${file.mime};utf8,${encodeURIComponent(file.content)}`;
-    return <ImageViewer src={src} alt={file.name} />;
-  }
   if (file.content.trim() === "") {
     return (
       <p className="font-mono text-[11.5px] italic text-faint">
@@ -1241,9 +1244,111 @@ function FileBody({
     );
   }
   return (
-    <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-4 py-3 font-mono text-[12px] leading-relaxed text-dim">
+    <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-dim">
       {file.content}
     </pre>
+  );
+}
+
+/** Builds a `data:` URL for a context file's inline content (base64 or utf8-encoded). */
+function fileDataUrl(file: ContextFileContent): string {
+  return file.encoding === "base64"
+    ? `data:${file.mime};base64,${file.content}`
+    : `data:${file.mime};utf8,${encodeURIComponent(file.content)}`;
+}
+
+/** Image artifact viewer. Renders full-bleed — the viewer fills the entire pane body below the top bar. */
+function ImageFileBody({ file }: { file: ContextFileContent }) {
+  return <ImageViewer src={fileDataUrl(file)} alt={file.name} />;
+}
+
+/**
+ * Text-ish `application/*` mimes whose content is plain text worth copying. `text/*` is always copyable;
+ * `image/*` is copied as a PNG bitmap. Anything else (zip, pdf, octet-stream, …) can't be copied — the copy
+ * button hides itself for those.
+ */
+const COPYABLE_APPLICATION_MIMES = new Set([
+  "application/json",
+  "application/xml",
+  "application/javascript",
+  "application/x-yaml",
+  "application/yaml",
+  "application/toml",
+]);
+
+function fileCopyKind(mime: string): "text" | "image" | null {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("text/") || COPYABLE_APPLICATION_MIMES.has(mime))
+    return "text";
+  return null;
+}
+
+/** Re-encode any image data URL to a PNG blob via a canvas — browser clipboard image writes only accept PNG. */
+async function imageDataUrlToPngBlob(dataUrl: string): Promise<Blob> {
+  const img = new Image();
+  img.src = dataUrl;
+  await img.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not get a 2D canvas context for image copy.");
+  ctx.drawImage(img, 0, 0);
+  return await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (blob) =>
+        blob ? resolve(blob) : reject(new Error("Canvas produced no PNG blob.")),
+      "image/png",
+    ),
+  );
+}
+
+/**
+ * The file detail pane's working copy button, dropped into the top bar's copy slot. Copies text content for
+ * text/markdown/code/JSON files and the image (as PNG) for images; renders nothing for a file whose type
+ * can't be copied, so the copy action simply disappears for zips and other binaries.
+ */
+function FileCopyButton({ file }: { file: ContextFileContent | undefined }) {
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    },
+    [],
+  );
+
+  const kind = file ? fileCopyKind(file.mime) : null;
+  if (!file || !kind) return null;
+
+  async function copy() {
+    if (!file || !kind) return;
+    try {
+      if (kind === "image") {
+        const pngBlob = await imageDataUrlToPngBlob(fileDataUrl(file));
+        await navigator.clipboard.write([
+          new ClipboardItem({ "image/png": pngBlob }),
+        ]);
+      } else {
+        const text =
+          file.encoding === "base64" ? atob(file.content) : file.content;
+        await navigator.clipboard.writeText(text);
+      }
+      setCopied(true);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error("Copy failed", err);
+    }
+  }
+
+  return (
+    <TopBarButton
+      title={copied ? "Copied" : kind === "image" ? "Copy image" : "Copy file"}
+      onClick={copy}
+    >
+      {copied ? <Check size={15} /> : <Copy size={15} />}
+    </TopBarButton>
   );
 }
 

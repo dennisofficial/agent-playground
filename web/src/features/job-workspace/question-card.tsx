@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CheckCircle2, HelpCircle, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { Markdown } from "./markdown";
 import { useAnswerQuestion } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
@@ -147,6 +148,7 @@ export function QuestionCardView({
                 onClick={() => submit(other)}
               >
                 Send answer
+                <ShortcutHint />
               </Button>
               <Button
                 size="sm"

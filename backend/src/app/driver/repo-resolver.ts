@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Job } from '../domain';
-import { LocalGitService, parseGithubRepoUrl, type ProjectRepo } from '../git';
+import type { SandboxGitIdentity } from '../engine/engine.types';
+import {
+  GitIdentityService,
+  LocalGitService,
+  parseGithubRepoUrl,
+  type ProjectRepo,
+} from '../git';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity } from '../persistence/entities';
@@ -22,6 +28,8 @@ export interface ResolvedRepo {
   defaultBranch: string;
   /** The GitHub token for push + PR (env-resolved); undefined → public-only / no PR. */
   token?: string;
+  /** The commit identity of the PAT's GitHub account (resolved via GET /user); undefined → fail-open (git defaults). */
+  identity?: SandboxGitIdentity;
 }
 
 /** The narrow surface the driver consumes — resolve a thread's repo into a ready-to-use clone. */
@@ -40,6 +48,7 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
   constructor(
     private readonly creds: CredentialResolver,
     private readonly git: LocalGitService,
+    private readonly identities: GitIdentityService,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly projects: Repository<RepoEntity>,
   ) {}
@@ -60,6 +69,7 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
       );
     }
     const token = await this.creds.githubToken(thread.orgId);
+    const identity = await this.identities.resolve(token);
     // The repo's SLUG is the on-disk clone/worktree identity (human-readable), NOT the uuid id.
     const projectRepo = await this.git.ensureRepo({
       repoId: project.slug,
@@ -73,6 +83,7 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
       repo: parsed.repo,
       defaultBranch: projectRepo.defaultBranch,
       ...(token ? { token } : {}),
+      ...(identity ? { identity } : {}),
     };
   }
 }

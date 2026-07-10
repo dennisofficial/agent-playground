@@ -284,6 +284,38 @@ describe('GithubPrService.ensureWebhook', () => {
   });
 });
 
+describe('GithubPrService.getAuthenticatedUser', () => {
+  it('returns the parsed user on an ok response', async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        body: { login: 'octocat', id: 583231, name: 'The Octocat' },
+      },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    expect(await svc.getAuthenticatedUser('TOK123')).toEqual({
+      login: 'octocat',
+      id: 583231,
+      name: 'The Octocat',
+    });
+    expect(calls[0].url).toBe('https://api.github.com/user');
+    const headers = calls[0].init?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer TOK123');
+  });
+
+  it('returns null on a non-OK (401) response; the token never appears in output', async () => {
+    const { impl } = fakeFetch([
+      { status: 401, body: { message: 'Bad credentials' } },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const result = await svc.getAuthenticatedUser('SECRET');
+    expect(result).toBeNull();
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
+});
+
 describe('parseGithubRepoUrl', () => {
   it('parses owner/repo and drops .git; null on non-github', () => {
     expect(parseGithubRepoUrl('https://github.com/acme/app.git')).toEqual({

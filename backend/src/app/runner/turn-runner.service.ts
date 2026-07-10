@@ -10,6 +10,7 @@ import type {
   EngineHomeKey,
   EngineRunResult,
   EngineUsage,
+  GitAuth,
   ResolvedMcpServer,
   ResolvedSkill,
   ToolBridgeOptions,
@@ -60,7 +61,7 @@ export interface RunTurnInput {
    * inside the sandbox. Sourced from the RESOLVED repo, NOT `sandbox` (a row-sourced sandbox has empty
    * `gitUrl`/no token). Set by build/execute dispatch; the runner puts it on the docker `target`.
    */
-  gitAuth?: { gitUrl: string; token?: string };
+  gitAuth?: GitAuth;
   /**
    * Opt into RICH token-level streaming (thinking + tool calls/results + subagent forwarding). Build turns
    * pass this so they ride the shared transcript spine (a full transcript, not coarse text/tool/result).

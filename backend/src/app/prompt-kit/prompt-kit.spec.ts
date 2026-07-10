@@ -202,6 +202,19 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     }
   });
 
+  it('the evidence owners must INSPECT captured artifacts, not just capture them (PR #106 regression)', () => {
+    // The incident: a subagent captured a "can't reach the server" screenshot and cited it as proof
+    // without ever looking at it. The capture agents must be told to inspect what they captured.
+    for (const agent of [Agent.WORKER, Agent.VALIDATE]) {
+      const out = renderAgentPrompt(agent, { jobKind: 'feature' });
+      expect(out, String(agent)).toContain('INSPECT WHAT YOU CAPTURED');
+      expect(out, String(agent)).toContain('capturing an artifact is NOT the same as validating');
+    }
+    // The brain that finalizes must be told "SAW it run" means it LOOKED at the artifact.
+    const brain = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    expect(brain).toContain('never finalize on an artifact you did not inspect');
+  });
+
   it('the validate subagent renders a non-empty persona with its report contract', () => {
     const out = renderAgentPrompt(Agent.VALIDATE);
     expect(out.length).toBeGreaterThan(0);

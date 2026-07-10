@@ -40,6 +40,8 @@ interface RealtimeRow {
   prMergeable?: string | null;
   /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — WAL row is loosely typed like prState. */
   ciStatus?: string | null;
+  /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship". */
+  shipping?: boolean;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt?: WireJobHalt | null;
 }
@@ -119,6 +121,9 @@ export function useAllJobsRealtime(): void {
           activity: row.activity ?? next[idx].activity,
           needsYou: row.needsYou,
           halted: row.halted,
+          // Flips true→false exactly when status leaves `running` (ship finalize done), which also flips
+          // `status`, so the section re-group already re-renders — just keep the flag in sync.
+          shipping: row.shipping ?? false,
           // The flat WAL row carries no PR url — preserve the enriched one from the fetched row so a
           // live conflict→ready→merged transition re-glyphs without dropping the click-through link.
           pr: row.prState

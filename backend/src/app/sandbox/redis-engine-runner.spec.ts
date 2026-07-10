@@ -343,6 +343,41 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(env.env.GIT_TERMINAL_PROMPT).toBe('0');
     expect(env.env.GITHUB_TOKEN).toBe('tok-123');
     expect(env.env.GH_TOKEN).toBe('tok-123');
+    // No identity was supplied — the author/committer env vars are absent.
+    expect(env.env.GIT_AUTHOR_NAME).toBeUndefined();
+    expect(env.env.GIT_AUTHOR_EMAIL).toBeUndefined();
+    expect(env.env.GIT_COMMITTER_NAME).toBeUndefined();
+    expect(env.env.GIT_COMMITTER_EMAIL).toBeUndefined();
+  });
+
+  it('injects author/committer env vars when target.gitAuth carries an identity', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.run({
+      ...baseArgs(() => {}),
+      target: {
+        containerId: 'c1',
+        worktreeHost: '/wt',
+        gitAuth: {
+          gitUrl: 'https://github.com/o/r.git',
+          token: 'tok-123',
+          identity: {
+            name: 'The Octocat',
+            email: '583231+octocat@users.noreply.github.com',
+          },
+        },
+      },
+    });
+
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.GIT_AUTHOR_NAME).toBe('The Octocat');
+    expect(env.env.GIT_AUTHOR_EMAIL).toBe('583231+octocat@users.noreply.github.com');
+    expect(env.env.GIT_COMMITTER_NAME).toBe('The Octocat');
+    expect(env.env.GIT_COMMITTER_EMAIL).toBe('583231+octocat@users.noreply.github.com');
   });
 
   it('does NOT inject git auth into the exec env when target.gitAuth is absent', async () => {
