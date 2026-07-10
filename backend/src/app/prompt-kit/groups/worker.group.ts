@@ -6,6 +6,7 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
+import type { PromptCtx } from '../prompt-ctx';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
   DELETION_SAFETY_NOTE,
@@ -24,6 +25,11 @@ import {
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from '../fragments';
+
+// Gate for host-tool prose that only makes sense on the BATCH turn — where complete_thread, record_deviation,
+// and capture_ticket are actually registered. On gate/commit turns those tools aren't in the model's per-turn
+// list, so instructing them there would contradict its real tool set. Absent turnPhase ⇒ batch (back-compat).
+const batchOnly = (c: PromptCtx) => (c.turnPhase ?? 'batch') === 'batch';
 
 // Orchestrator note — the LIVE task list: the shared discipline (TASK_LIST_NOTE) plus the orchestrator's own
 // seeding rule — the list starts from the plan's steps.
@@ -106,18 +112,28 @@ export class WorkerGroup {
       "implemented, VERIFY: discover and run the repository's OWN typecheck/build/test tooling and FIX any " +
       'failures (use `debug`/`test` subagents) — do NOT claim done on a guess. If verification fails and you ' +
       'cannot fix it within scope, say so explicitly. ' +
-      COMPLETE_THREAD_NOTE +
-      MID_BUILD_ROUTING_NOTE +
-      ' ' +
       MONOREPO_VERIFY_HINT +
       ' ' +
       DELETION_SAFETY_NOTE +
-      ' ' +
-      DEVIATION_NOTE +
       ORCHESTRATOR_TASKLIST_NOTE +
       ORCHESTRATOR_SUBAGENTS_NOTE +
       PLAYGROUND_NOTE
     );
+  }
+
+  /** The typed terminal assertion + mid-build routing — instructs `complete_thread`, `record_deviation`,
+   *  `capture_ticket`, `request_operator_input`, `block_thread`. Only the BATCH turn registers these host
+   *  tools, so this is gated to the batch phase (gate/commit turns get a different, accurate tool set). */
+  @Fragment({ usedBy: [Agent.WORKER], order: 105, condition: batchOnly })
+  batchToolContract(): string {
+    return COMPLETE_THREAD_NOTE + MID_BUILD_ROUTING_NOTE;
+  }
+
+  /** DEVIATION flagging — leans on `record_deviation`/`capture_ticket`, batch-only host tools. Gated so the
+   *  gate/commit prompts don't instruct tools they can't call. */
+  @Fragment({ usedBy: [Agent.WORKER], order: 112, condition: batchOnly })
+  deviationFlagging(): string {
+    return DEVIATION_NOTE;
   }
 
   @Fragment({ usedBy: [Agent.WORKER], order: 400 })
@@ -169,7 +185,7 @@ export class WorkerGroup {
    *  Owned jointly with the `validate` subagent — the orchestrator DELEGATES the heavy live-validation +
    *  capture to `validate` (to keep its own context clean) and, if `validate` already wrote the bundle,
    *  does NOT recapture. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 430 })
+  @Fragment({ usedBy: [Agent.WORKER], order: 430, condition: batchOnly })
   evidenceArtifacts(): string {
     return (
       EVIDENCE_ARTIFACTS_NOTE +
