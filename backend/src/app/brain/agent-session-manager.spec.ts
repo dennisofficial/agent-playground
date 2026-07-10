@@ -2261,7 +2261,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }),
       steer,
     } as unknown as EngineRunnerPort;
-    const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
+    const liveTurns = { push: vi.fn(), end: vi.fn(), snapshot: vi.fn(() => null) } as unknown as LiveTurnStore;
     // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
     // end-to-end through the brain (push/end + the durable blocks) exactly as in production.
     const blockSink = {
