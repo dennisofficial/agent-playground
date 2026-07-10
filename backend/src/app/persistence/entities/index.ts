@@ -20,6 +20,7 @@ export * from './build-leg.entity';
 export * from './decision-record.entity';
 export * from './memory.entity';
 export * from './org-credentials.entity';
+export * from './org-claude-credential.entity';
 export * from './org-workspace-secret-file.entity';
 export * from './org-workspace-mount.entity';
 export * from './job-sandbox.entity';
@@ -49,6 +50,7 @@ import { BuildLegEntity } from './build-leg.entity';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { MemoryEntity } from './memory.entity';
 import { OrgCredentialsEntity } from './org-credentials.entity';
+import { OrgClaudeCredentialEntity } from './org-claude-credential.entity';
 import { OrgWorkspaceSecretFileEntity } from './org-workspace-secret-file.entity';
 import { OrgWorkspaceMountEntity } from './org-workspace-mount.entity';
 import { JobSandboxEntity } from './job-sandbox.entity';
@@ -80,6 +82,7 @@ export const ENTITIES = [
   DecisionRecordEntity,
   MemoryEntity,
   OrgCredentialsEntity,
+  OrgClaudeCredentialEntity,
   OrgWorkspaceSecretFileEntity,
   OrgWorkspaceMountEntity,
   JobSandboxEntity,

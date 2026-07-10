@@ -80,18 +80,25 @@ export const VIEW_PLAN_ACTION_ID = "atlas_approval:view_plan";
  *  plan stage), clicked while the job is `awaiting_ship_review`. POSTs to the SAME `/approve` endpoint with
  *  a `value` of just `{ jobId }` (no decision record — nothing to re-rule, just resume the build). */
 export const SHIP_ACTION_ID = "atlas_approval:ship";
-/** The ship-review gate's manual "Back to building" retract — sends `awaiting_ship_review → planning`
+/** The ship-review gate's manual "Amend build" retract — sends `awaiting_ship_review → amending`
  *  without discarding completed work (mirrors the Atlas `withdraw_ship` tool). POSTs to the SAME
  *  `/approve` endpoint with the ship card's `{ jobId }` value. Must match the backend string in
  *  `approval-blocks.ts`. */
 export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
+/** The brain's "Amend build?" PROPOSAL buttons (the `withdraw_ship` tool's card). Unlike the plain
+ *  ship-card retract, the gate stays parked until the operator approves: `Approve amend` runs the operator
+ *  retract AND wakes the brain; `Dismiss` just clears the card. Must match `approval-blocks.ts`. */
+export const AMEND_APPROVE_ACTION_ID = "atlas_approval:amend_approve";
+export const AMEND_DISMISS_ACTION_ID = "atlas_approval:amend_dismiss";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
   | typeof REQUEST_CHANGES_ACTION_ID
   | typeof DENY_ACTION_ID
   | typeof SHIP_ACTION_ID
-  | typeof RETRACT_SHIP_ACTION_ID;
+  | typeof RETRACT_SHIP_ACTION_ID
+  | typeof AMEND_APPROVE_ACTION_ID
+  | typeof AMEND_DISMISS_ACTION_ID;
 
 export interface ApprovalDecision {
   decisionClass: string;
@@ -118,9 +125,10 @@ export interface WebApprovalCard {
   /**
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
    * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
-   * `threads`/`decisions` empty).
+   * `threads`/`decisions` empty). `amend` — the brain's "Amend build?" proposal at the ship gate
+   * (`Approve amend` + `Dismiss`); the gate stays parked until approved.
    */
-  kind?: "plan" | "direct" | "ship";
+  kind?: "plan" | "direct" | "ship" | "amend";
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -529,6 +537,18 @@ export interface PipelineJob {
   currentBranch: string | null;
   baseBranch: string | null;
   threads: PipelineThread[];
+  /**
+   * Prior PLAN REVISIONS' build lanes as read-only, browsable history — present only once a re-propose over
+   * already-DONE work has forged a new revision (the common single-revision job sends `[]`/absent). Each
+   * entry is a superseded revision with its own executable lanes; `revision` is 1-based by age (oldest = v1).
+   * The navigator renders each as a collapsed "Previous plan (vN)" section below the active lanes.
+   */
+  priorRevisions?: {
+    decisionRecordId: string;
+    revision: number;
+    status: string;
+    threads: PipelineThread[];
+  }[];
 }
 
 /**
@@ -602,6 +622,13 @@ export interface ServiceInfo {
    * `unknown` (couldn't probe: no running container, null pgid/startedAt, or a transient exec failure).
    */
   status: "running" | "stopped" | "unknown";
+  /** The port the service declared via `atlas-svc run --port` (null = not an HTTP service). */
+  port: number | null;
+  /**
+   * Public HTTPS URL when the service is exposed (has a port, not opted out, running) and the
+   * backend's preview feature is on; otherwise null (feature off, or nothing to expose).
+   */
+  url: string | null;
 }
 
 // ── UI job model ───────────────────────────────────────────────────────────────────────────────
@@ -612,6 +639,7 @@ export type JobStatus =
   | "plan_review"
   | "awaiting_approval"
   | "awaiting_ship_review"
+  | "amending"
   | "done"
   | "triaging"
   | "cancelled"

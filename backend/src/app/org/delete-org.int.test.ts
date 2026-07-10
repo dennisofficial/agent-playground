@@ -13,7 +13,8 @@
  *
  * Integration: real Postgres (the dedicated `*_test` DB), an in-memory fake git (no actual clone) and a
  * fake docker-ish sandbox provider (no Docker). The real `JobLifecycleService` runs `deleteJobDeep`
- * per thread; `OrganizationService` resolves it via `ModuleRef` exactly as in production.
+ * per thread; `OrganizationService` reaches it through the injected `JOB_TEARDOWN` port (bound here to
+ * `JobLifecycleService` via `useExisting`, mirroring the @Global `DriverModule`) exactly as in production.
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -43,7 +44,8 @@ import {
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { DRIVER_REPO, JOB_TEARDOWN, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, WorktreeProvisioner } from '../driver';
+import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, JOB_TEARDOWN, WorktreeProvisioner } from '../driver';
+import { BrainGateway } from '../brain-gateway';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
 import { TicketService } from '../tickets';
 import { OrganizationService } from './organization.service';
@@ -79,13 +81,13 @@ class FakeGitService {
   async createBaseWorktree(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     return { repoId: repo.repoId, branch: 'main', worktreePath: `${repo.repoPath}/.worktrees/thread-${jobId}`, gitUrl: repo.gitUrl };
   }
+  async hasSubmodules(): Promise<boolean> {
+    return false;
+  }
   async switchBranch(sandbox: FeatureSandbox, _repo: ProjectRepo, featureBranch: string): Promise<FeatureSandbox> {
     return { ...sandbox, branch: featureBranch };
   }
   // Provision-path no-ops (no real git/cache/submodules/index in the fake).
-  async hasSubmodules(): Promise<boolean> {
-    return false;
-  }
   async createBaseClone(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     return this.createBaseWorktree(repo, jobId);
   }
@@ -219,7 +221,20 @@ beforeEach(async () => {
       { provide: TicketService, useValue: { revertForDeletedThread: async () => {} } },
       { provide: TurnRegistry, useValue: { failRunningForJob: async () => 0 } },
       { provide: SkillUpdaterService, useValue: { reconcileOrgAsync: () => undefined } },
+      // JobLifecycleService construct-depends on the neutral driver→brain BrainGateway; deleteOrg's
+      // teardown path never fires a brain wake, so an inert stub satisfies DI without being called.
+      {
+        provide: BrainGateway,
+        useValue: {
+          openPrAtShip: async () => {},
+          notifyThreadHalted: async () => {},
+          notifyThreadDone: async () => {},
+          wakeForProvisioningFailure: async () => {},
+        } as unknown as BrainGateway,
+      },
       JobLifecycleService,
+      // OrganizationService injects @Inject(JOB_TEARDOWN); the @Global DriverModule binds the token to
+      // JobLifecycleService via useExisting — mirror that here so DI resolves in this standalone module.
       { provide: JOB_TEARDOWN, useExisting: JobLifecycleService },
       OrganizationService,
     ],

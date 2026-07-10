@@ -17,6 +17,7 @@ import {
   BASELINE_FIRST_NOTE,
   CANDOR_NOTE,
   CLARITY_OVER_COMMENTS_NOTE,
+  DESIGN_DISCIPLINE_NOTE,
   DOC_VERSION_VERIFY_NOTE,
   MINIMAL_CODE_NOTE,
   RUNNABLE_WORKSPACE_NOTE,
@@ -67,6 +68,13 @@ export class BehavioralGroup {
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8030, condition: notReview })
   minimalCode(): string {
     return MINIMAL_CODE_NOTE;
+  }
+
+  /** DESIGN DISCIPLINE — the always-on recognition trigger for the `design-patterns` skill; rides on top of
+   *  MINIMAL_CODE_NOTE on the brain's plans + direct builds. Same nudge the worker + fan-out writers carry. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8031, condition: notReview })
+  designDiscipline(): string {
+    return DESIGN_DISCIPLINE_NOTE;
   }
 
   /** TYPESCRIPT TYPE STYLE — the brain authors code on direct builds + onboarding script fixes; same house

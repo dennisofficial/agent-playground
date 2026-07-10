@@ -32,10 +32,15 @@ import type {
   ThreadTerminalRecord,
 } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
-import { isDriverExecutableKind, laneDefaultFooter, threadKindSpec } from '../thread-kind';
+import {
+  coerceThreadType,
+  isDriverExecutableKind,
+  laneDefaultFooter,
+  threadKindSpec,
+} from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
-import { webVerdictCard } from '../surface/web-approval-card';
+import { webAmendProposalCard, webVerdictCard } from '../surface/web-approval-card';
 import type { PlannedStep } from './render-plan';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
@@ -352,8 +357,8 @@ export class DriverStoreService {
     return (res.affected ?? 0) > 0;
   }
 
-  /** Retract the ship-review gate back to planning (Atlas `withdraw_ship` tool OR the manual
-   *  "Back to building" click). CONDITIONAL on `awaiting_ship_review` — single-winner vs a racing
+  /** Retract the ship-review gate back to `amending` (Atlas `withdraw_ship` tool OR the manual
+   *  "Amend build" click). CONDITIONAL on `awaiting_ship_review` — single-winner vs a racing
    *  "Ship it" click; a stale/double retract is a no-op. Does NOT touch `ship_review_approved_at`
    *  (already null here) nor the decision record (the plan was approved — nothing to supersede).
    *  Also neutralizes EVERY still-actionable durable ship card so its inline "Ship it" button can't
@@ -364,7 +369,7 @@ export class DriverStoreService {
         .getRepository(JobEntity)
         .createQueryBuilder()
         .update(JobEntity)
-        .set({ status: 'planning', activity: 'idle' })
+        .set({ status: 'amending', activity: 'idle' })
         .where('id = :jobId', { jobId })
         .andWhere("status = 'awaiting_ship_review'")
         .execute();
@@ -381,12 +386,73 @@ export class DriverStoreService {
           jobId,
           title,
           'retracted',
-          '↩︎ Retracted — back to planning for changes.',
+          '↩︎ Retracted — amending the build.',
         ) as unknown as Record<string, unknown>;
         await messages.save(row);
       }
       return true;
     });
+  }
+
+  /**
+   * OPEN the brain's "Amend build?" proposal — posted by the `withdraw_ship` tool. Unlike `retractShip`,
+   * this does NOT flip the job status: the gate STAYS parked at `awaiting_ship_review` until the operator
+   * approves. It just posts a durable `kind:'amend'` proposal card carrying the brain's `reason`. Returns:
+   *  - `'not-parked'`  — the job isn't at the ship-review gate (nothing to propose)
+   *  - `'already-open'` — an actionable amend proposal card already exists (don't double-post)
+   *  - `'posted'`       — a fresh proposal card was written
+   * Keyed on a deterministic `ts` (`amend-proposal:${jobId}`) so `neutralizeAmendProposal` can find it.
+   */
+  async openAmendProposal(
+    jobId: string,
+    reason: string,
+  ): Promise<'posted' | 'not-parked' | 'already-open'> {
+    return this.dataSource.transaction(async (m) => {
+      const job = await m.getRepository(JobEntity).findOne({ where: { id: jobId } });
+      if (!job || job.status !== 'awaiting_ship_review') return 'not-parked';
+      const messages = m.getRepository(MessageEntity);
+      const existing = await messages.find({
+        where: { job_id: jobId, ts: `amend-proposal:${jobId}`, kind: 'card' },
+      });
+      // An amend proposal is still actionable while its card is an `approval_card` (a resolved one has been
+      // rewritten to a `verdict_card`). If one is live, don't stack a second.
+      if (existing.some((row) => (row.card as Record<string, unknown> | null)?.['type'] === 'approval_card')) {
+        return 'already-open';
+      }
+      await messages.save(
+        messages.create({
+          job_id: jobId,
+          author: 'Atlas',
+          author_id: 'atlas',
+          author_bot_id: 'atlas',
+          text: reason || 'Amend build?',
+          kind: 'card',
+          ts: `amend-proposal:${jobId}`,
+          card: webAmendProposalCard({ jobId, reason }) as unknown as Record<string, unknown>,
+        }),
+      );
+      return 'posted';
+    });
+  }
+
+  /**
+   * NEUTRALIZE the brain's amend proposal card — called on BOTH Approve and Dismiss so its buttons stop
+   * being actionable. Rewrites every still-actionable `amend-proposal:${jobId}` card to a `verdict_card`
+   * carrying `verdictLine`. Idempotent: already-neutralized rows (`verdict_card`) are skipped. Does NOT
+   * touch job status (the Approve path's retract handles that; Dismiss leaves the gate parked).
+   */
+  async neutralizeAmendProposal(jobId: string, verdictLine: string): Promise<void> {
+    const rows = await this.messages.find({
+      where: { job_id: jobId, ts: `amend-proposal:${jobId}`, kind: 'card' },
+    });
+    for (const row of rows) {
+      const card = row.card as Record<string, unknown> | null;
+      if (card?.['type'] !== 'approval_card') continue;
+      const title = String(card?.['title'] ?? 'Amend build?');
+      const verdict = verdictLine.toLowerCase().includes('dismiss') ? 'dismissed' : 'approved';
+      row.card = webVerdictCard(jobId, title, verdict, verdictLine) as unknown as Record<string, unknown>;
+      await this.messages.save(row);
+    }
   }
 
   /** Clear the ship-review approval marker so the NEXT build cycle re-gates. Called when a fresh build is
@@ -428,10 +494,19 @@ export class DriverStoreService {
 
   // ── threads ─────────────────────────────────────────────────────────────────────────────────
 
-  /** The thread's threads in execution order (ORDER BY ordinal). */
+  /**
+   * The job's threads for the ACTIVE plan revision, in execution order (ORDER BY ordinal). Scoped to
+   * `jobs.decision_record_id` so a superseded revision's threads (browsable history) are NEVER re-driven —
+   * without this, an old `master_review` or a prior revision's pending builder would re-run. NULL-record
+   * job-level singletons (`main`/`plan_review`) are excluded here (the two callers — `runJob` and the
+   * final-delivery gaps loop — want only executable active-revision rows; `main` is filtered out by
+   * `isDriverExecutableKind` anyway). A job with no active revision yet (early planning) matches the
+   * NULL-record rows, of which none are executable.
+   */
   async threadsForJob(jobId: string): Promise<DriverThread[]> {
+    const job = await this.jobs.findOne({ where: { id: jobId } });
     const rows = await this.threads.find({
-      where: { job_id: jobId },
+      where: { job_id: jobId, decision_record_id: job?.decision_record_id ?? IsNull() },
       order: { ordinal: 'ASC' },
     });
     return rows.map(toThread);
@@ -668,6 +743,25 @@ export class DriverStoreService {
   async getThreadTasks(threadId: string): Promise<TaskItem[]> {
     const row = await this.threads.findOne({ where: { id: threadId }, select: { id: true, tasks: true } });
     return Array.isArray(row?.tasks) ? row!.tasks : [];
+  }
+
+  /** Host backstop for a thread that reached `done` with an unreconciled checklist: flip every still-open task
+   *  (`pending`/`in_progress`) to `dropped` — NOT `completed` (the host must not claim work it did not verify;
+   *  a `dropped` row renders struck-through / drops out of the live navigator checklist).
+   *  Returns how many were flipped. A plain read-modify-write is safe here: this runs at the done transition,
+   *  after the thread's turn(s) have finished, so no concurrent task fold races it. */
+  async dropOpenThreadTasks(threadId: string): Promise<number> {
+    const tasks = await this.getThreadTasks(threadId);
+    let dropped = 0;
+    const next = tasks.map((t) => {
+      if (t.status === 'pending' || t.status === 'in_progress') {
+        dropped++;
+        return { ...t, status: 'dropped' as const };
+      }
+      return t;
+    });
+    if (dropped > 0) await this.threads.update({ id: threadId }, { tasks: next });
+    return dropped;
   }
 
   /** Live single-thread read (not the run-start snapshot). Used to detect a thread a concurrent/stale drive
@@ -1187,12 +1281,16 @@ export class DriverStoreService {
         childrenByParent.set(t.parent_thread_id, list);
       }
     }
-    // The top-level `threads` array is the driver-EXECUTABLE roots (builder + master_review). `main` renders
-    // as the navigator's always-first Main row (from `main_tasks`); `plan_review` renders as its own Codex
-    // review row (below) — both from their own sources, so they're excluded from this build-lane list.
-    const threads = allThreads.filter(
+    // The top-level `threads` array is the driver-EXECUTABLE roots (builder + master_review) FOR THE ACTIVE
+    // PLAN REVISION. `main` renders as the navigator's always-first Main row (from `main_tasks`);
+    // `plan_review` renders as its own Codex review row (below) — both from their own sources, so they're
+    // excluded from this build-lane list. Prior revisions' roots are surfaced separately as `priorRevisions`
+    // (browsable history) — see below.
+    const activeRecordId = thread.decision_record_id;
+    const rootExecutable = allThreads.filter(
       (t) => t.parent_thread_id == null && isDriverExecutableKind(t.kind),
     );
+    const threads = rootExecutable.filter((t) => t.decision_record_id === activeRecordId);
     // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue Main communicates with). It's
     // its own thread (`kind='plan_review'`), but its runtime + transcript live on the `codex-review:<jobId>`
     // lane + the `codex_reviews` row (the authoritative status). Surface it when EITHER exists (a new job has
@@ -1231,6 +1329,54 @@ export class DriverStoreService {
       list.push(l);
       legsByThread.set(l.thread_id, list);
     }
+    // The per-root-thread → pipeline-node mapper, shared by the ACTIVE lanes and every historical revision's
+    // lanes (so history renders identically, just read-only in the web).
+    const mapPipelineThread = (s: ThreadEntity) => ({
+      id: s.id,
+      ordinal: s.ordinal,
+      brief: s.brief,
+      type: coerceThreadType(s.type),
+      status: s.status,
+      condition: s.condition,
+      // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's kind.
+      defaultFooter: laneDefaultFooter(s.kind),
+      // Derived from `kind` (the `is_master_review` column is gone) — the web keys "Master review"
+      // rendering off this field. `kind` is also surfaced directly for the data-driven tree.
+      kind: s.kind,
+      isMasterReview: s.kind === 'master_review',
+      hasPlan: s.plan != null,
+      // The builder's review CHILD threads (review_lens × N + post_review) — each a first-class row with
+      // its own status + findings + streaming lane. The web renders the review sub-tree directly from
+      // these (bare child-thread nodes). A master-review thread has no children (it IS the review).
+      children: pipelineReviewChildren(s, childrenByParent.get(s.id) ?? []),
+      // The thread's own LLM-authored task list — no fallback default, same rationale as the job-level
+      // field above.
+      tasks: Array.isArray(s.tasks) ? s.tasks : [],
+      // Build Legs (context-rot rotation): one navigable row per engine session, with the handoff pill each
+      // rotated Leg authored. Empty for a thread that never rotated (the web renders a single implicit Leg).
+      legs: pipelineLegs(legsByThread.get(s.id) ?? []),
+      steps: mapBatchedSteps(stepsByThread.get(s.id) ?? []),
+    });
+    // PRIOR PLAN REVISIONS (browsable, immutable history). Only present once a re-propose over already-DONE
+    // work has forged a new revision (see `persistPlan`); the common single-revision job returns `[]`. Each
+    // record maps to its own root executable lanes; the ACTIVE record is excluded (it's `threads` above).
+    // Revision numbers are derived by `created_at` order (oldest = v1). Only revisions that actually
+    // materialized build lanes are surfaced (a bare superseded planning-loop draft has none → skipped).
+    const records = await this.records
+      .find({ where: { job_id: thread.id }, order: { created_at: 'ASC' } })
+      .catch(() => [] as DecisionRecordEntity[]);
+    const priorRevisions = records
+      .map((rec, i) => ({ rec, revision: i + 1 }))
+      .filter(({ rec }) => rec.id !== activeRecordId)
+      .map(({ rec, revision }) => ({
+        decisionRecordId: rec.id,
+        revision,
+        status: rec.status,
+        threads: rootExecutable
+          .filter((t) => t.decision_record_id === rec.id)
+          .map(mapPipelineThread),
+      }))
+      .filter((r) => r.threads.length > 0);
     return {
       jobId: thread.id,
       title: thread.title,
@@ -1268,32 +1414,9 @@ export class DriverStoreService {
       // The Main (brain) lane's pre-turn footer default — the web renders Main from `mainTasks` (it's not in
       // the `threads` array), so it needs its own default carrier for the pre-first-turn footer.
       mainDefaultFooter: laneDefaultFooter('main'),
-      threads: threads.map((s) => ({
-        id: s.id,
-        ordinal: s.ordinal,
-        brief: s.brief,
-        type: s.type,
-        status: s.status,
-        condition: s.condition,
-        // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's kind.
-        defaultFooter: laneDefaultFooter(s.kind),
-        // Derived from `kind` (the `is_master_review` column is gone) — the web keys "Master review"
-        // rendering off this field. `kind` is also surfaced directly for the data-driven tree.
-        kind: s.kind,
-        isMasterReview: s.kind === 'master_review',
-        hasPlan: s.plan != null,
-        // The builder's review CHILD threads (review_lens × N + post_review) — each a first-class row with
-        // its own status + findings + streaming lane. The web renders the review sub-tree directly from
-        // these (bare child-thread nodes). A master-review thread has no children (it IS the review).
-        children: pipelineReviewChildren(s, childrenByParent.get(s.id) ?? []),
-        // The thread's own LLM-authored task list — no fallback default, same rationale as the job-level
-        // field above.
-        tasks: Array.isArray(s.tasks) ? s.tasks : [],
-        // Build Legs (context-rot rotation): one navigable row per engine session, with the handoff pill each
-        // rotated Leg authored. Empty for a thread that never rotated (the web renders a single implicit Leg).
-        legs: pipelineLegs(legsByThread.get(s.id) ?? []),
-        steps: mapBatchedSteps(stepsByThread.get(s.id) ?? []),
-      })),
+      threads: threads.map(mapPipelineThread),
+      // Prior plan revisions' lanes as read-only history (empty for the common single-revision job).
+      priorRevisions,
     };
   }
 
@@ -1412,6 +1535,7 @@ function toThread(row: ThreadEntity): DriverThread {
     status: row.status as ThreadStatus,
     condition: (row.condition as ThreadCondition) ?? 'none',
     kind: row.kind,
+    type: coerceThreadType(row.type),
     parentThreadId: row.parent_thread_id ?? null,
     startSha: row.start_sha ?? null,
   };
@@ -1455,13 +1579,11 @@ interface PipelineLeg {
 }
 
 /**
- * A builder's review children for the `/pipeline` read model. When the child rows are MATERIALIZED (the new
- * child-thread flow — after the builder finished executing), map them directly (real status + findings). When
- * they are NOT (a pre-review builder that hasn't reviewed yet, OR a historical job built before review became
- * child threads), SYNTHESIZE the review set from the thread-kind registry so the rows — and their transcript
- * lanes (the historical review turns still live in `messages` on `autofix:*`) — stay visible. Master-review
- * threads have no review children (they ARE the review). This keeps the review sub-tree data-driven (from the
- * registry, not the dropped `review_agents` jsonb) without the rows vanishing.
+ * A builder's review children for the `/pipeline` read model. Reflects MATERIALIZED rows only (the
+ * `review_lens` × N + `post_review` children the driver's `runReviewChildren` inserts once it computes
+ * the type-routed lens selection via `reviewAgentsForThread`) — empty before the review pass materializes
+ * them, operator-approved (no independent re-derivation of the selection here; the driver is the single
+ * source of truth). Master-review threads have no review children (they ARE the review).
  */
 function pipelineReviewChildren(
   parent: ThreadEntity,
@@ -1472,9 +1594,10 @@ function pipelineReviewChildren(
   const spec = threadKindSpec('builder');
   if (!spec.children) return [];
   // A done builder was reviewed (auto-fix ran before it completed) → show the synthesized rows `done`; an
-  // in-flight/pending builder shows them queued at `pending` (the review preview). The real per-lens
-  // status/findings a historical job once had were in the dropped jsonb, so they degrade to this heuristic —
-  // the navigable transcript on each lane is the durable record.
+  // in-flight/pending builder shows them queued at `pending` (the review preview). Review-lens selection is
+  // now type-routed and diff-dependent (`reviewAgentsForThread`), so the registry's `children` factory only
+  // declares the statically-known `post_review` child — the lens preview rows appear once the driver
+  // materializes them (no static list to synthesize ahead of the diff).
   const status = parent.status === 'done' ? 'done' : 'pending';
   return spec.children({ id: parent.id, config: {} }).map((c) => {
     const lensId = (c.config as { lensId?: string }).lensId;

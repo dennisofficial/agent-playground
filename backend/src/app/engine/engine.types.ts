@@ -20,12 +20,20 @@ export type { SessionLimitHit } from './session-limit';
 export type EngineAuth = {
   secret: string;
   /**
+   * NON-secret discriminator for Claude: `'personal'` credentials are an OAuth login delivered as the
+   * `.credentials.json` file and are refreshable; `'setup-token'` credentials are a static env var. Absent
+   * for Codex (whose `secret` is always an `auth.json` blob). Safe to serialize — carried over the wire on
+   * `TurnSpec.auth.kind` so the in-container engine can tell the two apart.
+   */
+  kind?: 'setup-token' | 'personal';
+  /**
    * HOST-SIDE provenance for the auth-refresh write-back: where to persist a refreshed `auth.json` back
    * to. Set ONLY when `secret` came from an org credential (never the env fallback — a process env var
    * can't be persisted). It is STRIPPED before the turn spec enters the container (the container never
    * needs it), so it never rides Redis into the sandbox. Absent → no write-back (env/local-dev runs).
+   * `credentialId` lets the write-back target the exact `claude_credentials` row it came from.
    */
-  refreshBack?: { orgId: string; engine: SessionEngine };
+  refreshBack?: { orgId: string; engine: SessionEngine; credentialId?: string };
 };
 
 /**
@@ -193,11 +201,11 @@ export interface EngineUsage {
    */
   engine?: SessionEngine;
   /**
-   * The reasoning effort the run used, when one was passed (Codex-only input — see
-   * {@link RunEngineArgs.modelReasoningEffort}; undefined for Claude, which has no effort knob).
-   * Display-only: threads through to the composer footer as the "· xHigh" suffix.
+   * The reasoning effort the run used, when one was passed — see {@link RunEngineArgs.modelReasoningEffort}.
+   * Stamped engine-agnostically (Codex and Claude both). Display-only: threads through to the composer
+   * footer as the "· xHigh" suffix.
    */
-  reasoningEffort?: CodexReasoningEffort;
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -412,6 +420,10 @@ export type CodexReasoningEffort =
   | 'high'
   | 'xhigh';
 
+/** Engine-agnostic reasoning effort. Superset of Codex's (adds 'max') and Claude's (adds 'minimal')
+ *  value spaces; mapped to each engine's own type at the SDK boundary. */
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 /**
  * A user-defined MCP server, fully RESOLVED host-side (secret header/env values already inlined) and
  * ready to serialize onto the turn spec. `McpResolver.resolveForTurn` produces these from the
@@ -478,6 +490,15 @@ export interface ResolvedSkill {
    * with `managed`.
    */
   managedGit?: boolean;
+  /**
+   * The review-lens applicability axes (thread types / file globs), populated by
+   * `SkillResolver.resolveForTurn` from the system-tier fields or the workspace row's
+   * `review_for_types`/`review_for_globs` columns. Consumed by `resolveReviewSkillsForThread` to pick which
+   * skills' bodies get injected into a review turn — meaningless (and unused) for a non-review surface.
+   */
+  reviewForTypes?: string[];
+  /** See {@link reviewForTypes}. */
+  reviewForGlobs?: string[];
 }
 
 export interface RunEngineArgs {
@@ -519,11 +540,12 @@ export interface RunEngineArgs {
    */
   auth?: EngineAuth;
   /**
-   * NON-SECRET gate telling the in-container Codex engine to READ its refreshed `auth.json` overlay back
-   * after the turn (and relay it on {@link EngineRunResult.refreshedAuthSecret}). Serialized into the turn
-   * spec (unlike the secret-bearing `auth.refreshBack`, which is host-only). The runner sets it to
-   * `!!auth.refreshBack`, so ONLY org-sourced runs read back — env-fallback runs (which inject an ambient
-   * `CODEX_OAUTH_TOKEN` the container can't distinguish) never emit a secret into the final frame.
+   * NON-SECRET gate telling the in-container engine to READ its refreshed credential back after the turn
+   * (and relay it on {@link EngineRunResult.refreshedAuthSecret}) — Codex's `auth.json` overlay or Claude's
+   * `.credentials.json` (a personal login the SDK self-refreshes). Serialized into the turn spec (unlike the
+   * secret-bearing `auth.refreshBack`, which is host-only). The runner sets it to `!!auth.refreshBack`, so
+   * ONLY org-sourced runs read back — env-fallback runs (which inject an ambient token the container can't
+   * distinguish) never emit a secret into the final frame.
    */
   persistAuthRefresh?: boolean;
   /**
@@ -566,11 +588,12 @@ export interface RunEngineArgs {
   /** Override the model for this run. Falls back to the engine's env/default when unset. */
   model?: string;
   /**
-   * Codex-only: the reasoning effort for this run (maps to the SDK's `ThreadOptions.modelReasoningEffort`).
-   * Unset → the account/CLI default. The plan-review turn pins `'xhigh'` so the reviewer reasons hard.
-   * (A ChatGPT-account token REJECTS an explicit `model`, but ACCEPTS this knob — verified by spike.)
+   * Reasoning effort for this run. Codex → `ThreadOptions.modelReasoningEffort`; Claude → the Agent SDK
+   * `Options.effort`. Unset → the account/CLI default. The plan-review turn pins `'xhigh'` so the
+   * reviewer reasons hard. (A ChatGPT-account token REJECTS an explicit `model`, but ACCEPTS this knob —
+   * verified by spike.)
    */
-  modelReasoningEffort?: CodexReasoningEffort;
+  modelReasoningEffort?: ReasoningEffort;
   /** Called for each progress event as the run streams. */
   onEvent?: (e: EngineEvent) => void;
   /**
@@ -687,8 +710,12 @@ export interface TurnSpec extends Pick<RunEngineArgs, SpecVerbatimKey> {
   cwd: string;
   /** Rewritten to container mount paths. */
   writableRoots: string[];
-  /** Secret only — the host-only `refreshBack` provenance is stripped so org ids never ride Redis in. */
-  auth?: { secret: string };
+  /**
+   * Secret + the non-secret `kind` discriminator (the container needs it to tell a Claude personal
+   * credential from a setup-token) — the host-only `refreshBack` provenance is stripped so org ids never
+   * ride Redis in.
+   */
+  auth?: { secret: string; kind?: 'setup-token' | 'personal' };
   /** Non-secret gate telling the in-container engine to write refreshed auth back (derived from `auth.refreshBack`). */
   persistAuthRefresh?: boolean;
   /** When present, activates the tool bridge — the host tool names to proxy via an MCP server. */
@@ -724,10 +751,11 @@ export interface EngineRunResult {
   planText?: string;
   usage?: EngineUsage;
   /**
-   * The post-run Codex `auth.json` overlay when the turn REFRESHED its tokens (Codex rewrites the file in
-   * place) AND `RunEngineArgs.persistAuthRefresh` was set. Relayed back over the final frame so the host
-   * can persist it to the org credential store, keeping the stored subscription credential live instead of
-   * a rotting snapshot. Contains a SECRET — never log it. Absent on the common (no-refresh) path.
+   * The post-run refreshed engine credential when the turn ROTATED its tokens (Codex rewrites its `auth.json`
+   * overlay in place; Claude's SDK rewrites `.credentials.json` for a personal login) AND
+   * `RunEngineArgs.persistAuthRefresh` was set. Relayed back over the final frame so the host can persist it
+   * to the org credential store, keeping the stored subscription credential live instead of a rotting
+   * snapshot. Contains a SECRET — never log it. Absent on the common (no-refresh) path.
    */
   refreshedAuthSecret?: string;
   /**

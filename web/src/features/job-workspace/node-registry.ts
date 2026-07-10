@@ -89,8 +89,6 @@ export function resolveNode(
   if (node.startsWith("file:")) return "found";
   // The Codex review lane self-handles an empty transcript inside TranscriptView. Always resolvable.
   if (node.startsWith("codex-review:")) return "found";
-  // Sandbox ports are a design-stage mock — always resolvable.
-  if (node.startsWith("port:")) return "found";
   // Supervised services self-handle a missing marker inside ServiceLogView — always resolvable, like ports.
   if (node.startsWith("service:")) return "found";
 

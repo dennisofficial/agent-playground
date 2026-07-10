@@ -84,7 +84,9 @@ interface OrgVM {
   rollupAct: boolean;
 }
 
-export function Sidebar() {
+export function Sidebar({
+  inDrawer = false,
+}: { inDrawer?: boolean } = {}) {
   const pathname = usePathname();
   const { owned, joined, isLoading: orgsLoading } = useOrgs();
   const { repos: allRepos, isLoading: reposLoading } = useAllRepos();
@@ -214,7 +216,11 @@ export function Sidebar() {
 
   return (
     <aside
-      className="flex w-[272px] shrink-0 flex-col border-r border-border"
+      data-testid="app-sidebar"
+      className={cn(
+        "flex flex-col",
+        inDrawer ? "w-full" : "w-[272px] shrink-0 border-r border-border",
+      )}
       style={{ background: "var(--surface-2)" }}
     >
       <div className="flex-none px-3 pb-2.5 pt-3.5">
@@ -622,6 +628,7 @@ const SECTION_COLOR: Record<JobSection, string> = {
   planning: "var(--blue)",
   awaiting: "var(--slate)",
   building: "var(--accent)",
+  amending: "var(--amber)",
   ready_to_ship: "var(--green)",
   done: "var(--green)",
   pr_open: "var(--green)",

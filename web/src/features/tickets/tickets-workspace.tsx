@@ -156,7 +156,7 @@ export function TicketsWorkspace({
           value={view}
           onChange={(v) => setView(v as View)}
         />
-        <div className="relative flex items-center">
+        <div className="relative flex w-full items-center sm:w-auto">
           <Search
             size={13}
             className="pointer-events-none absolute left-2.5 text-faint"
@@ -165,7 +165,7 @@ export function TicketsWorkspace({
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search title or #number"
-            className="h-8 w-[220px] rounded-md border border-border bg-surface pl-[30px] pr-3 text-[12px] text-text outline-none transition focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
+            className="h-8 w-full rounded-md border border-border bg-surface pl-[30px] pr-3 text-[12px] text-text outline-none transition focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)] sm:w-[220px]"
           />
         </div>
         <div className="flex items-center gap-[7px]">

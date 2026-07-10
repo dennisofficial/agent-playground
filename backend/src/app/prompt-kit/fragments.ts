@@ -81,7 +81,7 @@ export const SANDBOX_FILESYSTEM_MAP_NOTE = [
  */
 export const TASK_LIST_NOTE =
   "LIVE TASK LIST — your native task tools (`TaskCreate`/`TaskUpdate`) render DIRECTLY in the operator's " +
-  'UI as this session\'s checklist; they are how the operator follows your work at a glance. Whenever the ' +
+  "UI as this session's checklist; they are how the operator follows your work at a glance. Whenever the " +
   'work in front of you has more than one meaningful step, lay the list out FIRST: `TaskCreate` one task ' +
   'per unit of work (short, outcome-phrased subjects the operator understands), then work it — `TaskUpdate` ' +
   'a task to `in_progress` when you start it (one at a time) and `completed` the moment it finishes, never ' +
@@ -109,7 +109,7 @@ export const CODEX_TASK_LIST_NOTE =
  */
 export const REVIEW_SCOPE_NOTE =
   'correctness bugs, behavior the change silently removed or broke, security issues, missing edge cases ' +
-  "or error handling, violations of the conventions this repo already follows, and seams where " +
+  'or error handling, violations of the conventions this repo already follows, and seams where ' +
   'separately-built pieces integrate badly with each other';
 
 // ── WORKER / EXECUTE POLICY BLOCKS (reused across the worker orchestrator + the verify/writer subagents) ─
@@ -175,7 +175,7 @@ export const VERIFY_CURRENCY =
   'current release and its date, the recommended replacement) BEFORE you state it — this applies equally to ' +
   'a claim the operator makes and one you are tempted to make yourself. The version in package.json / the ' +
   'lockfile tells you what is INSTALLED, not whether it is current: reading it proves nothing about how far ' +
-  'behind latest you are. When you do report a version\'s status, name BOTH the installed and the current ' +
+  "behind latest you are. When you do report a version's status, name BOTH the installed and the current " +
   'version (e.g. "Electron 35 — three majors behind the current 44"), never a bare adjective like "modern".';
 
 /**
@@ -192,7 +192,7 @@ export const DOC_VERSION_VERIFY_NOTE =
   'recommend anything against a library, SDK, framework, platform API, CLI, or third-party service, confirm ' +
   'the CURRENT official docs AND that your approach matches the version actually installed here. Do not rely ' +
   'on memory or a pattern from an older generation of the tool: read package.json / the lockfile / the ' +
-  'existing imports for the REAL installed version, then confirm THAT version\'s true API shape — the ' +
+  "existing imports for the REAL installed version, then confirm THAT version's true API shape — the " +
   'export/component names, config flags, supported params, CLI syntax — against its own docs (WebSearch / ' +
   'WebFetch, or a Context7 docs tool when one is available; the sandbox has live web). Never mix patterns ' +
   'from different versions or generations of the same tool. If the official docs, the installed version, and ' +
@@ -214,7 +214,7 @@ export const LSP_TOOLS_NOTE =
   '`filePath` + the 1-indexed `line` and `column` of the symbol (plus `newName` for `rename_symbol`); ' +
   '`diagnostics` takes just a `filePath`. `rename_symbol` APPLIES the edit itself and returns only a ' +
   'changed-files summary — do NOT re-read or re-write the affected files afterward. `references` ' +
-  'reliably returns every real usage (not text matches). The tools are scoped to the target file\'s ' +
+  "reliably returns every real usage (not text matches). The tools are scoped to the target file's " +
   'package, so a rename/references may not reach a sibling package that imports the symbol, and rename ' +
   'never touches string/comment occurrences — after a cross-package rename, spot-check with `references` ' +
   'or a Grep, and use a codemod (`ast-grep`) when strings must change too.';
@@ -228,7 +228,7 @@ export const LSP_NAV_NOTE =
   'To find every usage of a symbol or jump to its definition, prefer the `atlas-lsp-ts` tools ' +
   '(`references`/`definition`/`hover`) over grep-and-read. They are POSITION-based: pass the `filePath` ' +
   'and the 1-indexed `line`/`column` where you saw the symbol (from a Read/grep). Type-accurate — the ' +
-  'real symbol, not every text match of its name (scoped to that file\'s package).';
+  "real symbol, not every text match of its name (scoped to that file's package).";
 
 /**
  * DEVIATION flagging — off-spec work is never silent. Shared by the worker execute prompts + the `implement`
@@ -239,7 +239,7 @@ export const DEVIATION_NOTE =
   '(e.g. a small out-of-scope fix — a dead link, a wrong import — or adding a file/dependency/config nobody ' +
   'asked for), you MUST record it — off-spec work is NEVER silent. If you have the `record_deviation` tool ' +
   '(you are the orchestrator), call `record_deviation({note})` with a one-line what-and-why the moment you ' +
-  'make the change; it is logged to `/context/generated/deviations.md`, the operator\'s deviation log (NOT ' +
+  "make the change; it is logged to `/context/generated/deviations.md`, the operator's deviation log (NOT " +
   'the PR body). If you do NOT have that tool (you are a writer subagent), report each such change on its ' +
   "own line starting 'DEVIATION:' in your summary back to the orchestrator, who records it. Reserve this for " +
   'fixes you actually MADE — use `capture_ticket` for out-of-scope work you are deferring, not fixing.';
@@ -316,6 +316,21 @@ export const MINIMAL_CODE_NOTE =
   'ladder): fully understanding the problem, input validation at trust boundaries, error handling that ' +
   'prevents data loss, security, accessibility, and anything the task explicitly asked for — leanness is ' +
   'about scope and cleverness, never about dropping a guardrail.';
+
+/**
+ * DESIGN DISCIPLINE — the always-on recognition trigger for the `design-patterns` skill. Rides on top of
+ * {@link MINIMAL_CODE_NOTE}: it does NOT teach the 22 patterns (the skill does) — it just makes the agent
+ * NOTICE the smell and reach for the skill, which is the step that was missing ("knows patterns, never
+ * applies them"). Shared by every code-authoring persona (brain direct-builds + plans, worker orchestrator,
+ * fan-out writers). Restraint-first by construction so it can never fight the YAGNI ladder above it.
+ */
+export const DESIGN_DISCIPLINE_NOTE =
+  'DESIGN DISCIPLINE — diagnose structure from smells, not pattern names. When non-trivial code is hard to ' +
+  'extend (many-site edits, bloated functions/classes, tangled conditionals, data/behavior mismatch), try ' +
+  'the boring refactor first: extract, rename, inline, guard clause. Reach for the `design-patterns` skill ' +
+  'only when the smell survives and a named pattern earns its keep; never add single-caller or ' +
+  'one-implementation ceremony. Match incidental repo conventions, but if the current shape fights the ' +
+  'requirement, migrate the pattern deliberately and completely.';
 
 // ── SUBAGENT POLICY BLOCKS ──────────────────────────────────────────────────────────────────────────
 
@@ -423,7 +438,7 @@ export const RUNNABLE_WORKSPACE_NOTE =
   'run the setup, and fix the DURABLE workspace profile (request the missing secret, correct the setup ' +
   'script) so it stays fixed for the next job — from a build thread you cannot provision it yourself, so hand ' +
   'the genuinely-missing piece to Atlas via `block_thread({reason:"needs_env"})`. (3) ASK for what only the ' +
-  "operator can supply and WAIT — \"why didn't you just ask?\" is the failure to design out. (4) NEVER " +
+  'operator can supply and WAIT — "why didn\'t you just ask?" is the failure to design out. (4) NEVER ' +
   'FABRICATE A STAND-IN that dodges the real environment — a throwaway harness that skips the real app config, ' +
   'a mock that bypasses the real service — and call it validated: that is a FALSE GREEN, worse than no check ' +
   'because it lies. Validate the REAL thing in its REAL environment. The ONLY acceptable skip is something ' +
@@ -443,7 +458,7 @@ export const EVIDENCE_ARTIFACTS_NOTE =
   'CAPTURE EVIDENCE ARTIFACTS — once you have live-validated (see VALIDATE BY RUNNING), leave the PROOF on ' +
   'disk in `/context/artifacts/` so the operator can see the work actually runs. This is the ONE `/context` ' +
   'bucket you may write (treat `/context/specs` and `/context/generated` as READ-ONLY grounding, and put all ' +
-  'CODE under `/workspace`); everything you drop in `/context/artifacts/` surfaces in the operator\'s ARTIFACTS ' +
+  "CODE under `/workspace`); everything you drop in `/context/artifacts/` surfaces in the operator's ARTIFACTS " +
   'panel — logs and markdown render as text, screenshots (`.png`) render inline. Capture, per scenario you ' +
   'validated: the command/test OUTPUT as a `*.log`, a `.png` SCREENSHOT of any UI you drove (Playwright ' +
   '`page.screenshot`), any report the run produced, and a top-level `RESULTS.md` that INDEXES what you ' +
@@ -522,7 +537,7 @@ export const AUTHOR_LIVE_VALIDATION_NOTE =
   'process showing the changed value was passed at runtime. And "SAW it run" means you actually LOOKED at ' +
   'the result — an artifact you (or a subagent you delegated to) captured but never opened is not ' +
   'observation, and a screenshot/log that shows an error or "connection lost"/unreachable state is a ' +
-  'FAILING check, not a passing one: before you rely on captured evidence — your own or a subagent\'s — open ' +
+  "FAILING check, not a passing one: before you rely on captured evidence — your own or a subagent's — open " +
   'it and confirm it shows the intended state, and never finalize on an artifact you did not inspect. This ' +
   'holds both ways: in a PLAN, author each ' +
   "thread's `## Validation` as that live run and NEVER mark it " +

@@ -1,5 +1,9 @@
 import type { Seeder } from '@workspace/nestjs-core';
-import { OrgCredentialsEntity } from '../src/app/persistence/entities';
+import {
+  OrgCredentialsEntity,
+  OrgClaudeCredentialEntity,
+  OrganizationEntity,
+} from '../src/app/persistence/entities';
 import { isNewerCodexAuth } from '../src/app/onboarding/codex-auth-freshness';
 import { decryptSecret, encryptSecret, loadSecretsKey } from '../src/app/onboarding/secret-cipher';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
@@ -64,7 +68,6 @@ export default (async (ds) => {
     }
     if (openaiApiKey) row.openai_api_key_enc = encryptSecret(openaiApiKey, key);
     if (githubPat) row.github_pat_enc = encryptSecret(githubPat, key);
-    if (claudeOauthToken) row.claude_oauth_token_enc = encryptSecret(claudeOauthToken, key);
 
     // Codex auth.json: only (re)write when the file blob is genuinely newer than what's stored, so a
     // re-seed never clobbers a fresher token the running app refreshed back into this row.
@@ -78,6 +81,34 @@ export default (async (ds) => {
     }
 
     await creds.save(row);
+
+    // Claude auth lives in the new `claude_credentials` table (the resolver reads ONLY the org's selected
+    // row — the legacy `org_credentials.claude_oauth_token_enc` column is vestigial and no longer read).
+    // Upsert ONE canonical "Imported setup-token" row and select it, mirroring the runtime write-through
+    // (`ClaudeCredentialStore.upsertLegacySetupToken`) + the migration's imported label so re-seeds don't
+    // accumulate duplicates and the seeded org can actually authenticate a Claude turn.
+    if (claudeOauthToken) {
+      const LEGACY_SETUP_TOKEN_LABEL = 'Imported setup-token';
+      const claudeCreds = ds.getRepository(OrgClaudeCredentialEntity);
+      const cred =
+        (await claudeCreds.findOne({
+          where: { org_id: orgId, kind: 'setup_token', label: LEGACY_SETUP_TOKEN_LABEL },
+        })) ??
+        claudeCreds.create({
+          org_id: orgId,
+          label: LEGACY_SETUP_TOKEN_LABEL,
+          kind: 'setup_token',
+          refresh_token_enc: null,
+          expires_at: null,
+          status: 'active',
+        });
+      cred.access_token_enc = encryptSecret(claudeOauthToken, key);
+      const savedCred = await claudeCreds.save(cred);
+      await ds
+        .getRepository(OrganizationEntity)
+        .update({ id: orgId }, { selected_claude_credential_id: savedCred.id });
+    }
+
     console.log(`  003: seeded credentials for org ${orgId}`);
   }
 }) satisfies Seeder;

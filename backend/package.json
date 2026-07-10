@@ -31,7 +31,8 @@
     "db:schema:drop": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs schema:drop -d cli/data-source.ts",
     "db:seed": "dotenvx run -f .env.local.enc -f .env.seed.enc -f .env.personal --ignore=MISSING_ENV_FILE -o --strict -- cross-env NODE_ENV=development ts-node --project tsconfig.cli.json cli/seed-runner.ts",
     "db:recover-turn": "pnpm env:inject -- ts-node --project tsconfig.cli.json cli/recover-turn.ts",
-    "db:recreate": "pnpm db:schema:drop && pnpm db:migrate && pnpm db:seed"
+    "db:recreate": "pnpm db:schema:drop && pnpm db:migrate && pnpm db:seed",
+    "seed:demo": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json ts-node --project tsconfig.cli.json scripts/seed-demo-jobs.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.204",
@@ -65,6 +66,7 @@
     "@workspace/nestjs-core": "workspace:^",
     "@workspace/pg-realtime": "workspace:*",
     "@workspace/shared": "workspace:*",
+    "async-sema": "^3.1.1",
     "bullmq": "^5.34.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
@@ -78,6 +80,7 @@
     "mongoose": "^9.6.3",
     "pg": "^8.13.1",
     "pgvector": "^0.3.0",
+    "picomatch": "^4.0.4",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typeorm": "^0.3.30",
@@ -95,6 +98,7 @@
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.7",
     "@types/pg": "^8.11.10",
+    "@types/picomatch": "^4.0.0",
     "@types/supertest": "^6.0.2",
     "@vitest/coverage-v8": "^3.0.0",
     "@workspace/ai-testing": "workspace:*",

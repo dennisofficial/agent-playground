@@ -11,7 +11,7 @@
  */
 import type { Agent } from '../prompt-kit';
 import type { SessionEngine } from '../domain';
-import type { CodexReasoningEffort } from '../engine';
+import type { ReasoningEffort } from '../engine';
 import type { ThreadInput, ThreadKind as LaneKind } from '../surface/thread-registry';
 
 /** The KIND of a `threads` row — the single differentiator across every thread-like concept. */
@@ -62,8 +62,8 @@ export interface ThreadKindSpec {
   mode: 'execute' | 'review' | 'conversational';
   /** How the driver treats the kind — see {@link ThreadExecution}. */
   execution: ThreadExecution;
-  /** Codex-only reasoning effort (e.g. `xhigh` for master review); undefined = the engine default. */
-  reasoningEffort?: CodexReasoningEffort;
+  /** Engine-agnostic reasoning effort (e.g. `xhigh` for master review); undefined = the engine default. */
+  reasoningEffort?: ReasoningEffort;
   /** Host-side gates that run after this kind's execute turn (the diagnostics done-gate + the ADR-0005
    *  live-verification judge). Master review carries its own verify mandate, so both are off for it. */
   gates: { verification: boolean; liveVerification: boolean };

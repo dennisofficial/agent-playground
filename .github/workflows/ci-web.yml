@@ -1,0 +1,51 @@
+name: CI Web
+
+# Web (Next.js operator console) checks, split out of the backend `ci.yml` into a dedicated,
+# PATH-SCOPED workflow: it only runs when the web app (or the workspace deps it compiles against)
+# actually changes, so a backend-only PR doesn't pay for a web typecheck and vice-versa. Independent of
+# `ci.yml` — it is NOT what `deploy.yml` waits on (deploy still gates on the `CI` workflow), so this is a
+# pure PR/main quality signal. The web IMAGE is still built + shipped by `ci.yml`'s build-images on
+# push-to-main; this just gives the web app the typecheck coverage it never had.
+on:
+  pull_request:
+    paths:
+      - "web/**"
+      - "shared/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/ci-web.yml"
+      - ".github/actions/setup-workspace/**"
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "shared/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/ci-web.yml"
+      - ".github/actions/setup-workspace/**"
+
+# One in-flight run per ref; a new commit supersedes the previous.
+concurrency:
+  group: ci-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-typecheck:
+    name: Web typecheck
+    runs-on: [self-hosted, atlas-box]
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          # Submodules are PUBLIC — the `ai-testing` submodule pins react/@types via the workspace
+          # overrides, so web's tsc needs the full workspace resolved.
+          submodules: recursive
+
+      - name: Set up workspace
+        uses: ./.github/actions/setup-workspace
+
+      - name: Web typecheck
+        run: pnpm --filter web typecheck

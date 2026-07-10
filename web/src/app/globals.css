@@ -283,6 +283,39 @@ body {
 .anim-pop {
   animation: atlas-pop 0.18s ease both;
 }
+@keyframes atlas-slide-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes atlas-slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes atlas-slide-in-bottom {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.anim-drawer-left {
+  animation: atlas-slide-in-left 0.22s ease both;
+}
+.anim-drawer-right {
+  animation: atlas-slide-in-right 0.22s ease both;
+}
+.anim-drawer-bottom {
+  animation: atlas-slide-in-bottom 0.22s ease both;
+}
 .pulse-dot {
   animation: atlas-softpulse 1.4s ease-in-out infinite;
 }

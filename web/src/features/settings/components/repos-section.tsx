@@ -694,7 +694,7 @@ function RepoRow({
         };
 
   return (
-    <div className="flex items-start gap-4 px-4 py-[15px]">
+    <div className="flex flex-wrap items-start gap-4 px-4 py-[15px]">
       {/* identity */}
       <div className="min-w-0 flex-1">
         <div className="text-[13px] font-semibold text-text">{repo.name}</div>
@@ -722,7 +722,7 @@ function RepoRow({
       </div>
 
       {/* right: pill + actions */}
-      <div className="flex shrink-0 flex-col items-end gap-2.5">
+      <div className="flex w-full flex-col items-end gap-2.5 sm:w-auto sm:shrink-0">
         <span
           className="flex items-center gap-1.5 rounded-full px-2.5 py-[3px] text-[11px] font-medium"
           style={{
@@ -770,7 +770,7 @@ function RepoRow({
 
         {canManage ? (
           <>
-            <div className="mt-0.5 flex items-center gap-1.5">
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
               {repo.accessOk ? (
                 <button
                   type="button"

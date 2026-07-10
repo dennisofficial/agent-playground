@@ -182,18 +182,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.threads).toHaveLength(1);
     const [sec] = state.threads;
     expect(sec.hasPlan).toBe(true);
-    // Review children are data-driven. With no materialized child rows yet (an un-reviewed / executing
-    // builder), getPipelineState SYNTHESIZES the review set from the thread-kind registry so the rows + their
-    // transcript lanes stay visible — the default lenses + the post-review fix, queued at `pending`.
-    expect(
-      sec.children.filter((c) => c.kind === 'review_lens').map((c) => c.lensId),
-    ).toEqual(['best_practices', 'correctness', 'consistency', 'minimalism']);
-    expect(sec.children.find((c) => c.kind === 'post_review')).toBeTruthy();
-    expect(sec.children.every((c) => c.status === 'pending')).toBe(true);
-    // Each synthesized child carries its real transcript lane (where the historical review turns live).
-    expect(sec.children.find((c) => c.lensId === 'best_practices')?.lane).toBe(
-      `autofix:${sec.id}:best_practices`,
-    );
+    // Review children are data-driven. Before the review stage materializes child rows, the read model has
+    // no synthetic review lanes; materialized children are covered by the next test.
+    expect(sec.children).toEqual([]);
     expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
     expect(sec.steps[0].status).toBe('building');
     expect(sec.steps[1].status).toBe('pending');
@@ -414,6 +405,46 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     ]);
   });
 
+  it('dropOpenThreadTasks flips open (pending/in_progress) tasks to `dropped`, leaves completed, returns the count', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'drop open tasks',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const thread = await threads.save(
+      threads.create({
+        kind: 'builder',
+        job_id: job.id,
+        org_id: ORG_ID,
+        ordinal: 10,
+        brief: 'Backend — drop open tasks',
+        status: 'executing',
+        tasks: [
+          { id: 't1', subject: 'Done work', status: 'completed' },
+          { id: 't2', subject: 'Forgotten tick', status: 'in_progress' },
+          { id: 't3', subject: 'Never started', status: 'pending' },
+        ],
+      }),
+    );
+
+    const dropped = await store.dropOpenThreadTasks(thread.id);
+    expect(dropped).toBe(2);
+    expect(await store.getThreadTasks(thread.id)).toEqual([
+      { id: 't1', subject: 'Done work', status: 'completed' },
+      { id: 't2', subject: 'Forgotten tick', status: 'dropped' },
+      { id: 't3', subject: 'Never started', status: 'dropped' },
+    ]);
+
+    // Idempotent: a second pass finds nothing open, returns 0, and writes nothing new.
+    expect(await store.dropOpenThreadTasks(thread.id)).toBe(0);
+  });
+
   it('persists the repo-orientation cheat-sheet and surfaces it on the mapped thread (resume-durable)', async () => {
     const job = await jobs.save(
       jobs.create({
@@ -468,7 +499,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({
       status: 'no_job',
       mainTasks: [],
-      mainDefaultFooter: { engine: 'claude', model: 'opus' },
+      mainDefaultFooter: { engine: 'claude', model: 'opus', effort: 'high' },
     });
   });
 
@@ -870,7 +901,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
   }
 
-  it('retractShip flips awaiting_ship_review -> planning and neutralizes the durable ship card', async () => {
+  it('retractShip flips awaiting_ship_review -> amending and neutralizes the durable ship card', async () => {
     const { jobId } = await seedShipParkedJob();
     await seedShipCardRow(jobId);
 
@@ -878,7 +909,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(acted).toBe(true);
 
     const row = await jobs.findOne({ where: { id: jobId } });
-    expect(row?.status).toBe('planning');
+    expect(row?.status).toBe('amending');
     expect(row?.activity).toBe('idle');
     expect(row?.ship_review_approved_at).toBeNull();
 
@@ -897,7 +928,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(await store.retractShip(jobId)).toBe(false);
 
     const row = await jobs.findOne({ where: { id: jobId } });
-    expect(row?.status).toBe('planning'); // unchanged by the no-op second call
+    expect(row?.status).toBe('amending'); // unchanged by the no-op second call
   });
 
   it('retractShip does not act on a job in a DIFFERENT status', async () => {

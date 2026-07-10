@@ -16,6 +16,7 @@ import {
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
 import { JobTitler } from '../titling';
+import { DriverStoreService } from '../driver/driver-store.service';
 import { BrainStoreService } from './brain-store.service';
 
 /**
@@ -34,6 +35,7 @@ const PROJECT_SLUG = 'brainstore-it';
 describe('BrainStoreService re-propose (live Postgres)', () => {
   let app: NestExpressApplication;
   let store: BrainStoreService;
+  let driverStore: DriverStoreService;
   let dataSource: DataSource;
 
   const prevSurface = process.env.SURFACE;
@@ -59,6 +61,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await app.init();
 
     store = app.get(BrainStoreService);
+    driverStore = app.get(DriverStoreService);
     dataSource = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     await purge(dataSource);
   }, 60_000);
@@ -148,6 +151,107 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await draftCount(dataSource, jobId)).toBe(1);
   }, 30_000);
 
+  it('PLAN VERSIONING: a re-propose over a DONE builder preserves the prior revision as history and forges a new one', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'versioning-repo');
+
+    // First proposal — one builder — then simulate it BUILT & committed (status=done).
+    const first = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'v1',
+      kind: 'feature',
+      overview: 'overview v1',
+      decisions: [],
+      threadTitles: ['backend one'],
+    });
+    await dataSource.query(
+      `UPDATE threads SET status = 'done' WHERE decision_record_id = $1 AND kind = 'builder'`,
+      [first.decisionRecordId],
+    );
+
+    // Ship-review retracted → amending (the gate the operator released); re-propose is allowed here.
+    await dataSource.query(`UPDATE jobs SET status = 'amending' WHERE id = $1`, [jobId]);
+
+    // Second proposal with a NEW builder — must NOT delete the done v1 builder.
+    const second = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'v2',
+      kind: 'feature',
+      overview: 'overview v2',
+      decisions: [],
+      threadTitles: ['backend two'],
+    });
+    expect(second.decisionRecordId).not.toBe(first.decisionRecordId);
+
+    // The prior revision's done builder SURVIVES (history), and the new revision's builder exists too.
+    expect(await builderBriefsForRecord(dataSource, first.decisionRecordId)).toEqual(['backend one']);
+    expect(await builderBriefsForRecord(dataSource, second.decisionRecordId)).toEqual(['backend two']);
+    // Exactly ONE main row across both revisions (create-if-absent, not recreated per revision).
+    expect(await mainCount(dataSource, jobId)).toBe(1);
+
+    // getPipelineState: active lanes = the NEW revision; the old one is browsable history in priorRevisions.
+    // (Both `threads` arrays also carry the revision's `master_review` root — filter to builders to compare.)
+    const state = (await driverStore.getPipelineState(jobId, TEAM_ID)) as {
+      threads: Array<{ brief: string; kind: string }>;
+      priorRevisions: Array<{ revision: number; threads: Array<{ brief: string; kind: string }> }>;
+    };
+    const builders = (ts: Array<{ brief: string; kind: string }>) =>
+      ts.filter((t) => t.kind === 'builder').map((t) => t.brief);
+    expect(builders(state.threads)).toEqual(['backend two']);
+    expect(state.priorRevisions).toHaveLength(1);
+    expect(state.priorRevisions[0].revision).toBe(1);
+    expect(builders(state.priorRevisions[0].threads)).toEqual(['backend one']);
+  }, 30_000);
+
+  it('PLAN VERSIONING: a DIRECT build (empty threadTitles) over done work preserves history and creates no builders', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'versioning-direct-repo');
+
+    const first = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'v1',
+      kind: 'feature',
+      overview: 'overview v1',
+      decisions: [],
+      threadTitles: ['backend one'],
+    });
+    await dataSource.query(
+      `UPDATE threads SET status = 'done' WHERE decision_record_id = $1 AND kind = 'builder'`,
+      [first.decisionRecordId],
+    );
+    await dataSource.query(`UPDATE jobs SET status = 'amending' WHERE id = $1`, [jobId]);
+
+    // Direct build: empty threadTitles → no new builders, no master_review.
+    const second = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'v2 direct',
+      kind: 'feature',
+      overview: 'fold-in',
+      decisions: [],
+      threadTitles: [],
+    });
+    expect(await builderBriefsForRecord(dataSource, first.decisionRecordId)).toEqual(['backend one']);
+    expect(await builderBriefsForRecord(dataSource, second.decisionRecordId)).toEqual([]);
+    expect(await masterReviewCount(dataSource, jobId)).toBe(1); // only v1's master review remains
+
+    const state = (await driverStore.getPipelineState(jobId, TEAM_ID)) as {
+      threads: Array<{ brief: string; kind: string }>;
+      priorRevisions: Array<{ threads: Array<{ brief: string; kind: string }> }>;
+    };
+    // Active revision has no lanes (empty direct build), but the done v1 builder is browsable history.
+    expect(state.threads).toEqual([]);
+    expect(state.priorRevisions).toHaveLength(1);
+    expect(
+      state.priorRevisions[0].threads.filter((t) => t.kind === 'builder').map((t) => t.brief),
+    ).toEqual(['backend one']);
+  }, 30_000);
+
   it('openJob anchors the thread into planning without clobbering an existing title when no title is given', async () => {
     // Regression: `review_plan` anchors the scoping job with an EMPTY title (goal/overview go to
     // propose_plan, not review). openJob must keep the thread's existing title in that case instead of
@@ -188,6 +292,31 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'Profile picture CRUD', kind: 'feature' });
     row = await loadThreadRow(dataSource, jobId);
     expect(row?.title).toBe('Profile picture CRUD');
+  }, 30_000);
+
+  it('persistPlan coerces off-vocabulary thread types at the write boundary', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-thread-types-it');
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'types',
+      kind: 'feature',
+    });
+
+    await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'typed plan',
+      kind: 'feature',
+      overview: 'overview',
+      decisions: [],
+      threadTitles: ['legacy analytics', 'case backend', 'missing'],
+      threadTypes: ['analytics', 'BACKEND'],
+    });
+
+    expect(await threadTypes(dataSource, jobId)).toEqual(['general', 'backend', 'general']);
   }, 30_000);
 
   it('stamps appended blocks with their emission time so a mid-turn user message keeps chronological order', async () => {
@@ -728,6 +857,17 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await jobStatus(dataSource, jobId)).toBe('planning'); // unchanged
   }, 30_000);
 
+  it('openJobOnThread anchors an `amending` job too, not just `planning` — a ship-retract resumes as ONE build', async () => {
+    // Regression: post-withdraw_ship the job sits in `amending`; before this fix openJobOnThread only
+    // recognized `planning`, so the next chat message would re-anchor onto a FRESH job instead of
+    // continuing the amendment on the existing one.
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-amending-it');
+    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'amend me', kind: 'feature' });
+    await dataSource.query(`UPDATE jobs SET status = 'amending' WHERE id = $1`, [jobId]);
+
+    expect(await store.openJobOnThread(jobId)).toBe(jobId);
+  }, 30_000);
+
   it('RACE: withdrawPlan wins over a stale approve — approve(jobId, recId, approvedBy) returns null once withdrawn', async () => {
     const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-race-it');
     const approverId = await seedApprover(dataSource);
@@ -853,10 +993,37 @@ async function threadTitles(ds: DataSource, jobId: string): Promise<string[]> {
   return rows.map((r) => r.brief);
 }
 
+/** The FEATURE (builder) thread types — excludes the appended master-review thread. */
+async function threadTypes(ds: DataSource, jobId: string): Promise<string[]> {
+  const rows: Array<{ type: string }> = await ds.query(
+    `SELECT type FROM threads WHERE job_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
+    [jobId],
+  );
+  return rows.map((r) => r.type);
+}
+
 /** The count of appended master-review threads for a job (should be exactly 1 after a full plan). */
 async function masterReviewCount(ds: DataSource, jobId: string): Promise<number> {
   const rows: Array<{ n: string }> = await ds.query(
     `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND kind = 'master_review'`,
+    [jobId],
+  );
+  return Number(rows[0]?.n ?? '0');
+}
+
+/** Builder briefs scoped to ONE plan revision (decision record) — the versioning read. */
+async function builderBriefsForRecord(ds: DataSource, recordId: string): Promise<string[]> {
+  const rows: Array<{ brief: string }> = await ds.query(
+    `SELECT brief FROM threads WHERE decision_record_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
+    [recordId],
+  );
+  return rows.map((r) => r.brief);
+}
+
+/** The count of `main` rows for a job — must stay 1 across re-proposes (create-if-absent). */
+async function mainCount(ds: DataSource, jobId: string): Promise<number> {
+  const rows: Array<{ n: string }> = await ds.query(
+    `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND kind = 'main'`,
     [jobId],
   );
   return Number(rows[0]?.n ?? '0');

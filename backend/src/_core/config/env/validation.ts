@@ -56,6 +56,11 @@ export interface IEnvConfig {
   // default (containerized turns are unavailable until Redis appears).
   REDIS_URL?: string;
 
+  // Claude subscription OAuth. Both have code defaults (DEFAULT_CLAUDE_OAUTH_CONFIG) matching the real
+  // claude.ai/platform.claude.com endpoints — only set to point at a different OAuth deployment.
+  CLAUDE_OAUTH_AUTHORIZE_URL?: string;
+  CLAUDE_OAUTH_CLIENT_ID?: string;
+
   // Slack/approval boss user id (set in the shared dev config). installed_by wins when set.
   APPROVAL_BOSS_USER_ID?: string;
 
@@ -74,12 +79,11 @@ export interface IEnvConfig {
   // Docker sandbox layer. DOCKER_SOCKET_PATH: host socket (default /var/run/docker.sock). SANDBOX_IMAGE:
   // the sandbox base-image tag (default 'atlas-sandbox:latest'). WORKSPACE_IMAGE /
   // WORKSPACE_DOCKER_STORAGE_DRIVER: local Docker-Desktop knobs (the latter forces the inner dockerd to
-  // `vfs`; EMPTY on a real Linux host). MAX_CONCURRENT_SANDBOXES: optional capacity cap (unset → no cap).
+  // `vfs`; EMPTY on a real Linux host).
   DOCKER_SOCKET_PATH?: string;
   SANDBOX_IMAGE?: string;
   WORKSPACE_IMAGE?: string;
   WORKSPACE_DOCKER_STORAGE_DRIVER?: string;
-  MAX_CONCURRENT_SANDBOXES?: number;
   // SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (falls back to REDIS_URL).
   // SANDBOX_BUS_NETWORK: the internal Docker network each sandbox joins (`atlas-bus` in prod; unset in dev).
   // SANDBOX_MCP_NETWORK: the internal net the read-only diagnostics MCP reader lives on; a sandbox is
@@ -98,6 +102,12 @@ export interface IEnvConfig {
   JWT_REFRESH_SECRET: string;
   ADMIN_API_TOKEN?: string; // gates the admin REST endpoints; unset → disabled
   COOKIE_DOMAIN?: string; // scopes session cookies across subdomains in deploy; host-only in dev
+  // Sandbox preview exposure (see the exposure module). All optional — the feature is OFF (no routing,
+  // no injected env) unless PREVIEW_BASE_DOMAIN is set, so dev/local is unchanged.
+  PREVIEW_BASE_DOMAIN?: string; // e.g. `atlas.dltechnologies.co`; unset → exposure disabled
+  CADDY_ADMIN_SOCKET?: string; // Caddy admin unix socket path; default /srv/atlas/caddy/admin/admin.sock
+  CADDY_CONTAINER_NAME?: string; // Caddy container to bridge into sandbox nets; default `atlas-caddy`
+  PREVIEW_ID_SECRET?: string; // HMAC key for the previewId token; derives from SECRETS_ENCRYPTION_KEY if unset
   ADMIN_SEED_EMAIL?: string; // provisions the dev admin on boot (+ seeds); unset → no auto-seed
   ADMIN_SEED_PASSWORD?: string;
   GITHUB_WEBHOOK_SECRET?: string; // HMAC-verifies GitHub webhooks; unset → /ingress/github refuses all
@@ -133,10 +143,13 @@ export interface IEnvConfig {
   //  - DRIVER_TRANSIENT_RETRY_MS: base backoff between transient drive retries (default 2000).
   //  - TURN_STALE_MS: heartbeat-quiet window before the watchdog fails a turn (default 90000).
   //  - TURN_STREAM_REAP_IDLE_MS: untouched window before a turn's orphan streams may be reaped (default 300000).
+  //  - REVIEW_LENS_CONCURRENCY: total in-flight review-lens turns cap for a builder's post-build review
+  //    fan-out (the `async-sema` semaphore `runReviewChildren` bounds ALL lens turns with); default 8.
   PHASE_TIMEOUT_MS?: number;
   DRIVER_TRANSIENT_RETRY_MS?: number;
   TURN_STALE_MS?: number;
   TURN_STREAM_REAP_IDLE_MS?: number;
+  REVIEW_LENS_CONCURRENCY?: number;
 
   // Dev/test tooling (never live in prod). TEST_BRIDGE: 'off' opts a non-prod env out of the `/test/*`
   // bridge (gating is NODE_ENV-driven; hard-off in prod). DISABLE_RESUME: skip the driver's boot
@@ -174,6 +187,10 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Redis (host↔sandbox engine bus)
   REDIS_URL: Joi.string().uri().optional(),
 
+  // Claude subscription OAuth
+  CLAUDE_OAUTH_AUTHORIZE_URL: Joi.string().uri().optional(),
+  CLAUDE_OAUTH_CLIENT_ID: Joi.string().optional(),
+
   APPROVAL_BOSS_USER_ID: Joi.string().optional(),
 
   // Path roots (differ dev↔prod; code defaults)
@@ -189,7 +206,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SANDBOX_IMAGE: Joi.string().optional(),
   WORKSPACE_IMAGE: Joi.string().optional(),
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
-  MAX_CONCURRENT_SANDBOXES: Joi.number().integer().min(1).optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
   SANDBOX_MCP_NETWORK: Joi.string().optional(),
@@ -201,6 +217,10 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   JWT_REFRESH_SECRET: Joi.string().required(),
   ADMIN_API_TOKEN: Joi.string().optional(),
   COOKIE_DOMAIN: Joi.string().optional(),
+  PREVIEW_BASE_DOMAIN: Joi.string().optional(),
+  CADDY_ADMIN_SOCKET: Joi.string().optional(),
+  CADDY_CONTAINER_NAME: Joi.string().optional(),
+  PREVIEW_ID_SECRET: Joi.string().optional(),
   ADMIN_SEED_EMAIL: Joi.string().email().optional(),
   ADMIN_SEED_PASSWORD: Joi.string().optional(),
   GITHUB_WEBHOOK_SECRET: Joi.string().optional(),
@@ -230,6 +250,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   DRIVER_TRANSIENT_RETRY_MS: Joi.number().integer().min(0).optional(),
   TURN_STALE_MS: Joi.number().integer().min(1).optional(),
   TURN_STREAM_REAP_IDLE_MS: Joi.number().integer().min(1).optional(),
+  REVIEW_LENS_CONCURRENCY: Joi.number().integer().min(1).optional(),
 
   // Dev/test tooling (never prod)
   TEST_BRIDGE: Joi.string().valid('on', 'off').optional(),

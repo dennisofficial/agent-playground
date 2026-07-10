@@ -8,7 +8,7 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { isOnboarding, notOnboarding } from '../conditions';
+import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
 import {
   CLOUD_SANDBOX_NOTE,
   PLAYGROUND_NOTE,
@@ -125,9 +125,11 @@ export class SandboxGroup {
   sandboxRuntime(): string {
     return [
       'SANDBOX RUNTIME: ANY long-running process (dev servers, `docker compose` — run it foreground, not `-d`,',
-      '— watchers) MUST be wrapped with the `atlas-svc` supervisor via Bash — `atlas-svc run --name <id> -- <cmd>`',
+      '— watchers) MUST be wrapped with the `atlas-svc` supervisor via Bash — `atlas-svc run --name <id> [--port <n>] -- <cmd>`',
       '(detached, captured logs), `atlas-svc logs [-f] <id>`, `atlas-svc ps`, `atlas-svc stop <id>` — never a bare',
-      '`&`/nohup/`-d`. This is how the OPERATOR sees your services: everything under atlas-svc shows up in their',
+      '`&`/nohup/`-d`. Pass `--port <n>` for an HTTP dev server so it shows in the operator\'s PORTS panel (and, when',
+      'previews are enabled, gets a public URL — see PUBLIC PREVIEW URLS below); omit it for a non-HTTP worker.',
+      'This is how the OPERATOR sees your services: everything under atlas-svc shows up in their',
       'UI with live logs; anything started outside it is invisible to them. Your sandbox can be restarted between turns (idle reaps,',
       'crashes); never assume something you started earlier is still running — `atlas-svc ps` shows what died,',
       'and verify a server is actually up (curl/health-check) before relying on it.',
@@ -138,6 +140,39 @@ export class SandboxGroup {
       'to drop the whole fleet at once. Do NOT leave dev servers idling across turns "just in case" — a later',
       'turn restarts them in seconds, and `atlas-svc ps` shows what is down. Leave nothing running you are not',
       'actively using.',
+    ].join('\n');
+  }
+
+  /** Auto-expose: how a ported service becomes a public preview URL, and the provision→write-env→start
+   *  ordering the operator must follow (only active when the ATLAS_PREVIEW_* env vars are injected). A
+   *  build-brain concern — a review job never boots its own branch, so it gates `isBuildBrain`. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1262, condition: isBuildBrain })
+  publicExposure(): string {
+    return [
+      'PUBLIC PREVIEW URLS: a supervised service started with a port is automatically exposed on the public',
+      'internet so the operator can test your branch live. Start it as `atlas-svc run --name <svc> --port <n>',
+      '-- <cmd>` and it is reachable at `https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN`. Those two vars',
+      'are in your env ONLY when previews are enabled — if either is unset, exposure is off, so skip this whole',
+      'section and do not promise the operator a URL.',
+      'The URL is DETERMINISTIC: you know it BEFORE you start anything, which is load-bearing because a frontend',
+      'bakes its API base URL at build/start time and a backend bakes its cookie domain + CORS allow-list at',
+      'boot. So the ordering is not optional:',
+      '  1. Compute each service URL from `$ATLAS_PREVIEW_ID` + `$ATLAS_PREVIEW_DOMAIN` (e.g. web =',
+      '     `https://$ATLAS_PREVIEW_ID-web.$ATLAS_PREVIEW_DOMAIN`, api = `https://$ATLAS_PREVIEW_ID-api.$ATLAS_PREVIEW_DOMAIN`).',
+      "  2. Write them into the apps' config FIRST: the frontend's API base URL env → the backend service's URL;",
+      "     the backend's cookie domain + allowed CORS origin → the frontend service's URL. Both are subdomains",
+      '     of the same registrable domain, so a `Secure; SameSite=Lax` cookie is sent cross-subdomain; CORS must',
+      '     allow-list the EXACT frontend origin with credentials enabled.',
+      '  3. THEN start each service with `atlas-svc run --name <svc> --port <n> -- <cmd>`.',
+      'CRITICAL — BIND TO 0.0.0.0, NOT localhost: the proxy reaches your service from OUTSIDE its container, so a',
+      'server listening on `127.0.0.1` shows as "running" but the public URL 502s. Start every exposed dev server',
+      'on `0.0.0.0:<port>` — Next `next dev -H 0.0.0.0 -p <n>`, Vite `vite --host 0.0.0.0 --port <n>`, Nest/Express',
+      "`app.listen(<n>, '0.0.0.0')`, or set `HOST=0.0.0.0`.",
+      'After starting, `curl https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN` and confirm a real response,',
+      'not a 502, before telling the operator it is up.',
+      'Use `--no-expose` for an internal-only service you do not want a public URL for. Naming: the `<svc>` name',
+      'becomes the subdomain label, so keep names short and DNS-safe: lowercase letters/digits/hyphens only,',
+      'start/end alphanumeric, max 52 chars (`web`, `api`, `admin-ui`).',
     ].join('\n');
   }
 

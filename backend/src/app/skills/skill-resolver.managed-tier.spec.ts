@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
+import type { EnvService } from '@core/config/env/env.service';
 import type { WorkspaceSkillEntity } from '../persistence/entities';
 import { SkillResolver } from './skill-resolver.service';
 import { WorkspaceSkillStore } from './workspace-skill.store';
+
+/** Minimal `EnvService` stub — none of these tests exercise `resolveReviewSkillsForThread`'s disk reads. */
+const fakeEnv = { get: () => undefined } as unknown as EnvService;
 
 // Stubs the system-tier registry so this file can assert the MERGE/precedence behavior without depending
 // on whatever's actually shipped in `system-skill-registry.ts` (which ships empty by design — see its
@@ -55,7 +59,7 @@ class FakeRepo {
 function make(): { resolver: SkillResolver; store: WorkspaceSkillStore } {
   const repo = new FakeRepo();
   const store = new WorkspaceSkillStore(repo as unknown as Repository<WorkspaceSkillEntity>);
-  return { resolver: new SkillResolver(store), store };
+  return { resolver: new SkillResolver(store, fakeEnv), store };
 }
 
 describe('SkillResolver.resolveForTurn — managed (system) tier precedence', () => {
@@ -64,8 +68,22 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
     expect(out).toEqual(
       expect.arrayContaining([
-        { name: 'shared', description: 'managed description', dirPath: 'shared', managed: true },
-        { name: 'managed-only', description: 'only on the system tier', dirPath: 'managed-only', managed: true },
+        {
+          name: 'shared',
+          description: 'managed description',
+          dirPath: 'shared',
+          managed: true,
+          reviewForTypes: [],
+          reviewForGlobs: [],
+        },
+        {
+          name: 'managed-only',
+          description: 'only on the system tier',
+          dirPath: 'managed-only',
+          managed: true,
+          reviewForTypes: [],
+          reviewForGlobs: [],
+        },
       ]),
     );
   });
@@ -75,7 +93,13 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
     await store.write('org1', '*', 'shared', { description: 'org override' });
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
     const shared = out.find((s) => s.name === 'shared');
-    expect(shared).toEqual({ name: 'shared', description: 'org override', dirPath: 'shared' });
+    expect(shared).toEqual({
+      name: 'shared',
+      description: 'org override',
+      dirPath: 'shared',
+      reviewForTypes: [],
+      reviewForGlobs: [],
+    });
     expect(shared?.managed).toBeUndefined();
   });
 
@@ -87,6 +111,8 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
       name: 'shared',
       description: 'repo override',
       dirPath: 'repos/repo-1/shared',
+      reviewForTypes: [],
+      reviewForGlobs: [],
     });
   });
 
@@ -106,6 +132,8 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
           description: 'git-sourced managed description',
           dirPath: 'git-shared',
           managedGit: true,
+          reviewForTypes: [],
+          reviewForGlobs: [],
         },
       ]),
     );
@@ -116,7 +144,13 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
     await store.write('org1', '*', 'git-shared', { description: 'org override' });
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
     const gitShared = out.find((s) => s.name === 'git-shared');
-    expect(gitShared).toEqual({ name: 'git-shared', description: 'org override', dirPath: 'git-shared' });
+    expect(gitShared).toEqual({
+      name: 'git-shared',
+      description: 'org override',
+      dirPath: 'git-shared',
+      reviewForTypes: [],
+      reviewForGlobs: [],
+    });
     expect(gitShared?.managed).toBeUndefined();
     expect(gitShared?.managedGit).toBeUndefined();
   });

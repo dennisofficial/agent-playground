@@ -54,6 +54,7 @@ import type {
   JobContext,
   JobKind,
   JobStatus,
+  ServiceInfo,
   TaskItem,
 } from "@/lib/api/types";
 import type { JobRef } from "@/lib/api/job-api";
@@ -98,8 +99,8 @@ export interface JobMeta {
  * never restructures; only the signals inside change (dot color, dimming, the selected row, per-region notes).
  *
  * "Job" is the operator-facing name for what the API still calls a thread; a job's lanes ("Threads") are the
- * Main conversation + the build threads. PORTS is a design-stage mock (no backend port-exposure yet) — kept
- * behind {@link PORTS_MOCK} so it is trivial to wire to real sandbox ports later.
+ * Main conversation + the build threads. PORTS is a filtered live view of the sandbox's supervised services
+ * (those that declared a port), each exposed row linking out to its public preview URL.
  */
 export function Navigator({
   meta,
@@ -119,6 +120,7 @@ export function Navigator({
   hasOpenPr,
   deleteReady,
   directBuild,
+  inDrawer = false,
 }: {
   meta: JobMeta;
   pipeline: PipelineState | undefined;
@@ -151,6 +153,8 @@ export function Navigator({
   deleteReady?: boolean;
   /** True when the awaiting approval is a direct build — flips the approve CTA to "Approve Direct Build". */
   directBuild?: boolean;
+  /** Rendered inside the left Drawer (below xl) — fills the sheet width instead of the fixed 288px rail. */
+  inDrawer?: boolean;
 }) {
   const job = pipelineJob(pipeline);
   // A COMMITTED direct build (durable `jobs.build_path`, stamped only at approval) never grows build lanes,
@@ -176,17 +180,28 @@ export function Navigator({
     !hasPr &&
     meta.status !== "done" &&
     meta.status !== "running" &&
-    meta.status !== "awaiting_ship_review";
+    meta.status !== "awaiting_ship_review" &&
+    meta.status !== "amending";
   const [editing, setEditing] = useState(false);
 
   // Tickets Atlas raised FROM this job — the header "Tickets raised" entry appears only once there's ≥1.
   const { data: raisedTickets = [] } = useJobTickets(jobRef);
 
+  // Supervised services drive BOTH the SERVICES and PORTS regions — fetched once here and passed down so
+  // the two regions share a single poll (PORTS is a filtered view of the same services).
+  const { data: servicesData, isLoading: servicesLoading } =
+    useServices(jobRef);
+  const services = servicesData?.services ?? [];
+
   const st = meta.status;
 
   return (
     <div
-      className="flex w-72 shrink-0 flex-col overflow-hidden border-r border-border"
+      data-testid="job-navigator"
+      className={cn(
+        "flex flex-col overflow-hidden border-r border-border",
+        inDrawer ? "h-full w-full" : "w-72 shrink-0",
+      )}
       style={{
         background: "color-mix(in srgb, var(--panel) 35%, transparent)",
       }}
@@ -452,13 +467,15 @@ export function Navigator({
         {/* SERVICES — real atlas-svc supervised processes (dev servers Atlas brought up on demand). Open in
             the RIGHT pane (blue), which streams the process's captured log. */}
         <ServicesRegion
-          jobRef={jobRef}
+          services={services}
+          isLoading={servicesLoading}
           detailNode={detailNode}
           onSelectNode={onSelectNode}
         />
 
-        {/* PORTS — the sandbox's live dev servers (design-stage mock). Open in the RIGHT pane (blue). */}
-        <PortsRegion detailNode={detailNode} onSelectNode={onSelectNode} />
+        {/* PORTS — the sandbox's live dev servers (real exposures). Rows link out to the public URL. Shares
+            the SERVICES poll (same `useServices` query) rather than fetching a second time. */}
+        <PortsRegion services={services} />
       </div>
     </div>
   );
@@ -574,17 +591,72 @@ function ThreadRows({
   // One renderer for every stage: running/done/failed threads expand to their live task list; pre-approval
   // drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the hero ghost row —
   // EXCEPT a committed direct build, which never grows lanes, so its "approve the plan" ghost is just noise.
-  if (!job || job.threads.length === 0) {
+  // PLAN VERSIONING: prior revisions (browsable history) render below the active lanes; a re-propose/direct
+  // build over already-DONE work can leave the active lanes empty while history persists — show history then.
+  const prior = job?.priorRevisions ?? [];
+  if (!job || (job.threads.length === 0 && prior.length === 0)) {
     return isDirectBuild ? null : <BuildLanesEmpty />;
   }
   return (
-    <PipelineTree
-      job={job}
-      status={status}
-      jobId={jobId}
-      laneNode={laneNode}
-      onSelectNode={onSelectNode}
-    />
+    <>
+      {job.threads.length > 0 ? (
+        <PipelineTree
+          job={job}
+          status={status}
+          jobId={jobId}
+          laneNode={laneNode}
+          onSelectNode={onSelectNode}
+        />
+      ) : null}
+      {prior.map((rev) => (
+        <PriorRevisionSection
+          key={rev.decisionRecordId}
+          job={job}
+          revision={rev}
+          jobId={jobId}
+          laneNode={laneNode}
+          onSelectNode={onSelectNode}
+        />
+      ))}
+    </>
+  );
+}
+
+/**
+ * One PRIOR PLAN REVISION as a collapsed, muted "Previous plan (vN)" section — read-only history from an
+ * earlier plan that was superseded by a re-propose over already-DONE work. Reuses `PipelineTree` with a
+ * synthetic job (the revision's lanes, no active halt); the muted wrapper reads as history while lane clicks
+ * still open each lane's persisted transcript (browsing is the point). Collapsed by default to stay quiet.
+ */
+function PriorRevisionSection({
+  job,
+  revision,
+  jobId,
+  laneNode,
+  onSelectNode,
+}: {
+  job: PipelineJob;
+  revision: NonNullable<PipelineJob["priorRevisions"]>[number];
+  jobId: string;
+  laneNode: string | null;
+  onSelectNode: (node: string) => void;
+}) {
+  const revJob: PipelineJob = { ...job, threads: revision.threads, halt: null };
+  return (
+    <details className="mt-1 opacity-70">
+      <summary className="cursor-pointer list-none px-2 py-1.5 text-[10.5px] font-medium uppercase tracking-wide text-dim">
+        Previous plan (v{revision.revision})
+      </summary>
+      <div className="mt-0.5">
+        <PipelineTree
+          job={revJob}
+          status="done"
+          jobId={jobId}
+          laneNode={laneNode}
+          onSelectNode={onSelectNode}
+        />
+      </div>
+    </details>
   );
 }
 
@@ -780,17 +852,16 @@ function OutputGroup({
  *  check (the host can't see into the container's PID namespace). Rows never claim "running" outright;
  *  a pulsing dot is only a heuristic ("its log wrote recently"), never a guarantee — see `ServiceInfo`. */
 function ServicesRegion({
-  jobRef,
+  services,
+  isLoading,
   detailNode,
   onSelectNode,
 }: {
-  jobRef: JobRef;
+  services: ServiceInfo[];
+  isLoading: boolean;
   detailNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const { data, isLoading } = useServices(jobRef);
-  const services = data?.services ?? [];
-
   return (
     <>
       <Divider
@@ -854,35 +925,15 @@ function ServicesRegion({
   );
 }
 
-// ── PORTS: the sandbox's live dev servers (design-stage mock) ──────────────────────────────────────
+// ── PORTS: the sandbox's live dev servers (real exposures) ─────────────────────────────────────────
 
-/** Whether to render the PORTS region. Mock-only for now — there is no backend port-exposure yet (the
- *  Docker port-mapping plumbing exists but is unused). Flip the data source here when it lands. */
-const PORTS_MOCK = true;
-
-interface PortVM {
-  id: string;
-  /** `W` web app · `S` server. */
-  tag: "W" | "S";
-  name: string;
-  meta: string;
-}
-
-const MOCK_PORTS: PortVM[] = [
-  { id: "billing", tag: "W", name: "Billing UI", meta: ":3000 · web app" },
-  { id: "admin", tag: "W", name: "Admin", meta: ":3002 · web app" },
-  { id: "api", tag: "S", name: "API server", meta: ":8080 · server" },
-];
-
-function PortsRegion({
-  detailNode,
-  onSelectNode,
-}: {
-  detailNode: string | null;
-  onSelectNode: (node: string) => void;
-}) {
-  if (!PORTS_MOCK) return null;
-  const ports = MOCK_PORTS;
+/** The PORTS region: a filtered view of the same supervised services as SERVICES, showing only those that
+ *  declared a port and haven't stopped. Each exposed row (`url` present) links out to its public preview
+ *  URL. When exposure is off (backend sends `url: null`), rows still render as a read-only port list. */
+function PortsRegion({ services }: { services: ServiceInfo[] }) {
+  const ports = services.filter(
+    (s) => s.port != null && s.status !== "stopped",
+  );
   return (
     <>
       {/* PORTS — the sandbox's live dev servers. Same inline-divider style as the OUTPUTS sub-groups; the
@@ -906,48 +957,69 @@ function PortsRegion({
       {ports.length === 0 ? (
         <EmptyRow icon={<Globe size={13} />}>No ports exposed yet</EmptyRow>
       ) : null}
-      {ports.map((p) => {
-        const node = `port:${p.id}`;
-        const active = detailNode === node;
-        const web = p.tag === "W";
-        return (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => onSelectNode(node)}
-            className={cn(
-              "flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left transition hover:bg-surface-2",
-              active && "nav-selected-blue",
-            )}
-          >
+      {ports.map((s) => {
+        const linked = s.url != null;
+        const running = s.status === "running";
+        // The whole row is the same band whether it's a link-out or an inert port entry; the anchor form is
+        // only used when there's a public URL to open.
+        const rowClass = cn(
+          "flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left transition",
+          linked ? "hover:bg-surface-2" : "cursor-default",
+        );
+        const inner = (
+          <>
             <span
               className="grid h-[19px] w-[19px] shrink-0 place-items-center rounded-[5px]"
               style={{
-                color: web ? "var(--blue)" : "var(--green)",
-                background: web
+                color: linked ? "var(--blue)" : "var(--faint)",
+                background: linked
                   ? "color-mix(in srgb, var(--blue) 13%, transparent)"
-                  : "var(--green-soft)",
+                  : "var(--surface-2)",
               }}
             >
-              {web ? <Globe size={11} /> : <Server size={11} />}
+              {linked ? <Globe size={11} /> : <Server size={11} />}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[11px] font-semibold text-text">
-                {p.name}
+              <span
+                className={cn(
+                  "block truncate text-[11px] font-semibold",
+                  running ? "text-text" : "text-faint",
+                )}
+              >
+                {s.name}
               </span>
               <span className="block truncate font-mono text-[8px] text-faint">
-                {p.meta}
+                :{s.port}
               </span>
             </span>
             <span
               className="h-1.5 w-1.5 shrink-0 rounded-full"
-              style={{
-                background: "var(--green)",
-                boxShadow:
-                  "0 0 0 3px color-mix(in srgb, var(--green) 16%, transparent)",
-              }}
+              style={
+                running
+                  ? {
+                      background: "var(--green)",
+                      boxShadow:
+                        "0 0 0 3px color-mix(in srgb, var(--green) 16%, transparent)",
+                    }
+                  : { background: "var(--faint)" }
+              }
             />
-          </button>
+          </>
+        );
+        return linked ? (
+          <a
+            key={s.id}
+            href={s.url ?? undefined}
+            target="_blank"
+            rel="noreferrer"
+            className={rowClass}
+          >
+            {inner}
+          </a>
+        ) : (
+          <div key={s.id} className={rowClass}>
+            {inner}
+          </div>
         );
       })}
     </>

@@ -6,6 +6,7 @@
 #   - /srv/atlas/pgdata/            (Postgres data directory)
 #   - /srv/atlas/data/{repos,agent-home,refs,skills,golden,engine}/
 #   - /srv/atlas/caddy/{data,config}/
+#   - /srv/atlas/caddy/admin/       (Caddy admin API unix socket — mounted into caddy + backend)
 #   - /srv/atlas/state/             (blue/green active-color + tag)
 #   - /var/run/docker.sock          (the host Docker daemon socket)
 #
@@ -74,6 +75,16 @@ x-backend-common: &backend-common
     # sandbox create fails with "OCI runtime create failed ... not a directory". bundleMcpHub() mirrors the
     # bundle here on boot, same as the engine and bridge bundles.
     MCP_HUB_BUNDLE_PATH: /srv/atlas/data/engine/mcp-hub-server.mjs
+    # Sandbox preview exposure (thread 2). Setting PREVIEW_BASE_DOMAIN turns the feature ON: the backend
+    # auto-registers a Caddy route (`<previewId>-<svc>.atlas.dltechnologies.co`) for every supervised
+    # service that declares a --port, bridges atlas-caddy into that sandbox's own `-net`, and injects
+    # ATLAS_PREVIEW_ID/ATLAS_PREVIEW_DOMAIN into each sandbox so the agent can compute URLs before boot.
+    # Routes are programmed over the admin unix socket mounted below (never TCP). PREVIEW_ID_SECRET (the
+    # HMAC key for the unguessable previewId token) rides the encrypted atlas.env; unset → derived from
+    # SECRETS_ENCRYPTION_KEY.
+    PREVIEW_BASE_DOMAIN: atlas.dltechnologies.co
+    CADDY_ADMIN_SOCKET: /srv/atlas/caddy/admin/admin.sock
+    CADDY_CONTAINER_NAME: atlas-caddy
     # CORS origin for the Atlas web console
     FRONTEND_HOST: https://atlas.dltechnologies.co
     # This backend's own public origin — used to build self-referential URLs, notably the MCP OAuth
@@ -91,6 +102,10 @@ x-backend-common: &backend-common
     # Same-path data mount — host paths handed to `docker run` resolve correctly
     # because the container sees the exact same absolute path as the daemon does.
     - /srv/atlas/data:/srv/atlas/data
+    # Caddy admin API unix socket — same host dir mounted at the SAME path into caddy
+    # (see the caddy service) so the socket is one shared inode. The backend programs
+    # per-preview routes through admin.sock here; NO TCP admin listener exists.
+    - /srv/atlas/caddy/admin:/srv/atlas/caddy/admin
   networks:
     - atlas
   depends_on:
@@ -221,14 +236,34 @@ services:
 
   # ── Caddy (reverse proxy + auto-TLS) ───────────────────────────────────────────
   caddy:
-    image: caddy:2
+    # Custom image = stock caddy:2 + the caddy-dns/cloudflare module (infra/caddy.Dockerfile),
+    # required for the `*.atlas.dltechnologies.co` wildcard cert via DNS-01. Built + pushed in CI
+    # like the backend/web images.
+    #
+    # Pinned to the stable `:latest` tag, NOT the per-deploy ${ATLAS_IMAGE_TAG}: preview routes are
+    # added dynamically via the admin API and live only in Caddy's in-memory config (they're not in
+    # the static Caddyfile). If the image ref changed every deploy, `DC up -d ... caddy` (deploy.sh)
+    # would recreate the container each time and wipe all live sandbox preview routes. A constant ref
+    # means compose leaves the running caddy untouched across deploys. To roll out a new caddy build,
+    # pull + recreate it explicitly (`DC pull caddy && DC up -d caddy`), accepting the route reset.
+    image: ghcr.io/dennisofficial/atlas-caddy:latest
+    # Fixed name so the backend can `docker network connect atlas-caddy <sandbox>-net`
+    # deterministically on first exposure (mirrors atlas-postgres above).
+    container_name: atlas-caddy
     ports:
       - "80:80"
       - "443:443"
+    # CLOUDFLARE_API_TOKEN (scoped Zone:Read + DNS:Edit on dltechnologies.co) lives in the box
+    # secrets file; Caddy reads it as {env.CLOUDFLARE_API_TOKEN} for the DNS-01 challenge.
+    env_file:
+      - /srv/atlas/secrets/atlas.env
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /srv/atlas/caddy/data:/data
       - /srv/atlas/caddy/config:/config
+      # Admin API unix socket — same host dir mounted at the SAME path into the backend
+      # (backend-common) so the socket is one shared inode. NO TCP admin listener exists.
+      - /srv/atlas/caddy/admin:/srv/atlas/caddy/admin
     networks:
       - atlas
     restart: unless-stopped

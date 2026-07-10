@@ -2,6 +2,7 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } 
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { JobEntity } from './job.entity';
+import { DecisionRecordEntity } from './decision-record.entity';
 import type { ReviewFinding } from '../../autofix/autofix.types';
 
 /**
@@ -17,8 +18,10 @@ import type { ReviewFinding } from '../../autofix/autofix.types';
 @Entity({ name: 'threads' })
 @Index(['job_id'])
 @Index(['parent_thread_id'])
-// Hands-off: uq_threads_job_parent_ordinal is UNIQUE … NULLS NOT DISTINCT, unexpressible in TypeORM
-// metadata. The DDL lives in the migrations; this only tells migration:generate never to DROP it.
+// Hands-off: uq_threads_job_parent_ordinal is UNIQUE(job_id, decision_record_id, parent_thread_id, ordinal)
+// … NULLS NOT DISTINCT, unexpressible in TypeORM metadata. The `decision_record_id` column makes it
+// revision-aware so two plan revisions can reuse ordinals 10/20/30 without colliding. The DDL lives in the
+// migrations; this only tells migration:generate never to DROP it.
 @Index('uq_threads_job_parent_ordinal', { synchronize: false })
 export class ThreadEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -89,9 +92,12 @@ export class ThreadEntity extends TimestampedEntity {
   brief!: string;
 
   /**
-   * The scope TYPE of this thread (backend/frontend/docs/testing/analytics/infra/…) — selects the
-   * review agents that check it. A fixed vocabulary (THREAD_TYPES) with an allow-other escape hatch;
-   * defaults to 'general' for arg-less callers (bugfix/direct build).
+   * The scope TYPE of this thread — the deterministic routing key that selects the review agents that
+   * check it. A CLOSED vocabulary (THREAD_TYPES: backend | frontend | docs | testing | infra | data |
+   * general), enforced at write via `coerceThreadType`; 'general' is the total fallback for arg-less
+   * callers (bugfix/direct build) and any unrecognized value. Stays a `text` column (no DB enum) — the
+   * app layer is the validator, so legacy rows with off-vocabulary values are tolerated and coerce to
+   * 'general' at selection time.
    */
   @Column({ type: 'text', default: 'general' })
   type!: string;
@@ -123,6 +129,24 @@ export class ThreadEntity extends TimestampedEntity {
   // 'none' | 'paused' | 'incomplete' | 'failed' | 'skipped' — the orthogonal condition overlay (ADR-0004 detail stays in terminal_record/halt_outcome)
   @Column({ type: 'text', default: 'none' })
   condition!: string;
+
+  /**
+   * The PLAN REVISION this thread belongs to (FK → decision_records.id) — the versioning key. A re-propose
+   * over already-DONE work creates a NEW revision and points `jobs.decision_record_id` at it; the prior
+   * revision's threads keep THEIR record id and become immutable, browsable history (see `persistPlan`). The
+   * "active" revision is always `jobs.decision_record_id`; the driver scopes to it (`threadsForJob`) so old
+   * revisions are never re-run. NULL for job-level singletons (`main`/`plan_review`) and legacy rows — these
+   * are revision-agnostic. It is part of the `uq_threads_job_parent_ordinal` unique index (job_id,
+   * decision_record_id, parent_thread_id, ordinal) so two revisions can reuse ordinals 10/20/30 without
+   * colliding. `onDelete: CASCADE` so pruning a never-built draft record clears its threads.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  @Index()
+  decision_record_id!: string | null;
+
+  @ManyToOne(() => DecisionRecordEntity, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'decision_record_id' })
+  decisionRecord?: DecisionRecordEntity | null;
 
   /**
    * The thread's LLM-authored task list — folded incrementally from the orchestrating session's

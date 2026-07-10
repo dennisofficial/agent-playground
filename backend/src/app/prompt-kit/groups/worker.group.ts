@@ -10,6 +10,7 @@ import type { PromptCtx } from '../prompt-ctx';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
   DELETION_SAFETY_NOTE,
+  DESIGN_DISCIPLINE_NOTE,
   DEVIATION_NOTE,
   DOC_VERSION_VERIFY_NOTE,
   DOCS_BEFORE_GREP,
@@ -168,15 +169,22 @@ export class WorkerGroup {
     return MINIMAL_CODE_NOTE;
   }
 
+  /** DESIGN DISCIPLINE — the always-on recognition trigger that makes the `design-patterns` skill fire; rides
+   *  on top of MINIMAL_CODE_NOTE. Same nudge the brain + fan-out writers carry. */
+  @Fragment({ usedBy: [Agent.WORKER], order: 421 })
+  designDiscipline(): string {
+    return DESIGN_DISCIPLINE_NOTE;
+  }
+
   /** TYPESCRIPT TYPE STYLE — the orchestrator makes small edits itself; same house rule the brain + writers
    *  carry. No-op on non-TS repos by its own wording. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 421 })
+  @Fragment({ usedBy: [Agent.WORKER], order: 422 })
   tsStyle(): string {
     return TS_STYLE_NOTE;
   }
 
   /** VERIFY DOCS + INSTALLED VERSION before building on a dependency. Shared with the brain + fan-out writers. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 422 })
+  @Fragment({ usedBy: [Agent.WORKER], order: 423 })
   docVersionVerify(): string {
     return DOC_VERSION_VERIFY_NOTE;
   }
