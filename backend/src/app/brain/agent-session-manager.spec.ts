@@ -2678,6 +2678,44 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('finish connecting this repo');
   });
 
+  it('a closed sandbox posts the "thread is closed" notice ONCE and MARKS the message delivered (kills the 2-min spam)', async () => {
+    // ensureProvisioned → null means the sandbox is torn down (lifecycle=closed) and NOT revived (a
+    // non-operator seed, or a genuinely un-provisionable job). The message must be stamped delivered via
+    // onRegistered — else the undelivered-chat sweep re-posts this identical notice every lease cycle.
+    const ensureProvisioned = vi.fn().mockResolvedValue(null);
+    const { manager, surface } = makeManager({ findSandbox: { worktreePath: '/wt' }, ensureProvisioned });
+    const onRegistered = vi.fn();
+
+    await (
+      manager as unknown as {
+        runChatTurn: (s: ChatStimulus, o: { onRegistered: () => void }) => Promise<void>;
+      }
+    ).runChatTurn(stimulus, { onRegistered });
+
+    const closedPosts = (surface.post as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[1]).includes('This thread is closed'),
+    );
+    expect(closedPosts).toHaveLength(1); // posted once, not spammed
+    expect(onRegistered).toHaveBeenCalledTimes(1); // marked delivered → the sweep can't re-drive it
+  });
+
+  it('defense-in-depth: a SYSTEM-authored turn cannot revive a closed sandbox even if allowClosedReprovision is passed', async () => {
+    const ensureProvisioned = vi.fn().mockResolvedValue(null);
+    const { manager } = makeManager({ findSandbox: { worktreePath: '/wt' }, ensureProvisioned });
+    const systemStim: ChatStimulus = { ...stimulus, author: { id: 'atlas', displayName: 'Atlas' } };
+
+    await (
+      manager as unknown as {
+        runChatTurn: (s: ChatStimulus, o: { allowClosedReprovision: boolean }) => Promise<void>;
+      }
+    ).runChatTurn(systemStim, { allowClosedReprovision: true });
+
+    // isOperatorAuthored fences the flag: a non-operator author always resolves it to false.
+    expect(ensureProvisioned).toHaveBeenCalledWith(THREAD_ID, TEAM_ID, expect.anything(), {
+      allowClosedReprovision: false,
+    });
+  });
+
   it('PASSIVE awareness: an OPERATOR turn drains the buffer and PREPENDS the passive summary to the turn input', async () => {
     const drainAndAdvance = vi.fn().mockResolvedValue({
       markers: [
