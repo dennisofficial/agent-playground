@@ -54,29 +54,48 @@ function reviewLensId(sandboxKey: EngineHomeKey): string | undefined {
   return sandboxKey.subId?.startsWith('review-') ? sandboxKey.subId.slice('review-'.length) : undefined;
 }
 
+type EngineCall = {
+  mode: string;
+  engine?: string;
+  sandboxKey: EngineHomeKey;
+  richStream?: boolean;
+  hasOnEvent: boolean;
+  modelReasoningEffort?: string;
+};
+
 function mockEngine(opts: {
   reviewReports: Record<string, string>;
   fixReport?: string;
 }): {
   engine: EngineRunnerPort;
-  calls: Array<{ mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; hasOnEvent: boolean }>;
+  calls: EngineCall[];
 } {
-  const calls: Array<{ mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; hasOnEvent: boolean }> = [];
+  const calls: EngineCall[] = [];
   const run = vi.fn(
-    async (args: { mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; onEvent?: unknown }) => {
+    async (args: {
+      mode: string;
+      engine?: string;
+      sandboxKey: EngineHomeKey;
+      richStream?: boolean;
+      onEvent?: unknown;
+      modelReasoningEffort?: string;
+    }) => {
       calls.push({
         mode: args.mode,
+        engine: args.engine,
         sandboxKey: args.sandboxKey,
         richStream: args.richStream,
         hasOnEvent: typeof args.onEvent === 'function',
+        modelReasoningEffort: args.modelReasoningEffort,
       });
       if (args.mode === 'execute') {
-      return { result: opts.fixReport ?? 'fixed finding 1', sessionId: 'fix-sess' };
-    }
-    // review turn — pick the report by the lens embedded in the sandbox key.
-    const lensId = reviewLensId(args.sandboxKey);
-    return { result: opts.reviewReports[lensId ?? ''] ?? reportWith([]), sessionId: `rev-${lensId}` };
-  });
+        return { result: opts.fixReport ?? 'fixed finding 1', sessionId: 'fix-sess' };
+      }
+      // review turn — pick the report by the lens embedded in the sandbox key.
+      const lensId = reviewLensId(args.sandboxKey);
+      return { result: opts.reviewReports[lensId ?? ''] ?? reportWith([]), sessionId: `rev-${lensId}` };
+    },
+  );
   return { engine: { run } as unknown as EngineRunnerPort, calls };
 }
 
@@ -166,6 +185,50 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     expect(summary.commits).toEqual([
       { sha: 'commitsha1', message: expect.stringContaining('thread review fixes') },
     ]);
+  });
+
+  it('threads Autofix effort only onto matching Claude child turns, preserving Codex defaults', async () => {
+    const finding = {
+      lens: 'l1',
+      severity: 'high' as const,
+      file: 'src/x.ts',
+      title: 'finding A',
+      detail: 'fix it',
+    };
+
+    const claude = mockEngine({
+      reviewReports: { l1: reportWith([finding]) },
+      fixReport: 'fixed finding A.',
+    });
+    const claudeStage = new AutoFixStage(claude.engine, mockGit({ sha: 'claude-sha' }).git, mockHarness().factory);
+
+    await claudeStage.runReviewLens(ctx, LENSES[0]);
+    expect(claude.calls[0]).toMatchObject({
+      mode: 'review',
+      engine: 'claude',
+      modelReasoningEffort: 'high',
+    });
+
+    await claudeStage.applyReviewFindings(ctx, [finding]);
+    expect(claude.calls[1]).toMatchObject({
+      mode: 'execute',
+      engine: 'claude',
+      modelReasoningEffort: 'high',
+    });
+
+    const codex = mockEngine({
+      reviewReports: { l1: reportWith([finding]) },
+      fixReport: 'fixed finding A.',
+    });
+    const codexStage = new AutoFixStage(codex.engine, mockGit({ sha: 'codex-sha' }).git, mockHarness().factory);
+
+    await codexStage.runReviewLens(ctx, LENSES[0], { engine: 'codex' });
+    expect(codex.calls[0]).toMatchObject({ mode: 'review', engine: 'codex' });
+    expect(codex.calls[0].modelReasoningEffort).toBeUndefined();
+
+    await codexStage.applyReviewFindings(ctx, [finding], { engine: 'codex' });
+    expect(codex.calls[1]).toMatchObject({ mode: 'execute', engine: 'codex' });
+    expect(codex.calls[1].modelReasoningEffort).toBeUndefined();
   });
 
   it('PR-tail mode tags the commit message + summary mode (from the agent-authored HEAD)', async () => {
