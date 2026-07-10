@@ -1,9 +1,10 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type {
   OnApplicationBootstrap,
   OnApplicationShutdown,
 } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
@@ -13,6 +14,8 @@ import { TurnRegistry } from './turn-registry.service';
 const TURN_KEY_MATCH = 'turn:*';
 /** How often the leader reaps orphaned turn streams. Slower than the watchdog — orphans aren't urgent. */
 const DEFAULT_INTERVAL_MS = 300_000;
+/** SchedulerRegistry interval name (process-unique) for the leader-gated reap sweep. */
+const REAPER_INTERVAL = 'sandbox:turn-stream-reaper';
 /**
  * A key must be untouched at least this long (no read/write) before it's reap-eligible — the guard that
  * makes a false-delete impossible. A just-kicked turn `xadd`s its `spec` BEFORE it `register`s its
@@ -42,13 +45,15 @@ export class TurnStreamReaperService
   private readonly logger = new Logger(TurnStreamReaperService.name);
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
-  private timer?: ReturnType<typeof setInterval>;
 
   constructor(
     @Inject(REDIS_STREAM_PORT) private readonly redis: RedisStreamPort,
     private readonly registry: TurnRegistry,
     private readonly election: LeaderElectionService,
     private readonly env: EnvService,
+    // Prod always injects the scheduler (global ScheduleModule); unit tests omit it and never promote, so
+    // the reaper never starts there.
+    @Optional() private readonly scheduler?: SchedulerRegistry,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -67,17 +72,19 @@ export class TurnStreamReaperService
   }
 
   private start(): void {
-    if (this.timer) return;
+    if (!this.scheduler) return;
+    if (this.scheduler.doesExist('interval', REAPER_INTERVAL)) return;
     void this.reap(); // boot cleanup — sweep any orphans accumulated before this leader took over
-    this.timer = setInterval(() => void this.reap(), this.intervalMs);
-    if (typeof this.timer.unref === 'function') this.timer.unref();
+    const iv = setInterval(() => void this.reap(), this.intervalMs);
+    iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
+    this.scheduler.addInterval(REAPER_INTERVAL, iv);
     this.logger.log('turn stream reaper started (leader)');
   }
 
   private stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
+    // deleteInterval clears the interval AND removes it from the registry.
+    if (this.scheduler?.doesExist('interval', REAPER_INTERVAL)) {
+      this.scheduler.deleteInterval(REAPER_INTERVAL);
     }
   }
 

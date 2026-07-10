@@ -34,6 +34,7 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__review_plan          — run (or resume) a SYNCHRONOUS Codex review of your authored specs; returns severity-tagged findings (FULL PATH; see below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__propose_plan         — send the reviewed plan to the operator for approval (FULL PATH; requires review_plan first; see below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_plan        — retract a still-pending plan/direct-build approval you proposed (flips back to planning; the operator's Approve button clears). Use it when you keep working after proposing; then re-propose when ready.`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_ship        — retract the ship-review gate (READY TO SHIP) back to planning when the operator wants more changes rather than to ship; keeps completed work, re-arms automatically once follow-up work lands.`,
       `  - mcp__${BRIDGE_SERVER_NAME}__start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
       `  - mcp__${BRIDGE_SERVER_NAME}__dispatch_build       — (gated) dispatch an already-approved full build`,
@@ -145,7 +146,11 @@ export class HostToolsGroup {
       '    a two-call confirm (first call explains what is lost; call again to do it); refuses on a dirty/unpushed tree.',
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__propose_mcp_servers  — recommend stack-matched MCP servers ({ servers }) for`,
       '    the OWNER to approve (see MCP SERVERS). Posts a proposal card; you never register servers yourself.',
-      '    Declare a credential slot by name with `secret: true`; fill it after approval via request_secret (mcp).',
+      '    Declare a static credential slot by name with `secret: true`; fill it after approval via request_secret',
+      '    (mcp). For a server that needs INTERACTIVE login, set authKind:"oauth" instead (http/sse only, NO secret',
+      '    slot): the OWNER completes consent in the console (MCP settings → Connect) — you cannot, and must never',
+      "    inject an Authorization/Bearer header. NOTE: Claude's own design MCP (/design-login, claude.ai design",
+      '    files) is NOT onboardable as an MCP here — to use a .dc.html, ask the operator to UPLOAD it.',
       `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: only after the stack boots green (see FINISH)`,
     ].join('\n');
   }

@@ -50,6 +50,9 @@ export interface RawInboxThread {
   ciStatus?: CiStatus | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt?: WireJobHalt | null;
+  /** True only while a "Ship it" is being finalized (PR opening). The job re-uses the `running` status
+   *  during shipping, so this keeps the card in "Ready to Ship" instead of "Building". */
+  shipping?: boolean;
   org: { id: string; slug?: string; name?: string };
   repo: { id: string; name?: string };
 }
@@ -74,6 +77,9 @@ export interface InboxThread {
   ci: CiStatus | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt: WireJobHalt | null;
+  /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship"
+   *  (with the `running` working spinner) instead of routing it to "Building". */
+  shipping: boolean;
   org: { id: string; slug: string; name: string };
   repo: { id: string; name: string };
 }
@@ -107,6 +113,7 @@ export function normalize(r: RawInboxThread): InboxThread {
     pr: r.pr ?? null,
     ci: r.ciStatus ?? null,
     halt: r.halt ?? null,
+    shipping: r.shipping ?? false,
     org: {
       id: r.org.id,
       slug: r.org.slug ?? r.org.id,

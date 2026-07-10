@@ -2,7 +2,14 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '../domain';
-import { ENGINE_RUNNER, EngineAuthError, SANDBOX_RESET_NOTICE, pickKeys, type EngineRunnerPort } from '../engine';
+import {
+  ENGINE_RUNNER,
+  EngineAuthError,
+  EngineSessionLimitError,
+  SANDBOX_RESET_NOTICE,
+  pickKeys,
+  type EngineRunnerPort,
+} from '../engine';
 import type {
   CodexReasoningEffort,
   EngineAuth,
@@ -10,8 +17,10 @@ import type {
   EngineHomeKey,
   EngineRunResult,
   EngineUsage,
+  GitAuth,
   ResolvedMcpServer,
   ResolvedSkill,
+  SessionLimitHit,
   ToolBridgeOptions,
   TurnMeta,
 } from '../engine';
@@ -60,7 +69,7 @@ export interface RunTurnInput {
    * inside the sandbox. Sourced from the RESOLVED repo, NOT `sandbox` (a row-sourced sandbox has empty
    * `gitUrl`/no token). Set by build/execute dispatch; the runner puts it on the docker `target`.
    */
-  gitAuth?: { gitUrl: string; token?: string };
+  gitAuth?: GitAuth;
   /**
    * Opt into RICH token-level streaming (thinking + tool calls/results + subagent forwarding). Build turns
    * pass this so they ride the shared transcript spine (a full transcript, not coarse text/tool/result).
@@ -124,6 +133,9 @@ export interface RunTurnResult {
   /** A plan, when the turn was a plan turn that captured one. */
   planText?: string;
   usage?: EngineUsage;
+  /** Set when the turn ended on a Claude subscription session/usage limit (see {@link EngineRunResult.sessionLimit}).
+   *  Pure pass-through from the engine result; the caller decides how to park/resume. */
+  sessionLimit?: SessionLimitHit;
   /** The handle the driver holds for the session's next turn. */
   session: SessionRef;
 }
@@ -242,6 +254,19 @@ export class TurnRunnerService {
       throw err;
     }
 
+    // Session/usage limit — the turn ended CLEANLY on a Claude subscription limit (not a crash). Persist the
+    // step session id first (so a resume continues the SAME session, exactly like the auth-error path above),
+    // then THROW so the driver's halt-classification chokepoint parks the lane on a resume clock instead of
+    // failing the build. Only the build lane calls runTurn (the brain reads result.sessionLimit directly).
+    if (result.sessionLimit) {
+      if (stepId && result.sessionId) {
+        await this.steps.update({ id: stepId }, { session_id: result.sessionId });
+      }
+      const { resetAt, rateLimitType } = result.sessionLimit;
+      const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
+      throw new EngineSessionLimitError(message, resetAt, rateLimitType, result.sessionId);
+    }
+
     // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread. Belt-and-
     // braces for the Leg-seed clear too: if the session event never fired the clear but a fresh id surfaced
     // here, null the rotation markers alongside (see clear-on-birth above).
@@ -283,6 +308,7 @@ export class TurnRunnerService {
       report: result.result,
       ...(result.planText ? { planText: result.planText } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
+      ...(result.sessionLimit ? { sessionLimit: result.sessionLimit } : {}),
       session,
     };
   }
@@ -351,10 +377,16 @@ export class TurnRunnerService {
     if (stepId && result.sessionId) {
       await this.steps.update({ id: stepId }, { session_id: result.sessionId }).catch(() => undefined);
     }
+    if (result.sessionLimit) {
+      const { resetAt, rateLimitType } = result.sessionLimit;
+      const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
+      throw new EngineSessionLimitError(message, resetAt, rateLimitType, result.sessionId);
+    }
     return {
       report: result.result,
       ...(result.planText ? { planText: result.planText } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
+      ...(result.sessionLimit ? { sessionLimit: result.sessionLimit } : {}),
       // The driver's reattach continuation only reads `report`; the SessionRef is the legacy return shape.
       session: {
         id: result.sessionId ?? '',

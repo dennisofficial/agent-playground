@@ -564,6 +564,15 @@ export class RedisEngineRunner implements EngineRunnerPort {
         e.GITHUB_TOKEN = token;
         e.GH_TOKEN = token;
       }
+      // Attribute the in-sandbox agent's commits to the PAT's own GitHub account (resolved host-side by
+      // GitIdentityService) instead of git's ambient default.
+      const id = target.gitAuth.identity;
+      if (id) {
+        put('GIT_AUTHOR_NAME', id.name);
+        put('GIT_AUTHOR_EMAIL', id.email);
+        put('GIT_COMMITTER_NAME', id.name);
+        put('GIT_COMMITTER_EMAIL', id.email);
+      }
     }
     return e;
   }

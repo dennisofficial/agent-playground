@@ -261,6 +261,12 @@ export class BrainStoreService {
     /** `<untrusted>` provenance/severity — surfaced on the web's untrusted pill. */
     untrustedSource?: string;
     severity?: string;
+    /**
+     * The full raw payload delivered to the engine, when it differs from the short collapsed `text` label.
+     * Stashed in `meta` and revealed on row-expand in the console (mirrors `meta.compactionSummary`), so the
+     * operator can inspect the actual context injected into Atlas. Omit when `text` already IS the full body.
+     */
+    fullBody?: string;
     createdAt?: Date;
   }): Promise<void> {
     const dup = await this.messages
@@ -287,6 +293,7 @@ export class BrainStoreService {
             ? { untrustedSource: input.untrustedSource }
             : {}),
           ...(input.severity ? { severity: input.severity } : {}),
+          ...(input.fullBody ? { fullBody: input.fullBody } : {}),
         },
         ...(input.createdAt ? { created_at: input.createdAt } : {}),
       }),
@@ -1356,6 +1363,25 @@ export class BrainStoreService {
     await this.jobs.update(
       { id: jobId },
       halted ? { halted: true, activity: 'idle' } : { halted: false },
+    );
+  }
+
+  /**
+   * Set (or clear) the durable auto-resume clock the Main lane parks on when it hits a Claude session/usage
+   * limit. `resumeAt=null` (with `meta=null`) clears the clock so the leader sweep never re-fires — called on
+   * the force-resume path (`/retry-turn`). See {@link JobEntity.session_resume_at}.
+   */
+  async setSessionResume(
+    jobId: string,
+    resumeAt: string | null,
+    meta: JobEntity['session_resume'],
+  ): Promise<void> {
+    await this.jobs.update(
+      { id: jobId },
+      {
+        session_resume_at: resumeAt ? new Date(resumeAt) : null,
+        session_resume: meta,
+      },
     );
   }
 

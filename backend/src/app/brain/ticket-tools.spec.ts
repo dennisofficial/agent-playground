@@ -64,6 +64,7 @@ function makeManager(tickets: Partial<TicketService>) {
     { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
     {} as never, // threadInput
     { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
+    { getResetAt: () => undefined } as never, // usage (OauthUsageService)
   );
   return { manager, store };
 }

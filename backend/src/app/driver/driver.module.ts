@@ -8,6 +8,7 @@ import {
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { Subscription } from 'rxjs';
 import { AutoFixModule } from '../autofix';
@@ -31,20 +32,28 @@ import { StimulusModule } from '../stimulus';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { GitStateReconciler } from './git-state-reconciler.service';
+import { SessionResumeSweep } from './session-resume-sweep.service';
 import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
 import { JobLifecycleService } from './job-lifecycle.service';
+import { JOB_TEARDOWN } from './job-teardown.port';
 import { GithubPrStateSync } from './github-pr-state-sync.service';
 import { GithubCiStateSync } from './github-ci-state-sync.service';
 import { OnboardingService } from '../onboarding';
-import { ExposureService } from '../exposure';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
+import { ExposureService } from '../exposure';
 
-const PREVIEW_RECONCILE_INTERVAL_MS = 10_000;
+// SchedulerRegistry interval names (process-unique) for the leader-gated driver timers. Registered on
+// promote, deleted on demote — the leader-only lifecycle is unchanged; only the timer plumbing moved off
+// hand-rolled setInterval onto @nestjs/schedule.
+const REAP_INTERVAL = 'driver:reap';
+const POLL_INTERVAL = 'driver:poll';
+const SESSION_RESUME_INTERVAL = 'driver:session-resume';
+const PREVIEW_INTERVAL = 'driver:preview';
 
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
@@ -96,15 +105,21 @@ const PREVIEW_RECONCILE_INTERVAL_MS = 10_000;
     GithubPrStateSync,
     GithubCiStateSync,
     GitStateReconciler,
+    SessionResumeSweep,
     WorktreeHydrator,
     WorktreeProvisioner,
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
     { provide: JOB_DISPATCHER, useExisting: ThreadDriver },
+    // The physical job-teardown seam — lets callers outside the driver (OrganizationService.deleteOrg)
+    // reclaim a job's container + worktree WITHOUT a static import of the driver (which would close an
+    // ES module cycle). @Global export, so no `imports: [DriverModule]` edge is needed either.
+    { provide: JOB_TEARDOWN, useExisting: JobLifecycleService },
   ],
   exports: [
     ThreadDriver,
     JOB_DISPATCHER,
     JobLifecycleService,
+    JOB_TEARDOWN,
     GithubPrStateSync,
     GithubCiStateSync,
     // Exported so the @Global surface + the ingress state-webhook controller can reach `markRepoDue`
@@ -117,16 +132,12 @@ const PREVIEW_RECONCILE_INTERVAL_MS = 10_000;
     DRIVER_REPO,
   ],
 })
-export class DriverModule
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdown {
   private resumeSub?: Subscription;
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
-  private reapTimer?: ReturnType<typeof setInterval>;
-  private pollTimer?: ReturnType<typeof setInterval>;
-  private previewTimer?: ReturnType<typeof setInterval>;
   private pollInFlight = false; // skip a heartbeat if the prior tick is still running (slow GitHub / many PRs)
+  private sessionResumeInFlight = false; // skip a tick if the prior session-resume sweep is still running
   private previewInFlight = false; // skip a preview reconcile if the prior tick is still converging Caddy
   private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
@@ -137,9 +148,11 @@ export class DriverModule
     private readonly env: EnvService,
     private readonly lifecycle: JobLifecycleService,
     private readonly reconciler: GitStateReconciler,
+    private readonly sessionResumeSweep: SessionResumeSweep,
     private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly onboarding: OnboardingService,
+    private readonly scheduler: SchedulerRegistry,
     // Sandbox-preview reconciler — swept on a short leader-only timer so marker writes become Caddy routes
     // without relying on an open console tab. From the @Global ExposureModule; inert when disabled. @Optional
     // so the module's direct-construction unit test compiles without a trailing argument.
@@ -182,9 +195,7 @@ export class DriverModule
         // is protected. Awaited (bounded, cheap); never blocks promotion on failure.
         await this.lifecycle
           .reapOrphanedSandboxArtifacts()
-          .catch((err) =>
-            this.logger.warn(`boot orphan-artifact sweep failed: ${err}`),
-          );
+          .catch((err) => this.logger.warn(`boot orphan-artifact sweep failed: ${err}`));
       }
       // Best-effort: register the GitHub delivery webhooks for already-connected repos so the fast path is
       // live without a re-connect. Once per process, fire-and-forget — never blocks resume, and skips
@@ -193,9 +204,7 @@ export class DriverModule
         this.webhooksBackfilled = true;
         void this.onboarding
           .ensureWebhooksForActiveRepos()
-          .catch((err) =>
-            this.logger.warn(`webhook backfill sweep failed: ${err}`),
-          );
+          .catch((err) => this.logger.warn(`webhook backfill sweep failed: ${err}`));
       }
       // Re-drive `running` jobs on EVERY promotion — including a mid-life re-promote. Leadership-fenced
       // drives (see ThreadDriver.runJob) YIELD on demotion, so a re-promote must re-pick-up the yielded job or
@@ -205,11 +214,13 @@ export class DriverModule
       await this.driver.resume();
       this.startReapTimer(); // transient: stopped on demote, restarted on every promote
       this.startPollTimer(); // the fast adaptive PR-state heartbeat (leader-only, like the reap timer)
+      this.startSessionResumeTimer(); // auto-resume lanes parked on a Claude session limit (leader-only)
       this.startPreviewTimer(); // the marker → Caddy-route reconciler (leader-only, exposure-gated)
     });
     this.demoteSub = this.election.onDemote(() => {
       this.stopReapTimer();
       this.stopPollTimer();
+      this.stopSessionResumeTimer();
       this.stopPreviewTimer();
     });
   }
@@ -223,9 +234,9 @@ export class DriverModule
    * orphaned-artifact sweep (leaked `-net`/`-dind` reclaim, so the Docker address pool can't exhaust).
    */
   private startReapTimer(): void {
-    if (this.reapTimer) return;
+    if (this.scheduler.doesExist('interval', REAP_INTERVAL)) return;
     const everyMs = 30 * 60 * 1000; // 30m — idle-reap + PR-merge cleanup sweep cadence.
-    this.reapTimer = setInterval(() => {
+    const iv = setInterval(() => {
       // At-least-once re-drive backstop: leadership-fenced drives yield on demotion, and the promote-time
       // resume() covers the normal re-promote — but a demote landing DURING a drive's yield (before drive()
       // clears its `active` guard) can race the re-promote resume() and strand the job `running`. This
@@ -239,13 +250,14 @@ export class DriverModule
       // gate that previously left this sweep unscheduled in prod).
       void this.lifecycle.reapOrphanedSandboxArtifacts().catch(() => undefined);
     }, everyMs);
-    this.reapTimer.unref?.();
+    iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
+    this.scheduler.addInterval(REAP_INTERVAL, iv);
   }
 
   private stopReapTimer(): void {
-    if (this.reapTimer) {
-      clearInterval(this.reapTimer);
-      this.reapTimer = undefined;
+    // deleteInterval clears the interval AND removes it from the registry.
+    if (this.scheduler.doesExist('interval', REAP_INTERVAL)) {
+      this.scheduler.deleteInterval(REAP_INTERVAL);
     }
   }
 
@@ -259,9 +271,9 @@ export class DriverModule
    * the process alive; `pollInFlight` guards against overlap when a tick runs long.
    */
   private startPollTimer(): void {
-    if (this.pollTimer) return;
+    if (this.scheduler.doesExist('interval', POLL_INTERVAL)) return;
     const everyMs = 15 * 1000; // 15s — the fast heartbeat; the reconciler's per-PR cadence does the throttling.
-    this.pollTimer = setInterval(() => {
+    const iv = setInterval(() => {
       if (this.pollInFlight) return;
       this.pollInFlight = true;
       void this.reconciler
@@ -271,21 +283,56 @@ export class DriverModule
           this.pollInFlight = false;
         });
     }, everyMs);
-    this.pollTimer.unref?.();
+    iv.unref?.();
+    this.scheduler.addInterval(POLL_INTERVAL, iv);
   }
 
   private stopPollTimer(): void {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = undefined;
+    if (this.scheduler.doesExist('interval', POLL_INTERVAL)) {
+      this.scheduler.deleteInterval(POLL_INTERVAL);
     }
   }
 
-  /** Short leader-only preview reconciler: `atlas-svc --port` marker writes become public Caddy routes even
-   *  when no operator has the workspace open to trigger the services endpoint. */
+  /**
+   * The auto-resume heartbeat (~30s) — the leader un-parks every lane whose durable `session_resume_at` clock
+   * is due (a Claude session/usage limit that has now reset). Leader-only (like the reap/poll timers): it
+   * re-drives builds + wakes brains, which must never run in two processes. `unref` so it never keeps the
+   * process alive; `sessionResumeInFlight` guards against overlap when a tick runs long.
+   */
+  private startSessionResumeTimer(): void {
+    if (this.scheduler.doesExist('interval', SESSION_RESUME_INTERVAL)) return;
+    const everyMs = 30 * 1000; // 30s — the resume-clock granularity; a few seconds past reset is fine.
+    const iv = setInterval(() => {
+      if (this.sessionResumeInFlight) return;
+      this.sessionResumeInFlight = true;
+      void this.sessionResumeSweep
+        .tick()
+        .catch((err) => this.logger.warn(`session-resume tick failed: ${err}`))
+        .finally(() => {
+          this.sessionResumeInFlight = false;
+        });
+    }, everyMs);
+    iv.unref?.();
+    this.scheduler.addInterval(SESSION_RESUME_INTERVAL, iv);
+  }
+
+  private stopSessionResumeTimer(): void {
+    if (this.scheduler.doesExist('interval', SESSION_RESUME_INTERVAL)) {
+      this.scheduler.deleteInterval(SESSION_RESUME_INTERVAL);
+    }
+  }
+
+  /**
+   * The sandbox-preview reconcile heartbeat (~10s) — the leader turns supervised-service markers into live
+   * Caddy routes (and prunes stale ones) without relying on an open console tab. Leader-only (it mutates
+   * shared Caddy state) and inert unless the ExposureService is enabled (PREVIEW_BASE_DOMAIN set); `unref`
+   * so it never keeps the process alive; `previewInFlight` guards against overlap when a tick runs long.
+   */
   private startPreviewTimer(): void {
-    if (this.previewTimer || !this.exposure?.enabled) return;
-    const tick = (): void => {
+    if (!this.exposure?.enabled) return; // exposure disabled (no PREVIEW_BASE_DOMAIN) — nothing to reconcile
+    if (this.scheduler.doesExist('interval', PREVIEW_INTERVAL)) return;
+    const everyMs = 10 * 1000; // 10s — a marker write becomes a public route within a tick.
+    const iv = setInterval(() => {
       if (this.previewInFlight) return;
       this.previewInFlight = true;
       void this.exposure
@@ -294,18 +341,15 @@ export class DriverModule
         .finally(() => {
           this.previewInFlight = false;
         });
-    };
-    tick();
-    this.previewTimer = setInterval(tick, PREVIEW_RECONCILE_INTERVAL_MS);
-    this.previewTimer.unref?.();
+    }, everyMs);
+    iv.unref?.();
+    this.scheduler.addInterval(PREVIEW_INTERVAL, iv);
   }
 
   private stopPreviewTimer(): void {
-    if (this.previewTimer) {
-      clearInterval(this.previewTimer);
-      this.previewTimer = undefined;
+    if (this.scheduler.doesExist('interval', PREVIEW_INTERVAL)) {
+      this.scheduler.deleteInterval(PREVIEW_INTERVAL);
     }
-    this.previewInFlight = false;
   }
 
   onApplicationShutdown(): void {
@@ -314,6 +358,7 @@ export class DriverModule
     this.demoteSub?.unsubscribe();
     this.stopReapTimer();
     this.stopPollTimer();
+    this.stopSessionResumeTimer();
     this.stopPreviewTimer();
   }
 }

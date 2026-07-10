@@ -12,6 +12,7 @@ import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
+  RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
 } from './approval-blocks';
 import { parseWebApprovalMeta } from './web-approval-card';
@@ -80,6 +81,14 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
         return;
       }
 
+      // RETRACT the ship-review gate: the "Back to building" click. Same lazy-driver resolution as the
+      // approve branch above; `retractShipDurably` is idempotent (acts only while parked), so a stale click
+      // is a safe no-op.
+      if (actionId === RETRACT_SHIP_ACTION_ID) {
+        void retractShip(this.moduleRef, meta.jobId, ruledBy).catch(() => undefined);
+        return;
+      }
+
       const verdict = actionIdToVerdict(actionId);
       if (!verdict) return;
 
@@ -115,6 +124,20 @@ async function resolveShipApproval(
   const { ThreadDriver } = await import('../driver/thread-driver.service.js');
   const driver = moduleRef.get(ThreadDriver, { strict: false });
   await driver.resolveShipApprovalDurably(jobId, ruledBy);
+}
+
+/**
+ * Retract a ship-review gate back to planning. Mirrors {@link resolveShipApproval}'s lazy `ThreadDriver`
+ * resolution; `retractShipDurably` is itself idempotent (acts only while `awaiting_ship_review`).
+ */
+async function retractShip(
+  moduleRef: ModuleRef,
+  jobId: string,
+  ruledBy: string,
+): Promise<void> {
+  const { ThreadDriver } = await import('../driver/thread-driver.service.js');
+  const driver = moduleRef.get(ThreadDriver, { strict: false });
+  await driver.retractShipDurably(jobId, ruledBy);
 }
 
 function actionIdToVerdict(actionId: string): ApprovalVerdict | undefined {

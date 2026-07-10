@@ -45,6 +45,7 @@ import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
+  RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
@@ -108,6 +109,9 @@ const VALID_ACTION_IDS = new Set([
   // The ship-review gate's "Ship it" button — same endpoint, but the `approval$` bridge routes it to the
   // driver's ship-resume instead of a plan verdict (see WebSurfaceModule).
   SHIP_ACTION_ID,
+  // The ship-review gate's "Back to building" button — the sibling retract of SHIP_ACTION_ID, routed to
+  // the driver's ship-retract instead of a plan verdict (see WebSurfaceModule).
+  RETRACT_SHIP_ACTION_ID,
 ]);
 /** Author fields for an operator-authored web message — the REAL signed-in user (display name falls back
  *  to email), so the brain's `<user name=…>` attribution names the actual person, not a generic "Operator".
@@ -598,6 +602,10 @@ export class WebSurfaceController {
         halt: t.halt ?? null,
         activity: t.activity,
         halted: t.halted,
+        // True only while the operator's "Ship it" is being finalized (PR opening): the job re-uses the
+        // `running` status during shipping, so this distinguishes "opening PR" from "building threads" and
+        // keeps the card pinned in "Ready to Ship" instead of "Building".
+        shipping: t.status === 'running' && t.ship_review_approved_at != null,
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,
@@ -1061,7 +1069,7 @@ export class WebSurfaceController {
     }
     // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
     const thread = await this.requireThread(meta.jobId, org.id);
-    if (actionId !== SHIP_ACTION_ID) {
+    if (actionId !== SHIP_ACTION_ID && actionId !== RETRACT_SHIP_ACTION_ID) {
       const mismatch =
         thread.status !== 'awaiting_approval' ||
         !meta.decisionRecordId ||
@@ -1106,6 +1114,9 @@ export class WebSurfaceController {
    * `running`, fast-forwards finished work, continues at the first unfinished step). `status` (the build
    * phase) is untouched by the halt, so retry resumes it in place. No-op if the thread isn't halted.
    * Scoped to the caller's org via the membership guard + `requireThread`.
+   *
+   * Also the build-lane FORCE-resume for a `session_limit` park: `ThreadDriver.retry` un-halts any halt kind
+   * (session_limit included) and clears the auto-resume clock, so this same endpoint resumes a parked build early.
    */
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/retry')
   @UseGuards(OrgMembershipGuard)
@@ -1150,6 +1161,9 @@ export class WebSurfaceController {
         chunkKey: `seed:retry:${jobId}:${Date.now()}`,
       },
     });
+    // Force-resume of a Main-lane session-limit park: clear the durable auto-resume clock so the leader sweep
+    // never re-fires the resume it has now been done early. Harmless when the thread wasn't parked (no-op update).
+    await this.store.setSessionResume(jobId, null, null);
     return { ok: true };
   }
 
@@ -1318,6 +1332,19 @@ export class WebSurfaceController {
     // report whether it now connects. The value's only resting place is the encrypted blob.
     if (payload.mcp) {
       const { server, slot, key } = payload.mcp;
+      // Authoritative guard: an OAuth server's Authorization is minted by the console "Connect" flow, never a
+      // pasted secret. Refuse a secret write to an `auth_kind='oauth'` row (no setSecret, no probe) even if a
+      // stale card slipped past the brain-side check — the row is the source of truth.
+      const target = await this.mcpStore.rawRow(org.id, thread.repo_id, server).catch(() => null);
+      if (target?.auth_kind === 'oauth') {
+        await this.store.clearAwaitingSecret(jobId, body.requestId);
+        const notice = `Did not store a secret for MCP server \`${server}\` — it uses OAuth. Its access is granted by the OWNER via the console (MCP settings → Connect), not a secret slot.`;
+        const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+          orgId: org.id,
+          seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:mcp:${server}:${key}:oauth` },
+        });
+        return { ok: false, ts };
+      }
       const wrote = await this.mcpStore.setSecret(
         org.id,
         thread.repo_id,
@@ -1433,10 +1460,19 @@ export class WebSurfaceController {
 
     const committed: string[] = [];
     const needSecrets: string[] = [];
+    const needConnect: string[] = [];
+    let readyStatic = 0;
     for (const s of card.servers) {
       if (!s.name || isReservedMcpName(s.name)) continue;
       await this.mcpStore.write(org.id, dbScope, s.name, this.mcpProposalToInput(s));
       committed.push(s.name);
+      // OAuth server: lands UNCONNECTED (no token yet). It has no secret slot to fill and MUST NOT be static-
+      // probed here — an unconnected OAuth endpoint 401s, which would falsely mark it broken. The owner completes
+      // consent via the console "Connect" (McpOAuthService), after which it validates.
+      if (s.authKind === 'oauth') {
+        needConnect.push(s.name);
+        continue;
+      }
       const secretSlots = [
         ...(s.headers ?? []).filter((h) => h.secret).map((h) => `${s.name} header:${h.name}`),
         ...(s.env ?? []).filter((e) => e.secret).map((e) => `${s.name} env:${e.name}`),
@@ -1452,6 +1488,7 @@ export class WebSurfaceController {
             .catch(() => undefined);
         }
       }
+      if (secretSlots.length === 0) readyStatic += 1;
     }
     await this.store.markMcpProposalApproved(jobId, requestId, committed);
     const notice = committed.length
@@ -1460,7 +1497,13 @@ export class WebSurfaceController {
           .join(', ')} ${card.scope === 'org' ? 'org-wide (every repo)' : 'on this repo'}.` +
         (needSecrets.length
           ? ` Fill each secret slot now via request_secret (mcp target): ${needSecrets.join('; ')}. After every slot is filled, reset_sandbox to load the server(s), then invoke a tool to verify (see MCP SERVERS).`
-          : ' No secrets needed — now reset_sandbox to load the server(s) into a fresh session, then invoke one of their tools to verify it works (see MCP SERVERS).')
+          : '') +
+        (needConnect.length
+          ? ` OAuth server(s) ${needConnect.map((n) => `\`${n}\``).join(', ')} have NO secret to fill — the OWNER must open the console (MCP settings → Connect) to complete consent; you cannot consent yourself and must NOT inject an Authorization/Bearer header. Once the owner connects, reset_sandbox to load it.`
+          : '') +
+        (readyStatic && !needSecrets.length
+          ? ' No secrets needed for the rest — reset_sandbox to load the server(s) into a fresh session, then invoke one of their tools to verify it works (see MCP SERVERS).'
+          : '')
       : 'The operator approved the MCP proposal, but no servers were committed.';
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
@@ -1705,6 +1748,10 @@ export class WebSurfaceController {
     const env = toPairs(s.env);
     if (env) input.env = env;
     if (s.surfaces && s.surfaces.length) input.surfaces = s.surfaces;
+    // Auth kind + non-secret OAuth knobs pass through to the store (which owns `oauth_enc`); an oauth row lands
+    // UNCONNECTED — the owner completes consent via the console "Connect" flow (McpOAuthService.beginAuthorization).
+    if (s.authKind === 'oauth') input.authKind = 'oauth';
+    if (s.oauth && Object.keys(s.oauth).length) input.oauth = s.oauth;
     return input;
   }
 

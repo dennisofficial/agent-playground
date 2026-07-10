@@ -15,6 +15,9 @@ export const VIEW_PLAN_ACTION_ID = 'atlas_approval:view_plan';
  *  (no decision record — nothing to re-rule, just resume the driver). Routed through the SAME `/approve`
  *  endpoint + `approval$` bridge, but the bridge dispatches it to the driver's ship-resume, not a verdict. */
 export const SHIP_ACTION_ID = 'atlas_approval:ship';
+/** Retract the ship-review gate back to planning — the manual "Back to building" click, the sibling of
+ *  `SHIP_ACTION_ID`. Also carries only `{ jobId }`; routed to `ThreadDriver.retractShipDurably`. */
+export const RETRACT_SHIP_ACTION_ID = 'atlas_approval:retract_ship';
 
 /** What rides in a button `value` / a verdict payload — the ids needed to resolve the gate. */
 export interface ApprovalActionMeta {

@@ -39,6 +39,7 @@ export function McpProposalCard({
 
   if (card.approved_at != null) {
     const names = card.committed ?? card.servers.map((s) => s.name);
+    const oauthNames = card.servers.filter((s) => s.authKind === "oauth").map((s) => s.name);
     return (
       <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center gap-2.5 px-4 py-3">
@@ -56,6 +57,21 @@ export function McpProposalCard({
             </p>
           </div>
         </div>
+        {oauthNames.length > 0 ? (
+          <div className="flex items-start gap-2 border-t border-border bg-surface-2 px-4 py-2.5 text-[11.5px] leading-snug text-dim">
+            <Plug size={13} className="mt-0.5 shrink-0 text-accent" />
+            <span>
+              {oauthNames.length === 1 ? "This server uses" : "These servers use"} OAuth — finish by opening{" "}
+              <span className="font-medium text-text">MCP settings → Connect</span> to authorize{" "}
+              {oauthNames.map((n) => (
+                <span key={n} className="mr-1 font-mono">
+                  {n}
+                </span>
+              ))}
+              .
+            </span>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -83,7 +99,11 @@ export function McpProposalCard({
                 <span className="rounded-full border border-border px-1.5 py-0.5 text-[9.5px] uppercase text-dim">
                   {s.transport}
                 </span>
-                {slots.length > 0 ? (
+                {s.authKind === "oauth" ? (
+                  <span className="rounded-full border border-accent/40 px-1.5 py-0.5 text-[9.5px] uppercase text-accent">
+                    oauth
+                  </span>
+                ) : slots.length > 0 ? (
                   <span className="rounded-full border border-border px-1.5 py-0.5 text-[9.5px] text-amber">
                     needs secret
                   </span>
@@ -102,6 +122,13 @@ export function McpProposalCard({
           Approving registers {card.servers.length === 1 ? "this server" : "these servers"} on this repo.
           Servers marked <span className="text-amber">needs secret</span> then ask you for a credential
           through a secure field — the value never appears in the conversation.
+          {card.servers.some((s) => s.authKind === "oauth") ? (
+            <>
+              {" "}
+              Servers marked <span className="text-accent">oauth</span> need one more step after approving:
+              open <span className="font-medium text-text">MCP settings → Connect</span> to authorize them.
+            </>
+          ) : null}
         </p>
       </div>
 

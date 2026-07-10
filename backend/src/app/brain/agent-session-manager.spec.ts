@@ -22,6 +22,7 @@ const noopTurnHarness = {
     onEvent: vi.fn(),
     finish: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn().mockResolvedValue(undefined),
+    discard: vi.fn().mockResolvedValue(undefined),
     emitPrompt: vi.fn().mockResolvedValue(undefined),
   }),
 } as unknown as TurnHarnessFactory;
@@ -35,6 +36,7 @@ import type { EventStimulus } from '../domain';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
+import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
 import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
@@ -123,6 +125,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockDriverStore = {
     getPipelineState: vi.fn(),
     getDecisionRecord: vi.fn(),
+    retractShip: vi.fn(),
     // ADR 0004 Phase 3 — halt wake + bounded fix
     loadJob: vi.fn(),
     getThread: vi.fn(),
@@ -130,8 +133,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     resolveSessionAnchor: vi.fn().mockResolvedValue(undefined),
     claimHaltFixAttempt: vi.fn(),
     markHaltWaked: vi.fn(),
-    // Decision d1 — completion wake
+    // Decision d1 — completion wake (gen-CAS): claim returns a gen so the delivery proceeds; supersede no-ops.
     threadsForJob: vi.fn().mockResolvedValue([]),
+    claimDoneWakeGen: vi.fn().mockResolvedValue(1),
+    supersedeDoneWakeMessages: vi.fn().mockResolvedValue(undefined),
     markDoneWaked: vi.fn(),
   } as unknown as DriverStoreService;
 
@@ -271,6 +276,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // resetAllMocks wiped the file-scope default — re-arm it so notifyThreadHalted's anchor resolve returns a
     // Promise (not undefined) for the tests that don't stub it themselves.
     (mockDriverStore.resolveSessionAnchor as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    // Decision d1 completion-wake gen-CAS defaults (resetAllMocks wiped them): claim yields a gen so the
+    // notifyThreadDone delivery proceeds, and the supersede/threadsForJob are no-op promises.
+    (mockDriverStore.claimDoneWakeGen as ReturnType<typeof vi.fn>).mockResolvedValue(1);
+    (mockDriverStore.supersedeDoneWakeMessages as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockDriverStore.threadsForJob as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     // Passive-awareness defaults (resetAllMocks wiped the resolved values) — append is a no-op promise.
     (mockAwareness.appendMarker as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -302,6 +312,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
     // Default loadJob: no prior job state (propose_plan's idempotency guard proceeds; other tests override).
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockDriverStore.retractShip as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
     // Working-set decisions default to empty; card lookups default to none (reset wiped inline defaults).
     (mockStore.pendingDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -428,6 +439,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       { generate: () => 'SYSTEM PROMPT' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       mockJudge, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
+      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
     );
   });
 
@@ -1325,6 +1337,57 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
   });
 
+  it('propose_mcp_servers with authKind:"oauth" carries it onto the card + tells the brain the owner must Connect', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [
+        {
+          name: 'jira',
+          transport: 'sse',
+          url: 'https://mcp.atlassian.com/v1/sse',
+          authKind: 'oauth',
+          oauth: { scope: 'read:jira-work', tokenAuthMethod: 'none' },
+          reason: 'Issue tracking',
+        },
+      ],
+    });
+    expect(result).toMatchObject({ ok: true, proposed: ['jira'] });
+    const arg = (mockStore.openMcpProposal as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(arg.card.servers[0].authKind).toBe('oauth');
+    expect(arg.card.servers[0].oauth).toEqual({ scope: 'read:jira-work', tokenAuthMethod: 'none' });
+    const message = (result as { message: string }).message;
+    expect(message).toContain('Connect');
+    expect(message).toContain('jira');
+  });
+
+  it('propose_mcp_servers rejects oauth on a stdio transport (oauth is http/sse only)', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [{ name: 'svc', transport: 'stdio', command: 'svc-mcp', authKind: 'oauth' }],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('oauth');
+    expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
+  });
+
+  it('propose_mcp_servers rejects an oauth server that also declares a secret slot', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [
+        {
+          name: 'svc',
+          transport: 'http',
+          url: 'https://x',
+          authKind: 'oauth',
+          headers: [{ name: 'Authorization', secret: true }],
+        },
+      ],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('secret');
+    expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
+  });
+
   it('request_secret with an mcp target opens a value-free card carrying the MCP slot (no path)', async () => {
     const tools = manager.buildTools(fakeStimulus, 'onboarding');
     const result = await tools['request_secret']({
@@ -1387,9 +1450,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(raced).toMatchObject({ ok: false });
   });
 
-  it('(e4) buildTools() exposes withdraw_plan', () => {
+  it('(e4) buildTools() exposes withdraw_plan and withdraw_ship', () => {
     const tools = manager.buildTools(fakeStimulus);
     expect(tools['withdraw_plan']).toBeDefined();
+    expect(tools['withdraw_ship']).toBeDefined();
   });
 
   it('(e5) withdraw_plan retracts a pending proposal — cancels the live handle + posts the notice; a non-awaiting job is a no-op', async () => {
@@ -1413,6 +1477,22 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const notPending = await tools['withdraw_plan']({});
     expect(notPending).toMatchObject({ ok: false });
     expect(mockApprovals.cancel).not.toHaveBeenCalled();
+    expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+  });
+
+  it('(e6) withdraw_ship retracts a parked ship-review gate and posts the notice; a non-parked job is a no-op', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+
+    (mockDriverStore.retractShip as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const ok = await tools['withdraw_ship']({ reason: 'more polish' });
+    expect(mockDriverStore.retractShip).toHaveBeenCalledWith(THREAD_ID);
+    expect(ok).toMatchObject({ ok: true });
+    expect(mockStore.appendAtlasMessage).toHaveBeenCalledWith(THREAD_ID, expect.stringContaining('more polish'));
+
+    (mockDriverStore.retractShip as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockClear();
+    const notParked = await tools['withdraw_ship']({});
+    expect(notParked).toMatchObject({ ok: false });
     expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
   });
 
@@ -2024,7 +2104,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       const stim = spy.mock.calls[0][0] as ChatStimulus;
       expect(stim.trust).toBe('trusted');
       expect(stim.seed).toBe(true);
-      expect(stim.seedDoneWake).toEqual({ threadId: 'th-x', reason: 'notable' });
+      expect(stim.seedDoneWake).toEqual({ threadId: 'th-x', reason: 'notable', gen: 1 });
       expect(stim.body).toContain('<untrusted');
       expect(stim.body).toContain('rate limiting not load-tested');
       expect(stim.body).toMatch(/may NOT edit\/push code or ship without the operator/);
@@ -2049,7 +2129,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       await manager.notifyThreadDone('job1', 'th-mr', 'final');
 
       const stim = spy.mock.calls[0][0] as ChatStimulus;
-      expect(stim.seedDoneWake).toEqual({ threadId: 'th-mr', reason: 'final' });
+      expect(stim.seedDoneWake).toEqual({ threadId: 'th-mr', reason: 'final', gen: 1 });
       expect(stim.body).toContain('build reviewed and clean');
       expect(stim.body).toContain('Backend — auth');
       expect(stim.body).toContain('left a TODO');
@@ -2062,6 +2142,35 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       await manager.notifyThreadDone('gone', 'th-x', 'notable');
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
+    });
+
+    it('notifyThreadDone claims a gen and supersedes prior partials before delivering', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'auth lane' });
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({ status: 'done', summary: 'ok' });
+      fn(mockDriverStore.claimDoneWakeGen).mockResolvedValue(3);
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadDone('job1', 'th-x', 'notable');
+
+      expect(mockDriverStore.claimDoneWakeGen).toHaveBeenCalledWith('th-x');
+      expect(mockDriverStore.supersedeDoneWakeMessages).toHaveBeenCalledWith('job1', 'th-x', 3);
+      const stim = spy.mock.calls[0][0] as ChatStimulus;
+      expect(stim.seedDoneWake).toEqual({ threadId: 'th-x', reason: 'notable', gen: 3 });
+      spy.mockRestore();
+    });
+
+    it('notifyThreadDone no-ops (no delivery) when the wake is no longer owed (claim returns null)', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'auth lane' });
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({ status: 'done', summary: 'ok' });
+      fn(mockDriverStore.claimDoneWakeGen).mockResolvedValue(null); // already delivered by a racing sweep
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadDone('job1', 'th-x', 'notable');
+
+      expect(mockDriverStore.supersedeDoneWakeMessages).not.toHaveBeenCalled();
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+      fn(mockDriverStore.claimDoneWakeGen).mockResolvedValue(1); // restore default for later tests
     });
   });
 });
@@ -2151,7 +2260,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }),
       steer,
     } as unknown as EngineRunnerPort;
-    const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
+    const liveTurns = { push: vi.fn(), end: vi.fn(), snapshot: vi.fn(() => null) } as unknown as LiveTurnStore;
     // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
     // end-to-end through the brain (push/end + the durable blocks) exactly as in production.
     const blockSink = {
@@ -2159,7 +2268,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       appendBlockOnce: vi.fn().mockResolvedValue(undefined),
     } as unknown as BlockSink;
     const taskSink = { applyTaskEvent: vi.fn().mockResolvedValue(undefined) } as unknown as TaskEventSink;
-    const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink);
+    const usage = { applyHarvest: vi.fn().mockResolvedValue(undefined) } as unknown as OauthUsageService;
+    const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink, usage);
     const driverStore = {
       getPipelineState: vi.fn().mockResolvedValue({ status: 'no_job' }),
     } as unknown as DriverStoreService;
@@ -2221,6 +2331,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
+      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
     );
     return { manager, store, lifecycle, git, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
   }
@@ -2564,6 +2675,27 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     expect(dockerRunner.run).not.toHaveBeenCalled();
     expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('finish connecting this repo');
+  });
+
+  it('a closed sandbox posts the "thread is closed" notice ONCE and MARKS the message delivered (kills the 2-min spam)', async () => {
+    // ensureProvisioned → null means the sandbox is torn down (lifecycle=closed) and NOT revived (a
+    // non-operator seed, or a genuinely un-provisionable job). The message must be stamped delivered via
+    // onRegistered — else the undelivered-chat sweep re-posts this identical notice every lease cycle.
+    const ensureProvisioned = vi.fn().mockResolvedValue(null);
+    const { manager, surface } = makeManager({ findSandbox: { worktreePath: '/wt' }, ensureProvisioned });
+    const onRegistered = vi.fn();
+
+    await (
+      manager as unknown as {
+        runChatTurn: (s: ChatStimulus, o: { onRegistered: () => void }) => Promise<void>;
+      }
+    ).runChatTurn(stimulus, { onRegistered });
+
+    const closedPosts = (surface.post as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[1]).includes('This thread is closed'),
+    );
+    expect(closedPosts).toHaveLength(1); // posted once, not spammed
+    expect(onRegistered).toHaveBeenCalledTimes(1); // marked delivered → the sweep can't re-drive it
   });
 
   it('PASSIVE awareness: an OPERATOR turn drains the buffer and PREPENDS the passive summary to the turn input', async () => {
@@ -3004,6 +3136,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
+      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
     );
     return { manager, store };
   }
@@ -3155,6 +3288,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
+      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
     );
     return { manager, store, lifecycle, ship, repos };
   }
@@ -3269,10 +3403,11 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
       inert, // mcp (McpResolver, 21)
       election, // election (22)
-      inert, inert, inert, inert, inert, inert, // ledger…git (27)
-      { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
-      { register: () => undefined } as never, // threadInput (ThreadInputService)
-      { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
+      inert, inert, inert, inert, // turnRecovery, secretStore, configStore, git (26)
+      { generate: () => 'SYSTEM' } as never, // prompts (27, PromptService)
+      { register: () => undefined } as never, // threadInput (28, ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (29, LIVE_VERIFICATION_JUDGE)
+      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (30, OauthUsageService)
     );
     return { manager, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
   }
@@ -3469,6 +3604,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
+      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
     );
     return { manager, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
   }
@@ -3670,6 +3806,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         { generate: () => 'SYSTEM' } as never, // prompts (28)
         { register: () => undefined } as never, // threadInput (29)
         { judge: async () => undefined } as never, // liveVerificationJudge (30)
+        { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31)
       );
       // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
       const handleChatTurn = vi

@@ -34,6 +34,7 @@ export {
   type ResolvedRepo,
 } from './repo-resolver';
 export { renderPlan, type PlannedStep } from './render-plan';
+export { JOB_TEARDOWN, type JobTeardownPort } from './job-teardown.port';
 export {
   LIVE_VERIFICATION_JUDGE,
   AnthropicLiveVerificationJudge,

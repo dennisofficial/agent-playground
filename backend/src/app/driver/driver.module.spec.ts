@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SchedulerRegistry } from '@nestjs/schedule';
 
 import { DriverModule } from './driver.module';
 import type { ThreadDriver } from './thread-driver.service';
 import type { JobLifecycleService } from './job-lifecycle.service';
 import type { GitStateReconciler } from './git-state-reconciler.service';
+import type { SessionResumeSweep } from './session-resume-sweep.service';
 import type { LeaderElectionService } from '../cluster';
 import type { EnvService } from '@core/config/env/env.service';
 import type { ChatSurface } from '../surface';
@@ -29,6 +31,9 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     const reconciler = {
       tick: vi.fn(async () => 0),
     } as unknown as GitStateReconciler;
+    const sessionResumeSweep = {
+      tick: vi.fn(async () => undefined),
+    } as unknown as SessionResumeSweep;
     let promoteCb: (() => void | Promise<void>) | undefined;
     let demoteCb: (() => void | Promise<void>) | undefined;
     const election = {
@@ -46,7 +51,20 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     const onboarding = {
       ensureWebhooksForActiveRepos: vi.fn(async () => undefined),
     } as unknown as OnboardingService;
-    const mod = new DriverModule(driver, env, lifecycle, reconciler, election, surface, onboarding);
+    // A REAL SchedulerRegistry (a plain Map-backed class, no Nest bootstrap needed) so the leader-gated
+    // interval timers register/deregister for real and still fire under vitest's fake timers.
+    const scheduler = new SchedulerRegistry();
+    const mod = new DriverModule(
+      driver,
+      env,
+      lifecycle,
+      reconciler,
+      sessionResumeSweep,
+      election,
+      surface,
+      onboarding,
+      scheduler,
+    );
     return {
       mod,
       driver,

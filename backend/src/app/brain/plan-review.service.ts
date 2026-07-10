@@ -289,6 +289,7 @@ export class PlanReviewService {
     > => {
       const harness = this.turnHarness.create({
         jobId: input.jobId,
+        orgId: input.orgId,
         channel,
         lane: codexReviewLane(input.jobId),
         metaTag: { codexReviewId: input.jobId },

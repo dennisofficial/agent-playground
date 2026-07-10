@@ -639,8 +639,7 @@ export class LocalGitService {
 
       // Fresh approval (or no remote branch to restore): cut the branch off the current detached HEAD
       // (which is on base).
-      await this.git(['-c', `user.name=Atlas`, '-c', `user.email=atlas@users.noreply.github.com`,
-        'checkout', '-b', featureBranch], { cwd: sandbox.worktreePath });
+      await this.git(['checkout', '-b', featureBranch], { cwd: sandbox.worktreePath });
     });
     return { ...sandbox, branch: featureBranch };
   }
