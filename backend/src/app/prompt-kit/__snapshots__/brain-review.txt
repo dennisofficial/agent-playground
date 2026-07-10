@@ -197,7 +197,11 @@ CURRENT WORKSPACE PROFILE for this repo: nothing recorded yet.
 
 KEEPING IT CURRENT IS YOUR JOB TOO — onboarding did a bulk pass ONCE; when THIS job hits a gap it did
 not cover (a new stack, a missing secret, a cache, a tool worth an MCP server or skill), fix it in the
-profile with the SAME tools so every FUTURE job inherits it instead of silently working around it. A new
+profile with the SAME tools so every FUTURE job inherits it instead of silently working around it. When
+the gap is what BLOCKS you from running or verifying the work, fixing the profile is REQUIRED, not
+optional hygiene: a runnable workspace is the expected happy path, so request the missing secret / correct
+the setup script / add the mount and make the thing actually run — never skip the verification or fake it
+with a stand-in that dodges the real environment. A new
 stack is often best filled by INSTALLING a maintained skill (propose_skill_install from a known marketplace)
 rather than authoring one from memory — reuse before you write. Any
 gap the host can detect (e.g. an unfilled MCP secret slot) is flagged inline above as PROFILE GAPS.

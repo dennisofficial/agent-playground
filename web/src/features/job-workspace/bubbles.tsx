@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Check, ChevronRight, Loader2, RotateCw } from "lucide-react";
 import { toneOf, type SystemTone } from "./classify";
 import { Markdown } from "./markdown";
+import { contextConvoNodeForHref } from "./node-registry";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
 import { SubagentCard, indexLiveSubagents, subagentNode } from "./subagents";
 import { Button } from "@/components/ui/button";
@@ -126,26 +128,48 @@ export function UserBubble({
   );
 }
 
-export function ClaudeBubble({ message }: { message: JobMessage }) {
+export function ClaudeBubble({
+  message,
+  onSelectNode,
+}: {
+  message: JobMessage;
+  onSelectNode?: (node: string) => void;
+}) {
   // No per-bubble timestamp on assistant prose — the end-of-turn `TurnMetaDivider` line carries the
   // turn's time (next to its token counter), so a timestamp here would just duplicate it.
-  return <StreamTextBubble text={message.text} />;
+  return <StreamTextBubble text={message.text} onSelectNode={onSelectNode} />;
 }
 
 /**
  * An assistant message — rendered as markdown prose (no avatar, no bubble), per the conversation redesign.
- * `streaming` adds a blinking cursor for the live (token-by-token) turn.
+ * `streaming` adds a blinking cursor for the live (token-by-token) turn. When `onSelectNode` is supplied,
+ * explicit markdown links to a `/context/{specs,generated,artifacts}/…` file become clickable and open the
+ * target in the detail pane (SPA nav on left-click, real deep link on cmd/middle-click).
  */
 export function StreamTextBubble({
   text,
   streaming = false,
+  onSelectNode,
 }: {
   text: string;
   streaming?: boolean;
+  onSelectNode?: (node: string) => void;
 }) {
+  const pathname = usePathname();
+  const resolveRelativeLink = useMemo(() => {
+    if (!onSelectNode) return undefined;
+    return (href: string) => {
+      const node = contextConvoNodeForHref(href);
+      if (!node) return null;
+      return {
+        url: `${pathname}?node=${encodeURIComponent(node)}`,
+        onSelect: () => onSelectNode(node),
+      };
+    };
+  }, [onSelectNode, pathname]);
   return (
     <div className="anim-fadeUp">
-      <Markdown>{text}</Markdown>
+      <Markdown resolveRelativeLink={resolveRelativeLink}>{text}</Markdown>
       {streaming ? (
         <span
           className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] animate-pulse"
@@ -284,7 +308,11 @@ export function buildLiveTurnItems(
       items.push({
         key: b.key,
         node: (
-          <StreamTextBubble text={b.text} streaming={!b.done && turn.active} />
+          <StreamTextBubble
+            text={b.text}
+            streaming={!b.done && turn.active}
+            onSelectNode={onSelectNode}
+          />
         ),
         ts: b.emittedAt,
       });

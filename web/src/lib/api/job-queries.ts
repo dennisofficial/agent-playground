@@ -433,7 +433,7 @@ export function useRenameJob(ref: JobRef) {
 export function useDeleteJob(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => deleteThread(ref),
+    mutationFn: (prAction?: "close" | "leave") => deleteThread(ref, prAction),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },

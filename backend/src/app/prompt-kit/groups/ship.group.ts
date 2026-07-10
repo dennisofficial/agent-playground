@@ -12,6 +12,7 @@ import {
   EVIDENCE_ARTIFACTS_NOTE,
   GIT_SAFETY_NOTE,
   REVIEW_SCOPE_NOTE,
+  RUNNABLE_WORKSPACE_NOTE,
   SOLE_AUTHOR_NOTE,
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
@@ -57,6 +58,8 @@ export class ShipGroup {
       'VERIFY THE INTEGRATED WHOLE — this is the first time the merged feature runs end-to-end (each builder ' +
       'only smoked its own slice), so do not stop at a green build. ' +
       VALIDATE_BY_RUNNING_NOTE +
+      ' ' +
+      RUNNABLE_WORKSPACE_NOTE +
       ' ' +
       EVIDENCE_ARTIFACTS_NOTE
     );

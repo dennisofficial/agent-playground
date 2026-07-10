@@ -18,6 +18,7 @@ import {
   MINIMAL_CODE_NOTE,
   MONOREPO_VERIFY_HINT,
   PLAYGROUND_NOTE,
+  RUNNABLE_WORKSPACE_NOTE,
   SPIKE_FIRST_NOTE,
   SUBAGENT_NUDGE_NOTE,
   TASK_LIST_NOTE,
@@ -45,7 +46,11 @@ const COMPLETE_THREAD_NOTE =
   'call `request_operator_input` when a single human answer would unblock you RIGHT NOW and you can wait for ' +
   'it inline (the turn pauses and resumes with the answer); call `block_thread({reason, detail})` when you ' +
   'genuinely cannot make progress this turn and there is nothing to poll for — `reason:"needs_env"` (a ' +
-  'missing secret/service/credential the sandbox lacks), `reason:"decision"` (a substantive product or ' +
+  'missing secret/service/credential the sandbox lacks) is a genuine LAST RESORT, NOT a first reflex: a ' +
+  'runnable workspace is the expected happy path, so FIRST confirm the thing is actually missing (the secret ' +
+  'may already be granted, the service may just need starting) and try to boot it — block on needs_env only ' +
+  'once you have verified it is truly absent and only Atlas can provision it, so it fixes the workspace ' +
+  'profile rather than you skipping the verification. `reason:"decision"` (a substantive product or ' +
   'architecture decision that needs deliberation), or `reason:"question"` (information you need that is not ' +
   'answerable inline) — which hands the thread to Atlas to diagnose and either fix or escalate. In short: ' +
   '`request_operator_input` keeps the turn alive for a quick answer; `block_thread` gives up the turn.';
@@ -155,6 +160,13 @@ export class WorkerGroup {
   @Fragment({ usedBy: [Agent.WORKER], order: 400 })
   validateByRunning(): string {
     return VALIDATE_BY_RUNNING_NOTE;
+  }
+
+  /** RUNNABLE WORKSPACE — the environment-side of verification: a not-yet-runnable env is fixed or escalated,
+   *  never a reason to skip validation or fake it with a stand-in. Sits beside validate-by-running. */
+  @Fragment({ usedBy: [Agent.WORKER], order: 401 })
+  runnableWorkspace(): string {
+    return RUNNABLE_WORKSPACE_NOTE;
   }
 
   @Fragment({ usedBy: [Agent.WORKER], order: 405 })

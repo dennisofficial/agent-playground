@@ -11,6 +11,7 @@ import {
   EVIDENCE_ARTIFACTS_NOTE,
   MINIMAL_CODE_NOTE,
   REPORT_ONLY_NOTE,
+  RUNNABLE_WORKSPACE_NOTE,
   SANDBOX_FILESYSTEM_MAP_NOTE,
   SUBAGENT_KERNEL_NOTE,
   SOLE_AUTHOR_NOTE,
@@ -207,6 +208,21 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(out).toContain('LIVE VALIDATION');
     expect(out).toContain('EXACT artifact paths'); // the report-back contract
     expect(out).toContain('/context/artifacts');
+  });
+
+  it('RUNNABLE_WORKSPACE_NOTE reaches the build-touching lanes (brain, worker, master review) once, not the advisories', () => {
+    // the stance that a not-yet-runnable env is fixed-or-escalated (never skipped) rides the lanes that build
+    // and verify: the planning brain, the thread orchestrator, and the ship-time master review.
+    for (const agent of [Agent.WORKER, Agent.MASTER_REVIEW]) {
+      const out = renderAgentPrompt(agent, { jobKind: 'feature' });
+      expect(out.split(RUNNABLE_WORKSPACE_NOTE).length - 1, String(agent)).toBe(1);
+    }
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' })).toContain(RUNNABLE_WORKSPACE_NOTE);
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' })).toContain(RUNNABLE_WORKSPACE_NOTE);
+    // read-only advisories don't own verification — they never get it.
+    for (const agent of [Agent.EXPLORE, Agent.DOCS, Agent.REVIEW_AGENT, Agent.DEBUG, Agent.TEST, Agent.FAN_OUT]) {
+      expect(renderAgentPrompt(agent), String(agent)).not.toContain(RUNNABLE_WORKSPACE_NOTE);
+    }
   });
 
   it('the worker behavioral tail (validate + spike) follows the job-kind block, in order', () => {
