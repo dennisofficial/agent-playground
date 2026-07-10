@@ -10,7 +10,7 @@ import { isBuildBrain, isOnboarding, isReview } from '../conditions';
 
 @FragmentGroup()
 export class IdentityGroup {
-  /** normal block 00 — the orchestrator identity. */
+  /** The orchestrator identity. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1000, condition: isBuildBrain })
   atlasIdentity(): string {
     return [
@@ -19,7 +19,7 @@ export class IdentityGroup {
     ].join('\n');
   }
 
-  /** review block 00 — the PR-reviewer identity (order 1001: unique vs atlasIdentity@1000, still first). */
+  /** The PR-reviewer identity (order 1001: unique vs atlasIdentity@1000, still first). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1001, condition: isReview })
   reviewIdentity(): string {
     return [
@@ -31,7 +31,7 @@ export class IdentityGroup {
     ].join('\n');
   }
 
-  /** onboarding block 00 — the repo bring-up identity. */
+  /** The repo bring-up identity. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2000, condition: isOnboarding })
   onboardingIdentity(): string {
     return [

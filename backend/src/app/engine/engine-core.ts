@@ -144,7 +144,7 @@ export function detectLongRunningCommand(command: string): string | null {
   return null;
 }
 
-const SVC_NUDGE_TEXT =
+export const SVC_NUDGE_TEXT =
   'this looks like a long-running process. If it is a dev server / `docker compose up` / watcher, do NOT ' +
   "run it bare — start it under the supervisor so it survives the turn and shows in the operator's SERVICES " +
   'sidebar with live logs: `atlas-svc run --name <id> -- <cmd>` (then `atlas-svc logs -f <id>`, `atlas-svc ' +

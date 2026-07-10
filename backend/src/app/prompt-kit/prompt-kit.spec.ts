@@ -9,6 +9,7 @@ import {
   DEVIATION_NOTE,
   DOC_VERSION_VERIFY_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
+  MINIMAL_CODE_NOTE,
   REPORT_ONLY_NOTE,
   RUNNABLE_WORKSPACE_NOTE,
   SANDBOX_FILESYSTEM_MAP_NOTE,
@@ -122,8 +123,9 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('the sole-author invariant reaches every file-touching / operator-facing agent, exactly once', () => {
-    // brain (feature + onboarding), worker orchestrator, and the fan-out writer.
-    for (const agent of [Agent.WORKER, Agent.FAN_OUT]) {
+    // brain (feature + onboarding), worker orchestrator, the fan-out writer, and the ship master review
+    // (it edits + commits the merged diff, so it owns the checkout too).
+    for (const agent of [Agent.WORKER, Agent.FAN_OUT, Agent.MASTER_REVIEW]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(SOLE_AUTHOR_NOTE).length - 1, String(agent)).toBe(1);
     }
@@ -288,6 +290,23 @@ describe('brain vs worker behavioral tails do not leak into each other', () => {
     // run-it note — distinct consts so the split stays assertable.
     expect(brain).toContain(AUTHOR_LIVE_VALIDATION_NOTE);
     expect(brain).not.toContain(VALIDATE_BY_RUNNING_NOTE); // validate-by-running is a WORKER note, not brain
+  });
+
+  it('the external-PR review brain does not carry build-authoring guidance', () => {
+    const review = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'review' });
+    for (const note of [
+      BASELINE_FIRST_NOTE,
+      AUTHOR_LIVE_VALIDATION_NOTE,
+      SPIKE_FIRST_NOTE,
+      CLARITY_OVER_COMMENTS_NOTE,
+      MINIMAL_CODE_NOTE,
+      TS_STYLE_NOTE,
+      DOC_VERSION_VERIFY_NOTE,
+    ]) {
+      expect(review).not.toContain(note);
+    }
+    expect(review).not.toContain('ACT WITH CARE, REPORT TRUTHFULLY');
+    expect(review).toContain('You are Atlas, reviewing an EXISTING pull request');
   });
 });
 

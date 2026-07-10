@@ -1,0 +1,1 @@
+Handoff recorded and saved to /context/generated/handoffs/. Your session will now rotate: a fresh session continues from this handoff with your work-in-progress intact on disk. STOP here and end your turn now — do not take any further action.

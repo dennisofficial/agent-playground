@@ -13,7 +13,7 @@ import { isReview } from '../conditions';
 
 @FragmentGroup()
 export class ReviewGroup {
-  /** review block 01 — scope the PR (the target + how to fetch it). */
+  /** Scope the PR — the target + how to fetch it. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1082, condition: isReview })
   scope(): string {
     return [
@@ -29,7 +29,7 @@ export class ReviewGroup {
     ].join('\n');
   }
 
-  /** review block 02 — the finder angles (what a real defect looks like). */
+  /** The finder angles — what a real defect looks like. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1084, condition: isReview })
   finderAngles(): string {
     return [
@@ -45,7 +45,7 @@ export class ReviewGroup {
     ].join('\n');
   }
 
-  /** review block 03 — verify before you report. */
+  /** Verify before you report. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1086, condition: isReview })
   verify(): string {
     return [
@@ -59,7 +59,7 @@ export class ReviewGroup {
     ].join('\n');
   }
 
-  /** review block 04 — present the review + offer next steps. */
+  /** Present the review + offer next steps. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1088, condition: isReview })
   present(): string {
     return [

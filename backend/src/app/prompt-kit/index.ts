@@ -9,7 +9,6 @@
  * - `assemble.ts` — the pure assembly core (`renderAgentPrompt` + `primeFragments`).
  * - `fragments.ts` — the shared TEXT catalog fragment methods cite. `job-kind.ts` — the job-kind block helper.
  * - `preview.ts` — the dev-only preview catalog. `prompt.service.ts`/`prompt-kit.module.ts` — the DI facade.
- * - `bodies/*.body.ts` — TRANSITIONAL persona-text consts the fragments wrap (being inlined + removed).
  */
 // Shared TEXT catalog the fragment methods cite (`fragments.ts`) + the job-kind block helper (`job-kind.ts`).
 export * from './fragments';

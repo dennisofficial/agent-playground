@@ -1,0 +1,19 @@
+Verification gate (required before your work is accepted) — attempt 2.
+
+This thread's changes touched these files:
+- src/a.ts
+- src/b.ts
+
+Your last attempt still left these unresolved:
+- prior error text
+
+
+1. Run `mcp__atlas-lsp-ts__diagnostics` on each changed file above — a fast per-file check.
+
+2. Run the repo's own typecheck command (authoritative, whole-program) — discover it the same way you would for a normal build (package.json scripts / repo conventions).
+
+3. Fix every error you find, in THIS session, then re-run both checks to confirm they're clean.
+
+4. COMMIT: once both checks are clean, `git add -A`, commit any fixes with a clear message, and `git push` — leave a CLEAN working tree (the host does NOT commit for you; it reads what you leave).
+
+When both are clean AND your tree is committed + pushed, call `report_verification` with `{ passed: true }`. If you cannot get the checks clean, call `report_verification` with `{ passed: false, remaining: [...] }`, listing the specific remaining errors (file:line — message) — never end the turn without calling one or the other.

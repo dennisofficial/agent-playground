@@ -6254,7 +6254,7 @@ const COMPACTION_INSTRUCTION = [
  * Prepended to the compaction summary when it seeds the FRESH session (folded into the next turn by
  * `runChatTurnInner`). Frames the summary as recovered context and tells the session to keep going.
  */
-const CONTINUATION_PREAMBLE = [
+export const CONTINUATION_PREAMBLE = [
   '<session_compacted>',
   'Your previous session was compacted to keep the context lean while the build runs. It is summarized below.',
   'Treat it as your own recovered memory. Re-read the durable artifacts it points to (`/context/specs`,',
