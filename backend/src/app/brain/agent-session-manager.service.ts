@@ -58,7 +58,14 @@ import {
   CodexReviewEntity,
   MessageEntity,
 } from '../persistence/entities';
-import type { McpSurface, SessionAnchor, ThreadTerminalRecord } from '../persistence/entities';
+import type {
+  McpAuthKind,
+  McpOAuthTokenAuthMethod,
+  McpSurface,
+  SessionAnchor,
+  StoredMcpOAuthConfig,
+  ThreadTerminalRecord,
+} from '../persistence/entities';
 import {
   ProvisioningNotReadyError,
   JobLifecycleService,
@@ -3734,6 +3741,19 @@ export class AgentSessionManager
           return { ok: false, reason: "mcp.slot must be 'header' or 'env'" };
         }
         if (!key) return { ok: false, reason: 'mcp.key is required (the header/env key name)' };
+        // An OAuth server has NO fillable secret slot — its Authorization is minted by the console "Connect"
+        // flow (McpOAuthService), so a request_secret against it would inject a bearer that bypasses the token
+        // lifecycle. Reject early (the host provideSecret lane enforces this authoritatively too). MCP secrets
+        // land on THIS repo's scope, so check the repo-scoped row.
+        const oauthRow = await this.mcpStore
+          ?.rawRow(stimulus.orgId, stimulus.repoId, server)
+          .catch(() => null);
+        if (oauthRow?.auth_kind === 'oauth') {
+          return {
+            ok: false,
+            reason: `MCP server "${server}" uses OAuth — it is connected by the OWNER in the console (MCP settings → Connect), not via a secret slot. Do not request a secret or inject an Authorization/Bearer header for it.`,
+          };
+        }
         const requestId = `s-${randomUUID()}`;
         const card = webSecretInputCard({
           jobId: stimulus.jobId,
@@ -4149,6 +4169,33 @@ export class AgentSessionManager
           Array.isArray(s['surfaces']) ? (s['surfaces'] as unknown[]).map((x) => String(x)) : []
         ).filter((x): x is McpSurface => VALID_SURFACES.has(x as McpSurface));
         const reason = String(s['reason'] ?? '').trim() || undefined;
+        // Auth kind: 'static' (header/env slots filled via request_secret) or 'oauth' (interactive OAuth 2.1
+        // the OWNER completes in the console). OAuth is http/sse-only and owns the Authorization header itself,
+        // so a secret slot on an oauth server is invalid (it would read as an unfillable gap). Mirrors
+        // McpServersController.assertShape.
+        const authKind: McpAuthKind = s['authKind'] === 'oauth' ? 'oauth' : 'static';
+        if (authKind === 'oauth') {
+          if (transport === 'stdio') {
+            return { ok: false, reason: `server "${name}": oauth is only supported for http/sse transports` };
+          }
+          if ((headers ?? []).some((h) => h.secret) || (env ?? []).some((e) => e.secret)) {
+            return {
+              ok: false,
+              reason: `server "${name}": an oauth server must NOT declare secret header/env slots — the OWNER completes OAuth in the console (MCP settings → Connect); OAuth manages the Authorization header itself`,
+            };
+          }
+        }
+        const oauthRaw = (s['oauth'] ?? {}) as Record<string, unknown>;
+        const oauthScope = String(oauthRaw['scope'] ?? '').trim() || undefined;
+        const oauthTam = ['none', 'client_secret_post', 'client_secret_basic'].includes(
+          String(oauthRaw['tokenAuthMethod'] ?? ''),
+        )
+          ? (String(oauthRaw['tokenAuthMethod']) as McpOAuthTokenAuthMethod)
+          : undefined;
+        const oauth: StoredMcpOAuthConfig | undefined =
+          authKind === 'oauth' && (oauthScope || oauthTam)
+            ? { ...(oauthScope ? { scope: oauthScope } : {}), ...(oauthTam ? { tokenAuthMethod: oauthTam } : {}) }
+            : undefined;
         servers.push({
           name,
           transport,
@@ -4159,6 +4206,8 @@ export class AgentSessionManager
           ...(env ? { env } : {}),
           ...(surfaces.length ? { surfaces } : {}),
           ...(reason ? { reason } : {}),
+          ...(authKind === 'oauth' ? { authKind } : {}),
+          ...(oauth ? { oauth } : {}),
         });
       }
       const lowerNames = servers.map((s) => s.name.toLowerCase());
@@ -4183,6 +4232,7 @@ export class AgentSessionManager
           ...(s.headers ?? []).filter((h) => h.secret).map((h) => `${s.name} header:${h.name}`),
           ...(s.env ?? []).filter((e) => e.secret).map((e) => `${s.name} env:${e.name}`),
         ]);
+        const oauthNames = servers.filter((s) => s.authKind === 'oauth').map((s) => s.name);
         return {
           ok: true,
           requestId,
@@ -4192,7 +4242,12 @@ export class AgentSessionManager
             `it to register ${scope === 'org' ? 'them org-wide (every repo)' : 'them on this repo'} — you ` +
             'cannot register servers yourself. Stop and wait for approval. After approval, use request_secret ' +
             '(with an mcp target) to fill each secret slot' +
-            (needSecrets.length ? `: ${needSecrets.join('; ')}.` : '.'),
+            (needSecrets.length ? `: ${needSecrets.join('; ')}.` : '.') +
+            (oauthNames.length
+              ? ` OAuth server(s) [${oauthNames.join(', ')}] have NO secret to fill — after approval the OWNER ` +
+                'must Connect them in the console (MCP settings → Connect) to complete consent. You cannot ' +
+                'consent yourself; do NOT try to inject an Authorization/Bearer header via request_secret.'
+              : ''),
         };
       } catch (err) {
         this.logger.warn(`propose_mcp_servers failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
@@ -4363,6 +4418,10 @@ export class AgentSessionManager
           surfaces: s.surfaces,
           enabled: s.enabled,
           secretKeys: s.secretKeys,
+          // Auth model, so the brain reads a 401 correctly: `authKind:'oauth'` + `oauthConnected:false` means
+          // the OWNER must Connect it in the console (NOT a request_secret target); `'static'` uses secretKeys.
+          authKind: s.authKind,
+          oauthConnected: s.oauthConnected,
           // Secret-SAFE failure state so a brain that lists servers sees a broken one directly (not only
           // via the PROFILE GAPS block): `validationError` is a safe message; `needsReauth` is OAuth-only.
           validationError: s.validationError,
@@ -4371,9 +4430,13 @@ export class AgentSessionManager
         return {
           ok: true,
           servers,
-          message: servers.length
-            ? 'Existing MCP servers — propose_mcp_servers with the SAME name to REPLACE one, or a new name to add one.'
-            : 'No MCP servers registered yet — propose_mcp_servers to add the first (owner-approved).',
+          message:
+            (servers.length
+              ? 'Existing MCP servers — propose_mcp_servers with the SAME name to REPLACE one, or a new name to add one.'
+              : 'No MCP servers registered yet — propose_mcp_servers to add the first (owner-approved).') +
+            (servers.some((s) => s.authKind === 'oauth' && !s.oauthConnected)
+              ? ' An oauth server with oauthConnected:false is NOT broken auth you can fix — the OWNER must Connect it in the console (MCP settings → Connect). Do not use request_secret / inject an Authorization header for it.'
+              : ''),
         };
       } catch (err) {
         this.logger.warn(`list_mcp_servers failed for org=${stimulus.orgId}: ${err}`);

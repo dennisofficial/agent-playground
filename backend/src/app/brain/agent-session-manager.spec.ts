@@ -1325,6 +1325,57 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
   });
 
+  it('propose_mcp_servers with authKind:"oauth" carries it onto the card + tells the brain the owner must Connect', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [
+        {
+          name: 'jira',
+          transport: 'sse',
+          url: 'https://mcp.atlassian.com/v1/sse',
+          authKind: 'oauth',
+          oauth: { scope: 'read:jira-work', tokenAuthMethod: 'none' },
+          reason: 'Issue tracking',
+        },
+      ],
+    });
+    expect(result).toMatchObject({ ok: true, proposed: ['jira'] });
+    const arg = (mockStore.openMcpProposal as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(arg.card.servers[0].authKind).toBe('oauth');
+    expect(arg.card.servers[0].oauth).toEqual({ scope: 'read:jira-work', tokenAuthMethod: 'none' });
+    const message = (result as { message: string }).message;
+    expect(message).toContain('Connect');
+    expect(message).toContain('jira');
+  });
+
+  it('propose_mcp_servers rejects oauth on a stdio transport (oauth is http/sse only)', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [{ name: 'svc', transport: 'stdio', command: 'svc-mcp', authKind: 'oauth' }],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('oauth');
+    expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
+  });
+
+  it('propose_mcp_servers rejects an oauth server that also declares a secret slot', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [
+        {
+          name: 'svc',
+          transport: 'http',
+          url: 'https://x',
+          authKind: 'oauth',
+          headers: [{ name: 'Authorization', secret: true }],
+        },
+      ],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('secret');
+    expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
+  });
+
   it('request_secret with an mcp target opens a value-free card carrying the MCP slot (no path)', async () => {
     const tools = manager.buildTools(fakeStimulus, 'onboarding');
     const result = await tools['request_secret']({
