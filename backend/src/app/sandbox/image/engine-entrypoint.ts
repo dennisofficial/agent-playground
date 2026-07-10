@@ -112,11 +112,18 @@ async function runOverRedis(turnId: string): Promise<void> {
       // it is registered under is purely presentational. Reused for both bridges below. Each tool
       // registers its REAL per-tool shape from the shared canonical source, so the SDK's strict object
       // validates + strips the model's input and the flat parsed payload forwards straight through.
-      const makeProxyTool = (toolName: string) =>
-        claudeSdk.tool(
+      const makeProxyTool = (toolName: string) => {
+        const shape = TOOL_SHAPES[toolName];
+        if (!shape) {
+          // Fail loud: an empty shape would be wrapped in the SDK's STRICT object and silently strip
+          // the whole payload to `{}` before the handler runs. A missing schema is a drift bug (caught
+          // by the completeness guard tests) — surface it here rather than at runtime as data loss.
+          throw new Error(`[engine-entrypoint] no TOOL_SHAPES entry for bridged tool '${toolName}'`);
+        }
+        return claudeSdk.tool(
           toolName,
           TOOL_DESCRIPTIONS[toolName] ?? `Host-side tool '${toolName}' proxied via the Atlas tool bridge.`,
-          TOOL_SHAPES[toolName] ?? {},
+          shape,
           async (input: Record<string, unknown>) => {
             const id = randomUUID();
             const resultPromise = toolReader.register(id);
@@ -136,6 +143,7 @@ async function runOverRedis(turnId: string): Promise<void> {
             }
           },
         );
+      };
       // Split the flat host tool list into the general host bridge and the dedicated Workspace
       // Profile bridge, so the brain sees the seven provisioning dimensions as one section.
       const { host: hostToolNames, profile: profileToolNames } = partitionWorkspaceProfileTools(

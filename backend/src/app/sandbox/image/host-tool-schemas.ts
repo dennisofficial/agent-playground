@@ -287,14 +287,14 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     name: z.string(),
     description: z.string(),
     rationale: z.string(),
-    scope: z.enum(['org', 'repo']),
+    scope: z.enum(['org', 'repo']).optional(),
   },
   propose_skill_install: {
     sourceUrl: z.string(),
     ref: z.string().optional(),
     subpath: z.string().optional(),
     rationale: z.string(),
-    scope: z.enum(['org', 'repo']),
+    scope: z.enum(['org', 'repo']).optional(),
   },
   request_skill_edit_access: {
     skill: z.string(),
@@ -303,7 +303,7 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   propose_skill_removal: {
     name: z.string(),
     rationale: z.string(),
-    scope: z.enum(['org', 'repo']),
+    scope: z.enum(['org', 'repo']).optional(),
   },
   propose_mcp_servers: {
     servers: z.array(
@@ -335,12 +335,12 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
         reason: z.string().optional(),
       }),
     ),
-    scope: z.enum(['org', 'repo']),
+    scope: z.enum(['org', 'repo']).optional(),
   },
   propose_mcp_removal: {
     name: z.string(),
     rationale: z.string(),
-    scope: z.enum(['org', 'repo']),
+    scope: z.enum(['org', 'repo']).optional(),
   },
   propose_convention_profile: {
     slug: z.string().optional(),
