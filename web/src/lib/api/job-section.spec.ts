@@ -16,6 +16,7 @@ function makeThread(overrides: Partial<InboxThread> = {}): InboxThread {
     pr: null,
     ci: null,
     halt: null,
+    shipping: false,
     org: { id: "org1", slug: "org1", name: "Org One" },
     repo: { id: "repo1", name: "repo-one" },
     ...overrides,
@@ -44,6 +45,18 @@ describe("sectionOf", () => {
       pr: { state: "open", number: 1, mergeable: null, url: "https://example.com/pr/1" },
     });
     expect(sectionOf(thread)).toBe("building");
+  });
+
+  it("a shipping job (running + shipping) stays in ready_to_ship, not building", () => {
+    expect(
+      sectionOf(makeThread({ status: "running", shipping: true })),
+    ).toBe("ready_to_ship");
+  });
+
+  it("a normal running job (shipping false) lands in building", () => {
+    expect(
+      sectionOf(makeThread({ status: "running", shipping: false })),
+    ).toBe("building");
   });
 
   it("done with no PR lands in done", () => {

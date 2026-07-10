@@ -611,6 +611,10 @@ export class WebSurfaceController {
         halt: t.halt ?? null,
         activity: t.activity,
         halted: t.halted,
+        // True only while the operator's "Ship it" is being finalized (PR opening): the job re-uses the
+        // `running` status during shipping, so this distinguishes "opening PR" from "building threads" and
+        // keeps the card pinned in "Ready to Ship" instead of "Building".
+        shipping: t.status === 'running' && t.ship_review_approved_at != null,
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,

@@ -41,7 +41,9 @@ export function sectionOf(t: InboxThread): JobSection | null {
     case "awaiting_ship_review":
       return "ready_to_ship";
     case "running":
-      return "building";
+      // A shipping job re-uses the `running` status while its PR opens — keep it in "Ready to Ship"
+      // (showing the `running` working spinner) rather than teleporting it to "Building".
+      return t.shipping ? "ready_to_ship" : "building";
     case "done":
       if (t.pr?.state === "open") return "pr_open";
       if (t.pr?.state === "merged") return "merged";
