@@ -11,7 +11,10 @@
     # network can reach it (an unauthenticated TCP admin API would be a hole). The host dir
     # /srv/atlas/caddy/admin is mounted into both the caddy and backend containers at the
     # same path (see docker-compose.prod.yml).
-    admin unix//srv/atlas/caddy/admin/admin.sock
+    # The `|0660` suffix sets group-rw perms on the socket so the backend container
+    # (a different UID sharing a compatible gid) can connect(); Caddy otherwise creates
+    # it owner-only and the backend's connect() would fail with EACCES.
+    admin unix//srv/atlas/caddy/admin/admin.sock|0660
 }
 
 # ── Backend API ─────────────────────────────────────────────────────────────────

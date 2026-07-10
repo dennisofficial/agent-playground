@@ -83,6 +83,10 @@ x-backend-common: &backend-common
     # Same-path data mount — host paths handed to `docker run` resolve correctly
     # because the container sees the exact same absolute path as the daemon does.
     - /srv/atlas/data:/srv/atlas/data
+    # Caddy admin API unix socket — same host dir mounted at the SAME path into caddy
+    # (see the caddy service) so the socket is one shared inode. The backend programs
+    # per-preview routes through admin.sock here; NO TCP admin listener exists.
+    - /srv/atlas/caddy/admin:/srv/atlas/caddy/admin
   networks:
     - atlas
   depends_on:
@@ -176,8 +180,15 @@ services:
   caddy:
     # Custom image = stock caddy:2 + the caddy-dns/cloudflare module (infra/caddy.Dockerfile),
     # required for the `*.atlas.dltechnologies.co` wildcard cert via DNS-01. Built + pushed in CI
-    # like the backend/web images; deploy.sh pulls it by tag.
-    image: ghcr.io/dennisofficial/atlas-caddy:${ATLAS_IMAGE_TAG:-latest}
+    # like the backend/web images.
+    #
+    # Pinned to the stable `:latest` tag, NOT the per-deploy ${ATLAS_IMAGE_TAG}: preview routes are
+    # added dynamically via the admin API and live only in Caddy's in-memory config (they're not in
+    # the static Caddyfile). If the image ref changed every deploy, `DC up -d ... caddy` (deploy.sh)
+    # would recreate the container each time and wipe all live sandbox preview routes. A constant ref
+    # means compose leaves the running caddy untouched across deploys. To roll out a new caddy build,
+    # pull + recreate it explicitly (`DC pull caddy && DC up -d caddy`), accepting the route reset.
+    image: ghcr.io/dennisofficial/atlas-caddy:latest
     # Fixed name so the backend can `docker network connect atlas-caddy <sandbox>-net`
     # deterministically on first exposure (mirrors atlas-postgres above).
     container_name: atlas-caddy
