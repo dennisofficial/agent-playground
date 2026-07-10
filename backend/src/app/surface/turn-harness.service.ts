@@ -194,6 +194,9 @@ export interface TurnHarness {
   finish(finalText?: string, turnMeta?: TurnEndMeta): Promise<void>;
   /** Persist whatever partials accumulated (no fallback) and end the live lane — for error/timeout paths. */
   abort(): Promise<void>;
+  /** End the live lane and persist NOTHING — for a benign abort that will be RE-DELIVERED in full, so the
+   *  truncated partial never becomes a durable half-message. */
+  discard(): Promise<void>;
 }
 
 export interface TurnHarnessOptions {
@@ -478,6 +481,15 @@ export class TurnHarnessFactory {
         if (closed) return;
         closed = true;
         await persistAll();
+      },
+
+      discard: async () => {
+        if (closed) return;
+        closed = true;
+        // End the live lane WITHOUT persisting the accumulated blocks — the caller is about to re-deliver
+        // this turn in full (a benign stream abort on an at-least-once wake), so a flushed partial would
+        // become a durable truncated half-message alongside the complete re-run.
+        this.liveTurns.end(channel, jobId, lane);
       },
     };
   }

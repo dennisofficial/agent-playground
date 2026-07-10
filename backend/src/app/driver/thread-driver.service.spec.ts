@@ -377,6 +377,10 @@ function makeStore(state: StoreState): {
       const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
       return s?.halt_fix_attempts ?? 0;
     }),
+    haltOutcome: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
+      return (s?.halt_outcome as 'blocked' | 'incomplete' | 'failed' | null) ?? null;
+    }),
     rearmHaltedThreads: vi.fn(async (jobId: string) => {
       let n = 0;
       for (const x of state.threads) {
@@ -2087,6 +2091,81 @@ function stubChangedFileNames(
   (git as unknown as { changedFileNames: ReturnType<typeof vi.fn> }).changedFileNames =
     vi.fn(impl);
 }
+
+describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread blocked → Holding." spam)', () => {
+  // A blocked thread leaves the JOB `running`, so the 30-min reap's resume() re-drives it and re-enters the
+  // "already blocked → re-halt" short-circuit. It must NOT re-post the card or re-arm the owed wake once the
+  // halt was already delivered — except for a `judge_unavailable` transient hold, whose periodic re-wake IS
+  // its recovery. And it MUST still notify if haltJob never ran (halt_outcome missing → wake would be lost).
+  function blockedState(o: {
+    reason?: 'unverified' | 'judge_unavailable' | 'question';
+    haltOutcome?: 'blocked' | null;
+    haltWakedAt?: Date | null;
+    haltFixAttempts?: number;
+  }): StoreState {
+    const t = thread('sec-be', 10, 'Backend', 'executing', false, 'paused');
+    (t as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record = {
+      status: 'blocked',
+      summary: 'blocked',
+      blocked: { reason: o.reason ?? 'unverified', detail: 'needs your input' },
+    };
+    const h = t as HaltFields;
+    h.halt_outcome = o.haltOutcome ?? null;
+    h.halt_waked_at = o.haltWakedAt ?? null;
+    h.halt_fix_attempts = o.haltFixAttempts ?? 0;
+    return {
+      job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
+      record: makeRecord(),
+      threads: [t],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+  }
+  const blockedCards = (h: { sunk: Array<{ block: { text?: string } }> }) =>
+    h.sunk.filter((s) => s.block.text?.includes('Thread blocked'));
+
+  it('already-notified block (owed-wake row exists + delivered) → re-drive re-posts NOTHING and does not re-arm', async () => {
+    // haltJob already ran on the first block: halt_outcome set, wake delivered (halt_waked_at stamped).
+    const state = blockedState({ reason: 'unverified', haltOutcome: 'blocked', haltWakedAt: new Date() });
+    const h = assemble(state);
+    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
+
+    await h.driver.resume();
+    await flush();
+
+    expect(blockedCards(h)).toHaveLength(0); // no re-posted "Thread blocked" card
+    expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // no re-arm
+    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(0); // stays acked
+  });
+
+  it('REGRESSION: blocked record but halt_outcome MISSING (crash before haltJob) → re-drive still runs haltJob ONCE', async () => {
+    // The block_thread terminal record persisted, but haltJob never created the owed-wake row. A re-drive must
+    // NOT suppress — else `threadsAwaitingHaltWake` has nothing to deliver and the brain is never woken.
+    const state = blockedState({ reason: 'unverified', haltOutcome: null, haltWakedAt: null });
+    const h = assemble(state);
+
+    await h.driver.resume();
+    await flush();
+
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // owed-wake row created
+    expect(blockedCards(h).length).toBeGreaterThan(0); // the card posts (the FIRST notification)
+    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(1);
+  });
+
+  it('judge_unavailable transient hold KEEPS re-arming on re-drive (its only recovery path)', async () => {
+    // Already delivered, but judge_unavailable must re-wake the brain to retry_thread when the judge recovers.
+    const state = blockedState({ reason: 'judge_unavailable', haltOutcome: 'blocked', haltWakedAt: new Date() });
+    const h = assemble(state);
+    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
+
+    await h.driver.resume();
+    await flush();
+
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // re-armed
+    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(1); // owed again
+  });
+});
 
 describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — no rollout dial)', () => {
   it('touched + adequate verification → done (judge consulted, never gates)', async () => {

@@ -1,5 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Injectable, Logger, type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
+import { Injectable, Logger, Optional, type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,6 +13,8 @@ import { buildSystemSkills, type SystemSkillGitSource } from './system-skill-reg
 /** How often the leader re-checks every git-sourced managed skill against its remote — mirrors
  *  `SkillUpdaterService.RECONCILE_INTERVAL_MS`; this tier moves just as rarely. */
 const RECONCILE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+/** SchedulerRegistry interval name (process-unique) for the leader-gated reconcile sweep. */
+const MANAGED_SKILL_SYNC_INTERVAL = 'skills:managed-skill-sync';
 
 /**
  * LEADER-ONLY sync for the GIT-SOURCED half of the system-tier managed skills (`system-skill-registry.ts`
@@ -32,12 +35,14 @@ export class ManagedSkillSyncService implements OnApplicationBootstrap, OnApplic
   private readonly logger = new Logger(ManagedSkillSyncService.name);
   private promoteSub?: { unsubscribe(): void };
   private demoteSub?: { unsubscribe(): void };
-  private timer?: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly git: LocalGitService,
     private readonly election: LeaderElectionService,
     private readonly env: EnvService,
+    // Prod always injects the scheduler (global ScheduleModule); unit tests omit it and never promote, so
+    // the sync never starts there.
+    @Optional() private readonly scheduler?: SchedulerRegistry,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -56,17 +61,19 @@ export class ManagedSkillSyncService implements OnApplicationBootstrap, OnApplic
   }
 
   private start(): void {
-    if (this.timer) return;
+    if (!this.scheduler) return;
+    if (this.scheduler.doesExist('interval', MANAGED_SKILL_SYNC_INTERVAL)) return;
     void this.syncAll(); // boot/promotion sweep
-    this.timer = setInterval(() => void this.syncAll(), RECONCILE_INTERVAL_MS);
-    this.timer.unref?.();
+    const iv = setInterval(() => void this.syncAll(), RECONCILE_INTERVAL_MS);
+    iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
+    this.scheduler.addInterval(MANAGED_SKILL_SYNC_INTERVAL, iv);
     this.logger.log('managed-skill sync started (leader)');
   }
 
   private stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
+    // deleteInterval clears the interval AND removes it from the registry.
+    if (this.scheduler?.doesExist('interval', MANAGED_SKILL_SYNC_INTERVAL)) {
+      this.scheduler.deleteInterval(MANAGED_SKILL_SYNC_INTERVAL);
     }
   }
 
