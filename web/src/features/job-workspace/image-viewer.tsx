@@ -53,7 +53,7 @@ export function ImageViewer({ src, alt }: { src: string; alt: string }) {
   }
 
   return (
-    <div className="relative h-[70vh] w-full overflow-hidden rounded-md border border-border bg-surface-2">
+    <div className="relative h-full w-full flex-1 overflow-hidden bg-surface-2">
       <Viewer
         src={src}
         alt={alt}
@@ -80,7 +80,7 @@ function Viewer({
       minScale={MIN_SCALE}
       maxScale={MAX_SCALE}
       centerOnInit
-      wheel={{ step: 0.15 }}
+      wheel={{ step: 0.015 }}
       doubleClick={{ mode: "toggle", step: 1.2 }}
     >
       <Toolbar fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen} />

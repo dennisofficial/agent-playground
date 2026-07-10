@@ -36,10 +36,17 @@ export function DetailTopBar({
 }
 
 /**
- * The standard right-side action cluster — search / copy-transcript / view-diff / resume. The buttons are
- * static design-parity placeholders for now (no backend wiring).
+ * The standard right-side action cluster — search / copy / view-diff / resume. Search and diff are static
+ * design-parity placeholders for now (no backend wiring). The copy slot is wired where the caller supplies a
+ * working control via `copySlot` (e.g. the file detail view's {@link FileCopyButton}); otherwise it falls
+ * back to the placeholder copy button.
  */
-export function TopBarActions() {
+export function TopBarActions({
+  copySlot,
+}: {
+  /** Replaces the placeholder copy button when provided; render `null` inside it to hide the copy action. */
+  copySlot?: React.ReactNode;
+}) {
   return (
     <div className="flex items-center gap-0.5">
       <TopBarButton title="Search this job">
@@ -57,21 +64,25 @@ export function TopBarActions() {
           <path d="M21 21l-4.35-4.35" />
         </svg>
       </TopBarButton>
-      <TopBarButton title="Copy transcript">
-        <svg
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <rect x="9" y="9" width="11" height="11" rx="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
-      </TopBarButton>
+      {copySlot === undefined ? (
+        <TopBarButton title="Copy transcript">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        </TopBarButton>
+      ) : (
+        copySlot
+      )}
       <button
         type="button"
         title="View diff · 4 files"
@@ -97,17 +108,20 @@ export function TopBarActions() {
   );
 }
 
-function TopBarButton({
+export function TopBarButton({
   title,
+  onClick,
   children,
 }: {
   title: string;
+  onClick?: () => void;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       title={title}
+      onClick={onClick}
       className="flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text"
     >
       {children}
