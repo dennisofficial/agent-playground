@@ -19,20 +19,22 @@ runs:
       shell: bash
       run: git submodule foreach --recursive 'git clean -ffdx' || true
 
-    - name: Clean stale pnpm install dir
-      # Self-hosted runners REUSE the runner HOME between jobs, so pnpm/action-setup's
-      # self-installer dest (~/setup-pnpm) persists from a prior run. On the next run the
-      # installer tries to rmdir that dest before reinstalling and fails with
-      # `ENOTEMPTY: directory not empty, rmdir '.../setup-pnpm'` (pnpm/action-setup#149),
-      # taking down the whole "Set up workspace" step intermittently. Wipe it first so the
-      # installer always starts from a clean dest. No-op on ephemeral hosted runners.
-      shell: bash
-      run: rm -rf "$HOME/setup-pnpm" || true
-
     - name: Set up pnpm
       # No `version:` here — action-setup reads it from package.json's `packageManager`
       # field (single source of truth), so a pnpm bump can't desync the two.
+      #
+      # `dest` is isolated PER RUNNER. The self-hosted atlas-box runners run as one shared
+      # OS user, so the default dest (`~/setup-pnpm`) is the SAME directory for every
+      # runner instance. When two jobs (e.g. Typecheck + Unit tests) run concurrently they
+      # both self-install pnpm into that one dir and race: one job's self-installer chdirs
+      # into the dest while the other rewrites/removes it, so the loser dies with either
+      # `ENOTEMPTY: ... rmdir '.../setup-pnpm'` or `ENOENT: process.cwd failed ... uv_cwd`
+      # (pnpm/action-setup#149). RUNNER_TEMP is unique per runner instance AND wiped between
+      # jobs, so keying dest to it gives every job a private, clean install dir — no shared
+      # state, no cross-job race. No-op difference on ephemeral hosted runners.
       uses: pnpm/action-setup@v4
+      with:
+        dest: ${{ runner.temp }}/setup-pnpm
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
