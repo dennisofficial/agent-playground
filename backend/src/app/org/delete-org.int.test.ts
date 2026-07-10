@@ -45,6 +45,7 @@ import {
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, JOB_TEARDOWN, WorktreeProvisioner } from '../driver';
+import { BrainGateway } from '../brain-gateway';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
 import { TicketService } from '../tickets';
 import { OrganizationService } from './organization.service';
@@ -220,6 +221,17 @@ beforeEach(async () => {
       { provide: TicketService, useValue: { revertForDeletedThread: async () => {} } },
       { provide: TurnRegistry, useValue: { failRunningForJob: async () => 0 } },
       { provide: SkillUpdaterService, useValue: { reconcileOrgAsync: () => undefined } },
+      // JobLifecycleService construct-depends on the neutral driver→brain BrainGateway; deleteOrg's
+      // teardown path never fires a brain wake, so an inert stub satisfies DI without being called.
+      {
+        provide: BrainGateway,
+        useValue: {
+          openPrAtShip: async () => {},
+          notifyThreadHalted: async () => {},
+          notifyThreadDone: async () => {},
+          wakeForProvisioningFailure: async () => {},
+        } as unknown as BrainGateway,
+      },
       JobLifecycleService,
       // OrganizationService injects @Inject(JOB_TEARDOWN); the @Global DriverModule binds the token to
       // JobLifecycleService via useExisting — mirror that here so DI resolves in this standalone module.
