@@ -313,6 +313,17 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
         url: z.string().optional(),
         command: z.string().optional(),
         args: z.array(z.string()).optional(),
+        // `'static'` (default) = header/env credential slots filled via request_secret. `'oauth'` = interactive
+        // OAuth 2.1 the OWNER completes in the console ("Connect"); http/sse only, no secret slots.
+        authKind: z.enum(['static', 'oauth']).optional(),
+        oauth: z
+          .object({
+            scope: z.string().optional(),
+            tokenAuthMethod: z
+              .enum(['none', 'client_secret_post', 'client_secret_basic'])
+              .optional(),
+          })
+          .optional(),
         headers: z
           .array(
             z.object({
@@ -412,7 +423,9 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Propose a change to a convention (house-style) profile, with body and rationale.',
 
   // ── Workspace-profile tools ───────────────────────────────────────────────────────────────────
-  request_secret: 'Request a secret from the operator (file, env, or MCP header/env slot).',
+  request_secret:
+    'Request a secret from the operator (file, env, or MCP header/env slot). NOT for OAuth MCP servers — ' +
+    'those are connected by the owner in the console (MCP settings → Connect), never via a pasted secret.',
   request_file: 'Request a file from the operator at a given path, with a description.',
   withdraw_file_request: 'Withdraw a pending file request you no longer need.',
   write_workspace_config: 'Write the workspace config (mounts) for this repo.',
@@ -430,7 +443,9 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   propose_skill_install: 'Propose installing a skill from a source URL for this org or repo.',
   request_skill_edit_access: 'Request edit access to an existing skill, with rationale.',
   propose_skill_removal: 'Propose removing a skill from this org or repo.',
-  propose_mcp_servers: 'Propose one or more MCP servers for this org or repo.',
+  propose_mcp_servers:
+    'Propose one or more MCP servers for this org or repo. Use authKind:"oauth" (http/sse, no secret slot) ' +
+    'for a server that needs interactive login — the owner completes it via the console Connect.',
   propose_mcp_removal: 'Propose removing an MCP server from this org or repo.',
   propose_convention_profile: 'Propose a new convention (house-style) profile for this repo.',
   finish_onboarding: 'Finish workspace onboarding with a summary and the verification you performed.',

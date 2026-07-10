@@ -214,6 +214,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
         env: [{ name: 'STRIPE_TOKEN', secret: true, value: 'x' }],
         surfaces: ['brain', 'experimental'],
         reason: 'Needed for billing tasks.',
+        authKind: 'oauth',
+        oauth: { scope: 'read write', tokenAuthMethod: 'none' },
       },
     ],
     scope: 'org',
