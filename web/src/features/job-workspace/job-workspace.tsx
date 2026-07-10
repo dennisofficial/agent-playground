@@ -316,7 +316,10 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   // The detail-pane content — the same node body whether it fills the desktop Panel or the right drawer.
   const detailBody = (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div
+      data-testid="detail-pane"
+      className="relative flex min-h-0 flex-1 flex-col"
+    >
       {subNode ? (
         // A sub-agent stacked on top of the right pane — a second-level page with a breadcrumb back to
         // the base detail node (which stays selected in the navigator underneath).
@@ -398,7 +401,11 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
               {/* A 1px divider line, NOT a 6px reserved strip — so both panes (and the detail-pane footers like
               the approval bar) sit flush against it. The resizable hit target is widened by the library's
               `resizeTargetMinimumSize` (10px mouse / 20px touch), so dragging stays easy despite the thin line. */}
+              {/* `Separator` always stamps its own `data-testid`/`id` from this `id` prop (falling back to a
+              generated one) — passing it directly, rather than `data-testid`, is the only way to get a
+              stable, library-respected test hook here. */}
               <Separator
+                id="pane-resize-handle"
                 disableDoubleClick
                 onDoubleClick={() =>
                   groupRef.current?.setLayout({ conversation: 50, detail: 50 })

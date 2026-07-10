@@ -216,6 +216,7 @@ export function Sidebar({
 
   return (
     <aside
+      data-testid="app-sidebar"
       className={cn(
         "flex flex-col",
         inDrawer ? "w-full" : "w-[272px] shrink-0 border-r border-border",

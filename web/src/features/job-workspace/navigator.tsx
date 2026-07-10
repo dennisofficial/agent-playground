@@ -189,6 +189,7 @@ export function Navigator({
 
   return (
     <div
+      data-testid="job-navigator"
       className={cn(
         "flex flex-col overflow-hidden border-r border-border",
         inDrawer ? "h-full w-full" : "w-72 shrink-0",
