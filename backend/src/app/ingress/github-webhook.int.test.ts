@@ -44,6 +44,7 @@ import { SurfaceOrchestration } from '../stimulus/surface-orchestration.service'
 import { BRAIN_SINK } from '../stimulus/stimulus-consumer';
 import { JobTitler } from '../titling';
 import { GithubPrStateSync } from '../driver/github-pr-state-sync.service';
+import { GithubCiStateSync } from '../driver/github-ci-state-sync.service';
 import { GitStateReconciler } from '../driver/git-state-reconciler.service';
 import { GithubNotificationSource } from './github-notification.source';
 import {
@@ -132,6 +133,10 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
         {
           provide: GithubPrStateSync,
           useValue: { dispatch: async () => undefined },
+        },
+        {
+          provide: GithubCiStateSync,
+          useValue: { schedule: () => undefined },
         },
         {
           provide: EnvService,

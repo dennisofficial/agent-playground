@@ -1,5 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
-import type { JobHalt } from '@workspace/shared';
+import type { JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
 import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
@@ -47,6 +47,7 @@ export interface ThreadPipelineAwareness {
  */
 @Entity({ name: 'jobs' })
 @Index(['org_id', 'repo_id'])
+@Index('uq_threads_ticket_id', ['ticket_id'], { unique: true, where: '"ticket_id" IS NOT NULL' })
 export class JobEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -86,8 +87,9 @@ export class JobEntity extends TimestampedEntity {
   /**
    * The ticket this thread was promoted from / works (FK → tickets.id); null for a thread not tied to a
    * ticket. A thread works AT MOST one ticket — enforced 1:1 by a partial unique index
-   * (`uq_threads_ticket_id` WHERE ticket_id IS NOT NULL), hand-added in the migration. SET NULL if the
-   * ticket is deleted (the thread/PR outlives the board entry).
+   * (`uq_threads_ticket_id` WHERE ticket_id IS NOT NULL), modeled on this entity via
+   * `@Index('uq_threads_ticket_id', …)`. SET NULL if the ticket is deleted (the thread/PR outlives the
+   * board entry).
    */
   @Column({ type: 'uuid', nullable: true })
   ticket_id!: string | null;
@@ -121,20 +123,21 @@ export class JobEntity extends TimestampedEntity {
   ship_review_approved_at!: Date | null;
 
   /**
-   * Whether a live conversational (brain) turn is streaming RIGHT NOW. Toggled around `runChatTurn`
-   * (true for its whole duration, including provisioning; cleared in a `finally`). A SEPARATE axis from
-   * `status` — together they yield the "needs you" signal (see `deriveNeedsYou`): `status` covers build
-   * activity, `turn_active` covers conversation activity. Reset to false on boot (no turn survives a
-   * process restart) so a crash mid-turn can't leave a thread looking "working" forever.
+   * What the SYSTEM is doing on this job RIGHT NOW — the ephemeral "working" axis (see {@link JobActivity}):
+   * `idle | turn | plan_review | build | master_review`. Orthogonal to `status` (the build phase) and
+   * `halt` (the failure gate); any non-`idle` value suppresses the "needs you" dot in `deriveNeedsYou`
+   * because the system, not the operator, owns the next step. Reset to `idle` on boot (no in-flight work
+   * survives a process restart) so a crash mid-work can't leave a thread looking "working" forever. Column
+   * stays `text`; the union is enforced in TS.
    */
-  @Column({ type: 'boolean', default: false })
-  turn_active!: boolean;
+  @Column({ type: 'text', default: 'idle' })
+  activity!: JobActivity;
 
   /**
    * Whether an unresolved TURN-FAILURE operator box is outstanding (a stop-the-world engine error the
-   * operator must Resume or reply past). A SEPARATE axis from `status`/`turn_active`: chat-turn failures
+   * operator must Resume or reply past). A SEPARATE axis from `status`/`activity`: chat-turn failures
    * never touch `status`, so this is what makes a stopped thread render as errored. Set in
-   * `saySystemOperator`, cleared when the next turn starts (`runChatTurn`). UNLIKE `turn_active` it is NOT
+   * `saySystemOperator`, cleared when the next turn starts (`runChatTurn`). UNLIKE `activity` it is NOT
    * reset on boot — a real unresolved error must survive a process restart.
    */
   @Column({ type: 'boolean', default: false })

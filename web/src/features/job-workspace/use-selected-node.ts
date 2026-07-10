@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { isDetailNode } from "./node-registry";
+import { isDetailNode, parseFileNode } from "./node-registry";
 
 /**
  * The workspace has TWO panes, each with its own selection, plus a stacked sub-agent layer on the right
@@ -25,6 +25,7 @@ import { isDetailNode } from "./node-registry";
 const LANE_PARAM = "lane";
 const NODE_PARAM = "node";
 const SUB_PARAM = "sub";
+const FILE_PARAM = "file";
 
 // `isDetailNode` (which pane a node opens in) now lives in the node registry — the single source of truth.
 export { isDetailNode } from "./node-registry";
@@ -54,6 +55,12 @@ export interface SelectedNode {
   closeDetail: () => void;
   /** Pop the stacked sub-agent (drop `?sub=`), returning to the base detail node. */
   closeSub: () => void;
+  /** The stacked repo-file view's path (`?file=`), or `null` when no file view is open. */
+  fileNode: string | null;
+  /** The optional line target of the open file view (`"18"` / `"18-24"`), or `null`. */
+  fileLines: string | null;
+  /** Pop the stacked repo-file view (drop `?file=`), returning to the base spec/plan. */
+  closeFile: () => void;
 }
 
 export function useSelectedNode(): SelectedNode {
@@ -72,12 +79,19 @@ export function useSelectedNode(): SelectedNode {
       : subSep >= 0
         ? subParam.slice(subSep + 2)
         : subParam;
+  const fileParam = params.get(FILE_PARAM);
+  // The param stores the path WITHOUT the `file:` prefix (as `?sub=` stores without `subagent:`).
+  const fileSel = fileParam ? parseFileNode(`file:${fileParam}`) : null;
 
   const selectNode = useCallback(
     (node: string, opts?: { push?: boolean }) => {
       const qs = new URLSearchParams(params.toString());
       let key: string;
-      if (node.startsWith("subagent:")) {
+      if (node.startsWith("file:")) {
+        // Stack the file view on top of the right pane — the base `?node=` (spec/plan) stays selected.
+        key = FILE_PARAM;
+        qs.set(FILE_PARAM, node.slice("file:".length));
+      } else if (node.startsWith("subagent:")) {
         // Stack the sub-agent on top of the right pane — the base `?node=` (and its nav highlight) stays.
         key = SUB_PARAM;
         qs.set(SUB_PARAM, node.slice("subagent:".length));
@@ -85,6 +99,7 @@ export function useSelectedNode(): SelectedNode {
         key = NODE_PARAM;
         qs.set(NODE_PARAM, node);
         qs.delete(SUB_PARAM); // a new base detail resets the stacked sub-agent
+        qs.delete(FILE_PARAM); // ...and the stacked file view
       } else {
         key = LANE_PARAM;
         qs.set(LANE_PARAM, node);
@@ -124,10 +139,11 @@ export function useSelectedNode(): SelectedNode {
     [dropParams],
   );
   const closeDetail = useCallback(
-    () => dropParams([NODE_PARAM, SUB_PARAM]),
+    () => dropParams([NODE_PARAM, SUB_PARAM, FILE_PARAM]),
     [dropParams],
   );
   const closeSub = useCallback(() => dropParams([SUB_PARAM]), [dropParams]);
+  const closeFile = useCallback(() => dropParams([FILE_PARAM]), [dropParams]);
 
   return {
     laneNode,
@@ -139,5 +155,8 @@ export function useSelectedNode(): SelectedNode {
     openConversation,
     closeDetail,
     closeSub,
+    fileNode: fileSel?.path ?? null,
+    fileLines: fileSel?.lines ?? null,
+    closeFile,
   };
 }

@@ -7,7 +7,11 @@
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
-import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@workspace/shared";
+import type {
+  JobActivity as WireJobActivity,
+  JobHalt as WireJobHalt,
+  JobStatus as WireJobStatus,
+} from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
@@ -17,6 +21,11 @@ import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@worksp
 export type { WireJobStatus };
 /** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
 export type { WireJobHalt };
+/**
+ * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
+ * single-sourced in `@workspace/shared`. Carried on the realtime row; the dot itself reads `needsYou`.
+ */
+export type { WireJobActivity };
 
 export type WireJobKind =
   | "feature"
@@ -243,6 +252,13 @@ export interface WebMcpProposalServer {
   /** Header names; `secret:true` marks a slot the owner fills after approval (via request_secret). */
   headers?: { name: string; secret?: boolean; value?: string }[];
   env?: { name: string; secret?: boolean; value?: string }[];
+  /**
+   * `"static"` (default when absent) = header/env credential slots. `"oauth"` = interactive OAuth 2.1 the
+   * owner completes after approving by clicking Connect in MCP settings (no secret slot to fill).
+   */
+  authKind?: "static" | "oauth";
+  /** Non-secret OAuth knobs; only meaningful when `authKind==="oauth"`. */
+  oauth?: { scope?: string; tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic" };
   /** The brain's one-line rationale for why this server suits the repo. */
   reason?: string;
 }
@@ -483,6 +499,9 @@ export interface PipelineJob {
   prState: PrState | null;
   /** GitHub `mergeable_state` (`'dirty'` = merge conflict), or null. Refines the `open` state's coloring. */
   prMergeable: string | null;
+  /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — same four-state taxonomy as the sidebar
+   *  dot; null = no checks reported. Only meaningful once a PR exists (prNumber != null). */
+  ciStatus: CiStatus | null;
   /** The feature branch all threads stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   /** The OBSERVED live branch the agent's HEAD is on; differs from featureBranch ⇒ drift (badge). Null
@@ -584,6 +603,9 @@ export type JobKind = "feat" | "fix" | "event" | "onboard" | "review";
 
 /** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
 export type PrState = "open" | "merged" | "closed";
+
+/** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI"). */
+export type CiStatus = "success" | "failure" | "pending"; // null handled at the field level
 
 /** The observed PR on a job — drives the sidebar's PR-status glyph (see `PrStatusIcon`). `mergeable` is
  *  GitHub's `mergeable_state` ('dirty' = merge conflict); `url` links to the PR. */

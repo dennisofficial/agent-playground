@@ -5,10 +5,18 @@ on:
     branches: [main]
   pull_request:
 
+# Serialize by ref and drop superseded runs. A new commit on a PR cancels that PR's
+# in-flight run; a new push to main cancels the running one, so only the newest main
+# commit builds images and deploys (deploy fires only on CI success). Distinct refs
+# (different PRs, main) get distinct groups and never cancel each other.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # ── Test ──────────────────────────────────────────────────────────────────────
-  test:
-    name: Typecheck + unit tests
+  # ── Typecheck ─────────────────────────────────────────────────────────────────
+  typecheck:
+    name: Typecheck
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (with submodules)
@@ -17,38 +25,55 @@ jobs:
           # Submodules are PUBLIC — no PAT needed; the default GITHUB_TOKEN checks them out.
           submodules: recursive
 
-      - name: Set up pnpm
-        # No `version:` here — action-setup reads it from package.json's `packageManager`
-        # field (single source of truth), so a pnpm bump can't desync the two.
-        uses: pnpm/action-setup@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build workspace packages
-        run: pnpm run build:packages
-
-      - name: Build shared
-        run: pnpm --filter @workspace/shared run build
+      - name: Set up workspace
+        uses: ./.github/actions/setup-workspace
 
       - name: Backend typecheck
         run: pnpm --filter backend typecheck
 
+  # ── Unit tests (sharded) ──────────────────────────────────────────────────────
+  # The unit suite is module-load/transform bound; a single 4-core hosted runner caps
+  # parallelism, so we split the files across 4 shards that run on separate runners.
+  unit-tests:
+    name: Unit tests (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up workspace
+        uses: ./.github/actions/setup-workspace
+
       - name: Unit tests
-        run: pnpm test:unit
+        run: pnpm --filter backend exec vitest run --mode unit --shard=${{ matrix.shard }}/4
+
+  # ── Aggregate gate ────────────────────────────────────────────────────────────
+  # Single required status check. Named to match the existing branch-protection check
+  # ("CI / Typecheck + unit tests") so splitting the job needs no settings change, and
+  # so the required check is robust to future shard-count changes.
+  ci-gate:
+    name: Typecheck + unit tests
+    runs-on: ubuntu-latest
+    needs: [typecheck, unit-tests]
+    if: always()
+    steps:
+      - name: Require typecheck + all shards to pass
+        run: |
+          [ "${{ needs.typecheck.result }}" = "success" ] \
+            && [ "${{ needs.unit-tests.result }}" = "success" ] || exit 1
 
   # ── Build and push images ─────────────────────────────────────────────────────
-  # Only runs on push to main (not PRs) and requires the test job to pass.
+  # Only runs on push to main (not PRs) and requires typecheck + all test shards to pass.
   build-images:
     name: Build + push Docker images
     runs-on: ubuntu-latest
-    needs: test
+    needs: [typecheck, unit-tests]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
       contents: read

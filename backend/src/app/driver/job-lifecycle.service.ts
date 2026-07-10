@@ -481,6 +481,25 @@ export class JobLifecycleService {
     return (res.affected ?? 0) > 0;
   }
 
+  /** Close the job's OPEN PR on GitHub (no merge). Throws if it can't — the caller aborts the delete. */
+  async closeJobPullRequest(job: JobEntity): Promise<void> {
+    if (job.pr_state !== 'open') return; // nothing open to close — no-op
+    if (job.pr_number == null) {
+      throw new Error(`cannot close PR for job ${job.id}: missing PR number`);
+    }
+    const repo = await this.projects.findOne({ where: { id: job.repo_id, org_id: job.org_id } });
+    const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
+    const token = await this.creds.githubToken(job.org_id);
+    if (!parsed || !token) {
+      throw new Error(`cannot resolve GitHub repo/token to close PR for job ${job.id}`);
+    }
+    await this.pr.closePullRequest(token, {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      number: job.pr_number,
+    });
+  }
+
   async deleteJobDeep(jobId: string, orgId: string): Promise<void> {
     // 1. Reclaim the container + worktree (physical side effects — no DB cascade can do this).
     await this.closeJob(jobId, orgId);
@@ -608,15 +627,16 @@ export class JobLifecycleService {
     for (const row of rows) {
       if (!row.container_id) continue;
       if (this.activity.isBusy(row.container_id)) continue; // never mid-turn (this process)
-      // Durable cross-process guard: never reap a container whose thread is mid-turn on ANY instance.
-      // `activity` is in-memory/per-process; `turn_active` is the DB-backed signal that survives the
-      // brief leader overlap of a rolling deploy (defense-in-depth — the single-leader invariant already
-      // means no other process is reaping, but this is cheap insurance).
+      // Durable cross-process guard: never reap a container whose job has any non-idle system activity on
+      // ANY instance. Plan review also uses the job container and can outlive its enclosing brain turn.
+      // `this.activity` is in-memory/per-process; the DB `activity` column survives the brief leader overlap
+      // of a rolling deploy (defense-in-depth — the single-leader invariant already means no other process
+      // is reaping, but this is cheap insurance).
       const active = await this.jobs.findOne({
         where: { id: row.job_id },
-        select: { id: true, turn_active: true },
+        select: { id: true, activity: true },
       });
-      if (active?.turn_active) continue;
+      if (active && active.activity !== 'idle') continue;
       if (row.last_active_at && row.last_active_at.getTime() > cutoff) continue; // recently active
       await this.detachContainer(row, 'idle');
       reaped++;

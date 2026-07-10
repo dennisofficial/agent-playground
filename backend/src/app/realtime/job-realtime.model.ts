@@ -4,7 +4,7 @@ import {
   type Row,
 } from '@workspace/pg-realtime';
 import type { JobHalt } from '@workspace/shared';
-import { deriveNeedsYou } from '../domain/job';
+import { deriveNeedsYou, JOB_ACTIVITIES, type JobActivity } from '../domain/job';
 
 /**
  * The authenticated principal handed to the realtime guard — resolved by the SSE endpoint from the
@@ -32,7 +32,9 @@ export interface ThreadRealtimeRow extends Row {
   /** Job kind ('feature'|'bugfix'|'onboarding'|'event'|'review'|null) — small text col, always in SELECT */
   kind: string | null;
   status: string;
-  turnActive: boolean;
+  /** What the system is doing now ('idle'|'turn'|'plan_review'|'build'|'master_review') — any non-'idle'
+   *  value suppresses the "needs you" dot while the system owns the next step. */
+  activity: JobActivity;
   /** Unresolved turn-failure box outstanding — drives the sidebar ✕ glyph even when status is untouched. */
   halted: boolean;
   needsYou: boolean;
@@ -68,11 +70,17 @@ class ThreadOrgGuard extends RealtimeRuleGuard<
 
 function mapRow(raw: Row): ThreadRealtimeRow {
   const status = String(raw.status);
-  const turnActive = raw.turn_active === true;
+  // The WAL row values are `unknown`, so narrow `activity` to the union (unknown/bad → 'idle').
+  const rawActivity = String(raw.activity ?? 'idle');
+  const activity: JobActivity = (JOB_ACTIVITIES as readonly string[]).includes(
+    rawActivity,
+  )
+    ? (rawActivity as JobActivity)
+    : 'idle';
   // The durable human-input gate (see `deriveNeedsYou`): how many `ask_question` cards await the operator.
   // `SELECT *` snapshots and the WAL new-row image both carry this small (never-TOASTed) column, so it is
   // always present here; opening/answering a question updates the thread row → fires a realtime delta.
-  const awaitingQuestion = Number(raw.open_question_count ?? 0) > 0;
+  const openQuestion = Number(raw.open_question_count ?? 0) > 0;
   const halted = raw.halted === true;
   const createdAt = raw.created_at;
   return {
@@ -81,14 +89,15 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     origin: String(raw.origin),
     kind: (raw.kind as string | null) ?? null,
     status,
-    turnActive,
+    activity,
     halted,
-    needsYou: deriveNeedsYou(
+    needsYou: deriveNeedsYou({
       status,
-      turnActive,
-      awaitingQuestion,
-      halted || raw.halt != null,
-    ),
+      activity,
+      openQuestion,
+      awaitingSecret: raw.awaiting_secret_id != null,
+      halted: halted || raw.halt != null,
+    }),
     createdAt:
       createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
     orgId: String(raw.org_id),
@@ -107,7 +116,7 @@ export const THREADS_MODEL: ModelConfig<ThreadRealtimeRow> = {
   table: 'jobs',
   primaryKey: 'id',
   // `halt` is jsonb. On UPDATE, pgoutput may omit an unchanged TOASTed jsonb value; refetch so status-only
-  // or turn-active deltas never accidentally map an existing halt to null in the sidebar cache.
+  // or activity deltas never accidentally map an existing halt to null in the sidebar cache.
   refetchOnUpdate: true,
   mapRow,
   guard: new ThreadOrgGuard(),

@@ -10,6 +10,7 @@ import {
   summarizeEngineError,
 } from './plan-review.service';
 import type { PlanReviewInput } from './plan-review.service';
+import { BrainStoreService } from './brain-store.service';
 import type { EngineRunnerPort, EngineRunResult } from '../engine/engine.types';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
@@ -144,6 +145,8 @@ function makeService(opts: {
   contextDirHost?: string;
   /** Called when the harness `finish()` runs — lets a test observe reply-persist ordering. */
   onFinish?: () => void;
+  /** Inject a capturing `jobs` repo to assert the `activity` axis writes. */
+  jobs?: Repository<JobEntity>;
 }) {
   const engine = {
     run: vi.fn(
@@ -160,9 +163,14 @@ function makeService(opts: {
     ),
     contextDirHost: () => opts.contextDirHost ?? '/nonexistent/context',
   } as unknown as JobLifecycleService;
-  const jobs = {
-    findOne: async () => ({ id: 'job-1', repo_id: 'repo-1' }),
-  } as unknown as Repository<JobEntity>;
+  const jobs =
+    opts.jobs ??
+    ({
+      findOne: async () => ({ id: 'job-1', repo_id: 'repo-1' }),
+      // persistRow reflects the review status onto jobs.activity via syncReviewActivity — the fake must
+      // accept the update (the live sync is asserted end-to-end in web-surface.halt.int.test.ts).
+      update: vi.fn(async () => ({ affected: 1 })),
+    } as unknown as Repository<JobEntity>);
   // The render-only `plan_review` thread row is best-effort — a no-op stub is enough for these tests.
   const threads = {
     findOne: async () => null,
@@ -340,5 +348,109 @@ describe('PlanReviewService.findRunningReviews (backstop worklist)', () => {
     const svc = makeService({ reviews });
     const running = await svc.findRunningReviews();
     expect(running.map((r) => r.id)).toEqual(['a']);
+  });
+});
+
+// A capturing `jobs` repo that records every `activity` value written (in order).
+function capturingJobsRepo() {
+  const activities: string[] = [];
+  return {
+    _activities: () => activities,
+    repo: {
+      findOne: async () => ({ id: 'job-1', repo_id: 'repo-1' }),
+      update: vi.fn(async (_where: unknown, patch: { activity?: string }) => {
+        if (patch.activity !== undefined) activities.push(patch.activity);
+        return { affected: 1 };
+      }),
+    } as unknown as Repository<JobEntity>,
+  };
+}
+
+describe('PlanReviewService.review — reflects onto jobs.activity (§6)', () => {
+  it('writes plan_review while running, then idle once the review completes', async () => {
+    const reviews = fakeReviewRepo();
+    const cap = capturingJobsRepo();
+    const svc = makeService({ reviews, jobs: cap.repo });
+    await svc.review(baseInput);
+    // persistRow('running') → plan_review, persistRow('complete') → idle, in that order.
+    expect(cap._activities()).toEqual(['plan_review', 'idle']);
+  });
+
+  it('writes plan_review then idle even when the review fails (no sandbox)', async () => {
+    const reviews = fakeReviewRepo();
+    const cap = capturingJobsRepo();
+    const svc = makeService({ reviews, jobs: cap.repo, ensureContainer: null });
+    await svc.review(baseInput);
+    expect(cap._activities()[cap._activities().length - 1]).toBe('idle');
+  });
+});
+
+// ── BrainStoreService activity writers (§4b + §7 nesting) ────────────────────────────────────────
+
+/** A capturing `jobs` repo shared by the BrainStoreService unit tests. */
+function fakeStoreJobs() {
+  const patches: Array<Record<string, unknown>> = [];
+  return {
+    _patches: () => patches,
+    repo: {
+      update: vi.fn(async (_where: unknown, patch: Record<string, unknown>) => {
+        patches.push(patch);
+        return { affected: 1 };
+      }),
+    } as unknown as Repository<JobEntity>,
+  };
+}
+
+function makeBrainStore(opts: { reviewRunning: boolean; jobs: Repository<JobEntity> }) {
+  const reviews = {
+    exists: vi.fn(async () => opts.reviewRunning),
+  } as unknown as Repository<CodexReviewEntity>;
+  const stub = {} as never;
+  return new BrainStoreService(
+    opts.jobs,
+    stub, // messages
+    stub, // records
+    stub, // threads
+    stub, // steps
+    stub, // stimuli
+    reviews,
+    stub, // dataSource
+    stub, // titler
+  );
+}
+
+describe('BrainStoreService activity writers', () => {
+  it('setActivity writes the given activity', async () => {
+    const jobs = fakeStoreJobs();
+    const store = makeBrainStore({ reviewRunning: false, jobs: jobs.repo });
+    await store.setActivity('job-1', 'turn');
+    expect(jobs._patches()).toEqual([{ activity: 'turn' }]);
+  });
+
+  it('setHalted(true) clears activity to idle; setHalted(false) leaves activity untouched', async () => {
+    const jobs = fakeStoreJobs();
+    const store = makeBrainStore({ reviewRunning: false, jobs: jobs.repo });
+    await store.setHalted('job-1', true);
+    await store.setHalted('job-1', false);
+    expect(jobs._patches()).toEqual([
+      { halted: true, activity: 'idle' },
+      { halted: false },
+    ]);
+  });
+
+  it('endTurnActivity → idle when no review is running (turn ended, nothing outlives it)', async () => {
+    const jobs = fakeStoreJobs();
+    const store = makeBrainStore({ reviewRunning: false, jobs: jobs.repo });
+    await store.endTurnActivity('job-1');
+    expect(jobs._patches()).toEqual([{ activity: 'idle' }]);
+  });
+
+  it('endTurnActivity → plan_review while a codex_reviews row still runs (review outlives the turn)', async () => {
+    // The §7 crux: the turn finalizes first but a `review_plan` review is still `running`, so activity must
+    // stay plan_review (dot suppressed) — never landing idle until the review row itself leaves running.
+    const jobs = fakeStoreJobs();
+    const store = makeBrainStore({ reviewRunning: true, jobs: jobs.repo });
+    await store.endTurnActivity('job-1');
+    expect(jobs._patches()).toEqual([{ activity: 'plan_review' }]);
   });
 });

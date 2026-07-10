@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { ArrowRight, FileText, PanelRight } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatBytes } from "@/lib/format";
-import { useContextFile, useServices } from "@/lib/api/job-queries";
+import {
+  useContextFile,
+  useRepoFile,
+  useRepoTree,
+  useServices,
+} from "@/lib/api/job-queries";
 import { threadTitle } from "@/lib/thread-title";
 import { VerdictButtons } from "./approval-card";
 import { Markdown } from "./markdown";
@@ -17,6 +22,8 @@ import {
 } from "./bubbles";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
+import { CodeListing } from "./tool-calls/ui";
+import { langFromPath } from "./tool-calls/highlight";
 import {
   durableSubBlocks,
   durableSubagentPrompt,
@@ -30,16 +37,18 @@ import {
 } from "./subagents";
 import { useLiveTurn, type LiveTurn } from "@/lib/api/job-stream";
 import { threadLane } from "./phases";
-import { parseLegNode } from "./node-registry";
+import { contextConvoNodeForHref, parseLegNode } from "./node-registry";
 import { codexReviewLane } from "./codex-review";
 import { resolveNode } from "./node-resolution";
 import { TranscriptView } from "./conversation";
 import { Composer, type ComposerFooter } from "./composer";
 import { DetailTopBar } from "./detail-top-bar";
+import { ImageViewer } from "./image-viewer";
 import { ServiceLogView, serviceHeaderSubtitle } from "./service-log-view";
 import { TicketsRaisedPane } from "./tickets-raised-pane";
 import { useCommentableRef } from "./use-text-selection";
 import { useReviewComments } from "./review-comments";
+import { makeResolveFileLink } from "./repo-file-links";
 import {
   contextRawUrl,
   pipelineJob,
@@ -181,6 +190,7 @@ export function PhaseView({
         card={approvalCard}
         threads={job?.threads.map((s) => s.brief)}
         jobRef={jobRef}
+        onSelectNode={onSelectNode}
       />
     );
   } else if (selectedNode === "decision") {
@@ -346,6 +356,10 @@ export function PhaseView({
     // One rotated session: the thread's stable lane, sliced to this Leg. Its handoff (Leg N) and continuation
     // seed (Leg N+1) ride the same `meta.legOrdinal` tag, so they land at the tail/head of the right Leg.
     const phaseIds = new Set(legThread.steps.map((s) => s.anchorStepId));
+    // The in-flight turn is shared across the thread's Legs (one lane), so only the LIVE Leg's pane may render
+    // it — otherwise a rotated Leg re-paints the active Leg's streaming tail + spinner at its own bottom.
+    const legIsLive =
+      (legThread.legs ?? []).find((l) => l.ordinal === legRef.ordinal)?.status === "active";
     body = (
       <TranscriptView
         jobRef={jobRef}
@@ -353,6 +367,7 @@ export function PhaseView({
         lane={threadLane(legThread.id)}
         phaseIds={phaseIds}
         legOrdinal={legRef.ordinal}
+        legIsLive={legIsLive}
         composer
         readOnly
         defaultFooter={legThread.defaultFooter}
@@ -471,6 +486,8 @@ function SubagentView({
       <div
         ref={tail.scrollRef}
         onScroll={tail.onScroll}
+        onPointerOver={tail.onPointerOver}
+        onPointerLeave={tail.onPointerLeave}
         className="h-full overflow-y-auto px-5 py-4"
       >
         <div className="mx-auto flex max-w-[820px] flex-col gap-3">
@@ -604,23 +621,47 @@ function PlanDoc({
   card,
   threads,
   jobRef,
+  onSelectNode,
 }: {
   card: WebApprovalCard | null;
   threads?: string[];
   jobRef: JobRef;
+  /** Select another navigator node (URL `?node=`/`?file=`) — lets the plan summary's file-path spans open
+   *  the stacked repo-file view in-app. */
+  onSelectNode?: (node: string) => void;
 }) {
   const decisions = card?.decisions ?? [];
   const sectionList = card?.threads ?? threads ?? [];
   const value =
     card?.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ?? "";
   const contentRef = useCommentableRef<HTMLDivElement>();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const repoTree = useRepoTree(jobRef);
+  const fileSet = useMemo(
+    () => new Set(repoTree.data?.files ?? []),
+    [repoTree.data],
+  );
 
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
       <div ref={contentRef} className="max-w-[720px]">
         {card?.summary ? (
           <div className="mb-6">
-            <Markdown>{card.summary}</Markdown>
+            <Markdown
+              resolveFileLink={
+                onSelectNode
+                  ? makeResolveFileLink(
+                      fileSet,
+                      pathname,
+                      searchParams,
+                      onSelectNode,
+                    )
+                  : undefined
+              }
+            >
+              {card.summary}
+            </Markdown>
           </div>
         ) : null}
 
@@ -1070,6 +1111,12 @@ function FileView({
 }) {
   const { data, isLoading, error } = useContextFile(jobRef, path);
   const contentRef = useCommentableRef<HTMLDivElement>();
+  const repoTree = useRepoTree(jobRef);
+  const fileSet = useMemo(
+    () => new Set(repoTree.data?.files ?? []),
+    [repoTree.data],
+  );
+  const linkRepoFiles = path.startsWith("specs/");
   // HTML artifacts render full-bleed: the sandboxed iframe fills the whole pane body, bypassing the padded,
   // max-width prose wrapper that letterboxes every other file type.
   if (data?.mime === "text/html") {
@@ -1090,7 +1137,12 @@ function FileView({
             }
           />
         ) : data ? (
-          <FileBody file={data} onSelectNode={onSelectNode} />
+          <FileBody
+            file={data}
+            onSelectNode={onSelectNode}
+            fileSet={fileSet}
+            linkRepoFiles={linkRepoFiles}
+          />
         ) : null}
       </div>
     </div>
@@ -1102,7 +1154,14 @@ function FileView({
  * `/context` file at `fromPath` (bucket-rooted, e.g. `specs/plan.md`) to the navigator node that opens it
  * (`spec:`/`gen:`/`artifact:` + the bucket-relative path). Returns null if it escapes a known bucket.
  */
+/** Stable empty fallback for `FileBody`'s `fileSet` prop (no tracked-file manifest available). */
+const EMPTY_FILE_SET: Set<string> = new Set();
+const MAX_HIGHLIGHTED_FILE_LINES = 500;
+
 function contextNodeForLink(fromPath: string, href: string): string | null {
+  // A site-absolute `/context/<bucket>/…` href already carries its own bucket, so it resolves against the
+  // context root — NOT relative to `fromPath`. Delegate it to the href-based resolver.
+  if (href.startsWith("/context/")) return contextConvoNodeForHref(href);
   const parts = fromPath.split("/");
   const bucket = parts[0];
   const prefix =
@@ -1127,24 +1186,24 @@ function contextNodeForLink(fromPath: string, href: string): string | null {
 function FileBody({
   file,
   onSelectNode,
+  fileSet = EMPTY_FILE_SET,
+  linkRepoFiles = false,
 }: {
   file: ContextFileContent;
   onSelectNode?: (node: string) => void;
+  /** The job worktree's tracked-file manifest — used to linkify a spec's inline-code file-path spans. */
+  fileSet?: Set<string>;
+  /** Opt-in for spec markdown only; generated/artifact markdown keeps ordinary inline code chips. */
+  linkRepoFiles?: boolean;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   if (file.mime.startsWith("image/")) {
     const src =
       file.encoding === "base64"
         ? `data:${file.mime};base64,${file.content}`
         : `data:${file.mime};utf8,${encodeURIComponent(file.content)}`;
-    // eslint-disable-next-line @next/next/no-img-element -- a data: URL, not a remote asset for next/image
-    return (
-      <img
-        src={src}
-        alt={file.name}
-        className="max-w-full rounded-md border border-border"
-      />
-    );
+    return <ImageViewer src={src} alt={file.name} />;
   }
   if (file.content.trim() === "") {
     return (
@@ -1169,6 +1228,11 @@ function FileBody({
                   onSelect: () => onSelectNode(node),
                 };
               }
+            : undefined
+        }
+        resolveFileLink={
+          linkRepoFiles && onSelectNode
+            ? makeResolveFileLink(fileSet, pathname, searchParams, onSelectNode)
             : undefined
         }
       >
@@ -1330,6 +1394,158 @@ export function SubagentPane({
           parentId={parentId}
         />
       </div>
+    </div>
+  );
+}
+
+/** A stacked repo-file view over the spec/plan pane — breadcrumb header (‹ / base crumb / ×, all Back) +
+ *  a syntax-highlighted, line-number listing scrolled to (and highlighting) the referenced `:line`/`:range`. */
+export function FilePane({
+  jobRef,
+  path,
+  lines,
+  base,
+  onBack,
+}: {
+  jobRef: JobRef;
+  path: string;
+  lines: string | null;
+  base: string | null;
+  onBack: () => void;
+}) {
+  const name = path.split("/").pop() ?? path;
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-surface">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
+        <button
+          type="button"
+          onClick={onBack}
+          title="Back"
+          className="flex items-center text-[17px] leading-none text-blue hover:opacity-80"
+        >
+          ‹
+        </button>
+        {base ? (
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex min-w-0 items-center gap-1.5 hover:opacity-80"
+          >
+            <FileText size={12} className="shrink-0 text-blue" />
+            <span className="max-w-[150px] truncate font-mono text-[10px] text-dim">
+              {base}
+            </span>
+          </button>
+        ) : null}
+        <span className="text-[11px] font-semibold text-border-2">▸</span>
+        <FileText size={13} className="shrink-0 text-dim" />
+        <span className="truncate font-mono text-[11px] font-semibold text-text">
+          {name}
+        </span>
+        <span className="shrink-0 font-mono text-[9px] text-faint">
+          {lines ? `:${lines}` : "file"}
+        </span>
+        <span className="flex-1" />
+        <button
+          type="button"
+          onClick={onBack}
+          title="Close"
+          className="text-[15px] leading-none text-faint hover:text-text"
+        >
+          ×
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <RepoFileBody jobRef={jobRef} path={path} lines={lines} />
+      </div>
+    </div>
+  );
+}
+
+function RepoFileBody({
+  jobRef,
+  path,
+  lines,
+}: {
+  jobRef: JobRef;
+  path: string;
+  lines: string | null;
+}) {
+  const { data, isLoading, error } = useRepoFile(jobRef, path);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Parse "18" / "18-24" → the active line-number set + the first line to scroll to.
+  const { activeNos, firstLine } = useMemo(() => {
+    const empty = {
+      activeNos: undefined as Set<number> | undefined,
+      firstLine: null as number | null,
+    };
+    if (!lines) return empty;
+    const m = /^(\d+)(?:-(\d+))?$/.exec(lines);
+    if (!m) return empty;
+    const start = Number(m[1]);
+    if (!Number.isSafeInteger(start) || start < 1) return empty;
+    const rawEnd = m[2] ? Number(m[2]) : start;
+    const endCandidate =
+      Number.isSafeInteger(rawEnd) && rawEnd >= start ? rawEnd : start;
+    const end = Math.min(endCandidate, start + MAX_HIGHLIGHTED_FILE_LINES - 1);
+    const set = new Set<number>();
+    for (let n = start; n <= end; n++) set.add(n);
+    return { activeNos: set, firstLine: start };
+  }, [lines]);
+
+  useEffect(() => {
+    if (!data || firstLine == null) return;
+    const el = containerRef.current?.querySelector(
+      `[data-line="${firstLine}"]`,
+    );
+    el?.scrollIntoView({ block: "center" });
+  }, [data, firstLine]);
+
+  if (isLoading)
+    return (
+      <div className="px-8 py-7">
+        <p className="font-mono text-[11.5px] text-faint">Loading…</p>
+      </div>
+    );
+  if (error)
+    return (
+      <div className="px-8 py-7">
+        <Placeholder
+          title="Couldn’t load file"
+          body={
+            error instanceof Error
+              ? error.message
+              : "Unknown error reading this file."
+          }
+        />
+      </div>
+    );
+  if (!data) return null;
+  if (data.mime.startsWith("image/")) {
+    const src =
+      data.encoding === "base64"
+        ? `data:${data.mime};base64,${data.content}`
+        : `data:${data.mime};utf8,${encodeURIComponent(data.content)}`;
+    return (
+      <div className="h-full overflow-y-auto px-8 py-7">
+        <ImageViewer src={src} alt={data.name} />
+      </div>
+    );
+  }
+  const lang = langFromPath(path);
+  const rows = data.content
+    .replace(/\n$/, "")
+    .split("\n")
+    .map((code, i) => ({ no: i + 1, code }));
+  return (
+    <div ref={containerRef} className="h-full overflow-y-auto px-4 py-3">
+      <CodeListing
+        rows={rows}
+        lang={lang}
+        activeNos={activeNos}
+        maxHeight="100%"
+      />
     </div>
   );
 }
