@@ -5,6 +5,7 @@ import { AuthModule } from './auth';
 import { ClusterModule } from './cluster';
 import { AutoFixModule } from './autofix';
 import { BrainModule } from './brain';
+import { BrainGatewayModule } from './brain-gateway';
 import { DecisionGateModule } from './decision-gate';
 import { DriverModule, LiveVerificationModule } from './driver';
 import { IngressModule } from './ingress';
@@ -79,6 +80,7 @@ import { ThreadKindModule } from './thread-kind';
     IngressModule,
     DecisionGateModule,
     AutoFixModule,
+    BrainGatewayModule,
     BrainModule,
     DriverModule,
     LiveVerificationModule,

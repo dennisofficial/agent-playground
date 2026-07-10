@@ -52,7 +52,8 @@ export class HostToolsGroup {
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__withdraw_file_request — retract a still-open request_file card BY requestId (wrong path / no longer needed); post a corrected request_file if you still need the file`,
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__derive_secret        — store a value YOU computed from an already-granted credential (no operator wait; e.g. a printed webhook secret)`,
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_workspace_config — amend the repo's DB-backed workspace config (mounts) — a live write for every future job on this repo, no PR`,
-      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_setup_script   — save the repo's cold-boot setup script ({ script }) — runs on EVERY cold sandbox bring-up for every future job on this repo (no PR); must be idempotent`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_setup_script   — save the repo's cold-boot setup script ({ script }) — runs on EVERY cold sandbox bring-up for every future job on this repo (no PR); must be idempotent. It REPLACES the whole script — read_setup_script FIRST to see the current body`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_setup_script    — read the repo's CURRENT cold-boot setup script (raw body) so you can edit it safely before write_setup_script (which overwrites the whole thing)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox        — recreate your container from scratch to prove the setup cold-boots (recreates on your NEXT turn — call it, then STOP). Add { hard:true } for a full from-scratch reset (fresh worktree + container, session kept) — two-call confirm; refuses on a dirty/unpushed tree`,
     ].join('\n');
   }
@@ -139,6 +140,9 @@ export class HostToolsGroup {
       '    a DB write, live for every future job on this repo (no PR). The host runs it on EVERY cold sandbox',
       '    bring-up (and skips it warm), so it MUST be idempotent (guard the one-time work) and must NOT init',
       '    submodules (already automatic). This is how you record the bring-up steps so a cold box comes up ready.',
+      '    It REPLACES the whole script — call read_setup_script FIRST to see the current body, then write the full new one.',
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_setup_script   — read the repo's CURRENT cold-boot SETUP SCRIPT (raw`,
+      '    body) so you can edit an existing script safely instead of clobbering it when you write_setup_script.',
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox       — recreate your container from scratch to PROVE the`,
       '    environment cold-boots from durable inputs (see RESET). It does not reset instantly — it recreates on',
       '    your NEXT turn, so call it then STOP; you will be prompted to verify once the fresh box is up. Pass',
