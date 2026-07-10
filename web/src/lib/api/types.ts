@@ -10,7 +10,7 @@
 import type {
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
-  OrgUsage as WireOrgUsage,
+  OrgUsage,
 } from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
@@ -21,8 +21,17 @@ import type {
 export type { WireJobStatus };
 /** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
 export type { WireJobHalt };
-/** Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`. */
-export type { WireOrgUsage };
+/**
+ * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`, plus OPTIONAL
+ * multi-account display fields the backend doesn't populate yet (both undefined until then; the usage
+ * panel falls back to a neutral single-account header when absent).
+ */
+export type WireOrgUsage = OrgUsage & {
+  /** Display label for the connected account (e.g. an email) — absent until multi-account ships. */
+  accountLabel?: string;
+  /** Subscription plan label (e.g. "Max plan") — absent until multi-account ships. */
+  plan?: string;
+};
 
 export type WireJobKind =
   | "feature"
