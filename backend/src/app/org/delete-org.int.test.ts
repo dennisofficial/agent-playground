@@ -43,7 +43,6 @@ import {
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { SkillUpdaterService } from '../skills/skill-updater.service';
 import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, WorktreeProvisioner } from '../driver';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
 import { TicketService } from '../tickets';
@@ -87,9 +86,6 @@ class FakeGitService {
     return { ...sandbox, branch: featureBranch };
   }
   // Provision-path no-ops (no real git/cache/submodules/index in the fake).
-  async hasSubmodules(): Promise<boolean> {
-    return false;
-  }
   async createBaseClone(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     return this.createBaseWorktree(repo, jobId);
   }
