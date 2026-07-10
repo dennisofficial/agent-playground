@@ -13,6 +13,9 @@ import { OrganizationEntity } from './organization.entity';
 @Entity({ name: 'memory' })
 @Index(['scope'])
 @Index(['org_id', 'scope'])
+// Hands-off: the pgvector HNSW index is unexpressible in TypeORM metadata. The DDL lives in the
+// migrations; this only tells migration:generate never to DROP it.
+@Index('idx_memory_embedding_hnsw', { synchronize: false })
 export class MemoryEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
