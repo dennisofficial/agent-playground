@@ -121,9 +121,12 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   useEffect(() => {
     if (!navAsDrawer) setNavOpen(false);
   }, [navAsDrawer]);
+  // Close the nav drawer on ANY selection made from it: a lane switch (?lane=) OR a detail-node pick
+  // (?node=, which leaves laneNode unchanged). Without detailNode here, tapping a spec/artifact/log/diff
+  // row in the open left drawer would open the right detail drawer on top of it — two stacked drawers.
   useEffect(() => {
     setNavOpen(false);
-  }, [laneNode]);
+  }, [laneNode, detailNode]);
 
   const openNav = () => setNavOpen(true);
   const openDetail = () => selectNode(lastDetail.current ?? "plan");
