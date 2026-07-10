@@ -73,9 +73,14 @@ export function buildSystemSkills(): SystemSkill[] {
     },
     {
       name: 'playwright-cli',
-      description: 'Automate browser interactions, test web pages and work with Playwright tests.',
+      description:
+        'Automate browser interactions, test web pages and work with Playwright tests.',
       surfaces: ['build'],
-      git: { url: 'https://github.com/microsoft/playwright-cli', subpath: 'skills/playwright-cli', ref: 'main' },
+      git: {
+        url: 'https://github.com/microsoft/playwright-cli',
+        subpath: 'skills/playwright-cli',
+        ref: 'main',
+      },
     },
     {
       name: 'web-state-redux-toolkit',
@@ -96,7 +101,11 @@ export function buildSystemSkills(): SystemSkill[] {
         "reasoning. Invoke to play devil's advocate, run a pre-mortem, red team, or audit evidence " +
         'and assumptions.',
       surfaces: ['brain', 'build'],
-      git: { url: 'https://github.com/Jeffallan/claude-skills', subpath: 'skills/the-fool', ref: 'main' },
+      git: {
+        url: 'https://github.com/Jeffallan/claude-skills',
+        subpath: 'skills/the-fool',
+        ref: 'main',
+      },
     },
   ];
 }

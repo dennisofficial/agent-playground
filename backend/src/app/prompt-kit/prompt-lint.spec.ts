@@ -40,7 +40,10 @@ import {
 describe('prompt-lint / every fragment order is an integer', () => {
   it('no fractional or non-finite orders survive', () => {
     for (const f of primeFragments()) {
-      expect(Number.isInteger(f.meta.order), `${f.id} has order ${f.meta.order}`).toBe(true);
+      expect(
+        Number.isInteger(f.meta.order),
+        `${f.id} has order ${f.meta.order}`,
+      ).toBe(true);
     }
   });
 });
@@ -54,8 +57,13 @@ describe('prompt-lint / no sentence-run double space in any assembled prompt', (
     it(`"${entry.id}" (${entry.agent})`, () => {
       const out = renderAgentPrompt(entry.agent, entry.ctx);
       const hit = SENTENCE_DOUBLE_SPACE.exec(out);
-      const near = hit ? out.slice(Math.max(0, hit.index - 30), hit.index + 30) : '';
-      expect(hit, near && `double space near: ${JSON.stringify(near)}`).toBeNull();
+      const near = hit
+        ? out.slice(Math.max(0, hit.index - 30), hit.index + 30)
+        : '';
+      expect(
+        hit,
+        near && `double space near: ${JSON.stringify(near)}`,
+      ).toBeNull();
     });
   }
 });
@@ -93,9 +101,13 @@ describe('prompt-lint / every persona declares a role (+ review personas a repor
     it(`${agent} (${ctx.jobKind ?? 'default'})`, () => {
       const out = renderAgentPrompt(agent, ctx);
       expect(out.length, String(agent)).toBeGreaterThan(0);
-      expect(ROLE_MARKER.test(out), `${agent} has no role statement`).toBe(true);
+      expect(ROLE_MARKER.test(out), `${agent} has no role statement`).toBe(
+        true,
+      );
       if (contract) {
-        expect(out, `${agent} is missing its report contract`).toContain(contract);
+        expect(out, `${agent} is missing its report contract`).toContain(
+          contract,
+        );
       }
     });
   }
@@ -139,7 +151,10 @@ describe('prompt-lint / no shared fragment is included twice for one agent', () 
       const out = renderAgentPrompt(entry.agent, entry.ctx);
       for (const [name, note] of SHARED_NOTES) {
         const occurrences = out.split(note).length - 1;
-        expect(occurrences, `${name} appears ${occurrences}× in ${entry.id}`).toBeLessThanOrEqual(1);
+        expect(
+          occurrences,
+          `${name} appears ${occurrences}× in ${entry.id}`,
+        ).toBeLessThanOrEqual(1);
       }
     });
   }

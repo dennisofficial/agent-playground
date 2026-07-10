@@ -136,7 +136,7 @@ export class SubagentsGroup {
         'EXERCISING it the way a real caller would — do not stop at a green build. Boot long-running services ' +
         'with the `atlas-svc` supervisor (`run`/`logs`/`ps`) so they outlive you, then hit them: `curl` the ' +
         'endpoint and check the status/body, drive the UI with Playwright (install on demand: ' +
-        '`npx playwright install --with-deps chromium`) and take screenshots, and/or run the repo\'s OWN ' +
+        "`npx playwright install --with-deps chromium`) and take screenshots, and/or run the repo's OWN " +
         'e2e/smoke tooling — read package.json scripts / Makefile / repo docs for the REAL commands, do not ' +
         'assume them. If the change is internal plumbing whose effect is never echoed in an HTTP/UI/CLI surface ' +
         '(e.g. an option/value handed to an SDK), instead capture a log line from the booted process proving the ' +

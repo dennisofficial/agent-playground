@@ -12,12 +12,12 @@ A design pattern is the *cure*; a code smell is the *diagnosis*. Applied without
 
 ## The one rule: diagnose before you pattern
 
-Never reach for a pattern by name first ("let's use a Factory here"). Name the **smell**, then climb the response ladder. If you can't name the smell, you don't need the pattern. Depth for each pattern lives in `references/creational.md`, `references/structural.md`, and `references/behavioral.md` — pull one in only once you've named a smell it removes.
+Never reach for a pattern by name first ("let's use a Factory here"). Name the **smell**, then climb the response ladder. If you can't name the smell, you don't need the pattern. The boring moves that resolve a smell *without* a pattern are cataloged in `references/refactorings.md` — reach there first. Depth for each pattern lives in `references/creational.md`, `references/structural.md`, and `references/behavioral.md` — pull one in only once you've named a smell it removes.
 
 ## The response ladder
 
 1. **Does this complexity need to exist?** Delete it, simplify the requirement, or say no. The best pattern is no code.
-2. **Boring refactoring first.** Extract a named function, rename for intent, inline a needless indirection, replace a magic number with a constant, add a guard clause, introduce a parameter object. Most "I need a pattern" moments end here.
+2. **Boring refactoring first.** Extract a named function, rename for intent, inline a needless indirection, replace a magic number with a constant, add a guard clause, introduce a parameter object — see `references/refactorings.md` for the mechanics of each. Most "I need a pattern" moments end here.
 3. **The minimum named pattern** — only if the smell survives step 2, and only the smallest one that fits. Match the intent, not the label.
 4. **Never** a pattern with a single caller or a single implementation. A Strategy with one strategy, a Factory that makes one type, an interface with one implementer — that is a smell you are *adding*, not removing.
 
