@@ -254,8 +254,7 @@ function isTurnGenuinelyDone(m: { terminal_reason?: string; stop_reason?: string
  * It does exactly four things: plan/review (read-only) vs execute (writes confined to the worktree);
  * thread the run's subscription secret (always subscription — no api_key path); pin an ISOLATED agent home (CLAUDE_CONFIG_DIR/CODEX_HOME,
  * never the personal one); return { result, sessionId?, planText?, usage? }. Env-derived knobs arrive as
- * an {@link EngineCoreConfig} (read from `EnvService` on the host, from `process.env` in the container),
- * and logging goes through a tiny {@link CoreLogger} (Nest Logger on the host, console in the container).
+ * an {@link EngineCoreConfig} (read from `EnvService` on the host, from `process.env` in the container).
  */
 
 /** Env-derived configuration (the values the host reads from EnvService, the container from process.env). */
@@ -296,12 +295,6 @@ const DEFAULT_WORKER_MODEL = 'opus';
 // supported when using Codex with a ChatGPT account"), including `gpt-5-codex` and `gpt-5`. So we do NOT
 // pin a Codex model — we leave it unset and let the Codex SDK use the account's own default model.
 
-/** A minimal logger so the core stays Nest-free. */
-export interface CoreLogger {
-  warn(message: string): void;
-}
-
-const NOOP_LOGGER: CoreLogger = { warn: () => undefined };
 
 /**
  * Whether a resumable Claude session transcript exists under this config dir. The SDK stores it at
@@ -570,11 +563,11 @@ export class EngineCore {
   // One Codex client per (auth, sandbox) — each funds its own runs from its own home.
   private readonly codexClients = new Map<string, Codex>();
 
+  // The SDK modules are injected (host + container share this class); env-derived knobs arrive as `cfg`.
   constructor(
     private readonly claudeSdk: typeof import('@anthropic-ai/claude-agent-sdk'),
     private readonly codexSdk: typeof import('@openai/codex-sdk'),
     private readonly cfg: EngineCoreConfig,
-    private readonly logger: CoreLogger = NOOP_LOGGER,
   ) {}
 
   private homeRoot(): string | undefined {
