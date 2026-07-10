@@ -4,7 +4,7 @@ import type { CredentialResolver } from '../onboarding';
 import type { GithubPrService, CheckRun, PullDetail } from '../git';
 import type { StimulusIntake } from '../stimulus';
 import type { JobEntity, RepoEntity } from '../persistence/entities';
-import { CADENCE_MS, GitStateReconciler, summarizeChecks } from './git-state-reconciler.service';
+import { CADENCE_MS, GitStateReconciler, sameCounts, summarizeChecks } from './git-state-reconciler.service';
 
 // Fixed clock so the adaptive-cadence `next_poll_at` writes are deterministic (new Date(now + ms)).
 const NOW = 1_700_000_000_000;
@@ -23,6 +23,7 @@ function make(over: {
     pr_number: 7,
     feature_branch: 'feat/a1b2c3d4',
     ci_status: null,
+    ci_counts: null,
     pr_mergeable: null,
     ...over.job,
   } as JobEntity;
@@ -73,7 +74,10 @@ describe('GitStateReconciler.tick', () => {
       severity: 'critical',
       correlation: { prNumber: 7 },
     });
-    expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { ci_status: null, pr_mergeable: 'dirty' });
+    expect(update).toHaveBeenCalledWith(
+      { id: 'job-1' },
+      { ci_status: null, ci_counts: null, pr_mergeable: 'dirty' },
+    );
     // dirty is a settled (non-null) state → active cadence, not the fast computing tier.
     expect(nextPollWrite(update)).toEqual({ next_poll_at: new Date(NOW + CADENCE_MS.active) });
   });
@@ -85,7 +89,14 @@ describe('GitStateReconciler.tick', () => {
     });
     await svc.tick();
     expect(intakeEvent).not.toHaveBeenCalled();
-    expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { ci_status: 'success', pr_mergeable: 'clean' });
+    expect(update).toHaveBeenCalledWith(
+      { id: 'job-1' },
+      {
+        ci_status: 'success',
+        ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 },
+        pr_mergeable: 'clean',
+      },
+    );
     expect(nextPollWrite(update)).toEqual({ next_poll_at: new Date(NOW + CADENCE_MS.active) });
   });
 
@@ -149,10 +160,32 @@ describe('GitStateReconciler.tick', () => {
   it('no column churn when nothing changed — only the poll-clock re-stamp is written', async () => {
     const { svc, update } = make({
       detail: detail({ mergeableState: 'clean' }),
-      job: { ci_status: 'success', pr_mergeable: 'clean', pr_state: 'open' },
+      job: {
+        ci_status: 'success',
+        ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 },
+        pr_mergeable: 'clean',
+        pr_state: 'open',
+      },
       runs: [{ id: 1, name: 'CI', status: 'completed', conclusion: 'success', detailsUrl: null }],
     });
     await svc.tick();
+    expect(update.mock.calls).toHaveLength(1);
+    expect(nextPollWrite(update)).toEqual({ next_poll_at: new Date(NOW + CADENCE_MS.active) });
+  });
+
+  it('CLOBBER GUARD: empty check-runs never overwrite a known ci_status/ci_counts back to null', async () => {
+    const { svc, update } = make({
+      detail: detail({ mergeableState: 'clean' }),
+      job: {
+        ci_status: 'failure',
+        ci_counts: { failing: 1, pending: 0, passed: 1, skipped: 0, total: 2 },
+        pr_mergeable: 'clean',
+        pr_state: 'open',
+      },
+      runs: [], // transient no-checks-yet window for this head SHA
+    });
+    await svc.tick();
+    // Nothing changed (mergeableState unchanged, ci columns kept) — only the poll-clock re-stamp write.
     expect(update.mock.calls).toHaveLength(1);
     expect(nextPollWrite(update)).toEqual({ next_poll_at: new Date(NOW + CADENCE_MS.active) });
   });
@@ -198,11 +231,53 @@ describe('GitStateReconciler.markRepoDue', () => {
 
 describe('summarizeChecks', () => {
   const run = (conclusion: string | null, status = 'completed'): CheckRun => ({ id: 1, name: 'x', status, conclusion, detailsUrl: null });
-  it('null when no checks', () => expect(summarizeChecks([])).toBeNull());
-  it('failure when any completed run failed', () =>
-    expect(summarizeChecks([run('success'), run('failure')])).toBe('failure'));
-  it('success when all completed and none failed', () =>
-    expect(summarizeChecks([run('success'), run('neutral')])).toBe('success'));
-  it('pending when a run is still running', () =>
-    expect(summarizeChecks([run('success'), run(null, 'in_progress')])).toBe('pending'));
+
+  it('{ status: null, counts: null } when no checks', () =>
+    expect(summarizeChecks([])).toEqual({ status: null, counts: null }));
+
+  it('THE EXACT REPRO: 2 failing + 1 skipped + 3 success → failure, with per-category counts', () => {
+    const runs = [
+      run('failure'), run('failure'),
+      run('skipped'),
+      run('success'), run('success'), run('success'),
+    ];
+    expect(summarizeChecks(runs)).toEqual({
+      status: 'failure',
+      counts: { failing: 2, pending: 0, passed: 3, skipped: 1, total: 6 },
+    });
+  });
+
+  it('all skipped/neutral (no success, no failure) → status skipped', () => {
+    const result = summarizeChecks([run('skipped'), run('neutral')]);
+    expect(result.status).toBe('skipped');
+    expect(result.counts?.skipped).toBe(2);
+  });
+
+  it('mixed success + skipped (none failing) → status success', () => {
+    const result = summarizeChecks([run('success'), run('neutral')]);
+    expect(result.status).toBe('success');
+    expect(result.counts?.skipped).toBeGreaterThan(0);
+  });
+
+  it('failing + in_progress → failure (failure takes precedence over pending)', () => {
+    expect(summarizeChecks([run('failure'), run(null, 'in_progress')]).status).toBe('failure');
+  });
+
+  it('success + in_progress → pending', () => {
+    expect(summarizeChecks([run('success'), run(null, 'in_progress')]).status).toBe('pending');
+  });
+});
+
+describe('sameCounts', () => {
+  it('treats null/null as equal and null/non-null as unequal', () => {
+    expect(sameCounts(null, null)).toBe(true);
+    expect(sameCounts(null, { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 })).toBe(false);
+  });
+  it('compares each category', () => {
+    const a = { failing: 1, pending: 0, passed: 2, skipped: 0, total: 3 };
+    const b = { failing: 1, pending: 0, passed: 2, skipped: 0, total: 3 };
+    const c = { failing: 0, pending: 0, passed: 2, skipped: 1, total: 3 };
+    expect(sameCounts(a, b)).toBe(true);
+    expect(sameCounts(a, c)).toBe(false);
+  });
 });
