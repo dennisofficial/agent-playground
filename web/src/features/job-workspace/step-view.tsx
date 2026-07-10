@@ -355,6 +355,10 @@ export function PhaseView({
     // One rotated session: the thread's stable lane, sliced to this Leg. Its handoff (Leg N) and continuation
     // seed (Leg N+1) ride the same `meta.legOrdinal` tag, so they land at the tail/head of the right Leg.
     const phaseIds = new Set(legThread.steps.map((s) => s.anchorStepId));
+    // The in-flight turn is shared across the thread's Legs (one lane), so only the LIVE Leg's pane may render
+    // it — otherwise a rotated Leg re-paints the active Leg's streaming tail + spinner at its own bottom.
+    const legIsLive =
+      (legThread.legs ?? []).find((l) => l.ordinal === legRef.ordinal)?.status === "active";
     body = (
       <TranscriptView
         jobRef={jobRef}
@@ -362,6 +366,7 @@ export function PhaseView({
         lane={threadLane(legThread.id)}
         phaseIds={phaseIds}
         legOrdinal={legRef.ordinal}
+        legIsLive={legIsLive}
         composer
         readOnly
         defaultFooter={legThread.defaultFooter}
