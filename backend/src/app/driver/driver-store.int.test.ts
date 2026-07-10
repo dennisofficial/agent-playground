@@ -25,8 +25,10 @@ import {
   StepEntity,
   ThreadEntity,
   JobEntity,
+  MessageEntity,
 } from '../persistence/entities';
 import { DriverStoreService } from './driver-store.service';
+import { webShipReviewCard } from '../surface/web-approval-card';
 
 const ORG_ID = '21111111-1111-4111-8111-111111111111';
 const BASE_BRANCH = 'main';
@@ -55,6 +57,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   let jobs: Repository<JobEntity>;
   let threads: Repository<ThreadEntity>;
   let steps: Repository<StepEntity>;
+  let messages: Repository<MessageEntity>;
   let repoId: string;
 
   beforeAll(async () => {
@@ -71,6 +74,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
     steps = mod.get(getRepositoryToken(StepEntity, DB_CONNECTION));
+    messages = mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION));
 
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
@@ -193,6 +197,47 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
     expect(sec.steps[0].status).toBe('building');
     expect(sec.steps[1].status).toBe('pending');
+  });
+
+  it('surfaces the committed `build_path` as `buildPath` — direct builds carry no lanes', async () => {
+    // A DIRECT build: approved fast path, committed `build_path='direct'`, done, with NO builder threads.
+    // The navigator reads `buildPath` to suppress its plan-oriented placeholders for exactly this shape.
+    const direct = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'Direct build',
+        kind: 'feature',
+        status: 'done',
+        base_branch: BASE_BRANCH,
+        build_path: 'direct',
+      }),
+    );
+    const directState = (await store.getPipelineState(direct.id, ORG_ID)) as {
+      buildPath: string | null;
+      threads: unknown[];
+    };
+    expect(directState.buildPath).toBe('direct');
+    expect(directState.threads).toHaveLength(0);
+
+    // A job that never committed a path (still convertible) reports `buildPath: null` — the navigator keeps
+    // its placeholders in that case.
+    const unset = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'Unapproved proposal',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const unsetState = (await store.getPipelineState(unset.id, ORG_ID)) as {
+      buildPath: string | null;
+    };
+    expect(unsetState.buildPath).toBeNull();
   });
 
   it('materializes review children (idempotent) and derives per-lens status + findings from their own rows', async () => {
@@ -514,6 +559,135 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(oks[0]).toEqual({ ok: true, used: 2 });
   });
 
+  // ── Decision d1 — completion-wake store methods (mirrors the halt trio, WITH a generation CAS) ─────
+
+  it('setDoneWakeOwed → threadsAwaitingDoneWake selects only owed+un-waked rows', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    // A second thread on the SAME job, already waked — must never resurface as owed.
+    const otherThread = await threads.save(
+      threads.create({
+        kind: 'builder',
+        job_id: jobId,
+        org_id: ORG_ID,
+        ordinal: 20,
+        brief: 'Frontend — done',
+        status: 'done',
+      }),
+    );
+    expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([]);
+
+    await store.setDoneWakeOwed(threadId, 'notable');
+    await store.setDoneWakeOwed(otherThread.id, 'final');
+    const g = await store.claimDoneWakeGen(otherThread.id);
+    await store.markDoneWaked(otherThread.id, g!); // already waked — must be excluded
+
+    const owed = await store.threadsAwaitingDoneWake(jobId);
+    expect(owed).toEqual([{ jobId, threadId, reason: 'notable' }]);
+  });
+
+  it('claimDoneWakeGen bumps monotonically while owed, and returns null once not owed', async () => {
+    const { threadId } = await seedJobThread();
+    // Not owed yet → nothing to claim.
+    expect(await store.claimDoneWakeGen(threadId)).toBeNull();
+
+    await store.setDoneWakeOwed(threadId, 'final');
+    expect(await store.claimDoneWakeGen(threadId)).toBe(1);
+    expect(await store.claimDoneWakeGen(threadId)).toBe(2); // a re-delivery attempt gets a fresh gen
+
+    // Once stamped (with the current gen) the wake is no longer owed → further claims are null.
+    await store.markDoneWaked(threadId, 2);
+    expect(await store.claimDoneWakeGen(threadId)).toBeNull();
+  });
+
+  it('markDoneWaked is a GENERATION-KEYED CAS — a stale gen is a no-op, only the current gen stamps', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    await store.setDoneWakeOwed(threadId, 'final');
+    const gen1 = await store.claimDoneWakeGen(threadId); // 1
+    const gen2 = await store.claimDoneWakeGen(threadId); // 2 (a newer attempt superseded gen1)
+
+    // The stale gen-1 attempt completing late must NOT clear the owed flag out from under gen 2.
+    await store.markDoneWaked(threadId, gen1!);
+    expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([
+      { jobId, threadId, reason: 'final' },
+    ]);
+    let row = await threads.findOne({ where: { id: threadId } });
+    expect(row?.done_waked_at).toBeNull();
+
+    // The live gen-2 attempt stamps it.
+    await store.markDoneWaked(threadId, gen2!);
+    expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([]);
+    row = await threads.findOne({ where: { id: threadId } });
+    expect(row?.done_wake_owed).toBe(false);
+    expect(row?.done_waked_at).toBeInstanceOf(Date);
+  });
+
+  it('supersedeDoneWakeMessages deletes only THIS thread\'s below-gen rows — spares other threads and untagged rows', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    const otherThread = await threads.save(
+      threads.create({
+        kind: 'builder',
+        job_id: jobId,
+        org_id: ORG_ID,
+        ordinal: 21,
+        brief: 'Other lane',
+        status: 'done',
+      }),
+    );
+    const mk = async (meta: Record<string, unknown> | null, text: string) =>
+      (
+        await messages.save(
+          messages.create({
+            job_id: jobId,
+            author: 'Atlas',
+            author_id: 'atlas',
+            text,
+            kind: 'chat',
+            meta,
+          }),
+        )
+      ).id;
+
+    const stalePartial = await mk(
+      { doneWakeThreadId: threadId, doneWakeGen: 1 },
+      'truncated gen-1 partial',
+    );
+    const currentSummary = await mk(
+      { doneWakeThreadId: threadId, doneWakeGen: 2 },
+      'complete gen-2 summary',
+    );
+    const otherThreadSummary = await mk(
+      { doneWakeThreadId: otherThread.id, doneWakeGen: 1 },
+      'other thread gen-1 summary',
+    );
+    const untagged = await mk(null, 'normal operator chat');
+
+    // Deliver gen 2 for `threadId` → supersede its gen<2 rows only.
+    await store.supersedeDoneWakeMessages(jobId, threadId, 2);
+
+    const survivors = (await messages.find({ where: { job_id: jobId } })).map((m) => m.id);
+    expect(survivors).not.toContain(stalePartial); // the truncated gen-1 partial is gone
+    expect(survivors).toEqual(
+      expect.arrayContaining([currentSummary, otherThreadSummary, untagged]),
+    );
+  });
+
+  it('masterReviewThreadId returns the job\'s master_review thread id, or null when it has none', async () => {
+    const { jobId } = await seedJobThread();
+    expect(await store.masterReviewThreadId(jobId)).toBeNull();
+
+    const masterReview = await threads.save(
+      threads.create({
+        kind: 'master_review',
+        job_id: jobId,
+        org_id: ORG_ID,
+        ordinal: 999,
+        brief: 'master review',
+        status: 'executing',
+      }),
+    );
+    expect(await store.masterReviewThreadId(jobId)).toBe(masterReview.id);
+  });
+
   // ── Leg rotation (context-rot: one build thread → many sequential engine sessions) ─────────────────
 
   async function seedJobThreadStep(
@@ -605,6 +779,36 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     });
   });
 
+  // ── Transcript anchor (the halt-wake's session pointer) ────────────────────────────────────────────
+
+  it('resolveSessionAnchor returns the MOST-RECENT Leg\'s session id + ordinal (no terminal record needed)', async () => {
+    const { threadId, anchorStepId } = await seedJobThreadStep('sess-1');
+    await store.recordActiveLeg(anchorStepId, 'sess-1', 100_000); // leg 1
+    await store.completeLegRotation({ anchorStepId, handoff: 'h', seed: 's' }); // bumps to leg 2
+    await store.recordActiveLeg(anchorStepId, 'sess-2', 120_000); // leg 2
+
+    // No terminal_record was ever written — the anchor must resolve from steps/legs regardless.
+    expect(await store.getTerminalRecord(threadId)).toBeNull();
+    expect(await store.resolveSessionAnchor(threadId)).toEqual({
+      sessionId: 'sess-2',
+      legOrdinal: 2,
+    });
+  });
+
+  it('resolveSessionAnchor falls back to the anchor step session when no Leg row exists', async () => {
+    const { threadId } = await seedJobThreadStep('sess-step-only');
+    expect(await store.getLegs(threadId)).toEqual([]);
+    expect(await store.resolveSessionAnchor(threadId)).toEqual({
+      sessionId: 'sess-step-only',
+      legOrdinal: 1,
+    });
+  });
+
+  it('resolveSessionAnchor is undefined when the thread never got a session', async () => {
+    const { threadId } = await seedJobThreadStep(null);
+    expect(await store.resolveSessionAnchor(threadId)).toBeUndefined();
+  });
+
   // ── Regression: the prod `get_pipeline_state` "empty Error" incident (missing `AddJobHalt` migration) ──
 
   // Regression tripwire for the prod `get_pipeline_state` "empty Error" incident: the handler reads the
@@ -626,5 +830,110 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     const state = (await store.getPipelineState(job.id, ORG_ID)) as { halt: unknown };
     expect(state.halt).toBeNull();
+  });
+
+  // ── retractShip (the ship-review gate's retract CAS + card neutralization) ───────────────────────
+
+  async function seedShipParkedJob(): Promise<{ jobId: string }> {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'ship-parked',
+        kind: 'feature',
+        status: 'awaiting_ship_review',
+        activity: 'idle',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    return { jobId: job.id };
+  }
+
+  async function seedShipCardRow(jobId: string): Promise<void> {
+    const card = webShipReviewCard({
+      jobId,
+      title: 'Ready to ship',
+      summary: 'The build is ready.',
+    });
+    await messages.save(
+      messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: 'Ready to ship',
+        kind: 'card',
+        ts: `ship-review:${jobId}`,
+        card: card as unknown as Record<string, unknown>,
+      }),
+    );
+  }
+
+  it('retractShip flips awaiting_ship_review -> planning and neutralizes the durable ship card', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+
+    const acted = await store.retractShip(jobId);
+    expect(acted).toBe(true);
+
+    const row = await jobs.findOne({ where: { id: jobId } });
+    expect(row?.status).toBe('planning');
+    expect(row?.activity).toBe('idle');
+    expect(row?.ship_review_approved_at).toBeNull();
+
+    const cardRow = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    expect(cardRow?.card).toMatchObject({ type: 'verdict_card' });
+    expect((cardRow?.card as Record<string, unknown> | undefined)?.actions).toBeUndefined();
+  });
+
+  it('a second retractShip call is a no-op (idempotent, returns false)', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+
+    expect(await store.retractShip(jobId)).toBe(true);
+    expect(await store.retractShip(jobId)).toBe(false);
+
+    const row = await jobs.findOne({ where: { id: jobId } });
+    expect(row?.status).toBe('planning'); // unchanged by the no-op second call
+  });
+
+  it('retractShip does not act on a job in a DIFFERENT status', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'running job',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+
+    expect(await store.retractShip(job.id)).toBe(false);
+    const row = await jobs.findOne({ where: { id: job.id } });
+    expect(row?.status).toBe('running'); // untouched
+  });
+
+  it('neutralizes EVERY ship-review card row across a re-arm cycle (no unique (job_id,ts,kind) constraint)', async () => {
+    const { jobId } = await seedShipParkedJob();
+    // Two rows with the SAME ts (simulating a re-arm: park → retract → park again inserted a second row).
+    await seedShipCardRow(jobId);
+    await seedShipCardRow(jobId);
+
+    const acted = await store.retractShip(jobId);
+    expect(acted).toBe(true);
+
+    const rows = await messages.find({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.card).toMatchObject({ type: 'verdict_card' });
+      expect((row.card as Record<string, unknown> | null)?.actions).toBeUndefined();
+    }
   });
 });

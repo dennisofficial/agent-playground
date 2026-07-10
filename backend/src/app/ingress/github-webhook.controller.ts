@@ -1,9 +1,9 @@
 import { Controller, HttpCode, Logger, Post, Req } from '@nestjs/common';
 import { Public } from '@workspace/auth/server';
 import { GithubNotificationSource } from './github-notification.source';
-import { runIngress, runPrWebhook, type RawBodyRequest } from './ingress-http';
+import { runPrWebhook, runWorkEvent, type RawBodyRequest } from './ingress-http';
 import { StimulusIntake } from '../stimulus';
-import { GithubPrStateSync } from '../driver';
+import { GithubCiStateSync, GithubPrStateSync, GitStateReconciler } from '../driver';
 
 /**
  * `POST /webhooks/github/events` — the GitHub WORK-EVENTS webhook (CI results, reviews, PR/issue
@@ -26,20 +26,23 @@ export class GithubEventsWebhookController {
   constructor(
     private readonly adapter: GithubNotificationSource,
     private readonly intake: StimulusIntake,
+    private readonly ciSync: GithubCiStateSync,
   ) {}
 
   @Post()
   @HttpCode(202)
   async receive(@Req() req: RawBodyRequest): Promise<Record<string, unknown>> {
-    return runIngress(this.logger, this.adapter, this.intake, req);
+    return runWorkEvent(this.logger, this.adapter, this.intake, this.ciSync, req);
   }
 }
 
 /**
- * `POST /webhooks/github/state` — the GitHub PR-STATE webhook. Silent PR-state sync ONLY: it does its
- * own verify+route (shared with `GithubEventsWebhookController` via the adapter), parses `pull_request`
- * events into a `PrStateDelta`, and dispatches them straight to `GithubPrStateSync` — it never touches
- * `StimulusIntake`, so a PR event can't leak into triage / wake a brain / seed a job.
+ * `POST /webhooks/github/state` — the GitHub PR-STATE webhook. Silent state sync ONLY: it does its own
+ * verify+route (shared with `GithubEventsWebhookController` via the adapter), then either parses a
+ * `pull_request` event into a `PrStateDelta` dispatched to `GithubPrStateSync`, or (for a `push` to the
+ * repo's default branch) marks the repo's open PRs due-now via `GitStateReconciler` so a base-move
+ * conflict is caught in seconds. It never touches `StimulusIntake`, so neither event can leak into triage
+ * / wake a brain / seed a job.
  */
 @Public()
 @Controller('webhooks/github/state')
@@ -49,11 +52,12 @@ export class GithubStateWebhookController {
   constructor(
     private readonly adapter: GithubNotificationSource,
     private readonly prSync: GithubPrStateSync,
+    private readonly reconciler: GitStateReconciler,
   ) {}
 
   @Post()
   @HttpCode(202)
   async receive(@Req() req: RawBodyRequest): Promise<Record<string, unknown>> {
-    return runPrWebhook(this.logger, this.adapter, req, this.prSync);
+    return runPrWebhook(this.logger, this.adapter, req, this.prSync, this.reconciler);
   }
 }

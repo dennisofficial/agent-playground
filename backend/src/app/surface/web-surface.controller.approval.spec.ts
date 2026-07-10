@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { CurrentOrgCtx } from '../org/current-org.decorator';
-import { APPROVE_ACTION_ID, SHIP_ACTION_ID } from './approval-blocks';
+import { APPROVE_ACTION_ID, SHIP_ACTION_ID, RETRACT_SHIP_ACTION_ID } from './approval-blocks';
 import { WebSurfaceController } from './web-surface.controller';
 
 type ControllerMocks = {
@@ -62,6 +62,7 @@ function makeController(thread: {
     {} as never,
     {} as never,
     {} as never, // skillInstaller (SkillInstallerService)
+    {} as never, // git (LocalGitService)
   );
   return { controller, mocks };
 }
@@ -150,6 +151,27 @@ describe('WebSurfaceController — plan approval endpoint', () => {
     expect(result).toEqual({ ok: true, jobId: 'job-1' });
     expect(mocks.receiveApprovalClick).toHaveBeenCalledWith(
       SHIP_ACTION_ID,
+      value,
+      'user-1',
+      undefined,
+    );
+  });
+
+  it('does not apply the decision-record preflight to ship-review retracts', async () => {
+    const { controller, mocks } = makeController({
+      status: 'awaiting_ship_review',
+      decision_record_id: null,
+    });
+    const value = JSON.stringify({ jobId: 'job-1' });
+
+    const result = await controller.approve(ORG, USER as never, 'job-1', {
+      actionId: RETRACT_SHIP_ACTION_ID,
+      value,
+    });
+
+    expect(result).toEqual({ ok: true, jobId: 'job-1' });
+    expect(mocks.receiveApprovalClick).toHaveBeenCalledWith(
+      RETRACT_SHIP_ACTION_ID,
       value,
       'user-1',
       undefined,

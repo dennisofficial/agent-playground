@@ -54,6 +54,26 @@ export const ROTATION_PREAMBLE = [
 ].join('\n');
 
 /**
+ * Appended AFTER the original batch task when a seed is folded — the recency-slot complement to the primacy-slot
+ * {@link ROTATION_PREAMBLE}. LLM attention is U-shaped (strong at the start AND end, weak in the middle), so the
+ * fresh Leg's operative INSTRUCTION belongs last, where recall is highest — while the handoff/checklist keep the
+ * primacy slot up top. This is an instruction, NOT a relocated state-dump: it re-anchors the Leg on the handoff's
+ * single "Next safe action", points it at its OWN spec section (selective re-read, not every spec — the fresh Leg
+ * has a fresh budget to protect), and reiterates continue-don't-restart.
+ */
+export const ROTATION_RESUME_TAIL = [
+  '<resume_here>',
+  'You are RESUMING a rotated session. Your recovered handoff and carried checklist are at the TOP of this message;',
+  'the thread brief and batch above are unchanged context, NOT a signal to start over. Before anything else:',
+  '1. Re-read your OWN thread spec section under `/context/specs/sections/` and the specific pointers your handoff',
+  '   names (the commit SHA, the files by path). Do NOT re-read every spec — pull only what this next step needs.',
+  '2. Do the SINGLE "Next safe action" from your handoff. One step, then reassess against the carried checklist.',
+  '3. Continue — do NOT restart the batch, do NOT redo work already committed or staged, and do NOT re-ask or',
+  '   re-derive anything the handoff already settles.',
+  '</resume_here>',
+].join('\n');
+
+/**
  * SOFT nudge steered into the LIVE builder turn once occupancy crosses the soft threshold. Carries the FULL
  * handoff schema (the builder reads THIS, not the tool description) so the handoff it authors is solid and
  * self-sufficient. If the builder keeps going, {@link ROTATION_REMINDER_NUDGE} re-fires every +delta of growth.

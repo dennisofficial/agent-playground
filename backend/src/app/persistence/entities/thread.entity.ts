@@ -17,6 +17,9 @@ import type { ReviewFinding } from '../../autofix/autofix.types';
 @Entity({ name: 'threads' })
 @Index(['job_id'])
 @Index(['parent_thread_id'])
+// Hands-off: uq_threads_job_parent_ordinal is UNIQUE … NULLS NOT DISTINCT, unexpressible in TypeORM
+// metadata. The DDL lives in the migrations; this only tells migration:generate never to DROP it.
+@Index('uq_threads_job_parent_ordinal', { synchronize: false })
 export class ThreadEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -113,9 +116,13 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   handoff_out!: string | null;
 
-  // 'pending' | 'planning' | 'reviewing' | 'awaiting_approval' | 'executing' | 'awaiting_input' | 'auto_fixing' | 'done' | 'failed'
+  // 'pending' | 'planning' | 'reviewing' | 'executing' | 'auto_fixing' | 'done' — the PURE LINEAR step (pause/failure/skip live on `condition`)
   @Column({ type: 'text', default: 'pending' })
   status!: string;
+
+  // 'none' | 'paused' | 'incomplete' | 'failed' | 'skipped' — the orthogonal condition overlay (ADR-0004 detail stays in terminal_record/halt_outcome)
+  @Column({ type: 'text', default: 'none' })
+  condition!: string;
 
   /**
    * The thread's LLM-authored task list — folded incrementally from the orchestrating session's
@@ -177,6 +184,38 @@ export class ThreadEntity extends TimestampedEntity {
   halt_fix_attempts!: number;
 
   /**
+   * Completion-wake OWED signal (mirrors {@link halt_outcome} for the clean-completion path, decision d1).
+   * Set true by `setDoneWakeOwed` only when a completion qualifies for an autonomous brain wake: the FINAL
+   * thread of a build (parked at the ship gate) or a NOTABLE completion (finished `done` but carrying
+   * gaps/unverified items). Intermediate clean completions never set it — they keep the cheap note-and-queue.
+   * The owed-wake sweep delivers it at-least-once. Unlike the halt path there is no generation CAS: a `done`
+   * thread is never re-driven, so the `done_waked_at IS NULL` guard alone is enough.
+   */
+  @Column({ type: 'boolean', default: false })
+  done_wake_owed!: boolean;
+
+  /** Why the completion wake was owed — `'final'` (whole build parked at ship gate) or `'notable'`
+   *  (done-with-gaps). Drives the wake framing. Null when no done-wake is owed. */
+  @Column({ type: 'text', nullable: true })
+  done_wake_reason!: string | null;
+
+  /** Completion-wake DEDUP marker: stamped by `markDoneWaked` only on the wake turn's SUCCESS TAIL (null
+   *  while owed), so a crash before the stamp lets the boot sweep re-fire (at-least-once). */
+  @Column({ type: 'timestamptz', nullable: true })
+  done_waked_at!: Date | null;
+
+  /**
+   * Completion-wake GENERATION token (mirrors {@link halt_fix_attempts}) — the wake-stamp CAS key AND the
+   * partial-supersede key. Atomically bumped by `claimDoneWakeGen` at each delivery START; the fresh value
+   * tags every durable block of that delivery (`meta.doneWakeGen` / `meta.doneWakeThreadId` via the harness
+   * `metaTag`) and keys `markDoneWaked`'s CAS. So a stale (crashed mid-stream) attempt's late stamp matches
+   * zero rows, and its truncated partial rows are deleted by the next attempt's `supersedeDoneWakeMessages`.
+   * Never resets — a `done` thread is never re-driven.
+   */
+  @Column({ type: 'int', default: 0 })
+  done_wake_gen!: number;
+
+  /**
    * The thread's START HEAD — the feature-branch sha captured ONCE, the first time the thread begins
    * executing. The post-build review scopes its diff by `start_sha..HEAD` and commit-recording compares
    * HEAD against it (thread-driver `:1733`); RE-capturing it on every (re)entry lets a RESUME grab it AFTER
@@ -187,6 +226,19 @@ export class ThreadEntity extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   start_sha!: string | null;
+}
+
+/**
+ * The transcript anchor for a thread's halted/completed lane — the engine `sessionId` (and, when the thread
+ * rotated, which Leg) the wake hands the brain so it can read the builder's raw JSONL via
+ * `atlas-tx show <sessionId>`. HOST-populated at halt/notable time from `steps.session_id` / `build_legs`
+ * (the host has ground truth) — NEVER builder-self-reported.
+ */
+export interface SessionAnchor {
+  /** The halted/completed lane's engine session id (from `steps.session_id` / the active `build_legs` row). */
+  sessionId: string;
+  /** Which Leg (1..N) the session belongs to, for "Leg N" framing when the thread rotated. */
+  legOrdinal?: number;
 }
 
 /**
@@ -205,8 +257,14 @@ export interface ThreadTerminalRecord {
   deviations?: string[];
   /** Honest known gaps / things to know — routed to the brain + next-thread orientation. */
   gaps?: string[];
-  /** Set when status='blocked' (Phase 3 `block_thread`, or the ADR-0005 live-verification judge downgrade). */
-  blocked?: { reason: 'question' | 'needs_env' | 'decision' | 'unverified'; detail: string };
+  /** Set when status='blocked' (Phase 3 `block_thread`, or the ADR-0005 live-verification judge downgrade).
+   *  `judge_unavailable` is distinct from `unverified`: the work may well be verified, but the judge itself
+   *  was UNREACHABLE (transient Anthropic outage / key rate-or-credit limit) — a done thread must HOLD and
+   *  retry when the service recovers, NOT burn its autonomous fix budget and rest as `budget_exhausted`. */
+  blocked?: {
+    reason: 'question' | 'needs_env' | 'decision' | 'unverified' | 'judge_unavailable';
+    detail: string;
+  };
   /** Set when status='failed' — the structured failure the driver relays. */
   failure?: {
     kind: 'build' | 'verification';

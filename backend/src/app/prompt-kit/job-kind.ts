@@ -4,10 +4,10 @@
  * A job carries a `kind` (see `domain/job.ts` `JobKind`). The kind changes how an agent should orient:
  * an onboarding job is bootstrapping a repo it has never seen; an event job was seeded by an external
  * signal and is untrusted intake; feature/bugfix are the normal build kinds. `jobKindFragment` turns a
- * kind into a short context block that bodies/layers splice in (see `compose.ts`).
+ * kind into a short context block that gated `@Fragment` methods in `job-kind.group.ts` /
+ * `driver-framing.group.ts` splice in.
  *
- * Injected into composed prompts starting in Phase 2 of the rollout — a `null`/unknown kind yields the
- * empty string, so composing without a kind is a no-op.
+ * A `null`/unknown kind yields the empty string, so a prompt without a kind simply omits this block.
  */
 import type { JobKind } from '../domain';
 

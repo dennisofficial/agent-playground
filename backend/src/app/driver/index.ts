@@ -8,6 +8,13 @@ export * from './thread-driver.service';
 export * from './driver-store.service';
 export * from './job-lifecycle.service';
 export * from './github-pr-state-sync.service';
+export * from './github-ci-state-sync.service';
+export {
+  GitStateReconciler,
+  summarizeChecks,
+  CADENCE_MS,
+  type PollTier,
+} from './git-state-reconciler.service';
 export { WorktreeProvisioner } from './worktree-provisioner.service';
 export { WorktreeHydrator } from './worktree-hydrator.service';
 export { type MountSpec, type MountMode } from '../sandbox/container-paths';
@@ -27,6 +34,7 @@ export {
   type ResolvedRepo,
 } from './repo-resolver';
 export { renderPlan, type PlannedStep } from './render-plan';
+export { JOB_TEARDOWN, type JobTeardownPort } from './job-teardown.port';
 export {
   LIVE_VERIFICATION_JUDGE,
   AnthropicLiveVerificationJudge,
@@ -36,6 +44,7 @@ export {
 } from './live-verification-judge';
 export { LiveVerificationModule } from './live-verification.module';
 export {
+  clampEvidenceOutput,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
   renderTerminalRecordSummary,

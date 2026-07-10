@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ArrowRight,
@@ -9,11 +10,14 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
-import { useApprove } from "@/lib/api/job-queries";
+import { makeResolveFileLink } from "./repo-file-links";
+import { useApprove, useRepoTree } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
+import { isSubmitCombo } from "@/lib/keyboard";
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
+  RETRACT_SHIP_ACTION_ID,
   type ApprovalActionId,
   type WebApprovalCard,
   type WebCardAction,
@@ -37,17 +41,47 @@ export function ApprovalCardView({
   card,
   jobRef,
   onOpenPlan,
+  onSelectNode,
 }: {
   card: WebApprovalCard;
   jobRef: JobRef;
   onOpenPlan?: () => void;
+  onSelectNode?: (node: string) => void;
 }) {
   // The ship-review gate reuses this same `approval_card` payload (discriminated by `kind: 'ship'`) but
-  // is a much smaller card — a title/summary + a single "Ship it" button, rendered generically off
+  // is a much smaller card — a title/summary + ship-gate buttons, rendered generically off
   // `card.actions` (never a hardcoded action id, so the card doesn't drift from whatever the backend sends).
   if (card.kind === "ship") {
     return <ShipCardView card={card} jobRef={jobRef} />;
   }
+  return (
+    <PlanApprovalCardView
+      card={card}
+      jobRef={jobRef}
+      onOpenPlan={onOpenPlan}
+      onSelectNode={onSelectNode}
+    />
+  );
+}
+
+function PlanApprovalCardView({
+  card,
+  jobRef,
+  onOpenPlan,
+  onSelectNode,
+}: {
+  card: WebApprovalCard;
+  jobRef: JobRef;
+  onOpenPlan?: () => void;
+  onSelectNode?: (node: string) => void;
+}) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const repoTree = useRepoTree(jobRef);
+  const fileSet = useMemo(
+    () => new Set(repoTree.data?.files ?? []),
+    [repoTree.data],
+  );
 
   const value =
     card.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ??
@@ -85,7 +119,20 @@ export function ApprovalCardView({
         <h3 className="text-[14px] font-semibold text-text">{card.title}</h3>
         {card.summary ? (
           <div className="mt-1.5">
-            <Markdown>{card.summary}</Markdown>
+            <Markdown
+              resolveFileLink={
+                onSelectNode
+                  ? makeResolveFileLink(
+                      fileSet,
+                      pathname,
+                      searchParams,
+                      onSelectNode,
+                    )
+                  : undefined
+              }
+            >
+              {card.summary}
+            </Markdown>
           </div>
         ) : null}
       </div>
@@ -140,8 +187,7 @@ export function ApprovalCardView({
 
 /**
  * The inline ship-review card — the SECOND human gate (after the plan-approval card above), posted once
- * the build + master review finish. Just a title/summary and a single "Ship it" button; there is no
- * "Deny"/"Request changes" — declining is done via prose in chat, same as the plan gate.
+ * the build + master review finish. Just a title/summary and the backend-provided ship-gate actions.
  */
 function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef }) {
   return (
@@ -192,13 +238,21 @@ function ShipActionButton({
   action: WebCardAction;
 }) {
   const approve = useApprove(jobRef);
+  const variant =
+    action.style === "danger"
+      ? "danger"
+      : action.style === "default"
+        ? "ghost"
+        : "primary";
+  const loadingText =
+    action.actionId === RETRACT_SHIP_ACTION_ID ? "Retracting…" : "Shipping…";
   return (
     <div className="flex flex-col gap-2">
       <Button
         size="sm"
-        variant={action.style === "danger" ? "danger" : "primary"}
+        variant={variant}
         loading={approve.isPending}
-        loadingText="Shipping…"
+        loadingText={loadingText}
         onClick={() =>
           approve.mutate({
             actionId: action.actionId,
@@ -211,7 +265,7 @@ function ShipActionButton({
       </Button>
       {approve.isError ? (
         <p className="text-[11.5px] text-red">
-          Could not ship. Try again.
+          Could not submit. Try again.
         </p>
       ) : null}
     </div>
@@ -262,6 +316,14 @@ export function VerdictButtons({
           autoFocus
           value={note}
           onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => {
+            // ⌘/Ctrl+Enter submits the verdict; plain Enter still inserts a newline.
+            if (!isSubmitCombo(e)) return;
+            e.preventDefault();
+            if (pending) return;
+            send(drafting, note);
+            setDrafting(null);
+          }}
           placeholder={NOTE_PROMPT[drafting] ?? "Add a note (optional)"}
           rows={2}
           className="w-full resize-y rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[12.5px] text-text outline-none placeholder:text-faint focus:border-accent"

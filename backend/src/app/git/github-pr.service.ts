@@ -18,8 +18,13 @@ export const WORK_EVENTS = [
   'pull_request_review_comment',
   'issue_comment',
 ];
-/** Events delivered to the silent PR-state-sync front door (`/webhooks/github/state`). */
-export const STATE_EVENTS = ['pull_request'];
+/**
+ * Events delivered to the silent PR-state-sync front door (`/webhooks/github/state`). `pull_request`
+ * drives the open/merge/close sync; `push` drives the real-time base-move-conflict unlock — a push to a
+ * repo's DEFAULT branch marks that repo's open PRs due-now so the reconciler re-checks mergeability in
+ * seconds (GitHub emits no webhook for a base-induced conflict).
+ */
+export const STATE_EVENTS = ['pull_request', 'push'];
 
 export interface OpenPullRequestArgs {
   owner: string;
@@ -111,6 +116,16 @@ export class GithubPrService {
       'User-Agent': 'atlas', // GitHub rejects UA-less requests
       'Content-Type': 'application/json',
     };
+  }
+
+  /** The GitHub account that owns `token` (GET /user) — for commit attribution. null on any non-OK. */
+  async getAuthenticatedUser(
+    token: string,
+  ): Promise<{ login: string; id: number; name: string | null } | null> {
+    const res = await this.fetchImpl(`${API}/user`, { headers: this.headers(token) });
+    if (!res.ok) return null;
+    const u = (await res.json()) as { login: string; id: number; name: string | null };
+    return { login: u.login, id: u.id, name: u.name ?? null };
   }
 
   /** Create the PR, or return the already-open one for the same head (idempotent). */
@@ -217,6 +232,23 @@ export class GithubPrService {
       isDraft:
         json.data?.markPullRequestReadyForReview?.pullRequest?.isDraft ?? false,
     };
+  }
+
+  /** Close an OPEN PR without merging (PATCH state=closed). Throws with GitHub status+detail on failure. */
+  async closePullRequest(
+    token: string,
+    { owner, repo, number }: { owner: string; repo: string; number: number },
+  ): Promise<void> {
+    const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
+      method: 'PATCH',
+      headers: this.headers(token),
+      body: JSON.stringify({ state: 'closed' }),
+    });
+    if (res.ok) return;
+    const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(
+      `GitHub refused to close PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`,
+    );
   }
 
   /** Post a comment on a PR (PRs are issues for the comments API). Best-effort by the caller. */

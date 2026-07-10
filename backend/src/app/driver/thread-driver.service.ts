@@ -15,20 +15,28 @@ import {
   type AutoFixContext,
   type FindingSeverity,
 } from '../autofix';
-import type { DecisionRecord, Step, Job, SessionEngine, ThreadStatus } from '../domain';
+import type {
+  DecisionRecord,
+  Step,
+  Job,
+  SessionEngine,
+  ThreadCondition,
+} from '../domain';
 import { HALT_FIX_ATTEMPT_CAP } from '../domain';
 import { TICKET_AUTO_SKIP_SIM, TICKET_TERMINAL_STATUSES } from '../domain/ticket';
 import {
   EngineAuthError,
+  EngineSessionLimitError,
+  isSessionLimitError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
-  unwrapBridgeArgs,
   type EngineEvent,
   type EngineHomeKey,
   type EngineHomeType,
   type ToolBridgeOptions,
   type ToolImpl,
 } from '../engine';
+import { defaultResumeAt } from '../engine/session-limit';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
   CHAT_SURFACE,
@@ -42,6 +50,7 @@ import {
   webShipReviewCard,
 } from '../surface';
 import { CredentialResolver } from '../onboarding';
+import { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { McpResolver, McpOAuthService } from '../mcp';
 import { ConventionProfileResolver, type ResolvedConventions } from '../conventions';
 import { SkillResolver } from '../skills';
@@ -50,13 +59,21 @@ import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
-import type { ActiveTurnEntity, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
+import type {
+  ActiveTurnEntity,
+  SessionAnchor,
+  TaskItem,
+  ThreadTerminalRecord,
+} from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
   Agent,
+  CODEX_TASK_LIST_NOTE,
+  COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
   ROTATION_PREAMBLE,
+  ROTATION_RESUME_TAIL,
   ROTATION_SOFT_NUDGE,
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
@@ -70,6 +87,7 @@ import {
   type LiveVerificationVerdict,
 } from './live-verification-judge';
 import {
+  clampEvidenceOutput,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
   renderTerminalRecordSummary,
@@ -129,6 +147,13 @@ interface BatchResult {
 interface ThreadResult {
   outcome: ThreadOutcome;
   handoff: string | null;
+  /** Set ONLY by the "already blocked → re-halt" short-circuit, and ONLY when the durable owed-wake row
+   *  already exists (`halt_outcome` set → `haltJob` already posted the card + persisted the wake) AND this
+   *  is not a `judge_unavailable` transient hold. When true, `runJob` SKIPS `haltJob` — no re-post, no
+   *  re-arm — which stops the every-reap "Thread blocked → Holding." spam. Left unset for a fresh block, for
+   *  a `judge_unavailable` hold (whose periodic re-wake IS its recovery), and when `halt_outcome` is still
+   *  missing (crash between `block_thread`'s record write and `haltJob`) so `haltJob` runs once to create it. */
+  suppressHaltNotify?: boolean;
 }
 
 /**
@@ -141,6 +166,7 @@ interface ThreadResult {
  */
 function isTransientDriveError(err: unknown): boolean {
   if (err instanceof EngineAuthError) return false; // → paused
+  if (err instanceof EngineSessionLimitError) return false; // → parked on session limit
   if (isEngineDetachedError(err)) return false; // → leave running for boot re-attach
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   if (msg.includes(UNRESUMABLE_SESSION_MARKER.toLowerCase())) return false; // session gone — retry futile
@@ -167,6 +193,14 @@ interface BrainSurface {
     outcome: 'blocked' | 'incomplete' | 'failed',
     gen: number,
   ): Promise<void>;
+
+  /** Wake the job brain for a `done` completion owed a wake (decision d1) — `'final'` (whole build parked
+   *  at ship gate) or `'notable'` (finished done but carrying gaps/unverified items). */
+  notifyThreadDone(
+    jobId: string,
+    threadId: string,
+    reason: 'final' | 'notable',
+  ): Promise<void>;
 }
 
 @Injectable()
@@ -187,6 +221,9 @@ export class ThreadDriver implements JobDispatcher {
     private readonly env: EnvService,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
     private readonly creds: CredentialResolver,
+    // Host-side subscription usage snapshot — the session-limit park reads `getResetAt(orgId, rateLimitType)`
+    // to seed the resume clock when the engine didn't surface a precise reset instant. @Global OnboardingModule.
+    private readonly usage: OauthUsageService,
     private readonly mcp: McpResolver,
     // Host-authoritative MCP OAuth: before a build drive, refresh any near-expiry OAuth tokens and, if one
     // rotated, re-write the sandbox hub config so a long-lived warm sandbox picks up the fresh Bearer.
@@ -340,9 +377,11 @@ export class ThreadDriver implements JobDispatcher {
    */
   async resumePaused(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
-    if (!job || job.halt?.kind !== 'blocked_credentials') {
+    // Resumes a credential/401 halt OR a session-limit park (the auto-resume sweep + the operator ping both
+    // route here). Any other halt kind (or none) is ignored.
+    if (!job || !['blocked_credentials', 'session_limit'].includes(job.halt?.kind ?? '')) {
       this.logger.warn(
-        `resumePaused job=${jobId}: not a credential halt (${job?.halt?.kind ?? 'gone'}) — ignoring`,
+        `resumePaused job=${jobId}: not a resumable halt (${job?.halt?.kind ?? 'gone'}) — ignoring`,
       );
       return;
     }
@@ -357,6 +396,9 @@ export class ThreadDriver implements JobDispatcher {
     }
     // Clear the halt (only retry/resumePaused/redriveThread may un-halt) then re-drive the preserved phase.
     await this.store.clearJobHalt(jobId);
+    // Clear the durable auto-resume clock too, so the leader sweep never re-fires this resume (no-op for a
+    // credential resume that was never parked on the clock).
+    await this.store.setSessionResume(jobId, null, null);
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
@@ -400,6 +442,9 @@ export class ThreadDriver implements JobDispatcher {
     // status flip is a no-op in practice — a halt is only ever recorded mid-drive, i.e. while `running` — but
     // it self-heals any drifted/backfilled phase so `runJob`'s `running` gate lets the re-drive through.
     await this.store.clearJobHalt(jobId);
+    // A Force-resume of a session-limit park routes through here — clear the durable auto-resume clock so the
+    // leader sweep never re-fires (harmless no-op for a non-parked retry).
+    await this.store.setSessionResume(jobId, null, null);
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
@@ -462,6 +507,7 @@ export class ThreadDriver implements JobDispatcher {
     // re-drive must lift the halt or `runJob`/`drive`'s halt gate would refuse to re-drive.
     await this.store.clearJobHalt(jobId).catch(() => undefined);
     await this.store.setThreadStatus(threadId, 'executing').catch(() => undefined);
+    await this.store.setThreadCondition(threadId, 'none').catch(() => undefined);
     if (guidance) {
       await this.store.setThreadOrientation(threadId, guidance).catch(() => undefined);
     }
@@ -506,6 +552,35 @@ export class ThreadDriver implements JobDispatcher {
     // The stamp is NOT here — the brain stamps `halt_waked_at` on the wake turn's SUCCESS tail (keyed by the
     // captured `gen`), so a wake turn that fails/steers/detaches leaves the halt owed for the sweeps to retry.
     await brain.notifyThreadHalted(t.jobId, t.threadId, t.outcome, t.gen);
+  }
+
+  /**
+   * Decision d1 — deliver any OWED completion brain wakes (`'final'`/`'notable'`). Called from the periodic
+   * chat-delivery sweep and the leader boot sweep (all jobs). For each owed thread: wake the brain, which
+   * stamps the dedup marker on its own success tail. Fire-and-forget per thread; a wake-turn failure leaves
+   * the marker un-stamped so the boot sweep re-fires (at-least-once).
+   */
+  async deliverOwedDoneWakes(jobId?: string): Promise<void> {
+    const owed = await this.store.threadsAwaitingDoneWake(jobId).catch(() => []);
+    for (const t of owed) {
+      if (this.active.has(t.jobId)) continue; // defer — NEVER wake during an active drive (a notable wake can fire mid-build; the build continues; deliver on the next quiescent sweep tick)
+      void this.deliverOneDoneWake(t).catch((err) =>
+        this.logger.warn(
+          `done wake failed for thread=${t.threadId} (boot sweep will retry): ${err}`,
+        ),
+      );
+    }
+  }
+
+  private async deliverOneDoneWake(t: {
+    jobId: string;
+    threadId: string;
+    reason: 'final' | 'notable';
+  }): Promise<void> {
+    const brain = await this.brain();
+    // Stamp is NOT here — the brain stamps `done_waked_at` on the wake turn's SUCCESS tail, so a
+    // failed/steered/detached wake stays owed for the sweeps.
+    await brain.notifyThreadDone(t.jobId, t.threadId, t.reason);
   }
 
   // ── the pipeline ───────────────────────────────────────────────────────────────────────────────
@@ -558,6 +633,52 @@ export class ThreadDriver implements JobDispatcher {
           })
           .catch(() => undefined);
         await this.relayPaused(jobId, err);
+      } else if (isSessionLimitError(err)) {
+        // A Claude subscription SESSION/USAGE limit — PARK (don't fail): the phase is preserved and the
+        // unfinished step's session_id was persisted at the throw, so the lane resumes the SAME session. It
+        // auto-resumes once the reset passes (the leader `SessionResumeSweep` → `resumePaused`) or on an
+        // operator Force-resume (`POST …/retry`). Do NOT consume `halt_fix_attempts` — this isn't a build failure.
+        const limit = err as EngineSessionLimitError;
+        this.logger.warn(`job=${jobId} parked on session limit: ${limit.message}`);
+        const job = await this.store.loadJob(jobId).catch(() => null);
+        const orgId = job?.orgId;
+        // Resume-clock precedence (d5): the engine's precise reset instant → the org's harvested usage window.
+        const resumeAt =
+          limit.resetAt ?? (orgId ? await this.usage.getResetAt(orgId, limit.rateLimitType) : undefined);
+        // When neither yields a precise instant, park on a BOUNDED default clock (now + shortest window) so the
+        // leader sweep still auto-resumes — a null clock would only ever be Force-resumed by hand.
+        const resumeClock = resumeAt ?? defaultResumeAt();
+        // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
+        // reset — this also covers the text-fallback path, which carries no `rate_limit_event` frame to harvest.
+        if (orgId)
+          void this.usage
+            .applyHarvest(orgId, {
+              status: 'rejected',
+              rateLimitType: limit.rateLimitType,
+              resetsAt: new Date(resumeClock).getTime(),
+              utilization: 100,
+            })
+            .catch(() => undefined);
+        // A structured `rateLimitType` means the reset came from the usage frame/API; its absence means the
+        // engine fell back to parsing the CLI's printed "resets …" string.
+        const resetSource: 'usage_api' | 'parsed_string' = limit.rateLimitType ? 'usage_api' : 'parsed_string';
+        const at = new Date().toISOString();
+        await this.store
+          .setJobHalt(jobId, {
+            kind: 'session_limit',
+            reason: limit.message,
+            at,
+            resumeAt: resumeClock,
+          })
+          .catch(() => undefined);
+        await this.store
+          .setSessionResume(jobId, resumeClock, {
+            lane: 'build',
+            reason: limit.message,
+            resetSource,
+          })
+          .catch(() => undefined);
+        await this.relaySessionLimitPaused(jobId, resumeAt);
       } else {
         this.logger.error(
           `job=${jobId} failed: ${err instanceof Error ? err.stack : err}`,
@@ -636,6 +757,53 @@ export class ThreadDriver implements JobDispatcher {
       await this.post(route, text);
     } catch (e) {
       this.logger.warn(`could not live-relay pause for job=${jobId}: ${e}`);
+    }
+  }
+
+  /**
+   * Post a "parked on a session/usage limit" notice (build lane). Mirrors {@link relayPaused} (durable-first
+   * via the block sink, best-effort live post on top) but marks the block `sessionLimit` so the UI can render
+   * the park + its Force-resume affordance. The text is STABLE (no live now-timestamp) so a re-drive that
+   * re-parks the same limit dedupes against the last notice instead of stacking near-identical boxes.
+   */
+  private async relaySessionLimitPaused(jobId: string, resumeAt?: string): Promise<void> {
+    const text = `You've hit your session limit — resets ${resumeAt ? fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`;
+    const alreadyPosted = await this.store
+      .hasRecentSystemOperatorNotice(jobId, text)
+      .catch(() => false);
+    if (!alreadyPosted) {
+      await this.blockSink
+        .appendBlock(jobId, {
+          kind: 'chat',
+          text,
+          meta: {
+            source: 'system_operator',
+            severity: 'warning',
+            sessionLimit: true,
+            ...(resumeAt ? { resumeAt } : {}),
+          },
+        })
+        .catch((e) =>
+          this.logger.error(`could not durably record session-limit park for job=${jobId}: ${e}`),
+        );
+    }
+    try {
+      const job = await this.store.loadJob(jobId);
+      const route = await this.store.route(job);
+      if (route.channel && !alreadyPosted) {
+        await this.surface.post(route.channel, text, {
+          ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+          ...(route.orgId ? { orgId: route.orgId } : {}),
+          meta: {
+            source: 'system_operator',
+            severity: 'warning',
+            sessionLimit: true,
+            ...(resumeAt ? { resumeAt } : {}),
+          },
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`could not live-relay session-limit park for job=${jobId}: ${e}`);
     }
   }
 
@@ -720,6 +888,8 @@ export class ThreadDriver implements JobDispatcher {
       );
       return;
     }
+    // The driver now owns this job's work — mark it building (system-owned; suppresses the needs-you dot).
+    await this.store.setActivity(jobId, 'build').catch(() => undefined);
     // Cap the BUILDER lanes at MAX_SECTIONS, but NEVER drop the master-review thread (it rides on top of the
     // builders and must always run last) — partition by kind, cap the builders, re-append the review last.
     const featureSections = executable.filter((s) => s.kind === 'builder');
@@ -759,6 +929,11 @@ export class ThreadDriver implements JobDispatcher {
         );
         return;
       }
+      if (thread.kind === 'master_review') {
+        await this.store
+          .setActivity(job.id, 'master_review')
+          .catch(() => undefined);
+      }
       const res = await this.runThread(
         job,
         record,
@@ -772,7 +947,15 @@ export class ThreadDriver implements JobDispatcher {
         // HALT the build (ADR 0004): an unfinished thread must not ship. Relay a durable card, flip the job
         // to a needs-you state, record the owed brain wake + trail, and SKIP finalizeBuild — no PR on an
         // unfinished build. The brain wake fires from `drive()` once the job leaves the active window.
-        await this.haltJob(job, route, thread, res.outcome);
+        //
+        // EXCEPT a re-halt of an already-notified brain-owned block (`suppressHaltNotify`): the card was
+        // already posted and the owed-wake row persists in the DB (delivered→acked stays acked; never
+        // delivered stays owed and the 30s sweep still delivers it once). Skipping `haltJob` here kills the
+        // every-30-min "Thread blocked → Holding." spam without dropping a genuine first wake. A fresh block
+        // or a `judge_unavailable` re-halt still notifies.
+        if (!res.suppressHaltNotify) {
+          await this.haltJob(job, route, thread, res.outcome);
+        }
         return;
       }
       handoff = res.handoff;
@@ -798,6 +981,8 @@ export class ThreadDriver implements JobDispatcher {
       return;
     }
     await this.finalizeBuild(job, record, route, repo, sandbox);
+    // Build shipped — the system is done working this job; hand it back to idle.
+    await this.store.setActivity(job.id, 'idle').catch(() => undefined);
   }
 
   /**
@@ -826,6 +1011,15 @@ export class ThreadDriver implements JobDispatcher {
       `ship-review:${job.id}`,
       'The build finished and passed master review; it is parked awaiting your ship-review approval before the PR opens.',
     ).catch(() => undefined);
+    // Decision d1 — the FINAL wake, additive to the milestone above. Carried by the job's master-review
+    // thread (the whole-build carrier). If none resolves, skip the wake rather than guess — the milestone
+    // still informs.
+    const masterReviewId = await this.store.masterReviewThreadId(job.id).catch(() => null);
+    if (masterReviewId) {
+      await this.store
+        .setDoneWakeOwed(masterReviewId, 'final')
+        .catch((e) => this.logger.warn(`could not set final done-wake for job=${job.id}: ${e}`));
+    }
   }
 
   /**
@@ -856,6 +1050,31 @@ export class ThreadDriver implements JobDispatcher {
       ),
     );
     return true;
+  }
+
+  /**
+   * SHIP-REVIEW RETRACT (the Atlas `withdraw_ship` tool OR the manual "Back to building" click). Flip
+   * `awaiting_ship_review → planning` (idempotent in the store — acts only while parked, so a stale/double
+   * retract is a no-op) and post a durable note. Unlike {@link resolveShipApprovalDurably}, this does NOT
+   * re-drive — the job sits in `planning` for the operator/Atlas to do the follow-up work, and the gate
+   * re-arms automatically once that work reaches `parkForShipReview` again.
+   */
+  async retractShipDurably(jobId: string, ruledBy: string): Promise<void> {
+    const acted = await this.store.retractShip(jobId);
+    if (!acted) {
+      this.logger.warn(
+        `ship retract for job=${jobId} by ${ruledBy}: not awaiting ship review — no-op`,
+      );
+      return;
+    }
+    this.logger.log(`ship retract for job=${jobId} by ${ruledBy} — back to planning`);
+    await this.blockSink
+      .appendBlock(jobId, {
+        kind: 'chat',
+        text: '↩︎ Ship-review retracted — back to planning for changes.',
+        meta: { source: 'system_operator' },
+      })
+      .catch(() => undefined);
   }
 
   /**
@@ -894,18 +1113,27 @@ export class ThreadDriver implements JobDispatcher {
       text = `:x: Build failed in *${thread.brief}* — ${why}\n_The job is marked failed; reply in this thread to retry or adjust._`;
       severity = 'error';
     } else if (outcome === 'blocked') {
-      const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
-      if (spent >= HALT_FIX_ATTEMPT_CAP) {
-        // Autonomous budget exhausted → rest the job for the operator (no more brain wakes owed).
-        const reason = term?.blocked?.detail ?? 'needs your input';
-        await this.store
-          .setJobHalt(job.id, { kind: 'budget_exhausted', reason, at })
-          .catch(() => undefined);
-        owedWake = false;
-        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${reason}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
+      // A `judge_unavailable` block is a TRANSIENT infra hold, not a work defect: the live-verification judge
+      // was unreachable (Anthropic outage / key rate-or-credit limit), so a genuinely-done thread must HOLD and
+      // retry when the service recovers — NOT consume its autonomous fix budget and rest `budget_exhausted`
+      // (which would let a single Anthropic blip permanently stall EVERY in-flight job; 07-09 incident). Keep the
+      // job `running` with the thread `awaiting_input` + owed wake, regardless of prior attempts.
+      if (term?.blocked?.reason === 'judge_unavailable') {
+        text = `:hourglass_flowing_sand: *${thread.brief}* is done but the live-verification judge is temporarily unavailable — holding to retry when it recovers (not counted against the fix budget).`;
       } else {
-        // Budget remains: job stays `running`; the thread is `awaiting_input` (Phase 3 wakes the brain to fix).
-        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
+        const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
+        if (spent >= HALT_FIX_ATTEMPT_CAP) {
+          // Autonomous budget exhausted → rest the job for the operator (no more brain wakes owed).
+          const reason = term?.blocked?.detail ?? 'needs your input';
+          await this.store
+            .setJobHalt(job.id, { kind: 'budget_exhausted', reason, at })
+            .catch(() => undefined);
+          owedWake = false;
+          text = `:raising_hand: Thread blocked — *${thread.brief}*: ${reason}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
+        } else {
+          // Budget remains: job stays `running`; the thread is `awaiting_input` (Phase 3 wakes the brain to fix).
+          text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
+        }
       }
     } else {
       // incomplete
@@ -971,9 +1199,14 @@ export class ThreadDriver implements JobDispatcher {
       threadDirName(thread),
     );
     await mkdir(dir, { recursive: true });
+    // Resolve the anchor DIRECTLY (not off `term`) so the Transcript line renders even for an `incomplete`
+    // halt whose terminal record is null.
+    const anchor = await this.store
+      .resolveSessionAnchor(thread.id)
+      .catch(() => undefined);
     await writeFile(
       join(dir, 'completion.md'),
-      renderCompletionMd(thread, outcome, term, new Date().toISOString()),
+      renderCompletionMd(thread, outcome, term, new Date().toISOString(), anchor),
       'utf8',
     );
   }
@@ -1014,13 +1247,29 @@ export class ThreadDriver implements JobDispatcher {
     // thread. (Live-observed on job 43705139 — the master review "blocked again" hundreds of times.)
     const prior = await this.store.getTerminalRecord(thread.id).catch(() => null);
     if (prior?.status === 'blocked') {
+      // Suppress the redundant re-notify (re-posted card + re-armed brain wake) ONLY when the durable
+      // owed-wake row already exists (`halt_outcome` set → `haltJob` already ran) AND this isn't the
+      // transient `judge_unavailable` hold. If `halt_outcome` is still missing (crash between
+      // `block_thread`'s terminal-record write and `haltJob`), fall through so `haltJob` runs once and
+      // creates it — else `threadsAwaitingHaltWake` has nothing to deliver and the wake is lost forever. A
+      // `judge_unavailable` hold recovers ONLY via the periodic re-wake driving the brain to `retry_thread`
+      // (no judge health-poll exists), so it must keep re-arming.
+      const owedHaltExists =
+        (await this.store.haltOutcome(thread.id).catch(() => null)) != null;
+      const transientHold = prior.blocked?.reason === 'judge_unavailable';
+      const suppressHaltNotify = owedHaltExists && !transientHold;
       this.logger.log(
-        `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)`,
+        `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)` +
+          (suppressHaltNotify
+            ? ' [suppressing redundant re-notify]'
+            : transientHold
+              ? ' [judge_unavailable: re-arming wake]'
+              : ' [owed-wake row missing: running haltJob to create it]'),
       );
       await this.store
-        .setThreadStatus(thread.id, 'awaiting_input')
+        .setThreadCondition(thread.id, 'paused')
         .catch(() => undefined);
-      return { outcome: 'blocked', handoff: null };
+      return { outcome: 'blocked', handoff: null, suppressHaltNotify };
     }
 
     // A thread already `done` must NOT be re-run. The runJob loop skips `done` threads from its start-of-run
@@ -1068,6 +1317,9 @@ export class ThreadDriver implements JobDispatcher {
     //    empty range → the review is silently skipped and the commit mis-recorded as `(nothing)`.
     const sectionStartSha = await this.resolveThreadStartSha(thread, sandbox);
     await this.store.setThreadStatus(thread.id, 'executing');
+    // Clear any stale halt overlay from a prior run — this (re)start of the turn puts the step back on the
+    // linear ladder, so a resumed/retried thread must not keep a persisted 'incomplete'|'failed'|'paused'.
+    await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
     const { outcome, reports } = await this.executeSteps(
       job, route, sandbox, thread, record, repo, sectionStartSha,
     );
@@ -1076,9 +1328,12 @@ export class ThreadDriver implements JobDispatcher {
     // skip auto-fix + handoff, set the thread status, and let runJob relay + skip finalize. NEVER fall through
     // to the done path (ADR 0004: a clean turn is not evidence of completion).
     if (outcome !== 'done') {
-      const status: ThreadStatus =
-        outcome === 'blocked' ? 'awaiting_input' : outcome; // 'incomplete' | 'failed'
-      await this.store.setThreadStatus(thread.id, status).catch(() => undefined);
+      // Leave the STEP at `executing` (where it halted) and record the halt on the orthogonal condition
+      // overlay instead. `outcome` here is 'blocked' | 'incomplete' | 'failed'; the latter two are valid
+      // conditions verbatim, and 'blocked' maps to the operator-pause condition 'paused'.
+      const condition: ThreadCondition =
+        outcome === 'blocked' ? 'paused' : outcome;
+      await this.store.setThreadCondition(thread.id, condition).catch(() => undefined);
       this.logger.warn(`thread ${thread.ordinal} "${thread.brief}" halted — ${outcome}`);
       return { outcome, handoff: null };
     }
@@ -1096,12 +1351,24 @@ export class ThreadDriver implements JobDispatcher {
     const handoffOut = this.summarizeHandoff(thread, steps, reports);
     await this.store.setThreadHandoffOut(thread.id, handoffOut);
     await this.store.setThreadStatus(thread.id, 'done');
+    await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
     this.logger.log(`thread ${thread.ordinal} done`);
     await this.recordMilestone(
       job.id,
       `thread:${thread.id}:done`,
       `Thread "${thread.brief}" finished building.`,
     );
+    // Decision d1 — a clean `done` is normally cheap note-and-queue; a NOTABLE one (gaps left) also owes an
+    // autonomous brain wake so the operator isn't the first to notice. The wake resolves the transcript anchor
+    // itself at delivery time. (No live-verification sub-clause here: a runtime-touched-but-inadequate record is
+    // already downgraded to `blocked` upstream, so a `done` record's verdict is always adequate.)
+    const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
+    const isNotable = term != null && (term.gaps?.length ?? 0) > 0;
+    if (isNotable) {
+      await this.store
+        .setDoneWakeOwed(thread.id, 'notable')
+        .catch((e) => this.logger.warn(`could not set notable done-wake for thread=${thread.id}: ${e}`));
+    }
     await this.post(route, `:white_check_mark: Thread done — *${thread.brief}*`);
     return { outcome: 'done', handoff: handoffOut };
   }
@@ -1184,7 +1451,7 @@ export class ThreadDriver implements JobDispatcher {
       scope: 'thread',
       // The fix turn commits + pushes its own work now — give it the authenticated remote (same as the
       // builder/gate/master-review turns carry).
-      gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
+      gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
       ...(sandbox.containerId
         ? {
             containerId: sandbox.containerId,
@@ -1218,7 +1485,11 @@ export class ThreadDriver implements JobDispatcher {
         if (c.kind === 'review_lens') {
           await this.store.setThreadReviewFindings(c.id, []).catch(() => undefined);
         }
+        // The review lifecycle genuinely completed (there was nothing to review), so the STEP is `done` —
+        // this keeps the `=== 'done'` resume-idempotency guards intact — while `skipped` carries the
+        // "nothing to do" overlay that used to live in the status value.
         await this.store.setThreadStatus(c.id, 'done').catch(() => undefined);
+        await this.store.setThreadCondition(c.id, 'skipped').catch(() => undefined);
       }
       return;
     }
@@ -1254,14 +1525,20 @@ export class ThreadDriver implements JobDispatcher {
     const lens = lensById(lensId);
     if (!lens) {
       this.logger.warn(`review-lens child ${child.id} has unknown lensId "${lensId}" — skipping`);
-      await this.store.setThreadStatus(child.id, 'skipped').catch(() => undefined);
+      // Terminal `done` (matching the empty-diff skip) — nothing to review, so the step genuinely completed;
+      // this keeps the `=== 'done'` resume-idempotency guard intact while `skipped` carries the overlay.
+      await this.store.setThreadStatus(child.id, 'done').catch(() => undefined);
+      await this.store.setThreadCondition(child.id, 'skipped').catch(() => undefined);
       return;
     }
     await this.store.setThreadStatus(child.id, 'executing').catch(() => undefined);
+    // Clear any stale halt overlay from a prior run before (re)running the lens's turn.
+    await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     try {
       const findings = await this.autofix.runReviewLens(ctx, lens);
       await this.store.setThreadReviewFindings(child.id, findings);
       await this.store.setThreadStatus(child.id, 'done');
+      await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     } catch (err) {
       this.logger.warn(`review lens "${lensId}" failed (continuing): ${err}`);
       // Persist the reason on the lens's OWN lane so its pane explains itself instead of showing a
@@ -1270,7 +1547,7 @@ export class ThreadDriver implements JobDispatcher {
         .emitReviewNotice(ctx, { lensId }, `This review lens failed to run: ${shortReason(err)}`)
         .catch(() => undefined);
       await this.store.setThreadReviewFindings(child.id, []).catch(() => undefined);
-      await this.store.setThreadStatus(child.id, 'failed').catch(() => undefined);
+      await this.store.setThreadCondition(child.id, 'failed').catch(() => undefined);
     }
   }
 
@@ -1301,17 +1578,19 @@ export class ThreadDriver implements JobDispatcher {
           .emitReviewNotice(ctx, { fix: true }, 'No findings met the fix threshold — nothing to fix.')
           .catch(() => undefined);
         await this.store.setThreadStatus(child.id, 'done').catch(() => undefined);
+        await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
         return;
       }
       await this.autofix.applyReviewFindings(ctx, actionable);
       await this.store.setThreadStatus(child.id, 'done');
+      await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     } catch (err) {
       this.logger.warn(`post-review fix failed (continuing): ${err}`);
       // Persist the reason on the fix lane so a failed post-review explains itself, not a blank pane.
       await this.autofix
         .emitReviewNotice(ctx, { fix: true }, `Post-review fix failed to run: ${shortReason(err)}`)
         .catch(() => undefined);
-      await this.store.setThreadStatus(child.id, 'failed').catch(() => undefined);
+      await this.store.setThreadCondition(child.id, 'failed').catch(() => undefined);
     }
   }
 
@@ -1434,7 +1713,7 @@ export class ThreadDriver implements JobDispatcher {
                     kind: String(o['kind'] ?? '').trim(),
                     command: String(o['command'] ?? '').trim(),
                     exitCode: Number.isFinite(Number(o['exitCode'])) ? Number(o['exitCode']) : -1,
-                    outputTail: String(o['outputTail'] ?? '').slice(0, 2000),
+                    outputTail: clampEvidenceOutput(String(o['outputTail'] ?? '')),
                   };
                 })
                 .filter((v) => v.command)
@@ -1444,7 +1723,7 @@ export class ThreadDriver implements JobDispatcher {
                     kind: 'reported',
                     command: '(see outputTail)',
                     exitCode: 0,
-                    outputTail: args['verification'].trim().slice(0, 2000),
+                    outputTail: clampEvidenceOutput(args['verification'].trim()),
                   },
                 ]
               : undefined;
@@ -1480,8 +1759,10 @@ export class ThreadDriver implements JobDispatcher {
             existing?.questionId ??
             (await this.store.openOperatorInputCard(job.id, question)).questionId;
           if (!existing) {
+            // The STEP stays `executing` (the turn is still alive, polling for the answer); the pause is
+            // recorded on the orthogonal condition overlay instead.
             await this.store
-              .setThreadStatus(thread.id, 'awaiting_input')
+              .setThreadCondition(thread.id, 'paused')
               .catch(() => undefined);
             await this.post(
               route,
@@ -1500,6 +1781,9 @@ export class ThreadDriver implements JobDispatcher {
             await this.store.markOperatorInputDelivered(job.id, questionId).catch(() => undefined);
             await this.store
               .setThreadStatus(thread.id, 'executing')
+              .catch(() => undefined);
+            await this.store
+              .setThreadCondition(thread.id, 'none')
               .catch(() => undefined);
             return { answer };
           } finally {
@@ -1734,11 +2018,18 @@ export class ThreadDriver implements JobDispatcher {
 
     if (effective.runtimeSurfaceTouched && !effective.liveVerificationAdequate) {
       let detail = [effective.reason, effective.missingChecks].filter(Boolean).join(' — ');
-      // Distinguish "no key configured" from a generic judge failure so an operator isn't left guessing.
+      // The judge was CONSULTED (runtime diff) but returned nothing → it was UNAVAILABLE, not a real
+      // "inadequate" verdict. Distinguish the two so a transient judge outage doesn't masquerade as unverified
+      // work: `judge_unavailable` HOLDS + retries (see `haltJob`) instead of burning the fix budget. A missing
+      // key is a real config gap the operator must fix, so that stays a plain `unverified` block.
+      let reason: 'unverified' | 'judge_unavailable' = 'unverified';
       if (!nonRuntime && !verdict) {
         const hasKey = await this.creds.anthropicKey(job.orgId).catch(() => undefined);
         if (!hasKey) {
           detail = `no Anthropic API key configured for the live-verification judge — configure one. (${detail})`;
+        } else {
+          reason = 'judge_unavailable';
+          detail = `live-verification judge temporarily unavailable (transient infra) — the work may be fine; will retry when the service recovers. (${detail})`;
         }
       }
       const blocked: ThreadTerminalRecord = {
@@ -1748,12 +2039,15 @@ export class ThreadDriver implements JobDispatcher {
         ...(candidate.verification ? { verification: candidate.verification } : {}),
         ...(candidate.deviations ? { deviations: candidate.deviations } : {}),
         ...(candidate.gaps ? { gaps: candidate.gaps } : {}),
-        blocked: { reason: 'unverified', detail },
+        blocked: { reason, detail },
         liveVerification: { verdict: effective },
       };
       return {
         record: blocked,
-        warning: `Downgraded to blocked (unverified) by the live-verification judge: ${detail}`,
+        warning:
+          reason === 'judge_unavailable'
+            ? `Live-verification judge unavailable (transient) — holding ${thread.brief} to retry, not counted against the fix budget: ${detail}`
+            : `Downgraded to blocked (unverified) by the live-verification judge: ${detail}`,
       };
     }
 
@@ -1910,7 +2204,7 @@ export class ThreadDriver implements JobDispatcher {
     // instead of restarting the batch. The seed is cleared the instant the fresh session is born (turn-runner
     // clear-on-birth). Mirrors the brain's `pending_compaction_seed` fold in `runChatTurnInner`.
     const legSeed = await this.store.getPendingLegSeed(anchor.id);
-    const task = legSeed ? `${legSeed}\n\n---\n\n${baseTask}` : baseTask;
+    const task = this.foldLegSeed(legSeed, baseTask);
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2025,7 +2319,7 @@ export class ThreadDriver implements JobDispatcher {
           );
           result = null;
           const seed = await this.store.getPendingLegSeed(anchor.id);
-          legTask = seed ? `${seed}\n\n---\n\n${baseTask}` : baseTask;
+          legTask = this.foldLegSeed(seed, baseTask);
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
           rotationState.softReached = false;
@@ -2039,7 +2333,7 @@ export class ThreadDriver implements JobDispatcher {
         // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
         result = null;
         const seed = await this.store.getPendingLegSeed(anchor.id);
-        legTask = seed ? `${seed}\n\n---\n\n${baseTask}` : baseTask;
+        legTask = this.foldLegSeed(seed, baseTask);
       }
       report = result!.report;
 
@@ -2205,7 +2499,7 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const spec = threadKindSpec(thread.kind);
     const metaTag = { phaseId: anchor.id, commitNudge: attempt };
-    const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
     const task =
       `You have UNCOMMITTED changes in the working tree, but the thread is otherwise finished. Commit them` +
       ` now: run \`git add -A\` (your \`.gitignore\` governs what's tracked — if build/cache junk appears,` +
@@ -2226,6 +2520,7 @@ export class ThreadDriver implements JobDispatcher {
           systemPrompt: renderAgentPrompt(spec.agent, {
             jobKind: job.kind,
             settings: { repoConventions },
+            turnPhase: 'commit',
           }),
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
@@ -2233,7 +2528,7 @@ export class ThreadDriver implements JobDispatcher {
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
-          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
+          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
           richStream: true,
           turnMeta: {
             jobId: job.id,
@@ -2304,6 +2599,7 @@ export class ThreadDriver implements JobDispatcher {
     );
     const harness = this.turnHarness.create({
       jobId: job.id,
+      orgId: job.orgId,
       channel: row.channel,
       lane,
       metaTag,
@@ -2327,6 +2623,12 @@ export class ThreadDriver implements JobDispatcher {
         // Persist nothing, finalize nothing (the row + streams are the next boot's re-attach anchor), and
         // crucially do NOT return null: that would re-kick a live engine's session. Propagate instead.
         this.logger.warn(`re-attach turn ${row.turn_id} detached — leaving it for the next boot`);
+        throw err;
+      }
+      if (isSessionLimitError(err)) {
+        // The re-attached turn ended cleanly on a Claude session limit. End the live lane without a text
+        // fallback and propagate so the top-level drive parks the build on the durable resume clock.
+        await harness.abort();
         throw err;
       }
       // The engine turn already finished (streams reaped) or its container is gone — persist partials, end
@@ -2363,7 +2665,7 @@ export class ThreadDriver implements JobDispatcher {
     rotation: { state: LegRotationRunState; thresholds: LegRotationThresholds } | null,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const anchor = steps[0];
-    const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
     // Engine / persona / reasoning effort come from the thread-kind spec (the prompt-kit `Agent` binding).
     // The master-review kind runs CODEX in execute mode over the whole diff (review + fix + verify) with a
     // dedicated persona + high reasoning effort; a builder runs Claude with the WORKER persona. `jobKind` is
@@ -2376,6 +2678,7 @@ export class ThreadDriver implements JobDispatcher {
     const systemPrompt = renderAgentPrompt(spec.agent, {
       jobKind: job.kind,
       settings: { repoConventions },
+      turnPhase: 'batch',
     });
     // Leg-rotation occupancy watch: fires SOFT once, then a REMINDER on each further +delta as this builder
     // session's main-agent context fills. Codex/master-review turns emit no per-call occupancy, so the watch
@@ -2434,7 +2737,7 @@ export class ThreadDriver implements JobDispatcher {
           ...(repoConventions ? { repoConventions } : {}),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
-          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
+          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
           // Mid-turn steering — armed for Claude builder turns so operator steers AND the engine-local
           // Leg-rotation SOFT/REMINDER nudges land in the LIVE turn (`priority:'now'`). Never for Codex (no
@@ -2592,6 +2895,16 @@ export class ThreadDriver implements JobDispatcher {
     const tasks = await this.store.getThreadTasks(threadId).catch(() => [] as TaskItem[]);
     const tasksBlock = renderOpenLegTasks(tasks);
     return [ROTATION_PREAMBLE, handoff, ...(tasksBlock ? [tasksBlock] : [])].join('\n\n');
+  }
+
+  /**
+   * Fold a rotation seed into the fresh Leg's turn task. The seed ({@link buildLegSeed} — preamble + handoff +
+   * carried checklist) leads so it lands in the PRIMACY slot; the original batch task sits in the middle; and the
+   * {@link ROTATION_RESUME_TAIL} operative directive trails LAST, in the RECENCY slot where LLM recall is highest.
+   * A non-rotated Leg (no seed) gets the bare batch task unchanged.
+   */
+  private foldLegSeed(seed: string | null, baseTask: string): string {
+    return seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask;
   }
 
   /**
@@ -2759,7 +3072,7 @@ export class ThreadDriver implements JobDispatcher {
     anchorStepId: string,
     toolBridge: ToolBridgeOptions,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>> | null> {
-    const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
     try {
       const result = await this.turn.reattach({
         turnId: row.turn_id,
@@ -2798,12 +3111,10 @@ export class ThreadDriver implements JobDispatcher {
     const bareName = e.name.startsWith(prefix) ? e.name.slice(prefix.length) : e.name;
     const impl = toolBridge.tools[bareName];
     if (!impl) return;
-    // The replayed `tool_use` carries `block.input` verbatim — the model's raw (often MIS-NESTED) payload:
-    // the proxy tools use a generic `{ args }` schema and the model double-wraps / stringifies against it
-    // (`{ args: { args: { passed: true } } }`, `{ args: "{…}" }`). Normalise it the same way the live dispatch
-    // does (`unwrapBridgeArgs`), or the handler reads `args['passed']` off a wrapper → undefined → a false
-    // `passed:false` → the gate falsely halts even though the orchestrator reported passed.
-    void impl(unwrapBridgeArgs(e.input));
+    // The replayed `tool_use` carries `block.input` verbatim — the model's FLAT payload against the tool's
+    // real per-tool schema (no `{ args }` wrapper), already strict-validated client-side — so the replay
+    // path drives the handler with it directly, exactly like the live dispatch.
+    void impl((e.input ?? {}) as Record<string, unknown>);
   }
 
   /** KICK a fresh gate-iteration turn — resumes the orchestrator's persisted session (via `stepId`) with the
@@ -2823,7 +3134,7 @@ export class ThreadDriver implements JobDispatcher {
     toolBridge: ToolBridgeOptions,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const metaTag = { phaseId: anchor.id, gateIteration: iteration };
-    const harness = this.turnHarness.create({ jobId: job.id, channel, lane, metaTag });
+    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
     // Surface this gate iteration's directive (the verify/fix task the orchestrator resumes with) on the
     // build lane, inline before its activity — the gate resumes the build session with no anchor of its own,
     // so without this the operator sees the fix work but never what was asked. Keyed per (step, iteration)
@@ -2843,6 +3154,7 @@ export class ThreadDriver implements JobDispatcher {
           systemPrompt: renderAgentPrompt(Agent.WORKER, {
             jobKind: job.kind,
             settings: { repoConventions },
+            turnPhase: 'gate',
           }),
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
@@ -2852,7 +3164,7 @@ export class ThreadDriver implements JobDispatcher {
           ...(threadKindSpec('builder').reasoningEffort
             ? { modelReasoningEffort: threadKindSpec('builder').reasoningEffort }
             : {}),
-          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
+          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
           richStream: true,
           toolBridge,
           turnMeta: {
@@ -3193,18 +3505,11 @@ export function renderBatchTask(
 }
 
 /**
- * Shared writer instruction — YOU (the writer session) own the commit. The host no longer commits your
- * work; it only reads what you leave. So before you call `complete_thread`, LEAVE A CLEAN TREE: stage,
- * commit, and push your own changes. `.gitignore` governs what's tracked — if build/cache junk (a
- * package store, node_modules, a build dir) shows up in `git status`, add it to `.gitignore` rather than
- * committing it. Used by every writer prompt (builder batch, verification gate, master-review).
+ * The batch writer's commit instruction — the shared `COMMIT_AND_PUSH_NOTE`, prefixed with the leading
+ * newline the surrounding task body splices on. YOU (the writer session) own the commit: the host reads what
+ * you leave and does NOT commit for you, so leave a CLEAN tree before you call `complete_thread`.
  */
-export const COMMIT_AND_PUSH_INSTRUCTION =
-  `\nCOMMIT YOUR WORK (required — the host does NOT commit for you): once the work is done and verified,` +
-  ` run \`git add -A\` (your \`.gitignore\` governs what's tracked; if build or cache junk appears in` +
-  ` \`git status\`, add it to \`.gitignore\` instead of committing it), commit with a clear message, and` +
-  ` \`git push\` your branch. Leave the working tree CLEAN. THEN call \`complete_thread\`. If you finish` +
-  ` without committing, your work is treated as unfinished.`;
+export const COMMIT_AND_PUSH_INSTRUCTION = '\n' + COMMIT_AND_PUSH_NOTE;
 
 /**
  * Render the durable halt trail for `/context/generated/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
@@ -3216,6 +3521,7 @@ export function renderCompletionMd(
   outcome: 'blocked' | 'incomplete' | 'failed',
   term: ThreadTerminalRecord | null,
   at: string,
+  anchor?: SessionAnchor,
 ): string {
   const lines: string[] = [
     `# Thread halted: ${thread.brief}`,
@@ -3224,6 +3530,12 @@ export function renderCompletionMd(
     `- **Thread:** \`${thread.id}\` (ordinal ${thread.ordinal})`,
     `- **When:** ${at}`,
   ];
+  if (anchor)
+    lines.push(
+      `- **Transcript:** session \`${anchor.sessionId}\`${
+        anchor.legOrdinal ? ` (Leg ${anchor.legOrdinal})` : ''
+      } — \`atlas-tx show ${anchor.sessionId}\``,
+    );
   if (term?.summary) lines.push(``, `## Summary`, term.summary);
   if (term?.blocked) {
     lines.push(
@@ -3279,10 +3591,7 @@ export function renderMasterReviewTask(record: DecisionRecord | null, repo: Reso
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nThis is the FINAL review-and-fix pass over the whole feature branch before its pull request opens.`,
-    `\nTRACK YOUR WORK: use the \`task_create\` / \`task_update\` host tools (the "atlasbridge" MCP server) to` +
-      ` keep a live checklist the operator can watch — up front, \`task_create\` one task for each step below,` +
-      ` then \`task_update({ taskId, status: "in_progress" })\` as you start each and \`"completed"\` when it's` +
-      ` done (\`task_create\` returns the id to pass back). Keep exactly one task in_progress at a time.`,
+    `\nTRACK YOUR WORK: ${CODEX_TASK_LIST_NOTE} Up front, \`task_create\` one task for each step below.`,
     `\n1. Review the whole merged diff: \`git diff origin/${repo.defaultBranch}...HEAD\`. Look for real,` +
       ` in-scope defects — correctness bugs, security issues, and cross-thread integration mistakes (where` +
       ` two threads' changes don't line up). Ignore style nits and anything outside this feature's scope.`,
@@ -3316,12 +3625,6 @@ export function renderGateTask(
     : '';
   return [
     `Verification gate (required before your work is accepted) — attempt ${iteration}.`,
-    `\nTHIS TURN'S TOOLS ARE DIFFERENT from your last one: the ONLY host tool available right now is` +
-      ` \`report_verification\`. Your system prompt's mention of \`complete_thread\`/\`request_operator_input\`` +
-      ` describes the BATCH turn you just finished, not this one — they are NOT callable here, and you` +
-      ` already called \`complete_thread\` to get here. Do not ask the operator anything; just do the work` +
-      ` below and call \`report_verification\` when you're done — it IS registered for this turn even though` +
-      ` your system prompt doesn't mention it by name.`,
     `\nThis thread's changes touched these files:\n${fileList}`,
     priorBlock,
     `\n1. Run \`mcp__atlas-lsp-ts__diagnostics\` on each changed file above — a fast per-file check.`,
@@ -3392,3 +3695,10 @@ export function shortReason(err: unknown): string {
   return detail.length > 500 ? `${detail.slice(0, 497)}...` : detail || 'unknown error';
 }
 
+/** Render a session-limit reset instant as a short human time (e.g. "3:20 PM"); falls back to the raw ISO
+ *  string if it can't be parsed. Kept simple + STABLE so the park notice dedupes on exact text. */
+export function fmtReset(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}

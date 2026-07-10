@@ -648,6 +648,55 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(Number(dupCount[0].n)).toBe(1);
   }, 30_000);
 
+  it('recordSystemChunk stashes the raw fullBody in meta when given, and omits it otherwise', async () => {
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active') ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, 'brainstore-fullbody-it', 'FullBody Repo', 'https://github.com/acme/fullbody.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+      [TEAM_ID],
+    );
+    const [thread]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
+         VALUES ($1, $2, 'chat', 'fullbody') RETURNING id`,
+      [TEAM_ID, repoRow.id],
+    );
+    const jobId = thread.id;
+
+    // A curated pill whose collapsed label is short, but the raw payload delivered to the engine is fuller.
+    const rawPayload =
+      '<system_notice>The MCP `Direct build` call failed: fields must be wrapped under `args`.</system_notice>';
+    await store.recordSystemChunk({
+      jobId,
+      kind: 'system_notice',
+      text: 'A harness system notification was delivered to Atlas.',
+      chunkKey: `seed:fullbody:${jobId}:with`,
+      fullBody: rawPayload,
+    });
+    // A row whose text already IS the full body carries no redundant fullBody.
+    await store.recordSystemChunk({
+      jobId,
+      kind: 'system_notice',
+      text: 'Opening the pull request.',
+      chunkKey: `seed:fullbody:${jobId}:without`,
+    });
+
+    const withRow: Array<{ meta: Record<string, unknown> }> = await dataSource.query(
+      `SELECT meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
+      [jobId, `seed:fullbody:${jobId}:with`],
+    );
+    const withoutRow: Array<{ meta: Record<string, unknown> }> = await dataSource.query(
+      `SELECT meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
+      [jobId, `seed:fullbody:${jobId}:without`],
+    );
+    expect(withRow[0].meta.fullBody).toBe(rawPayload);
+    expect(withoutRow[0].meta.fullBody).toBeUndefined();
+  }, 30_000);
+
   it('withdrawPlan on an awaiting job atomically flips it back to planning and supersedes the draft record', async () => {
     const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-withdraw-it');
     await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'withdraw me', kind: 'feature' });
@@ -698,7 +747,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
     // The operator's approve click races in AFTER the withdraw — the guard (status='awaiting_approval')
     // already failed, so it must approve NOTHING.
-    expect(await store.approve(jobId, decisionRecordId, approverId)).toBeNull();
+    expect(await store.approve(jobId, decisionRecordId, approverId, 'plan')).toBeNull();
     expect(await jobStatus(dataSource, jobId)).toBe('planning');
     expect(await recordStatus(dataSource, decisionRecordId)).toBe('superseded');
   }, 30_000);
@@ -718,10 +767,11 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       threadTitles: ['backend'],
     });
 
-    const running = await store.approve(jobId, decisionRecordId, approverId);
+    const running = await store.approve(jobId, decisionRecordId, approverId, 'plan');
 
     expect(running?.status).toBe('running');
     expect(await recordStatus(dataSource, decisionRecordId)).toBe('approved');
+    expect(await buildPath(dataSource, jobId)).toBe('plan');
   }, 30_000);
 
   it('VERSION PIN: a stale approve on the superseded R1 record fails the guard; approve on the current R2 record succeeds (the exact stale-card scenario)', async () => {
@@ -753,12 +803,12 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
     // A stale click on the R1 card: the job is still awaiting_approval, but decision_record_id now points
     // at R2, so the guard on R1 fails → null, and nothing about the job changes.
-    expect(await store.approve(jobId, r1.decisionRecordId, approverId)).toBeNull();
+    expect(await store.approve(jobId, r1.decisionRecordId, approverId, 'plan')).toBeNull();
     expect(await jobStatus(dataSource, jobId)).toBe('awaiting_approval'); // still pointing at R2
     expect(await recordStatus(dataSource, r1.decisionRecordId)).toBe('superseded');
 
     // The CURRENT card (R2) approves cleanly.
-    const running = await store.approve(jobId, r2.decisionRecordId, approverId);
+    const running = await store.approve(jobId, r2.decisionRecordId, approverId, 'plan');
     expect(running?.status).toBe('running');
     expect(await recordStatus(dataSource, r2.decisionRecordId)).toBe('approved');
   }, 30_000);
@@ -861,6 +911,15 @@ async function draftCount(ds: DataSource, jobId: string): Promise<number> {
 /** The job row's current status (reuses `loadThreadRow`'s underlying query, narrowed to just the field). */
 async function jobStatus(ds: DataSource, jobId: string): Promise<string | null> {
   return (await loadThreadRow(ds, jobId))?.status ?? null;
+}
+
+/** The committed build path stamped by `approve()` ('direct' | 'plan'), or null before any approval. */
+async function buildPath(ds: DataSource, jobId: string): Promise<string | null> {
+  const rows: Array<{ build_path: string | null }> = await ds.query(
+    `SELECT build_path FROM jobs WHERE id = $1`,
+    [jobId],
+  );
+  return rows[0]?.build_path ?? null;
 }
 
 /** The sentinel approver's email — `decision_records.approved_by` FK's into `users`, so approve() tests

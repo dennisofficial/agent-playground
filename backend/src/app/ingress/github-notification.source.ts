@@ -2,6 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
+  CiSyncDelta,
   EventSeverity,
   IngressResult,
   NotificationSource,
@@ -51,19 +52,53 @@ export class GithubNotificationSource implements NotificationSource {
   async handle(raw: RawNotification): Promise<IngressResult> {
     const g = await this.verifyAndRoute(raw);
     if ('outcome' in g) return g;
+    return this.buildTriage(g, raw);
+  }
 
+  /**
+   * The same work-events front door as `handle`, but also correlates the payload into a `CiSyncDelta`
+   * for the silent CI-status sync — non-null ONLY for the three CI event types. The two are computed
+   * from the SAME verified/routed payload so they can never disagree.
+   */
+  async handleWorkEvent(
+    raw: RawNotification,
+  ): Promise<{ triage: IngressResult; ci: CiSyncDelta | null }> {
+    const g = await this.verifyAndRoute(raw);
+    if ('outcome' in g) return { triage: g, ci: null };
+    const triage = this.buildTriage(g, raw);
+    const ci = parseCiDelta(g.eventType, g.route, g.body);
+    return { triage, ci };
+  }
+
+  /** Build the work-events triage result from an already verified+routed payload. */
+  private buildTriage(
+    g: {
+      eventType: string;
+      body: GithubWebhookBody;
+      route: { orgId: string; repoId: string };
+    },
+    raw: RawNotification,
+  ): IngressResult {
     const summary = summarizeGithubEvent(g.eventType, g.body);
     if (!summary) {
       // A verified payload we deliberately don't act on (e.g. a successful run, a push event, a
       // pull_request — that one's routed via `handlePrWebhook` instead).
-      return { outcome: 'ignored', reason: 'unsupported', detail: `github ${g.eventType} (no action)` };
+      return {
+        outcome: 'ignored',
+        reason: 'unsupported',
+        detail: `github ${g.eventType} (no action)`,
+      };
     }
 
     const event: ParsedEvent = {
       orgId: g.route.orgId,
       repoId: g.route.repoId,
       source: this.source,
-      dedupeKey: deriveDedupeKey(g.eventType, g.body, raw.headers['x-github-delivery']),
+      dedupeKey: deriveDedupeKey(
+        g.eventType,
+        g.body,
+        raw.headers['x-github-delivery'],
+      ),
       severity: summary.severity,
       body: summary.body,
       ...(summary.correlation ? { correlation: summary.correlation } : {}),
@@ -79,8 +114,15 @@ export class GithubNotificationSource implements NotificationSource {
   async handlePrWebhook(raw: RawNotification): Promise<IngressResult> {
     const g = await this.verifyAndRoute(raw);
     if ('outcome' in g) return g;
+    if (g.eventType === 'push') {
+      return this.parsePush(g.route, g.body);
+    }
     if (g.eventType !== 'pull_request') {
-      return { outcome: 'ignored', reason: 'unsupported', detail: `github ${g.eventType} (not a pull_request event)` };
+      return {
+        outcome: 'ignored',
+        reason: 'unsupported',
+        detail: `github ${g.eventType} (not a pull_request event)`,
+      };
     }
     return this.parsePullRequest(g.route, g.body);
   }
@@ -92,30 +134,57 @@ export class GithubNotificationSource implements NotificationSource {
    */
   private async verifyAndRoute(
     raw: RawNotification,
-  ): Promise<IngressResult | { eventType: string; body: GithubWebhookBody; route: { orgId: string; repoId: string } }> {
+  ): Promise<
+    | IngressResult
+    | {
+        eventType: string;
+        body: GithubWebhookBody;
+        route: { orgId: string; repoId: string };
+      }
+  > {
     const secret = this.env.get('GITHUB_WEBHOOK_SECRET');
     if (!secret) {
       this.logger.warn('GITHUB_WEBHOOK_SECRET unset — refusing GitHub webhook');
-      return { outcome: 'rejected', reason: 'unverifiable', detail: 'no webhook secret configured' };
+      return {
+        outcome: 'rejected',
+        reason: 'unverifiable',
+        detail: 'no webhook secret configured',
+      };
     }
 
     const signature = raw.headers['x-hub-signature-256'];
     if (!signature) {
-      return { outcome: 'rejected', reason: 'unverifiable', detail: 'missing X-Hub-Signature-256' };
+      return {
+        outcome: 'rejected',
+        reason: 'unverifiable',
+        detail: 'missing X-Hub-Signature-256',
+      };
     }
     if (!verifyGithubSignature(raw.rawBody, signature, secret)) {
-      return { outcome: 'rejected', reason: 'bad-signature', detail: 'X-Hub-Signature-256 mismatch' };
+      return {
+        outcome: 'rejected',
+        reason: 'bad-signature',
+        detail: 'X-Hub-Signature-256 mismatch',
+      };
     }
 
     const eventType = raw.headers['x-github-event'] ?? 'unknown';
     if (eventType === 'ping') {
-      return { outcome: 'ignored', reason: 'unsupported', detail: 'github ping' };
+      return {
+        outcome: 'ignored',
+        reason: 'unsupported',
+        detail: 'github ping',
+      };
     }
 
     const body = raw.body as GithubWebhookBody;
     const repo = body?.repository?.full_name;
     if (!repo) {
-      return { outcome: 'rejected', reason: 'malformed', detail: 'missing repository.full_name' };
+      return {
+        outcome: 'rejected',
+        reason: 'malformed',
+        detail: 'missing repository.full_name',
+      };
     }
 
     // A GitHub payload carries no Slack team id — the repo IS the tenant key. Route across all
@@ -123,7 +192,11 @@ export class GithubNotificationSource implements NotificationSource {
     // per-payload team). Unknown repo → unroutable (Atlas never works a repo it doesn't own).
     const route = await this.routing.routeGithubRepo(repo);
     if (!route) {
-      return { outcome: 'rejected', reason: 'unroutable', detail: `no atlas_project for repo ${repo}` };
+      return {
+        outcome: 'rejected',
+        reason: 'unroutable',
+        detail: `no atlas_project for repo ${repo}`,
+      };
     }
 
     return { eventType, body, route };
@@ -136,11 +209,19 @@ export class GithubNotificationSource implements NotificationSource {
   ): IngressResult {
     const action = body.action;
     if (action !== 'opened' && action !== 'reopened' && action !== 'closed') {
-      return { outcome: 'ignored', reason: 'unsupported', detail: `github pull_request ${action ?? '?'} (no action)` };
+      return {
+        outcome: 'ignored',
+        reason: 'unsupported',
+        detail: `github pull_request ${action ?? '?'} (no action)`,
+      };
     }
     const pr = body.pull_request;
     if (pr?.number == null) {
-      return { outcome: 'ignored', reason: 'unsupported', detail: 'pull_request missing number' };
+      return {
+        outcome: 'ignored',
+        reason: 'unsupported',
+        detail: 'pull_request missing number',
+      };
     }
     const delta: PrStateDelta = {
       orgId: route.orgId,
@@ -153,12 +234,30 @@ export class GithubNotificationSource implements NotificationSource {
     };
     return { outcome: 'pr-sync', delta };
   }
+
+  /**
+   * Parse a `push` webhook: only a push to the repo's DEFAULT branch is a base-move that can silently
+   * conflict its open PRs (`ref === refs/heads/<default_branch>`). Emit `repo-push` for those (the state
+   * door then marks the repo's open PRs due-now); ignore every other push (feature-branch pushes are the
+   * PR's own head moving — GitHub recomputes + the ~45s cadence already catches those). Deletes
+   * (`ref` gone / no default_branch) are ignored.
+   */
+  private parsePush(route: { orgId: string; repoId: string }, body: GithubWebhookBody): IngressResult {
+    const ref = body.ref;
+    const defaultBranch = body.repository?.default_branch;
+    if (!ref || !defaultBranch || ref !== `refs/heads/${defaultBranch}`) {
+      return { outcome: 'ignored', reason: 'unsupported', detail: `github push to non-default ref ${ref ?? '?'}` };
+    }
+    return { outcome: 'repo-push', orgId: route.orgId, repoId: route.repoId };
+  }
 }
 
 /** The subset of a GitHub webhook body the adapter reads. */
 interface GithubWebhookBody {
   action?: string;
-  repository?: { full_name?: string };
+  /** The `push` event's fully-qualified ref, e.g. `refs/heads/main` (default-branch pushes matter). */
+  ref?: string;
+  repository?: { full_name?: string; default_branch?: string };
   workflow_run?: {
     id?: number;
     name?: string;
@@ -167,7 +266,7 @@ interface GithubWebhookBody {
     html_url?: string;
     head_branch?: string;
     head_sha?: string;
-    pull_requests?: Array<{ number?: number }>;
+    pull_requests?: Array<{ number?: number; head?: { ref?: string } }>;
   };
   check_run?: {
     id?: number;
@@ -177,7 +276,7 @@ interface GithubWebhookBody {
     html_url?: string;
     head_sha?: string;
     check_suite?: { head_branch?: string };
-    pull_requests?: Array<{ number?: number }>;
+    pull_requests?: Array<{ number?: number; head?: { ref?: string } }>;
   };
   check_suite?: {
     id?: number;
@@ -187,9 +286,25 @@ interface GithubWebhookBody {
     head_sha?: string;
     pull_requests?: Array<{ number?: number }>;
   };
-  pull_request?: { number?: number; html_url?: string; merged?: boolean; head?: { ref?: string } };
-  review?: { id?: number; state?: string; body?: string | null; html_url?: string; user?: { login?: string } };
-  comment?: { id?: number; body?: string | null; html_url?: string; user?: { login?: string } };
+  pull_request?: {
+    number?: number;
+    html_url?: string;
+    merged?: boolean;
+    head?: { ref?: string };
+  };
+  review?: {
+    id?: number;
+    state?: string;
+    body?: string | null;
+    html_url?: string;
+    user?: { login?: string };
+  };
+  comment?: {
+    id?: number;
+    body?: string | null;
+    html_url?: string;
+    user?: { login?: string };
+  };
   issue?: { number?: number; pull_request?: unknown };
   sender?: { login?: string; type?: string };
 }
@@ -202,7 +317,11 @@ interface EventSummary {
 }
 
 /** Verify GitHub's `sha256=<hex>` HMAC of the raw bytes, constant-time. */
-export function verifyGithubSignature(rawBody: Buffer, signature: string, secret: string): boolean {
+export function verifyGithubSignature(
+  rawBody: Buffer,
+  signature: string,
+  secret: string,
+): boolean {
   const expected = `sha256=${createHmac('sha256', secret).update(rawBody).digest('hex')}`;
   const a = Buffer.from(expected);
   const b = Buffer.from(signature);
@@ -228,7 +347,10 @@ function summarizeGithubEvent(
       return {
         severity: 'critical',
         body: `GitHub Actions workflow "${run.name ?? 'unknown'}" ${run.conclusion} in ${repo}.\n${run.html_url ?? ''}`.trim(),
-        correlation: { branch: run.head_branch ?? null, prNumber: run.pull_requests?.[0]?.number ?? null },
+        correlation: {
+          branch: run.head_branch ?? null,
+          prNumber: run.pull_requests?.[0]?.number ?? null,
+        },
       };
     }
     return null;
@@ -241,7 +363,7 @@ function summarizeGithubEvent(
         severity: 'critical',
         body: `GitHub check "${check.name ?? 'unknown'}" ${check.conclusion} in ${repo}.\n${check.html_url ?? ''}`.trim(),
         correlation: {
-          branch: check.check_suite?.head_branch ?? null,
+          branch: checkRunBranch(check),
           prNumber: check.pull_requests?.[0]?.number ?? null,
         },
       };
@@ -255,7 +377,10 @@ function summarizeGithubEvent(
       return {
         severity: 'critical',
         body: `GitHub check suite failed on branch "${suite.head_branch ?? '?'}" in ${repo}.`,
-        correlation: { branch: suite.head_branch ?? null, prNumber: suite.pull_requests?.[0]?.number ?? null },
+        correlation: {
+          branch: suite.head_branch ?? null,
+          prNumber: suite.pull_requests?.[0]?.number ?? null,
+        },
       };
     }
     return null;
@@ -304,6 +429,45 @@ function summarizeGithubEvent(
 }
 
 /**
+ * Correlation delta for the silent CI-status sync — non-null ONLY for the three CI event types. We do
+ * NOT gate on conclusion/status: recompute on ANY CI event (queued/in_progress included) so "running" is
+ * caught, not only terminal states. Carries only correlation keys (never the webhook's own head_sha).
+ */
+function parseCiDelta(
+  eventType: string,
+  route: { orgId: string; repoId: string },
+  body: GithubWebhookBody,
+): CiSyncDelta | null {
+  if (
+    eventType !== 'workflow_run' &&
+    eventType !== 'check_run' &&
+    eventType !== 'check_suite'
+  )
+    return null;
+  const prNumber =
+    body.workflow_run?.pull_requests?.[0]?.number ??
+    body.check_run?.pull_requests?.[0]?.number ??
+    body.check_suite?.pull_requests?.[0]?.number ??
+    null;
+  const branch =
+    body.workflow_run?.head_branch ??
+    (body.check_run ? checkRunBranch(body.check_run) : null) ??
+    body.check_suite?.head_branch ??
+    null;
+  return { orgId: route.orgId, repoId: route.repoId, prNumber, branch };
+}
+
+function checkRunBranch(
+  check: NonNullable<GithubWebhookBody['check_run']>,
+): string | null {
+  return (
+    check.check_suite?.head_branch ??
+    check.pull_requests?.[0]?.head?.ref ??
+    null
+  );
+}
+
+/**
  * Derive the collapse key so ONE logical failure = one job, not one-per-webhook.
  *
  * CI events fan out: a single failing commit emits `workflow_run` + `check_suite` + N×`check_run`,
@@ -321,7 +485,9 @@ function deriveDedupeKey(
   deliveryId: string | undefined,
 ): string {
   const ciSha =
-    body.workflow_run?.head_sha ?? body.check_run?.head_sha ?? body.check_suite?.head_sha;
+    body.workflow_run?.head_sha ??
+    body.check_run?.head_sha ??
+    body.check_suite?.head_sha;
   if (ciSha) return `ci:${ciSha}`;
   const groupId =
     body.workflow_run?.id ??
@@ -329,6 +495,7 @@ function deriveDedupeKey(
     body.check_suite?.id ??
     body.review?.id ??
     body.comment?.id;
-  if (groupId !== undefined && groupId !== null) return `${eventType}:${groupId}`;
+  if (groupId !== undefined && groupId !== null)
+    return `${eventType}:${groupId}`;
   return `delivery:${deliveryId ?? 'unknown'}`;
 }

@@ -81,6 +81,8 @@ export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
       <div
         ref={tail.scrollRef}
         onScroll={tail.onScroll}
+        onPointerOver={tail.onPointerOver}
+        onPointerLeave={tail.onPointerLeave}
         className="h-full overflow-y-auto px-4 py-3"
         style={{ background: "var(--term)" }}
       >

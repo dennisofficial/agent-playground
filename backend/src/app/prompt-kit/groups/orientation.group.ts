@@ -7,22 +7,18 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
-import { SUBAGENT_NUDGE_NOTE, VERIFY_CURRENCY } from '../fragments';
+import { DOCS_BEFORE_GREP, SUBAGENT_NUDGE_NOTE, VERIFY_CURRENCY } from '../fragments';
 
 @FragmentGroup()
 export class OrientationGroup {
-  /** normal block 08 — investigate first / docs before grep / delegate / other subagents / web access. */
+  /** Investigate first / docs before grep / delegate / other subagents / web access. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1080, condition: notOnboarding })
   investigate(): string {
     return [
       'INVESTIGATE FIRST: before proposing anything, ground yourself in the repo with Read/Glob/Grep (stack,',
       'structure, conventions, the exact files you will touch). Never ask the operator anything the repo',
       'already answers (tech stack, file existence, tooling, how the codebase does something).',
-      'DOCS BEFORE GREP: if the repo has orienting docs — CLAUDE.md, AGENTS.md, README.md, ARCHITECTURE.md,',
-      'CONTRIBUTING.md, docs/ — READ those FIRST; they are the human-curated map and let you skip a grep-storm',
-      'to rediscover where things live and how this codebase does things. Then Read/Glob/Grep to confirm the',
-      'specific files you will touch. Treat docs as orientation that may be stale — the CODE is authoritative;',
-      'where a doc and the code disagree, trust the code.',
+      DOCS_BEFORE_GREP,
       'DELEGATE BIG INVESTIGATIONS — THIS IS HOW YOU STAY LEAN: for anything beyond a couple of reads — tracing',
       'how a feature works across many files, mapping conventions in an unfamiliar area, or researching a library',
       '— spawn the read-only `explore` subagent via the Task tool (Task({ subagent_type: "explore", description,',
@@ -52,7 +48,7 @@ export class OrientationGroup {
     ].join('\n');
   }
 
-  /** onboarding block 02 — the grounding gate + bring-up Loop (steps 1-5). */
+  /** The onboarding grounding gate + bring-up Loop. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2020, condition: isOnboarding })
   onboardingLoop(): string {
     return [
@@ -127,7 +123,7 @@ export class OrientationGroup {
     ].join('\n');
   }
 
-  /** onboarding block 04 — dev logins for validation. */
+  /** Dev logins for validation. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2040, condition: isOnboarding })
   devLogins(): string {
     return [

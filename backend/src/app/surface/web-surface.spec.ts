@@ -24,9 +24,11 @@ import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
+  RETRACT_SHIP_ACTION_ID,
+  SHIP_ACTION_ID,
 } from './approval-blocks';
 import type { DecisionApprovalCard } from './approval-blocks';
-import { webApprovalCard, webVerdictCard, parseWebApprovalMeta } from './web-approval-card';
+import { webApprovalCard, webShipReviewCard, webVerdictCard, parseWebApprovalMeta } from './web-approval-card';
 
 // ── Fixtures ──────────────────────────────────��──────────────────────────���──────────────────────
 
@@ -347,6 +349,27 @@ describe('webApprovalCard (pure builder)', () => {
     expect(styles[APPROVE_ACTION_ID]).toBe('primary');
     expect(styles[DENY_ACTION_ID]).toBe('danger');
     expect(styles[REQUEST_CHANGES_ACTION_ID]).toBeUndefined();
+  });
+
+  it('ship-review cards expose both ship and retract actions', () => {
+    const card = webShipReviewCard({
+      jobId: 'job-ship',
+      title: 'Ready to ship',
+      summary: 'Reviewed.',
+    });
+
+    const actions = new Map(card.actions.map((a) => [a.actionId, a]));
+    expect(actions.get(SHIP_ACTION_ID)).toMatchObject({
+      label: 'Ship it',
+      style: 'primary',
+    });
+    expect(actions.get(RETRACT_SHIP_ACTION_ID)).toMatchObject({
+      label: 'Back to building',
+      style: 'default',
+    });
+    expect(parseWebApprovalMeta(actions.get(RETRACT_SHIP_ACTION_ID)!.value)).toEqual({
+      jobId: 'job-ship',
+    });
   });
 });
 

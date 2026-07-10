@@ -38,11 +38,33 @@ export type JobStatus =
  * `kind` distinguishes consumer behavior: `blocked_credentials` drives request-secret / needs-you;
  * `failed`/`incomplete` are build failures; `budget_exhausted` is a rest-until-re-armed halt.
  */
-export type JobHaltKind = 'failed' | 'blocked_credentials' | 'budget_exhausted' | 'incomplete';
+export type JobHaltKind =
+  | 'failed'
+  | 'blocked_credentials'
+  | 'budget_exhausted'
+  | 'incomplete'
+  | 'session_limit'; // parked on a Claude session/usage limit; auto-resumes at resumeAt
 export type JobHalt = {
   kind: JobHaltKind;
   /** Short human string (what `relayFailure` already computes via `shortReason`). */
   reason: string;
   /** ISO timestamp the halt was recorded. */
   at: string;
+  /** ISO reset timestamp; when set, the lane auto-resumes once it passes (session_limit halts). */
+  resumeAt?: string;
 };
+
+/**
+ * The orthogonal "system is working" axis on a job — what the AI/pipeline is DOING right now, separate
+ * from the build PHASE (`JobStatus`) and the failure gate (`JobHalt`). Any non-`idle` value means the
+ * system owns the next step, so the sidebar suppresses the "needs you" dot (see `deriveNeedsYou`). It is
+ * ephemeral: reset to `idle` on boot (no in-flight work survives a process restart). The DB column stays
+ * `text` (the repo's status-column convention), with the union enforced in TS at every boundary.
+ *
+ *  - `turn`          — a live conversational (brain) turn is streaming.
+ *  - `plan_review`   — a synchronous Codex plan review is in flight (outranks a `turn` it nests inside).
+ *  - `build`         — the driver is executing a builder thread.
+ *  - `master_review` — the driver is running the whole-diff master review.
+ */
+export const JOB_ACTIVITIES = ['idle', 'turn', 'plan_review', 'build', 'master_review'] as const;
+export type JobActivity = (typeof JOB_ACTIVITIES)[number];

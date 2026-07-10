@@ -1,29 +1,29 @@
 /**
- * prompt-kit / groups / job-kind — the "JOB KIND — …" orientation block that the legacy composer appended
- * via `jobKindFragment(kind)` (see `compose.ts`). Reproduced here as gated fragments so the assembled brain
- * prompt carries the same block. `onboarding` intentionally has NO fragment (`jobKindFragment('onboarding')`
- * is empty — the onboarding persona owns that framing).
+ * prompt-kit / groups / job-kind — gated `@Fragment` methods (one per build `jobKind`) that emit the
+ * "JOB KIND — …" orientation block for `Agent.ATLAS_MAIN`. `onboarding` intentionally has NO fragment
+ * (`jobKindFragment('onboarding')` is empty — the onboarding persona owns that framing); same for `review`
+ * (the ReviewGroup persona owns it).
  *
- * Ordered `19xx` — after all body fragments, before the behavioral tail (matching the composer's order).
+ * Ordered `19xx` — after all body fragments, before the behavioral tail.
  */
 import { Agent } from '../agent';
+import { jobKindIs } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { jobKindFragment } from '../job-kind';
-import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()
 export class JobKindGroup {
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1900, condition: (c: PromptCtx) => c.jobKind === 'feature' })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1900, condition: jobKindIs('feature') })
   feature(): string {
     return jobKindFragment('feature');
   }
 
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1901, condition: (c: PromptCtx) => c.jobKind === 'bugfix' })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1901, condition: jobKindIs('bugfix') })
   bugfix(): string {
     return jobKindFragment('bugfix');
   }
 
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1902, condition: (c: PromptCtx) => c.jobKind === 'event' })
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1902, condition: jobKindIs('event') })
   event(): string {
     return jobKindFragment('event');
   }

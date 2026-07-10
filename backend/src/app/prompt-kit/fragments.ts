@@ -1,18 +1,18 @@
 /**
  * prompt-kit / fragments — the single HOME for reusable system-prompt fragment TEXT.
  *
- * A "fragment" is a named block of prose that more than one prompt wants to share, or that we want to be
- * able to change in ONE place and have reach every consumer at once. Fragments do NOT dictate their own
- * position — each prompt body splices them where it wants (head / tail / embedded); see `compose.ts` and
- * the relocated bodies under `bodies/`.
+ * A "fragment" here is an exported prose const that more than one `@Fragment` method wants to share, or
+ * that we want to be able to change in ONE place and have reach every consumer at once. The consts do NOT
+ * dictate their own position — each `groups/*.ts` `@Fragment` method splices the const where it wants
+ * (head / tail / embedded).
  *
  * Buckets (by the audience a fragment is FOR):
  *   - GLOBAL   — cross-cutting truths every in-sandbox agent needs (where it runs, the scratch pad).
  *   - WORKER   — the build/execute + ship agents that actually change code and run things.
- *   - PLANNING — the planning-side (brain intent/plan + the thread planner).
+ *   - PLANNING — the planning-side (the brain's intent + plan surfaces).
  *
- * The three BEHAVIORAL fragments (validate-by-running / spike-first / baseline-first) live here too; they
- * are wired into the layers in `layers.ts`.
+ * The three BEHAVIORAL fragments (validate-by-running / spike-first / baseline-first) live here too; see
+ * the banner below.
  */
 
 // ── GLOBAL ──────────────────────────────────────────────────────────────────────────────────────────
@@ -89,6 +89,19 @@ export const TASK_LIST_NOTE =
   "and drop ones that become moot (`TaskUpdate` with `status:'deleted'`). A stale checklist is worse than none.";
 
 /**
+ * CODEX task-list discipline — the Codex-tool-name SIBLING of {@link TASK_LIST_NOTE}. Codex threads drive the
+ * live checklist through the host bridge's snake_case `task_create`/`task_update` tools (the "atlasbridge" MCP
+ * server), NOT Claude Code's `TaskCreate`/`TaskUpdate`, so the two notes stay distinct. Shared by the Codex
+ * master-review persona (`ship.group`) and the driver's master-review task body. Each consumer prepends its own
+ * lead-in ("TASK LIST — " / "TRACK YOUR WORK: ") and appends its own seeding rule.
+ */
+export const CODEX_TASK_LIST_NOTE =
+  'keep a live checklist via the `task_create` / `task_update` host tools (from the "atlasbridge" MCP ' +
+  'server) so the operator can watch your progress: `task_create` returns a task id, and ' +
+  '`task_update({ taskId, status: "in_progress" })` as you start each item and `"completed"` when it is ' +
+  'done, keeping exactly one task in_progress at a time.';
+
+/**
  * The canonical "what a code review covers" list — the single home so every review surface (the ship-time
  * master review + the `review` subagent) hunts the SAME dimensions and the final gate can't be narrower
  * than the per-step one. A noun-phrase list meant to slot into "find …". The autofix lenses
@@ -99,19 +112,13 @@ export const REVIEW_SCOPE_NOTE =
   "or error handling, violations of the conventions this repo already follows, and seams where " +
   'separately-built pieces integrate badly with each other';
 
-// ── WORKER / EXECUTE POLICY BLOCKS (reused across the execute prompts + writer/verify subagents) ─────
+// ── WORKER / EXECUTE POLICY BLOCKS (reused across the worker orchestrator + the verify/writer subagents) ─
 
 /**
- * VERIFY — the build/test FLOOR every executor must clear before claiming done. Shared by the worker
- * execute prompts (STEP/BATCH/ORCHESTRATE). Coexists with {@link VALIDATE_BY_RUNNING_NOTE} (the "then
- * actually run it" step): this is the floor, that is beyond it.
- */
-/**
- * MONOREPO discovery hint for the verify step — shared by {@link VERIFY_NOTE} (STEP/BATCH executors), the
- * ORCHESTRATE prompt's inline verify clause, and the `test` subagent. A single root `package.json` with no
- * aggregate test script does NOT mean "no tests": in a workspace the real commands live per-package or in
- * the workspace tooling. Kept as its own const so the three verify surfaces can't drift. (Declared before
- * VERIFY_NOTE, which concatenates it — module-const init order matters.)
+ * MONOREPO discovery hint for the verify step — shared by the worker orchestrator's inline verify clause and
+ * the verification subagents (subagents.group). A single root `package.json` with no aggregate test script
+ * does NOT mean "no tests": in a workspace the real commands live per-package or in the workspace tooling.
+ * Kept as its own const so the verify surfaces can't drift.
  */
 export const MONOREPO_VERIFY_HINT =
   "In a monorepo/workspace the real typecheck/build/test commands often live in a sub-package's " +
@@ -119,9 +126,32 @@ export const MONOREPO_VERIFY_HINT =
   "the sub-packages; do not conclude 'no tests' from the root package.json alone.";
 
 /**
- * DOCS BEFORE GREP — orient off the repo's own docs before spelunking. Shared by the thread PLANNER and the
- * three EXECUTE prompts (STEP/BATCH/ORCHESTRATE): an execute session is FRESH (no planner context), so it
- * must orient itself just like the planner instead of rediscovering the layout/conventions with a grep-storm.
+ * COMMIT + PUSH — the writer session owns its commit; the host reads what you leave and does NOT commit for
+ * you, so leave a CLEAN tree before asserting completion. The single home for this instruction: the driver's
+ * task builders re-export it as `COMMIT_AND_PUSH_INSTRUCTION` (with a leading newline for their inline splice)
+ * and any prompt-kit persona can splice it directly.
+ */
+export const COMMIT_AND_PUSH_NOTE =
+  'COMMIT YOUR WORK (required — the host does NOT commit for you): once the work is done and verified, run ' +
+  "`git add -A` (your `.gitignore` governs what's tracked; if build or cache junk appears in `git status`, " +
+  'add it to `.gitignore` instead of committing it), commit with a clear message, and `git push` your ' +
+  'branch. Leave the working tree CLEAN. THEN call `complete_thread`. If you finish without committing, your ' +
+  'work is treated as unfinished.';
+
+/**
+ * GIT SAFETY — the destructive-command prohibition every git-running persona/turn shares. The single home so
+ * the in-sandbox open-PR turn (`turns/ship-open-pr.ts`) and the ship-time master-review persona (`ship.group`)
+ * carry the SAME guardrail. Ends at "git config."; a consumer that also resolves conflicts (the open-PR turn)
+ * appends its own "make no code changes beyond a clean conflict resolution" clause after this.
+ */
+export const GIT_SAFETY_NOTE =
+  'GIT SAFETY: NEVER run destructive or irreversible git commands (`push --force`, `reset --hard`, history ' +
+  'rewrites, etc.) unless explicitly instructed. Never skip hooks (`--no-verify`) and never touch git config.';
+
+/**
+ * DOCS BEFORE GREP — orient off the repo's own docs before spelunking. Shared by the brain (orientation.group)
+ * and the worker orchestrator (worker.group): a fresh worktree session must orient itself off the docs instead
+ * of rediscovering the layout/conventions with a grep-storm.
  */
 export const DOCS_BEFORE_GREP =
   'DOCS BEFORE GREP: if the repo has orienting docs (CLAUDE.md, AGENTS.md, README.md, ARCHITECTURE.md, ' +
@@ -169,13 +199,6 @@ export const DOC_VERSION_VERIFY_NOTE =
   'your approach do not clearly line up, STOP and surface the mismatch — name the options and the safest ' +
   'path — rather than guessing. (VERIFY CURRENCY governs claiming something IS current; this governs writing ' +
   'code that actually matches the version in your hands.)';
-
-export const VERIFY_NOTE =
-  "VERIFY before you finish: discover and run the repository's OWN typecheck/build/test tooling (read the " +
-  'package.json scripts / Makefile / repo docs for the REAL commands — do not assume them) and make sure ' +
-  'the change compiles and the relevant tests pass — do NOT claim the work is done on the basis of a guess. ' +
-  'If verification fails and you cannot fix it within scope, say so explicitly rather than reporting success. ' +
-  MONOREPO_VERIFY_HINT;
 
 /**
  * LSP TOOLS (full) — for the personas that can actually rename (the orchestrator + the `implement`/
@@ -274,7 +297,7 @@ export const DELETION_SAFETY_NOTE =
  * A POSITIVE decision procedure run AFTER you understand the problem, not a licence to cut corners — it climbs
  * from "does this need to exist" to "minimum viable code", stopping at the lowest rung that works. Deliberately
  * carries its own SAFETY carve-out so it can never be read as skipping validation/error-handling/security, and
- * stays OUT of the review/verify lanes (VERIFY_NOTE / VALIDATE_BY_RUNNING_NOTE own that) and the comment lane
+ * stays OUT of the review/verify lanes (VALIDATE_BY_RUNNING_NOTE owns that) and the comment lane
  * (CLARITY_OVER_COMMENTS_NOTE) — this is only about how much to build. The "prefer an already-installed
  * dependency over a new one" rung reinforces the always-ask gate (a NEW dependency is still an ask).
  */
@@ -358,13 +381,12 @@ export const TOOL_QUALIFICATION_NOTE = (server: string): string =>
  * (Promoted here from a worker.body-local const so it's a first-class catalog block.)
  */
 export const PLAYGROUND_NOTE =
-  ' SCRATCH SPACE: for any THROWAWAY work — probe/spike scripts, one-off verification harnesses, ad-hoc ' +
+  'SCRATCH SPACE: for any THROWAWAY work — probe/spike scripts, one-off verification harnesses, ad-hoc ' +
   'installs — write to the durable `/playground` dir OUTSIDE the worktree, never into /workspace (which ' +
   'pollutes the diff/PR) or /tmp (wiped on restart). Nothing in /playground is ever committed.';
 
 // ── BEHAVIORAL (the three asks) ─────────────────────────────────────────────────────────────────────
-// Wired into the layers in `layers.ts`; ABSENT from every body until Phase 2 of the rollout so the
-// Phase-1 relocation stays byte-identical.
+// Spliced in by the brain's `behavioral.group` tail and by the worker group.
 
 /**
  * VALIDATE BY RUNNING — for workers/ship. Typecheck/build/test is the floor, not the finish line; when a
@@ -377,7 +399,36 @@ export const VALIDATE_BY_RUNNING_NOTE =
   'green build: actually run it and exercise it the way a caller would before you report done. Start ' +
   'long-running services with the `atlas-svc` supervisor (`run`/`logs`/`ps`) so they outlive the turn, ' +
   'then hit them — `curl` the endpoint and check the status/body, drive the UI with Playwright, or run ' +
-  "the repo's own e2e/smoke tooling — and confirm the OBSERVED behavior matches the intent.";
+  "the repo's own e2e/smoke tooling — and confirm the OBSERVED behavior matches the intent. If the change " +
+  'is internal plumbing whose effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed ' +
+  'to an SDK), instead capture a log line from the booted process proving the changed value was passed at runtime.';
+
+/**
+ * RUNNABLE WORKSPACE IS THE HAPPY PATH — for every build-touching lane (worker orchestrator, brain, master
+ * review). The environment-side twin of VALIDATE_BY_RUNNING: that note says "actually run it," this one
+ * says "a not-yet-runnable environment is a problem you FIX or ASK about, never a licence to skip." Encodes
+ * decision d1 (operator-confirmed): treat a set-up, runnable repo as the EXPECTED default; verification is a
+ * hard requirement. Lane-agnostic on purpose — the brain provisions via the workspace-profile tools, a build
+ * thread hands a genuinely-missing secret to Atlas via `block_thread({reason:"needs_env"})`; the STANCE is
+ * shared. The named failure ("secret-gated" server whose key was present) is the real reported incident.
+ */
+export const RUNNABLE_WORKSPACE_NOTE =
+  'A RUNNABLE WORKSPACE IS THE HAPPY PATH — a correctly-set-up, runnable repo is the EXPECTED default, not a ' +
+  'hope, and VERIFYING your work is a hard requirement, not a courtesy. So when you cannot run or verify ' +
+  'something because the environment is not ready — a missing secret, an unstarted service, an unfinished ' +
+  'setup step — that is a PROBLEM TO FIX, never a licence to skip. (1) ASSUME IT IS MEANT TO WORK AND CHECK ' +
+  'FIRST: before concluding anything is missing, confirm it actually is — the secret may already be granted ' +
+  'and the service may just need starting. The classic failure is giving up on a "secret-gated" server whose ' +
+  'key was present the whole time, then screenshotting a broken stand-in. (2) MAKE IT WORK: boot the service, ' +
+  'run the setup, and fix the DURABLE workspace profile (request the missing secret, correct the setup ' +
+  'script) so it stays fixed for the next job — from a build thread you cannot provision it yourself, so hand ' +
+  'the genuinely-missing piece to Atlas via `block_thread({reason:"needs_env"})`. (3) ASK for what only the ' +
+  "operator can supply and WAIT — \"why didn't you just ask?\" is the failure to design out. (4) NEVER " +
+  'FABRICATE A STAND-IN that dodges the real environment — a throwaway harness that skips the real app config, ' +
+  'a mock that bypasses the real service — and call it validated: that is a FALSE GREEN, worse than no check ' +
+  'because it lies. Validate the REAL thing in its REAL environment. The ONLY acceptable skip is something ' +
+  'GENUINELY impossible in this Linux sandbox (device hardware, a Windows-only GUI) — and then SAY SO ' +
+  'explicitly; never silently report done on work you did not actually run.';
 
 /**
  * EVIDENCE ARTIFACTS — the human-facing PROOF that live-validation actually happened. Shared by the build
@@ -398,20 +449,39 @@ export const EVIDENCE_ARTIFACTS_NOTE =
   '`page.screenshot`), any report the run produced, and a top-level `RESULTS.md` that INDEXES what you ' +
   'validated, HOW (the exact commands/flows), the OBSERVED result, and links to each evidence file. Name ' +
   'files by scenario so the panel reads cleanly (e.g. `server-presence/jest-integration.log`, ' +
-  '`boot.png`). EVIDENCE, NOT CLAIMS: prefer a captured artifact over prose, and where something genuinely ' +
+  '`boot.png`). INSPECT WHAT YOU CAPTURED — capturing an artifact is NOT the same as validating: a ' +
+  'screenshot or log is not proof until you have actually LOOKED at it. Open every screenshot you take ' +
+  '(Read it back — images render visually) and read the tail of every log, and confirm it shows the ' +
+  'INTENDED state — the real UI/output you were validating, populated, with no error overlay. A screenshot ' +
+  'of an error page, a blank or half-loaded screen, a "connection lost" / "can\'t reach the server" gate, a ' +
+  '4xx/5xx, or a login wall is evidence the check FAILED, not that it passed — it means your target was ' +
+  'not actually exercised (often the environment was not fully up, e.g. only the frontend booted and the ' +
+  'backend was unreachable). Report that as a validation FAILURE (or an environment to FIX), and NEVER cite ' +
+  'it — or fall back to a stand-in like a bundle-string grep — as if it proved the change works. EVIDENCE, ' +
+  'NOT CLAIMS: prefer a captured artifact you have inspected over prose, and where something genuinely ' +
   'cannot be validated in this Linux sandbox (a Windows GUI app, real device hardware), SAY SO plainly in ' +
   'RESULTS.md — validate everything you can and mark the honest remainder, never fabricate a result.';
 
 /**
  * SPIKE FIRST — for planning + workers. Prove a risky/unverified assumption (especially an SDK or library
- * capability) with a tiny throwaway spike BEFORE committing to a plan that rests on it.
+ * capability) with a tiny throwaway spike BEFORE committing to a plan that rests on it. Covers BOTH
+ * directions of a capability claim: building ON one you assume works, AND ruling OUT a path because you
+ * assume it "can't be done" — the negative claim is the more dangerous one, since it silently steers the
+ * design toward a workaround and never trips the "before you build on it" guardrails.
  */
 export const SPIKE_FIRST_NOTE =
   'SPIKE BEFORE YOU COMMIT to an approach that rests on an UNVERIFIED assumption — above all a claim about ' +
   'what an SDK, library, API, or tool can actually do ("does X support Y?", "can this be called ' +
-  'mid-stream?"). Rather than design several steps on top of a guess and discover the premise was false, ' +
-  'write the smallest throwaway spike that calls the real thing and RUN it to prove the assumption first. ' +
-  'A five-minute spike beats a derailed plan. Keep spikes in throwaway scratch space; never commit them.';
+  'mid-stream?"). A claim that something CANNOT be done — "not expressible", "not supported", "the library ' +
+  'can\'t do this", so you reach for a workaround — is the MOST dangerous version of this and carries the ' +
+  'HIGHEST burden of proof, not the lowest: you cannot prove a negative from memory, and "I don\'t recall a ' +
+  'way" is not "there is no way". Treat any impossibility claim that would change your approach exactly like ' +
+  '"does X support Y?" — verify it against the actual current docs/source for the installed version (or a ' +
+  'spike) and CITE what you found (a doc URL or source path:line) before you let it steer the design; an ' +
+  'uncited "can\'t" does not get to rule out a path. Rather than design several steps on top of a guess and ' +
+  'discover the premise was false, write the smallest throwaway spike that calls the real thing and RUN it ' +
+  'to prove the assumption first. A five-minute spike beats a derailed plan. Keep spikes in throwaway ' +
+  'scratch space; never commit them.';
 
 /**
  * BASELINE FIRST — for planning. Reproduce and observe the CURRENT behavior of the thing you're about to
@@ -429,6 +499,15 @@ export const BASELINE_FIRST_NOTE =
   'yet (or you cannot reproduce the reported bug), say so plainly rather than guessing.';
 
 /**
+ * The canonical prohibition list — the labels a live-validation step must NEVER be tagged with. Shared so the
+ * near-verbatim list lives ONCE: the brain-authoring note ({@link AUTHOR_LIVE_VALIDATION_NOTE}) and the plan.md
+ * structure fragment (`planning.group` `planMdStructure`) both splice it after their own verb ("mark it …" /
+ * "be marked …"). A bare noun-phrase so it slots into either grammar unchanged.
+ */
+export const LIVE_VALIDATION_NOT_OPTIONAL_NOTE =
+  '"optional", "nice to have", "smoke (optional)", or "if time permits"';
+
+/**
  * AUTHOR LIVE VALIDATION — for the BRAIN. The brain-authoring twin of {@link VALIDATE_BY_RUNNING_NOTE}
  * (which tells the WORKER to run it): this tells the brain, when it AUTHORS a plan's `## Validation` and
  * when it builds directly (FAST PATH), that live-running is the proof and is never optional. Kept a DISTINCT
@@ -438,9 +517,17 @@ export const AUTHOR_LIVE_VALIDATION_NOTE =
   'PROVE IT BY RUNNING IT — Atlas knows work is done because it SAW it run, not because the build was green. ' +
   'When a change has ANY runtime surface (an endpoint, a UI, a CLI, a job, a script), the proof is actually ' +
   'RUNNING it and observing the result — `curl` the endpoint and check the body, drive the UI, run the CLI — ' +
-  'and typecheck/build/test is only the FLOOR beneath that. This holds both ways: in a PLAN, author each ' +
-  "thread's `## Validation` as that live run and NEVER mark it \"optional\"/\"nice to have\"/\"smoke (optional)\"; " +
-  'and on a DIRECT build you run yourself, live-validate before you finalize. The only work that validates by ' +
+  'and typecheck/build/test is only the FLOOR beneath that. For internal plumbing whose effect is never echoed ' +
+  'in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), the proof is a log line from the booted ' +
+  'process showing the changed value was passed at runtime. And "SAW it run" means you actually LOOKED at ' +
+  'the result — an artifact you (or a subagent you delegated to) captured but never opened is not ' +
+  'observation, and a screenshot/log that shows an error or "connection lost"/unreachable state is a ' +
+  'FAILING check, not a passing one: before you rely on captured evidence — your own or a subagent\'s — open ' +
+  'it and confirm it shows the intended state, and never finalize on an artifact you did not inspect. This ' +
+  'holds both ways: in a PLAN, author each ' +
+  "thread's `## Validation` as that live run and NEVER mark it " +
+  LIVE_VALIDATION_NOT_OPTIONAL_NOTE +
+  '; and on a DIRECT build you run yourself, live-validate before you finalize. The only work that validates by ' +
   'tests alone is work with genuinely no runtime surface — and then say that is why.';
 
 /**

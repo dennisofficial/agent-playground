@@ -86,6 +86,7 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     {} as never, // skillStore (WorkspaceSkillStore)
     {} as never, // skillFiles (SkillFileWriter)
     {} as never, // skillInstaller (SkillInstallerService)
+    {} as never, // git (LocalGitService)
   );
   return { controller, m };
 }
@@ -162,6 +163,27 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     expect(m.write).not.toHaveBeenCalled(); // a removal never writes
   });
 
+  it('an oauth server is committed with authKind, NOT static-probed, and the notice points to Connect', async () => {
+    const card = {
+      type: 'mcp_proposal_card',
+      servers: [
+        { name: 'jira', transport: 'sse', url: 'https://mcp.atlassian.com/v1/sse', authKind: 'oauth' },
+      ],
+    };
+    const { controller, m } = makeController({ threadRepoId: 'repo-1', card });
+    const res = await controller.approveMcpProposal(OWNER, 'job-1', 'mcp-1');
+
+    expect(res).toMatchObject({ ok: true, committed: ['jira'] });
+    // mcpProposalToInput carries authKind → the store writes an oauth row.
+    const jiraInput = m.write.mock.calls.find((c) => c[2] === 'jira')![3];
+    expect(jiraInput.authKind).toBe('oauth');
+    // An UNCONNECTED oauth server must NOT be static-probed (its endpoint 401s until the owner connects).
+    expect(m.validate).not.toHaveBeenCalled();
+    const notice = m.seedSystemNotification.mock.calls.at(-1)![2] as string;
+    expect(notice).toContain('Connect');
+    expect(notice).not.toContain('No secrets needed'); // the static "ready" copy must not fire for oauth
+  });
+
   it('is idempotent — a re-approve of an already-committed card writes nothing', async () => {
     const card = {
       type: 'mcp_proposal_card',
@@ -221,6 +243,26 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
     const notice = m.seedSystemNotification.mock.calls.at(-1)![2] as string;
     expect(notice).toContain('github');
     expect(notice).not.toContain('ghp_x');
+  });
+
+  it('refuses a secret write to an OAuth server (no setSecret, no probe) and clears the gate', async () => {
+    const secretCard = {
+      type: 'secret_input_card',
+      name: 'Authorization',
+      mcp: { server: 'jira', slot: 'header', key: 'Authorization' },
+    };
+    const { controller, m } = makeController({ secretCard });
+    // The target row is an oauth server — the authoritative guard must refuse before setSecret.
+    m.rawRow.mockResolvedValueOnce({ auth_kind: 'oauth', transport: 'sse', config: { url: 'https://x' } });
+    const res = await controller.provideSecret(OWNER, 'job-1', { requestId: 's-1', value: 'Bearer x' });
+
+    expect(res.ok).toBe(false);
+    expect(m.setSecret).not.toHaveBeenCalled();
+    expect(m.validate).not.toHaveBeenCalled();
+    expect(m.clearAwaitingSecret).toHaveBeenCalledWith('job-1', 's-1');
+    const notice = m.seedSystemNotification.mock.calls.at(-1)![2] as string;
+    expect(notice).toContain('OAuth');
+    expect(notice).not.toContain('Bearer x');
   });
 
   it('clears the gate + fails cleanly when the target MCP server is gone', async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { TurnWatchdogService } from './turn-watchdog.service';
 import { turnKeys } from './redis-turn-keys';
 import type { TurnRegistry } from './turn-registry.service';
@@ -127,7 +128,14 @@ describe('TurnWatchdogService boot grace', () => {
       onDemote: () => ({ unsubscribe() {} }),
     } as unknown as LeaderElectionService;
 
-    const svc = new TurnWatchdogService(registry, promotableElection, env(), redisWithIdle());
+    // A REAL SchedulerRegistry so the leader-gated interval registers + fires (start() no-ops without one).
+    const svc = new TurnWatchdogService(
+      registry,
+      promotableElection,
+      env(),
+      redisWithIdle(),
+      new SchedulerRegistry(),
+    );
     svc.onApplicationBootstrap(); // subscribes (not a *_test DB → watchdog on)
     promote(); // fire start()
     await new Promise((r) => setTimeout(r, 20)); // let the touch().finally(sweep) chain settle

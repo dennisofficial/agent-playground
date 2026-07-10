@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
+import { DataSource, IsNull, MoreThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import type {
   Decision,
@@ -9,7 +9,9 @@ import type {
   StepStatus,
   Thread,
   ThreadStatus,
+  ThreadCondition,
   Job,
+  JobActivity,
   JobStatus,
   JobHalt,
 } from '../domain';
@@ -23,11 +25,17 @@ import {
   JobEntity,
   CodexReviewEntity,
 } from '../persistence/entities';
-import type { DeviationEntry, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
+import type {
+  DeviationEntry,
+  SessionAnchor,
+  TaskItem,
+  ThreadTerminalRecord,
+} from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
 import { isDriverExecutableKind, laneDefaultFooter, threadKindSpec } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
+import { webVerdictCard } from '../surface/web-approval-card';
 import type { PlannedStep } from './render-plan';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
@@ -52,6 +60,7 @@ export interface ReviewChildThread {
   ordinal: number;
   config: Record<string, unknown>;
   status: ThreadStatus;
+  condition: ThreadCondition;
   reviewFindings: ReviewFinding[] | null;
 }
 
@@ -215,15 +224,62 @@ export class DriverStoreService {
     await this.jobs.update({ id: jobId }, { status });
   }
 
+  /** Set the job's `activity` axis (see {@link JobActivity} / `deriveNeedsYou`) — the driver's build/review
+   *  boundary writer, mirroring the brain's turn writer. */
+  async setActivity(jobId: string, activity: JobActivity): Promise<void> {
+    await this.jobs.update({ id: jobId }, { activity });
+  }
+
   /** Record a phase-preserving job HALT (see {@link JobHalt}) — the status/phase is left untouched. Named
-   *  JOB-level to stay distinct from {@link clearHalt} (the per-thread halt table). */
+   *  JOB-level to stay distinct from {@link clearHalt} (the per-thread halt table). A halt means the build
+   *  STOPPED, so `activity` is cleared to `idle` in the same write (a stale `build`/`master_review` must not
+   *  mask the halt in `deriveNeedsYou`). */
   async setJobHalt(jobId: string, halt: JobHalt): Promise<void> {
-    await this.jobs.update({ id: jobId }, { halt });
+    await this.jobs.update({ id: jobId }, { halt, activity: 'idle' });
   }
 
   /** Clear the phase-preserving job halt on operator re-engagement / a brain re-drive. */
   async clearJobHalt(jobId: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { halt: null });
+  }
+
+  /**
+   * Has an IDENTICAL system→operator notice already landed on this thread recently? Mirrors the brain-store
+   * guard, but build-lane notices are authored through the shared block sink (`author_id='atlas'`) and marked
+   * operator-only by `meta.source`, so match on that source rather than author.
+   */
+  async hasRecentSystemOperatorNotice(
+    jobId: string,
+    text: string,
+    withinMs = 120_000,
+  ): Promise<boolean> {
+    const since = new Date(Date.now() - withinMs);
+    const existing = await this.messages.find({
+      where: { job_id: jobId, text, created_at: MoreThan(since) },
+      select: { id: true, meta: true },
+    });
+    return existing.some(
+      (m) => (m.meta as { source?: unknown } | null)?.source === 'system_operator',
+    );
+  }
+
+  /**
+   * Set (or clear) the durable auto-resume clock a lane parks on when it hits a Claude session/usage limit.
+   * `resumeAt=null` (with `meta=null`) clears the clock so the leader sweep never re-fires — called on every
+   * un-park path (retry / resumePaused / the sweep itself). See {@link JobEntity.session_resume_at}.
+   */
+  async setSessionResume(
+    jobId: string,
+    resumeAt: string | null,
+    meta: JobEntity['session_resume'],
+  ): Promise<void> {
+    await this.jobs.update(
+      { id: jobId },
+      {
+        session_resume_at: resumeAt ? new Date(resumeAt) : null,
+        session_resume: meta,
+      },
+    );
   }
 
   /** Record the feature branch all threads stack on (set once, when the sandbox is cut). */
@@ -242,10 +298,10 @@ export class DriverStoreService {
   // ── ship-review gate (the terminal human gate: reviewed diff → operator clicks "Ship it" → PR) ────────
 
   /**
-   * PARK the job at the ship-review gate in one txn: flip `running → awaiting_ship_review` and post the
-   * durable "Ship it" card. The status flip is CONDITIONAL on `running`, so it's the single-park guard — a
-   * concurrent drive (or a re-drive) that finds the job already parked affects 0 rows and skips the card,
-   * returning false. Returns whether THIS caller parked it.
+   * PARK the job at the ship-review gate in one txn: flip `running → awaiting_ship_review`, clear activity
+   * to `idle`, and post the durable "Ship it" card. The status flip is CONDITIONAL on `running`, so it's
+   * the single-park guard — a concurrent drive (or a re-drive) that finds the job already parked affects 0
+   * rows and skips the card, returning false. Returns whether THIS caller parked it.
    */
   async parkForShipReview(
     jobId: string,
@@ -257,7 +313,7 @@ export class DriverStoreService {
         .getRepository(JobEntity)
         .createQueryBuilder()
         .update(JobEntity)
-        .set({ status: 'awaiting_ship_review' })
+        .set({ status: 'awaiting_ship_review', activity: 'idle' })
         .where('id = :jobId', { jobId })
         .andWhere("status = 'running'")
         .execute();
@@ -296,6 +352,43 @@ export class DriverStoreService {
     return (res.affected ?? 0) > 0;
   }
 
+  /** Retract the ship-review gate back to planning (Atlas `withdraw_ship` tool OR the manual
+   *  "Back to building" click). CONDITIONAL on `awaiting_ship_review` — single-winner vs a racing
+   *  "Ship it" click; a stale/double retract is a no-op. Does NOT touch `ship_review_approved_at`
+   *  (already null here) nor the decision record (the plan was approved — nothing to supersede).
+   *  Also neutralizes EVERY still-actionable durable ship card so its inline "Ship it" button can't
+   *  be clicked when the gate re-arms. */
+  async retractShip(jobId: string): Promise<boolean> {
+    return this.dataSource.transaction(async (m) => {
+      const res = await m
+        .getRepository(JobEntity)
+        .createQueryBuilder()
+        .update(JobEntity)
+        .set({ status: 'planning', activity: 'idle' })
+        .where('id = :jobId', { jobId })
+        .andWhere("status = 'awaiting_ship_review'")
+        .execute();
+      if ((res.affected ?? 0) === 0) return false;
+      const messages = m.getRepository(MessageEntity);
+      const rows = await messages.find({
+        where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+      });
+      for (const row of rows) {
+        const card = row.card as Record<string, unknown> | null;
+        if (card?.['type'] !== 'approval_card') continue;
+        const title = String(card?.['title'] ?? 'Ship review');
+        row.card = webVerdictCard(
+          jobId,
+          title,
+          'retracted',
+          '↩︎ Retracted — back to planning for changes.',
+        ) as unknown as Record<string, unknown>;
+        await messages.save(row);
+      }
+      return true;
+    });
+  }
+
   /** Clear the ship-review approval marker so the NEXT build cycle re-gates. Called when a fresh build is
    *  dispatched (a new plan approval) — a re-drive after ship-approval must NOT clear it. */
   async clearShipApproval(jobId: string): Promise<void> {
@@ -314,6 +407,7 @@ export class DriverStoreService {
         pr_url: prUrl,
         ...(prNumber != null ? { pr_number: prNumber } : {}),
         status: 'done',
+        activity: 'idle',
         // Latch the PR lifecycle to `open` HERE (not on a later reconcile) so the sidebar shows the
         // pull-request glyph the moment the PR is recorded — the reap-timer reconcile is up to 30 min away.
         pr_state: 'open',
@@ -345,6 +439,10 @@ export class DriverStoreService {
 
   async setThreadStatus(threadId: string, status: ThreadStatus): Promise<void> {
     await this.threads.update({ id: threadId }, { status });
+  }
+
+  async setThreadCondition(threadId: string, condition: ThreadCondition): Promise<void> {
+    await this.threads.update({ id: threadId }, { condition });
   }
 
   /**
@@ -731,6 +829,101 @@ export class DriverStoreService {
       .execute();
   }
 
+  // ── Completion-wake (decision d1) — mirrors the halt trio above, no generation CAS ─────────────
+
+  /** Mark a `done` thread as OWED a brain wake — `'final'` (whole build parked at ship gate) or `'notable'`
+   *  (done-with-gaps). Idempotent: a repeat call re-asserts the same owed row. */
+  async setDoneWakeOwed(threadId: string, reason: 'final' | 'notable'): Promise<void> {
+    await this.threads.update(
+      { id: threadId },
+      { done_wake_owed: true, done_wake_reason: reason, done_waked_at: null },
+    );
+  }
+
+  /** Threads whose completion is owed a brain wake (`done_wake_owed`, not yet waked). Optionally scoped to
+   *  one job. Mirrors `threadsAwaitingHaltWake`'s shape (no `gen` — a `done` thread is never re-driven). */
+  async threadsAwaitingDoneWake(
+    jobId?: string,
+  ): Promise<{ jobId: string; threadId: string; reason: 'final' | 'notable' }[]> {
+    const qb = this.threads
+      .createQueryBuilder('t')
+      .select(['t.id', 't.job_id', 't.done_wake_reason'])
+      .where('t.done_wake_owed IS TRUE')
+      .andWhere('t.done_waked_at IS NULL');
+    if (jobId) qb.andWhere('t.job_id = :jobId', { jobId });
+    const rows = await qb.getMany();
+    return rows.map((r) => ({
+      jobId: r.job_id,
+      threadId: r.id,
+      reason: r.done_wake_reason as 'final' | 'notable',
+    }));
+  }
+
+  /** CAS-claim a fresh completion-wake generation at delivery START — atomically bump `done_wake_gen` and
+   *  return the new value, iff the wake is still owed + un-stamped. Returns null when nothing is owed
+   *  (already delivered/superseded → the caller no-ops). Mirrors the halt CAS but does the bump HERE (not
+   *  out-of-band like `retry_thread`): a plain read would hand two concurrent sweeps the SAME gen and let
+   *  both claim it, whereas the atomic bump gives each a distinct gen so the loser's late stamp is invalid. */
+  async claimDoneWakeGen(threadId: string): Promise<number | null> {
+    const res = await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ done_wake_gen: () => 'done_wake_gen + 1' })
+      .where('id = :threadId', { threadId })
+      .andWhere('done_wake_owed IS TRUE')
+      .andWhere('done_waked_at IS NULL')
+      .returning('done_wake_gen')
+      .execute();
+    const gen = (res.raw as { done_wake_gen?: number }[] | undefined)?.[0]?.done_wake_gen;
+    return typeof gen === 'number' ? gen : null;
+  }
+
+  /** Supersede a prior (dead) completion-wake attempt: delete every `messages` row for THIS originating wake
+   *  thread whose `meta.doneWakeGen` is below the current gen. Scoped by `doneWakeThreadId` (NOT just
+   *  job+gen) because `done_wake_gen` is per-thread and the owed-wake sweep iterates every owed thread of a
+   *  job — a job-wide `gen<N` delete would erase another thread's valid summary. Untagged rows (normal chat,
+   *  seed pills) carry no `doneWakeThreadId` → never matched. Called at delivery START so a truncated partial
+   *  from attempt N-1 is gone before the gen-N summary lands. */
+  async supersedeDoneWakeMessages(
+    jobId: string,
+    threadId: string,
+    gen: number,
+  ): Promise<void> {
+    await this.messages
+      .createQueryBuilder()
+      .delete()
+      .where('job_id = :jobId', { jobId })
+      .andWhere(`(meta ->> 'doneWakeThreadId') = :threadId`, { threadId })
+      .andWhere(`(meta ->> 'doneWakeGen')::int < :gen`, { gen })
+      .execute();
+  }
+
+  /** Stamp the completion wake delivered and clear the owed flag — GENERATION-KEYED CAS (mirrors
+   *  `markHaltWaked`): stamp only if `done_wake_gen` still equals the `gen` captured at delivery start (no
+   *  newer attempt superseded this one) and the wake is still owed + un-stamped. A stale attempt completing
+   *  after a newer claim matches zero rows, so it can't clear owed out from under the live attempt. */
+  async markDoneWaked(threadId: string, gen: number): Promise<void> {
+    await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ done_waked_at: () => 'now()', done_wake_owed: false })
+      .where('id = :threadId', { threadId })
+      .andWhere('done_wake_gen = :gen', { gen })
+      .andWhere('done_wake_owed IS TRUE')
+      .andWhere('done_waked_at IS NULL')
+      .execute();
+  }
+
+  /** The job's `master_review` thread id — the carrier for the `'final'` completion wake — or null if the
+   *  job has none (yet). */
+  async masterReviewThreadId(jobId: string): Promise<string | null> {
+    const row = await this.threads.findOne({
+      where: { job_id: jobId, kind: 'master_review' },
+      select: { id: true },
+    });
+    return row?.id ?? null;
+  }
+
   /** Clear the halt signal on a re-drive so a FRESH block re-arms a fresh wake (both the owed flag and the
    *  dedup marker). The `halt_fix_attempts` budget is intentionally NOT cleared (it's a lifetime counter). */
   async clearHalt(threadId: string): Promise<void> {
@@ -757,6 +950,22 @@ export class DriverStoreService {
       .execute();
     const used = res.raw?.[0]?.halt_fix_attempts as number | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
+  /** The thread's owed-halt outcome (`halt_outcome`), or null if no halt-wake has been persisted yet. Lets
+   *  the re-halt short-circuit tell a genuinely already-notified block (owed-wake row exists → safe to
+   *  suppress the redundant re-notify) from a blocked terminal record whose `haltJob` hasn't run yet (crash
+   *  between `block_thread`'s record write and `haltJob` → must still notify once, else the wake is lost). */
+  async haltOutcome(
+    threadId: string,
+  ): Promise<'blocked' | 'incomplete' | 'failed' | null> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, halt_outcome: true },
+    });
+    return (
+      (row?.halt_outcome as 'blocked' | 'incomplete' | 'failed' | null) ?? null
+    );
   }
 
   /** The thread's spent autonomous re-drive budget (0 if unset). Read by `haltJob` to decide whether a
@@ -851,6 +1060,39 @@ export class DriverStoreService {
       order: { ordinal: 'ASC' },
     });
     return rows.map(toStep);
+  }
+
+  /**
+   * The AUTHORITATIVE transcript anchor for a thread — the engine `sessionId` (+ Leg ordinal) the wake hands
+   * the brain to read the halted/completed lane's raw JSONL (`atlas-tx show <sessionId>`). Resolved from the
+   * most-recent `build_legs` row with a non-null `session_id` (preferred — carries the Leg ordinal), else the
+   * latest `steps.session_id`. Read from steps/legs — which exist for EVERY thread that ran a turn — NOT from
+   * `terminal_record`, so it works even for an `incomplete` halt whose record is null. The host has ground
+   * truth here; a builder-written value is never trusted. `undefined` only when the thread never got a session
+   * (e.g. halted in provisioning).
+   */
+  async resolveSessionAnchor(threadId: string): Promise<SessionAnchor | undefined> {
+    const legs = await this.getLegs(threadId);
+    const legWithSession = [...legs]
+      .reverse()
+      .find((l) => l.session_id != null);
+    if (legWithSession?.session_id) {
+      return {
+        sessionId: legWithSession.session_id,
+        legOrdinal: legWithSession.ordinal,
+      };
+    }
+    const steps = await this.stepsForThread(threadId);
+    const stepWithSession = [...steps]
+      .reverse()
+      .find((s) => s.sessionId != null);
+    if (stepWithSession?.sessionId) {
+      return {
+        sessionId: stepWithSession.sessionId,
+        legOrdinal: stepWithSession.legOrdinal,
+      };
+    }
+    return undefined;
   }
 
   /**
@@ -995,6 +1237,10 @@ export class DriverStoreService {
       kind: thread.kind,
       status: thread.status,
       halt: thread.halt ?? null,
+      // Which build path was committed at approval: 'direct' (fast, brain-implemented) | 'plan' (driver) |
+      // null (never approved). The navigator reads this to hide the plan-oriented empty-state placeholders
+      // (build lanes / plan.md / generated docs) for a direct build, where they never apply.
+      buildPath: thread.build_path ?? null,
       // The plan-review (Codex) thread's presence + live status — the navigator renders a dedicated row that
       // opens the `codex-review:<jobId>` lane. Null when no review has run.
       planReview,
@@ -1006,6 +1252,9 @@ export class DriverStoreService {
       // instead of hardcoding "open" (it would otherwise show a stale green "open" after a merge/close).
       prState: thread.pr_state,
       prMergeable: thread.pr_mergeable,
+      // The observed CI/CD aggregate for the PR head (`success|failure|pending|null`) — drives the
+      // navigator PR-row CI glyph, kept fresh by the webhook CI-sync + the 30-min reconciler backstop.
+      ciStatus: thread.ci_status,
       featureBranch: thread.feature_branch,
       // The OBSERVED live branch (what the agent's HEAD is actually on) — drives the navigator drift badge
       // when it diverges from the host-named featureBranch. Null until first sampled / on detached HEAD.
@@ -1025,6 +1274,7 @@ export class DriverStoreService {
         brief: s.brief,
         type: s.type,
         status: s.status,
+        condition: s.condition,
         // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's kind.
         defaultFooter: laneDefaultFooter(s.kind),
         // Derived from `kind` (the `is_master_review` column is gone) — the web keys "Master review"
@@ -1135,6 +1385,7 @@ function toJob(row: JobEntity): Job {
     baseBranch: row.base_branch,
     kind: row.kind as Job['kind'],
     status: row.status as JobStatus,
+    activity: row.activity,
     halt: row.halt ?? null,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
@@ -1159,6 +1410,7 @@ function toThread(row: ThreadEntity): DriverThread {
     handoffIn: row.handoff_in,
     handoffOut: row.handoff_out,
     status: row.status as ThreadStatus,
+    condition: (row.condition as ThreadCondition) ?? 'none',
     kind: row.kind,
     parentThreadId: row.parent_thread_id ?? null,
     startSha: row.start_sha ?? null,
@@ -1173,6 +1425,7 @@ function toReviewChild(row: ThreadEntity): ReviewChildThread {
     ordinal: row.ordinal,
     config: (row.config as Record<string, unknown>) ?? {},
     status: row.status as ThreadStatus,
+    condition: (row.condition as ThreadCondition) ?? 'none',
     reviewFindings: Array.isArray(row.review_findings) ? row.review_findings : null,
   };
 }
@@ -1183,6 +1436,7 @@ interface PipelineReviewChild {
   kind: string;
   brief: string;
   status: string;
+  condition: string;
   lensId?: string;
   findings: number | null;
   lane: string;
@@ -1230,6 +1484,7 @@ function pipelineReviewChildren(
       kind: c.kind,
       brief: c.brief,
       status,
+      condition: 'none',
       ...(lensId ? { lensId } : {}),
       findings: null,
       lane:
@@ -1267,6 +1522,7 @@ function toPipelineChild(c: ThreadEntity, parentId: string): PipelineReviewChild
     kind: c.kind,
     brief: c.brief,
     status: c.status,
+    condition: c.condition,
     ...(lensId ? { lensId } : {}),
     findings: Array.isArray(c.review_findings) ? c.review_findings.length : null,
     lane:

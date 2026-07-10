@@ -10,7 +10,7 @@ import { isBuildBrain } from '../conditions';
 
 @FragmentGroup()
 export class ContextGroup {
-  /** normal block 15 — the /context shared folder. */
+  /** The /context shared folder. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1150, condition: isBuildBrain })
   contextFolder(): string {
     return [
@@ -40,6 +40,36 @@ export class ContextGroup {
       '  • `/context/artifacts/` — OUTPUTS for the human: preview HTML, screenshots, reports (never the repo).',
       'Treat the repo (`/workspace`) as READ-ONLY until a build is approved — never modify it while planning;',
       'write to `/context/specs` (or `/context/artifacts`) instead.',
+    ].join('\n');
+  }
+
+  /** normal block 15b — default to an HTML preview for UI work + link /context files. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1152, condition: isBuildBrain })
+  uiPreviewAndLinks(): string {
+    return [
+      "UI PREVIEW BY DEFAULT — SHOW, DON'T DESCRIBE: when the work creates or meaningfully alters a",
+      'VISUAL surface (a new screen/component, a layout, a styling direction), DEFAULT to producing a',
+      'plain, self-contained static HTML prototype in `/context/artifacts/` and letting the operator',
+      'PREVIEW it BEFORE you propose — the console renders `.html` artifacts full-bleed in a sandboxed',
+      'iframe, so a mockup shows faithfully. Skip it for non-visual work and pure copy/color/spacing',
+      'tweaks. Do NOT silently skip a preview you judge worthwhile: if the prototype looks like a lot of',
+      'work, ASK the operator whether they want it (via `ask_question`) rather than deciding for them.',
+      '  • ONE faithful mockup by DEFAULT. Lay out several side-by-side style VARIANTS in a single HTML',
+      '    page ONLY when there is genuine stylistic latitude (a real open design choice) — not for a',
+      '    straightforward change.',
+      '  • ONE format: HTML. Do NOT ALSO render a PNG (or other) copy that merely DUPLICATES the HTML',
+      '    mockup — it is heavier, lower-quality, and wasted tokens; the console renders the HTML',
+      '    faithfully. A screenshot is only worth it when it shows something the HTML cannot (e.g. a',
+      '    capture of the REAL running app).',
+      "  • Build it against the app's REAL fonts/tokens/components where you can, so it reads true.",
+      '  • DELEGATE the prototype build to the `implement` writer subagent (or `implement-deep` for',
+      '    judgment-heavy design), NAMING the exact `/context/artifacts/<file>` for it to write. It authors',
+      '    the HTML and writes the file directly, returning only a summary — so the raw HTML never rots your',
+      '    planning context. Then reference the artifact it produced.',
+      'REFERENCE /context FILES AS CLICKABLE LINKS: when you point the operator at a file under `/context`',
+      '(a prototype, a spec, a generated doc), write it as a MARKDOWN LINK to its context path —',
+      '`[Preview: sidebar options](/context/artifacts/pr-number-sidebar-mockup.html)` — so a click opens',
+      "it in the operator's right-hand panel. A bare path is not clickable; a markdown link is.",
     ].join('\n');
   }
 }

@@ -7,7 +7,12 @@
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
-import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@workspace/shared";
+import type {
+  JobActivity as WireJobActivity,
+  JobHalt as WireJobHalt,
+  JobStatus as WireJobStatus,
+  OrgUsage,
+} from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
@@ -17,6 +22,22 @@ import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@worksp
 export type { WireJobStatus };
 /** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
 export type { WireJobHalt };
+/**
+ * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`, plus OPTIONAL
+ * multi-account display fields the backend doesn't populate yet (both undefined until then; the usage
+ * panel falls back to a neutral single-account header when absent).
+ */
+export type WireOrgUsage = OrgUsage & {
+  /** Display label for the connected account (e.g. an email) — absent until multi-account ships. */
+  accountLabel?: string;
+  /** Subscription plan label (e.g. "Max plan") — absent until multi-account ships. */
+  plan?: string;
+};
+/**
+ * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
+ * single-sourced in `@workspace/shared`. Carried on the realtime row; the dot itself reads `needsYou`.
+ */
+export type { WireJobActivity };
 
 export type WireJobKind =
   | "feature"
@@ -25,28 +46,30 @@ export type WireJobKind =
   | "event"
   | "review";
 
-/** The lane (Thread) status — one build lane within a Job. */
+/** The lane (Thread) PURE LINEAR STEP — one build lane within a Job. Pause/failure/skip are NOT steps;
+ *  they live on the orthogonal {@link ThreadCondition} overlay. Mirrors backend `ThreadStatus`. */
 export type ThreadStatus =
   | "pending"
   | "planning"
   | "reviewing"
-  | "awaiting_approval"
   | "executing"
-  | "awaiting_input"
   | "auto_fixing"
-  | "skipped" // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
-  | "done"
-  | "incomplete"
-  | "failed";
+  | "done";
+
+/**
+ * The orthogonal condition overlay on a lane (a lightweight denormalized tag, like job-level `halt.kind`),
+ * independent of the linear {@link ThreadStatus} step. Detail (stderr, block reason, verification) stays in
+ * the backend `terminal_record`/`halt_outcome`. Mirrors backend `ThreadCondition`.
+ */
+export type ThreadCondition =
+  | "none"
+  | "paused" // a mid-build pause (request_operator_input / thread-level approval) — the step is preserved
+  | "incomplete" // halted without asserting completion (ADR 0004)
+  | "failed" // crashed / errored out
+  | "skipped"; // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
 
 /** Per-step status (the execute folder's leaves). Mirrors backend `StepStatus` in `domain/thread.ts`. */
-export type StepStatus =
-  | "pending"
-  | "building"
-  | "reviewing"
-  | "done"
-  | "failed"
-  | "skipped";
+export type StepStatus = "pending" | "building" | "reviewing" | "done";
 
 // ── Approval / verdict cards ───────────────────────────────────────────────────────────────────
 export const APPROVE_ACTION_ID = "atlas_approval:approve";
@@ -57,11 +80,18 @@ export const VIEW_PLAN_ACTION_ID = "atlas_approval:view_plan";
  *  plan stage), clicked while the job is `awaiting_ship_review`. POSTs to the SAME `/approve` endpoint with
  *  a `value` of just `{ jobId }` (no decision record — nothing to re-rule, just resume the build). */
 export const SHIP_ACTION_ID = "atlas_approval:ship";
+/** The ship-review gate's manual "Back to building" retract — sends `awaiting_ship_review → planning`
+ *  without discarding completed work (mirrors the Atlas `withdraw_ship` tool). POSTs to the SAME
+ *  `/approve` endpoint with the ship card's `{ jobId }` value. Must match the backend string in
+ *  `approval-blocks.ts`. */
+export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
   | typeof REQUEST_CHANGES_ACTION_ID
-  | typeof DENY_ACTION_ID;
+  | typeof DENY_ACTION_ID
+  | typeof SHIP_ACTION_ID
+  | typeof RETRACT_SHIP_ACTION_ID;
 
 export interface ApprovalDecision {
   decisionClass: string;
@@ -87,7 +117,8 @@ export interface WebApprovalCard {
   decisionRecordId?: string;
   /**
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
-   * vs "Changes". `ship` — the ship-review gate (a single "Ship it" button; `threads`/`decisions` empty).
+   * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
+   * `threads`/`decisions` empty).
    */
   kind?: "plan" | "direct" | "ship";
   title: string;
@@ -241,6 +272,13 @@ export interface WebMcpProposalServer {
   /** Header names; `secret:true` marks a slot the owner fills after approval (via request_secret). */
   headers?: { name: string; secret?: boolean; value?: string }[];
   env?: { name: string; secret?: boolean; value?: string }[];
+  /**
+   * `"static"` (default when absent) = header/env credential slots. `"oauth"` = interactive OAuth 2.1 the
+   * owner completes after approving by clicking Connect in MCP settings (no secret slot to fill).
+   */
+  authKind?: "static" | "oauth";
+  /** Non-secret OAuth knobs; only meaningful when `authKind==="oauth"`. */
+  oauth?: { scope?: string; tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic" };
   /** The brain's one-line rationale for why this server suits the repo. */
   reason?: string;
 }
@@ -365,6 +403,8 @@ export interface PipelineReviewChild {
   kind: "review_lens" | "post_review";
   brief: string;
   status: ThreadStatus;
+  /** The orthogonal condition overlay (skipped/failed/…) — independent of the linear {@link status} step. */
+  condition: ThreadCondition;
   /** The lens id (`best_practices`/…) for a `review_lens` child; absent for `post_review`. */
   lensId?: string;
   /** Findings this lens surfaced, or null until it has run (`post_review` is always null). */
@@ -419,6 +459,8 @@ export interface PipelineThread {
   /** The thread's scope type (backend/frontend/docs/…). */
   type: string;
   status: ThreadStatus;
+  /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
+  condition: ThreadCondition;
   /** The thread KIND (`builder` | `master_review`) — the single differentiator. */
   kind?: string;
   /** True for the whole-diff Codex master-review thread (derived from `kind`) — rendered "Master review"
@@ -450,6 +492,13 @@ export interface PipelineJob {
   kind: WireJobKind;
   status: WireJobStatus;
   halt: WireJobHalt | null;
+  /**
+   * Which build path was committed at approval: `'direct'` (fast, brain-implemented) | `'plan'` (driver
+   * multi-thread) | `null` (never approved — still an open/awaiting-approval proposal that could become
+   * either). The navigator reads this to suppress the plan-oriented empty-state placeholders (build lanes,
+   * `plan.md`, generated docs) for a direct build, where they never apply. Absent on very old payloads.
+   */
+  buildPath?: "direct" | "plan" | null;
   decisionRecordId: string | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
@@ -470,6 +519,9 @@ export interface PipelineJob {
   prState: PrState | null;
   /** GitHub `mergeable_state` (`'dirty'` = merge conflict), or null. Refines the `open` state's coloring. */
   prMergeable: string | null;
+  /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — same four-state taxonomy as the sidebar
+   *  dot; null = no checks reported. Only meaningful once a PR exists (prNumber != null). */
+  ciStatus: CiStatus | null;
   /** The feature branch all threads stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   /** The OBSERVED live branch the agent's HEAD is on; differs from featureBranch ⇒ drift (badge). Null
@@ -572,10 +624,15 @@ export type JobKind = "feat" | "fix" | "event" | "onboard" | "review";
 /** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
 export type PrState = "open" | "merged" | "closed";
 
+/** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI"). */
+export type CiStatus = "success" | "failure" | "pending"; // null handled at the field level
+
 /** The observed PR on a job — drives the sidebar's PR-status glyph (see `PrStatusIcon`). `mergeable` is
  *  GitHub's `mergeable_state` ('dirty' = merge conflict); `url` links to the PR. */
 export interface InboxPr {
   state: PrState;
+  /** GitHub PR number, shown on sidebar rows for cross-referencing. */
+  number: number | null;
   mergeable: string | null;
   url: string | null;
 }

@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, rmSync } from 'node:fs';
-import { IsNull, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver, OnboardingService } from '../onboarding';
@@ -93,6 +93,11 @@ function setupErrorFrom(sandbox: FeatureSandbox): string | null {
   const r = sandbox.setupScriptResult;
   return r && !r.ok ? `exit ${r.exitCode}: ${r.tail}` : null;
 }
+
+/** How long a merged/closed job's sandbox may sit `detached` (RAM already freed, worktree kept so the
+ *  conversation stays resumable) before the disk GC reclaims its worktree + scratch dirs. A week of
+ *  post-merge resume-ability, then reclaim; the job row + transcript always survive. */
+const MERGED_SANDBOX_GC_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class JobLifecycleService {
@@ -449,6 +454,32 @@ export class JobLifecycleService {
   }
 
   /**
+   * The RAM-free TWIN of {@link closeJob}, used on a terminal PR state (merge/close): reclaim the CONTAINER
+   * but PRESERVE the worktree + `session_id`, so the operator's next message re-attaches a fresh container to
+   * the existing worktree and RESUMES the same brain session with full context (vs `closeJob`, which removes
+   * the worktree + flips to `closed` → `doEnsureProvisioned` returns null → a fresh session = amnesia). A
+   * stale detached worktree is later reclaimed for disk by {@link reapMergedSandboxes}.
+   *
+   * Modeled on `closeJob` EXACTLY for the two things that matter: `teardownByIdentity` (not `teardown`) so a
+   * boot-reconciled row — `container_id` nulled on restart while the real container still runs — is still
+   * reclaimed by deterministic name (+ its net/volume artifacts); and a scoped `update` (not `save`) so a
+   * concurrent cascade delete can't resurrect the row. Differs only in: no worktree removal, lifecycle
+   * `detached` (not `closed`). Guards ONLY on `closed` (a detached-but-still-running container must still be
+   * reclaimed, so it does not short-circuit on `detached`).
+   */
+  async detachJobContainer(jobId: string, orgId: string): Promise<void> {
+    const row = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
+    if (!row || row.lifecycle === 'closed') return; // already fully torn down — leave it.
+    await this.sandboxProvider
+      .teardownByIdentity({ sandbox: await this.rowToSandbox(row), orgId, jobId })
+      .catch((err) => {
+        this.logger.warn(`detachJobContainer: teardown failed for thread ${jobId}: ${err}`);
+      });
+    await this.sandboxes.update({ id: row.id }, { container_id: null, lifecycle: 'detached' });
+    this.logger.log(`detached thread ${jobId} on PR-terminal (container freed, worktree + session kept)`);
+  }
+
+  /**
    * Terminal DELETE of a thread and EVERYTHING it owns — two layers, in order:
    *   1. `closeJob` — the PHYSICAL teardown a database can't do: reclaim the Docker container and the
    *      git worktree (flips the sandbox row to `closed`; no-op if already closed).
@@ -481,25 +512,32 @@ export class JobLifecycleService {
     return (res.affected ?? 0) > 0;
   }
 
+  /** Close the job's OPEN PR on GitHub (no merge). Throws if it can't — the caller aborts the delete. */
+  async closeJobPullRequest(job: JobEntity): Promise<void> {
+    if (job.pr_state !== 'open') return; // nothing open to close — no-op
+    if (job.pr_number == null) {
+      throw new Error(`cannot close PR for job ${job.id}: missing PR number`);
+    }
+    const repo = await this.projects.findOne({ where: { id: job.repo_id, org_id: job.org_id } });
+    const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
+    const token = await this.creds.githubToken(job.org_id);
+    if (!parsed || !token) {
+      throw new Error(`cannot resolve GitHub repo/token to close PR for job ${job.id}`);
+    }
+    await this.pr.closePullRequest(token, {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      number: job.pr_number,
+    });
+  }
+
   async deleteJobDeep(jobId: string, orgId: string): Promise<void> {
     // 1. Reclaim the container + worktree (physical side effects — no DB cascade can do this).
     await this.closeJob(jobId, orgId);
 
-    // 1b. Remove the job's durable host-side scratch dirs — `closeJob` reclaims the container + worktree
-    //     but these live OUTSIDE the worktree (keyed by jobId), so nothing else deletes them. Done ONLY on
-    //     deep delete (not `closeJob`, which also runs on PR-merge/idle-close where the job row survives).
-    //     Best-effort: never block teardown. `/playground` can hold large ad-hoc installs; `/context` was
-    //     also leaking here before this cleanup.
-    for (const dir of [
-      this.sandboxProvider.playgroundDirHost(orgId, jobId),
-      this.sandboxProvider.contextDirHost(orgId, jobId),
-    ]) {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch (err) {
-        this.logger.warn(`deleteJobDeep: host scratch dir remove failed for ${dir}: ${err}`);
-      }
-    }
+    // 1b. Remove the job's durable host-side scratch dirs — `closeJob` reclaims the container + worktree but
+    //     these live OUTSIDE the worktree (keyed by jobId), so nothing else deletes them.
+    this.removeJobScratchDirs(orgId, jobId);
 
     // 2. Hand any linked ticket back to the board BEFORE the thread row vanishes (its `ticket_id` is the
     //    only way to resolve the ticket). The board's in_progress/in_review lanes are thread-driven, so a
@@ -557,7 +595,10 @@ export class JobLifecycleService {
     if (state === 'open') return 'noop';
     const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
     await this.jobs.update({ id: job.id }, { pr_state: prState });
-    await this.closeJob(job.id, job.org_id);
+    // DETACH, not close: free the container's RAM but KEEP the worktree + session so a post-merge follow-up
+    // resumes the brain with full context (a merged PR should "just free RAM, never delete data"). The
+    // worktree is reclaimed for disk later by `reapMergedSandboxes` once it's sat detached past the TTL.
+    await this.detachJobContainer(job.id, job.org_id);
     return 'closed';
   }
 
@@ -572,7 +613,16 @@ export class JobLifecycleService {
     for (const thread of threads) {
       try {
         const sandbox = await this.sandboxes.findOne({ where: { job_id: thread.id } });
-        if (!sandbox || sandbox.lifecycle === 'closed') continue;
+        // Skip already-terminal jobs: a closed sandbox, OR a job whose `pr_state` is already merged/closed
+        // (its teardown ran — since merge now DETACHES rather than closing, the lifecycle-only guard would
+        // otherwise re-poll + re-apply + re-count a detached merged job every 30 min forever).
+        if (
+          !sandbox ||
+          sandbox.lifecycle === 'closed' ||
+          thread.pr_state === 'merged' ||
+          thread.pr_state === 'closed'
+        )
+          continue;
         const project = await this.projects.findOne({ where: { id: thread.repo_id } });
         const parsed = project ? parseGithubRepoUrl(project.git_url) : null;
         const token = await this.creds.githubToken(thread.org_id);
@@ -595,6 +645,59 @@ export class JobLifecycleService {
     return closed;
   }
 
+  /** Remove a job's durable host-side scratch dirs (`/playground` + `/context`) — they live OUTSIDE the
+   *  worktree (keyed by jobId), so neither `closeJob` nor a worktree removal touches them. Best-effort;
+   *  never throws. Used by `deleteJobDeep` (hard delete) and `reapMergedSandboxes` (disk GC). */
+  private removeJobScratchDirs(orgId: string, jobId: string): void {
+    for (const dir of [
+      this.sandboxProvider.playgroundDirHost(orgId, jobId),
+      this.sandboxProvider.contextDirHost(orgId, jobId),
+    ]) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch (err) {
+        this.logger.warn(`removeJobScratchDirs: remove failed for ${dir}: ${err}`);
+      }
+    }
+  }
+
+  /**
+   * Disk GC for merged/closed jobs whose sandbox has sat `detached` past {@link MERGED_SANDBOX_GC_TTL_MS}.
+   * Merge now DETACHES (frees the container RAM immediately, keeps the worktree so the conversation stays
+   * resumable) — but nothing reclaims that worktree, so without this it grows unbounded. Runs the full
+   * `closeJob` (worktree + container-by-identity + `closed`) AND `removeJobScratchDirs` (`/context`,
+   * `/playground` — which `closeJob` does NOT touch). The job row + transcript SURVIVE (never a data delete);
+   * the conversation just becomes non-resumable past the TTL (start a new job). Leader-only, best-effort;
+   * returns how many were reclaimed.
+   */
+  async reapMergedSandboxes(): Promise<number> {
+    const cutoff = Date.now() - MERGED_SANDBOX_GC_TTL_MS;
+    const jobs = await this.jobs.find({
+      where: { pr_state: In(['merged', 'closed']) },
+      select: { id: true, org_id: true },
+    });
+    let reclaimed = 0;
+    for (const job of jobs) {
+      try {
+        const sandbox = await this.sandboxes.findOne({
+          where: { job_id: job.id, org_id: job.org_id },
+        });
+        // Only a still-detached row past the cutoff: an `attached` (re-engaged) or already-`closed` row is
+        // left alone, and a recently-detached one stays resumable until it ages out.
+        if (!sandbox || sandbox.lifecycle !== 'detached') continue;
+        if (!sandbox.updated_at || sandbox.updated_at.getTime() >= cutoff) continue;
+        await this.closeJob(job.id, job.org_id);
+        this.removeJobScratchDirs(job.org_id, job.id);
+        reclaimed++;
+      } catch (err) {
+        this.logger.warn(`reapMergedSandboxes: reclaim of job ${job.id} failed: ${err}`);
+      }
+    }
+    if (reclaimed)
+      this.logger.log(`reapMergedSandboxes: reclaimed disk for ${reclaimed} stale merged sandbox(es)`);
+    return reclaimed;
+  }
+
   /**
    * Reap the CONTAINER (not the worktree) of every `attached` thread that has been idle past the TTL and
    * is not mid-turn → flip it to `detached`. The durable worktree + branch + session stay; the next turn
@@ -608,21 +711,33 @@ export class JobLifecycleService {
     for (const row of rows) {
       if (!row.container_id) continue;
       if (this.activity.isBusy(row.container_id)) continue; // never mid-turn (this process)
-      // Durable cross-process guard: never reap a container whose thread is mid-turn on ANY instance.
-      // `activity` is in-memory/per-process; `turn_active` is the DB-backed signal that survives the
-      // brief leader overlap of a rolling deploy (defense-in-depth — the single-leader invariant already
-      // means no other process is reaping, but this is cheap insurance).
+      // Durable cross-process guard: never reap a container whose job has any non-idle system activity on
+      // ANY instance. Plan review also uses the job container and can outlive its enclosing brain turn.
+      // `this.activity` is in-memory/per-process; the DB `activity` column survives the brief leader overlap
+      // of a rolling deploy (defense-in-depth — the single-leader invariant already means no other process
+      // is reaping, but this is cheap insurance).
       const active = await this.jobs.findOne({
         where: { id: row.job_id },
-        select: { id: true, turn_active: true },
+        select: { id: true, activity: true },
       });
-      if (active?.turn_active) continue;
+      if (active && active.activity !== 'idle') continue;
       if (row.last_active_at && row.last_active_at.getTime() > cutoff) continue; // recently active
       await this.detachContainer(row, 'idle');
       reaped++;
     }
     if (reaped) this.logger.log(`reapIdle: detached ${reaped} idle sandbox container(s)`);
     return reaped;
+  }
+
+  /**
+   * Reclaim leaked per-sandbox Docker artifacts (`-net` networks + `-dind` volumes) whose owning container is
+   * gone — the catch-all that keeps Docker's address pool from being exhausted by networks orphaned across
+   * crashes / restarts / swallowed `removeNetwork` races. Thin pass-through to the provider's optional
+   * {@link SandboxProvider.reapOrphanedArtifacts} (no-op for a provider that doesn't implement it, e.g. a test
+   * fake). Scheduled by the driver's leader-gated reap timer + once on leadership acquisition (see DriverModule).
+   */
+  async reapOrphanedSandboxArtifacts(): Promise<void> {
+    await this.sandboxProvider.reapOrphanedArtifacts?.();
   }
 
   /**

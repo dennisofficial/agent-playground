@@ -289,6 +289,7 @@ export class PlanReviewService {
     > => {
       const harness = this.turnHarness.create({
         jobId: input.jobId,
+        orgId: input.orgId,
         channel,
         lane: codexReviewLane(input.jobId),
         metaTag: { codexReviewId: input.jobId },
@@ -481,7 +482,7 @@ export class PlanReviewService {
     error: string | null,
   ): Promise<CodexReviewEntity> {
     if (!existing) {
-      return this.reviews.save(
+      const created = await this.reviews.save(
         this.reviews.create({
           job_id: input.jobId,
           org_id: input.orgId,
@@ -493,6 +494,8 @@ export class PlanReviewService {
           resume_count: 0,
         }),
       );
+      await this.syncReviewActivity(input.jobId, status);
+      return created;
     }
     // A transition to 'running' refreshes the spec hash + clears stale findings. `resume_count` is the
     // plan-version/round number: bump it ONLY when the specs actually changed (a genuine re-review after
@@ -512,7 +515,29 @@ export class PlanReviewService {
       if (specHash !== null) patch.spec_hash = specHash;
     }
     await this.reviews.update({ id: existing.id }, patch);
+    await this.syncReviewActivity(input.jobId, status);
     return (await this.reviews.findOneOrFail({ where: { id: existing.id } }));
+  }
+
+  /**
+   * Reflect the review row's status onto the job's `activity` axis: `plan_review` while running, `idle`
+   * when it finalizes (`complete`/`failed`). `persistRow` is the single choke point for every
+   * `codex_reviews` status transition, so `activity` can never drift from the review. `deriveNeedsYou`
+   * reads it to suppress the "needs you" dot while a review is in flight — critically, the live sidebar's
+   * single-table WAL realtime mapper can only see the `jobs` row, so writing it here is what makes the live
+   * dot correct. Setting `idle` on complete is SAFE: if the enclosing brain turn is still live it re-asserts
+   * `turn` (see the `review_plan` handler); if the turn already ended, `idle` is correct. The shutdown-drain
+   * abort path deliberately does NOT call `persistRow`, leaving the row `running` (and `activity`
+   * untouched) so the backstop re-drives an interrupted review.
+   */
+  private async syncReviewActivity(
+    jobId: string,
+    status: 'running' | 'complete' | 'failed',
+  ): Promise<void> {
+    await this.jobs.update(
+      { id: jobId },
+      { activity: status === 'running' ? 'plan_review' : 'idle' },
+    );
   }
 
   /**

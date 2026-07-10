@@ -14,14 +14,14 @@ import type { PromptCtx } from '../prompt-ctx';
 
 /** The named area + its seven dimensions and the upkeep tool for each. Shared by both framings. */
 const WORKSPACE_PROFILE_DIMENSIONS = [
-  'THE WORKSPACE PROFILE — the durable, per-repo provisioning that turns a bare checkout into a runnable,',
-  'correctly-configured workspace. It is ONE area with SEVEN dimensions, each with its own upkeep tool:',
+  'THE WORKSPACE PROFILE — the durable provisioning for this repo, or for the org when scope:"org" is requested,',
+  'that turns a bare checkout into a runnable, correctly-configured workspace. It is ONE area with SEVEN dimensions, each with its own upkeep tool:',
   '  1. Secret files   — request_secret / request_file (or derive_secret for a self-computed value)',
   '  2. Mounts         — write_workspace_config({ mounts }) — durable dirs a tool writes outside your HOME',
   '  3. Cache folders  — write_workspace_config (a shared-rw mount); most caches already persist under HOME',
   '  4. Setup script   — write_setup_script — the idempotent bring-up commands a cold sandbox needs',
-  '  5. MCP servers    — propose_mcp_servers (owner-approved)',
-  '  6. Skills         — propose_skill_install (reuse a maintained skill) · propose_skill (author a repo-idiom one)',
+  '  5. MCP servers    — propose_mcp_servers (owner-approved; scope:"repo" default or scope:"org" for every repo in the org)',
+  '  6. Skills         — propose_skill_install (reuse a maintained skill) · propose_skill (author a repo-idiom one); scope:"repo" default or scope:"org" for every repo in the org',
   '  7. House style    — propose_convention_profile (owner-approved)',
 ].join('\n');
 
@@ -36,9 +36,9 @@ function workspaceProfileSnapshot(ctx: PromptCtx): string {
 @FragmentGroup()
 export class WorkspaceProfileGroup {
   /**
-   * normal block 28 — the WORKSPACE PROFILE overview for a real build (incremental upkeep framing). Names
-   * the area, prints the current snapshot, and tells the brain that keeping it current is ongoing work, not
-   * a one-time ceremony. Absorbs the old `environmentGaps` nudge (the persistence-by-kind recipe below).
+   * The WORKSPACE PROFILE overview for a real build (incremental upkeep framing). Names the area, prints
+   * the current snapshot, and tells the brain that keeping it current is ongoing work, not a one-time
+   * ceremony. Absorbs the old `environmentGaps` nudge (the persistence-by-kind recipe below).
    */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1280, condition: notOnboarding })
   workspaceProfileNormal(ctx: PromptCtx): string {
@@ -49,9 +49,17 @@ export class WorkspaceProfileGroup {
       '',
       'KEEPING IT CURRENT IS YOUR JOB TOO — onboarding did a bulk pass ONCE; when THIS job hits a gap it did',
       'not cover (a new stack, a missing secret, a cache, a tool worth an MCP server or skill), fix it in the',
-      'profile with the SAME tools so every FUTURE job inherits it instead of silently working around it. A new',
+      'profile with the SAME tools so every FUTURE job inherits it instead of silently working around it. When',
+      'the gap is what BLOCKS you from running or verifying the work, fixing the profile is REQUIRED, not',
+      'optional hygiene: a runnable workspace is the expected happy path, so request the missing secret / correct',
+      'the setup script / add the mount and make the thing actually run — never skip the verification or fake it',
+      'with a stand-in that dodges the real environment. A new',
       'stack is often best filled by INSTALLING a maintained skill (propose_skill_install from a known marketplace)',
-      'rather than authoring one from memory — reuse before you write. Any',
+      'rather than authoring one from memory — reuse before you write. SCOPE — some dimensions are org-wide, not',
+      'just this repo: the skill tools (propose_skill_install / propose_skill / propose_skill_removal) and',
+      'propose_mcp_servers each take scope:"repo" (this repo only, the DEFAULT) or scope:"org" (EVERY repo in the',
+      'org). When the operator asks for something org-wide, PASS scope:"org" — never decline an org-wide request',
+      'as "repo-only". Any',
       'gap the host can detect (e.g. an unfilled MCP secret slot) is flagged inline above as PROFILE GAPS.',
       'Persistence, by kind: (a) a CLI the image does not ship (run `command -v` first — the sandbox bakes a',
       'broad toolkit) → drop it in `~/.local/bin` (on PATH, durable); (b) a tool credential/cache → it already',
@@ -69,9 +77,9 @@ export class WorkspaceProfileGroup {
   }
 
   /**
-   * onboarding block 015 — the WORKSPACE PROFILE overview for the bring-up (bulk-pass framing). Sits right
-   * after the onboarding identity/sandbox blocks; the deep per-dimension how-to fragments (SECRETS, CONFIG,
-   * SETUP SCRIPT, MCP SERVERS, SKILLS, HOUSE STYLE, RESET) follow below.
+   * The WORKSPACE PROFILE overview for the bring-up (bulk-pass framing). Sits right after the onboarding
+   * identity/sandbox fragments; the deep per-dimension how-to fragments (SECRETS, CONFIG, SETUP SCRIPT,
+   * MCP SERVERS, SKILLS, HOUSE STYLE, RESET) follow below.
    */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2015, condition: isOnboarding })
   workspaceProfileOnboarding(ctx: PromptCtx): string {
@@ -87,7 +95,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 06 — SECRETS. */
+  /** SECRETS. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2060, condition: isOnboarding })
   secrets(): string {
     return [
@@ -107,7 +115,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 07 — DERIVED values. */
+  /** DERIVED values. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2070, condition: isOnboarding })
   derivedValues(): string {
     return [
@@ -120,7 +128,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 08 — AUTH / CAPABILITY ACCESS (the interactive-login recipe). */
+  /** AUTH / CAPABILITY ACCESS (the interactive-login recipe). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2080, condition: isOnboarding })
   authAccess(): string {
     return [
@@ -148,7 +156,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 09 — INSTALLING A CLI. */
+  /** INSTALLING A CLI. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2090, condition: isOnboarding })
   installCli(): string {
     return [
@@ -162,7 +170,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10 — CONFIG (write_workspace_config mounts). */
+  /** CONFIG (write_workspace_config mounts). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2100, condition: isOnboarding })
   config(): string {
     return [
@@ -179,7 +187,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10b — SETUP SCRIPT (write_setup_script; runs on every cold bring-up). */
+  /** SETUP SCRIPT (write_setup_script; runs on every cold bring-up). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2105, condition: isOnboarding })
   setupScript(): string {
     return [
@@ -197,7 +205,7 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10c — MCP SERVERS (propose_mcp_servers; owner-approved, stack-matched). */
+  /** MCP SERVERS (propose_mcp_servers; owner-approved, stack-matched). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2108, condition: isOnboarding })
   mcpServers(): string {
     return [
@@ -244,8 +252,8 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10c2 — SKILLS (reuse a maintained skill, else author a repo-idiom one; owner-approved). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2108.5, condition: isOnboarding })
+  /** SKILLS — reuse a maintained skill, else author a repo-idiom one; owner-approved. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2112, condition: isOnboarding })
   skills(): string {
     return [
       'SKILLS — a skill is a reusable `SKILL.md` (+ optional references/scripts) that a build/brain/review session',
@@ -279,8 +287,8 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 10d — HOUSE STYLE (propose_convention_profile; owner-approved, stack-matched). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2109, condition: isOnboarding })
+  /** HOUSE STYLE (propose_convention_profile; owner-approved, stack-matched). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2114, condition: isOnboarding })
   houseStyle(): string {
     return [
       'HOUSE STYLE — the org may define reusable "house-style" profiles (a NestJS+Next.js folder-structure',
@@ -296,8 +304,8 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** onboarding block 11 — RESET / PROVE-IT-COLD-BOOTS. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2110, condition: isOnboarding })
+  /** RESET / PROVE-IT-COLD-BOOTS. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2116, condition: isOnboarding })
   reset(): string {
     return [
       'RESET / PROVE-IT-COLD-BOOTS — a stack that runs right now might only run because of ephemeral container',

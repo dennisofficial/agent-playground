@@ -1,0 +1,41 @@
+name: Set up workspace
+description: >
+  pnpm + Node, with the workspace-package dist restored from cache BEFORE install so
+  pnpm's injectWorkspacePackages hardlinks it at install time; build:packages runs only
+  on a cache miss. The `shared` package rebuilds itself via its `prepare` hook during
+  install, so it needs no explicit build step here.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up pnpm
+      # No `version:` here — action-setup reads it from package.json's `packageManager`
+      # field (single source of truth), so a pnpm bump can't desync the two.
+      uses: pnpm/action-setup@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+        cache: "pnpm"
+
+    - name: Restore built workspace packages (dist)
+      id: dist
+      # Restored BEFORE install: pnpm's injectWorkspacePackages hardlinks each package's
+      # dist into dependents at install time, so a warm dist lets us skip build:packages.
+      # The key hashes source only (dist does not exist yet at this point), so any change
+      # to a package or the lockfile invalidates it.
+      uses: actions/cache@v4
+      with:
+        path: packages/**/dist
+        key: pkgs-dist-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/**') }}
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    - name: Build workspace packages
+      # Only on a cache miss — on a hit the dist restored above is already injected.
+      if: steps.dist.outputs.cache-hit != 'true'
+      shell: bash
+      run: pnpm run build:packages

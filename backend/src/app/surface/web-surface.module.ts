@@ -5,12 +5,14 @@ import { Subscription } from 'rxjs';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { GitModule } from '../git/git.module';
 import { MessageEntity, RepoEntity, JobEntity } from '../persistence/entities';
 import { WebSurface } from './web-surface';
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
+  RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
 } from './approval-blocks';
 import { parseWebApprovalMeta } from './web-approval-card';
@@ -38,7 +40,15 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
  * Zero v1 imports.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([JobEntity, MessageEntity, RepoEntity], DB_CONNECTION)],
+  imports: [
+    TypeOrmModule.forFeature(
+      [JobEntity, MessageEntity, RepoEntity],
+      DB_CONNECTION,
+    ),
+    // Repo-file endpoints need `LocalGitService` (git ls-files over the job worktree); GitModule is not
+    // `@Global`, so it must be imported for the injected service to resolve.
+    GitModule,
+  ],
   providers: [
     WebSurface,
     // `JobTitleService` injects `JOB_TITLE_CHAIN`, now provided by the `@Global` `TitlingModule`.
@@ -68,6 +78,14 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
       // only acts while the job is `awaiting_ship_review`, so a stale/double click is a no-op.
       if (actionId === SHIP_ACTION_ID) {
         void resolveShipApproval(this.moduleRef, meta.jobId, ruledBy).catch(() => undefined);
+        return;
+      }
+
+      // RETRACT the ship-review gate: the "Back to building" click. Same lazy-driver resolution as the
+      // approve branch above; `retractShipDurably` is idempotent (acts only while parked), so a stale click
+      // is a safe no-op.
+      if (actionId === RETRACT_SHIP_ACTION_ID) {
+        void retractShip(this.moduleRef, meta.jobId, ruledBy).catch(() => undefined);
         return;
       }
 
@@ -106,6 +124,20 @@ async function resolveShipApproval(
   const { ThreadDriver } = await import('../driver/thread-driver.service.js');
   const driver = moduleRef.get(ThreadDriver, { strict: false });
   await driver.resolveShipApprovalDurably(jobId, ruledBy);
+}
+
+/**
+ * Retract a ship-review gate back to planning. Mirrors {@link resolveShipApproval}'s lazy `ThreadDriver`
+ * resolution; `retractShipDurably` is itself idempotent (acts only while `awaiting_ship_review`).
+ */
+async function retractShip(
+  moduleRef: ModuleRef,
+  jobId: string,
+  ruledBy: string,
+): Promise<void> {
+  const { ThreadDriver } = await import('../driver/thread-driver.service.js');
+  const driver = moduleRef.get(ThreadDriver, { strict: false });
+  await driver.retractShipDurably(jobId, ruledBy);
 }
 
 function actionIdToVerdict(actionId: string): ApprovalVerdict | undefined {

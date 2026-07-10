@@ -4,6 +4,7 @@ export type JobSection =
   | "planning"
   | "awaiting"
   | "building"
+  | "ready_to_ship"
   | "done"
   | "pr_open"
   | "merged";
@@ -12,6 +13,7 @@ export const SECTION_ORDER: JobSection[] = [
   "planning",
   "awaiting",
   "building",
+  "ready_to_ship",
   "done",
   "pr_open",
   "merged",
@@ -19,8 +21,9 @@ export const SECTION_ORDER: JobSection[] = [
 
 export const SECTION_LABEL: Record<JobSection, string> = {
   planning: "Planning",
-  awaiting: "Awaiting",
+  awaiting: "Awaiting Approval",
   building: "Building",
+  ready_to_ship: "Ready to Ship",
   done: "Done",
   pr_open: "PR Open",
   merged: "Merged",
@@ -34,10 +37,13 @@ export function sectionOf(t: InboxThread): JobSection | null {
     case "triaging":
       return "planning";
     case "awaiting_approval":
-    case "awaiting_ship_review":
       return "awaiting";
+    case "awaiting_ship_review":
+      return "ready_to_ship";
     case "running":
-      return "building";
+      // A shipping job re-uses the `running` status while its PR opens — keep it in "Ready to Ship"
+      // (showing the `running` working spinner) rather than teleporting it to "Building".
+      return t.shipping ? "ready_to_ship" : "building";
     case "done":
       if (t.pr?.state === "open") return "pr_open";
       if (t.pr?.state === "merged") return "merged";

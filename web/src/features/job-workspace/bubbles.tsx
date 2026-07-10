@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ChevronRight, Loader2, RotateCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
+import { Check, ChevronRight, Loader2, RotateCw } from "lucide-react";
 import { toneOf, type SystemTone } from "./classify";
 import { Markdown } from "./markdown";
+import { contextConvoNodeForHref } from "./node-registry";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
 import { SubagentCard, indexLiveSubagents, subagentNode } from "./subagents";
 import { Button } from "@/components/ui/button";
-import { useRetryTurn } from "@/lib/api/job-queries";
+import { useRetryJob, useRetryTurn } from "@/lib/api/job-queries";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
 import {
   formatElapsed,
+  MAIN_LANE,
   summarizeLiveTurn,
   useElapsedSeconds,
   type LiveBlock,
@@ -126,26 +129,48 @@ export function UserBubble({
   );
 }
 
-export function ClaudeBubble({ message }: { message: JobMessage }) {
+export function ClaudeBubble({
+  message,
+  onSelectNode,
+}: {
+  message: JobMessage;
+  onSelectNode?: (node: string) => void;
+}) {
   // No per-bubble timestamp on assistant prose — the end-of-turn `TurnMetaDivider` line carries the
   // turn's time (next to its token counter), so a timestamp here would just duplicate it.
-  return <StreamTextBubble text={message.text} />;
+  return <StreamTextBubble text={message.text} onSelectNode={onSelectNode} />;
 }
 
 /**
  * An assistant message — rendered as markdown prose (no avatar, no bubble), per the conversation redesign.
- * `streaming` adds a blinking cursor for the live (token-by-token) turn.
+ * `streaming` adds a blinking cursor for the live (token-by-token) turn. When `onSelectNode` is supplied,
+ * explicit markdown links to a `/context/{specs,generated,artifacts}/…` file become clickable and open the
+ * target in the detail pane (SPA nav on left-click, real deep link on cmd/middle-click).
  */
 export function StreamTextBubble({
   text,
   streaming = false,
+  onSelectNode,
 }: {
   text: string;
   streaming?: boolean;
+  onSelectNode?: (node: string) => void;
 }) {
+  const pathname = usePathname();
+  const resolveRelativeLink = useMemo(() => {
+    if (!onSelectNode) return undefined;
+    return (href: string) => {
+      const node = contextConvoNodeForHref(href);
+      if (!node) return null;
+      return {
+        url: `${pathname}?node=${encodeURIComponent(node)}`,
+        onSelect: () => onSelectNode(node),
+      };
+    };
+  }, [onSelectNode, pathname]);
   return (
     <div className="anim-fadeUp">
-      <Markdown>{text}</Markdown>
+      <Markdown resolveRelativeLink={resolveRelativeLink}>{text}</Markdown>
       {streaming ? (
         <span
           className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] animate-pulse"
@@ -284,7 +309,11 @@ export function buildLiveTurnItems(
       items.push({
         key: b.key,
         node: (
-          <StreamTextBubble text={b.text} streaming={!b.done && turn.active} />
+          <StreamTextBubble
+            text={b.text}
+            streaming={!b.done && turn.active}
+            onSelectNode={onSelectNode}
+          />
         ),
         ts: b.emittedAt,
       });
@@ -415,6 +444,8 @@ export function CompactionSummaryPill({
 export function SystemNoticeRow({ message }: { message: JobMessage }) {
   const [open, setOpen] = useState(false);
   const tone = toneOf(message.text ?? "");
+  // The full raw payload delivered to Atlas, when the row stored one that differs from the label.
+  const fullBody = (message.meta?.fullBody as string | undefined) ?? message.text;
   return (
     <div
       className="anim-fadeUp flex flex-col self-stretch rounded-md border"
@@ -447,7 +478,7 @@ export function SystemNoticeRow({ message }: { message: JobMessage }) {
           className="border-t px-3.5 py-2.5 text-[12px]"
           style={{ borderColor: "var(--hair)" }}
         >
-          <Markdown>{message.text}</Markdown>
+          <Markdown>{fullBody}</Markdown>
         </div>
       ) : null}
     </div>
@@ -484,6 +515,7 @@ export function SystemReminderChip({ message }: { message: JobMessage }) {
   const label = reminderLabel(
     message.meta?.reminderKind as string | undefined,
   );
+  const fullBody = (message.meta?.fullBody as string | undefined) ?? message.text;
   return (
     <div className="anim-fadeUp flex flex-col items-end gap-1 self-stretch">
       <button
@@ -510,7 +542,7 @@ export function SystemReminderChip({ message }: { message: JobMessage }) {
             background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
           }}
         >
-          <Markdown>{message.text}</Markdown>
+          <Markdown>{fullBody}</Markdown>
         </div>
       ) : null}
     </div>
@@ -527,6 +559,7 @@ export function UntrustedBlock({ message }: { message: JobMessage }) {
   const source = message.meta?.untrustedSource as string | undefined;
   const severity = message.meta?.severity as string | undefined;
   const body = message.text ?? "";
+  const fullBody = (message.meta?.fullBody as string | undefined) ?? body;
   const label = source ? `untrusted · ${source}` : "untrusted";
   return (
     <div
@@ -563,7 +596,7 @@ export function UntrustedBlock({ message }: { message: JobMessage }) {
           className="border-t px-3.5 py-2.5 text-[12px]"
           style={{ borderColor: "var(--hair)" }}
         >
-          <Markdown>{body}</Markdown>
+          <Markdown>{fullBody}</Markdown>
         </div>
       ) : null}
     </div>
@@ -582,6 +615,8 @@ interface TurnMeta {
   };
   contextTokens?: number | null;
   contextLimit?: number | null;
+  /** How long the turn worked, in ms (start→end). Absent on turns from before this shipped. */
+  workedMs?: number;
 }
 
 /** Format a USD cost: sub-cent as 4dp ($0.0042), otherwise 2dp ($0.03). */
@@ -602,6 +637,8 @@ export function TurnMetaDivider({ message }: { message: JobMessage }) {
   if (u.outputTokens != null) parts.push(`${formatTokens(u.outputTokens)} out`);
   if (u.cacheReadTokens) parts.push(`${formatTokens(u.cacheReadTokens)} cache`);
   if (u.costUsd != null) parts.push(formatCost(u.costUsd));
+  if (typeof meta.workedMs === "number" && meta.workedMs > 0)
+    parts.push(`worked ${formatElapsed(Math.round(meta.workedMs / 1000))}`);
   return (
     <div className="anim-fadeUp flex items-center gap-1.5 pl-0.5">
       <MessageTime iso={message.postedAt} tone="turn" />
@@ -663,21 +700,105 @@ export function LiveIndicator({
   );
 }
 
+/** Compact countdown label ("12m", "1h 4m", "45s") for the session-limit auto-resume clock. */
+function formatRemaining(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
+}
+
+/** The live "auto-resumes in …" countdown text, ticking every second toward `resumeAt`. */
+function useResumeCountdown(resumeAt: string | undefined): string {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!resumeAt) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [resumeAt]);
+
+  if (!resumeAt) return "auto-resumes at reset";
+  const resetMs = new Date(resumeAt).getTime();
+  if (!Number.isFinite(resetMs)) return "auto-resumes at reset";
+  const remaining = resetMs - now;
+  if (remaining <= 0) return "auto-resuming…";
+  return `auto-resumes in ${formatRemaining(remaining)}`;
+}
+
+/**
+ * The action row for a session-limit notice — a live countdown to the harness's own auto-resume, plus a
+ * "Force resume now" button for when the operator knows Anthropic already lifted the limit early. Main-lane
+ * notices force-resume via `/retry-turn`; build-lane notices via `/retry` (the lane's own retry endpoint).
+ */
+function SessionLimitActions({
+  jobRef,
+  isMain,
+  resumeAt,
+}: {
+  jobRef: JobRef;
+  isMain: boolean;
+  resumeAt: string | undefined;
+}) {
+  const retryTurn = useRetryTurn(jobRef);
+  const retryJob = useRetryJob(jobRef);
+  const resume = isMain ? retryTurn : retryJob;
+  const countdown = useResumeCountdown(resumeAt);
+
+  return (
+    <div
+      className="flex items-center gap-2 border-t px-3.5 py-2.5"
+      style={{ borderColor: "var(--red-line)" }}
+    >
+      <Button
+        size="sm"
+        loading={resume.isPending}
+        loadingText="Resuming…"
+        disabled={resume.isSuccess}
+        onClick={() => resume.mutate()}
+      >
+        <RotateCw size={12} className="mr-1" />
+        {resume.isSuccess ? "Resumed" : "Force resume now"}
+      </Button>
+      <span className="text-dim text-[11.5px]">{countdown}</span>
+      {resume.isError ? (
+        <span className="text-[11.5px] text-red">
+          Couldn&apos;t resume. Try again.
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * A SYSTEM→OPERATOR notice — a runtime/harness message addressed to the OPERATOR, not authored by Atlas
  * and never seen by it (e.g. "this thread can't be resumed — start a new one"). Deliberately NOT an Atlas
  * bubble: a full-width warn-toned panel with a "SYSTEM" header so it reads as coming from the harness.
  * When `meta.retryable` is set (a transient engine failure, not a terminal one), a "Resume" button
- * re-pokes the SAME engine session (`POST …/retry-turn`) with no new operator-authored message.
+ * re-pokes the SAME engine session (`POST …/retry-turn`) with no new operator-authored message. When
+ * `meta.sessionLimit` is set (Claude's own subscription session/usage limit), a session-limit action row
+ * (countdown + force-resume) renders instead — the harness already auto-resumes at `meta.resumeAt`.
  */
 export function SystemOperatorNotice({
   message,
   jobRef,
+  lane,
+  isOutstanding = false,
 }: {
   message: JobMessage;
   jobRef: JobRef;
+  lane?: string;
+  /** Whether THIS failure is still the outstanding one (thread currently halted). Only then is the Resume
+   *  button live; once the thread has resumed the footer shows a muted "Resumed" instead of a live CTA. */
+  isOutstanding?: boolean;
 }) {
   const retryable = message.meta?.retryable === true;
+  const sessionLimit = message.meta?.sessionLimit === true;
+  const resumeAt =
+    typeof message.meta?.resumeAt === "string" ? message.meta.resumeAt : undefined;
+  const isMain = (lane ?? MAIN_LANE) === MAIN_LANE;
   const retry = useRetryTurn(jobRef);
   return (
     <div
@@ -711,26 +832,37 @@ export function SystemOperatorNotice({
       <div className="px-3.5 py-3">
         <Markdown>{message.text}</Markdown>
       </div>
-      {retryable ? (
+      {sessionLimit ? (
+        <SessionLimitActions jobRef={jobRef} isMain={isMain} resumeAt={resumeAt} />
+      ) : retryable ? (
         <div
           className="flex items-center gap-2 border-t px-3.5 py-2.5"
           style={{ borderColor: "var(--red-line)" }}
         >
-          <Button
-            size="sm"
-            loading={retry.isPending}
-            loadingText="Resuming…"
-            disabled={retry.isSuccess}
-            onClick={() => retry.mutate()}
-          >
-            <RotateCw size={12} className="mr-1" />
-            {retry.isSuccess ? "Resumed" : "Resume"}
-          </Button>
-          {retry.isError ? (
-            <span className="text-[11.5px] text-red">
-              Couldn&apos;t resume. Try again.
+          {isOutstanding ? (
+            <>
+              <Button
+                size="sm"
+                loading={retry.isPending}
+                loadingText="Resuming…"
+                disabled={retry.isSuccess}
+                onClick={() => retry.mutate()}
+              >
+                <RotateCw size={12} className="mr-1" />
+                {retry.isSuccess ? "Resumed" : "Resume"}
+              </Button>
+              {retry.isError ? (
+                <span className="text-[11.5px] text-red">
+                  Couldn&apos;t resume. Try again.
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[11.5px] text-faint">
+              <Check size={12} aria-hidden />
+              Resumed
             </span>
-          ) : null}
+          )}
         </div>
       ) : null}
     </div>

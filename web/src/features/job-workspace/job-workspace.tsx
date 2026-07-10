@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Group,
@@ -36,11 +36,12 @@ import {
 import { Navigator, type JobMeta } from "./navigator";
 import { Conversation } from "./conversation";
 import { MarkdownActionsProvider } from "./markdown";
-import { PhaseView, EmptyPane, SubagentPane } from "./step-view";
+import { PhaseView, EmptyPane, SubagentPane, FilePane } from "./step-view";
 import { PersistentApprovalBar, PersistentShipBar } from "./spec-approval";
 import { useSelectedNode } from "./use-selected-node";
 import { ReviewCommentsProvider } from "./review-comments";
 import { SelectionCommentPopover } from "./selection-comment-popover";
+import { DeleteJobPrDialog } from "./delete-job-pr-dialog";
 
 /**
  * The thread workspace — the navigator (pipeline / state panels) + the work column (Conversation or
@@ -85,6 +86,9 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     openConversation,
     closeDetail,
     closeSub,
+    fileNode,
+    fileLines,
+    closeFile,
   } = useSelectedNode();
 
   // Persist the conversation/detail split ratio across reloads (per-browser). `panelIds` lets the
@@ -101,6 +105,15 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     [inbox, jobId],
   );
   const job = pipelineJob(pipeline);
+
+  // Prefer the pipeline job; fall back to the sidebar feed (resolves earlier). null = genuinely unknown.
+  const prState = job?.prState ?? inboxThread?.pr?.state ?? null;
+  const prUrl = job?.prUrl ?? inboxThread?.pr?.url ?? null;
+  const prNumber = job?.prNumber ?? null;
+  const hasOpenPr = prState === "open" && Boolean(prUrl);
+  // PR state is "known" once EITHER source has resolved; until then, block delete (don't leave-orphan).
+  const prStateKnown = job != null || inboxThread != null;
+  const [prDialogOpen, setPrDialogOpen] = useState(false);
 
   // Opening a job lands on the build lane that's currently running (the "builder thread") rather than always
   // on Main — you click a job to watch what it's doing. Decided ONCE per job open, the first time the
@@ -201,12 +214,19 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const onSelectNode = selectNode;
   const onOpenPlan = () => selectNode("plan");
   const onRename = (title: string) => rename.mutate(title);
-  const onDelete = () =>
-    del.mutate(undefined, {
+  const runDelete = (prAction: "close" | "leave") =>
+    del.mutate(prAction, {
       onSuccess: () => {
+        setPrDialogOpen(false);
         router.push(ROUTES.workspace());
       },
     });
+
+  const onDelete = () => {
+    if (!prStateKnown) return; // safety: never delete before we know whether a PR is open (button is disabled too)
+    if (hasOpenPr) setPrDialogOpen(true);
+    else runDelete("leave"); // confirmed no open PR → today's behavior
+  };
 
   return (
     <MarkdownActionsProvider value={markdownActions}>
@@ -228,6 +248,8 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
             onRename={onRename}
             onDelete={onDelete}
             deleting={del.isPending}
+            hasOpenPr={hasOpenPr}
+            deleteReady={prStateKnown}
           />
           {/* Work column — a horizontal split: the conversation is ALWAYS pinned on the left and the detail
           pane is a CONSTANT container on the right (never closes). Selecting a navigator node fills it;
@@ -290,7 +312,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
             >
               {/* The detail pane content fills the column; the persistent approval bar (when awaiting) pins to
               its base as a `flex:none` footer — present no matter what the pane is showing. */}
-              <div className="flex min-h-0 flex-1 flex-col">
+              <div className="relative flex min-h-0 flex-1 flex-col">
                 {subNode ? (
                   // A sub-agent stacked on top of the right pane — a second-level page with a breadcrumb back to
                   // the base detail node (which stays selected in the navigator underneath).
@@ -317,6 +339,17 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
                 ) : (
                   <EmptyPane />
                 )}
+                {fileNode ? (
+                  <div className="absolute inset-0 z-10 bg-surface">
+                    <FilePane
+                      jobRef={ref}
+                      path={fileNode}
+                      lines={fileLines}
+                      base={detailNode ? baseCrumbLabel(detailNode) : null}
+                      onBack={closeFile}
+                    />
+                  </div>
+                ) : null}
               </div>
               {awaitingApproval ? (
                 <PersistentApprovalBar
@@ -333,22 +366,33 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
           </Group>
         </div>
         <SelectionCommentPopover />
+        {prDialogOpen ? (
+          <DeleteJobPrDialog
+            prNumber={prNumber}
+            pending={del.isPending}
+            error={del.error as Error | null}
+            onChoose={runDelete}
+            onClose={() => {
+              setPrDialogOpen(false);
+              del.reset();
+            }}
+          />
+        ) : null}
       </ReviewCommentsProvider>
     </MarkdownActionsProvider>
   );
 }
 
-/** Thread statuses that count as "currently running" for the open-a-job default — a lane doing active work
- *  (executing / auto-fixing / reviewing / generating its just-in-time plan) or one blocked waiting on you.
- *  `pending` (queued, not started) and `awaiting_approval` (the plan gate — that flow lives on Main) are
- *  deliberately excluded, as are the terminal `done`/`incomplete`/`failed`. */
+/** The STEP values that count as "currently running" for the open-a-job default — a lane doing active work
+ *  (executing / auto-fixing / reviewing / generating its just-in-time plan). `pending` (queued) and the
+ *  terminal `done` are excluded; a lane halted with a `failed`/`incomplete` condition is filtered out at the
+ *  call site (a `paused` lane still counts — it's parked mid-build, waiting on you). */
 const RUNNING_THREAD_STATUSES: ReadonlySet<ThreadStatus> =
   new Set<ThreadStatus>([
     "planning",
     "reviewing",
     "executing",
     "auto_fixing",
-    "awaiting_input",
   ]);
 
 /** The `?lane=` id of the build lane to open when a job is first opened, or `null` to stay on Main. Picks the
@@ -358,6 +402,7 @@ function runningLane(job: PipelineJob): string | null {
   let pick: PipelineJob["threads"][number] | null = null;
   for (const t of job.threads) {
     if (!RUNNING_THREAD_STATUSES.has(t.status)) continue;
+    if (t.condition === "failed" || t.condition === "incomplete") continue; // terminal halt — not running
     if (!pick || t.ordinal > pick.ordinal) pick = t;
   }
   return pick?.id ?? null;

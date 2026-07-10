@@ -7,7 +7,7 @@ import { qk } from "./query-keys";
 import { subscribeSse, type SseHandle } from "./sse-manager";
 import { uiStatus, type InboxThread } from "./inbox";
 import { toJobKind } from "./status";
-import type { WireJobKind, WireJobHalt, PrState } from "./types";
+import type { WireJobKind, WireJobHalt, WireJobActivity, PrState, CiStatus } from "./types";
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
@@ -24,6 +24,9 @@ interface RealtimeRow {
   kind?: string | null;
   status: string;
   needsYou: boolean;
+  /** The orthogonal "system is working" axis — replaces the old `turnActive`/`reviewRunning` inputs.
+   *  `needsYou` already folds it in server-side; retained on the row for an optional live label. */
+  activity: WireJobActivity;
   /** An unresolved turn-failure box is outstanding — drives the sidebar failed-style ✕ glyph. */
   halted: boolean;
   orgId: string;
@@ -35,6 +38,10 @@ interface RealtimeRow {
   prState?: string | null;
   /** GitHub mergeable_state ('dirty' = conflict); refines the open-PR glyph. */
   prMergeable?: string | null;
+  /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — WAL row is loosely typed like prState. */
+  ciStatus?: string | null;
+  /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship". */
+  shipping?: boolean;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt?: WireJobHalt | null;
 }
@@ -80,11 +87,16 @@ export function useAllJobsRealtime(): void {
       let found = false;
       let statusChanged = false;
       let haltChanged = false;
+      let prChanged = false;
+      let ciChanged = false;
       const nextStatus = uiStatus(row.status, row.origin);
       const nextBranch = row.currentBranch ?? null;
       const prevBranch = lastBranchByJob.get(row.jobId);
       const branchChanged = prevBranch !== undefined && prevBranch !== nextBranch;
       lastBranchByJob.set(row.jobId, nextBranch);
+      const nextPrState = row.prState ?? null;
+      const nextPrMergeable = row.prMergeable ?? null;
+      const nextCi = (row.ciStatus ?? null) as CiStatus | null;
       const nextHalt = "halt" in row ? (row.halt ?? null) : undefined;
       qc.setQueryData<InboxThread[]>(qk.allJobs(), (prev) => {
         if (!prev) return prev;
@@ -92,6 +104,12 @@ export function useAllJobsRealtime(): void {
         if (idx === -1) return prev;
         found = true;
         statusChanged = prev[idx].status !== nextStatus;
+        // A PR-state or mergeable transition (e.g. a GitHub merge) moves only these fields — `status`
+        // was already latched to `done` when the PR opened — so it must trigger its own detail refresh.
+        prChanged =
+          (prev[idx].pr?.state ?? null) !== nextPrState ||
+          (prev[idx].pr?.mergeable ?? null) !== nextPrMergeable;
+        ciChanged = (prev[idx].ci ?? null) !== nextCi;
         const halt = nextHalt === undefined ? prev[idx].halt : nextHalt;
         haltChanged = !sameHalt(prev[idx].halt, halt);
         const next = [...prev];
@@ -100,17 +118,25 @@ export function useAllJobsRealtime(): void {
           title: row.title?.trim() || next[idx].title,
           kind: row.kind ? toJobKind(row.kind as WireJobKind) : next[idx].kind,
           status: nextStatus,
+          activity: row.activity ?? next[idx].activity,
           needsYou: row.needsYou,
           halted: row.halted,
+          // Flips true→false exactly when status leaves `running` (ship finalize done), which also flips
+          // `status`, so the section re-group already re-renders — just keep the flag in sync.
+          shipping: row.shipping ?? false,
           // The flat WAL row carries no PR url — preserve the enriched one from the fetched row so a
           // live conflict→ready→merged transition re-glyphs without dropping the click-through link.
           pr: row.prState
             ? {
                 state: row.prState as PrState,
+                // The number and url are stable once a PR exists and the flat WAL row omits them —
+                // preserve the enriched values so a live state transition re-glyphs without dropping them.
+                number: next[idx].pr?.number ?? null,
                 mergeable: row.prMergeable ?? null,
                 url: next[idx].pr?.url ?? null,
               }
             : null,
+          ci: nextCi,
           halt,
         };
         return next;
@@ -119,15 +145,18 @@ export function useAllJobsRealtime(): void {
         invalidate(); // a thread we don't have cached yet → refetch the enriched list
         return;
       }
-      // A status transition (e.g. approve → running, → building, cancelled), branch switch, or HALT change
-      // means the OPEN thread's detail pane is stale. Halt is intentionally orthogonal to status, so without
-      // the explicit haltChanged gate a failed/paused build could update the sidebar but leave the workspace
-      // banner and pipeline tree stale until a later refetch.
-      if (statusChanged || branchChanged || haltChanged) {
+      // A status transition (e.g. approve → running, → building, cancelled), branch switch, HALT change, or
+      // PR-state change means the OPEN thread's detail pane is stale. Halt is intentionally orthogonal to
+      // status, so without the explicit haltChanged gate a failed/paused build could update the sidebar but
+      // leave the workspace banner and pipeline tree stale until a later refetch. A GitHub-originated PR merge
+      // moves only pr_state (status already latched to `done` when the PR opened), so it needs its own gate.
+      if (statusChanged || branchChanged || haltChanged || prChanged || ciChanged) {
         const ref = { orgId: row.orgId, repoId: row.repoId, jobId: row.jobId };
-        // The pipeline carries the branch fields the drift badge reads — refresh on either a status flip or
-        // a live branch switch. Halt writes also append a durable operator message, so refresh both surfaces.
+        // The pipeline carries the branch fields the drift badge reads AND the PR state the workspace badge
+        // reads — refresh on a status flip, a live branch switch, or a PR-state/mergeable transition.
         void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+        // Halt writes also append a durable operator message; the PR-sync path does not, so PR changes alone
+        // don't refresh messages.
         if (statusChanged || haltChanged) {
           void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
         }

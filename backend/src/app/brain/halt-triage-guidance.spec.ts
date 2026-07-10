@@ -42,4 +42,14 @@ describe('haltTriageGuidance (retrieve-vs-author)', () => {
       expect(text(reason)).toMatch(/BOUNDED number of `retry_thread` attempts/);
     }
   });
+
+  it('every branch leads with the forensic "read the transcript via atlas-tx" orientation', () => {
+    for (const reason of [undefined, 'needs_env', 'question', 'decision'] as const) {
+      const g = text(reason);
+      expect(g).toMatch(/READ THE HALTED LANE'S OWN TRANSCRIPT/);
+      expect(g).toMatch(/atlas-tx show <sessionId>/);
+      // The belief-vs-reality forensic framing the reference screenshots want.
+      expect(g).toMatch(/BELIEVE vs\. what was TRUE/);
+    }
+  });
 });

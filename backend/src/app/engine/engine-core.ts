@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync }
 import { join, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { structuredPatch as diffStructuredPatch } from 'diff';
 import { applyClaudeAuth } from './claude-auth';
+import { detectSessionLimitText, limitFromRateEvent, parseResetAt, type SessionLimitHit } from './session-limit';
 import { atlasEngineHomeDir, engineHomeKeyString, type EngineHomeKey } from './engine-home';
 import {
   assertValidCodexAuthJson,
@@ -145,7 +146,7 @@ export function detectLongRunningCommand(command: string): string | null {
   return null;
 }
 
-const SVC_NUDGE_TEXT =
+export const SVC_NUDGE_TEXT =
   'this looks like a long-running process. If it is a dev server / `docker compose up` / watcher, do NOT ' +
   "run it bare — start it under the supervisor so it survives the turn and shows in the operator's SERVICES " +
   'sidebar with live logs: `atlas-svc run --name <id> -- <cmd>` (then `atlas-svc logs -f <id>`, `atlas-svc ' +
@@ -999,6 +1000,10 @@ export class EngineCore {
     // in their OWN context on cheaper models, so they're excluded.
     let contextTokens: number | undefined;
     let contextModel: string | undefined;
+    // Set the instant we detect a Claude subscription session/usage-limit wall (structured
+    // `rate_limit_event` status:'rejected', or the printed-line fallback). Its presence flips the turn from
+    // "hold input open + resume" to "end CLEANLY" so we never auto-resume straight back into the wall.
+    let sessionLimit: SessionLimitHit | undefined;
     try {
       for await (const message of this.claudeSdk.query({
         prompt: streaming ? input!.stream : task,
@@ -1028,6 +1033,20 @@ export class EngineCore {
           if (message.task_id) liveBgTasks.delete(message.task_id);
           onEvent?.({ kind: 'bg_task', taskId: message.task_id, status: message.status, detail: message.summary });
           resetHoldTimer();
+        } else if (message.type === 'rate_limit_event') {
+          // Harvest the subscription window state ALWAYS (the host updates its per-org usage snapshot from
+          // every frame, not just the wall). A `rejected` frame is the HARD limit — latch it so the result
+          // frame below ends the turn cleanly instead of holding input open to resume into the wall.
+          const info = message.rate_limit_info;
+          onEvent?.({
+            kind: 'rate_limit',
+            status: info.status,
+            ...(info.resetsAt != null ? { resetsAt: info.resetsAt } : {}),
+            ...(info.rateLimitType ? { rateLimitType: info.rateLimitType } : {}),
+            ...(info.utilization != null ? { utilization: info.utilization } : {}),
+          });
+          const hit = limitFromRateEvent(info);
+          if (hit) sessionLimit = hit;
         } else if (richStream && message.type === 'stream_event') {
           // LIVE token-by-token deltas (partial-message stream). Authoritative full blocks still arrive
           // on the `assistant` message below — these are for live rendering only, not persistence. Carry
@@ -1129,7 +1148,14 @@ export class EngineCore {
             thinking?: string;
           }>) {
             if (block.type === 'text' && block.text) {
-              onEvent?.({ kind: 'text', text: block.text, ...sub });
+              // Suppress the printed limit line at the source (kills the bare/doubled limit line). If the
+              // structured frame hasn't already latched the hit, latch it here from the text.
+              const isLimitLine = detectSessionLimitText(block.text);
+              if (isLimitLine) {
+                if (!sessionLimit) sessionLimit = { resetAt: parseResetAt(block.text) };
+              } else {
+                onEvent?.({ kind: 'text', text: block.text, ...sub });
+              }
             } else if (block.type === 'thinking' && block.thinking) {
               if (richStream) onEvent?.({ kind: 'thinking', text: block.thinking, ...sub });
             } else if (block.type === 'tool_use' && block.name) {
@@ -1203,8 +1229,11 @@ export class EngineCore {
               ) {
                 // A paused/interrupted success result (rate-limit / retry / budget) is NOT the end of the
                 // turn — keep input OPEN so the CLI can resume and may still call host tools (closing stdin
-                // under an in-flight call orphans it → "Stream closed"). See #65.
-                cancelEnd();
+                // under an in-flight call orphans it → "Stream closed"). See #65. EXCEPT when we've hit a
+                // subscription session limit: resuming would drive straight back into the wall, so end the
+                // turn CLEANLY (the caller parks the lane + auto-resumes at resetAt) instead of holding open.
+                if (sessionLimit) scheduleEnd();
+                else cancelEnd();
               } else if (liveBgTasks.size === 0) {
                 // Genuinely done and no background task in flight — close after the short steer grace.
                 scheduleEnd();
@@ -1232,7 +1261,15 @@ export class EngineCore {
               r.errors?.length ? `errors=${r.errors.join(' | ')}` : '',
               stderrTail.length ? `stderr(tail)=${stderrTail.join('').slice(-2000)}` : '',
             ].filter(Boolean);
-            throw new Error(parts.join('; '));
+            const errorMessage = parts.join('; ');
+            // A non-success end that is really a subscription session-limit wall must NOT throw the generic
+            // engine error — it is a clean park, not a failure. Latch it (from the text if the structured
+            // frame didn't already) and break so the normal return path carries `sessionLimit` back.
+            if (sessionLimit || detectSessionLimitText(errorMessage)) {
+              sessionLimit ??= { resetAt: parseResetAt(errorMessage) };
+              break;
+            }
+            throw new Error(errorMessage);
           }
         }
       }
@@ -1268,6 +1305,7 @@ export class EngineCore {
       sessionId: resolvedSession,
       ...(planText ? { planText } : {}),
       ...(usage ? { usage } : {}),
+      ...(sessionLimit ? { sessionLimit } : {}),
     };
   }
 

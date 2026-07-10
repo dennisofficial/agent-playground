@@ -1,5 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
-import type { JobHalt } from '@workspace/shared';
+import type { JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
 import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
@@ -47,6 +47,7 @@ export interface ThreadPipelineAwareness {
  */
 @Entity({ name: 'jobs' })
 @Index(['org_id', 'repo_id'])
+@Index('uq_threads_ticket_id', ['ticket_id'], { unique: true, where: '"ticket_id" IS NOT NULL' })
 export class JobEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -86,8 +87,9 @@ export class JobEntity extends TimestampedEntity {
   /**
    * The ticket this thread was promoted from / works (FK → tickets.id); null for a thread not tied to a
    * ticket. A thread works AT MOST one ticket — enforced 1:1 by a partial unique index
-   * (`uq_threads_ticket_id` WHERE ticket_id IS NOT NULL), hand-added in the migration. SET NULL if the
-   * ticket is deleted (the thread/PR outlives the board entry).
+   * (`uq_threads_ticket_id` WHERE ticket_id IS NOT NULL), modeled on this entity via
+   * `@Index('uq_threads_ticket_id', …)`. SET NULL if the ticket is deleted (the thread/PR outlives the
+   * board entry).
    */
   @Column({ type: 'uuid', nullable: true })
   ticket_id!: string | null;
@@ -121,20 +123,21 @@ export class JobEntity extends TimestampedEntity {
   ship_review_approved_at!: Date | null;
 
   /**
-   * Whether a live conversational (brain) turn is streaming RIGHT NOW. Toggled around `runChatTurn`
-   * (true for its whole duration, including provisioning; cleared in a `finally`). A SEPARATE axis from
-   * `status` — together they yield the "needs you" signal (see `deriveNeedsYou`): `status` covers build
-   * activity, `turn_active` covers conversation activity. Reset to false on boot (no turn survives a
-   * process restart) so a crash mid-turn can't leave a thread looking "working" forever.
+   * What the SYSTEM is doing on this job RIGHT NOW — the ephemeral "working" axis (see {@link JobActivity}):
+   * `idle | turn | plan_review | build | master_review`. Orthogonal to `status` (the build phase) and
+   * `halt` (the failure gate); any non-`idle` value suppresses the "needs you" dot in `deriveNeedsYou`
+   * because the system, not the operator, owns the next step. Reset to `idle` on boot (no in-flight work
+   * survives a process restart) so a crash mid-work can't leave a thread looking "working" forever. Column
+   * stays `text`; the union is enforced in TS.
    */
-  @Column({ type: 'boolean', default: false })
-  turn_active!: boolean;
+  @Column({ type: 'text', default: 'idle' })
+  activity!: JobActivity;
 
   /**
    * Whether an unresolved TURN-FAILURE operator box is outstanding (a stop-the-world engine error the
-   * operator must Resume or reply past). A SEPARATE axis from `status`/`turn_active`: chat-turn failures
+   * operator must Resume or reply past). A SEPARATE axis from `status`/`activity`: chat-turn failures
    * never touch `status`, so this is what makes a stopped thread render as errored. Set in
-   * `saySystemOperator`, cleared when the next turn starts (`runChatTurn`). UNLIKE `turn_active` it is NOT
+   * `saySystemOperator`, cleared when the next turn starts (`runChatTurn`). UNLIKE `activity` it is NOT
    * reset on boot — a real unresolved error must survive a process restart.
    */
   @Column({ type: 'boolean', default: false })
@@ -226,6 +229,29 @@ export class JobEntity extends TimestampedEntity {
   pr_state!: string | null;
 
   /**
+   * The DURABLE adaptive-poll clock — "re-check this PR's GitHub state at/after this instant". Owned by
+   * the `GitStateReconciler`: its fast heartbeat selects only DUE jobs (`next_poll_at IS NULL OR <= now()`),
+   * reconciles each, then re-stamps this by an adaptive cadence — ~8s while GitHub is still computing
+   * `mergeable_state`, ~45s for a settled open PR, ~3min for a branch still building with no PR yet, and
+   * CLEARED (null) once the PR is merged/closed/gone (teardown owns it). Durable (not an in-memory timer)
+   * so it survives the constant prod restarts that starved the old fixed sweep, survives leader failover,
+   * AND lets a base-branch push mark every open PR on a repo due-now with one `UPDATE` (the real-time
+   * base-move-conflict unlock). Null = due immediately (a fresh row is polled on the next heartbeat).
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  next_poll_at!: Date | null;
+
+  /**
+   * The DURABLE auto-resume clock — when a lane is parked on a Claude session/usage limit, the ISO
+   * instant it should auto-resume. Null = not parked. Swept leader-only (`SessionResumeSweep`, mirroring
+   * `GitStateReconciler`'s `next_poll_at` due-query pattern: `WHERE session_resume_at <= now()`); cleared
+   * on resume (auto or force). The Main (brain) lane has no `halt` at all, so it needs this column
+   * regardless of the build-lane's `halt.resumeAt`.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  session_resume_at!: Date | null;
+
+  /**
    * The MAIN brain session's own LLM-authored task list (the navigator's Main-row checklist), folded from
    * its `TaskCreate`/`TaskUpdate` calls on the `main` lane. LITERAL default — a function default loops
    * `migration:generate` (see the jsonb-default-loop memory).
@@ -275,6 +301,16 @@ export class JobEntity extends TimestampedEntity {
   halt!: JobHalt | null;
 
   /**
+   * Which lane is parked on {@link session_resume_at} + why, so the sweep dispatches to the right resume
+   * rail (`main` re-drives via the seed path; `build` calls `ThreadDriver.resumePaused`). `resetSource`
+   * records how the reset instant was determined (the live usage API vs. a best-effort parse of the CLI's
+   * "resets 5:20pm" string). Null when not parked. Nullable jsonb, no default — a `() => '...'::jsonb`
+   * default makes `migration:generate` loop forever (see {@link halt}).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  session_resume!: { lane: 'main' | 'build'; reason: string; resetSource: 'usage_api' | 'parsed_string' } | null;
+
+  /**
    * The ADR-0005 LIVE-VERIFICATION verdict for the DIRECT-BUILD ship path (the brain-owned
    * `finalize_build` gate — the direct-path analog of a driver thread's `terminal_record.liveVerification`).
    * Written on BOTH the pass and the refusal path so the same prod audit SQL that surfaced the direct-build
@@ -284,4 +320,16 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   direct_build_verification!: { verdict: LiveVerificationVerdict; at: string } | null;
+
+  /**
+   * Which BUILD PATH was committed for this job: 'direct' (the fast, brain-implemented path) or 'plan'
+   * (the driver-run multi-thread path). Null until an approval commits the path — a proposal still sitting
+   * at `awaiting_approval` (which can still be re-proposed as the other path) has no value here, so a
+   * requested-but-unapproved direct build is NOT yet a committed direct build. Stamped ATOMICALLY with the
+   * `awaiting_approval → running` flip in `BrainStoreService.approve()`. The UI reads this (surfaced as
+   * `buildPath` on the pipeline DTO) to suppress the plan-oriented empty-state placeholders — build lanes,
+   * `plan.md`, generated docs — that never apply to a direct build.
+   */
+  @Column({ type: 'text', nullable: true })
+  build_path!: 'direct' | 'plan' | null;
 }

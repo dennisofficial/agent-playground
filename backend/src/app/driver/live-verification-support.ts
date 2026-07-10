@@ -30,6 +30,25 @@ export interface TerminalRecordSummaryInput {
 export const NON_RUNTIME_FILE_RE =
   /(^|\/)docs\/|\.md$|\.spec\.ts$|\.test\.ts$|(^|\/)package(-lock)?\.json$|pnpm-lock\.yaml$|yarn\.lock$|(^|\/)\.gitignore$|(^|\/)\.github\//i;
 
+/**
+ * Head+TAIL clamp for one piece of evidence output — used at BOTH truncation layers (ingestion in the two
+ * producers, and the judge-input renderer) so they never drift. A plain head-only `slice(0, N)` silently
+ * dropped the DECISIVE line of a curated proof when it sat past the cut — the exact bug that starved the
+ * ADR-0005 judge (job `76f0ee2a…`: the `effort=high` line was past the old 300-char renderer slice).
+ *
+ * Returns `s` whole when it fits; otherwise keeps a head (context: which command) AND a tail (result:
+ * where a curated proof's decisive output usually lands), joined by a visible elision marker so nothing is
+ * silently lost from either end. Default cap 3000 sits above the measured prod p99 evidence length (~1921),
+ * so essentially all real evidence passes through untouched.
+ */
+export function clampEvidenceOutput(s: string, cap = 3000): string {
+  if (s.length <= cap) return s;
+  const head = Math.min(1200, Math.floor(cap / 3));
+  const tail = cap - head;
+  const elided = s.length - head - tail;
+  return `${s.slice(0, head)}\n…[${elided} chars elided]…\n${s.slice(s.length - tail)}`;
+}
+
 /** Compact rendering of a candidate terminal record for the live-verification judge's input — untrusted,
  *  fenced by the caller. */
 export function renderTerminalRecordSummary(
@@ -43,10 +62,14 @@ export function renderTerminalRecordSummary(
   );
   parts.push(
     r.verification?.length
-      ? `Verification:\n${r.verification
+      ? // Render EVERY evidence item — never drop one. The `verification` array is ordered
+        // diagnostics/typecheck-first with the live proof LAST, so a list-truncating cap would recreate
+        // the starvation bug. Each item is already clamped at ingestion; clamp again defensively (idempotent
+        // for already-bounded output) so this renderer is safe even if fed an unclamped record.
+        `Verification:\n${r.verification
           .map(
             (v) =>
-              `- [${v.kind}] ${v.command} (exit ${v.exitCode}): ${v.outputTail.slice(0, 300)}`,
+              `- [${v.kind}] ${v.command} (exit ${v.exitCode}): ${clampEvidenceOutput(v.outputTail)}`,
           )
           .join('\n')}`
       : 'Verification: (none reported)',

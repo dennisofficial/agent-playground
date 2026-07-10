@@ -25,7 +25,18 @@ import { useEffect, useRef, useState } from "react";
  * is real DOM so `scrollHeight` is exact. A VIRTUALIZED caller (the main conversation) renders off-screen
  * rows with ESTIMATED heights, so `scrollIntoView` can land short — it passes a `pin` that drives the
  * virtualizer's own scroll-to-index instead. When `pin` is set it also backs `jumpToLatest`.
+ *
+ * Auto-scroll also pauses while the pointer hovers interactive content (`onPointerOver`/`onPointerLeave`,
+ * wired on the scroll container). Otherwise a card streaming new tokens bumps up a frame before a click
+ * and steals the target. On release we re-measure, so following resumes only if still at the tail.
  */
+
+// An element counts as "interactive" (hovering it pauses tail-follow) if it is, or sits inside, a marked
+// card (`data-tailpause`) or a native control. Cards mark their whole body so the pause covers the padding
+// the pointer crosses on the way to a button, not just the button itself.
+const INTERACTIVE_SELECTOR =
+  '[data-tailpause], button, a[href], input, textarea, select, [role="button"], [role="textbox"]';
+
 export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -33,6 +44,9 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
   // while this is true, so reading scrollback isn't yanked back down on every streamed token. A ref (not
   // state) so the scroll listener and the auto-scroll effect share the latest value without re-rendering.
   const stuckToBottom = useRef(true);
+  // True while the pointer rests on interactive content — auto-scroll is suspended so the thing under the
+  // cursor holds still. A ref (like `stuckToBottom`) so the effect reads it without re-rendering.
+  const pointerHold = useRef(false);
   // Drives the "Jump to latest" pill — shown only while scrolled up off the tail. Mirrors `stuckToBottom`
   // but as state, since visibility has to re-render (the ref intentionally doesn't).
   const [showJump, setShowJump] = useState(false);
@@ -55,14 +69,30 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
     else endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   };
 
+  // Suspend/release the pointer hold. On RELEASE we re-run `onScroll` to refresh `stuckToBottom` from the
+  // current position: if the tail streamed past the operator while paused, this reads as "scrolled up"
+  // (the jump pill appears) instead of yanking to the bottom the moment the cursor leaves.
+  const setHold = (hold: boolean) => {
+    if (pointerHold.current === hold) return;
+    pointerHold.current = hold;
+    if (!hold) onScroll();
+  };
+
+  const onPointerOver = (e: React.PointerEvent) => {
+    const target = e.target as Element | null;
+    setHold(target?.closest?.(INTERACTIVE_SELECTOR) != null);
+  };
+
+  const onPointerLeave = () => setHold(false);
+
   useEffect(() => {
-    if (!stuckToBottom.current) return;
+    if (!stuckToBottom.current || pointerHold.current) return;
     if (pin) pin();
     else endRef.current?.scrollIntoView({ block: "end" });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are supplied by the caller (content signal)
   }, deps);
 
-  return { scrollRef, endRef, showJump, jumpToLatest, onScroll };
+  return { scrollRef, endRef, showJump, jumpToLatest, onScroll, onPointerOver, onPointerLeave };
 }
 
 /**

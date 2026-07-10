@@ -56,19 +56,35 @@ export type PrStateDelta = {
 };
 
 /**
+ * A parsed GitHub CI webhook (`check_run`/`check_suite`/`workflow_run`) correlation delta the silent
+ * CI-status sync recomputes against. Carries ONLY correlation keys — deliberately NOT the webhook's own
+ * head_sha: GitHub does not guarantee webhook delivery order, so recompute always reads the CURRENT PR
+ * head instead (an old commit's delayed CI webhook must never set the badge from its own SHA).
+ */
+export interface CiSyncDelta {
+  orgId: string;
+  repoId: string;
+  prNumber: number | null;
+  branch: string | null;
+}
+
+/**
  * An adapter's verdict on a raw notification. `accepted` carries the parsed event the intake then
  * normalizes; `rejected`/`ignored` carry a reason the controller maps to a status. `ignored` is a
  * SUCCESSFUL no-op (a verified-but-uninteresting payload, e.g. GitHub's `ping`), distinct from a
  * `rejected` (verification/routing failure). `pr-sync` is a SILENT authoritative PR-state delta
  * (open/merged/closed/reopened) applied directly to the owning job's row — it never seeds a stimulus.
  * For the GitHub adapter this is emitted only by `handlePrWebhook` (the `/webhooks/github/state` front
- * door), never by `handle` (the `/webhooks/github/events` work-events front door).
+ * door), never by `handle` (the `/webhooks/github/events` work-events front door). `repo-push` is a
+ * verified push to a repo's DEFAULT branch — the state door marks that repo's open PRs due-now so the
+ * reconciler catches a base-move-induced conflict in seconds (GitHub emits no webhook for one).
  */
 export type IngressResult =
   | { outcome: 'accepted'; event: ParsedEvent }
   | { outcome: 'ignored'; reason: IngressRejectionReason; detail?: string }
   | { outcome: 'rejected'; reason: IngressRejectionReason; detail?: string }
-  | { outcome: 'pr-sync'; delta: PrStateDelta };
+  | { outcome: 'pr-sync'; delta: PrStateDelta }
+  | { outcome: 'repo-push'; orgId: string; repoId: string };
 
 /**
  * The inbound-only port every gateway adapter implements. One method: take a `RawNotification`, do
