@@ -1,6 +1,6 @@
 import {
   CheckCircle2,
-  CircleSlash2,
+  CircleDashed,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -9,7 +9,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { KIND_META, STATUS_META } from "@/lib/api/status";
-import type { CiStatus, InboxPr, JobKind, JobStatus } from "@/lib/api/types";
+import type {
+  CiCounts,
+  CiStatus,
+  InboxPr,
+  JobKind,
+  JobStatus,
+} from "@/lib/api/types";
 
 /** A status dot — colored by status, optionally pulsing (running/triaging) with a soft glow. */
 export function StatusDot({
@@ -323,64 +329,121 @@ function prGlyph(pr: InboxPr): {
 }
 
 /**
- * Four-state CI glyph for a PR head (backend `jobs.ci_status`) — shared by the job header and the sidebar
- * dot so the two never disagree.
+ * Five-state CI glyph for a PR head (backend `jobs.ci_status`) — shared by the job header and the sidebar
+ * dot so the two never disagree. `spin` marks the running state (steady rotation, no scale-pulse).
  *   success → green check-circle "CI passed"
  *   failure → red x-circle "CI failed"
- *   pending → amber loader (pulsing) "CI running"
- *   null    → neutral slashed-circle "No CI"
+ *   pending → amber loader (spinning) "CI running"
+ *   skipped → muted dashed-ring "CI skipped"
+ *   null    → faint dashed-ring "No CI"
  */
 export function ciGlyph(ci: CiStatus | null): {
   Icon: typeof CheckCircle2;
   color: string;
   title: string;
-  pulse: boolean;
+  spin: boolean;
 } {
   if (ci === "success")
     return {
       Icon: CheckCircle2,
       color: "var(--green)",
       title: "CI passed",
-      pulse: false,
+      spin: false,
     };
   if (ci === "failure")
     return {
       Icon: XCircle,
       color: "var(--red)",
       title: "CI failed",
-      pulse: false,
+      spin: false,
     };
   if (ci === "pending")
     return {
       Icon: LoaderCircle,
       color: "var(--amber)",
       title: "CI running",
-      pulse: true,
+      spin: true,
+    };
+  if (ci === "skipped")
+    return {
+      Icon: CircleDashed,
+      color: "var(--muted)",
+      title: "CI skipped",
+      spin: false,
     };
   return {
-    Icon: CircleSlash2,
+    Icon: CircleDashed,
     color: "var(--faint)",
     title: "No CI",
-    pulse: false,
+    spin: false,
   };
 }
 
-/** The CI glyph shown in the job header after the `PR #NN · open` line — a `·` separator + the four-state
- *  {@link ciGlyph} icon (pulsing while running). Shared by both PR header branches (linked `<a>` and
- *  inline `<div>`) so the two can't drift. */
-export function CiHeaderGlyph({ ci }: { ci: CiStatus | null }) {
+/** One tooltip segment for the CI counts popover — a colored dot + "N label". */
+type CiCountSegment = { label: string; color: string };
+
+/** Build the Variant-A tooltip segments ("X failed · Y skipped · Z passed", plus pending when > 0) from
+ *  the per-category counts, omitting any zero category. Returns [] when there's nothing to show. */
+function ciCountSegments(counts: CiCounts): CiCountSegment[] {
+  const segments: CiCountSegment[] = [];
+  if (counts.failing > 0)
+    segments.push({ label: `${counts.failing} failed`, color: "var(--red)" });
+  if (counts.skipped > 0)
+    segments.push({ label: `${counts.skipped} skipped`, color: "var(--muted)" });
+  if (counts.passed > 0)
+    segments.push({ label: `${counts.passed} passed`, color: "var(--green)" });
+  if (counts.pending > 0)
+    segments.push({ label: `${counts.pending} pending`, color: "var(--amber)" });
+  return segments;
+}
+
+/** The CI glyph shown in the job header after the `PR #NN · open` line — a `·` separator + the five-state
+ *  {@link ciGlyph} icon (a steady spin while running). On hover it shows a small popover with the
+ *  per-category counts ("X failed · Y skipped · Z passed", Variant A); falls back to the plain title when
+ *  no counts are available. Shared by both PR header branches so the two can't drift. */
+export function CiHeaderGlyph({
+  ci,
+  counts,
+}: {
+  ci: CiStatus | null;
+  counts?: CiCounts | null;
+}) {
   const g = ciGlyph(ci);
-  const { Icon, color, title, pulse } = g;
+  const { Icon, color, title, spin } = g;
+  const segments = counts ? ciCountSegments(counts) : [];
   return (
-    <span className="flex shrink-0 items-center gap-0.5" title={title}>
+    <span className="group relative flex shrink-0 items-center gap-0.5">
       <span className="font-mono text-[9.5px] text-faint">·</span>
       <Icon
         size={11}
         strokeWidth={2}
         style={{ color }}
-        className={cn("shrink-0", pulse && "pulse-dot")}
+        className={cn("shrink-0", spin && "animate-spin")}
         aria-label={title}
       />
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-[var(--text)] px-1.5 py-1 text-[10px] font-medium text-[var(--panel)] opacity-0 shadow-md transition-opacity duration-100 group-hover:opacity-100"
+      >
+        {segments.length > 0 ? (
+          <span className="flex items-center gap-1.5">
+            {segments.map((seg, i) => (
+              <span key={seg.label} className="flex items-center gap-1">
+                {i > 0 ? (
+                  <span className="text-[var(--faint)]">·</span>
+                ) : null}
+                <span
+                  className="inline-block h-1.5 w-1.5 rounded-full"
+                  style={{ background: seg.color }}
+                />
+                {seg.label}
+              </span>
+            ))}
+          </span>
+        ) : (
+          title
+        )}
+      </span>
     </span>
   );
 }
@@ -399,7 +462,9 @@ export function CiStatusDot({
     <span
       className={cn(
         "absolute -bottom-px -left-0.5 rounded-full border-[1.5px] border-panel",
-        g.pulse && "pulse-dot",
+        // A solid dot can't visibly rotate — an opacity-only pulse conveys "running" without scaling
+        // (the shared `pulse-dot` scale-pulse is intentionally left untouched for StatusDot).
+        g.spin && "ci-dot-pulse",
       )}
       style={{ width: size, height: size, background: g.color }}
       title={g.title}

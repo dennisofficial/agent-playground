@@ -7,7 +7,7 @@ import { qk } from "./query-keys";
 import { subscribeSse, type SseHandle } from "./sse-manager";
 import { uiStatus, type InboxThread } from "./inbox";
 import { toJobKind } from "./status";
-import type { WireJobKind, WireJobHalt, WireJobActivity, PrState, CiStatus } from "./types";
+import type { WireJobKind, WireJobHalt, WireJobActivity, PrState, CiStatus, CiCounts } from "./types";
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
@@ -40,6 +40,8 @@ interface RealtimeRow {
   prMergeable?: string | null;
   /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — WAL row is loosely typed like prState. */
   ciStatus?: string | null;
+  /** Per-category CI check counts (`jobs.ci_counts`) — parallel to `ciStatus`; null when no checks. */
+  ciCounts?: CiCounts | null;
   /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship". */
   shipping?: boolean;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
@@ -60,6 +62,18 @@ function sameHalt(
   b: WireJobHalt | null,
 ): boolean {
   return a?.kind === b?.kind && a?.reason === b?.reason && a?.at === b?.at;
+}
+
+/** Equal iff both null or every category count matches — so a counts-only delta still refreshes the row. */
+function sameCiCounts(a: CiCounts | null, b: CiCounts | null): boolean {
+  if (a == null || b == null) return a === b;
+  return (
+    a.failing === b.failing &&
+    a.pending === b.pending &&
+    a.passed === b.passed &&
+    a.skipped === b.skipped &&
+    a.total === b.total
+  );
 }
 
 /**
@@ -97,6 +111,7 @@ export function useAllJobsRealtime(): void {
       const nextPrState = row.prState ?? null;
       const nextPrMergeable = row.prMergeable ?? null;
       const nextCi = (row.ciStatus ?? null) as CiStatus | null;
+      const nextCounts = row.ciCounts ?? null;
       const nextHalt = "halt" in row ? (row.halt ?? null) : undefined;
       qc.setQueryData<InboxThread[]>(qk.allJobs(), (prev) => {
         if (!prev) return prev;
@@ -109,7 +124,9 @@ export function useAllJobsRealtime(): void {
         prChanged =
           (prev[idx].pr?.state ?? null) !== nextPrState ||
           (prev[idx].pr?.mergeable ?? null) !== nextPrMergeable;
-        ciChanged = (prev[idx].ci ?? null) !== nextCi;
+        ciChanged =
+          (prev[idx].ci ?? null) !== nextCi ||
+          !sameCiCounts(prev[idx].ciCounts ?? null, nextCounts);
         const halt = nextHalt === undefined ? prev[idx].halt : nextHalt;
         haltChanged = !sameHalt(prev[idx].halt, halt);
         const next = [...prev];
@@ -137,6 +154,7 @@ export function useAllJobsRealtime(): void {
               }
             : null,
           ci: nextCi,
+          ciCounts: nextCounts,
           halt,
         };
         return next;

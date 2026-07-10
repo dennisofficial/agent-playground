@@ -325,7 +325,7 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
+                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} /> : null}
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
@@ -342,7 +342,7 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
+                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} /> : null}
                 </div>
               );
             })()

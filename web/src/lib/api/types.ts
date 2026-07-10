@@ -530,6 +530,9 @@ export interface PipelineJob {
   /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — same four-state taxonomy as the sidebar
    *  dot; null = no checks reported. Only meaningful once a PR exists (prNumber != null). */
   ciStatus: CiStatus | null;
+  /** Per-category CI check counts (`jobs.ci_counts`) — drives the header glyph's hover tooltip. Parallel
+   *  to `ciStatus`; null when no checks reported. */
+  ciCounts?: CiCounts | null;
   /** The feature branch all threads stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   /** The OBSERVED live branch the agent's HEAD is on; differs from featureBranch ⇒ drift (badge). Null
@@ -652,8 +655,19 @@ export type JobKind = "feat" | "fix" | "event" | "onboard" | "review";
 /** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
 export type PrState = "open" | "merged" | "closed";
 
-/** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI"). */
-export type CiStatus = "success" | "failure" | "pending"; // null handled at the field level
+/** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI").
+ *  `skipped` = checks ran but all were skipped/neutral (never a failure). */
+export type CiStatus = "success" | "failure" | "pending" | "skipped"; // null handled at the field level
+
+/** Per-category CI check counts for the PR head — backend `jobs.ci_counts`. Parallel to {@link CiStatus};
+ *  null exactly when the status is null (no checks reported). The four category counts sum to `total`. */
+export type CiCounts = {
+  failing: number;
+  pending: number;
+  passed: number;
+  skipped: number;
+  total: number;
+};
 
 /** The observed PR on a job — drives the sidebar's PR-status glyph (see `PrStatusIcon`). `mergeable` is
  *  GitHub's `mergeable_state` ('dirty' = merge conflict); `url` links to the PR. */
