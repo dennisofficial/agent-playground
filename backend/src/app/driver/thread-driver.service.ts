@@ -1045,14 +1045,17 @@ export class ThreadDriver implements JobDispatcher {
    * retract is a no-op) and post a durable note. Unlike {@link resolveShipApprovalDurably}, this does NOT
    * re-drive — the job sits in `amending` for the operator/Atlas to do the follow-up work, and the gate
    * re-arms automatically once that work reaches `parkForShipReview` again.
+   *
+   * Returns whether it actually acted (the store CAS affected a row) — the amend-proposal Approve path
+   * uses this to wake the brain ONLY when the retract really fired (a stale/double click returns false).
    */
-  async retractShipDurably(jobId: string, ruledBy: string): Promise<void> {
+  async retractShipDurably(jobId: string, ruledBy: string): Promise<boolean> {
     const acted = await this.store.retractShip(jobId);
     if (!acted) {
       this.logger.warn(
         `ship retract for job=${jobId} by ${ruledBy}: not awaiting ship review — no-op`,
       );
-      return;
+      return false;
     }
     this.logger.log(`ship retract for job=${jobId} by ${ruledBy} → amending`);
     await this.blockSink
@@ -1062,6 +1065,7 @@ export class ThreadDriver implements JobDispatcher {
         meta: { source: 'system_operator' },
       })
       .catch(() => undefined);
+    return true;
   }
 
   /**
