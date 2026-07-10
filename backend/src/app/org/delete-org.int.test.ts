@@ -43,7 +43,7 @@ import {
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, WorktreeProvisioner } from '../driver';
+import { DRIVER_REPO, JOB_TEARDOWN, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, WorktreeProvisioner } from '../driver';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
 import { TicketService } from '../tickets';
 import { OrganizationService } from './organization.service';
@@ -220,6 +220,7 @@ beforeEach(async () => {
       { provide: TurnRegistry, useValue: { failRunningForJob: async () => 0 } },
       { provide: SkillUpdaterService, useValue: { reconcileOrgAsync: () => undefined } },
       JobLifecycleService,
+      { provide: JOB_TEARDOWN, useExisting: JobLifecycleService },
       OrganizationService,
     ],
   }).compile();

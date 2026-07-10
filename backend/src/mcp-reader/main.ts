@@ -1,17 +1,30 @@
 import 'reflect-metadata';
 
 import { randomUUID, timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { CallToolRequestSchema, isInitializeRequest, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  isInitializeRequest,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { DataSource } from 'typeorm';
 import { audit } from './audit';
 import { initDataSource } from './data-source';
 import { loadEnv } from './env';
 import { redactSecrets } from './redact';
-import { TOOL_DEFS, TOOL_HANDLERS, type ToolCtx, type ToolRoots } from './tools';
+import {
+  TOOL_DEFS,
+  TOOL_HANDLERS,
+  type ToolCtx,
+  type ToolRoots,
+} from './tools';
 
 /**
  * atlas-mcp-reader — a standalone, READ-ONLY MCP server exposing production job diagnostics to an
@@ -61,10 +74,15 @@ class ReaderServer {
 
   listen(port: number): Promise<void> {
     const http = createServer((req, res) => void this.handle(req, res));
-    return new Promise((resolve) => http.listen(port, '0.0.0.0', () => resolve()));
+    return new Promise((resolve) =>
+      http.listen(port, '0.0.0.0', () => resolve()),
+    );
   }
 
-  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handle(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const remote = req.socket.remoteAddress ?? 'unknown';
     if (!isAuthorized(req, this.apiKey)) {
       audit({ tool: 'auth', ok: false, remote });
@@ -94,15 +112,20 @@ class ReaderServer {
       // A new connection MUST open with `initialize` (POST); anything else without a live session → 400.
       if (req.method !== 'POST' || !isInitializeRequest(body)) {
         res.writeHead(400, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'no valid mcp session (send initialize first)' }));
+        res.end(
+          JSON.stringify({
+            error: 'no valid mcp session (send initialize first)',
+          }),
+        );
         return;
       }
-      const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (id: string) => {
-          this.sessions.set(id, transport);
-        },
-      });
+      const transport: StreamableHTTPServerTransport =
+        new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (id: string) => {
+            this.sessions.set(id, transport);
+          },
+        });
       transport.onclose = () => {
         if (transport.sessionId) this.sessions.delete(transport.sessionId);
       };
@@ -110,36 +133,58 @@ class ReaderServer {
       await server.connect(transport);
       await transport.handleRequest(req, res, body);
     } catch (err) {
+      const error = String(redactSecrets(String(err)));
       // eslint-disable-next-line no-console -- stdout IS this process's log
-      console.log(`[mcp-reader] request error: ${String(err)}`);
+      console.log(`[mcp-reader] request error: ${error}`);
       if (!res.headersSent) res.writeHead(500).end();
     }
   }
 
   private buildMcpServer(): Server {
-    const server = new Server({ name: 'atlas-mcp-reader', version: '1.0.0' }, { capabilities: { tools: {} } });
-    server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: TOOL_DEFS }));
-    server.setRequestHandler(CallToolRequestSchema, (r) => this.callTool(r.params.name, r.params.arguments));
+    const server = new Server(
+      { name: 'atlas-mcp-reader', version: '1.0.0' },
+      { capabilities: { tools: {} } },
+    );
+    server.setRequestHandler(ListToolsRequestSchema, () => ({
+      tools: TOOL_DEFS,
+    }));
+    server.setRequestHandler(CallToolRequestSchema, (r) =>
+      this.callTool(r.params.name, r.params.arguments),
+    );
     return server;
   }
 
   /** Dispatch one `tools/call`, redact the result at THE serialization choke point, and audit ok/error
    *  either way. A thrown handler error becomes an MCP `isError` result, never an HTTP-level failure. */
-  private async callTool(name: string, args: Record<string, unknown> | undefined): Promise<CallToolResult> {
+  private async callTool(
+    name: string,
+    args: Record<string, unknown> | undefined,
+  ): Promise<CallToolResult> {
     const jobId = typeof args?.jobId === 'string' ? args.jobId : undefined;
     const handler = TOOL_HANDLERS[name];
     if (!handler) {
       audit({ tool: name, jobId, ok: false, error: 'unknown tool' });
-      return { content: [{ type: 'text', text: `unknown tool: ${name}` }], isError: true };
+      return {
+        content: [{ type: 'text', text: `unknown tool: ${name}` }],
+        isError: true,
+      };
     }
     const ctx: ToolCtx = { ds: this.ds, roots: this.roots, audit: {} };
     try {
       const result = await handler(ctx, args ?? {});
       audit({ tool: name, jobId, orgId: ctx.audit.orgId, ok: true });
-      return { content: [{ type: 'text', text: JSON.stringify(redactSecrets(result), null, 2) }] };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(redactSecrets(result), null, 2),
+          },
+        ],
+      };
     } catch (err) {
-      audit({ tool: name, jobId, orgId: ctx.audit.orgId, ok: false, error: String(err) });
-      return { content: [{ type: 'text', text: String(err) }], isError: true };
+      const error = String(redactSecrets(String(err)));
+      audit({ tool: name, jobId, orgId: ctx.audit.orgId, ok: false, error });
+      return { content: [{ type: 'text', text: error }], isError: true };
     }
   }
 }
@@ -147,7 +192,11 @@ class ReaderServer {
 async function main(): Promise<void> {
   const env = loadEnv();
   const ds = await initDataSource(env);
-  const server = new ReaderServer(ds, { agentHome: env.agentHomeRoot, repos: env.reposRoot }, env.apiKey);
+  const server = new ReaderServer(
+    ds,
+    { agentHome: env.agentHomeRoot, repos: env.reposRoot },
+    env.apiKey,
+  );
   await server.listen(env.port);
   // eslint-disable-next-line no-console -- stdout IS this process's log
   console.log(`[mcp-reader] listening on 0.0.0.0:${env.port}`);

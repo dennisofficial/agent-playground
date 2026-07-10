@@ -1,8 +1,19 @@
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import type { DataSource } from 'typeorm';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { JobEntity, JobSandboxEntity, MessageEntity, ThreadEntity } from '../app/persistence/entities';
+import {
+  JobEntity,
+  JobSandboxEntity,
+  MessageEntity,
+  ThreadEntity,
+} from '../app/persistence/entities';
 import type { ThreadTerminalRecord } from '../app/persistence/entities/thread.entity';
 import { resolveJailed } from './path-jail';
 import {
@@ -36,15 +47,28 @@ export interface ToolCtx {
   audit: { orgId?: string };
 }
 
-async function loadJob(ctx: ToolCtx, jobId: string): Promise<JobEntity> {
-  const job = await ctx.ds.getRepository(JobEntity).findOne({ where: { id: jobId } });
-  if (!job) throw new Error(`job ${jobId} not found`);
+function requireNonEmptyString(value: unknown, name: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+
+async function loadJob(ctx: ToolCtx, jobId: unknown): Promise<JobEntity> {
+  const id = requireNonEmptyString(jobId, 'jobId');
+  const job = await ctx.ds.getRepository(JobEntity).findOne({ where: { id } });
+  if (!job) throw new Error(`job ${id} not found`);
   ctx.audit.orgId = job.org_id;
   return job;
 }
 
-async function loadSandbox(ctx: ToolCtx, jobId: string): Promise<JobSandboxEntity> {
-  const sandbox = await ctx.ds.getRepository(JobSandboxEntity).findOne({ where: { job_id: jobId } });
+async function loadSandbox(
+  ctx: ToolCtx,
+  jobId: string,
+): Promise<JobSandboxEntity> {
+  const sandbox = await ctx.ds
+    .getRepository(JobSandboxEntity)
+    .findOne({ where: { job_id: jobId } });
   if (!sandbox) throw new Error(`no sandbox found for job ${jobId}`);
   return sandbox;
 }
@@ -61,7 +85,10 @@ function deriveFailureSummary(tr: ThreadTerminalRecord | null): string | null {
 
 // ── atlas_job_overview ────────────────────────────────────────────────────────────────────────────────
 
-async function jobOverview(ctx: ToolCtx, args: { jobId: string }): Promise<unknown> {
+async function jobOverview(
+  ctx: ToolCtx,
+  args: { jobId: string },
+): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const threads = await ctx.ds
     .getRepository(ThreadEntity)
@@ -103,13 +130,18 @@ async function jobOverview(ctx: ToolCtx, args: { jobId: string }): Promise<unkno
 
 // ── atlas_thread_failure ──────────────────────────────────────────────────────────────────────────────
 
-async function threadFailure(ctx: ToolCtx, args: { jobId: string; threadId?: string }): Promise<unknown> {
+async function threadFailure(
+  ctx: ToolCtx,
+  args: { jobId: string; threadId?: string },
+): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const repo = ctx.ds.getRepository(ThreadEntity);
   const threads = args.threadId
     ? await repo.find({ where: { job_id: job.id, id: args.threadId } })
     : await repo.find({ where: { job_id: job.id }, order: { ordinal: 'ASC' } });
-  const scoped = args.threadId ? threads : threads.filter((t) => t.terminal_record != null);
+  const scoped = args.threadId
+    ? threads
+    : threads.filter((t) => t.terminal_record != null);
 
   return {
     threads: scoped.map((t) => ({
@@ -142,13 +174,21 @@ interface JobTranscriptArgs {
   since?: string;
 }
 
-async function jobTranscript(ctx: ToolCtx, args: JobTranscriptArgs): Promise<unknown> {
+async function jobTranscript(
+  ctx: ToolCtx,
+  args: JobTranscriptArgs,
+): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const rows = await ctx.ds
     .getRepository(MessageEntity)
     .find({ where: { job_id: job.id }, order: { created_at: 'ASC' } });
 
-  const kinds = args.kind === undefined ? undefined : Array.isArray(args.kind) ? args.kind : [args.kind];
+  const kinds =
+    args.kind === undefined
+      ? undefined
+      : Array.isArray(args.kind)
+        ? args.kind
+        : [args.kind];
   const sinceDate = args.since ? new Date(args.since) : undefined;
 
   let mapped = rows
@@ -160,7 +200,10 @@ async function jobTranscript(ctx: ToolCtx, args: JobTranscriptArgs): Promise<unk
       author: m.author,
       authorId: m.author_id,
       isAtlas: m.author_bot_id != null,
-      source: mapMessageSource((m.meta as { source?: unknown } | null)?.source, m.author_bot_id != null),
+      source: mapMessageSource(
+        (m.meta as { source?: unknown } | null)?.source,
+        m.author_bot_id != null,
+      ),
       text: m.text,
       kind: m.kind,
       card: m.card,
@@ -179,6 +222,7 @@ async function jobTranscript(ctx: ToolCtx, args: JobTranscriptArgs): Promise<unk
 interface SessionRawArgs {
   jobId: string;
   sessionId?: string;
+  raw?: boolean;
   role?: 'user' | 'assistant';
   thinking?: boolean;
   text?: boolean;
@@ -189,10 +233,14 @@ interface SessionRawArgs {
   grep?: string;
 }
 
-async function sessionRaw(ctx: ToolCtx, args: SessionRawArgs): Promise<unknown> {
+async function sessionRaw(
+  ctx: ToolCtx,
+  args: SessionRawArgs,
+): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const sandboxDir = findSandboxDir(ctx.roots.agentHome, job.id);
-  if (!sandboxDir) throw new Error(`no sandbox transcripts found on disk for job ${job.id}`);
+  if (!sandboxDir)
+    throw new Error(`no sandbox transcripts found on disk for job ${job.id}`);
 
   if (args.grep) {
     let pattern: RegExp;
@@ -201,7 +249,9 @@ async function sessionRaw(ctx: ToolCtx, args: SessionRawArgs): Promise<unknown> 
     } catch (err) {
       throw new Error(`invalid grep pattern: ${String(err)}`);
     }
-    const files = args.sessionId ? [requireSessionFile(sandboxDir, args.sessionId)] : listSessionFiles(sandboxDir);
+    const files = args.sessionId
+      ? [requireSessionFile(sandboxDir, args.sessionId)]
+      : listSessionFiles(sandboxDir);
     return { hits: grepFiles(files, pattern) };
   }
 
@@ -217,6 +267,9 @@ async function sessionRaw(ctx: ToolCtx, args: SessionRawArgs): Promise<unknown> 
   }
 
   const path = requireSessionFile(sandboxDir, args.sessionId).path;
+  if (args.raw) {
+    return { sessionId: args.sessionId, path, content: readFileCapped(path) };
+  }
   const lines = renderShow(readRawLines(path), {
     role: args.role,
     since: args.since,
@@ -229,8 +282,12 @@ async function sessionRaw(ctx: ToolCtx, args: SessionRawArgs): Promise<unknown> 
   return { sessionId: args.sessionId, path, lines };
 }
 
-function requireSessionFile(sandboxDir: string, sessionId: string): { sessionId: string; path: string } {
-  if (!isValidSessionId(sessionId)) throw new Error(`invalid session id '${sessionId}'`);
+function requireSessionFile(
+  sandboxDir: string,
+  sessionId: string,
+): { sessionId: string; path: string } {
+  if (!isValidSessionId(sessionId))
+    throw new Error(`invalid session id '${sessionId}'`);
   const path = resolveSessionFile(sandboxDir, sessionId);
   if (!path) throw new Error(`session '${sessionId}' not found`);
   return { sessionId, path };
@@ -282,7 +339,10 @@ interface TreeEntry {
 /** Recursively list `absRoot`, capped at {@link MAX_TREE_ENTRIES} entries / {@link MAX_TREE_DEPTH} deep so
  *  a huge worktree/context dir can't blow up a tool response. Silently stops descending past the caps
  *  rather than failing the whole listing. */
-function listTree(absRoot: string, skipDirs: ReadonlySet<string> = new Set()): TreeEntry[] {
+function listTree(
+  absRoot: string,
+  skipDirs: ReadonlySet<string> = new Set(),
+): TreeEntry[] {
   const out: TreeEntry[] = [];
   const walk = (dir: string, rel: string, depth: number): void => {
     if (out.length >= MAX_TREE_ENTRIES || depth > MAX_TREE_DEPTH) return;
@@ -321,7 +381,9 @@ function listTree(absRoot: string, skipDirs: ReadonlySet<string> = new Set()): T
 function readFileCapped(path: string): string {
   const st = statSync(path);
   if (st.size > MAX_FILE_BYTES) {
-    throw new Error(`file too large to read (${st.size} bytes, cap is ${MAX_FILE_BYTES})`);
+    throw new Error(
+      `file too large to read (${st.size} bytes, cap is ${MAX_FILE_BYTES})`,
+    );
   }
   return readFileSync(path, 'utf8');
 }
@@ -330,7 +392,10 @@ function readFileCapped(path: string): string {
 
 const CONTEXT_SUBDIRS = ['specs', 'generated', 'artifacts'];
 
-async function contextRead(ctx: ToolCtx, args: { jobId: string; path?: string }): Promise<unknown> {
+async function contextRead(
+  ctx: ToolCtx,
+  args: { jobId: string; path?: string },
+): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const root = join(ctx.roots.agentHome, 'contexts', job.org_id, job.id);
 
@@ -339,13 +404,19 @@ async function contextRead(ctx: ToolCtx, args: { jobId: string; path?: string })
     for (const sub of CONTEXT_SUBDIRS) {
       const subRoot = join(root, sub);
       if (!existsSync(subRoot)) continue;
-      tree.push(...listTree(subRoot).map((e) => ({ path: `${sub}/${e.path}`, type: e.type })));
+      tree.push(
+        ...listTree(subRoot).map((e) => ({
+          path: `${sub}/${e.path}`,
+          type: e.type,
+        })),
+      );
     }
     return { root, tree };
   }
 
   const resolved = resolveJailed(root, args.path);
-  if (!existsSync(resolved)) throw new Error(`${args.path} not found under context root`);
+  if (!existsSync(resolved))
+    throw new Error(`${args.path} not found under context root`);
   const st = statSync(resolved);
   if (st.isDirectory()) {
     return { root, path: args.path, tree: listTree(resolved) };
@@ -357,11 +428,15 @@ async function contextRead(ctx: ToolCtx, args: { jobId: string; path?: string })
 
 const WORKTREE_SKIP_DIRS = new Set(['.git', 'node_modules']);
 
-async function worktreeTree(ctx: ToolCtx, args: { jobId: string; subpath?: string }): Promise<unknown> {
+async function worktreeTree(
+  ctx: ToolCtx,
+  args: { jobId: string; subpath?: string },
+): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const sandbox = await loadSandbox(ctx, job.id);
   const target = resolveJailed(sandbox.worktree_path, args.subpath ?? '.');
-  if (!existsSync(target)) throw new Error(`${args.subpath ?? '.'} not found under worktree`);
+  if (!existsSync(target))
+    throw new Error(`${args.subpath ?? '.'} not found under worktree`);
   return {
     root: sandbox.worktree_path,
     subpath: args.subpath ?? null,
@@ -369,14 +444,23 @@ async function worktreeTree(ctx: ToolCtx, args: { jobId: string; subpath?: strin
   };
 }
 
-async function worktreeFile(ctx: ToolCtx, args: { jobId: string; path: string }): Promise<unknown> {
+async function worktreeFile(
+  ctx: ToolCtx,
+  args: { jobId: string; path: string },
+): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const sandbox = await loadSandbox(ctx, job.id);
-  const target = resolveJailed(sandbox.worktree_path, args.path);
-  if (!existsSync(target)) throw new Error(`${args.path} not found under worktree`);
+  const filePath = requireNonEmptyString(args.path, 'path');
+  const target = resolveJailed(sandbox.worktree_path, filePath);
+  if (!existsSync(target))
+    throw new Error(`${filePath} not found under worktree`);
   const st = statSync(target);
-  if (!st.isFile()) throw new Error(`${args.path} is not a file`);
-  return { root: sandbox.worktree_path, path: args.path, content: readFileCapped(target) };
+  if (!st.isFile()) throw new Error(`${filePath} is not a file`);
+  return {
+    root: sandbox.worktree_path,
+    path: filePath,
+    content: readFileCapped(target),
+  };
 }
 
 // ── registry ──────────────────────────────────────────────────────────────────────────────────────────
@@ -384,7 +468,8 @@ async function worktreeFile(ctx: ToolCtx, args: { jobId: string; path: string })
 export const TOOL_DEFS: Tool[] = [
   {
     name: 'atlas_job_overview',
-    description: "A job's core status fields plus its thread list (with a one-line failure summary per thread).",
+    description:
+      "A job's core status fields plus its thread list (with a one-line failure summary per thread).",
     inputSchema: {
       type: 'object',
       properties: { jobId: { type: 'string' } },
@@ -403,12 +488,18 @@ export const TOOL_DEFS: Tool[] = [
   },
   {
     name: 'atlas_job_transcript',
-    description: "A job's operator-facing message transcript, with kind/source/since/tail filters.",
+    description:
+      "A job's operator-facing message transcript, with kind/source/since/tail filters.",
     inputSchema: {
       type: 'object',
       properties: {
         jobId: { type: 'string' },
-        kind: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
+        kind: {
+          anyOf: [
+            { type: 'string' },
+            { type: 'array', items: { type: 'string' } },
+          ],
+        },
         source: { type: 'string' },
         tail: { type: 'number' },
         since: { type: 'string', description: 'ISO-8601 timestamp' },
@@ -425,6 +516,10 @@ export const TOOL_DEFS: Tool[] = [
       properties: {
         jobId: { type: 'string' },
         sessionId: { type: 'string' },
+        raw: {
+          type: 'boolean',
+          description: 'when true with sessionId, returns the raw JSONL text',
+        },
         role: { type: 'string', enum: ['user', 'assistant'] },
         thinking: { type: 'boolean' },
         text: { type: 'boolean' },
@@ -432,14 +527,18 @@ export const TOOL_DEFS: Tool[] = [
         errors: { type: 'boolean' },
         tail: { type: 'number', description: 'default 80' },
         since: { type: 'string', description: 'ISO-8601 timestamp' },
-        grep: { type: 'string', description: 'regex; scans raw JSONL lines, not JSON-aware' },
+        grep: {
+          type: 'string',
+          description: 'regex; scans raw JSONL lines, not JSON-aware',
+        },
       },
       required: ['jobId'],
     },
   },
   {
     name: 'atlas_list_jobs',
-    description: 'List jobs across ALL orgs, optionally filtered by repoId/orgId/status.',
+    description:
+      'List jobs across ALL orgs, optionally filtered by repoId/orgId/status.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -480,15 +579,25 @@ export const TOOL_DEFS: Tool[] = [
   },
 ];
 
-export type ToolHandler = (ctx: ToolCtx, args: Record<string, unknown>) => Promise<unknown>;
+export type ToolHandler = (
+  ctx: ToolCtx,
+  args: Record<string, unknown>,
+) => Promise<unknown>;
 
 export const TOOL_HANDLERS: Record<string, ToolHandler> = {
-  atlas_job_overview: (ctx, args) => jobOverview(ctx, args as { jobId: string }),
-  atlas_thread_failure: (ctx, args) => threadFailure(ctx, args as { jobId: string; threadId?: string }),
-  atlas_job_transcript: (ctx, args) => jobTranscript(ctx, args as unknown as JobTranscriptArgs),
-  atlas_session_raw: (ctx, args) => sessionRaw(ctx, args as unknown as SessionRawArgs),
+  atlas_job_overview: (ctx, args) =>
+    jobOverview(ctx, args as { jobId: string }),
+  atlas_thread_failure: (ctx, args) =>
+    threadFailure(ctx, args as { jobId: string; threadId?: string }),
+  atlas_job_transcript: (ctx, args) =>
+    jobTranscript(ctx, args as unknown as JobTranscriptArgs),
+  atlas_session_raw: (ctx, args) =>
+    sessionRaw(ctx, args as unknown as SessionRawArgs),
   atlas_list_jobs: (ctx, args) => listJobs(ctx, args as ListJobsArgs),
-  atlas_context_read: (ctx, args) => contextRead(ctx, args as { jobId: string; path?: string }),
-  atlas_worktree_tree: (ctx, args) => worktreeTree(ctx, args as { jobId: string; subpath?: string }),
-  atlas_worktree_file: (ctx, args) => worktreeFile(ctx, args as { jobId: string; path: string }),
+  atlas_context_read: (ctx, args) =>
+    contextRead(ctx, args as { jobId: string; path?: string }),
+  atlas_worktree_tree: (ctx, args) =>
+    worktreeTree(ctx, args as { jobId: string; subpath?: string }),
+  atlas_worktree_file: (ctx, args) =>
+    worktreeFile(ctx, args as { jobId: string; path: string }),
 };

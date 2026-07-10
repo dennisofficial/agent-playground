@@ -20,7 +20,7 @@ const STRING_PATTERNS: RegExp[] = [
   // PEM private key blocks (whole block, DOTALL via [\s\S]).
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
   // Generic key/secret/token/password assignments — keep the prefix (key name + operator), mask the value.
-  /("?(?:api[_-]?key|secret|token|password)"?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi,
+  /("?(?:api[_-]?key|secret|token|password)"?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}"']+)/gi,
 ];
 
 function redactString(value: string): string {
@@ -29,9 +29,15 @@ function redactString(value: string): string {
     // The connection-string pattern must keep the scheme; the generic assignment pattern must keep its
     // prefix group — every other pattern replaces the whole match outright.
     if (pattern.source.startsWith('\\w+:\\/\\/')) {
-      out = out.replace(pattern, (m) => `${m.slice(0, m.indexOf('://') + 3)}${MASK}@`);
+      out = out.replace(
+        pattern,
+        (m) => `${m.slice(0, m.indexOf('://') + 3)}${MASK}@`,
+      );
     } else if (pattern.source.startsWith('("?(?:api')) {
-      out = out.replace(pattern, (_m, prefix: string) => `${prefix}${MASK}`);
+      out = out.replace(pattern, (_m, prefix: string, value: string) => {
+        const quote = value[0] === '"' || value[0] === "'" ? value[0] : '';
+        return `${prefix}${quote}${MASK}${quote}`;
+      });
     } else {
       out = out.replace(pattern, MASK);
     }
@@ -39,7 +45,8 @@ function redactString(value: string): string {
   return out;
 }
 
-const SECRET_KEY_PATTERN = /^(api[_-]?key|secret|token|password)$/i;
+const SECRET_KEY_PATTERN =
+  /(^|[_-])(api[_-]?key|secret|token|password)([_-]|$)|(?:apiKey|accessToken|refreshToken|idToken|clientSecret)$/i;
 
 /**
  * Recursively redact secret-shaped values out of `value` before it is ever serialized back to a caller —
@@ -47,9 +54,13 @@ const SECRET_KEY_PATTERN = /^(api[_-]?key|secret|token|password)$/i;
  * string-scans every string leaf, and additionally blanks the VALUE of any object key that looks like a
  * secret field name (even if its value didn't match a pattern, e.g. an opaque token). Cycle-safe.
  */
-export function redactSecrets(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+export function redactSecrets(
+  value: unknown,
+  seen: WeakSet<object> = new WeakSet(),
+): unknown {
   if (typeof value === 'string') return redactString(value);
   if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Date) return value;
 
   if (seen.has(value)) return '[circular]';
   seen.add(value);

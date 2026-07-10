@@ -10,9 +10,9 @@
 -- the role handed to the reader can ONLY SELECT — never INSERT/UPDATE/DELETE or run DDL — so even a fully
 -- compromised reader process cannot mutate production. There is no write role in the reader at all.
 --
--- Usage (run from the box; the password comes from atlas.env, never hard-coded here):
+-- Usage (run from the box; the password comes from the reader's scoped env file, never hard-coded here):
 --
---   PW="$(grep -E '^MCP_READER_PG_PASSWORD=' /srv/atlas/secrets/atlas.env | cut -d= -f2-)"
+--   PW="$(grep -E '^MCP_READER_PG_PASSWORD=' /srv/atlas/secrets/mcp-reader.env | cut -d= -f2-)"
 --   docker exec -i atlas-postgres psql -v ON_ERROR_STOP=1 \
 --     -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
 --     -v mcp_reader_password="$PW" \

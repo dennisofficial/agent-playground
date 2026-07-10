@@ -17,18 +17,18 @@ SELECT-only Postgres role and never writes to the database or the filesystem.
 
 ## Env vars
 
-| Var | Required | Default | Notes |
-|---|---|---|---|
-| `MCP_READER_PORT` | no | `4100` | HTTP listen port |
-| `MCP_READER_API_KEY` | **yes** | — | static key clients send as `x-api-key` |
-| `MCP_READER_PG_HOST` | **yes** | — | |
-| `MCP_READER_PG_PORT` | no | `5432` | |
-| `MCP_READER_PG_USER` | **yes** | — | should be a SELECT-only role |
-| `MCP_READER_PG_PASSWORD` | **yes** | — | |
-| `MCP_READER_PG_DB` | **yes** | — | |
-| `MCP_READER_PG_SSL` | no | `disable` | `disable` \| `verify-full` |
-| `AGENT_HOME_ROOT` | no | `/srv/atlas/data/agent-home` | root for sandbox JSONL + `/context` |
-| `REPOS_ROOT` | no | `/srv/atlas/data/repos` | root for worktrees (mounted read-only at the same host path) |
+| Var                      | Required | Default                      | Notes                                                        |
+| ------------------------ | -------- | ---------------------------- | ------------------------------------------------------------ |
+| `MCP_READER_PORT`        | no       | `4100`                       | HTTP listen port                                             |
+| `MCP_READER_API_KEY`     | **yes**  | —                            | static key clients send as `x-api-key`                       |
+| `MCP_READER_PG_HOST`     | **yes**  | —                            |                                                              |
+| `MCP_READER_PG_PORT`     | no       | `5432`                       |                                                              |
+| `MCP_READER_PG_USER`     | **yes**  | —                            | should be a SELECT-only role                                 |
+| `MCP_READER_PG_PASSWORD` | **yes**  | —                            |                                                              |
+| `MCP_READER_PG_DB`       | **yes**  | —                            |                                                              |
+| `MCP_READER_PG_SSL`      | no       | `disable`                    | `disable` \| `verify-full`                                   |
+| `AGENT_HOME_ROOT`        | no       | `/srv/atlas/data/agent-home` | root for sandbox JSONL + `/context`                          |
+| `REPOS_ROOT`             | no       | `/srv/atlas/data/repos`      | root for worktrees (mounted read-only at the same host path) |
 
 Missing required vars fail fast at boot with a clear error.
 
@@ -80,8 +80,9 @@ rejected auth attempt. No file, no DB — stdout only; the deployment's log coll
 1. `atlas_job_overview(jobId)` — job status fields + thread list with a derived one-line failure summary.
 2. `atlas_thread_failure(jobId, threadId?)` — full typed `terminal_record` for one or all threads.
 3. `atlas_job_transcript(jobId, {kind?, source?, tail?, since?})` — operator-facing message transcript.
-4. `atlas_session_raw(jobId, {sessionId?, role?, thinking?, text?, tools?, errors?, tail?, since?, grep?})`
-   — raw Claude session JSONL: list sessions, render one (mirrors `atlas-tx show`), or grep across sessions.
+4. `atlas_session_raw(jobId, {sessionId?, raw?, role?, thinking?, text?, tools?, errors?, tail?, since?, grep?})`
+   — raw Claude session JSONL: list sessions, return one raw (`raw:true`), render one (mirrors
+   `atlas-tx show`), or grep across sessions.
 5. `atlas_list_jobs({repoId?, orgId?, status?, limit?})` — jobs across ALL orgs (no org scoping).
 6. `atlas_context_read(jobId, path?)` — the job's durable `/context` dir (tree listing or file contents).
 7. `atlas_worktree_tree(jobId, subpath?)` — the job's git worktree file tree (skips `.git`, `node_modules`).

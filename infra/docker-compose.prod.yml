@@ -2,6 +2,7 @@
 #
 # Prerequisites:
 #   - /srv/atlas/secrets/atlas.env  (mode 600, see infra/.env.prod.example)
+#   - /srv/atlas/secrets/mcp-reader.env  (mode 600, see infra/.env.mcp-reader.example)
 #   - /srv/atlas/pgdata/            (Postgres data directory)
 #   - /srv/atlas/data/{repos,agent-home,refs,skills,golden,engine}/
 #   - /srv/atlas/caddy/{data,config}/

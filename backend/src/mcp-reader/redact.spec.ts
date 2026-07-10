@@ -28,28 +28,61 @@ describe('redactSecrets', () => {
   });
 
   it('masks a JWT', () => {
-    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dGhpc2lzYXNpZ25hdHVyZQ';
-    expect(redactSecrets(`Authorization: Bearer ${jwt}`)).toBe('Authorization: Bearer ***REDACTED***');
+    const jwt =
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dGhpc2lzYXNpZ25hdHVyZQ';
+    expect(redactSecrets(`Authorization: Bearer ${jwt}`)).toBe(
+      'Authorization: Bearer ***REDACTED***',
+    );
   });
 
   it('masks user:pass@ in a connection string, keeping scheme and host', () => {
     const s = 'postgres://myuser:s3cr3t@db.internal:5432/atlas';
-    expect(redactSecrets(s)).toBe('postgres://***REDACTED***@db.internal:5432/atlas');
+    expect(redactSecrets(s)).toBe(
+      'postgres://***REDACTED***@db.internal:5432/atlas',
+    );
   });
 
   it('masks a PEM private key block wholesale', () => {
-    const pem = '-----BEGIN RSA PRIVATE KEY-----\nMIIBogIBAAJ...\n-----END RSA PRIVATE KEY-----';
-    expect(redactSecrets(`before ${pem} after`)).toBe('before ***REDACTED*** after');
+    const pem =
+      '-----BEGIN RSA PRIVATE KEY-----\nMIIBogIBAAJ...\n-----END RSA PRIVATE KEY-----';
+    expect(redactSecrets(`before ${pem} after`)).toBe(
+      'before ***REDACTED*** after',
+    );
   });
 
   it('masks a generic key/secret/token/password assignment, keeping the key prefix', () => {
-    expect(redactSecrets('password: "hunter2"')).toBe('password: ***REDACTED***');
+    expect(redactSecrets('password: "hunter2"')).toBe(
+      'password: "***REDACTED***"',
+    );
     expect(redactSecrets('api_key=abcxyz123')).toBe('api_key=***REDACTED***');
-    expect(redactSecrets("token: 'tok_live_abc'")).toBe('token: ***REDACTED***');
+    expect(redactSecrets("token: 'tok_live_abc'")).toBe(
+      "token: '***REDACTED***'",
+    );
+  });
+
+  it('keeps raw JSONL parseable when redacting assignment-looking text inside a JSON string', () => {
+    const line =
+      '{"timestamp":"2026-07-10T22:00:00.000Z","message":{"content":"api_key=sk-abcdefghijklmnopqrstuvwxyz0123456789"}}';
+    const redacted = redactSecrets(line) as string;
+    expect(() => JSON.parse(redacted)).not.toThrow();
+    expect(JSON.parse(redacted).message.content).toBe('api_key=***REDACTED***');
+  });
+
+  it('preserves dates so JSON serialization keeps timestamp fields useful', () => {
+    const date = new Date('2026-07-10T12:34:56.000Z');
+    const out = redactSecrets({ createdAt: date }) as { createdAt: Date };
+    expect(out.createdAt).toBe(date);
+    expect(JSON.stringify(out)).toBe(
+      '{"createdAt":"2026-07-10T12:34:56.000Z"}',
+    );
   });
 
   it('redacts secret-named object keys, walks nested arrays/objects, and is cycle-safe', () => {
-    const cyclic: Record<string, unknown> = { name: 'job-1', secret: 'zzz', nested: { password: 'p' } };
+    const cyclic: Record<string, unknown> = {
+      name: 'job-1',
+      secret: 'zzz',
+      nested: { password: 'p' },
+    };
     cyclic.self = cyclic;
     const out = redactSecrets({
       list: [{ token: 'abc' }, 'plain text'],
@@ -60,7 +93,25 @@ describe('redactSecrets', () => {
     const obj = out.obj as Record<string, unknown>;
     expect(obj.name).toBe('job-1');
     expect(obj.secret).toBe('***REDACTED***');
-    expect((obj.nested as Record<string, unknown>).password).toBe('***REDACTED***');
+    expect((obj.nested as Record<string, unknown>).password).toBe(
+      '***REDACTED***',
+    );
     expect(obj.self).toBe('[circular]');
+  });
+
+  it('redacts structured token/secret key variants even when the value shape is opaque', () => {
+    expect(
+      redactSecrets({
+        access_token: 'opaque-access',
+        refreshToken: 'opaque-refresh',
+        client_secret: 'opaque-client-secret',
+        idToken: 'opaque-id-token',
+      }),
+    ).toEqual({
+      access_token: '***REDACTED***',
+      refreshToken: '***REDACTED***',
+      client_secret: '***REDACTED***',
+      idToken: '***REDACTED***',
+    });
   });
 });
