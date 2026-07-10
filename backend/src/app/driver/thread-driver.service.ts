@@ -1285,7 +1285,7 @@ export class ThreadDriver implements JobDispatcher {
       scope: 'thread',
       // The fix turn commits + pushes its own work now — give it the authenticated remote (same as the
       // builder/gate/master-review turns carry).
-      gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
+      gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
       ...(sandbox.containerId
         ? {
             containerId: sandbox.containerId,
@@ -2362,7 +2362,7 @@ export class ThreadDriver implements JobDispatcher {
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
-          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
+          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
           richStream: true,
           turnMeta: {
             jobId: job.id,
@@ -2564,7 +2564,7 @@ export class ThreadDriver implements JobDispatcher {
           ...(repoConventions ? { repoConventions } : {}),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
-          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
+          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
           // Mid-turn steering — armed for Claude builder turns so operator steers AND the engine-local
           // Leg-rotation SOFT/REMINDER nudges land in the LIVE turn (`priority:'now'`). Never for Codex (no
@@ -2978,7 +2978,7 @@ export class ThreadDriver implements JobDispatcher {
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
-          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token },
+          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
           richStream: true,
           toolBridge,
           turnMeta: {

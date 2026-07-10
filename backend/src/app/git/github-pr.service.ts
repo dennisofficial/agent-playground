@@ -118,6 +118,16 @@ export class GithubPrService {
     };
   }
 
+  /** The GitHub account that owns `token` (GET /user) — for commit attribution. null on any non-OK. */
+  async getAuthenticatedUser(
+    token: string,
+  ): Promise<{ login: string; id: number; name: string | null } | null> {
+    const res = await this.fetchImpl(`${API}/user`, { headers: this.headers(token) });
+    if (!res.ok) return null;
+    const u = (await res.json()) as { login: string; id: number; name: string | null };
+    return { login: u.login, id: u.id, name: u.name ?? null };
+  }
+
   /** Create the PR, or return the already-open one for the same head (idempotent). */
   async openPullRequest(
     token: string,
