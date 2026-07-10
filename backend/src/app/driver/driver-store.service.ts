@@ -670,6 +670,25 @@ export class DriverStoreService {
     return Array.isArray(row?.tasks) ? row!.tasks : [];
   }
 
+  /** Host backstop for a thread that reached `done` with an unreconciled checklist: flip every still-open task
+   *  (`pending`/`in_progress`) to `dropped` — NOT `completed` (the host must not claim work it did not verify;
+   *  a `dropped` row renders struck-through / drops out of the live navigator checklist).
+   *  Returns how many were flipped. A plain read-modify-write is safe here: this runs at the done transition,
+   *  after the thread's turn(s) have finished, so no concurrent task fold races it. */
+  async dropOpenThreadTasks(threadId: string): Promise<number> {
+    const tasks = await this.getThreadTasks(threadId);
+    let dropped = 0;
+    const next = tasks.map((t) => {
+      if (t.status === 'pending' || t.status === 'in_progress') {
+        dropped++;
+        return { ...t, status: 'dropped' as const };
+      }
+      return t;
+    });
+    if (dropped > 0) await this.threads.update({ id: threadId }, { tasks: next });
+    return dropped;
+  }
+
   /** Live single-thread read (not the run-start snapshot). Used to detect a thread a concurrent/stale drive
    *  has already finished, so we don't re-execute or re-review it. */
   async getThread(threadId: string): Promise<DriverThread | null> {

@@ -42,7 +42,7 @@ import type {
   ThreadCondition,
   Job,
 } from '../domain';
-import type { ThreadTerminalRecord } from '../persistence/entities';
+import type { TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type { LiveVerificationJudge, LiveVerificationVerdict } from './live-verification-judge';
 import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 
@@ -312,7 +312,23 @@ function makeStore(state: StoreState): {
     getPendingLegSeed: vi.fn(async (_anchorStepId: string) => null),
     completeLegRotation: vi.fn(async () => null),
     recordBuildSystemChunk: vi.fn(async () => undefined),
-    getThreadTasks: vi.fn(async (_threadId: string) => []),
+    getThreadTasks: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as { tasks?: TaskItem[] } | undefined;
+      return Array.isArray(s?.tasks) ? s!.tasks! : [];
+    }),
+    dropOpenThreadTasks: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as { tasks?: TaskItem[] } | undefined;
+      if (!Array.isArray(s?.tasks)) return 0;
+      let dropped = 0;
+      s!.tasks = s!.tasks!.map((t) => {
+        if (t.status === 'pending' || t.status === 'in_progress') {
+          dropped++;
+          return { ...t, status: 'dropped' as const };
+        }
+        return t;
+      });
+      return dropped;
+    }),
     recordActiveLeg: vi.fn(async () => undefined),
     getLegsForJob: vi.fn(async (_jobId: string) => []),
     threadJobId: vi.fn(async (threadId: string) => {
@@ -3036,6 +3052,112 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(judge.calls).toBe(2);
     const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }).terminal_record;
     expect(term?.status).toBe('done'); // recovered in-turn, not falsely stuck blocked
+    expect(state.job.status).toBe('done');
+  });
+
+  it('bounces the FIRST complete_thread when the checklist has an open task; the retry latches done once the model closes it', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as { tasks?: TaskItem[] }).tasks = [
+      { id: 'x1', subject: 'Add tests', status: 'in_progress' },
+    ];
+    const returns: Array<Record<string, unknown>> = [];
+    const turn = {
+      runTurn: vi.fn(
+        async (input: { mode: string; stepId?: string | null; jobId: string; toolBridge?: ToolBridgeOptions }) => {
+          const ct = input.toolBridge?.tools?.['complete_thread'];
+          if (ct) {
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
+            // The model heeds the one reminder and closes its task (its TaskUpdate folds onto threads.tasks)…
+            (state.threads[0] as { tasks?: TaskItem[] }).tasks = [
+              { id: 'x1', subject: 'Add tests', status: 'completed' },
+            ];
+            // …then re-asserts done — must reach the gate this time, not be nudged again.
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
+          }
+          return {
+            report: 'built',
+            session: {
+              id: 'sess', jobId: input.jobId, stepId: input.stepId ?? null,
+              engine: 'claude' as const, mode: input.mode as 'plan' | 'execute' | 'review',
+              branch: 'b', worktreePath: '/wt/b',
+            },
+          };
+        },
+      ),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+    const h = assemble(state, { turn });
+    stubChangedFileNames(h.git, async () => ['README.md']); // non-runtime → the done-gates short-circuit
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(String(returns[0]?.['warning'] ?? '')).toContain('open item'); // 1st: reminder, not latched
+    expect(returns[1]?.['warning']).toBeUndefined(); // 2nd: no second nudge — proceeded to the gate
+    const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }).terminal_record;
+    expect(term?.status).toBe('done');
+    expect(state.job.status).toBe('done');
+    // The model closed its own task, so the host had nothing to drop — it stays `completed`, not `dropped`.
+    const tasks = (state.threads[0] as { tasks?: TaskItem[] }).tasks ?? [];
+    expect(tasks.map((t) => t.status)).toEqual(['completed']);
+  });
+
+  it('accepts a re-asserted done with tasks STILL open, and the host flips the leftovers to `dropped` (not completed)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as { tasks?: TaskItem[] }).tasks = [
+      { id: 'x1', subject: 'Add tests', status: 'in_progress' },
+      { id: 'x2', subject: 'Update docs', status: 'pending' },
+    ];
+    const returns: Array<Record<string, unknown>> = [];
+    const turn = {
+      runTurn: vi.fn(
+        async (input: { mode: string; stepId?: string | null; jobId: string; toolBridge?: ToolBridgeOptions }) => {
+          const ct = input.toolBridge?.tools?.['complete_thread'];
+          if (ct) {
+            // First → nudged; second → still open, but accepted (never wedge a validated thread).
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
+          }
+          return {
+            report: 'built',
+            session: {
+              id: 'sess', jobId: input.jobId, stepId: input.stepId ?? null,
+              engine: 'claude' as const, mode: input.mode as 'plan' | 'execute' | 'review',
+              branch: 'b', worktreePath: '/wt/b',
+            },
+          };
+        },
+      ),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+    const h = assemble(state, { turn });
+    stubChangedFileNames(h.git, async () => ['README.md']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(String(returns[0]?.['warning'] ?? '')).toContain('open item');
+    expect(returns[1]?.['warning']).toBeUndefined();
+    const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }).terminal_record;
+    expect(term?.status).toBe('done');
+    expect(h.store.dropOpenThreadTasks).toHaveBeenCalledWith('sec-be');
+    // Both stragglers flipped to `dropped` — the host never claims they were completed.
+    const tasks = (state.threads[0] as { tasks?: TaskItem[] }).tasks ?? [];
+    expect(tasks.map((t) => t.status)).toEqual(['dropped', 'dropped']);
     expect(state.job.status).toBe('done');
   });
 
