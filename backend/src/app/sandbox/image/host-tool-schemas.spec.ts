@@ -11,7 +11,6 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { z } from 'zod/v4';
 import { TOOL_SHAPES, TOOL_DESCRIPTIONS, toolJsonSchema } from './host-tool-schemas';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from './workspace-profile-bridge-options';
 
