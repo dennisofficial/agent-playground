@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronRight, Loader2, RotateCw } from "lucide-react";
+import { Check, ChevronRight, Loader2, RotateCw } from "lucide-react";
 import { toneOf, type SystemTone } from "./classify";
 import { Markdown } from "./markdown";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
@@ -673,9 +673,13 @@ export function LiveIndicator({
 export function SystemOperatorNotice({
   message,
   jobRef,
+  isOutstanding = false,
 }: {
   message: JobMessage;
   jobRef: JobRef;
+  /** Whether THIS failure is still the outstanding one (thread currently halted). Only then is the Resume
+   *  button live; once the thread has resumed the footer shows a muted "Resumed" instead of a live CTA. */
+  isOutstanding?: boolean;
 }) {
   const retryable = message.meta?.retryable === true;
   const retry = useRetryTurn(jobRef);
@@ -716,21 +720,30 @@ export function SystemOperatorNotice({
           className="flex items-center gap-2 border-t px-3.5 py-2.5"
           style={{ borderColor: "var(--red-line)" }}
         >
-          <Button
-            size="sm"
-            loading={retry.isPending}
-            loadingText="Resuming…"
-            disabled={retry.isSuccess}
-            onClick={() => retry.mutate()}
-          >
-            <RotateCw size={12} className="mr-1" />
-            {retry.isSuccess ? "Resumed" : "Resume"}
-          </Button>
-          {retry.isError ? (
-            <span className="text-[11.5px] text-red">
-              Couldn&apos;t resume. Try again.
+          {isOutstanding ? (
+            <>
+              <Button
+                size="sm"
+                loading={retry.isPending}
+                loadingText="Resuming…"
+                disabled={retry.isSuccess}
+                onClick={() => retry.mutate()}
+              >
+                <RotateCw size={12} className="mr-1" />
+                {retry.isSuccess ? "Resumed" : "Resume"}
+              </Button>
+              {retry.isError ? (
+                <span className="text-[11.5px] text-red">
+                  Couldn&apos;t resume. Try again.
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[11.5px] text-faint">
+              <Check size={12} aria-hidden />
+              Resumed
             </span>
-          ) : null}
+          )}
         </div>
       ) : null}
     </div>

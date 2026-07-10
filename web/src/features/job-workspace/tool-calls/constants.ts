@@ -1,23 +1,53 @@
-/** The in-process MCP server the Atlas host-bridge tools are registered under (mirrors the backend). */
-export const BRIDGE_SERVER_NAME = "atlas-host-bridge";
+import {
+  ATLAS_HOST_BRIDGE_TOOLS,
+  BRIDGE_SERVER_NAME,
+  type AtlasHostBridgeTool,
+} from "@workspace/shared";
 
-/** Friendly labels for the Atlas host-bridge tools, keyed by their bare name. */
-export const BRIDGE_TOOL_LABELS: Record<string, string> = {
-  ask_question: "Ask question",
-  log_decision: "Log decision",
+/** The in-process MCP server the Atlas host-bridge tools are registered under (mirrors the backend). */
+export { BRIDGE_SERVER_NAME, ATLAS_HOST_BRIDGE_TOOLS };
+export type { AtlasHostBridgeTool };
+
+/**
+ * Friendly labels for the Atlas host-bridge tools, keyed by their bare name. Typed as an EXHAUSTIVE
+ * map over the shared `AtlasHostBridgeTool` contract, so adding/renaming/removing a host tool that
+ * isn't reflected here is a compile error — no more silent drift.
+ */
+export const BRIDGE_TOOL_LABELS: Record<AtlasHostBridgeTool, string> = {
+  report_verification: "Report verification",
   get_pipeline_state: "Pipeline state",
   get_decision_record: "Decision record",
   recall: "Recall memory",
   remember: "Remember",
+  ask_question: "Ask question",
+  create_decision: "Lock decision",
+  withdraw_question: "Withdraw question",
+  withdraw_plan: "Withdraw plan",
+  set_job_kind: "Set job kind",
+  update_decision: "Update decision",
+  delete_decision: "Delete decision",
   review_plan: "Codex review",
   propose_plan: "Propose plan",
+  dispatch_build: "Dispatch build",
+  retry_thread: "Retry thread",
+  note_cleared_block: "Clear block",
   start_direct_build: "Direct build",
   finalize_build: "Finalize build",
-  dispatch_build: "Dispatch build",
-  create_job: "Create thread",
+  create_job: "Create job",
   create_ticket: "Create ticket",
   list_tickets: "List tickets",
   update_ticket: "Update ticket",
   link_ticket_dependency: "Link dependency",
   promote_ticket: "Promote ticket",
+  reset_sandbox: "Reset sandbox",
+  finish_onboarding: "Finish onboarding",
 };
+
+/**
+ * Friendly label for a bare host-bridge tool name, falling back to the raw name for anything not in
+ * the map. Contains the `string`→union lookup so callers (which hold arbitrary tool-name strings)
+ * don't have to widen `BRIDGE_TOOL_LABELS` and lose its exhaustiveness guarantee.
+ */
+export function bridgeToolLabel(bare: string): string {
+  return (BRIDGE_TOOL_LABELS as Record<string, string>)[bare] ?? bare;
+}

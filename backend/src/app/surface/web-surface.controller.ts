@@ -615,7 +615,12 @@ export class WebSurfaceController {
         // The observed PR (null until one exists) — drives the sidebar's PR-status glyph. `mergeable`
         // ('dirty' = conflict) refines the open state; `state` gives merged/closed.
         pr: t.pr_state
-          ? { state: t.pr_state, mergeable: t.pr_mergeable, url: t.pr_url }
+          ? {
+              state: t.pr_state,
+              number: t.pr_number,
+              mergeable: t.pr_mergeable,
+              url: t.pr_url,
+            }
           : null,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
