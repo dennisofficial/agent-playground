@@ -135,6 +135,7 @@ import {
 import type {
   EngineEvent,
   EngineRunnerPort,
+  GitAuth,
   ToolImpl,
   RunEngineArgs,
   EngineRunResult,
@@ -236,7 +237,7 @@ export class AgentSessionManager
    *  by the turn-end latch in `runChatTurn` (records the PR + flips done promptly). */
   private readonly directBuildShipPending = new Map<string, boolean>();
   /** Per-job resolved git auth (repo url + org PAT) for in-sandbox push/fetch — cached; see resolveBrainGitAuth. */
-  private readonly gitAuthByJob = new Map<string, { gitUrl: string; token?: string }>();
+  private readonly gitAuthByJob = new Map<string, GitAuth>();
   /**
    * SESSION-scoped `Edit`/`Write` grants for skills (`request_skill_edit_access`), keyed by jobId — in-memory
    * on this manager, per `ARCHITECTURE.md`'s halt-and-resume model: the grant is recorded HOST-side when the
@@ -345,13 +346,17 @@ export class AgentSessionManager
    */
   private async resolveBrainGitAuth(
     jobId: string,
-  ): Promise<{ gitUrl: string; token?: string } | undefined> {
+  ): Promise<GitAuth | undefined> {
     const cached = this.gitAuthByJob.get(jobId);
     if (cached) return cached;
     try {
       const job = await this.store.loadJob(jobId);
       const repo = await this.repos.resolve(job);
-      const auth = { gitUrl: repo.projectRepo.gitUrl, token: repo.token };
+      const auth = {
+        gitUrl: repo.projectRepo.gitUrl,
+        token: repo.token,
+        ...(repo.identity ? { identity: repo.identity } : {}),
+      };
       if (auth.gitUrl && auth.token) this.gitAuthByJob.set(jobId, auth);
       return auth;
     } catch (err) {

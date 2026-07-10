@@ -235,6 +235,16 @@ export function resolveContextLimit(model?: string, engine?: SessionEngine): num
  * present, the `docker` runner `docker exec`s the engine entrypoint inside `containerId` as `user`.
  * Passed explicitly through the port so the runner never has to derive a container from a string.
  */
+export interface SandboxGitIdentity {
+  name: string;
+  email: string;
+}
+export interface GitAuth {
+  gitUrl: string;
+  token?: string;
+  identity?: SandboxGitIdentity;
+}
+
 export interface ExecutionTarget {
   /** The sandbox container to exec the turn inside. */
   containerId: string;
@@ -254,7 +264,7 @@ export interface ExecutionTarget {
    * `GIT_CONFIG_*` extraheader + `GITHUB_TOKEN` in the turn's exec env; the token never lands in argv or
    * `.git/config`. Absent → git remote ops fail closed (`GIT_TERMINAL_PROMPT=0`).
    */
-  gitAuth?: { gitUrl: string; token?: string };
+  gitAuth?: GitAuth;
 }
 
 // ── Tool-bridge frame protocol ────────────────────────────────────────────────────────────────────
