@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DataSource } from 'typeorm';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -297,12 +297,15 @@ function listTree(absRoot: string, skipDirs: ReadonlySet<string> = new Set()): T
       if (skipDirs.has(entry)) continue;
       const full = join(dir, entry);
       const relPath = rel ? `${rel}/${entry}` : entry;
-      let st: ReturnType<typeof statSync>;
+      let st: ReturnType<typeof lstatSync>;
       try {
-        st = statSync(full);
+        st = lstatSync(full);
       } catch {
         continue;
       }
+      // Don't follow symlinks: a symlink planted inside the jail could point outside it, so
+      // enumerating its target would leak names outside the jail. Skip them entirely.
+      if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) {
         out.push({ path: relPath, type: 'dir' });
         walk(full, relPath, depth + 1);
