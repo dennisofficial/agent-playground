@@ -14,11 +14,26 @@ export interface SkillFrontmatter {
   reviewForGlobs?: string[];
 }
 
-/** Parse a single-line list value: `[a, b]` or bare `a, b` -> trimmed, unquoted, non-empty items. */
+/** Parse a single-line list value: `[a, b]` or bare `a, b` -> trimmed, unquoted, non-empty items.
+ *  Commas inside `{...}` are NOT separators, so picomatch brace patterns like `foo.{ts,tsx}`
+ *  survive intact instead of being split into invalid globs. */
 function parseListValue(raw: string): string[] {
   const stripped = raw.replace(/^\[\s*/, '').replace(/\s*\]$/, '');
-  return stripped
-    .split(',')
+  const items: string[] = [];
+  let current = '';
+  let braceDepth = 0;
+  for (const ch of stripped) {
+    if (ch === '{') braceDepth++;
+    else if (ch === '}' && braceDepth > 0) braceDepth--;
+    if (ch === ',' && braceDepth === 0) {
+      items.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  items.push(current);
+  return items
     .map((item) => item.trim().replace(/^['"]|['"]$/g, ''))
     .filter((item) => item.length > 0);
 }
