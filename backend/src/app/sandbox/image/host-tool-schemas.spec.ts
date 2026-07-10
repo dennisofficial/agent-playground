@@ -99,6 +99,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   },
   withdraw_question: { questionId: 'q1', reason: 'No longer relevant.' },
   withdraw_plan: { reason: 'Scope changed.' },
+  withdraw_ship: { reason: 'More changes needed.' },
   set_job_kind: { kind: 'feature' },
   create_decision: {
     decisionClass: 'data_model',

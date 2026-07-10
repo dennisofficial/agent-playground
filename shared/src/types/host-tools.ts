@@ -30,6 +30,7 @@ export const ATLAS_HOST_BRIDGE_TOOLS = [
   'create_decision',
   'withdraw_question',
   'withdraw_plan',
+  'withdraw_ship',
   'set_job_kind',
   'update_decision',
   'delete_decision',

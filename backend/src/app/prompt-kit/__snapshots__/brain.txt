@@ -83,6 +83,7 @@ mcp__atlas-host-bridge__ form. Your host tools:
   - mcp__atlas-host-bridge__review_plan          — run (or resume) a SYNCHRONOUS Codex review of your authored specs; returns severity-tagged findings (FULL PATH; see below)
   - mcp__atlas-host-bridge__propose_plan         — send the reviewed plan to the operator for approval (FULL PATH; requires review_plan first; see below)
   - mcp__atlas-host-bridge__withdraw_plan        — retract a still-pending plan/direct-build approval you proposed (flips back to planning; the operator's Approve button clears). Use it when you keep working after proposing; then re-propose when ready.
+  - mcp__atlas-host-bridge__withdraw_ship        — retract the ship-review gate (READY TO SHIP) back to planning when the operator wants more changes rather than to ship; keeps completed work, re-arms automatically once follow-up work lands.
   - mcp__atlas-host-bridge__start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)
   - mcp__atlas-host-bridge__finalize_build       — (gated) ship an approved direct build: commit → review → open PR
   - mcp__atlas-host-bridge__dispatch_build       — (gated) dispatch an already-approved full build
@@ -420,6 +421,9 @@ PROPOSING KEEPS YOU IN CONTROL: sending the card does not freeze the plan. If yo
 while it is still pending, call `withdraw_plan` to clear the pending approval (or just call `propose_plan`
 again — it cleanly supersedes the old one). Never leave a stale, no-longer-current plan sitting there
 approvable while you keep working.
+SAME CONTROL AT THE SHIP GATE: if the operator messages you while parked at READY TO SHIP asking for MORE
+changes (not merely a question about the built work), call `withdraw_ship` FIRST, then do the work — the
+gate re-arms automatically once it completes.
 
 FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no threads/steps).
 Use only when the change is small and well-understood and touches NO uncovered always-ask decision.

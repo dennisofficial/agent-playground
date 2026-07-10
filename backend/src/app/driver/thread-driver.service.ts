@@ -928,6 +928,31 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
+   * SHIP-REVIEW RETRACT (the Atlas `withdraw_ship` tool OR the manual "Back to building" click). Flip
+   * `awaiting_ship_review → planning` (idempotent in the store — acts only while parked, so a stale/double
+   * retract is a no-op) and post a durable note. Unlike {@link resolveShipApprovalDurably}, this does NOT
+   * re-drive — the job sits in `planning` for the operator/Atlas to do the follow-up work, and the gate
+   * re-arms automatically once that work reaches `parkForShipReview` again.
+   */
+  async retractShipDurably(jobId: string, ruledBy: string): Promise<void> {
+    const acted = await this.store.retractShip(jobId);
+    if (!acted) {
+      this.logger.warn(
+        `ship retract for job=${jobId} by ${ruledBy}: not awaiting ship review — no-op`,
+      );
+      return;
+    }
+    this.logger.log(`ship retract for job=${jobId} by ${ruledBy} — back to planning`);
+    await this.blockSink
+      .appendBlock(jobId, {
+        kind: 'chat',
+        text: '↩︎ Ship-review retracted — back to planning for changes.',
+        meta: { source: 'system_operator' },
+      })
+      .catch(() => undefined);
+  }
+
+  /**
    * HALT the build on a non-`done` thread outcome (ADR 0004): flip the job to a needs-you state and relay a
    * DURABLE card so the halt never dead-ends silently (durable-first via the block sink — see
    * {@link relayFailure} for why a bare `post()` is invisible to reconnecting clients). `incomplete` →
