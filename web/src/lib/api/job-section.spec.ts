@@ -39,7 +39,7 @@ describe("sectionOf", () => {
   it("d1: a running job with pr.state='open' still lands in building, not pr_open", () => {
     const thread = makeThread({
       status: "running",
-      pr: { state: "open", mergeable: null, url: "https://example.com/pr/1" },
+      pr: { state: "open", number: 1, mergeable: null, url: "https://example.com/pr/1" },
     });
     expect(sectionOf(thread)).toBe("building");
   });
@@ -51,7 +51,7 @@ describe("sectionOf", () => {
   it("done with a closed PR lands in done", () => {
     const thread = makeThread({
       status: "done",
-      pr: { state: "closed", mergeable: null, url: null },
+      pr: { state: "closed", number: null, mergeable: null, url: null },
     });
     expect(sectionOf(thread)).toBe("done");
   });
@@ -59,7 +59,7 @@ describe("sectionOf", () => {
   it("done with an open PR lands in pr_open", () => {
     const thread = makeThread({
       status: "done",
-      pr: { state: "open", mergeable: null, url: null },
+      pr: { state: "open", number: 42, mergeable: null, url: null },
     });
     expect(sectionOf(thread)).toBe("pr_open");
   });
@@ -67,7 +67,7 @@ describe("sectionOf", () => {
   it("done with a merged PR lands in merged", () => {
     const thread = makeThread({
       status: "done",
-      pr: { state: "merged", mergeable: null, url: null },
+      pr: { state: "merged", number: null, mergeable: null, url: null },
     });
     expect(sectionOf(thread)).toBe("merged");
   });
@@ -81,7 +81,7 @@ describe("sectionOf", () => {
 describe("groupThreadsBySection", () => {
   it("omits empty sections and preserves fixed order", () => {
     const threads = [
-      makeThread({ id: "m1", status: "done", pr: { state: "merged", mergeable: null, url: null } }),
+      makeThread({ id: "m1", status: "done", pr: { state: "merged", number: null, mergeable: null, url: null } }),
       makeThread({ id: "p1", status: "planning" }),
       makeThread({ id: "b1", status: "running" }),
     ];

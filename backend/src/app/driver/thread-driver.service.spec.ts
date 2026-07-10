@@ -760,6 +760,9 @@ function assemble(
     turn?: TurnRunnerService;
     turnRegistry?: Pick<import('../sandbox/turn-registry.service').TurnRegistry, 'listRunning'>;
     judge?: LiveVerificationJudge & { calls: number };
+    /** Override `CredentialResolver.anthropicKey` — defaults to the env-fallback shape (no key). A test that
+     *  exercises the judge-unavailable-WITH-key path (transient infra hold) sets this to return a key. */
+    anthropicKey?: (orgId?: string) => Promise<string | undefined>;
     /** SHIP-REVIEW GATE: feature/bugfix builds now PARK before the PR (awaiting the operator's "Ship it").
      *  Default true → the harness auto-clicks "Ship it" the instant the gate parks, so the many
      *  build→ship pipeline tests still reach `done` without each re-encoding the gate. The dedicated
@@ -912,7 +915,7 @@ function assemble(
     },
     // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.
     {
-      anthropicKey: async () => undefined,
+      anthropicKey: opts.anthropicKey ?? (async () => undefined),
       openaiKey: async () => undefined,
       githubToken: async () => undefined,
       engineAuth: async () => ({ secret: 'test-secret' }),
@@ -1982,13 +1985,19 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
  *  (proving the diff signal the judge sees, not just whether it was called). */
 function capturingJudge(
   verdict: LiveVerificationVerdict | undefined,
-): LiveVerificationJudge & { calls: number; seenChangedFiles: string[][] } {
+): LiveVerificationJudge & {
+  calls: number;
+  seenChangedFiles: string[][];
+  seenSummaries: string[];
+} {
   return {
     calls: 0,
     seenChangedFiles: [],
+    seenSummaries: [],
     async judge(input) {
       this.calls++;
       this.seenChangedFiles.push(input.changedFiles);
+      this.seenSummaries.push(input.terminalRecordSummary);
       return verdict;
     },
   };
@@ -2085,6 +2094,60 @@ describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — 
     expect(term.status).toBe('done');
   });
 
+  it('a decisive evidence token PAST char 2000 survives ingestion → the judge input (no head-only truncation)', async () => {
+    // Regression for job 76f0ee2a: the `effort=high` proof landed past the head-only slice, so the judge
+    // was fed truncated evidence and (correctly, given what it saw) blocked. Ingestion now head+TAIL clamps,
+    // and the whole-item render preserves the tail — the decisive token must reach the judge.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    // >3000 chars total, decisive token at ~char 3000 — past BOTH the old 2000 ingestion slice and the old
+    // 300 renderer slice, and in the tail region the clamp keeps.
+    const decisive = 'DECISIVE_effort=high_in_pipeline_response';
+    const longTail = `${'DIAG '.repeat(600)}${decisive} TAIL`;
+    const turn = {
+      runTurn: vi.fn(async (input: { stepId?: string | null; jobId: string; toolBridge?: ToolBridgeOptions }) => {
+        await input.toolBridge?.tools?.['complete_thread']?.({
+          summary: 'plumbed effort through to the SDK',
+          verification: [{ kind: 'reported', command: 'curl /pipeline', exitCode: 0, outputTail: longTail }],
+        });
+        await input.toolBridge?.tools?.['report_verification']?.({ passed: true });
+        return {
+          report: 'did it',
+          session: {
+            id: 'sess',
+            jobId: input.jobId,
+            stepId: input.stepId ?? null,
+            engine: 'claude' as const,
+            mode: 'execute' as const,
+            branch: 'b',
+            worktreePath: '/wt/b',
+          },
+        };
+      }),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+    const judge = capturingJudge({
+      runtimeSurfaceTouched: true,
+      liveVerificationAdequate: true,
+      reason: 'effort=high observed live',
+    });
+    const h = assemble(state, { turn, judge });
+    stubChangedFileNames(h.git, async () => ['src/engine/run-claude.ts']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(judge.calls).toBeGreaterThanOrEqual(1);
+    // The exact evidence the judge blocked on before now reaches it.
+    expect(judge.seenSummaries[0]).toContain(decisive);
+  });
+
   it('touched + INADEQUATE verification → downgraded to blocked (unverified), build halts, no PR', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -2165,6 +2228,36 @@ describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — 
     expect(term.blocked?.reason).toBe('unverified');
     // No Anthropic key resolves in the default CredentialResolver fake → the operator-facing message names it.
     expect(term.blocked?.detail).toContain('no Anthropic API key configured');
+  });
+
+  it('judge UNAVAILABLE but a key IS configured → transient HOLD (judge_unavailable), job stays running, never rested', async () => {
+    // 07-09 incident: an Anthropic outage made the judge return undefined for EVERY thread. With a key present
+    // that is a TRANSIENT infra failure, not unverified work — the thread must hold + retry, NOT burn the fix
+    // budget and rest the job `budget_exhausted`. Re-drive it up to the cap and prove the job never rests.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const judge = fakeJudge(undefined); // judge unreachable (Anthropic down)
+    const h = assemble(state, { judge, anthropicKey: async () => 'sk-ant-present' });
+    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.threads[0].condition === 'paused');
+
+    const term = (state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record;
+    expect(term.status).toBe('blocked');
+    expect(term.blocked?.reason).toBe('judge_unavailable'); // distinct from 'unverified'
+    expect(term.blocked?.detail).toContain('temporarily unavailable');
+    // Held for retry — the job is NOT rested and the operator card does NOT claim the fix budget is spent.
+    expect(state.job.status).toBe('running');
+    expect(h.posts.some((p) => p.includes('temporarily unavailable'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('autonomous fix attempts'))).toBe(false);
+    expect(h.opened).toHaveLength(0); // nothing shipped
   });
 
   it('judge THROWING → caught, conservative blocked, never crashes the drive', async () => {

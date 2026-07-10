@@ -199,6 +199,21 @@ export function TranscriptView({
     [messages, liveWindowActive, startedAt],
   );
 
+  // A turn-failure "Resume" card is only actionable while the thread is STILL halted (the failure is
+  // outstanding). `halted` is a single live bit, so the outstanding failure is always the MOST-RECENT
+  // retryable card; once the thread resumes it flips false and every past failure card shows a muted
+  // "Resumed" instead of a live CTA that could be pressed again by mistake. Unknown (realtime row not
+  // cached yet) keeps the button, so we never hide a genuinely-needed Resume.
+  const openThreadHalted = useThreadHalted(jobRef.jobId);
+  const outstandingRetryTs = useMemo<string | null>(() => {
+    if (openThreadHalted === false) return null;
+    let ts: string | null = null;
+    for (const m of messages) {
+      if (m.source === "system_operator" && m.meta?.retryable === true) ts = m.ts;
+    }
+    return ts;
+  }, [messages, openThreadHalted]);
+
   // The composer footer — model · effort (from the latest `turn_meta`, else the lane's config default) + the
   // context ring. Computed for every lane that shows a composer (Main + read-only), scoped to the lane. The
   // ring prefers a LIVE occupancy value (`liveTurn.contextTokens`, streamed mid-turn by the engine's `usage`
@@ -233,8 +248,8 @@ export function TranscriptView({
   // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
   const items = useMemo(
     () =>
-      buildLogItems(log, jobRef, { lane, phaseIds, legOrdinal, onOpenPlan, onSelectNode }),
-    [log, jobRef, lane, phaseIds, legOrdinal, onOpenPlan, onSelectNode],
+      buildLogItems(log, jobRef, { lane, phaseIds, legOrdinal, outstandingRetryTs, onOpenPlan, onSelectNode }),
+    [log, jobRef, lane, phaseIds, legOrdinal, outstandingRetryTs, onOpenPlan, onSelectNode],
   );
 
   // The LIVE window: the in-flight turn's streaming blocks, time-merged with any mid-turn durable row (a
@@ -251,6 +266,7 @@ export function TranscriptView({
       lane,
       phaseIds,
       legOrdinal,
+      outstandingRetryTs,
       onOpenPlan,
       onSelectNode,
     }).map((it) => ({ ...it, ts: itemTs(it.key) }));
@@ -262,6 +278,7 @@ export function TranscriptView({
     lane,
     phaseIds,
     legOrdinal,
+    outstandingRetryTs,
     jobRef,
     onOpenPlan,
     onSelectNode,
@@ -281,7 +298,15 @@ export function TranscriptView({
   // the callback passed to useTailFollow stays stable while still reaching the freshly-built `virtualizer`
   // (which itself depends on the scrollRef useTailFollow returns — the ref breaks that render-order cycle).
   const pinRef = useRef<() => void>(() => {});
-  const { scrollRef, endRef, showJump, jumpToLatest, onScroll } = useTailFollow(
+  const {
+    scrollRef,
+    endRef,
+    showJump,
+    jumpToLatest,
+    onScroll,
+    onPointerOver,
+    onPointerLeave,
+  } = useTailFollow(
     [
       messages.length,
       live,
@@ -336,6 +361,8 @@ export function TranscriptView({
       <div
         ref={scrollRef}
         onScroll={onScroll}
+        onPointerOver={onPointerOver}
+        onPointerLeave={onPointerLeave}
         className="h-full overflow-y-auto px-7 pt-5"
       >
         <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
@@ -496,11 +523,14 @@ function buildLogItems(
     phaseIds?: Set<string>;
     /** For a per-LEG view: show only build rows tagged `meta.legOrdinal === this` (untagged rows = Leg 1). */
     legOrdinal?: number;
+    /** The `ts` of the currently-OUTSTANDING retryable failure card (the only one whose "Resume" button is
+     *  live). Null when the thread has resumed — every failure card then shows a muted "Resumed" instead. */
+    outstandingRetryTs?: string | null;
     onOpenPlan?: () => void;
     onSelectNode?: (node: string) => void;
   } = {},
 ): LogItem[] {
-  const { lane = MAIN_LANE, legOrdinal, onOpenPlan, onSelectNode } = opts;
+  const { lane = MAIN_LANE, legOrdinal, outstandingRetryTs = null, onOpenPlan, onSelectNode } = opts;
   const nodes: LogItem[] = [];
   let pending: Array<{ key: string; tool: ToolItem }> = [];
 
@@ -736,6 +766,11 @@ function buildLogItems(
 
     const push = (node: React.ReactNode) =>
       nodes.push({ key: message.ts, node });
+    // Interactive cards (buttons/inputs the operator clicks) are wrapped in `data-tailpause` so hovering
+    // ANYWHERE on the card — not just its controls — suspends tail-follow (see useTailFollow), keeping the
+    // target still under the cursor while tokens stream in.
+    const pushCard = (node: React.ReactNode) =>
+      push(<div data-tailpause>{node}</div>);
     switch (c.kind) {
       case "user":
         push(
@@ -757,7 +792,7 @@ function buildLogItems(
         );
         break;
       case "approval":
-        push(
+        pushCard(
           <ApprovalCardView
             key={message.ts}
             card={c.card}
@@ -767,30 +802,40 @@ function buildLogItems(
         );
         break;
       case "verdict":
-        push(<VerdictCardView key={message.ts} card={c.card} />);
+        pushCard(<VerdictCardView key={message.ts} card={c.card} />);
         break;
       case "question":
-        push(
+        pushCard(
           <QuestionCardView key={message.ts} card={c.card} jobRef={jobRef} />,
         );
         break;
       case "secret":
-        push(<SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "mcp_proposal":
-        push(<McpProposalCard key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <McpProposalCard key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "skill_proposal":
-        push(<SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "ticket":
-        push(<TicketCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <TicketCardView key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "file":
-        push(<FileCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <FileCardView key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "review_comments":
-        push(
+        pushCard(
           <ReviewCommentsCardView
             key={message.ts}
             card={c.card}
@@ -799,7 +844,7 @@ function buildLogItems(
         );
         break;
       case "attachments":
-        push(
+        pushCard(
           <AttachmentsCardView
             key={message.ts}
             card={c.card}
@@ -835,6 +880,7 @@ function buildLogItems(
             key={message.ts}
             message={message}
             jobRef={jobRef}
+            isOutstanding={message.ts === outstandingRetryTs}
           />,
         );
         break;
@@ -875,6 +921,18 @@ function useRealtimeIdle(jobId: string | null): boolean {
   const { data: threads } = useAllJobs();
   if (!jobId) return false;
   return threads?.find((t) => t.id === jobId)?.needsYou ?? false;
+}
+
+/**
+ * Live "an unresolved turn-failure box is outstanding" bit for one job, from the same server-owned realtime
+ * inbox row (`halted`, kept live by `useAllJobsRealtime`) — the durable signal a failed turn's "Resume" card
+ * keys off. Returns `undefined` when the row isn't cached yet, so callers keep showing Resume until realtime
+ * confirms the thread has actually resumed (never hide a genuinely-needed button on a cold cache).
+ */
+function useThreadHalted(jobId: string | null): boolean | undefined {
+  const { data: threads } = useAllJobs();
+  if (!jobId) return undefined;
+  return threads?.find((t) => t.id === jobId)?.halted;
 }
 
 /** The parsed identity of a transcript lane — the ONE place a lane string is decomposed, shared by
