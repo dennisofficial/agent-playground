@@ -81,15 +81,3 @@ describe('claudeAuthAdapter.readBackRefresh', () => {
     ).toBeUndefined();
   });
 });
-
-describe('claudeAuthAdapter.validate', () => {
-  it('throws on a blob missing claudeAiOauth.accessToken', () => {
-    expect(() => claudeAuthAdapter.validate(JSON.stringify({ claudeAiOauth: { refreshToken: 'r' } }))).toThrow(
-      /accessToken/,
-    );
-  });
-
-  it('accepts a well-formed blob', () => {
-    expect(() => claudeAuthAdapter.validate(oauthBlob(1))).not.toThrow();
-  });
-});

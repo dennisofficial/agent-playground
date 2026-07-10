@@ -59,16 +59,3 @@ describe('codexAuthAdapter.readBackRefresh', () => {
     ).toBeUndefined();
   });
 });
-
-describe('codexAuthAdapter.validate / isNewer', () => {
-  it('validate throws a clear error on an incomplete blob', () => {
-    expect(() => codexAuthAdapter.validate(JSON.stringify({ tokens: { access_token: 'a' } }))).toThrow();
-  });
-
-  it('isNewer prefers the last_refresh timestamp', () => {
-    const older = JSON.stringify({ ...fullTokens, last_refresh: '2026-07-01T00:00:00.000Z' });
-    const newer = JSON.stringify({ ...fullTokens, last_refresh: '2026-07-05T00:00:00.000Z' });
-    expect(codexAuthAdapter.isNewer(newer, older)).toBe(true);
-    expect(codexAuthAdapter.isNewer(older, newer)).toBe(false);
-  });
-});

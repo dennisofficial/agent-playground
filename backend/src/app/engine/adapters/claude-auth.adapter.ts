@@ -41,14 +41,6 @@ function validate(secret: string): void {
 export const claudeAuthAdapter: EngineAuthAdapter = {
   engine: 'claude',
 
-  validate(secret) {
-    validate(secret);
-  },
-
-  isNewer(candidate, current) {
-    return isNewerClaudeCredential(candidate, current);
-  },
-
   materialize({ homeRoot, key, secret, kind, env }) {
     const dir = atlasEngineHomeDir(homeRoot, 'claude', key);
     const credFile = join(dir, CREDENTIALS_FILENAME);

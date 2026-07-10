@@ -1,10 +1,4 @@
-import {
-  assertValidCodexAuthJson,
-  CodexAuthInvalidError,
-  ensureCodexAuthHome,
-  readCodexAuthHome,
-} from '../codex-auth-home';
-import { isNewerCodexAuth } from '../../onboarding/codex-auth-freshness';
+import { assertValidCodexAuthJson, ensureCodexAuthHome, readCodexAuthHome } from '../codex-auth-home';
 import type { EngineAuthAdapter } from '../engine-auth-adapter';
 
 /**
@@ -17,20 +11,6 @@ import type { EngineAuthAdapter } from '../engine-auth-adapter';
  */
 export const codexAuthAdapter: EngineAuthAdapter = {
   engine: 'codex',
-
-  validate(secret) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(secret);
-    } catch {
-      throw new CodexAuthInvalidError('not valid JSON (expected the full auth.json object)');
-    }
-    assertValidCodexAuthJson(parsed);
-  },
-
-  isNewer(candidate, current) {
-    return isNewerCodexAuth(candidate, current);
-  },
 
   materialize({ homeRoot, key, secret }) {
     return ensureCodexAuthHome(homeRoot, key, secret);

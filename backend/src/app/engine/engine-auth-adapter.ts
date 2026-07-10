@@ -29,10 +29,6 @@ export interface ReadBackArgs {
 
 export interface EngineAuthAdapter {
   readonly engine: SessionEngine;
-  /** Throws a clear, actionable error when `secret` isn't a usable credential for this engine. */
-  validate(secret: string): void;
-  /** Whether `candidate` is a strictly newer credential than `current`. */
-  isNewer(candidate: string, current: string): boolean;
   /** Write the credential file(s) into the engine home and/or mutate `env` as needed. Returns the home dir. */
   materialize(args: MaterializeArgs): string;
   /** Read a possibly-rotated credential back after a turn. Undefined when unchanged/absent/invalid. */
