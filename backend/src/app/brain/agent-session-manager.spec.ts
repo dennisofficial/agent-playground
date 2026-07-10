@@ -22,6 +22,7 @@ const noopTurnHarness = {
     onEvent: vi.fn(),
     finish: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn().mockResolvedValue(undefined),
+    discard: vi.fn().mockResolvedValue(undefined),
     emitPrompt: vi.fn().mockResolvedValue(undefined),
   }),
 } as unknown as TurnHarnessFactory;
@@ -46,6 +47,7 @@ import type { LeaderElectionService } from '../cluster';
 /** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
   onRegistered?: () => void;
+  allowClosedReprovision?: boolean;
 }
 
 /**
@@ -132,8 +134,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     resolveSessionAnchor: vi.fn().mockResolvedValue(undefined),
     claimHaltFixAttempt: vi.fn(),
     markHaltWaked: vi.fn(),
-    // Decision d1 — completion wake
+    // Decision d1 — completion wake (gen-CAS): claim returns a gen so the delivery proceeds; supersede no-ops.
     threadsForJob: vi.fn().mockResolvedValue([]),
+    claimDoneWakeGen: vi.fn().mockResolvedValue(1),
+    supersedeDoneWakeMessages: vi.fn().mockResolvedValue(undefined),
     markDoneWaked: vi.fn(),
   } as unknown as DriverStoreService;
 
@@ -273,6 +277,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // resetAllMocks wiped the file-scope default — re-arm it so notifyThreadHalted's anchor resolve returns a
     // Promise (not undefined) for the tests that don't stub it themselves.
     (mockDriverStore.resolveSessionAnchor as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    // Decision d1 completion-wake gen-CAS defaults (resetAllMocks wiped them): claim yields a gen so the
+    // notifyThreadDone delivery proceeds, and the supersede/threadsForJob are no-op promises.
+    (mockDriverStore.claimDoneWakeGen as ReturnType<typeof vi.fn>).mockResolvedValue(1);
+    (mockDriverStore.supersedeDoneWakeMessages as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockDriverStore.threadsForJob as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     // Passive-awareness defaults (resetAllMocks wiped the resolved values) — append is a no-op promise.
     (mockAwareness.appendMarker as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -2096,7 +2105,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       const stim = spy.mock.calls[0][0] as ChatStimulus;
       expect(stim.trust).toBe('trusted');
       expect(stim.seed).toBe(true);
-      expect(stim.seedDoneWake).toEqual({ threadId: 'th-x', reason: 'notable' });
+      expect(stim.seedDoneWake).toEqual({ threadId: 'th-x', reason: 'notable', gen: 1 });
       expect(stim.body).toContain('<untrusted');
       expect(stim.body).toContain('rate limiting not load-tested');
       expect(stim.body).toMatch(/may NOT edit\/push code or ship without the operator/);
@@ -2121,7 +2130,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       await manager.notifyThreadDone('job1', 'th-mr', 'final');
 
       const stim = spy.mock.calls[0][0] as ChatStimulus;
-      expect(stim.seedDoneWake).toEqual({ threadId: 'th-mr', reason: 'final' });
+      expect(stim.seedDoneWake).toEqual({ threadId: 'th-mr', reason: 'final', gen: 1 });
       expect(stim.body).toContain('build reviewed and clean');
       expect(stim.body).toContain('Backend — auth');
       expect(stim.body).toContain('left a TODO');
@@ -2134,6 +2143,35 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       await manager.notifyThreadDone('gone', 'th-x', 'notable');
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
+    });
+
+    it('notifyThreadDone claims a gen and supersedes prior partials before delivering', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'auth lane' });
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({ status: 'done', summary: 'ok' });
+      fn(mockDriverStore.claimDoneWakeGen).mockResolvedValue(3);
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadDone('job1', 'th-x', 'notable');
+
+      expect(mockDriverStore.claimDoneWakeGen).toHaveBeenCalledWith('th-x');
+      expect(mockDriverStore.supersedeDoneWakeMessages).toHaveBeenCalledWith('job1', 'th-x', 3);
+      const stim = spy.mock.calls[0][0] as ChatStimulus;
+      expect(stim.seedDoneWake).toEqual({ threadId: 'th-x', reason: 'notable', gen: 3 });
+      spy.mockRestore();
+    });
+
+    it('notifyThreadDone no-ops (no delivery) when the wake is no longer owed (claim returns null)', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'auth lane' });
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({ status: 'done', summary: 'ok' });
+      fn(mockDriverStore.claimDoneWakeGen).mockResolvedValue(null); // already delivered by a racing sweep
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadDone('job1', 'th-x', 'notable');
+
+      expect(mockDriverStore.supersedeDoneWakeMessages).not.toHaveBeenCalled();
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+      fn(mockDriverStore.claimDoneWakeGen).mockResolvedValue(1); // restore default for later tests
     });
   });
 });
@@ -2638,6 +2676,44 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     expect(dockerRunner.run).not.toHaveBeenCalled();
     expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('finish connecting this repo');
+  });
+
+  it('a closed sandbox posts the "thread is closed" notice ONCE and MARKS the message delivered (kills the 2-min spam)', async () => {
+    // ensureProvisioned → null means the sandbox is torn down (lifecycle=closed) and NOT revived (a
+    // non-operator seed, or a genuinely un-provisionable job). The message must be stamped delivered via
+    // onRegistered — else the undelivered-chat sweep re-posts this identical notice every lease cycle.
+    const ensureProvisioned = vi.fn().mockResolvedValue(null);
+    const { manager, surface } = makeManager({ findSandbox: { worktreePath: '/wt' }, ensureProvisioned });
+    const onRegistered = vi.fn();
+
+    await (
+      manager as unknown as {
+        runChatTurn: (s: ChatStimulus, o: { onRegistered: () => void }) => Promise<void>;
+      }
+    ).runChatTurn(stimulus, { onRegistered });
+
+    const closedPosts = (surface.post as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[1]).includes('This thread is closed'),
+    );
+    expect(closedPosts).toHaveLength(1); // posted once, not spammed
+    expect(onRegistered).toHaveBeenCalledTimes(1); // marked delivered → the sweep can't re-drive it
+  });
+
+  it('defense-in-depth: a SYSTEM-authored turn cannot revive a closed sandbox even if allowClosedReprovision is passed', async () => {
+    const ensureProvisioned = vi.fn().mockResolvedValue(null);
+    const { manager } = makeManager({ findSandbox: { worktreePath: '/wt' }, ensureProvisioned });
+    const systemStim: ChatStimulus = { ...stimulus, author: { id: 'atlas', displayName: 'Atlas' } };
+
+    await (
+      manager as unknown as {
+        runChatTurn: (s: ChatStimulus, o: { allowClosedReprovision: boolean }) => Promise<void>;
+      }
+    ).runChatTurn(systemStim, { allowClosedReprovision: true });
+
+    // isOperatorAuthored fences the flag: a non-operator author always resolves it to false.
+    expect(ensureProvisioned).toHaveBeenCalledWith(THREAD_ID, TEAM_ID, expect.anything(), {
+      allowClosedReprovision: false,
+    });
   });
 
   it('PASSIVE awareness: an OPERATOR turn drains the buffer and PREPENDS the passive summary to the turn input', async () => {
@@ -3613,6 +3689,21 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s1');
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s2');
+  });
+
+  it('the operator fresh-turn sets allowClosedReprovision — a follow-up may revive a merged/closed sandbox', async () => {
+    // The durable kind=chat inbox is operator-only by construction, so this seam (and ONLY this seam) is
+    // allowed to revive a closed job's sandbox — keeping a merged conversation chattable.
+    const pending = [pendingRow('s1', 'I merged. Create the follow-up job.', new Date('2026-07-02T12:00:00Z'))];
+    const { manager } = makeManager({ pending });
+    const runChatTurnSpy = vi
+      .spyOn(manager as never as { runChatTurn: (...a: unknown[]) => Promise<void> }, 'runChatTurn')
+      .mockResolvedValue(undefined);
+
+    await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
+
+    const [, opts] = runChatTurnSpy.mock.calls[0] as [ChatStimulus, TurnDeliveryOptsLike];
+    expect(opts.allowClosedReprovision).toBe(true);
   });
 
   it('NO pending messages and no live turn: a fresh turn is never started', async () => {

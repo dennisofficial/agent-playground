@@ -7,6 +7,7 @@ import {
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { Subscription } from 'rxjs';
 import { AutoFixModule } from '../autofix';
@@ -42,6 +43,13 @@ import { GithubCiStateSync } from './github-ci-state-sync.service';
 import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
+
+// SchedulerRegistry interval names (process-unique) for the leader-gated driver timers. Registered on
+// promote, deleted on demote — the leader-only lifecycle is unchanged; only the timer plumbing moved off
+// hand-rolled setInterval onto @nestjs/schedule.
+const REAP_INTERVAL = 'driver:reap';
+const POLL_INTERVAL = 'driver:poll';
+const SESSION_RESUME_INTERVAL = 'driver:session-resume';
 
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
@@ -119,10 +127,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private resumeSub?: Subscription;
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
-  private reapTimer?: ReturnType<typeof setInterval>;
-  private pollTimer?: ReturnType<typeof setInterval>;
   private pollInFlight = false; // skip a heartbeat if the prior tick is still running (slow GitHub / many PRs)
-  private sessionResumeTimer?: NodeJS.Timeout;
   private sessionResumeInFlight = false; // skip a tick if the prior session-resume sweep is still running
   private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
@@ -137,6 +142,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly onboarding: OnboardingService,
+    private readonly scheduler: SchedulerRegistry,
   ) {}
 
   /**
@@ -212,9 +218,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
    * orphaned-artifact sweep (leaked `-net`/`-dind` reclaim, so the Docker address pool can't exhaust).
    */
   private startReapTimer(): void {
-    if (this.reapTimer) return;
+    if (this.scheduler.doesExist('interval', REAP_INTERVAL)) return;
     const everyMs = 30 * 60 * 1000; // 30m — idle-reap + PR-merge cleanup sweep cadence.
-    this.reapTimer = setInterval(() => {
+    const iv = setInterval(() => {
       // At-least-once re-drive backstop: leadership-fenced drives yield on demotion, and the promote-time
       // resume() covers the normal re-promote — but a demote landing DURING a drive's yield (before drive()
       // clears its `active` guard) can race the re-promote resume() and strand the job `running`. This
@@ -228,13 +234,14 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       // gate that previously left this sweep unscheduled in prod).
       void this.lifecycle.reapOrphanedSandboxArtifacts().catch(() => undefined);
     }, everyMs);
-    this.reapTimer.unref?.();
+    iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
+    this.scheduler.addInterval(REAP_INTERVAL, iv);
   }
 
   private stopReapTimer(): void {
-    if (this.reapTimer) {
-      clearInterval(this.reapTimer);
-      this.reapTimer = undefined;
+    // deleteInterval clears the interval AND removes it from the registry.
+    if (this.scheduler.doesExist('interval', REAP_INTERVAL)) {
+      this.scheduler.deleteInterval(REAP_INTERVAL);
     }
   }
 
@@ -248,9 +255,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
    * the process alive; `pollInFlight` guards against overlap when a tick runs long.
    */
   private startPollTimer(): void {
-    if (this.pollTimer) return;
+    if (this.scheduler.doesExist('interval', POLL_INTERVAL)) return;
     const everyMs = 15 * 1000; // 15s — the fast heartbeat; the reconciler's per-PR cadence does the throttling.
-    this.pollTimer = setInterval(() => {
+    const iv = setInterval(() => {
       if (this.pollInFlight) return;
       this.pollInFlight = true;
       void this.reconciler
@@ -260,13 +267,13 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
           this.pollInFlight = false;
         });
     }, everyMs);
-    this.pollTimer.unref?.();
+    iv.unref?.();
+    this.scheduler.addInterval(POLL_INTERVAL, iv);
   }
 
   private stopPollTimer(): void {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = undefined;
+    if (this.scheduler.doesExist('interval', POLL_INTERVAL)) {
+      this.scheduler.deleteInterval(POLL_INTERVAL);
     }
   }
 
@@ -277,9 +284,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
    * process alive; `sessionResumeInFlight` guards against overlap when a tick runs long.
    */
   private startSessionResumeTimer(): void {
-    if (this.sessionResumeTimer) return;
+    if (this.scheduler.doesExist('interval', SESSION_RESUME_INTERVAL)) return;
     const everyMs = 30 * 1000; // 30s — the resume-clock granularity; a few seconds past reset is fine.
-    this.sessionResumeTimer = setInterval(() => {
+    const iv = setInterval(() => {
       if (this.sessionResumeInFlight) return;
       this.sessionResumeInFlight = true;
       void this.sessionResumeSweep
@@ -289,13 +296,13 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
           this.sessionResumeInFlight = false;
         });
     }, everyMs);
-    this.sessionResumeTimer.unref?.();
+    iv.unref?.();
+    this.scheduler.addInterval(SESSION_RESUME_INTERVAL, iv);
   }
 
   private stopSessionResumeTimer(): void {
-    if (this.sessionResumeTimer) {
-      clearInterval(this.sessionResumeTimer);
-      this.sessionResumeTimer = undefined;
+    if (this.scheduler.doesExist('interval', SESSION_RESUME_INTERVAL)) {
+      this.scheduler.deleteInterval(SESSION_RESUME_INTERVAL);
     }
   }
 

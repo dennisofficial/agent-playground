@@ -554,3 +554,70 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
     expect(closePullRequest).not.toHaveBeenCalled();
   });
 });
+
+describe('JobLifecycleService.ensureProvisioned — merged/closed conversations stay chattable (operator-only revive)', () => {
+  // Merge tears down the sandbox (lifecycle='closed') but keeps the job + messages + branch. A GENUINE
+  // operator follow-up revives the sandbox on demand so the conversation is chattable again; a stray
+  // system/harness seed must NOT respin a closed job's container.
+  function makeReviveService(closedRow: JobSandboxEntity) {
+    const sandboxes = {
+      findOne: vi.fn().mockResolvedValue(closedRow),
+      save: vi.fn(),
+      create: vi.fn(),
+      delete: vi.fn(),
+    } as unknown as Repository<JobSandboxEntity>;
+    const svc = new JobLifecycleService(
+      { findOne: vi.fn().mockResolvedValue({ id: 'thread-1', org_id: 'T1', feature_branch: null, base_branch: 'main' }) } as unknown as Repository<JobEntity>,
+      sandboxes,
+      { findOne: vi.fn().mockResolvedValue({ id: 'repo-uuid-1', slug: 'proj', default_branch: 'main', access_ok: true }) } as unknown as Repository<RepoEntity>,
+      {} as unknown as LocalGitService,
+      { getPullState: vi.fn() } as unknown as GithubPrService,
+      { githubToken: vi.fn() } as unknown as CredentialResolver,
+      { get: vi.fn() } as unknown as EnvService,
+      new SandboxActivityRegistry(),
+      { resolve: vi.fn() } as unknown as DriverRepoResolver,
+      { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
+      { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
+      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
+      { get: vi.fn() } as unknown as ModuleRef,
+      { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    );
+    // Stub the heavy cold-provision (real git/container) on the instance — we only assert the closed-row
+    // DECISION (drop + re-provision) here, not the provision internals.
+    const provisionSandbox = vi.fn();
+    (svc as unknown as { provisionSandbox: unknown }).provisionSandbox = provisionSandbox;
+    return {
+      svc,
+      sandboxes: sandboxes as unknown as { delete: ReturnType<typeof vi.fn> },
+      provisionSandbox,
+    };
+  }
+
+  it('a system/harness seed (allowClosedReprovision unset) does NOT revive a closed sandbox — returns null, no re-provision', async () => {
+    const { svc, sandboxes, provisionSandbox } = makeReviveService(
+      makeRow({ lifecycle: 'closed', container_id: null }),
+    );
+
+    const out = await svc.ensureProvisioned('thread-1', 'T1');
+
+    expect(out).toBeNull();
+    expect(sandboxes.delete).not.toHaveBeenCalled();
+    expect(provisionSandbox).not.toHaveBeenCalled();
+  });
+
+  it('an operator follow-up (allowClosedReprovision:true) REVIVES a closed sandbox — drops the row + re-provisions from default', async () => {
+    const closed = makeRow({ lifecycle: 'closed', container_id: null });
+    const revived = makeRow({ lifecycle: 'attached' });
+    const { svc, sandboxes, provisionSandbox } = makeReviveService(closed);
+    provisionSandbox.mockResolvedValue(revived);
+
+    const out = await svc.ensureProvisioned('thread-1', 'T1', undefined, {
+      allowClosedReprovision: true,
+    });
+
+    expect(sandboxes.delete).toHaveBeenCalledWith({ id: closed.id });
+    expect(provisionSandbox).toHaveBeenCalledTimes(1);
+    expect(out).toBe(revived);
+  });
+});

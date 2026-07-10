@@ -121,6 +121,50 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(persisted).toHaveLength(1);
   });
 
+  it('discard: ends the lane but persists NOTHING (the partial will be re-delivered in full)', async () => {
+    const { live, persisted, factory } = setup();
+    const h = factory.create({
+      jobId: 'T',
+      channel: 'R',
+      lane: 'main',
+      metaTag: { doneWakeGen: 2, doneWakeThreadId: 'th-x' },
+    });
+    h.onEvent({ kind: 'text', text: 'What shipped — truncated par' });
+    await h.discard();
+
+    // No durable rows written — the truncated partial never becomes a half-message.
+    expect(persisted).toHaveLength(0);
+    // …but the live lane is ended (the in-flight buffer is dropped).
+    expect(live.snapshot('R', 'T', 'main')).toBeNull();
+
+    // Idempotent + drops late events, like abort/finish.
+    await h.finish('ignored');
+    h.onEvent({ kind: 'text', text: 'late' });
+    expect(persisted).toHaveLength(0);
+  });
+
+  it('metaTag doneWakeGen/doneWakeThreadId tags every completion-wake block (chat/thinking/tool)', async () => {
+    const { persisted, factory } = setup();
+    const h = factory.create({
+      jobId: 'T',
+      channel: 'R',
+      lane: 'main',
+      metaTag: { doneWakeGen: 3, doneWakeThreadId: 'th-mr' },
+    });
+    h.onEvent({ kind: 'thinking', text: 'review' });
+    h.onEvent({ kind: 'text', text: 'What shipped — …' });
+    h.onEvent({ kind: 'tool_use', id: 't1', name: 'Bash', input: {} });
+    h.onEvent({ kind: 'tool_result', id: 't1', result: 'ok' });
+    await h.finish('What shipped — …', { usage: { inputTokens: 1, outputTokens: 1 } as never });
+
+    // Every persisted block (including the turn_meta divider) carries the wake tag → supersede can find them.
+    expect(
+      persisted.every(
+        (p) => p.block.meta?.doneWakeGen === 3 && p.block.meta?.doneWakeThreadId === 'th-mr',
+      ),
+    ).toBe(true);
+  });
+
   it('brain lane (no metaTag): blocks carry no phase tag; a subagent block keeps its parentToolUseId', async () => {
     const { persisted, factory } = setup();
     const h = factory.create({ jobId: 'T', channel: 'R' }); // default `main` lane, no metaTag
