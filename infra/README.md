@@ -20,7 +20,8 @@ Single OVH box (64 GB, SYS-GAME-2). Docker + docker-compose. Caddy for TLS termi
 ├── .env                # compose interpolation store — POSTGRES_USER/PASSWORD/DB for ${..}
 │                       # substitution + pg-backup.sh; mode 600 (see infra/.env.compose.example)
 ├── secrets/
-│   └── atlas.env       # plaintext secrets — mode 600, never committed (see .env.prod.example)
+│   ├── atlas.env       # plaintext secrets — mode 600, never committed (see .env.prod.example)
+│   └── mcp-reader.env  # scoped MCP_READER_* only — mode 600 (see .env.mcp-reader.example)
 ├── caddy/
 │   ├── data/           # Caddy certificate storage
 │   └── config/         # Caddy runtime config
@@ -210,10 +211,13 @@ physically cannot INSERT/UPDATE/DELETE or run DDL), not just by convention. Crea
 schema exists (step 7), with the idempotent `infra/mcp-reader-role.sql`:
 
 ```bash
-# Set MCP_READER_API_KEY + MCP_READER_PG_PASSWORD + MCP_READER_PG_DB in /srv/atlas/secrets/atlas.env first
-# (see infra/.env.prod.example). MCP_READER_PG_USER stays `mcp_reader`; MCP_READER_PG_DB == POSTGRES_DB.
+# Set MCP_READER_API_KEY + MCP_READER_PG_PASSWORD + MCP_READER_PG_DB in /srv/atlas/secrets/mcp-reader.env
+# first — the reader's OWN scoped secret file (template: infra/.env.mcp-reader.example), NOT atlas.env, so
+# the untrusted-data-ingesting reader never sees the backend's full secret bundle. Create it once:
+#   cp infra/.env.mcp-reader.example /srv/atlas/secrets/mcp-reader.env  # then fill in + chmod 600
+# MCP_READER_PG_USER stays `mcp_reader`; MCP_READER_PG_DB == POSTGRES_DB.
 set -a; source /srv/atlas/.env; set +a   # POSTGRES_USER / POSTGRES_DB
-PW="$(grep -E '^MCP_READER_PG_PASSWORD=' /srv/atlas/secrets/atlas.env | cut -d= -f2-)"
+PW="$(grep -E '^MCP_READER_PG_PASSWORD=' /srv/atlas/secrets/mcp-reader.env | cut -d= -f2-)"
 docker exec -i atlas-postgres psql -v ON_ERROR_STOP=1 \
     -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
     -v mcp_reader_password="$PW" \
@@ -231,10 +235,10 @@ network. In the web console's MCP settings, for the **Atlas repo only**, add a s
 - Transport: **Streamable HTTP**
 - URL: `http://mcp-reader:4100/` (internal Docker DNS — resolvable because Atlas-repo sandboxes are
   attached to `atlas-mcp`; gated on `ATLAS_REPO_SLUG` matching the repo's slug)
-- Header: `X-Api-Key: <MCP_READER_API_KEY>` (the same value stored in `atlas.env`)
+- Header: `X-Api-Key: <MCP_READER_API_KEY>` (the same value stored in `mcp-reader.env`)
 
 Only Atlas-repo jobs then receive both the network route **and** the key. Rotating the key = change
-`MCP_READER_API_KEY` in `atlas.env`, re-save the web-registry value, then `docker compose … up -d
+`MCP_READER_API_KEY` in `mcp-reader.env`, re-save the web-registry value, then `docker compose … up -d
 mcp-reader`.
 
 ### 8. Start all services

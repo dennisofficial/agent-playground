@@ -274,6 +274,7 @@ export class SandboxManager implements SandboxProvider {
           this.logger.log(`reusing stopped sandbox ${name} — starting (cold)`);
           await this.engine.start(existing.id);
           await this.attachRedisBus(existing.id); // idempotent — re-ensure the redis bus after a restart
+          await this.attachMcpNetwork(existing.id, sandbox.repoId); // idempotent — re-ensure the atlas-mcp route too
           await this.waitReady(existing.id);
         } else {
           this.logger.log(`reusing running sandbox ${name}`);

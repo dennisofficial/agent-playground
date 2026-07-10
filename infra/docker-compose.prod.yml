@@ -190,8 +190,12 @@ services:
     image: ghcr.io/dennisofficial/atlas-mcp-reader:${ATLAS_IMAGE_TAG:-latest}
     init: true
     env_file:
-      # MCP_READER_API_KEY + MCP_READER_PG_USER/PASSWORD/DB (the SELECT-only role) live here (mode 600).
-      - /srv/atlas/secrets/atlas.env
+      # Its OWN scoped secret file (mode 600) — ONLY MCP_READER_* values, NOT the backend's atlas.env.
+      # The reader is the single crossing point that ingests untrusted, prompt-injectable data, so it must
+      # never hold the full-privilege POSTGRES_PASSWORD / JWT_* / SECRETS_ENCRYPTION_KEY / GitHub tokens —
+      # otherwise a compromised reader could connect to Postgres as the read/write role and bypass the
+      # SELECT-only `mcp_reader` role entirely. Holds MCP_READER_API_KEY + MCP_READER_PG_USER/PASSWORD/DB.
+      - /srv/atlas/secrets/mcp-reader.env
     environment:
       MCP_READER_PORT: "4100"
       # Postgres over the internal `atlas` network (service DNS `postgres`), SELECT-only role.
