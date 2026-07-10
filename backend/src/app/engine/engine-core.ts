@@ -4,16 +4,10 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { structuredPatch as diffStructuredPatch } from 'diff';
-import { applyClaudeAuth } from './claude-auth';
 import { detectSessionLimitText, limitFromRateEvent, parseResetAt, type SessionLimitHit } from './session-limit';
 import { atlasEngineHomeDir, engineHomeKeyString, type EngineHomeKey } from './engine-home';
-import {
-  assertValidCodexAuthJson,
-  type CodexExtraMcpServers,
-  type CodexMcpBridge,
-  ensureCodexAuthHome,
-  readCodexAuthHome,
-} from './codex-auth-home';
+import { type CodexExtraMcpServers, type CodexMcpBridge, ensureCodexAuthHome } from './codex-auth-home';
+import { getEngineAuthAdapter } from './engine-auth-adapter';
 
 /** In-container path of the bundled Codex MCP tool-bridge server (baked by the Dockerfile, bind-mounted
  *  live — see `sandbox/image/mcp-bridge-server.ts`). codex spawns it via the config.toml `command`. */
@@ -836,7 +830,13 @@ export class EngineCore {
       ...process.env,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     };
-    applyClaudeAuth(subprocessEnv, auth);
+    getEngineAuthAdapter('claude').materialize({
+      homeRoot: this.homeRoot(),
+      key: sandboxKey,
+      secret: auth.secret,
+      kind: auth.kind,
+      env: subprocessEnv,
+    });
 
     // Capture the CLI subprocess's stderr (the real API/transport error text) into a bounded ring
     // buffer so a non-success result can surface it — the SDK otherwise flattens it into `subtype`.
@@ -1285,12 +1285,26 @@ export class EngineCore {
     const planText = (planMode && capturedPlan) || undefined;
     const summary = planText || result || '(no summary)';
     onEvent?.({ kind: 'result', text: summary });
+
+    // Auth-refresh write-back: a personal credential's `.credentials.json` is rewritten in place when the
+    // SDK self-refreshes it. Read it back and relay it so the host can persist the fresh blob. Gated on
+    // `persistAuthRefresh` — the host only sets it for ORG-sourced auth, so an env-fallback run never
+    // leaks its ambient token here.
+    const refreshedAuthSecret = args.persistAuthRefresh
+      ? getEngineAuthAdapter('claude').readBackRefresh({
+          homeRoot: this.homeRoot(),
+          key: sandboxKey,
+          writtenSecret: auth.secret,
+        })
+      : undefined;
+
     return {
       result: summary,
       sessionId: resolvedSession,
       ...(planText ? { planText } : {}),
       ...(usage ? { usage } : {}),
       ...(sessionLimit ? { sessionLimit } : {}),
+      ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
     };
   }
 
@@ -1509,7 +1523,11 @@ export class EngineCore {
     // blob (else the stored credential is a rotting snapshot). Gated on `persistAuthRefresh` — the host
     // only sets it for ORG-sourced auth, so an env-fallback run never leaks its ambient token here.
     const refreshedAuthSecret = args.persistAuthRefresh
-      ? this.readBackCodexRefresh(sandboxKey, auth.secret)
+      ? getEngineAuthAdapter('codex').readBackRefresh({
+          homeRoot: this.homeRoot(),
+          key: sandboxKey,
+          writtenSecret: auth.secret,
+        })
       : undefined;
 
     return {
@@ -1518,24 +1536,6 @@ export class EngineCore {
       ...(usage ? { usage } : {}),
       ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
     };
-  }
-
-  /**
-   * Read the Codex overlay `auth.json` back after a turn and return it ONLY when it changed from what we
-   * wrote (a real token refresh) AND still parses as a valid auth.json. Best-effort: any failure returns
-   * `undefined` (never fail the turn, never propagate a corrupt overlay). Cheap string compare → no-op on
-   * the common path where Codex didn't refresh.
-   */
-  private readBackCodexRefresh(sandboxKey: EngineHomeKey, writtenSecret: string): string | undefined {
-    try {
-      const after = readCodexAuthHome(this.homeRoot(), sandboxKey);
-      if (!after || after === writtenSecret) return undefined;
-      assertValidCodexAuthJson(JSON.parse(after));
-      return after;
-    } catch (err) {
-      this.logger.warn(`codex auth-refresh readback skipped: ${err instanceof Error ? err.message : err}`);
-      return undefined;
-    }
   }
 }
 

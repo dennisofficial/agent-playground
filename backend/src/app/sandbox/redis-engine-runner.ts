@@ -172,7 +172,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     const provenance = args.auth?.refreshBack;
     if (!result.refreshedAuthSecret || !provenance || !this.authRefreshSink) return;
     try {
-      await this.authRefreshSink.persist(provenance.orgId, provenance.engine, result.refreshedAuthSecret);
+      await this.authRefreshSink.persist(provenance, result.refreshedAuthSecret);
     } catch (err) {
       this.logger.warn(`auth-refresh write-back failed (ignored): ${err instanceof Error ? err.message : err}`);
     }

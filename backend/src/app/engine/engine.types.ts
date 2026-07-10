@@ -527,11 +527,12 @@ export interface RunEngineArgs {
    */
   auth?: EngineAuth;
   /**
-   * NON-SECRET gate telling the in-container Codex engine to READ its refreshed `auth.json` overlay back
-   * after the turn (and relay it on {@link EngineRunResult.refreshedAuthSecret}). Serialized into the turn
-   * spec (unlike the secret-bearing `auth.refreshBack`, which is host-only). The runner sets it to
-   * `!!auth.refreshBack`, so ONLY org-sourced runs read back — env-fallback runs (which inject an ambient
-   * `CODEX_OAUTH_TOKEN` the container can't distinguish) never emit a secret into the final frame.
+   * NON-SECRET gate telling the in-container engine to READ its refreshed credential back after the turn
+   * (and relay it on {@link EngineRunResult.refreshedAuthSecret}) — Codex's `auth.json` overlay or Claude's
+   * `.credentials.json` (a personal login the SDK self-refreshes). Serialized into the turn spec (unlike the
+   * secret-bearing `auth.refreshBack`, which is host-only). The runner sets it to `!!auth.refreshBack`, so
+   * ONLY org-sourced runs read back — env-fallback runs (which inject an ambient token the container can't
+   * distinguish) never emit a secret into the final frame.
    */
   persistAuthRefresh?: boolean;
   /**
@@ -736,10 +737,11 @@ export interface EngineRunResult {
   planText?: string;
   usage?: EngineUsage;
   /**
-   * The post-run Codex `auth.json` overlay when the turn REFRESHED its tokens (Codex rewrites the file in
-   * place) AND `RunEngineArgs.persistAuthRefresh` was set. Relayed back over the final frame so the host
-   * can persist it to the org credential store, keeping the stored subscription credential live instead of
-   * a rotting snapshot. Contains a SECRET — never log it. Absent on the common (no-refresh) path.
+   * The post-run refreshed engine credential when the turn ROTATED its tokens (Codex rewrites its `auth.json`
+   * overlay in place; Claude's SDK rewrites `.credentials.json` for a personal login) AND
+   * `RunEngineArgs.persistAuthRefresh` was set. Relayed back over the final frame so the host can persist it
+   * to the org credential store, keeping the stored subscription credential live instead of a rotting
+   * snapshot. Contains a SECRET — never log it. Absent on the common (no-refresh) path.
    */
   refreshedAuthSecret?: string;
   /**

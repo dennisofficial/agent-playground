@@ -155,7 +155,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
       await runner.run(authArgs(() => undefined));
 
-      expect(sink.persist).toHaveBeenCalledWith('org1', 'codex', 'fresh-blob');
+      expect(sink.persist).toHaveBeenCalledWith({ orgId: 'org1', engine: 'codex' }, 'fresh-blob');
     });
 
     it('does NOT fire the sink when the result has no refreshed secret', async () => {
