@@ -8,6 +8,7 @@
     "env:inject": "dotenvx run -f .env.local.enc -f .env.personal --ignore=MISSING_ENV_FILE -o --strict",
     "dev:env": "cross-env NODE_ENV=development NODE_OPTIONS=--enable-source-maps pnpm env:inject",
     "build": "nest build app",
+    "build:mcp-reader": "node scripts/build-mcp-reader.mjs",
     "dev": "pnpm dev:env -- nest start app --watch",
     "start:prod": "node dist/main",
     "e2e": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.e2e.json node -r tsconfig-paths/register -r ts-node/register src/app/e2e/e2e-main.ts",
