@@ -37,7 +37,7 @@ import {
 } from "./subagents";
 import { useLiveTurn, type LiveTurn } from "@/lib/api/job-stream";
 import { threadLane } from "./phases";
-import { parseLegNode } from "./node-registry";
+import { contextConvoNodeForHref, parseLegNode } from "./node-registry";
 import { codexReviewLane } from "./codex-review";
 import { resolveNode } from "./node-resolution";
 import { TranscriptView } from "./conversation";
@@ -1153,6 +1153,9 @@ const EMPTY_FILE_SET: Set<string> = new Set();
 const MAX_HIGHLIGHTED_FILE_LINES = 500;
 
 function contextNodeForLink(fromPath: string, href: string): string | null {
+  // A site-absolute `/context/<bucket>/…` href already carries its own bucket, so it resolves against the
+  // context root — NOT relative to `fromPath`. Delegate it to the href-based resolver.
+  if (href.startsWith("/context/")) return contextConvoNodeForHref(href);
   const parts = fromPath.split("/");
   const bucket = parts[0];
   const prefix =

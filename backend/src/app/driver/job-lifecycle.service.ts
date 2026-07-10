@@ -481,6 +481,25 @@ export class JobLifecycleService {
     return (res.affected ?? 0) > 0;
   }
 
+  /** Close the job's OPEN PR on GitHub (no merge). Throws if it can't — the caller aborts the delete. */
+  async closeJobPullRequest(job: JobEntity): Promise<void> {
+    if (job.pr_state !== 'open') return; // nothing open to close — no-op
+    if (job.pr_number == null) {
+      throw new Error(`cannot close PR for job ${job.id}: missing PR number`);
+    }
+    const repo = await this.projects.findOne({ where: { id: job.repo_id, org_id: job.org_id } });
+    const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
+    const token = await this.creds.githubToken(job.org_id);
+    if (!parsed || !token) {
+      throw new Error(`cannot resolve GitHub repo/token to close PR for job ${job.id}`);
+    }
+    await this.pr.closePullRequest(token, {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      number: job.pr_number,
+    });
+  }
+
   async deleteJobDeep(jobId: string, orgId: string): Promise<void> {
     // 1. Reclaim the container + worktree (physical side effects — no DB cascade can do this).
     await this.closeJob(jobId, orgId);

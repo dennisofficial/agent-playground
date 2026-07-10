@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Group,
@@ -41,6 +41,7 @@ import { PersistentApprovalBar, PersistentShipBar } from "./spec-approval";
 import { useSelectedNode } from "./use-selected-node";
 import { ReviewCommentsProvider } from "./review-comments";
 import { SelectionCommentPopover } from "./selection-comment-popover";
+import { DeleteJobPrDialog } from "./delete-job-pr-dialog";
 
 /**
  * The thread workspace — the navigator (pipeline / state panels) + the work column (Conversation or
@@ -104,6 +105,15 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     [inbox, jobId],
   );
   const job = pipelineJob(pipeline);
+
+  // Prefer the pipeline job; fall back to the sidebar feed (resolves earlier). null = genuinely unknown.
+  const prState = job?.prState ?? inboxThread?.pr?.state ?? null;
+  const prUrl = job?.prUrl ?? inboxThread?.pr?.url ?? null;
+  const prNumber = job?.prNumber ?? null;
+  const hasOpenPr = prState === "open" && Boolean(prUrl);
+  // PR state is "known" once EITHER source has resolved; until then, block delete (don't leave-orphan).
+  const prStateKnown = job != null || inboxThread != null;
+  const [prDialogOpen, setPrDialogOpen] = useState(false);
 
   // Opening a job lands on the build lane that's currently running (the "builder thread") rather than always
   // on Main — you click a job to watch what it's doing. Decided ONCE per job open, the first time the
@@ -204,12 +214,19 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const onSelectNode = selectNode;
   const onOpenPlan = () => selectNode("plan");
   const onRename = (title: string) => rename.mutate(title);
-  const onDelete = () =>
-    del.mutate(undefined, {
+  const runDelete = (prAction: "close" | "leave") =>
+    del.mutate(prAction, {
       onSuccess: () => {
+        setPrDialogOpen(false);
         router.push(ROUTES.workspace());
       },
     });
+
+  const onDelete = () => {
+    if (!prStateKnown) return; // safety: never delete before we know whether a PR is open (button is disabled too)
+    if (hasOpenPr) setPrDialogOpen(true);
+    else runDelete("leave"); // confirmed no open PR → today's behavior
+  };
 
   return (
     <MarkdownActionsProvider value={markdownActions}>
@@ -231,6 +248,8 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
             onRename={onRename}
             onDelete={onDelete}
             deleting={del.isPending}
+            hasOpenPr={hasOpenPr}
+            deleteReady={prStateKnown}
           />
           {/* Work column — a horizontal split: the conversation is ALWAYS pinned on the left and the detail
           pane is a CONSTANT container on the right (never closes). Selecting a navigator node fills it;
@@ -347,6 +366,18 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
           </Group>
         </div>
         <SelectionCommentPopover />
+        {prDialogOpen ? (
+          <DeleteJobPrDialog
+            prNumber={prNumber}
+            pending={del.isPending}
+            error={del.error as Error | null}
+            onChoose={runDelete}
+            onClose={() => {
+              setPrDialogOpen(false);
+              del.reset();
+            }}
+          />
+        ) : null}
       </ReviewCommentsProvider>
     </MarkdownActionsProvider>
   );

@@ -141,6 +141,34 @@ export function parseLegNode(
   return m ? { threadId: m[1], ordinal: Number(m[2]) } : null;
 }
 
+// ── conversation /context link → node id ────────────────────────────────────────────────────────
+/**
+ * Map a conversation markdown-link href that points at a `/context` file — absolute
+ * `/context/<bucket>/<path>` OR bucket-relative `<bucket>/<path>` (bucket ∈ specs|generated|artifacts) — to
+ * its navigator node id (`spec:`/`gen:`/`artifact:` + bucket-relative path), or null when it isn't a context
+ * link (unknown bucket, missing path, or a `..` traversal). This is the conversation-side analogue of
+ * {@link contextNodeForLink} (which resolves links relative to a "current file"); here the href already
+ * carries its own bucket, so there is no `fromPath`.
+ */
+export function contextConvoNodeForHref(href: string): string | null {
+  const clean = href
+    .split(/[?#]/)[0]
+    .replace(/^\/context\//, "")
+    .replace(/^\//, "");
+  const [bucket, ...rest] = clean.split("/");
+  const prefix =
+    bucket === "specs"
+      ? "spec:"
+      : bucket === "generated"
+        ? "gen:"
+        : bucket === "artifacts"
+          ? "artifact:"
+          : null;
+  if (!prefix || rest.length === 0 || rest.some((s) => s === "" || s === ".."))
+    return null;
+  return prefix + rest.join("/");
+}
+
 // ── transcript lane for a node (null = not a transcript-backed node) ────────────────────────────
 /**
  * The live/durable lane a transcript-backed node renders on — the ONE place that maps a node id to its
