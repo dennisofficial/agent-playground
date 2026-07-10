@@ -64,74 +64,6 @@ export function OrgSettings({
     if (!isMobile) setNavOpen(false);
   }, [isMobile]);
 
-  function RenderNav({ inDrawer }: { inDrawer?: boolean }) {
-    return (
-      <nav
-        className={cn(
-          "flex flex-col gap-0.5 px-3 py-4",
-          inDrawer ? "w-full" : "w-[228px] shrink-0 border-r border-border",
-        )}
-        style={{
-          background: "color-mix(in srgb, var(--panel) 60%, transparent)",
-        }}
-      >
-        <div className="flex items-center gap-2.5 px-2 pb-3 pt-1.5">
-          <span
-            className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg font-disp text-[14px] font-semibold text-white"
-            style={{ background: org ? orgSwatch() : "var(--border-2)" }}
-          >
-            {org ? orgInitials(org.name) : "·"}
-          </span>
-          <div className="min-w-0">
-            <div className="truncate text-[12.5px] font-semibold text-text">
-              {org?.name ?? "—"}
-            </div>
-            <div
-              className="font-mono text-[8.5px]"
-              style={{
-                color:
-                  org?.status === "active" ? "var(--green)" : "var(--faint)",
-              }}
-            >
-              {org?.status ?? "—"}
-            </div>
-          </div>
-        </div>
-        <div className="px-2 pb-1.5 pt-1 font-mono text-[9px] tracking-[0.16em] text-faint">
-          ORGANIZATION
-        </div>
-        {NAV.map(({ id, label, icon: Icon }) => {
-          const on = section === id;
-          return (
-            <button
-              key={id}
-              type="button"
-              onClick={() => {
-                setSection(id);
-                setNavOpen(false);
-              }}
-              className={cn(
-                "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition",
-                on ? "text-accent" : "text-dim hover:bg-surface-2",
-              )}
-              style={
-                on
-                  ? {
-                      background: "var(--accent-soft)",
-                      boxShadow: "inset 0 0 0 1px var(--accent-line)",
-                    }
-                  : undefined
-              }
-            >
-              <Icon size={15} />
-              {label}
-            </button>
-          );
-        })}
-      </nav>
-    );
-  }
-
   return (
     <>
       {/* Top bar */}
@@ -190,10 +122,21 @@ export function OrgSettings({
             onClose={() => setNavOpen(false)}
             label="Settings navigation"
           >
-            <RenderNav inDrawer />
+            <OrgSettingsNav
+              inDrawer
+              org={org}
+              section={section}
+              setSection={setSection}
+              setNavOpen={setNavOpen}
+            />
           </Drawer>
         ) : (
-          <RenderNav />
+          <OrgSettingsNav
+            org={org}
+            section={section}
+            setSection={setSection}
+            setNavOpen={setNavOpen}
+          />
         )}
 
         {/* Content */}
@@ -243,6 +186,86 @@ export function OrgSettings({
         </div>
       </div>
     </>
+  );
+}
+
+/** The settings section nav — rendered inline (desktop) or inside the mobile drawer (`inDrawer`). */
+function OrgSettingsNav({
+  inDrawer,
+  org,
+  section,
+  setSection,
+  setNavOpen,
+}: {
+  inDrawer?: boolean;
+  org: OrgSummary | undefined;
+  section: SettingsSection;
+  setSection: (section: SettingsSection) => void;
+  setNavOpen: (open: boolean) => void;
+}) {
+  return (
+    <nav
+      className={cn(
+        "flex flex-col gap-0.5 px-3 py-4",
+        inDrawer ? "w-full" : "w-[228px] shrink-0 border-r border-border",
+      )}
+      style={{
+        background: "color-mix(in srgb, var(--panel) 60%, transparent)",
+      }}
+    >
+      <div className="flex items-center gap-2.5 px-2 pb-3 pt-1.5">
+        <span
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg font-disp text-[14px] font-semibold text-white"
+          style={{ background: org ? orgSwatch() : "var(--border-2)" }}
+        >
+          {org ? orgInitials(org.name) : "·"}
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-[12.5px] font-semibold text-text">
+            {org?.name ?? "—"}
+          </div>
+          <div
+            className="font-mono text-[8.5px]"
+            style={{
+              color: org?.status === "active" ? "var(--green)" : "var(--faint)",
+            }}
+          >
+            {org?.status ?? "—"}
+          </div>
+        </div>
+      </div>
+      <div className="px-2 pb-1.5 pt-1 font-mono text-[9px] tracking-[0.16em] text-faint">
+        ORGANIZATION
+      </div>
+      {NAV.map(({ id, label, icon: Icon }) => {
+        const on = section === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => {
+              setSection(id);
+              setNavOpen(false);
+            }}
+            className={cn(
+              "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition",
+              on ? "text-accent" : "text-dim hover:bg-surface-2",
+            )}
+            style={
+              on
+                ? {
+                    background: "var(--accent-soft)",
+                    boxShadow: "inset 0 0 0 1px var(--accent-line)",
+                  }
+                : undefined
+            }
+          >
+            <Icon size={15} />
+            {label}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
