@@ -131,7 +131,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
       },
       {
         onSuccess: ({ jobId }) => {
-          router.push(threadHref({ orgId, repoId, jobId }));
+          router.replace(threadHref({ orgId, repoId, jobId }));
           onDone?.();
         },
         onError: () => setError("Could not start the job. Try again."),
@@ -320,7 +320,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           loadingText="Starting…"
           disabled={repos.length === 0}
         >
-          Create thread
+          Create Job
           <ShortcutHint />
         </Button>
       </div>
