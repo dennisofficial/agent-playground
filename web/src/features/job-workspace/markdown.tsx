@@ -25,6 +25,8 @@ import {
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import { JsonView, allExpanded, darkStyles } from "react-json-view-lite";
+import "react-json-view-lite/dist/index.css";
 import {
   CopyButton,
   TerminalChromeBar,
@@ -76,6 +78,60 @@ function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
       >
         {children}
       </pre>
+    </div>
+  );
+}
+
+// ── JSON tree ──────────────────────────────────────────────────────────────────────────────────────
+// A ```json fence whose content is an object/array renders as an interactive collapsible tree
+// (react-json-view-lite) instead of a flat, often-minified code line. Colors reuse the dark-frame
+// hljs palette from globals.css; the `!` important classes win over the package CSS regardless of
+// stylesheet order. Structure (indentation + expand/collapse icons) comes from spreading darkStyles.
+const JSON_VIEW_STYLES = {
+  ...darkStyles,
+  container: `${darkStyles.container} !bg-transparent`,
+  label: `${darkStyles.label} !text-[#b89cf0]`, // object keys — lavender (.hljs-title)
+  stringValue: `${darkStyles.stringValue} !text-[#6fb3c9]`, // teal (.hljs-string)
+  numberValue: `${darkStyles.numberValue} !text-[#d89a5c]`,
+  booleanValue: `${darkStyles.booleanValue} !text-[#e8983f]`, // amber
+  nullValue: `${darkStyles.nullValue} !text-[#e8983f]`,
+  undefinedValue: `${darkStyles.undefinedValue} !text-[#e8983f]`,
+  punctuation: `${darkStyles.punctuation} !text-[var(--term-dim)]`,
+  otherValue: `${darkStyles.otherValue} !text-[var(--term-fg)]`,
+};
+
+/** Parse `raw` as JSON, returning it only when it's a non-null object/array (what JsonView renders);
+ *  anything else (scalar or malformed) returns null so the caller falls back to the plain code frame. */
+function parseJsonContainer(raw: string): object | null {
+  try {
+    const value: unknown = JSON.parse(raw);
+    return value !== null && typeof value === "object" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function JsonBlock({ value }: { value: object }) {
+  return (
+    <div
+      className="my-3 overflow-hidden rounded-[9px] border border-border"
+      style={{ background: "var(--term)" }}
+    >
+      <TerminalChromeBar
+        label="json"
+        actions={<CopyButton text={JSON.stringify(value, null, 2)} />}
+      />
+      <div
+        className="overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7]"
+        style={{ color: "var(--term-fg)" }}
+      >
+        <JsonView
+          data={value}
+          style={JSON_VIEW_STYLES}
+          shouldExpandNode={allExpanded}
+          clickToExpandNode
+        />
+      </div>
     </div>
   );
 }
@@ -487,6 +543,12 @@ function renderCode({
   // A ```mermaid fence becomes a rendered diagram instead of a code frame.
   if (match?.[1] === "mermaid")
     return <Mermaid chart={nodeText(children).replace(/\n$/, "")} />;
+  // A ```json fence whose content is an object/array renders as an interactive collapsible tree;
+  // invalid or scalar JSON falls through to the normal code frame below.
+  if (match?.[1] === "json") {
+    const parsed = parseJsonContainer(nodeText(children).replace(/\n$/, ""));
+    if (parsed) return <JsonBlock value={parsed} />;
+  }
   // rehype-highlight tags fenced block code (and only block code) with `hljs`; fall back to a
   // newline sniff for the rare un-highlighted block.
   const isBlock =
