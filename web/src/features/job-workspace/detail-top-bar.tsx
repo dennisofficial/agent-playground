@@ -1,6 +1,7 @@
 "use client";
 
 import type React from "react";
+import { Menu, PanelRight } from "lucide-react";
 
 /**
  * The single top bar shared by the main conversation AND every lane/detail pane (build thread/step, subagent
@@ -12,14 +13,25 @@ export function DetailTopBar({
   title,
   subtitle,
   actions,
+  onOpenNav,
+  onOpenDetail,
 }: {
   title: string;
   subtitle?: string;
   /** Right-aligned controls. Defaults to the standard {@link TopBarActions} group. */
   actions?: React.ReactNode;
+  /** Below xl: opens the Navigator drawer via a leading `Menu` button (undefined = no button, desktop). */
+  onOpenNav?: () => void;
+  /** Below xl: opens the Detail drawer via a trailing `PanelRight` button (undefined = no button). */
+  onOpenDetail?: () => void;
 }) {
   return (
     <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-5">
+      {onOpenNav ? (
+        <TopBarButton title="Panels" onClick={onOpenNav}>
+          <Menu size={15} />
+        </TopBarButton>
+      ) : null}
       <div className="flex min-w-0 flex-1 flex-col justify-center">
         <span className="truncate font-disp text-[13.5px] font-semibold leading-tight text-text">
           {title}
@@ -31,6 +43,11 @@ export function DetailTopBar({
         ) : null}
       </div>
       {actions === undefined ? <TopBarActions /> : actions}
+      {onOpenDetail ? (
+        <TopBarButton title="Detail" onClick={onOpenDetail}>
+          <PanelRight size={15} />
+        </TopBarButton>
+      ) : null}
     </div>
   );
 }

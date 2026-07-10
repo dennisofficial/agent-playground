@@ -119,6 +119,7 @@ export function Navigator({
   hasOpenPr,
   deleteReady,
   directBuild,
+  inDrawer = false,
 }: {
   meta: JobMeta;
   pipeline: PipelineState | undefined;
@@ -151,6 +152,8 @@ export function Navigator({
   deleteReady?: boolean;
   /** True when the awaiting approval is a direct build — flips the approve CTA to "Approve Direct Build". */
   directBuild?: boolean;
+  /** Rendered inside the left Drawer (below xl) — fills the sheet width instead of the fixed 288px rail. */
+  inDrawer?: boolean;
 }) {
   const job = pipelineJob(pipeline);
   // A COMMITTED direct build (durable `jobs.build_path`, stamped only at approval) never grows build lanes,
@@ -186,7 +189,10 @@ export function Navigator({
 
   return (
     <div
-      className="flex w-72 shrink-0 flex-col overflow-hidden border-r border-border"
+      className={cn(
+        "flex flex-col overflow-hidden border-r border-border",
+        inDrawer ? "h-full w-full" : "w-72 shrink-0",
+      )}
       style={{
         background: "color-mix(in srgb, var(--panel) 35%, transparent)",
       }}

@@ -9,6 +9,8 @@ import {
   useDefaultLayout,
   useGroupRef,
 } from "react-resizable-panels";
+import { useBreakpoint } from "@/lib/use-breakpoint";
+import { Drawer } from "@/components/ui/drawer";
 import { useAllJobs } from "@/lib/api/inbox";
 import {
   useJobMessages,
@@ -99,6 +101,32 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     storage: typeof window === "undefined" ? undefined : window.localStorage,
   });
   const groupRef = useGroupRef();
+
+  // Responsive tiers. All four flags are `false` on the server and first client paint (desktop-first), so
+  // "all false" MUST read as the xl/desktop case to avoid a wide-screen flash. `belowXl` → Detail becomes a
+  // right drawer; `navAsDrawer` → Navigator becomes a left drawer (md and below).
+  const { isMobile, isTablet, isDesktop } = useBreakpoint();
+  const belowXl = isDesktop || isTablet || isMobile;
+  const navAsDrawer = isTablet || isMobile;
+  const detailSelected = Boolean(detailNode || subNode || fileNode);
+  const detailDrawerOpen = belowXl && detailSelected;
+
+  const [navOpen, setNavOpen] = useState(false);
+  // The last detail node the operator opened — lets the trailing "Detail" toggle re-open it after the drawer
+  // is dismissed (falls back to the plan doc when nothing has been opened yet).
+  const lastDetail = useRef<string | null>(null);
+  useEffect(() => {
+    if (detailNode) lastDetail.current = detailNode;
+  }, [detailNode]);
+  useEffect(() => {
+    if (!navAsDrawer) setNavOpen(false);
+  }, [navAsDrawer]);
+  useEffect(() => {
+    setNavOpen(false);
+  }, [laneNode]);
+
+  const openNav = () => setNavOpen(true);
+  const openDetail = () => selectNode(lastDetail.current ?? "plan");
 
   const inboxThread = useMemo(
     () => inbox?.find((t) => t.id === jobId),
@@ -228,142 +256,198 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     else runDelete("leave"); // confirmed no open PR → today's behavior
   };
 
+  // The navigator, authored once and rendered either inline (xl/lg rail) or inside the left drawer (md/below).
+  const navigatorPane = (inDrawer: boolean) => (
+    <Navigator
+      meta={meta}
+      pipeline={pipeline}
+      context={context}
+      contextLoading={contextLoading}
+      laneNode={laneNode}
+      detailNode={detailNode}
+      jobRef={ref}
+      approveValue={awaitingApproval ? approveValue : ""}
+      shipValue={awaitingShip ? shipValue : ""}
+      directBuild={isDirectApproval}
+      onConversation={onConversation}
+      onSelectNode={onSelectNode}
+      onRename={onRename}
+      onDelete={onDelete}
+      deleting={del.isPending}
+      hasOpenPr={hasOpenPr}
+      deleteReady={prStateKnown}
+      inDrawer={inDrawer}
+    />
+  );
+
+  // The LEFT work pane — the Main brain conversation by default; a selected THREADS lane replaces it with that
+  // lane's transcript. Authored once so the desktop Panel and the narrow single-pane share it; the two toggle
+  // callbacks are the only thing that changes across tiers (undefined = no top-bar button, i.e. desktop).
+  const workPane = (onOpenNav?: () => void, onOpenDetail?: () => void) =>
+    laneNode ? (
+      <PhaseView
+        jobRef={ref}
+        pipeline={pipeline}
+        pipelineLoading={pipelineLoading}
+        messages={messages}
+        approvalCard={approvalCard}
+        selectedNode={laneNode}
+        onConversation={openConversation}
+        onSelectNode={(node) => selectNode(node, { push: true })}
+        onOpenNav={onOpenNav}
+        onOpenDetail={onOpenDetail}
+      />
+    ) : (
+      <Conversation
+        jobRef={ref}
+        messages={messages}
+        isLoading={messagesLoading}
+        live={status === "running" || status === "plan_review"}
+        mainDefaultFooter={pipeline?.mainDefaultFooter}
+        onOpenPlan={onOpenPlan}
+        onSelectNode={(node) => selectNode(node, { push: true })}
+        onOpenNav={onOpenNav}
+        onOpenDetail={onOpenDetail}
+      />
+    );
+
+  // The detail-pane content — the same node body whether it fills the desktop Panel or the right drawer.
+  const detailBody = (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {subNode ? (
+        // A sub-agent stacked on top of the right pane — a second-level page with a breadcrumb back to
+        // the base detail node (which stays selected in the navigator underneath).
+        <SubagentPane
+          jobRef={ref}
+          messages={messages}
+          parentId={subNode}
+          lane={subLane ?? MAIN_LANE}
+          base={detailNode ? baseCrumbLabel(detailNode) : null}
+          onBack={closeSub}
+        />
+      ) : detailNode ? (
+        <PhaseView
+          jobRef={ref}
+          pipeline={pipeline}
+          pipelineLoading={pipelineLoading}
+          messages={messages}
+          approvalCard={approvalCard}
+          selectedNode={detailNode}
+          onConversation={closeDetail}
+          onSelectNode={(node) => selectNode(node, { push: true })}
+          tracksComments
+        />
+      ) : (
+        <EmptyPane />
+      )}
+      {fileNode ? (
+        <div className="absolute inset-0 z-10 bg-surface">
+          <FilePane
+            jobRef={ref}
+            path={fileNode}
+            lines={fileLines}
+            base={detailNode ? baseCrumbLabel(detailNode) : null}
+            onBack={closeFile}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+
+  // The persistent approval / ship gate — pins to the base of whichever surface hosts the detail content.
+  const footerBar = awaitingApproval ? (
+    <PersistentApprovalBar
+      jobRef={ref}
+      value={approveValue}
+      specCount={specCount}
+      stepCount={stepCount}
+      directBuild={isDirectApproval}
+    />
+  ) : awaitingShip ? (
+    <PersistentShipBar jobRef={ref} value={shipValue} />
+  ) : null;
+
   return (
     <MarkdownActionsProvider value={markdownActions}>
       <ReviewCommentsProvider>
         <div className="flex h-full min-h-0">
-          <Navigator
-            meta={meta}
-            pipeline={pipeline}
-            context={context}
-            contextLoading={contextLoading}
-            laneNode={laneNode}
-            detailNode={detailNode}
-            jobRef={ref}
-            approveValue={awaitingApproval ? approveValue : ""}
-            shipValue={awaitingShip ? shipValue : ""}
-            directBuild={isDirectApproval}
-            onConversation={onConversation}
-            onSelectNode={onSelectNode}
-            onRename={onRename}
-            onDelete={onDelete}
-            deleting={del.isPending}
-            hasOpenPr={hasOpenPr}
-            deleteReady={prStateKnown}
-          />
-          {/* Work column — a horizontal split: the conversation is ALWAYS pinned on the left and the detail
-          pane is a CONSTANT container on the right (never closes). Selecting a navigator node fills it;
-          with nothing selected it shows an empty state. The divider is a draggable resize handle
-          (react-resizable-panels); the ratio is persisted. */}
-          <Group
-            orientation="horizontal"
-            id="thread-work-split"
-            groupRef={groupRef}
-            defaultLayout={defaultLayout}
-            onLayoutChanged={onLayoutChanged}
-            className="min-w-0 flex-1 bg-surface"
-          >
-            {/* LEFT pane — the Main brain conversation by default; a selected THREADS lane (build thread/step)
-            replaces it with that lane's transcript. */}
-            <Panel
-              id="conversation"
-              minSize="28%"
-              className="flex min-w-0 flex-col"
+          {navAsDrawer ? null : navigatorPane(false)}
+          {!belowXl ? (
+            // DESKTOP (xl) — the unchanged horizontal split: the conversation is ALWAYS pinned on the left and
+            // the detail pane is a CONSTANT container on the right (never closes). The divider is a draggable
+            // resize handle (react-resizable-panels); the ratio is persisted. Mounts ONLY at xl so the library
+            // never runs below it.
+            <Group
+              orientation="horizontal"
+              id="thread-work-split"
+              groupRef={groupRef}
+              defaultLayout={defaultLayout}
+              onLayoutChanged={onLayoutChanged}
+              className="min-w-0 flex-1 bg-surface"
             >
-              {laneNode ? (
-                <PhaseView
-                  jobRef={ref}
-                  pipeline={pipeline}
-                  pipelineLoading={pipelineLoading}
-                  messages={messages}
-                  approvalCard={approvalCard}
-                  selectedNode={laneNode}
-                  onConversation={openConversation}
-                  onSelectNode={(node) => selectNode(node, { push: true })}
-                />
-              ) : (
-                <Conversation
-                  jobRef={ref}
-                  messages={messages}
-                  isLoading={messagesLoading}
-                  live={status === "running" || status === "plan_review"}
-                  mainDefaultFooter={pipeline?.mainDefaultFooter}
-                  onOpenPlan={onOpenPlan}
-                  onSelectNode={(node) => selectNode(node, { push: true })}
-                />
+              <Panel
+                id="conversation"
+                minSize="28%"
+                className="flex min-w-0 flex-col"
+              >
+                {workPane(undefined, undefined)}
+              </Panel>
+              {/* A 1px divider line, NOT a 6px reserved strip — so both panes (and the detail-pane footers like
+              the approval bar) sit flush against it. The resizable hit target is widened by the library's
+              `resizeTargetMinimumSize` (10px mouse / 20px touch), so dragging stays easy despite the thin line. */}
+              <Separator
+                disableDoubleClick
+                onDoubleClick={() =>
+                  groupRef.current?.setLayout({ conversation: 50, detail: 50 })
+                }
+                title="Drag to resize · double-click to center"
+                className="relative w-px bg-border outline-none transition-colors hover:bg-border-2 active:bg-text/50"
+              />
+              <Panel
+                id="detail"
+                defaultSize="50%"
+                minSize="32%"
+                className="flex min-w-0 flex-col"
+              >
+                {detailBody}
+                {footerBar}
+              </Panel>
+            </Group>
+          ) : (
+            <div className="relative flex min-w-0 flex-1 flex-col bg-surface">
+              {workPane(
+                navAsDrawer ? openNav : undefined,
+                !detailDrawerOpen ? openDetail : undefined,
               )}
-            </Panel>
-            {/* A 1px divider line, NOT a 6px reserved strip — so both panes (and the detail-pane footers like
-            the approval bar) sit flush against it. The resizable hit target is widened by the library's
-            `resizeTargetMinimumSize` (10px mouse / 20px touch), so dragging stays easy despite the thin line. */}
-            <Separator
-              disableDoubleClick
-              onDoubleClick={() =>
-                groupRef.current?.setLayout({ conversation: 50, detail: 50 })
-              }
-              title="Drag to resize · double-click to center"
-              className="relative w-px bg-border outline-none transition-colors hover:bg-border-2 active:bg-text/50"
-            />
-            <Panel
-              id="detail"
-              defaultSize="50%"
-              minSize="32%"
-              className="flex min-w-0 flex-col"
+              {/* The gate pins over the conversation only while the detail drawer is closed — when the drawer
+              hosts the detail content it carries the gate in its own footer, so it's always reachable. */}
+              {!detailDrawerOpen ? footerBar : null}
+            </div>
+          )}
+          {navAsDrawer ? (
+            <Drawer
+              side="left"
+              open={navOpen}
+              onClose={() => setNavOpen(false)}
+              label="Navigator"
             >
-              {/* The detail pane content fills the column; the persistent approval bar (when awaiting) pins to
-              its base as a `flex:none` footer — present no matter what the pane is showing. */}
-              <div className="relative flex min-h-0 flex-1 flex-col">
-                {subNode ? (
-                  // A sub-agent stacked on top of the right pane — a second-level page with a breadcrumb back to
-                  // the base detail node (which stays selected in the navigator underneath).
-                  <SubagentPane
-                    jobRef={ref}
-                    messages={messages}
-                    parentId={subNode}
-                    lane={subLane ?? MAIN_LANE}
-                    base={detailNode ? baseCrumbLabel(detailNode) : null}
-                    onBack={closeSub}
-                  />
-                ) : detailNode ? (
-                  <PhaseView
-                    jobRef={ref}
-                    pipeline={pipeline}
-                    pipelineLoading={pipelineLoading}
-                    messages={messages}
-                    approvalCard={approvalCard}
-                    selectedNode={detailNode}
-                    onConversation={closeDetail}
-                    onSelectNode={(node) => selectNode(node, { push: true })}
-                    tracksComments
-                  />
-                ) : (
-                  <EmptyPane />
-                )}
-                {fileNode ? (
-                  <div className="absolute inset-0 z-10 bg-surface">
-                    <FilePane
-                      jobRef={ref}
-                      path={fileNode}
-                      lines={fileLines}
-                      base={detailNode ? baseCrumbLabel(detailNode) : null}
-                      onBack={closeFile}
-                    />
-                  </div>
-                ) : null}
+              {navigatorPane(true)}
+            </Drawer>
+          ) : null}
+          {belowXl ? (
+            <Drawer
+              side="right"
+              open={detailDrawerOpen}
+              onClose={closeDetail}
+              label="Detail"
+              widthClass="max-w-[85vw] max-md:max-w-none max-md:w-full"
+            >
+              <div className="flex h-full min-h-0 flex-col bg-surface">
+                {detailBody}
+                {footerBar}
               </div>
-              {awaitingApproval ? (
-                <PersistentApprovalBar
-                  jobRef={ref}
-                  value={approveValue}
-                  specCount={specCount}
-                  stepCount={stepCount}
-                  directBuild={isDirectApproval}
-                />
-              ) : awaitingShip ? (
-                <PersistentShipBar jobRef={ref} value={shipValue} />
-              ) : null}
-            </Panel>
-          </Group>
+            </Drawer>
+          ) : null}
         </div>
         <SelectionCommentPopover />
         {prDialogOpen ? (

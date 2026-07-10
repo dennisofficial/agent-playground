@@ -67,6 +67,8 @@ export function Conversation({
   mainDefaultFooter,
   onOpenPlan,
   onSelectNode,
+  onOpenNav,
+  onOpenDetail,
 }: {
   jobRef: JobRef;
   messages: JobMessage[];
@@ -77,10 +79,13 @@ export function Conversation({
   onOpenPlan?: () => void;
   /** Open a node in the right detail pane (e.g. a subagent run's sub-page). */
   onSelectNode?: (node: string) => void;
+  /** Below xl: top-bar toggles for the Navigator / Detail drawers (undefined = no button, desktop). */
+  onOpenNav?: () => void;
+  onOpenDetail?: () => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
-      <ConversationTopBar />
+      <ConversationTopBar onOpenNav={onOpenNav} onOpenDetail={onOpenDetail} />
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
@@ -1099,6 +1104,19 @@ function defaultFooterAsComposer(d?: LaneDefaultFooter): ComposerFooter | null {
  * action cluster on the right, so it matches every lane/detail header exactly. (The context-window ring
  * lives in the composer's bottom-right, Claude-Code style.)
  */
-function ConversationTopBar() {
-  return <DetailTopBar title="Conversation" subtitle="the job brain" />;
+function ConversationTopBar({
+  onOpenNav,
+  onOpenDetail,
+}: {
+  onOpenNav?: () => void;
+  onOpenDetail?: () => void;
+}) {
+  return (
+    <DetailTopBar
+      title="Conversation"
+      subtitle="the job brain"
+      onOpenNav={onOpenNav}
+      onOpenDetail={onOpenDetail}
+    />
+  );
 }

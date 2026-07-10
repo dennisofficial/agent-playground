@@ -79,6 +79,8 @@ export function PhaseView({
   selectedNode,
   onConversation,
   onSelectNode,
+  onOpenNav,
+  onOpenDetail,
   tracksComments = false,
 }: {
   jobRef: JobRef;
@@ -93,6 +95,9 @@ export function PhaseView({
   /** Select another navigator node (URL `?node=`) — lets a rendered spec file's relative links open the
    *  linked file in-app. */
   onSelectNode?: (node: string) => void;
+  /** Below xl: top-bar toggles for the Navigator / Detail drawers (undefined = no button, desktop). */
+  onOpenNav?: () => void;
+  onOpenDetail?: () => void;
   /**
    * Only the RIGHT (detail) pane's `PhaseView` instance owns the review-comments `activeTarget` — the LEFT
    * (lane) instance's `selectedNode` is always a transcript lane (a bare thread/step id, or a
@@ -414,6 +419,8 @@ export function PhaseView({
         title={title}
         subtitle={subtitle || undefined}
         actions={actions}
+        onOpenNav={onOpenNav}
+        onOpenDetail={onOpenDetail}
       />
       {/* Flex column so a `flex-1` body (TranscriptView) gets a bounded height and scrolls internally —
           a plain block wrapper leaves its `h-full` scroll child resolving against auto height (no scroll). */}
