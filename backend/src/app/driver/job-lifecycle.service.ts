@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, rmSync } from 'node:fs';
-import { IsNull, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver, OnboardingService } from '../onboarding';
@@ -94,6 +94,11 @@ function setupErrorFrom(sandbox: FeatureSandbox): string | null {
   const r = sandbox.setupScriptResult;
   return r && !r.ok ? `exit ${r.exitCode}: ${r.tail}` : null;
 }
+
+/** How long a merged/closed job's sandbox may sit `detached` (RAM already freed, worktree kept so the
+ *  conversation stays resumable) before the disk GC reclaims its worktree + scratch dirs. A week of
+ *  post-merge resume-ability, then reclaim; the job row + transcript always survive. */
+const MERGED_SANDBOX_GC_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class JobLifecycleService {
@@ -210,9 +215,7 @@ export class JobLifecycleService {
    * brain's first chat turn calls this to provision lazily. Uniform recovery semantics:
    *
    *   - no row                      → provision.
-   *   - row `closed`                → return null for a stray system/harness seed; but an OPERATOR follow-up
-   *     (`opts.allowClosedReprovision`) REVIVES it — drop the closed row and provision fresh from default,
-   *     so a merged conversation stays chattable on demand.
+   *   - row `closed`                → return null (a closed thread isn't revived by a stray message).
    *   - row complete (worktree_path set AND the thread has a feature_branch) → return it (no-op). A
    *     healthy post-restart row (`reconcileOnBoot` → `detached`, container null, worktree+branch kept)
    *     IS complete; `ensureContainer` re-attaches it on the turn.
@@ -226,21 +229,12 @@ export class JobLifecycleService {
     jobId: string,
     orgId: string,
     onMilestone?: (stage: SandboxMilestoneStage) => void,
-    opts?: { allowClosedReprovision?: boolean },
   ): Promise<JobSandboxEntity | null> {
-    // ONE in-flight provision per job (single key — never split by `allowClosedReprovision`, or a plain seed
-    // and an operator revive could double-provision the same incomplete row). The rare closed-revive race
-    // (a system seed's null coalesces an operator message) is benign — the operator re-sends.
     const key = `${orgId}:${jobId}`;
     const inflight = this.provisioning.get(key);
     if (inflight) return inflight;
     // Set the promise SYNCHRONOUSLY (before any await) so racing callers share it.
-    const p = this.doEnsureProvisioned(
-      jobId,
-      orgId,
-      onMilestone,
-      opts?.allowClosedReprovision === true,
-    ).finally(() => this.provisioning.delete(key));
+    const p = this.doEnsureProvisioned(jobId, orgId, onMilestone).finally(() => this.provisioning.delete(key));
     this.provisioning.set(key, p);
     return p;
   }
@@ -249,39 +243,26 @@ export class JobLifecycleService {
     jobId: string,
     orgId: string,
     onMilestone?: (stage: SandboxMilestoneStage) => void,
-    allowClosedReprovision = false,
   ): Promise<JobSandboxEntity | null> {
     const thread = await this.jobs.findOne({ where: { id: jobId, org_id: orgId } });
     if (!thread) return null;
 
     const existing = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
     if (existing) {
-      if (existing.lifecycle === 'closed') {
-        // A closed sandbox (its container + worktree already reclaimed by `closeJob`, e.g. on PR merge) is
-        // NOT revived by a stray system/harness/periodic seed — those return null and leave it closed. But a
-        // genuine OPERATOR follow-up message (`allowClosedReprovision`) revives it on demand so the merged
-        // conversation stays chattable: drop the closed row and fall through to a fresh provision from the
-        // repo default branch (which now contains the merged work). Idle-reap tears it back down when idle.
-        if (!allowClosedReprovision) return null;
-        this.logger.log(
-          `ensureProvisioned: reviving closed sandbox for job ${jobId} (operator follow-up)`,
-        );
-        await this.sandboxes.delete({ id: existing.id });
-      } else {
-        // Complete iff BOTH the worktree path and the thread's feature branch are set. A failed
-        // provisionSandbox leaves a `detached` row with neither (and rowToSandbox would otherwise fall
-        // back to the base/default branch) — treat that as incomplete and re-provision.
-        if (existing.worktree_path && thread.feature_branch) return existing;
-        if (existing.container_id) {
-          await this.sandboxProvider
-            .teardown(await this.rowToSandbox(existing))
-            .catch((err) =>
-              this.logger.warn(`ensureProvisioned: teardown of stale sandbox failed for ${jobId}: ${err}`),
-            );
-        }
-        await this.sandboxes.delete({ id: existing.id });
-        this.logger.log(`ensureProvisioned: replaced incomplete sandbox row for thread ${jobId}`);
+      if (existing.lifecycle === 'closed') return null;
+      // Complete iff BOTH the worktree path and the thread's feature branch are set. A failed
+      // provisionSandbox leaves a `detached` row with neither (and rowToSandbox would otherwise fall
+      // back to the base/default branch) — treat that as incomplete and re-provision.
+      if (existing.worktree_path && thread.feature_branch) return existing;
+      if (existing.container_id) {
+        await this.sandboxProvider
+          .teardown(await this.rowToSandbox(existing))
+          .catch((err) =>
+            this.logger.warn(`ensureProvisioned: teardown of stale sandbox failed for ${jobId}: ${err}`),
+          );
       }
+      await this.sandboxes.delete({ id: existing.id });
+      this.logger.log(`ensureProvisioned: replaced incomplete sandbox row for thread ${jobId}`);
     }
 
     const project = await this.projects.findOne({ where: { id: thread.repo_id, org_id: orgId } });
@@ -479,6 +460,32 @@ export class JobLifecycleService {
   }
 
   /**
+   * The RAM-free TWIN of {@link closeJob}, used on a terminal PR state (merge/close): reclaim the CONTAINER
+   * but PRESERVE the worktree + `session_id`, so the operator's next message re-attaches a fresh container to
+   * the existing worktree and RESUMES the same brain session with full context (vs `closeJob`, which removes
+   * the worktree + flips to `closed` → `doEnsureProvisioned` returns null → a fresh session = amnesia). A
+   * stale detached worktree is later reclaimed for disk by {@link reapMergedSandboxes}.
+   *
+   * Modeled on `closeJob` EXACTLY for the two things that matter: `teardownByIdentity` (not `teardown`) so a
+   * boot-reconciled row — `container_id` nulled on restart while the real container still runs — is still
+   * reclaimed by deterministic name (+ its net/volume artifacts); and a scoped `update` (not `save`) so a
+   * concurrent cascade delete can't resurrect the row. Differs only in: no worktree removal, lifecycle
+   * `detached` (not `closed`). Guards ONLY on `closed` (a detached-but-still-running container must still be
+   * reclaimed, so it does not short-circuit on `detached`).
+   */
+  async detachJobContainer(jobId: string, orgId: string): Promise<void> {
+    const row = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
+    if (!row || row.lifecycle === 'closed') return; // already fully torn down — leave it.
+    await this.sandboxProvider
+      .teardownByIdentity({ sandbox: await this.rowToSandbox(row), orgId, jobId })
+      .catch((err) => {
+        this.logger.warn(`detachJobContainer: teardown failed for thread ${jobId}: ${err}`);
+      });
+    await this.sandboxes.update({ id: row.id }, { container_id: null, lifecycle: 'detached' });
+    this.logger.log(`detached thread ${jobId} on PR-terminal (container freed, worktree + session kept)`);
+  }
+
+  /**
    * Terminal DELETE of a thread and EVERYTHING it owns — two layers, in order:
    *   1. `closeJob` — the PHYSICAL teardown a database can't do: reclaim the Docker container and the
    *      git worktree (flips the sandbox row to `closed`; no-op if already closed).
@@ -534,21 +541,9 @@ export class JobLifecycleService {
     // 1. Reclaim the container + worktree (physical side effects — no DB cascade can do this).
     await this.closeJob(jobId, orgId);
 
-    // 1b. Remove the job's durable host-side scratch dirs — `closeJob` reclaims the container + worktree
-    //     but these live OUTSIDE the worktree (keyed by jobId), so nothing else deletes them. Done ONLY on
-    //     deep delete (not `closeJob`, which also runs on PR-merge/idle-close where the job row survives).
-    //     Best-effort: never block teardown. `/playground` can hold large ad-hoc installs; `/context` was
-    //     also leaking here before this cleanup.
-    for (const dir of [
-      this.sandboxProvider.playgroundDirHost(orgId, jobId),
-      this.sandboxProvider.contextDirHost(orgId, jobId),
-    ]) {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch (err) {
-        this.logger.warn(`deleteJobDeep: host scratch dir remove failed for ${dir}: ${err}`);
-      }
-    }
+    // 1b. Remove the job's durable host-side scratch dirs — `closeJob` reclaims the container + worktree but
+    //     these live OUTSIDE the worktree (keyed by jobId), so nothing else deletes them.
+    this.removeJobScratchDirs(orgId, jobId);
 
     // 2. Hand any linked ticket back to the board BEFORE the thread row vanishes (its `ticket_id` is the
     //    only way to resolve the ticket). The board's in_progress/in_review lanes are thread-driven, so a
@@ -606,7 +601,10 @@ export class JobLifecycleService {
     if (state === 'open') return 'noop';
     const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
     await this.jobs.update({ id: job.id }, { pr_state: prState });
-    await this.closeJob(job.id, job.org_id);
+    // DETACH, not close: free the container's RAM but KEEP the worktree + session so a post-merge follow-up
+    // resumes the brain with full context (a merged PR should "just free RAM, never delete data"). The
+    // worktree is reclaimed for disk later by `reapMergedSandboxes` once it's sat detached past the TTL.
+    await this.detachJobContainer(job.id, job.org_id);
     return 'closed';
   }
 
@@ -621,7 +619,16 @@ export class JobLifecycleService {
     for (const thread of threads) {
       try {
         const sandbox = await this.sandboxes.findOne({ where: { job_id: thread.id } });
-        if (!sandbox || sandbox.lifecycle === 'closed') continue;
+        // Skip already-terminal jobs: a closed sandbox, OR a job whose `pr_state` is already merged/closed
+        // (its teardown ran — since merge now DETACHES rather than closing, the lifecycle-only guard would
+        // otherwise re-poll + re-apply + re-count a detached merged job every 30 min forever).
+        if (
+          !sandbox ||
+          sandbox.lifecycle === 'closed' ||
+          thread.pr_state === 'merged' ||
+          thread.pr_state === 'closed'
+        )
+          continue;
         const project = await this.projects.findOne({ where: { id: thread.repo_id } });
         const parsed = project ? parseGithubRepoUrl(project.git_url) : null;
         const token = await this.creds.githubToken(thread.org_id);
@@ -642,6 +649,59 @@ export class JobLifecycleService {
     }
     if (closed) this.logger.log(`pollPrClosures: closed ${closed} merged/closed thread(s)`);
     return closed;
+  }
+
+  /** Remove a job's durable host-side scratch dirs (`/playground` + `/context`) — they live OUTSIDE the
+   *  worktree (keyed by jobId), so neither `closeJob` nor a worktree removal touches them. Best-effort;
+   *  never throws. Used by `deleteJobDeep` (hard delete) and `reapMergedSandboxes` (disk GC). */
+  private removeJobScratchDirs(orgId: string, jobId: string): void {
+    for (const dir of [
+      this.sandboxProvider.playgroundDirHost(orgId, jobId),
+      this.sandboxProvider.contextDirHost(orgId, jobId),
+    ]) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch (err) {
+        this.logger.warn(`removeJobScratchDirs: remove failed for ${dir}: ${err}`);
+      }
+    }
+  }
+
+  /**
+   * Disk GC for merged/closed jobs whose sandbox has sat `detached` past {@link MERGED_SANDBOX_GC_TTL_MS}.
+   * Merge now DETACHES (frees the container RAM immediately, keeps the worktree so the conversation stays
+   * resumable) — but nothing reclaims that worktree, so without this it grows unbounded. Runs the full
+   * `closeJob` (worktree + container-by-identity + `closed`) AND `removeJobScratchDirs` (`/context`,
+   * `/playground` — which `closeJob` does NOT touch). The job row + transcript SURVIVE (never a data delete);
+   * the conversation just becomes non-resumable past the TTL (start a new job). Leader-only, best-effort;
+   * returns how many were reclaimed.
+   */
+  async reapMergedSandboxes(): Promise<number> {
+    const cutoff = Date.now() - MERGED_SANDBOX_GC_TTL_MS;
+    const jobs = await this.jobs.find({
+      where: { pr_state: In(['merged', 'closed']) },
+      select: { id: true, org_id: true },
+    });
+    let reclaimed = 0;
+    for (const job of jobs) {
+      try {
+        const sandbox = await this.sandboxes.findOne({
+          where: { job_id: job.id, org_id: job.org_id },
+        });
+        // Only a still-detached row past the cutoff: an `attached` (re-engaged) or already-`closed` row is
+        // left alone, and a recently-detached one stays resumable until it ages out.
+        if (!sandbox || sandbox.lifecycle !== 'detached') continue;
+        if (!sandbox.updated_at || sandbox.updated_at.getTime() >= cutoff) continue;
+        await this.closeJob(job.id, job.org_id);
+        this.removeJobScratchDirs(job.org_id, job.id);
+        reclaimed++;
+      } catch (err) {
+        this.logger.warn(`reapMergedSandboxes: reclaim of job ${job.id} failed: ${err}`);
+      }
+    }
+    if (reclaimed)
+      this.logger.log(`reapMergedSandboxes: reclaimed disk for ${reclaimed} stale merged sandbox(es)`);
+    return reclaimed;
   }
 
   /**

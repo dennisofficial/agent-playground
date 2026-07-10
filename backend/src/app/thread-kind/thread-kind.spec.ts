@@ -42,12 +42,10 @@ describe('thread-kind registry', () => {
     expect(threadKindSpec('post_review').execution).toBe('child');
   });
 
-  it("a builder's children are N review_lens + 1 post_review (each a real child spec)", () => {
+  it("a builder's factory owns only the post_review child — lens selection is the driver's (reviewAgentsForThread)", () => {
     const kids = threadKindSpec('builder').children!({ id: 'b1', config: {} });
-    const lenses = kids.filter((k) => k.kind === 'review_lens');
+    expect(kids.filter((k) => k.kind === 'review_lens')).toHaveLength(0);
     const posts = kids.filter((k) => k.kind === 'post_review');
-    expect(lenses.length).toBeGreaterThan(0);
-    expect(lenses.every((l) => typeof (l.config as { lensId?: string }).lensId === 'string')).toBe(true);
     expect(posts).toHaveLength(1);
     expect((posts[0].config as { minSeverity?: string }).minSeverity).toBeTruthy();
   });

@@ -47,7 +47,6 @@ import type { LeaderElectionService } from '../cluster';
 /** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
   onRegistered?: () => void;
-  allowClosedReprovision?: boolean;
 }
 
 /**
@@ -687,6 +686,27 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(persistArgs.threadTitles).toEqual(['S']);
     expect(persistArgs.threadTypes).toEqual(['backend']);
     expect(persistArgs.stepsByThread).toBeUndefined();
+  });
+
+  it('(a) propose_plan: an off-vocabulary thread `type` coerces to the `general` fallback', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'o',
+      decisions: [],
+      threadTitles: ['S', 'T', 'U'],
+    });
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'some overview',
+      threads: [
+        { title: 'S', type: 'analytics' }, // dropped legacy label → general
+        { title: 'T', type: 'BACKEND' }, // valid, case-insensitive → backend
+        { title: 'U' }, // absent → general
+      ],
+    });
+    expect(result).toMatchObject({ ok: true });
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(persistArgs.threadTypes).toEqual(['general', 'backend', 'general']);
   });
 
   it('(a) propose_plan: returns error if overview is missing', async () => {
@@ -2699,23 +2719,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(onRegistered).toHaveBeenCalledTimes(1); // marked delivered → the sweep can't re-drive it
   });
 
-  it('defense-in-depth: a SYSTEM-authored turn cannot revive a closed sandbox even if allowClosedReprovision is passed', async () => {
-    const ensureProvisioned = vi.fn().mockResolvedValue(null);
-    const { manager } = makeManager({ findSandbox: { worktreePath: '/wt' }, ensureProvisioned });
-    const systemStim: ChatStimulus = { ...stimulus, author: { id: 'atlas', displayName: 'Atlas' } };
-
-    await (
-      manager as unknown as {
-        runChatTurn: (s: ChatStimulus, o: { allowClosedReprovision: boolean }) => Promise<void>;
-      }
-    ).runChatTurn(systemStim, { allowClosedReprovision: true });
-
-    // isOperatorAuthored fences the flag: a non-operator author always resolves it to false.
-    expect(ensureProvisioned).toHaveBeenCalledWith(THREAD_ID, TEAM_ID, expect.anything(), {
-      allowClosedReprovision: false,
-    });
-  });
-
   it('PASSIVE awareness: an OPERATOR turn drains the buffer and PREPENDS the passive summary to the turn input', async () => {
     const drainAndAdvance = vi.fn().mockResolvedValue({
       markers: [
@@ -3689,21 +3692,6 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s1');
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s2');
-  });
-
-  it('the operator fresh-turn sets allowClosedReprovision — a follow-up may revive a merged/closed sandbox', async () => {
-    // The durable kind=chat inbox is operator-only by construction, so this seam (and ONLY this seam) is
-    // allowed to revive a closed job's sandbox — keeping a merged conversation chattable.
-    const pending = [pendingRow('s1', 'I merged. Create the follow-up job.', new Date('2026-07-02T12:00:00Z'))];
-    const { manager } = makeManager({ pending });
-    const runChatTurnSpy = vi
-      .spyOn(manager as never as { runChatTurn: (...a: unknown[]) => Promise<void> }, 'runChatTurn')
-      .mockResolvedValue(undefined);
-
-    await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
-
-    const [, opts] = runChatTurnSpy.mock.calls[0] as [ChatStimulus, TurnDeliveryOptsLike];
-    expect(opts.allowClosedReprovision).toBe(true);
   });
 
   it('NO pending messages and no live turn: a fresh turn is never started', async () => {

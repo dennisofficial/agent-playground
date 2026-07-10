@@ -64,6 +64,7 @@ describe('renderBatchTask orientation injection', () => {
     status: 'executing',
     condition: 'none',
     kind: 'builder',
+    type: 'general',
     parentThreadId: null,
     startSha: null,
   };

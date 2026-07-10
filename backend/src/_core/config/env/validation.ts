@@ -128,10 +128,13 @@ export interface IEnvConfig {
   //  - DRIVER_TRANSIENT_RETRY_MS: base backoff between transient drive retries (default 2000).
   //  - TURN_STALE_MS: heartbeat-quiet window before the watchdog fails a turn (default 90000).
   //  - TURN_STREAM_REAP_IDLE_MS: untouched window before a turn's orphan streams may be reaped (default 300000).
+  //  - REVIEW_LENS_CONCURRENCY: total in-flight review-lens turns cap for a builder's post-build review
+  //    fan-out (the `async-sema` semaphore `runReviewChildren` bounds ALL lens turns with); default 8.
   PHASE_TIMEOUT_MS?: number;
   DRIVER_TRANSIENT_RETRY_MS?: number;
   TURN_STALE_MS?: number;
   TURN_STREAM_REAP_IDLE_MS?: number;
+  REVIEW_LENS_CONCURRENCY?: number;
 
   // Dev/test tooling (never live in prod). TEST_BRIDGE: 'off' opts a non-prod env out of the `/test/*`
   // bridge (gating is NODE_ENV-driven; hard-off in prod). DISABLE_RESUME: skip the driver's boot
@@ -223,6 +226,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   DRIVER_TRANSIENT_RETRY_MS: Joi.number().integer().min(0).optional(),
   TURN_STALE_MS: Joi.number().integer().min(1).optional(),
   TURN_STREAM_REAP_IDLE_MS: Joi.number().integer().min(1).optional(),
+  REVIEW_LENS_CONCURRENCY: Joi.number().integer().min(1).optional(),
 
   // Dev/test tooling (never prod)
   TEST_BRIDGE: Joi.string().valid('on', 'off').optional(),

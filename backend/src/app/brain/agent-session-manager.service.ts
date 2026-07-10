@@ -85,6 +85,7 @@ import {
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/render-plan';
+import { coerceThreadType, type ThreadType } from '../thread-kind/thread-types';
 import {
   LIVE_VERIFICATION_JUDGE,
   type LiveVerificationJudge,
@@ -1228,9 +1229,6 @@ export class AgentSessionManager
           );
         }
       },
-      // `combined` is the coalesced DURABLE operator-chat batch (the `kind='chat'` inbox is operator-only by
-      // construction) — so a follow-up here may revive a merged/closed job's sandbox. Set ONLY on this seam.
-      allowClosedReprovision: true,
     });
   }
 
@@ -1784,14 +1782,6 @@ export class AgentSessionManager
         stimulus.jobId,
         stimulus.orgId,
         onMilestone,
-        // Revive a merged/closed job's sandbox ONLY for a genuine operator message — the pump sets the flag,
-        // and `isOperatorAuthored` fences it (defense-in-depth) so no system/harness seed can respin a
-        // closed job's container. System seeds leave `allowClosedReprovision` false → closed stays closed.
-        {
-          allowClosedReprovision:
-            opts?.allowClosedReprovision === true &&
-            isOperatorAuthored(stimulus),
-        },
       );
       if (!provisioned) {
         await this.say(
@@ -1799,9 +1789,9 @@ export class AgentSessionManager
           'This thread is closed — start a new one to keep working.',
         );
         // Treat this pending chat as DELIVERED — else the 2-min at-least-once delivery sweep re-drives it and
-        // re-posts this identical "closed" notice every lease cycle (the endless spam). A closed sandbox that
-        // we chose NOT to revive (a system seed, or a non-operator author) is a terminal state for this
-        // message, not a transient un-delivery — mirror the ProvisioningNotReadyError branch below.
+        // re-posts this identical "closed" notice every lease cycle (the endless spam). A closed sandbox is a
+        // terminal state for this message, not a transient un-delivery — mirror the ProvisioningNotReadyError
+        // branch below.
         opts?.onRegistered?.();
         return;
       }
@@ -2828,8 +2818,8 @@ export class AgentSessionManager
         };
       },
 
-      // Retract the ship-review gate (READY TO SHIP) back to planning — the tool sibling of the manual
-      // "Back to building" click. Calls the SAME `DriverStoreService.retractShip` CAS transition + card
+      // Retract the ship-review gate (READY TO SHIP) to `amending` — the tool sibling of the manual
+      // "Amend build" click. Calls the SAME `DriverStoreService.retractShip` CAS transition + card
       // neutralization the click uses (already injected here as `driverStore` — no ThreadDriver import
       // needed), so there is one authoritative retract regardless of who triggers it.
       withdraw_ship: async (args) => {
@@ -2844,12 +2834,12 @@ export class AgentSessionManager
         }
         await this.store.appendAtlasMessage(
           stimulus.jobId,
-          `↩︎ Ship-review retracted — back to planning for changes${reason ? `: ${reason}` : ''}.`,
+          `↩︎ Ship-review retracted — amending the build${reason ? `: ${reason}` : ''}.`,
         );
         return {
           ok: true,
           message:
-            'Ship-review retracted — the job is back in planning. Do the follow-up work; the ship gate ' +
+            'Ship-review retracted — the job is now **amending**. Do the follow-up work; the ship gate ' +
             're-arms automatically once it completes.',
         };
       },
@@ -5396,7 +5386,8 @@ export class AgentSessionManager
     if (!existing) return {};
     // Statuses past the approval gate (post-`awaiting_approval`) — never (re)propose over these. A build
     // FAILURE is now the orthogonal `halt` axis (JobStatus has no 'failed'/'paused'); a failed/paused job
-    // keeps its phase (typically 'running'), so it's still caught here.
+    // keeps its phase (typically 'running'), so it's still caught here. `amending` is deliberately NOT
+    // listed — like `planning`, it's a shaping state where a fresh propose_plan is allowed.
     const pastGate: JobStatus[] = ['running', 'awaiting_ship_review', 'done', 'cancelled', 'deleting'];
     if (pastGate.includes(existing.status)) {
       return { refuse: `This job is already '${existing.status}' — can’t (re)propose a plan for it.` };
@@ -6451,11 +6442,6 @@ const WORK_OWED_RENUDGE_MS = 5 * 60_000;
 interface TurnDeliveryOpts {
   /** Fired when the turn becomes restart-survivable (registered + kicked). */
   onRegistered?: () => void;
-  /** Set ONLY by the durable OPERATOR-chat fresh-turn path (`deliverPendingViaFreshTurn`): allow a follow-up
-   *  message to REVIVE a merged/closed job's sandbox (re-provision on demand) so the conversation stays
-   *  chattable after a PR merges. Never set by system/harness/periodic seeds — they must leave a closed
-   *  sandbox torn down. Additionally gated on `isOperatorAuthored` at the consume site (defense-in-depth). */
-  allowClosedReprovision?: boolean;
 }
 
 const ATLAS_AUTHOR_ID = 'atlas';
@@ -7205,9 +7191,9 @@ function errText(err: unknown): string {
  */
 function normalizeThreads(
   raw: unknown,
-): { title: string; type: string; steps: PlannedStep[] }[] {
+): { title: string; type: ThreadType; steps: PlannedStep[] }[] {
   const arr = Array.isArray(raw) ? raw : [];
-  const out: { title: string; type: string; steps: PlannedStep[] }[] = [];
+  const out: { title: string; type: ThreadType; steps: PlannedStep[] }[] = [];
   for (const s of arr) {
     if (!s || typeof s !== 'object') continue;
     const o = s as {
@@ -7218,12 +7204,9 @@ function normalizeThreads(
     };
     const title = String(o.title ?? o.brief ?? '').trim();
     if (!title) continue;
-    // Scope type selects the review agents (THREAD_TYPES), but allow-other — a non-enum value is stored
-    // verbatim (lowercased); default 'general' when absent (the prompt asks the brain to set one).
-    const type =
-      String(o.type ?? '')
-        .trim()
-        .toLowerCase() || 'general';
+    // Scope type is the deterministic routing key for review-lens selection: coerced to the closed
+    // THREAD_TYPES vocabulary, with any unrecognized/empty value falling back to 'general'.
+    const type = coerceThreadType(o.type);
     const stepsRaw = Array.isArray(o.steps) ? o.steps : [];
     const steps: PlannedStep[] = [];
     for (const p of stepsRaw) {
