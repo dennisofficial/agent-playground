@@ -192,6 +192,21 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(meta.usage).toMatchObject({ inputTokens: 1200, outputTokens: 340, costUsd: 0.02, model: 'claude-opus-4-8' });
     expect(meta.contextTokens).toBe(1200);
     expect(meta.contextLimit).toBe(1_000_000);
+    // Per-turn work duration: computed from the still-live turn's `startedAt` (set by the first `onEvent`),
+    // so the footer can show "worked <elapsed>". A non-negative number in ms.
+    expect(typeof meta.workedMs).toBe('number');
+    expect(meta.workedMs as number).toBeGreaterThanOrEqual(0);
+  });
+
+  it('finish turn_meta: carries no workedMs when the turn pushed no events (no live start captured)', async () => {
+    const { persisted, factory } = setup();
+    // No `onEvent` at all → no live turn state → `snapshot` is null → duration is simply omitted.
+    const h = factory.create({ jobId: 'T', channel: 'R' });
+    await h.finish('reply', {
+      usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, model: 'claude-opus-4-8' },
+    });
+    const meta = persisted.find((p) => p.block.kind === 'turn_meta')!.block.meta!;
+    expect(meta.workedMs).toBeUndefined();
   });
 
   it('finish without usage: no turn_meta block is written', async () => {

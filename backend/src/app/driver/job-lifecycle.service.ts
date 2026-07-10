@@ -204,9 +204,7 @@ export class JobLifecycleService {
    * brain's first chat turn calls this to provision lazily. Uniform recovery semantics:
    *
    *   - no row                      → provision.
-   *   - row `closed`                → return null for a stray system/harness seed; but an OPERATOR follow-up
-   *     (`opts.allowClosedReprovision`) REVIVES it — drop the closed row and provision fresh from default,
-   *     so a merged conversation stays chattable on demand.
+   *   - row `closed`                → return null (a closed thread isn't revived by a stray message).
    *   - row complete (worktree_path set AND the thread has a feature_branch) → return it (no-op). A
    *     healthy post-restart row (`reconcileOnBoot` → `detached`, container null, worktree+branch kept)
    *     IS complete; `ensureContainer` re-attaches it on the turn.
@@ -220,21 +218,12 @@ export class JobLifecycleService {
     jobId: string,
     orgId: string,
     onMilestone?: (stage: SandboxMilestoneStage) => void,
-    opts?: { allowClosedReprovision?: boolean },
   ): Promise<JobSandboxEntity | null> {
-    // ONE in-flight provision per job (single key — never split by `allowClosedReprovision`, or a plain seed
-    // and an operator revive could double-provision the same incomplete row). The rare closed-revive race
-    // (a system seed's null coalesces an operator message) is benign — the operator re-sends.
     const key = `${orgId}:${jobId}`;
     const inflight = this.provisioning.get(key);
     if (inflight) return inflight;
     // Set the promise SYNCHRONOUSLY (before any await) so racing callers share it.
-    const p = this.doEnsureProvisioned(
-      jobId,
-      orgId,
-      onMilestone,
-      opts?.allowClosedReprovision === true,
-    ).finally(() => this.provisioning.delete(key));
+    const p = this.doEnsureProvisioned(jobId, orgId, onMilestone).finally(() => this.provisioning.delete(key));
     this.provisioning.set(key, p);
     return p;
   }
@@ -243,39 +232,26 @@ export class JobLifecycleService {
     jobId: string,
     orgId: string,
     onMilestone?: (stage: SandboxMilestoneStage) => void,
-    allowClosedReprovision = false,
   ): Promise<JobSandboxEntity | null> {
     const thread = await this.jobs.findOne({ where: { id: jobId, org_id: orgId } });
     if (!thread) return null;
 
     const existing = await this.sandboxes.findOne({ where: { job_id: jobId, org_id: orgId } });
     if (existing) {
-      if (existing.lifecycle === 'closed') {
-        // A closed sandbox (its container + worktree already reclaimed by `closeJob`, e.g. on PR merge) is
-        // NOT revived by a stray system/harness/periodic seed — those return null and leave it closed. But a
-        // genuine OPERATOR follow-up message (`allowClosedReprovision`) revives it on demand so the merged
-        // conversation stays chattable: drop the closed row and fall through to a fresh provision from the
-        // repo default branch (which now contains the merged work). Idle-reap tears it back down when idle.
-        if (!allowClosedReprovision) return null;
-        this.logger.log(
-          `ensureProvisioned: reviving closed sandbox for job ${jobId} (operator follow-up)`,
-        );
-        await this.sandboxes.delete({ id: existing.id });
-      } else {
-        // Complete iff BOTH the worktree path and the thread's feature branch are set. A failed
-        // provisionSandbox leaves a `detached` row with neither (and rowToSandbox would otherwise fall
-        // back to the base/default branch) — treat that as incomplete and re-provision.
-        if (existing.worktree_path && thread.feature_branch) return existing;
-        if (existing.container_id) {
-          await this.sandboxProvider
-            .teardown(await this.rowToSandbox(existing))
-            .catch((err) =>
-              this.logger.warn(`ensureProvisioned: teardown of stale sandbox failed for ${jobId}: ${err}`),
-            );
-        }
-        await this.sandboxes.delete({ id: existing.id });
-        this.logger.log(`ensureProvisioned: replaced incomplete sandbox row for thread ${jobId}`);
+      if (existing.lifecycle === 'closed') return null;
+      // Complete iff BOTH the worktree path and the thread's feature branch are set. A failed
+      // provisionSandbox leaves a `detached` row with neither (and rowToSandbox would otherwise fall
+      // back to the base/default branch) — treat that as incomplete and re-provision.
+      if (existing.worktree_path && thread.feature_branch) return existing;
+      if (existing.container_id) {
+        await this.sandboxProvider
+          .teardown(await this.rowToSandbox(existing))
+          .catch((err) =>
+            this.logger.warn(`ensureProvisioned: teardown of stale sandbox failed for ${jobId}: ${err}`),
+          );
       }
+      await this.sandboxes.delete({ id: existing.id });
+      this.logger.log(`ensureProvisioned: replaced incomplete sandbox row for thread ${jobId}`);
     }
 
     const project = await this.projects.findOne({ where: { id: thread.repo_id, org_id: orgId } });
