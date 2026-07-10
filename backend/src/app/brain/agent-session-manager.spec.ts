@@ -47,7 +47,6 @@ import type { LeaderElectionService } from '../cluster';
 /** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
   onRegistered?: () => void;
-  allowClosedReprovision?: boolean;
 }
 
 /**
@@ -2699,23 +2698,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(onRegistered).toHaveBeenCalledTimes(1); // marked delivered → the sweep can't re-drive it
   });
 
-  it('defense-in-depth: a SYSTEM-authored turn cannot revive a closed sandbox even if allowClosedReprovision is passed', async () => {
-    const ensureProvisioned = vi.fn().mockResolvedValue(null);
-    const { manager } = makeManager({ findSandbox: { worktreePath: '/wt' }, ensureProvisioned });
-    const systemStim: ChatStimulus = { ...stimulus, author: { id: 'atlas', displayName: 'Atlas' } };
-
-    await (
-      manager as unknown as {
-        runChatTurn: (s: ChatStimulus, o: { allowClosedReprovision: boolean }) => Promise<void>;
-      }
-    ).runChatTurn(systemStim, { allowClosedReprovision: true });
-
-    // isOperatorAuthored fences the flag: a non-operator author always resolves it to false.
-    expect(ensureProvisioned).toHaveBeenCalledWith(THREAD_ID, TEAM_ID, expect.anything(), {
-      allowClosedReprovision: false,
-    });
-  });
-
   it('PASSIVE awareness: an OPERATOR turn drains the buffer and PREPENDS the passive summary to the turn input', async () => {
     const drainAndAdvance = vi.fn().mockResolvedValue({
       markers: [
@@ -3689,21 +3671,6 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s1');
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s2');
-  });
-
-  it('the operator fresh-turn sets allowClosedReprovision — a follow-up may revive a merged/closed sandbox', async () => {
-    // The durable kind=chat inbox is operator-only by construction, so this seam (and ONLY this seam) is
-    // allowed to revive a closed job's sandbox — keeping a merged conversation chattable.
-    const pending = [pendingRow('s1', 'I merged. Create the follow-up job.', new Date('2026-07-02T12:00:00Z'))];
-    const { manager } = makeManager({ pending });
-    const runChatTurnSpy = vi
-      .spyOn(manager as never as { runChatTurn: (...a: unknown[]) => Promise<void> }, 'runChatTurn')
-      .mockResolvedValue(undefined);
-
-    await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
-
-    const [, opts] = runChatTurnSpy.mock.calls[0] as [ChatStimulus, TurnDeliveryOptsLike];
-    expect(opts.allowClosedReprovision).toBe(true);
   });
 
   it('NO pending messages and no live turn: a fresh turn is never started', async () => {

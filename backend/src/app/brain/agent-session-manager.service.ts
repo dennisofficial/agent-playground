@@ -1217,9 +1217,6 @@ export class AgentSessionManager
           );
         }
       },
-      // `combined` is the coalesced DURABLE operator-chat batch (the `kind='chat'` inbox is operator-only by
-      // construction) — so a follow-up here may revive a merged/closed job's sandbox. Set ONLY on this seam.
-      allowClosedReprovision: true,
     });
   }
 
@@ -1773,14 +1770,6 @@ export class AgentSessionManager
         stimulus.jobId,
         stimulus.orgId,
         onMilestone,
-        // Revive a merged/closed job's sandbox ONLY for a genuine operator message — the pump sets the flag,
-        // and `isOperatorAuthored` fences it (defense-in-depth) so no system/harness seed can respin a
-        // closed job's container. System seeds leave `allowClosedReprovision` false → closed stays closed.
-        {
-          allowClosedReprovision:
-            opts?.allowClosedReprovision === true &&
-            isOperatorAuthored(stimulus),
-        },
       );
       if (!provisioned) {
         await this.say(
@@ -1788,9 +1777,9 @@ export class AgentSessionManager
           'This thread is closed — start a new one to keep working.',
         );
         // Treat this pending chat as DELIVERED — else the 2-min at-least-once delivery sweep re-drives it and
-        // re-posts this identical "closed" notice every lease cycle (the endless spam). A closed sandbox that
-        // we chose NOT to revive (a system seed, or a non-operator author) is a terminal state for this
-        // message, not a transient un-delivery — mirror the ProvisioningNotReadyError branch below.
+        // re-posts this identical "closed" notice every lease cycle (the endless spam). A closed sandbox is a
+        // terminal state for this message, not a transient un-delivery — mirror the ProvisioningNotReadyError
+        // branch below.
         opts?.onRegistered?.();
         return;
       }
@@ -6440,11 +6429,6 @@ const WORK_OWED_RENUDGE_MS = 5 * 60_000;
 interface TurnDeliveryOpts {
   /** Fired when the turn becomes restart-survivable (registered + kicked). */
   onRegistered?: () => void;
-  /** Set ONLY by the durable OPERATOR-chat fresh-turn path (`deliverPendingViaFreshTurn`): allow a follow-up
-   *  message to REVIVE a merged/closed job's sandbox (re-provision on demand) so the conversation stays
-   *  chattable after a PR merges. Never set by system/harness/periodic seeds — they must leave a closed
-   *  sandbox torn down. Additionally gated on `isOperatorAuthored` at the consume site (defense-in-depth). */
-  allowClosedReprovision?: boolean;
 }
 
 const ATLAS_AUTHOR_ID = 'atlas';
