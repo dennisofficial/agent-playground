@@ -185,6 +185,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     secrets: { name: 'X' },
   },
   write_setup_script: { script: '#!/bin/sh\nnpm ci' },
+  read_setup_script: {},
   derive_secret: {
     name: 'DERIVED_KEY',
     path: '.derived/key',

@@ -32,6 +32,7 @@ export const WORKSPACE_PROFILE_TOOL_NAMES = [
   'write_workspace_config',
   // Setup script
   'write_setup_script',
+  'read_setup_script',
   // Skills
   'list_skills',
   'propose_skill',
