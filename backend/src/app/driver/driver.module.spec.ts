@@ -26,6 +26,7 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
       reconcileDeletingJobs: vi.fn(async () => undefined),
       reapIdle: vi.fn(async () => undefined),
       pollPrClosures: vi.fn(async () => undefined),
+      reapMergedSandboxes: vi.fn(async () => undefined),
       reapOrphanedSandboxArtifacts: vi.fn(async () => undefined),
     } as unknown as JobLifecycleService;
     const reconciler = {

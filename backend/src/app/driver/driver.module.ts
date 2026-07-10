@@ -235,6 +235,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       void this.lifecycle.reapIdle().catch(() => undefined);
       void this.lifecycle.pollPrClosures().catch(() => undefined);
       void this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
+      // Disk GC: reclaim the worktree + scratch dirs of merged/closed jobs whose sandbox has sat detached
+      // past the TTL (RAM was freed at merge; this bounds the worktree growth detach leaves behind).
+      void this.lifecycle.reapMergedSandboxes().catch(() => undefined);
       // Reclaim leaked per-sandbox `-net`/`-dind` artifacts so Docker's address pool can't be exhausted by
       // networks orphaned across restarts/crashes. Decoupled from MAX_CONCURRENT_SANDBOXES (the softCapCheck
       // gate that previously left this sweep unscheduled in prod).
