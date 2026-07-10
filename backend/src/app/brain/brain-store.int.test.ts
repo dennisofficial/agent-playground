@@ -648,6 +648,55 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(Number(dupCount[0].n)).toBe(1);
   }, 30_000);
 
+  it('recordSystemChunk stashes the raw fullBody in meta when given, and omits it otherwise', async () => {
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active') ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, 'brainstore-fullbody-it', 'FullBody Repo', 'https://github.com/acme/fullbody.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+      [TEAM_ID],
+    );
+    const [thread]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
+         VALUES ($1, $2, 'chat', 'fullbody') RETURNING id`,
+      [TEAM_ID, repoRow.id],
+    );
+    const jobId = thread.id;
+
+    // A curated pill whose collapsed label is short, but the raw payload delivered to the engine is fuller.
+    const rawPayload =
+      '<system_notice>The MCP `Direct build` call failed: fields must be wrapped under `args`.</system_notice>';
+    await store.recordSystemChunk({
+      jobId,
+      kind: 'system_notice',
+      text: 'A harness system notification was delivered to Atlas.',
+      chunkKey: `seed:fullbody:${jobId}:with`,
+      fullBody: rawPayload,
+    });
+    // A row whose text already IS the full body carries no redundant fullBody.
+    await store.recordSystemChunk({
+      jobId,
+      kind: 'system_notice',
+      text: 'Opening the pull request.',
+      chunkKey: `seed:fullbody:${jobId}:without`,
+    });
+
+    const withRow: Array<{ meta: Record<string, unknown> }> = await dataSource.query(
+      `SELECT meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
+      [jobId, `seed:fullbody:${jobId}:with`],
+    );
+    const withoutRow: Array<{ meta: Record<string, unknown> }> = await dataSource.query(
+      `SELECT meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
+      [jobId, `seed:fullbody:${jobId}:without`],
+    );
+    expect(withRow[0].meta.fullBody).toBe(rawPayload);
+    expect(withoutRow[0].meta.fullBody).toBeUndefined();
+  }, 30_000);
+
   it('withdrawPlan on an awaiting job atomically flips it back to planning and supersedes the draft record', async () => {
     const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-withdraw-it');
     await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'withdraw me', kind: 'feature' });

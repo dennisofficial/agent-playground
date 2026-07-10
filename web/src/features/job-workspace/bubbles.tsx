@@ -443,6 +443,8 @@ export function CompactionSummaryPill({
 export function SystemNoticeRow({ message }: { message: JobMessage }) {
   const [open, setOpen] = useState(false);
   const tone = toneOf(message.text ?? "");
+  // The full raw payload delivered to Atlas, when the row stored one that differs from the label.
+  const fullBody = (message.meta?.fullBody as string | undefined) ?? message.text;
   return (
     <div
       className="anim-fadeUp flex flex-col self-stretch rounded-md border"
@@ -475,7 +477,7 @@ export function SystemNoticeRow({ message }: { message: JobMessage }) {
           className="border-t px-3.5 py-2.5 text-[12px]"
           style={{ borderColor: "var(--hair)" }}
         >
-          <Markdown>{message.text}</Markdown>
+          <Markdown>{fullBody}</Markdown>
         </div>
       ) : null}
     </div>
@@ -512,6 +514,7 @@ export function SystemReminderChip({ message }: { message: JobMessage }) {
   const label = reminderLabel(
     message.meta?.reminderKind as string | undefined,
   );
+  const fullBody = (message.meta?.fullBody as string | undefined) ?? message.text;
   return (
     <div className="anim-fadeUp flex flex-col items-end gap-1 self-stretch">
       <button
@@ -538,7 +541,7 @@ export function SystemReminderChip({ message }: { message: JobMessage }) {
             background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
           }}
         >
-          <Markdown>{message.text}</Markdown>
+          <Markdown>{fullBody}</Markdown>
         </div>
       ) : null}
     </div>
@@ -555,6 +558,7 @@ export function UntrustedBlock({ message }: { message: JobMessage }) {
   const source = message.meta?.untrustedSource as string | undefined;
   const severity = message.meta?.severity as string | undefined;
   const body = message.text ?? "";
+  const fullBody = (message.meta?.fullBody as string | undefined) ?? body;
   const label = source ? `untrusted · ${source}` : "untrusted";
   return (
     <div
@@ -591,7 +595,7 @@ export function UntrustedBlock({ message }: { message: JobMessage }) {
           className="border-t px-3.5 py-2.5 text-[12px]"
           style={{ borderColor: "var(--hair)" }}
         >
-          <Markdown>{body}</Markdown>
+          <Markdown>{fullBody}</Markdown>
         </div>
       ) : null}
     </div>
