@@ -13,7 +13,8 @@
  *
  * Integration: real Postgres (the dedicated `*_test` DB), an in-memory fake git (no actual clone) and a
  * fake docker-ish sandbox provider (no Docker). The real `JobLifecycleService` runs `deleteJobDeep`
- * per thread; `OrganizationService` resolves it via `ModuleRef` exactly as in production.
+ * per thread; `OrganizationService` reaches it through the injected `JOB_TEARDOWN` port (bound here to
+ * `JobLifecycleService` via `useExisting`, mirroring the @Global `DriverModule`) exactly as in production.
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -43,7 +44,7 @@ import {
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, WorktreeProvisioner } from '../driver';
+import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, JOB_TEARDOWN, WorktreeProvisioner } from '../driver';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
 import { TicketService } from '../tickets';
 import { OrganizationService } from './organization.service';
@@ -220,6 +221,9 @@ beforeEach(async () => {
       { provide: TurnRegistry, useValue: { failRunningForJob: async () => 0 } },
       { provide: SkillUpdaterService, useValue: { reconcileOrgAsync: () => undefined } },
       JobLifecycleService,
+      // OrganizationService injects @Inject(JOB_TEARDOWN); the @Global DriverModule binds the token to
+      // JobLifecycleService via useExisting — mirror that here so DI resolves in this standalone module.
+      { provide: JOB_TEARDOWN, useExisting: JobLifecycleService },
       OrganizationService,
     ],
   }).compile();
