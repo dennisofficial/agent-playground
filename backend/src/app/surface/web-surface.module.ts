@@ -9,6 +9,8 @@ import { GitModule } from '../git/git.module';
 import { MessageEntity, RepoEntity, JobEntity } from '../persistence/entities';
 import { WebSurface } from './web-surface';
 import {
+  AMEND_APPROVE_ACTION_ID,
+  AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
@@ -89,6 +91,24 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
         return;
       }
 
+      // APPROVE the brain's "Amend build?" proposal: run the SAME operator retract path (so the retract note
+      // is operator-authored, never "Operator wants…"), neutralize the proposal card, and — only if the
+      // retract actually fired — wake the brain to do the follow-up work. Idempotent throughout.
+      if (actionId === AMEND_APPROVE_ACTION_ID) {
+        void amendApprove(this.moduleRef, this.asm, meta.jobId, ruledBy).catch(() => undefined);
+        return;
+      }
+
+      // DISMISS the brain's amend proposal: just neutralize the card. The gate stays parked at ship-review.
+      if (actionId === AMEND_DISMISS_ACTION_ID) {
+        void neutralizeAmendProposal(
+          this.moduleRef,
+          meta.jobId,
+          'Dismissed — staying at ship review.',
+        ).catch(() => undefined);
+        return;
+      }
+
       const verdict = actionIdToVerdict(actionId);
       if (!verdict) return;
 
@@ -138,6 +158,41 @@ async function retractShip(
   const { ThreadDriver } = await import('../driver/thread-driver.service.js');
   const driver = moduleRef.get(ThreadDriver, { strict: false });
   await driver.retractShipDurably(jobId, ruledBy);
+}
+
+/**
+ * APPROVE the brain's "Amend build?" proposal. Runs the operator retract path (attributed to `ruledBy`),
+ * neutralizes the durable proposal card either way, and wakes the brain ONLY if the retract actually fired
+ * (a stale click — the operator already shipped/retracted — returns false, so no spurious wake). Lazy
+ * `ThreadDriver`/`DriverStoreService` resolution mirrors {@link retractShip}.
+ */
+async function amendApprove(
+  moduleRef: ModuleRef,
+  asm: AgentSessionManager,
+  jobId: string,
+  ruledBy: string,
+): Promise<void> {
+  const { ThreadDriver } = await import('../driver/thread-driver.service.js');
+  const { DriverStoreService } = await import('../driver/driver-store.service.js');
+  const driver = moduleRef.get(ThreadDriver, { strict: false });
+  const store = moduleRef.get(DriverStoreService, { strict: false });
+  const acted = await driver.retractShipDurably(jobId, ruledBy);
+  await store.neutralizeAmendProposal(jobId, 'Approved — amending the build.');
+  if (acted) await asm.wakeForAmendApproved(jobId);
+}
+
+/**
+ * Neutralize the brain's amend proposal card without touching the gate — the Dismiss path. Lazy
+ * `DriverStoreService` resolution mirrors {@link retractShip}.
+ */
+async function neutralizeAmendProposal(
+  moduleRef: ModuleRef,
+  jobId: string,
+  verdictLine: string,
+): Promise<void> {
+  const { DriverStoreService } = await import('../driver/driver-store.service.js');
+  const store = moduleRef.get(DriverStoreService, { strict: false });
+  await store.neutralizeAmendProposal(jobId, verdictLine);
 }
 
 function actionIdToVerdict(actionId: string): ApprovalVerdict | undefined {
