@@ -125,9 +125,29 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     // …and it runs BEFORE resume() so a resumed drive's ensureNetwork can't hit a still-exhausted pool.
     expect(reapArtifacts.mock.invocationCallOrder[0]).toBeLessThan(resume.mock.invocationCallOrder[0]);
 
-    // The recurring reap timer sweeps too (decoupled from MAX_CONCURRENT_SANDBOXES).
+    // The recurring 30-min reap timer sweeps too.
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
     expect(reapArtifacts.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    h.mod.onApplicationShutdown();
+  });
+
+  it('runs idle-reap on its own fast 1-min timer (not the slow sweep), and demotion stops it', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const reapIdle = h.lifecycle.reapIdle as ReturnType<typeof vi.fn>;
+    await h.mod.onApplicationBootstrap();
+    await h.promote(); // starts the fast idle-reap timer
+
+    // Idle-reap fires every minute — several times inside one slow (30-min) sweep window.
+    await vi.advanceTimersByTimeAsync(3 * 60 * 1000);
+    expect(reapIdle.mock.calls.length).toBeGreaterThanOrEqual(3);
+
+    // Demotion stops the idle timer — no further idle-reap ticks.
+    h.demote();
+    const afterDemote = reapIdle.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(reapIdle.mock.calls.length).toBe(afterDemote);
 
     h.mod.onApplicationShutdown();
   });

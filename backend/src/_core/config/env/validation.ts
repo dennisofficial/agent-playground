@@ -74,12 +74,11 @@ export interface IEnvConfig {
   // Docker sandbox layer. DOCKER_SOCKET_PATH: host socket (default /var/run/docker.sock). SANDBOX_IMAGE:
   // the sandbox base-image tag (default 'atlas-sandbox:latest'). WORKSPACE_IMAGE /
   // WORKSPACE_DOCKER_STORAGE_DRIVER: local Docker-Desktop knobs (the latter forces the inner dockerd to
-  // `vfs`; EMPTY on a real Linux host). MAX_CONCURRENT_SANDBOXES: optional capacity cap (unset → no cap).
+  // `vfs`; EMPTY on a real Linux host).
   DOCKER_SOCKET_PATH?: string;
   SANDBOX_IMAGE?: string;
   WORKSPACE_IMAGE?: string;
   WORKSPACE_DOCKER_STORAGE_DRIVER?: string;
-  MAX_CONCURRENT_SANDBOXES?: number;
   // SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (falls back to REDIS_URL).
   // SANDBOX_BUS_NETWORK: the internal Docker network each sandbox joins (`atlas-bus` in prod; unset in dev).
   SANDBOX_REDIS_URL?: string;
@@ -193,7 +192,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SANDBOX_IMAGE: Joi.string().optional(),
   WORKSPACE_IMAGE: Joi.string().optional(),
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
-  MAX_CONCURRENT_SANDBOXES: Joi.number().integer().min(1).optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
 

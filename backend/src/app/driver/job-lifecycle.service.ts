@@ -26,13 +26,15 @@ import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
 /**
- * Default idle window before an attached-but-quiet container is reaped to `detached` (2h). Reaping
+ * Idle window before an attached-but-quiet container is reaped to `detached` (30 min). Reaping
  * removes the container, which frees the RAM of any dev servers the job left running under `atlas-svc`;
  * the durable worktree/branch/session survive and the next turn cold-re-attaches (with the reset
  * notice). Jobs run in peaks — hard work, then a long idle waiting for PR review — so a short window
- * reclaims a shared host without meaningfully hurting anyone. Override via `SANDBOX_IDLE_TTL_MS`.
+ * reclaims a shared host (RAM is the bottleneck) without meaningfully hurting anyone; the idle-reap
+ * sweep runs every minute (see `DriverModule`), so a quiet container is reclaimed ~30 min after its
+ * last turn.
  */
-const DEFAULT_IDLE_TTL_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_IDLE_TTL_MS = 30 * 60 * 1000;
 
 /**
  * Sandbox lifecycle status strings (mirrors the entity comment).
@@ -82,7 +84,7 @@ export class ProvisioningNotReadyError extends Error {
  *      thread's feature branch (`atlas/thread-<id>`) at create, attach a thread-keyed container.
  *   2. `ensureContainer` — every turn calls this first: reuse the warm container, or re-attach a cold
  *      one against the durable worktree, returning `wasReset` so a resumed turn knows its runtime is fresh.
- *   3. `reapIdle` / `evictForCapacity` — detach idle/over-cap containers (worktree survives).
+ *   3. `reapIdle` — detach idle containers past the TTL (worktree survives).
  *   4. `closeJob` / `pollPrClosures` — terminal cleanup (PR merged or operator close).
  */
 
@@ -393,10 +395,6 @@ export class JobLifecycleService {
       await this.ensureWorktree(row, await this.repoForRow(row));
       worktreeRestored = true;
     }
-
-    // If we're at the global cap and this thread has no live container yet, evict the least-recently
-    // active idle one to make room (never a busy thread).
-    if (!row.container_id) await this.evictForCapacity();
 
     // Hydrate (granted secrets/seed) only when stale or the worktree was just restored, then attach.
     // EVERY thread (incl. onboarding) now renders real secrets — see WorktreeHydrator for the rationale.
@@ -760,25 +758,6 @@ export class JobLifecycleService {
     if (res.affected) this.logger.log(`boot reconcile: marked ${res.affected} thread sandbox(es) detached`);
   }
 
-  /** Soft cap: if at/over `MAX_CONCURRENT_SANDBOXES`, detach the least-recently-active idle one. */
-  private async evictForCapacity(): Promise<void> {
-    const cap = Number(this.env.get('MAX_CONCURRENT_SANDBOXES'));
-    if (!cap || cap <= 0) return;
-    const attached = await this.sandboxes.find({
-      where: { lifecycle: 'attached' },
-      order: { last_active_at: 'ASC' },
-    });
-    const live = attached.filter((r) => r.container_id);
-    if (live.length < cap) return;
-    // Oldest non-busy live container is the victim. If every one is busy, exceed the cap rather than
-    // kill a live turn (soft cap).
-    const victim = live.find((r) => r.container_id && !this.activity.isBusy(r.container_id));
-    if (!victim) {
-      this.logger.warn(`evictForCapacity: at cap (${cap}) but all sandboxes busy — exceeding cap`);
-      return;
-    }
-    await this.detachContainer(victim, 'lru');
-  }
 
   /**
    * On-demand RESET of a thread's container: tear it down + flip to `detached`, keeping the durable
@@ -801,7 +780,7 @@ export class JobLifecycleService {
   }
 
   /** Tear down a row's container (best-effort) and flip it to `detached`. Worktree untouched. */
-  private async detachContainer(row: JobSandboxEntity, reason: 'idle' | 'lru' | 'reset'): Promise<void> {
+  private async detachContainer(row: JobSandboxEntity, reason: 'idle' | 'reset'): Promise<void> {
     // Drop any `running` turn row bound to this container BEFORE tearing it down: the engine is about to
     // die, so a lingering `running` row would make the steer path treat it as a live turn and XADD the
     // operator's next message into an unread input stream (silently lost) until the watchdog's stale
