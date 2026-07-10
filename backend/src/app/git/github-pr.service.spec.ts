@@ -98,6 +98,36 @@ describe('GithubPrService.openPullRequest', () => {
   });
 });
 
+describe('GithubPrService.closePullRequest', () => {
+  it('PATCHes state=closed with the token only in the Authorization header', async () => {
+    const { impl, calls } = fakeFetch([{ status: 200, body: { number: 9, state: 'closed' } }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    await svc.closePullRequest('TOK123', { owner: 'acme', repo: 'app', number: 9 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://api.github.com/repos/acme/app/pulls/9');
+    expect(calls[0].init?.method).toBe('PATCH');
+    const headers = calls[0].init?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer TOK123');
+    expect(String(calls[0].init?.body)).not.toContain('TOK123');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ state: 'closed' });
+  });
+
+  it('throws with GitHub status + detail (never the token) on a non-OK response', async () => {
+    const { impl } = fakeFetch([
+      { status: 403, body: { message: 'Resource not accessible' } },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    await expect(
+      svc.closePullRequest('SECRET', { owner: 'acme', repo: 'app', number: 9 }),
+    ).rejects.toThrow(/403.*Resource not accessible/);
+    await expect(
+      svc.closePullRequest('SECRET', { owner: 'acme', repo: 'app', number: 9 }),
+    ).rejects.not.toThrow(/SECRET/);
+  });
+});
+
 describe('GithubPrService.getRepo', () => {
   it('maps a repo and returns null on 404/403', async () => {
     const ok = fakeFetch([

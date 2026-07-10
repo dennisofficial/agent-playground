@@ -114,6 +114,8 @@ export function Navigator({
   onRename,
   onDelete,
   deleting,
+  hasOpenPr,
+  deleteReady,
   directBuild,
 }: {
   meta: JobMeta;
@@ -139,6 +141,12 @@ export function Navigator({
   onRename?: (title: string) => void;
   onDelete?: () => void;
   deleting?: boolean;
+  /** True when the job's PR is open — routes delete through the secondary PR-choice dialog instead of the
+   *  inline double-click confirm. */
+  hasOpenPr?: boolean;
+  /** True once the PR state is known (resolved from either the pipeline or the inbox feed) — the delete
+   *  button stays disabled until then so we never delete before knowing whether a PR is open. */
+  deleteReady?: boolean;
   /** True when the awaiting approval is a direct build — flips the approve CTA to "Approve Direct Build". */
   directBuild?: boolean;
 }) {
@@ -198,6 +206,8 @@ export function Navigator({
               onStartRename={onRename ? () => setEditing(true) : undefined}
               onDelete={onDelete}
               deleting={deleting}
+              hasOpenPr={hasOpenPr}
+              deleteReady={deleteReady}
             />
           ) : null}
         </div>
