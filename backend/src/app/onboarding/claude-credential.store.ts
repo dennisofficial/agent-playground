@@ -189,15 +189,6 @@ export class ClaudeCredentialStore {
     this.logger.log(`upserted legacy setup-token claude credential for org=${orgId} id=${rowId}`);
   }
 
-  /** True when the org has a selected credential AND the referenced row still exists. */
-  async hasSelected(orgId: string): Promise<boolean> {
-    const org = await this.orgRepo.findOne({ where: { id: orgId } });
-    const selectedId = org?.selected_claude_credential_id;
-    if (!selectedId) return false;
-    const row = await this.repo.findOne({ where: { id: selectedId, org_id: orgId } });
-    return !!row;
-  }
-
   /**
    * ATOMICALLY advance a `personal` credential to a REFRESHED `claudeAiOauth` blob — the auth-refresh
    * write-back, mirroring `TenantCredentialStore.advanceCodexAuthSecret`'s transaction + `pessimistic_write`

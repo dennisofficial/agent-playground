@@ -12,7 +12,7 @@ export class AddClaudeCredentials1783697526170 implements MigrationInterface {
     name = 'AddClaudeCredentials1783697526170'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`CREATE TABLE "claude_credentials" ("id" uuid NOT NULL DEFAULT gen_random_uuid(), "org_id" uuid NOT NULL, "label" text NOT NULL, "kind" text NOT NULL, "access_token_enc" text NOT NULL, "refresh_token_enc" text, "expires_at" TIMESTAMP WITH TIME ZONE, "scopes" text, "subscription_type" text, "account_email" text, "status" text NOT NULL DEFAULT 'active', "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "last_refreshed_at" TIMESTAMP WITH TIME ZONE, CONSTRAINT "PK_claude_credentials" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "claude_credentials" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "org_id" uuid NOT NULL, "label" text NOT NULL, "kind" text NOT NULL, "access_token_enc" text NOT NULL, "refresh_token_enc" text, "expires_at" TIMESTAMP WITH TIME ZONE, "scopes" text, "subscription_type" text, "account_email" text, "status" text NOT NULL DEFAULT 'active', "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "last_refreshed_at" TIMESTAMP WITH TIME ZONE, CONSTRAINT "PK_claude_credentials" PRIMARY KEY ("id"))`);
         await queryRunner.query(`ALTER TABLE "claude_credentials" ADD CONSTRAINT "FK_claude_credentials_org_id" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE`);
         await queryRunner.query(`CREATE INDEX "IDX_claude_credentials_org_id" ON "claude_credentials" ("org_id")`);
 
