@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ServiceLivenessProbe } from '../sandbox/sandbox-provider.port';
 
 /**
  * One supervised process's durable `atlas-svc` marker (see `backend/sandbox/atlas-svc`), read from the
@@ -28,6 +29,39 @@ const SERVICE_ID_RE = /^[a-z0-9_-]+$/;
 
 /** The marker `id` plus its parsed fields — `id` is the marker filename stem, distinct from `name`. */
 export type ReadServiceMarker = ServiceMarker & { id: string };
+
+/** A supervised process's live status: `running`, `stopped` (marker present, process gone), or `unknown`
+ *  (couldn't probe — no container yet, null pgid/startedAt, or a transient exec failure). */
+export type ServiceStatus = 'running' | 'stopped' | 'unknown';
+
+/** Slack for the generation gate: `atlas-svc` markers are second-precision (`date +%FT%TZ`) while Docker
+ *  `StartedAt` is sub-second, so a service started in the SAME second as container boot can truncate just
+ *  below it. Only treat a marker as previous-generation when it predates boot by more than this — genuine
+ *  stale markers predate boot by minutes/hours, so the tolerance never lets a reused old pgid through. */
+export const GENERATION_SKEW_MS = 2_000;
+
+/**
+ * Map one supervised process's durable marker + the container-wide liveness probe to its live status —
+ * the SINGLE gate shared by the web surface's PORTS listing AND the preview reconciler's routing, so the
+ * URL shown and the route published can never disagree. The container-GENERATION gate is load-bearing: a
+ * marker whose `startedAt` predates the current container boot is from a previous PID namespace and is
+ * dead even if its old pgid was reused and now answers `kill -0` — so we reject it BEFORE consulting
+ * `alive`. A transient probe failure (`unknown`) is never mapped to `stopped` (see {@link ServiceLivenessProbe}).
+ */
+export function serviceStatus(
+  marker: Pick<ServiceMarker, 'pgid' | 'startedAt'>,
+  probe: ServiceLivenessProbe,
+): ServiceStatus {
+  if (probe.status === 'unknown') return 'unknown';
+  if (probe.status === 'down') return 'stopped'; // no running container ⇒ every marker is dead
+  // probe.status === 'up' — verify the marker belongs to THIS container generation before trusting alive.
+  if (marker.pgid == null || marker.startedAt == null) return 'unknown';
+  const started = Date.parse(marker.startedAt);
+  const generation = Date.parse(probe.containerStartedAt);
+  if (!Number.isFinite(started) || !Number.isFinite(generation)) return 'unknown';
+  if (started < generation - GENERATION_SKEW_MS) return 'stopped'; // previous container — reused pgid must not read as running
+  return probe.alive.includes(marker.pgid) ? 'running' : 'stopped';
+}
 
 /**
  * Read every `atlas-svc` marker in `dir` (the host supervisor dir). Skips non-`.json` files, ids that

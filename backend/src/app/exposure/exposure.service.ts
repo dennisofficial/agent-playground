@@ -7,12 +7,7 @@ import {
 } from '../sandbox/sandbox-provider.port';
 import { CaddyAdminClient } from './caddy-admin.client';
 import { hostFor, routeId, routePrefix, urlFor } from './exposure-naming';
-import { readServiceMarkers, type ReadServiceMarker } from './service-markers';
-
-/** Slack for the container-generation gate — mirrors the surface controller's `GENERATION_SKEW_MS`:
- *  `atlas-svc` markers are second-precision while Docker `StartedAt` is sub-second, so a service started
- *  in the same second as boot can truncate just below it. */
-const GENERATION_SKEW_MS = 2_000;
+import { readServiceMarkers, serviceStatus } from './service-markers';
 
 /**
  * Drives Caddy to publish a thread sandbox's live, opted-in dev-servers at deterministic preview URLs.
@@ -73,7 +68,15 @@ export class ExposureService {
     const probe = await this.provider.probeLiveness(jobId, pgids).catch(
       () => ({ status: 'unknown' }) as ServiceLivenessProbe,
     );
-    const desired = exposable.filter((m) => this.isRunning(m, probe));
+
+    // A transient probe failure resolves to `unknown`; it must NOT be read as "nothing running" — doing so
+    // would delete routes + unbridge Caddy for dev-servers that are still up, flapping the preview URL
+    // (brief 502s) on every exec hiccup (the `ServiceLivenessProbe` contract). Only converge toward the
+    // teardown branch on a DEFINITE state: no exposable markers at all, or a probe that actually resolved
+    // (`up`/`down`). On `unknown` with markers present, leave the existing routes + bridge untouched.
+    if (exposable.length > 0 && probe.status === 'unknown') return;
+
+    const desired = exposable.filter((m) => serviceStatus(m, probe) === 'running');
 
     const secret = this.secret();
     const prefix = routePrefix(jobId, secret);
@@ -128,20 +131,5 @@ export class ExposureService {
     for (const j of jobIds) {
       await this.reconcile(j).catch(() => undefined);
     }
-  }
-
-  /**
-   * Whether a marker's process-group is genuinely alive in the CURRENT container generation — the same
-   * gate the surface controller's `serviceStatus` applies (a reused old pgid from a previous container
-   * must not read as running).
-   */
-  private isRunning(marker: ReadServiceMarker, probe: ServiceLivenessProbe): boolean {
-    if (probe.status !== 'up') return false;
-    if (marker.pgid == null || marker.startedAt == null) return false;
-    const started = Date.parse(marker.startedAt);
-    const generation = Date.parse(probe.containerStartedAt);
-    if (!Number.isFinite(started) || !Number.isFinite(generation)) return false;
-    if (started < generation - GENERATION_SKEW_MS) return false;
-    return probe.alive.includes(marker.pgid);
   }
 }

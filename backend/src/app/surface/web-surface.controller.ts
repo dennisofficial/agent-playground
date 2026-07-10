@@ -72,7 +72,7 @@ import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
 import { CONTAINER_CONTEXT, type ServiceLivenessProbe } from '../sandbox';
 import { ExposureService } from '../exposure/exposure.service';
-import { readServiceMarkers } from '../exposure/service-markers';
+import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
@@ -183,33 +183,6 @@ const SERVICE_ID_RE = /^[a-z0-9_-]+$/;
 /** Reuse-window for the in-container liveness probe (see `probeLivenessMemoized`). Comfortably shorter
  *  than the ~5s status poll so a genuine state change still surfaces on the next tick. */
 const LIVENESS_MEMO_TTL_MS = 2_500;
-/** Slack for the generation gate: `atlas-svc` markers are second-precision (`date +%FT%TZ`) while Docker
- *  `StartedAt` is sub-second, so a service started in the SAME second as container boot can truncate just
- *  below it. Only treat a marker as previous-generation when it predates boot by more than this — genuine
- *  stale markers predate boot by minutes/hours, so the tolerance never lets a reused old pgid through. */
-const GENERATION_SKEW_MS = 2_000;
-
-/**
- * Map one supervised process's durable marker + the container-wide liveness probe to its live `status`.
- * The container-GENERATION gate is load-bearing: a marker whose `startedAt` predates the current
- * container boot is from a previous PID namespace and is dead even if its old pgid was reused and now
- * answers `kill -0` — so we must reject it BEFORE consulting `alive`.
- */
-export function serviceStatus(
-  marker: Pick<ServiceInfo, 'pgid' | 'startedAt'>,
-  probe: ServiceLivenessProbe,
-): ServiceInfo['status'] {
-  if (probe.status === 'unknown') return 'unknown';
-  if (probe.status === 'down') return 'stopped'; // no running container ⇒ every marker is dead
-  // probe.status === 'up' — verify the marker belongs to THIS container generation before trusting alive.
-  if (marker.pgid == null || marker.startedAt == null) return 'unknown';
-  const started = Date.parse(marker.startedAt);
-  const generation = Date.parse(probe.containerStartedAt);
-  if (!Number.isFinite(started) || !Number.isFinite(generation))
-    return 'unknown';
-  if (started < generation - GENERATION_SKEW_MS) return 'stopped'; // previous container — reused pgid must not read as running
-  return probe.alive.includes(marker.pgid) ? 'running' : 'stopped';
-}
 /** Tail cap for the logs endpoint — a long-running dev server's log can grow large. */
 const MAX_SERVICE_LOG_TAIL_BYTES = 512 * 1024;
 /** How often the SSE log tail polls the file for new bytes — see `serviceLogEvents` doc comment. */
