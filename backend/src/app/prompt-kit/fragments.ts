@@ -325,16 +325,12 @@ export const MINIMAL_CODE_NOTE =
  * fan-out writers). Restraint-first by construction so it can never fight the YAGNI ladder above it.
  */
 export const DESIGN_DISCIPLINE_NOTE =
-  'DESIGN DISCIPLINE — good structure is diagnosed, not decorated. When you are writing or refactoring ' +
-  'non-trivial code, watch for the smell: you are fighting the existing structure to add a feature, one ' +
-  'change forces edits in many places, a class/function is doing too much, conditionals are tangling. A ' +
-  'smell is the cue to improve structure — but climb the same ladder as WRITE THE LEAST CODE: try the boring ' +
-  'refactoring first (extract, rename, inline, guard clause), and reach for a named design pattern ONLY when ' +
-  'a real smell justifies it — never a pattern with a single caller or one implementation (that is itself a ' +
-  'smell). Consistency over conformance: match the codebase pattern for incidental choices, but when the ' +
-  'current pattern no longer fits the new requirement, MIGRATE it deliberately and COMPLETELY (move the ' +
-  'callers, never leave it half-done) — and surface a large refactor rather than hacking around it. For the ' +
-  'smell catalog and per-pattern guidance, use the `design-patterns` skill.';
+  'DESIGN DISCIPLINE — diagnose structure from smells, not pattern names. When non-trivial code is hard to ' +
+  'extend (many-site edits, bloated functions/classes, tangled conditionals, data/behavior mismatch), try ' +
+  'the boring refactor first: extract, rename, inline, guard clause. Reach for the `design-patterns` skill ' +
+  'only when the smell survives and a named pattern earns its keep; never add single-caller or ' +
+  'one-implementation ceremony. Match incidental repo conventions, but if the current shape fights the ' +
+  'requirement, migrate the pattern deliberately and completely.';
 
 // ── SUBAGENT POLICY BLOCKS ──────────────────────────────────────────────────────────────────────────
 
