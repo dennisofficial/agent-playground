@@ -19,6 +19,16 @@ runs:
       shell: bash
       run: git submodule foreach --recursive 'git clean -ffdx' || true
 
+    - name: Clean stale pnpm install dir
+      # Self-hosted runners REUSE the runner HOME between jobs, so pnpm/action-setup's
+      # self-installer dest (~/setup-pnpm) persists from a prior run. On the next run the
+      # installer tries to rmdir that dest before reinstalling and fails with
+      # `ENOTEMPTY: directory not empty, rmdir '.../setup-pnpm'` (pnpm/action-setup#149),
+      # taking down the whole "Set up workspace" step intermittently. Wipe it first so the
+      # installer always starts from a clean dest. No-op on ephemeral hosted runners.
+      shell: bash
+      run: rm -rf "$HOME/setup-pnpm" || true
+
     - name: Set up pnpm
       # No `version:` here — action-setup reads it from package.json's `packageManager`
       # field (single source of truth), so a pnpm bump can't desync the two.
