@@ -4,5 +4,6 @@
  */
 export * from './spec';
 export * from './registry';
+export * from './thread-types';
 export { ThreadKindRegistry } from './thread-kind.service';
 export { ThreadKindModule } from './thread-kind.module';

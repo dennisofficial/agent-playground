@@ -190,6 +190,31 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(row?.title).toBe('Profile picture CRUD');
   }, 30_000);
 
+  it('persistPlan coerces off-vocabulary thread types at the write boundary', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-thread-types-it');
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'types',
+      kind: 'feature',
+    });
+
+    await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'typed plan',
+      kind: 'feature',
+      overview: 'overview',
+      decisions: [],
+      threadTitles: ['legacy analytics', 'case backend', 'missing'],
+      threadTypes: ['analytics', 'BACKEND'],
+    });
+
+    expect(await threadTypes(dataSource, jobId)).toEqual(['general', 'backend', 'general']);
+  }, 30_000);
+
   it('stamps appended blocks with their emission time so a mid-turn user message keeps chronological order', async () => {
     // Regression for the "a question I asked later jumped to the top of the turn" bug. The turn's blocks
     // are persisted in a batch at turn END, but the operator's follow-up is persisted immediately. Without
@@ -851,6 +876,15 @@ async function threadTitles(ds: DataSource, jobId: string): Promise<string[]> {
     [jobId],
   );
   return rows.map((r) => r.brief);
+}
+
+/** The FEATURE (builder) thread types — excludes the appended master-review thread. */
+async function threadTypes(ds: DataSource, jobId: string): Promise<string[]> {
+  const rows: Array<{ type: string }> = await ds.query(
+    `SELECT type FROM threads WHERE job_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
+    [jobId],
+  );
+  return rows.map((r) => r.type);
 }
 
 /** The count of appended master-review threads for a job (should be exactly 1 after a full plan). */

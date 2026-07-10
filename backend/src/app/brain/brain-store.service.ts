@@ -20,6 +20,7 @@ import { nextQuestionId } from '../surface/web-question-card';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { coerceThreadType } from '../thread-kind';
 import {
   CodexReviewEntity,
   DecisionRecordEntity,
@@ -1571,7 +1572,7 @@ export class BrainStoreService {
           ordinal: (i + 1) * ORDINAL_GAP,
           brief,
           // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
-          type: input.threadTypes?.[i] ?? 'general',
+          type: coerceThreadType(input.threadTypes?.[i]),
           // Feature threads are `builder` kind; the master-review row below is `master_review`. The `kind`
           // column is the first-class differentiator (subsumes `is_master_review`).
           kind: 'builder',
