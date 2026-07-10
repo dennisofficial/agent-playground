@@ -10,6 +10,7 @@ import {
   GitBranch,
   KeyRound,
   Layers,
+  Menu,
   Plug,
   Settings as SettingsIcon,
   Sparkles,
@@ -21,6 +22,8 @@ import { BrandLockup } from "@/components/ui/brand";
 import { AccountMenu } from "@/features/shell/components/account-menu";
 import { useOrg, useOrgs, type OrgSummary } from "@/lib/api/me";
 import { orgSwatch, orgInitials, roleLabel } from "@/lib/org-display";
+import { useBreakpoint } from "@/lib/use-breakpoint";
+import { Drawer } from "@/components/ui/drawer";
 import { GeneralSection } from "./general-section";
 import { CredentialsSection } from "./credentials-section";
 import { WorkspaceSecretsSection } from "./workspace-secrets-section";
@@ -54,24 +57,110 @@ export function OrgSettings({
   const org = useOrg(orgId);
   const router = useRouter();
   const [section, setSection] = useState<SettingsSection>(initialSection);
+  const [navOpen, setNavOpen] = useState(false);
+  const { isMobile } = useBreakpoint();
+
+  useEffect(() => {
+    if (!isMobile) setNavOpen(false);
+  }, [isMobile]);
+
+  function RenderNav({ inDrawer }: { inDrawer?: boolean }) {
+    return (
+      <nav
+        className={cn(
+          "flex flex-col gap-0.5 px-3 py-4",
+          inDrawer ? "w-full" : "w-[228px] shrink-0 border-r border-border",
+        )}
+        style={{
+          background: "color-mix(in srgb, var(--panel) 60%, transparent)",
+        }}
+      >
+        <div className="flex items-center gap-2.5 px-2 pb-3 pt-1.5">
+          <span
+            className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg font-disp text-[14px] font-semibold text-white"
+            style={{ background: org ? orgSwatch() : "var(--border-2)" }}
+          >
+            {org ? orgInitials(org.name) : "·"}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-[12.5px] font-semibold text-text">
+              {org?.name ?? "—"}
+            </div>
+            <div
+              className="font-mono text-[8.5px]"
+              style={{
+                color:
+                  org?.status === "active" ? "var(--green)" : "var(--faint)",
+              }}
+            >
+              {org?.status ?? "—"}
+            </div>
+          </div>
+        </div>
+        <div className="px-2 pb-1.5 pt-1 font-mono text-[9px] tracking-[0.16em] text-faint">
+          ORGANIZATION
+        </div>
+        {NAV.map(({ id, label, icon: Icon }) => {
+          const on = section === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                setSection(id);
+                setNavOpen(false);
+              }}
+              className={cn(
+                "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition",
+                on ? "text-accent" : "text-dim hover:bg-surface-2",
+              )}
+              style={
+                on
+                  ? {
+                      background: "var(--accent-soft)",
+                      boxShadow: "inset 0 0 0 1px var(--accent-line)",
+                    }
+                  : undefined
+              }
+            >
+              <Icon size={15} />
+              {label}
+            </button>
+          );
+        })}
+      </nav>
+    );
+  }
 
   return (
     <>
       {/* Top bar */}
       <header
-        className="flex h-[52px] shrink-0 items-center gap-3.5 border-b border-border px-4 backdrop-blur"
+        className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-4 backdrop-blur sm:gap-3.5"
         style={{
           background: "color-mix(in srgb, var(--panel) 82%, transparent)",
         }}
       >
-        <Link href={ROUTES.workspace()} aria-label="Back to workspace">
+        <button
+          type="button"
+          onClick={() => setNavOpen(true)}
+          aria-label="Open settings navigation"
+          className="grid h-9 w-9 flex-none -ml-1 place-items-center rounded-md text-dim transition hover:bg-surface-2 md:hidden"
+        >
+          <Menu size={17} />
+        </button>
+        <Link
+          href={ROUTES.workspace()}
+          aria-label="Back to workspace"
+          className="flex-none"
+        >
           <BrandLockup size="sm" />
         </Link>
         <span
-          className="h-[18px] w-px"
+          className="hidden h-[18px] w-px sm:block"
           style={{ background: "var(--border-2)" }}
         />
-        <div className="flex items-center gap-2 font-mono text-[11px] text-dim">
+        <div className="flex min-w-0 items-center gap-2 font-mono text-[11px] text-dim">
           <OrgSwitcher
             orgs={orgs}
             currentId={orgId}
@@ -80,8 +169,8 @@ export function OrgSettings({
               if (id !== orgId) router.push(ROUTES.orgSettings(id, section));
             }}
           />
-          <span className="text-border-2">/</span>
-          <span className="text-text">Settings</span>
+          <span className="flex-none text-border-2">/</span>
+          <span className="flex-none text-text">Settings</span>
         </div>
         <div className="flex-1" />
         {org?.role === "member" ? (
@@ -94,67 +183,22 @@ export function OrgSettings({
 
       <div className="flex min-h-0 flex-1">
         {/* Settings nav */}
-        <nav
-          className="flex w-[228px] shrink-0 flex-col gap-0.5 border-r border-border px-3 py-4"
-          style={{
-            background: "color-mix(in srgb, var(--panel) 60%, transparent)",
-          }}
-        >
-          <div className="flex items-center gap-2.5 px-2 pb-3 pt-1.5">
-            <span
-              className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg font-disp text-[14px] font-semibold text-white"
-              style={{ background: org ? orgSwatch() : "var(--border-2)" }}
-            >
-              {org ? orgInitials(org.name) : "·"}
-            </span>
-            <div className="min-w-0">
-              <div className="truncate text-[12.5px] font-semibold text-text">
-                {org?.name ?? "—"}
-              </div>
-              <div
-                className="font-mono text-[8.5px]"
-                style={{
-                  color:
-                    org?.status === "active" ? "var(--green)" : "var(--faint)",
-                }}
-              >
-                {org?.status ?? "—"}
-              </div>
-            </div>
-          </div>
-          <div className="px-2 pb-1.5 pt-1 font-mono text-[9px] tracking-[0.16em] text-faint">
-            ORGANIZATION
-          </div>
-          {NAV.map(({ id, label, icon: Icon }) => {
-            const on = section === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setSection(id)}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition",
-                  on ? "text-accent" : "text-dim hover:bg-surface-2",
-                )}
-                style={
-                  on
-                    ? {
-                        background: "var(--accent-soft)",
-                        boxShadow: "inset 0 0 0 1px var(--accent-line)",
-                      }
-                    : undefined
-                }
-              >
-                <Icon size={15} />
-                {label}
-              </button>
-            );
-          })}
-        </nav>
+        {isMobile ? (
+          <Drawer
+            side="left"
+            open={navOpen}
+            onClose={() => setNavOpen(false)}
+            label="Settings navigation"
+          >
+            <RenderNav inDrawer />
+          </Drawer>
+        ) : (
+          <RenderNav />
+        )}
 
         {/* Content */}
         <div className="min-w-0 flex-1 overflow-y-auto bg-surface">
-          <div className="max-w-[640px] px-9 py-8 pb-16">
+          <div className="max-w-[640px] px-4 py-8 pb-16 sm:px-9">
             {isLoading ? (
               <p className="text-[13px] text-faint">Loading…</p>
             ) : !org ? (
@@ -232,11 +276,11 @@ function OrgSwitcher({
   }, []);
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative min-w-0" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 rounded-[5px] border px-1.5 py-[3px] transition"
+        className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[5px] border px-1.5 py-[3px] transition"
         style={
           open
             ? {
@@ -250,7 +294,9 @@ function OrgSwitcher({
           className="h-2 w-2 shrink-0 rounded-[2px]"
           style={{ background: currentName ? orgSwatch() : "var(--faint)" }}
         />
-        <span className="text-text">{currentName ?? "Organization"}</span>
+        <span className="truncate text-text">
+          {currentName ?? "Organization"}
+        </span>
         <ChevronDown
           size={11}
           className={cn(

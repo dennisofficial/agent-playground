@@ -30,7 +30,7 @@ export function ReviewCommentsCardView({
   return (
     <div className="flex flex-col items-end gap-1">
       <div
-        className="flex max-w-[80%] min-w-[250px] flex-col gap-[9px] rounded-[13px] rounded-br-[4px] px-[13px] py-[11px]"
+        className="flex max-w-[80%] min-w-0 flex-col gap-[9px] rounded-[13px] rounded-br-[4px] px-[13px] py-[11px] sm:min-w-[250px]"
         style={{
           background: "var(--accent-soft)",
           border: "1px solid var(--accent-line)",

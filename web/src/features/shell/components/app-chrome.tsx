@@ -8,6 +8,7 @@ import { CommandPalette } from "./command-palette";
 import { useAllJobsRealtime } from "@/lib/api/all-jobs-realtime";
 import { useBreakpoint } from "@/lib/use-breakpoint";
 import { Drawer } from "@/components/ui/drawer";
+import { LeftNavProvider } from "@/features/shell/left-nav";
 
 /**
  * The persistent app chrome (client). The app-wide TOP BAR (ATLAS lockup + Threads | Tickets nav + avatar)
@@ -59,23 +60,25 @@ export function AppChrome({
         onOpenSidebar={() => setSidebarOpen(true)}
         onOpenSearch={() => setPaletteOpen(true)}
       />
-      <div className="flex min-h-0 flex-1">
-        {onTickets ? null : isMobile ? (
-          <Drawer
-            side="left"
-            open={sidebarOpen}
-            onClose={() => setSidebarOpen(false)}
-            label="Navigation"
-          >
-            <Sidebar inDrawer />
-          </Drawer>
-        ) : (
-          <Sidebar />
-        )}
-        <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
-        <CommandPalette open={paletteOpen} onClose={closePalette} />
-        {dialog}
-      </div>
+      <LeftNavProvider value={{ open: sidebarOpen, setOpen: setSidebarOpen }}>
+        <div className="flex min-h-0 flex-1">
+          {onTickets ? null : isMobile ? (
+            <Drawer
+              side="left"
+              open={sidebarOpen}
+              onClose={() => setSidebarOpen(false)}
+              label="Navigation"
+            >
+              <Sidebar inDrawer />
+            </Drawer>
+          ) : (
+            <Sidebar />
+          )}
+          <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
+          <CommandPalette open={paletteOpen} onClose={closePalette} />
+          {dialog}
+        </div>
+      </LeftNavProvider>
     </div>
   );
 }
