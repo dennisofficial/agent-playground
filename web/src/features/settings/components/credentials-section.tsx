@@ -2,17 +2,30 @@
 
 import { useState, type ReactNode } from "react";
 import {
+  AlertCircle,
   Check,
   Copy,
+  ExternalLink,
   Github,
+  KeyRound,
+  Lock,
   MessageSquare,
   Sparkles,
   Terminal,
+  Trash2,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  useAddClaudeCredential,
+  useClaudeCredentials,
+  useCreateClaudeAuthorizeUrl,
+  useDeleteClaudeCredential,
   useOrgCredentials,
   useSaveCredentials,
+  useSelectClaudeCredential,
+  type ClaudeCredential,
+  type ClaudeCredentialKind,
+  type ClaudeCredentialStatus,
   type SaveCredentialsBody,
   type SaveCredentialsResult,
 } from "@/lib/api/orgs";
@@ -28,11 +41,21 @@ import {
  *  - **Coding-engine subscriptions** (Claude, and optionally Codex) authenticate the SDK harness that
  *    actually drives the build. The harness runs subscription-only — an API key does NOT authorize it.
  * That's why Anthropic appears twice: an API key for prompts AND a subscription for the coding engine.
+ *
+ * Claude is the one exception to the presence-only cards above: it manages a full LIST of credentials
+ * (see `ClaudeCredentialsManager`) and is owner-gated, since the list surfaces account emails.
  */
-export function CredentialsSection({ orgId }: { orgId: string }) {
+export function CredentialsSection({
+  orgId,
+  role,
+}: {
+  orgId: string;
+  role: string;
+}) {
   const { data: presence, isLoading, isError } = useOrgCredentials(orgId);
   const save = useSaveCredentials(orgId);
   const onSave = (body: SaveCredentialsBody) => save.mutateAsync(body);
+  const isOwner = role === "owner";
 
   if (isLoading) {
     return <p className="text-[13px] text-faint">Loading credentials…</p>;
@@ -176,51 +199,7 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
         hint="Subscription tokens for the agents that drive the build. The engine runs subscription-only — an API key won’t authorize it."
       />
 
-      <CredentialCard
-        icon={<Sparkles size={15} />}
-        iconAccent
-        title="Claude subscription"
-        sub="Primary coding engine · required"
-        present={presence.engineAuthSet}
-        pill={
-          presence.engineAuthSet
-            ? { label: "set", tone: "dim" }
-            : { label: "not set", tone: "faint" }
-        }
-        modes={[
-          {
-            id: "claude-sub",
-            fieldLabel: "New Claude OAuth token",
-            placeholder: "sk-ant-oat01-…",
-            maskedPrefix: "sk-ant-oat-",
-            tag: "subscription · engine",
-            help: (
-              <HelpBlock>
-                <p>
-                  Generate a long-lived token from a Claude <strong>Pro</strong>{" "}
-                  or <strong>Max</strong> plan. With the Claude Code CLI
-                  installed, run:
-                </p>
-                <CommandLine cmd="claude setup-token" />
-                <p>
-                  Sign in when prompted, then paste the{" "}
-                  <Code>sk-ant-oat01-…</Code> token it prints.
-                </p>
-              </HelpBlock>
-            ),
-            validate: (v) => {
-              if (!v.startsWith("sk-ant-oat"))
-                return {
-                  ok: false,
-                  reason: "Subscription tokens start with sk-ant-oat.",
-                };
-              return { ok: true, reason: "Format looks valid." };
-            },
-            buildBody: (v) => ({ claudeOauthToken: v }),
-          },
-        ]}
-        onSave={onSave}
-      />
+      <ClaudeCredentialsManager orgId={orgId} isOwner={isOwner} />
 
       <CredentialCard
         icon={<Terminal size={15} />}
@@ -333,6 +312,553 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
         onSave={onSave}
       />
     </>
+  );
+}
+
+// ── Claude credentials manager ───────────────────────────────────────────────────────────────────
+/**
+ * The Claude coding-engine auth surface — unlike the other cards here, this manages a LIST of
+ * credentials (personal logins + setup-tokens) with one selected to fund the org's turns. Owner-gated:
+ * non-owners see the list read-only with no add/select/delete affordances.
+ */
+function ClaudeCredentialsManager({
+  orgId,
+  isOwner,
+}: {
+  orgId: string;
+  isOwner: boolean;
+}) {
+  const {
+    data: credentials,
+    isLoading,
+    isError,
+  } = useClaudeCredentials(orgId, isOwner);
+  const select = useSelectClaudeCredential(orgId);
+  const del = useDeleteClaudeCredential(orgId);
+  const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
+
+  async function handleDelete(id: string) {
+    setDeleteErrors((prev) => {
+      const { [id]: _drop, ...rest } = prev;
+      return rest;
+    });
+    try {
+      await del.mutateAsync(id);
+    } catch (e) {
+      setDeleteErrors((prev) => ({
+        ...prev,
+        [id]: (e as Error)?.message || "Could not delete credential.",
+      }));
+    }
+  }
+
+  // The list endpoint is owner-only server-side (rows carry account emails), so a member can't view it —
+  // show a banner explaining that rather than an empty/errored list.
+  if (!isOwner) {
+    return (
+      <div className="mb-3.5">
+        <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2.5 text-[11.5px] text-faint">
+          <Lock size={13} />
+          Only organization owners can view and manage Claude credentials.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-3.5">
+      {isLoading ? (
+        <p className="text-[13px] text-faint">Loading Claude credentials…</p>
+      ) : isError || !credentials ? (
+        <p className="text-[13px] text-red">
+          Couldn’t load Claude credentials.
+        </p>
+      ) : credentials.length === 0 ? (
+        <p className="rounded-lg border border-border bg-surface-2 px-3.5 py-3 text-[12px] text-faint">
+          No Claude credentials yet — add one below.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {credentials.map((cred) => (
+            <ClaudeCredentialRow
+              key={cred.id}
+              cred={cred}
+              isOwner={isOwner}
+              onSelect={() => select.mutate(cred.id)}
+              selectPending={select.isPending}
+              onDelete={() => handleDelete(cred.id)}
+              deletePending={del.isPending}
+              deleteError={deleteErrors[cred.id]}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-col gap-3">
+        <AddClaudePersonalCard orgId={orgId} />
+        <AddClaudeSetupTokenCard orgId={orgId} />
+      </div>
+
+      <p className="mt-4 border-t border-border pt-3 text-[11px] leading-relaxed text-faint">
+        <strong className="font-semibold text-dim">Setup-tokens</strong> don’t
+        expire and are never refreshed — rotate them manually when needed.{" "}
+        <strong className="font-semibold text-dim">Personal logins</strong>{" "}
+        are refreshed automatically in the background as long as they stay
+        connected.
+      </p>
+    </div>
+  );
+}
+
+/** One credential row: selected radio, label/badge/status, meta line, and (owner-only) delete. */
+function ClaudeCredentialRow({
+  cred,
+  isOwner,
+  onSelect,
+  selectPending,
+  onDelete,
+  deletePending,
+  deleteError,
+}: {
+  cred: ClaudeCredential;
+  isOwner: boolean;
+  onSelect: () => void;
+  selectPending: boolean;
+  onDelete: () => void;
+  deletePending: boolean;
+  deleteError?: string;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  function handleDeleteClick() {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setConfirmDelete(false);
+    onDelete();
+  }
+
+  return (
+    <div
+      className="flex items-start gap-3.5 rounded-lg border p-3.5"
+      style={
+        cred.isSelected
+          ? {
+              background: "var(--accent-soft)",
+              borderColor: "var(--accent-line)",
+              boxShadow: "inset 0 0 0 1px var(--accent-line)",
+            }
+          : { background: "var(--surface)", borderColor: "var(--border)" }
+      }
+    >
+      <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
+        {isOwner && !cred.isSelected ? (
+          <button
+            type="button"
+            aria-label="Select credential"
+            onClick={onSelect}
+            disabled={selectPending}
+            className="flex h-4 w-4 items-center justify-center rounded-full border-[1.6px] border-border-2 bg-surface transition disabled:opacity-60"
+          />
+        ) : (
+          <span
+            className="flex h-4 w-4 items-center justify-center rounded-full border-[1.6px]"
+            style={{
+              borderColor: cred.isSelected ? "var(--accent)" : "var(--border-2)",
+              background: "var(--surface)",
+            }}
+          >
+            {cred.isSelected ? (
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ background: "var(--accent)" }}
+              />
+            ) : null}
+          </span>
+        )}
+        {cred.isSelected ? (
+          <span className="whitespace-nowrap font-mono text-[8.5px] uppercase tracking-[0.04em] text-accent">
+            selected
+          </span>
+        ) : null}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13.5px] font-semibold text-text">
+            {cred.label}
+          </span>
+          <ClaudeKindBadge kind={cred.kind} />
+          <ClaudeStatusChip status={cred.status} />
+        </div>
+        <div className="mt-1 text-[11.5px] text-faint">
+          {claudeCredentialMeta(cred)}
+        </div>
+        {deleteError ? (
+          <p className="mt-1.5 text-[11px] text-red">{deleteError}</p>
+        ) : null}
+      </div>
+
+      {isOwner ? (
+        <button
+          type="button"
+          aria-label="Delete credential"
+          onClick={handleDeleteClick}
+          disabled={deletePending}
+          className="flex h-[30px] shrink-0 items-center justify-center rounded-md border border-border-2 px-2 text-faint transition hover:border-red hover:bg-red-soft hover:text-red disabled:opacity-60"
+        >
+          {confirmDelete ? (
+            <span className="text-[10.5px] font-semibold text-red">
+              Confirm?
+            </span>
+          ) : (
+            <Trash2 size={14} />
+          )}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Badge distinguishing a personal OAuth login from a long-lived setup-token. */
+function ClaudeKindBadge({ kind }: { kind: ClaudeCredentialKind }) {
+  const isPersonal = kind === "personal";
+  return (
+    <span
+      className="inline-flex items-center rounded-[4px] border px-1.5 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.03em]"
+      style={
+        isPersonal
+          ? {
+              color: "var(--blue)",
+              background: "var(--blue-soft)",
+              borderColor: "color-mix(in srgb, var(--blue) 30%, transparent)",
+            }
+          : {
+              color: "var(--slate)",
+              background: "var(--slate-soft)",
+              borderColor: "var(--slate-line)",
+            }
+      }
+    >
+      {isPersonal ? "Personal" : "Setup-token"}
+    </span>
+  );
+}
+
+/** Status chip: active (green), needs re-auth (red, warns to reconnect), or error (red). */
+function ClaudeStatusChip({
+  status,
+}: {
+  status: ClaudeCredentialStatus | string;
+}) {
+  if (status === "active") {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-medium"
+        style={{
+          color: "var(--green)",
+          background: "var(--green-soft)",
+          borderColor: "color-mix(in srgb, var(--green) 32%, transparent)",
+        }}
+      >
+        <span
+          className="h-1.5 w-1.5 rounded-full"
+          style={{ background: "var(--green)" }}
+        />
+        Active
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-medium"
+      style={{
+        color: "var(--red)",
+        background: "var(--red-soft)",
+        borderColor: "color-mix(in srgb, var(--red) 35%, transparent)",
+      }}
+    >
+      {status === "needs_reauth" ? <AlertCircle size={11} /> : null}
+      {status === "needs_reauth" ? "Needs re-auth" : "Error"}
+    </span>
+  );
+}
+
+/** The row's secondary line: expiry + account for a personal login, or a masked placeholder for a token. */
+function claudeCredentialMeta(cred: ClaudeCredential): string {
+  if (cred.kind === "setup_token") {
+    return "sk-ant-oat01-••••••••••••";
+  }
+  const emailSuffix = cred.accountEmail ? ` · ${cred.accountEmail}` : "";
+  const isExpired =
+    cred.status === "needs_reauth" ||
+    (cred.expiresAt !== null && cred.expiresAt <= Date.now());
+  if (isExpired) {
+    const when = cred.expiresAt !== null ? formatClaudeDate(cred.expiresAt) : null;
+    return `expired${when ? ` ${when}` : ""}${emailSuffix}`;
+  }
+  if (cred.expiresAt === null) {
+    return `access token${emailSuffix}`;
+  }
+  return `access token expires in ${formatClaudeDuration(cred.expiresAt - Date.now())}${emailSuffix}`;
+}
+
+function formatClaudeDate(epochMs: number): string {
+  return new Date(epochMs).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatClaudeDuration(ms: number): string {
+  const minutes = Math.max(Math.round(ms / 60_000), 1);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+/** Step 1 mints a Claude login URL and opens it; step 2 exchanges the pasted `code#state` for a credential. */
+function AddClaudePersonalCard({ orgId }: { orgId: string }) {
+  const createAuthorizeUrl = useCreateClaudeAuthorizeUrl(orgId);
+  const addCredential = useAddClaudeCredential(orgId);
+  const [label, setLabel] = useState("");
+  const [pending, setPending] = useState<{ state: string; label: string } | null>(
+    null,
+  );
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+
+  async function openLogin() {
+    const trimmedLabel = label.trim();
+    if (!trimmedLabel) {
+      setError("Enter a label first.");
+      return;
+    }
+    setError("");
+    try {
+      const result = await createAuthorizeUrl.mutateAsync({
+        label: trimmedLabel,
+      });
+      window.open(result.url, "_blank", "noopener,noreferrer");
+      setPending({ state: result.state, label: result.label });
+    } catch (e) {
+      setError((e as Error)?.message || "Could not start Claude login.");
+    }
+  }
+
+  async function submitCode() {
+    if (!pending) return;
+    const trimmedCode = code.trim();
+    if (!trimmedCode) {
+      setError("Paste the code from Claude.");
+      return;
+    }
+    setError("");
+    try {
+      await addCredential.mutateAsync({
+        code: trimmedCode,
+        state: pending.state,
+        label: pending.label,
+      });
+      setPending(null);
+      setCode("");
+      setLabel("");
+    } catch (e) {
+      setError((e as Error)?.message || "That code looks expired or invalid.");
+    }
+  }
+
+  return (
+    <div
+      className="rounded-lg border p-[18px]"
+      style={{
+        borderColor: "var(--accent-line)",
+        boxShadow: "0 6px 22px var(--accent-soft)",
+      }}
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <span
+          className="flex h-[26px] w-[26px] items-center justify-center rounded-md border"
+          style={{
+            background: "var(--accent-soft)",
+            borderColor: "var(--accent-line)",
+            color: "var(--accent)",
+          }}
+        >
+          <Sparkles size={14} />
+        </span>
+        <span className="text-[13.5px] font-semibold text-text">
+          Add personal login
+        </span>
+      </div>
+
+      <div className="mt-4 flex gap-3">
+        <StepNumber n={1} />
+        <div className="min-w-0 flex-1">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-dim">
+            Log in with Claude
+          </p>
+          <div className="mb-2.5">
+            <label className="mb-1.5 block text-[12px] font-medium text-dim">
+              Label
+            </label>
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              disabled={Boolean(pending)}
+              type="text"
+              placeholder="e.g. Dennis — MacBook"
+              className="w-full rounded-md border border-border-2 bg-surface-2 px-3 py-2 text-[12.5px] text-text outline-none placeholder:text-faint disabled:opacity-60"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={openLogin}
+            disabled={createAuthorizeUrl.isPending || Boolean(pending)}
+            className="inline-flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[12px] font-semibold text-accent transition hover:bg-accent-soft disabled:opacity-60"
+            style={{ borderColor: "var(--accent-line)" }}
+          >
+            {createAuthorizeUrl.isPending ? "Opening…" : "Open Claude login"}
+            <ExternalLink size={12} />
+          </button>
+          <p className="mt-2 text-[11px] leading-relaxed text-faint">
+            Opens Claude in a new tab to log in with your subscription.
+          </p>
+        </div>
+      </div>
+
+      {pending ? (
+        <div className="mt-4 flex gap-3">
+          <StepNumber n={2} />
+          <div className="min-w-0 flex-1">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-dim">
+              Paste the code back here
+            </p>
+            <div className="mb-3">
+              <label className="mb-1.5 block text-[12px] font-medium text-dim">
+                Paste the code from Claude
+              </label>
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                type="text"
+                placeholder="code#state"
+                className="w-full rounded-md border border-border-2 bg-surface-2 px-3 py-2 font-mono text-[12px] text-text outline-none placeholder:text-faint"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={submitCode}
+              disabled={addCredential.isPending}
+              className="rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
+              style={{ background: "var(--accent)" }}
+            >
+              {addCredential.isPending ? "Adding…" : "Add credential"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {error ? <p className="mt-3 text-[11.5px] text-red">{error}</p> : null}
+    </div>
+  );
+}
+
+/** A single "step N" pill used by the personal-login card's two-step flow. */
+function StepNumber({ n }: { n: number }) {
+  return (
+    <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border-2 bg-surface-3 font-mono text-[10px] font-semibold text-dim">
+      {n}
+    </span>
+  );
+}
+
+/** Compact inline form for a long-lived setup-token, generated via `claude setup-token`. */
+function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
+  const addCredential = useAddClaudeCredential(orgId);
+  const [label, setLabel] = useState("");
+  const [token, setToken] = useState("");
+  const [error, setError] = useState("");
+
+  async function submit() {
+    const trimmedLabel = label.trim();
+    const trimmedToken = token.trim();
+    if (!trimmedLabel) {
+      setError("Enter a label.");
+      return;
+    }
+    if (!trimmedToken.startsWith("sk-ant-oat")) {
+      setError("Subscription tokens start with sk-ant-oat.");
+      return;
+    }
+    setError("");
+    try {
+      await addCredential.mutateAsync({
+        label: trimmedLabel,
+        setupToken: trimmedToken,
+      });
+      setLabel("");
+      setToken("");
+    } catch (e) {
+      setError((e as Error)?.message || "Could not add credential.");
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border p-[18px]">
+      <div className="mb-1 flex items-center gap-2">
+        <span className="flex h-[26px] w-[26px] items-center justify-center rounded-md border border-border-2 bg-surface-3 text-dim">
+          <KeyRound size={13} />
+        </span>
+        <span className="text-[13.5px] font-semibold text-text">
+          Add setup-token
+        </span>
+      </div>
+      <div className="mt-3 flex items-end gap-2.5">
+        <div className="w-[150px] shrink-0">
+          <label className="mb-1.5 block text-[12px] font-medium text-dim">
+            Label
+          </label>
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            type="text"
+            placeholder="e.g. CI pipeline"
+            className="w-full rounded-md border border-border-2 bg-surface-2 px-3 py-2 text-[12.5px] text-text outline-none placeholder:text-faint"
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <label className="mb-1.5 block text-[12px] font-medium text-dim">
+            Token
+          </label>
+          <input
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            type="text"
+            placeholder="sk-ant-oat01-…"
+            className="w-full rounded-md border border-border-2 bg-surface-2 px-3 py-2 font-mono text-[12px] text-text outline-none placeholder:text-faint"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={addCredential.isPending}
+          className="shrink-0 rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
+          style={{ background: "var(--accent)" }}
+        >
+          {addCredential.isPending ? "Adding…" : "Add"}
+        </button>
+      </div>
+      {error ? (
+        <p className="mt-2.5 text-[11.5px] text-red">{error}</p>
+      ) : null}
+      <p className="mt-2.5 text-[11px] leading-relaxed text-faint">
+        Generate with <Code>claude setup-token</Code> on a Pro or Max plan.
+      </p>
+    </div>
   );
 }
 
