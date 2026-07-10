@@ -803,7 +803,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
   }
 
-  it('retractShip flips awaiting_ship_review -> planning and neutralizes the durable ship card', async () => {
+  it('retractShip flips awaiting_ship_review -> amending and neutralizes the durable ship card', async () => {
     const { jobId } = await seedShipParkedJob();
     await seedShipCardRow(jobId);
 
@@ -811,7 +811,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(acted).toBe(true);
 
     const row = await jobs.findOne({ where: { id: jobId } });
-    expect(row?.status).toBe('planning');
+    expect(row?.status).toBe('amending');
     expect(row?.activity).toBe('idle');
     expect(row?.ship_review_approved_at).toBeNull();
 
@@ -830,7 +830,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(await store.retractShip(jobId)).toBe(false);
 
     const row = await jobs.findOne({ where: { id: jobId } });
-    expect(row?.status).toBe('planning'); // unchanged by the no-op second call
+    expect(row?.status).toBe('amending'); // unchanged by the no-op second call
   });
 
   it('retractShip does not act on a job in a DIFFERENT status', async () => {

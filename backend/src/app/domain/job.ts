@@ -33,6 +33,7 @@ const OPERATOR_OWNED_STATUSES = new Set([
   'planning',
   'awaiting_approval',
   'awaiting_ship_review',
+  'amending',
 ]);
 
 /**

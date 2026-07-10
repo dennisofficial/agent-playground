@@ -410,7 +410,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   ask_question: 'Ask the operator a question, optionally with pickable options and a decision class.',
   withdraw_question: 'Withdraw a pending question you no longer need answered.',
   withdraw_plan: 'Withdraw the current proposed plan.',
-  withdraw_ship: 'Withdraw the current ship-review (send the job back to planning).',
+  withdraw_ship: 'Withdraw the current ship-review (move the job to `amending`).',
   set_job_kind: 'Set this job kind (feature, bugfix, or review).',
   create_decision: 'Record a new decision for this job.',
   update_decision: 'Update an existing decision by id.',

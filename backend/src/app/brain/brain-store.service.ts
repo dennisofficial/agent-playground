@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, MoreThan, Not, Repository } from 'typeorm';
+import { DataSource, In, IsNull, MoreThan, Not, Repository } from 'typeorm';
 import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type {
@@ -1418,12 +1418,13 @@ export class BrainStoreService {
   }
 
   /**
-   * If this thread is already being scoped (`status='planning'`), return its id — so a multi-turn grill
-   * continues ONE build rather than re-anchoring per message. Null otherwise.
+   * If this thread is already being SHAPED — `status='planning'` (upfront grill) OR `status='amending'`
+   * (post-ship-retract) — return its id, so a multi-turn grill/amendment continues ONE build rather than
+   * re-anchoring per message. Null otherwise.
    */
   async openJobOnThread(jobId: string): Promise<string | null> {
     const row = await this.jobs.findOne({
-      where: { id: jobId, status: 'planning' },
+      where: { id: jobId, status: In(['planning', 'amending']) },
     });
     return row?.id ?? null;
   }
