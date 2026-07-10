@@ -58,11 +58,32 @@ describe('GitIdentityService.resolve', () => {
     expect(github.getAuthenticatedUser).not.toHaveBeenCalled();
   });
 
-  it('returns undefined when getAuthenticatedUser returns null, and caches the miss', async () => {
+  it('returns undefined when getAuthenticatedUser returns null, without caching the miss', async () => {
     const github = fakeGithub(null);
     const svc = new GitIdentityService(github);
     expect(await svc.resolve('TOK')).toBeUndefined();
     expect(await svc.resolve('TOK')).toBeUndefined();
-    expect(github.getAuthenticatedUser).toHaveBeenCalledTimes(1);
+    expect(github.getAuthenticatedUser).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache a thrown lookup failure, so a later resolve can recover', async () => {
+    const getAuthenticatedUser = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({
+        login: 'octocat',
+        id: 583231,
+        name: 'The Octocat',
+      });
+    const svc = new GitIdentityService({
+      getAuthenticatedUser,
+    } as unknown as GithubPrService);
+
+    expect(await svc.resolve('TOK')).toBeUndefined();
+    expect(await svc.resolve('TOK')).toEqual({
+      name: 'The Octocat',
+      email: '583231+octocat@users.noreply.github.com',
+    });
+    expect(getAuthenticatedUser).toHaveBeenCalledTimes(2);
   });
 });
