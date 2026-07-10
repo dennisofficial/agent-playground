@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, MoreThan, Not, Repository } from 'typeorm';
-import type { Decision, Job, JobKind, JobStatus } from '../domain';
+import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type {
   WebConventionEditProposalCard,
@@ -21,6 +21,7 @@ import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
+  CodexReviewEntity,
   DecisionRecordEntity,
   MessageEntity,
   StepEntity,
@@ -75,6 +76,8 @@ export class BrainStoreService {
     private readonly steps: Repository<StepEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimuli: Repository<StimulusEntity>,
+    @InjectRepository(CodexReviewEntity, DB_CONNECTION)
+    private readonly reviews: Repository<CodexReviewEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly titler: JobTitler,
@@ -1318,22 +1321,42 @@ export class BrainStoreService {
   }
 
   /**
-   * Mark whether a live conversational (brain) turn is streaming for this thread. Drives the durable
-   * `turn_active` axis of the "needs you" signal (see `deriveNeedsYou`). Best-effort — a write failure
-   * here must never break the turn itself (the caller swallows errors).
+   * Set the job's `activity` axis (see {@link JobActivity} / `deriveNeedsYou`). Best-effort — a write
+   * failure here must never break the turn itself (the caller swallows errors).
    */
-  async setTurnActive(jobId: string, active: boolean): Promise<void> {
-    await this.jobs.update({ id: jobId }, { turn_active: active });
+  async setActivity(jobId: string, activity: JobActivity): Promise<void> {
+    await this.jobs.update({ id: jobId }, { activity });
+  }
+
+  /**
+   * A conversational turn is ending: settle `activity` to `idle` UNLESS a Codex plan review is still
+   * running for this job (a `review_plan` review can OUTLIVE the turn it nested inside — the durable
+   * `codex_reviews` row is the source of truth), in which case it stays `plan_review` so the dot stays
+   * suppressed until the review itself finalizes. Best-effort — the caller swallows errors.
+   */
+  async endTurnActivity(jobId: string): Promise<void> {
+    const reviewing = await this.reviews.exists({
+      where: { job_id: jobId, status: 'running' },
+    });
+    await this.jobs.update(
+      { id: jobId },
+      { activity: reviewing ? 'plan_review' : 'idle' },
+    );
   }
 
   /**
    * Mark whether an unresolved turn-failure operator box is outstanding for this thread — the durable
    * `halted` axis of the "needs you" signal (see `deriveNeedsYou`). Set when `saySystemOperator` posts a
-   * turn-failure box, cleared when the next turn starts. Best-effort — a write failure must never break
-   * the turn (the caller swallows errors). Deliberately NOT reset on boot (unlike `turn_active`).
+   * turn-failure box, cleared when the next turn starts. A halt means the system STOPPED, so setting it
+   * also clears `activity` to `idle` (a stale `turn`/`build` must not mask the halt); clearing it (a fresh
+   * turn is starting) leaves `activity` untouched — the caller sets it to `turn`. Best-effort — a write
+   * failure must never break the turn (the caller swallows errors). NOT reset on boot (unlike `activity`).
    */
   async setHalted(jobId: string, halted: boolean): Promise<void> {
-    await this.jobs.update({ id: jobId }, { halted });
+    await this.jobs.update(
+      { id: jobId },
+      halted ? { halted: true, activity: 'idle' } : { halted: false },
+    );
   }
 
   /**
@@ -1351,28 +1374,28 @@ export class BrainStoreService {
   }
 
   /**
-   * The threads with a `turn_active` flag still set — i.e. a conversational turn was streaming when the
-   * process died. Captured on boot BEFORE {@link resetAllTurnActive} clears the flags, so crash recovery
+   * The threads whose `activity` is still `turn` — i.e. a conversational turn was streaming when the
+   * process died. Captured on boot BEFORE {@link resetAllActivity} clears the flags, so crash recovery
    * knows which threads have a possibly-orphaned engine still finishing in the container (to watch them to
    * completion). Returns thread ids.
    */
   async threadsWithActiveTurn(): Promise<string[]> {
     const rows = await this.jobs.find({
-      where: { turn_active: true },
+      where: { activity: 'turn' },
       select: { id: true },
     });
     return rows.map((r) => r.id);
   }
 
   /**
-   * Boot reconciliation: no conversational turn can survive a process restart, so clear any `turn_active`
-   * left set by a crash mid-turn — otherwise the thread would read as "working" forever and never show
+   * Boot reconciliation: no in-flight system work can survive a process restart, so reset any non-`idle`
+   * `activity` left set by a crash — otherwise the thread would read as "working" forever and never show
    * the "needs you" dot. Returns the number of rows reset.
    */
-  async resetAllTurnActive(): Promise<number> {
+  async resetAllActivity(): Promise<number> {
     const res = await this.jobs.update(
-      { turn_active: true },
-      { turn_active: false },
+      { activity: Not('idle') },
+      { activity: 'idle' },
     );
     return res.affected ?? 0;
   }
@@ -1763,6 +1786,7 @@ function toThread(row: JobEntity): Job {
     baseBranch: row.base_branch,
     kind: row.kind as JobKind | null,
     status: row.status as Job['status'],
+    activity: row.activity,
     halt: row.halt ?? null,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,

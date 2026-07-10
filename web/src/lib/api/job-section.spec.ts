@@ -9,6 +9,7 @@ function makeThread(overrides: Partial<InboxThread> = {}): InboxThread {
     title: "A thread",
     kind: "feat",
     status: "planning",
+    activity: "idle",
     needsYou: false,
     halted: false,
     createdAt: "2026-01-01T00:00:00.000Z",

@@ -609,14 +609,15 @@ export class WebSurfaceController {
         kind: t.kind, // job kind ('feature'/'bugfix'/'onboarding'/'event'/'review'/null) — drives the web badge
         status: t.status,
         halt: t.halt ?? null,
-        turnActive: t.turn_active,
+        activity: t.activity,
         halted: t.halted,
-        needsYou: deriveNeedsYou(
-          t.status,
-          t.turn_active,
-          t.open_question_count > 0,
-          t.halted || t.halt != null,
-        ),
+        needsYou: deriveNeedsYou({
+          status: t.status,
+          activity: t.activity,
+          openQuestion: t.open_question_count > 0,
+          awaitingSecret: t.awaiting_secret_id != null,
+          halted: t.halted || t.halt != null,
+        }),
         createdAt: t.created_at,
         // The observed PR (null until one exists) — drives the sidebar's PR-status glyph. `mergeable`
         // ('dirty' = conflict) refines the open state; `state` gives merged/closed.
@@ -685,14 +686,15 @@ export class WebSurfaceController {
       origin: t.origin,
       status: t.status,
       halt: t.halt ?? null,
-      turnActive: t.turn_active,
+      activity: t.activity,
       halted: t.halted,
-      needsYou: deriveNeedsYou(
-        t.status,
-        t.turn_active,
-        t.open_question_count > 0,
-        t.halted || t.halt != null,
-      ),
+      needsYou: deriveNeedsYou({
+        status: t.status,
+        activity: t.activity,
+        openQuestion: t.open_question_count > 0,
+        awaitingSecret: t.awaiting_secret_id != null,
+        halted: t.halted || t.halt != null,
+      }),
       baseBranch: t.base_branch,
       createdAt: t.created_at,
     }));

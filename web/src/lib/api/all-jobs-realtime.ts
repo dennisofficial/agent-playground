@@ -7,7 +7,7 @@ import { qk } from "./query-keys";
 import { subscribeSse, type SseHandle } from "./sse-manager";
 import { uiStatus, type InboxThread } from "./inbox";
 import { toJobKind } from "./status";
-import type { WireJobKind, WireJobHalt, PrState, CiStatus } from "./types";
+import type { WireJobKind, WireJobHalt, WireJobActivity, PrState, CiStatus } from "./types";
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
@@ -24,6 +24,9 @@ interface RealtimeRow {
   kind?: string | null;
   status: string;
   needsYou: boolean;
+  /** The orthogonal "system is working" axis — replaces the old `turnActive`/`reviewRunning` inputs.
+   *  `needsYou` already folds it in server-side; retained on the row for an optional live label. */
+  activity: WireJobActivity;
   /** An unresolved turn-failure box is outstanding — drives the sidebar failed-style ✕ glyph. */
   halted: boolean;
   orgId: string;
@@ -113,6 +116,7 @@ export function useAllJobsRealtime(): void {
           title: row.title?.trim() || next[idx].title,
           kind: row.kind ? toJobKind(row.kind as WireJobKind) : next[idx].kind,
           status: nextStatus,
+          activity: row.activity ?? next[idx].activity,
           needsYou: row.needsYou,
           halted: row.halted,
           // The flat WAL row carries no PR url — preserve the enriched one from the fetched row so a

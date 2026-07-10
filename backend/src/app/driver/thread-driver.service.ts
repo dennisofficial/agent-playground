@@ -769,6 +769,8 @@ export class ThreadDriver implements JobDispatcher {
       );
       return;
     }
+    // The driver now owns this job's work — mark it building (system-owned; suppresses the needs-you dot).
+    await this.store.setActivity(jobId, 'build').catch(() => undefined);
     // Cap the BUILDER lanes at MAX_SECTIONS, but NEVER drop the master-review thread (it rides on top of the
     // builders and must always run last) — partition by kind, cap the builders, re-append the review last.
     const featureSections = executable.filter((s) => s.kind === 'builder');
@@ -807,6 +809,11 @@ export class ThreadDriver implements JobDispatcher {
           `job=${job.id} lost leadership mid-drive — yielding (a leader will re-drive; job left running)`,
         );
         return;
+      }
+      if (thread.kind === 'master_review') {
+        await this.store
+          .setActivity(job.id, 'master_review')
+          .catch(() => undefined);
       }
       const res = await this.runThread(
         job,
@@ -847,6 +854,8 @@ export class ThreadDriver implements JobDispatcher {
       return;
     }
     await this.finalizeBuild(job, record, route, repo, sandbox);
+    // Build shipped — the system is done working this job; hand it back to idle.
+    await this.store.setActivity(job.id, 'idle').catch(() => undefined);
   }
 
   /**
@@ -3507,4 +3516,3 @@ export function shortReason(err: unknown): string {
     .join(' | ');
   return detail.length > 500 ? `${detail.slice(0, 497)}...` : detail || 'unknown error';
 }
-

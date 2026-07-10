@@ -9,6 +9,7 @@ import type {
   WireJobStatus,
   WireJobKind,
   WireJobHalt,
+  WireJobActivity,
   JobStatus,
   JobKind,
   InboxPr,
@@ -34,6 +35,8 @@ export interface RawInboxThread {
   kind?: string | null;
   /** Raw backend thread status ('open' | 'planning' | … | 'cancelled'). */
   status: string;
+  /** Orthogonal backend activity axis; the server folds this into `needsYou`. */
+  activity: WireJobActivity;
   /** Server-derived: the thread is awaiting the operator (AI idle, not terminal). */
   needsYou: boolean;
   /** An unresolved turn-failure box is outstanding — the sidebar renders the failed-style ✕ glyph
@@ -57,6 +60,8 @@ export interface InboxThread {
   kind: JobKind;
   /** UI status (mapped from the backend status) — drives the status pie. */
   status: JobStatus;
+  /** Backend activity axis, retained so realtime and REST cache rows match the wire contract. */
+  activity: WireJobActivity;
   /** The alert dot: this thread is waiting on you. */
   needsYou: boolean;
   /** A turn-stopping error is outstanding — the sidebar shows the failed ✕ glyph over the status pie. */
@@ -95,6 +100,7 @@ export function normalize(r: RawInboxThread): InboxThread {
     title: r.title?.trim() || "Untitled thread",
     kind: deriveInboxKind(r),
     status: uiStatus(r.status, r.origin),
+    activity: r.activity ?? "idle",
     needsYou: r.needsYou,
     halted: r.halted ?? false,
     createdAt: r.createdAt,

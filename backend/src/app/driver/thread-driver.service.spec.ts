@@ -102,8 +102,12 @@ function makeStore(state: StoreState): {
     setJobStatus: vi.fn(async (_id: string, status: Job['status']) => {
       state.job.status = status;
     }),
+    setActivity: vi.fn(async (_id: string, activity: Job['activity']) => {
+      state.job.activity = activity;
+    }),
     setJobHalt: vi.fn(async (_id: string, halt: Job['halt']) => {
       state.job.halt = halt;
+      state.job.activity = 'idle';
     }),
     clearJobHalt: vi.fn(async (_id: string) => {
       state.job.halt = null;
@@ -114,11 +118,13 @@ function makeStore(state: StoreState): {
     setPrReady: vi.fn(async (_id: string, prUrl: string) => {
       state.job.prUrl = prUrl;
       state.job.status = 'done';
+      state.job.activity = 'idle';
     }),
     // ── ship-review gate fakes ───────────────────────────────────────────────────────────────────────
     parkForShipReview: vi.fn(async (_id: string) => {
       if (state.job.status !== 'running') return false;
       state.job.status = 'awaiting_ship_review';
+      state.job.activity = 'idle';
       return true;
     }),
     approveShip: vi.fn(async (_id: string) => {
@@ -706,6 +712,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     baseBranch: null,
     kind: 'feature',
     status: 'running',
+    activity: 'build',
     halt: null,
     decisionRecordId: 'dr-1',
     featureBranch: null,

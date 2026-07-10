@@ -113,10 +113,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     threadTicketId: vi.fn().mockResolvedValue(null),
     // ADR-0005 direct-build live-verification verdict (persisted on both pass + refusal paths).
     recordDirectBuildVerification: vi.fn().mockResolvedValue(undefined),
-    // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
-    setTurnActive: vi.fn().mockResolvedValue(undefined),
+    // The "needs you" activity axis is best-effort; the manager brackets every chat turn with it.
+    setActivity: vi.fn().mockResolvedValue(undefined),
+    endTurnActivity: vi.fn().mockResolvedValue(undefined),
     setHalted: vi.fn().mockResolvedValue(undefined),
-    resetAllTurnActive: vi.fn().mockResolvedValue(0),
+    resetAllActivity: vi.fn().mockResolvedValue(0),
   } as unknown as BrainStoreService;
 
   const mockDriverStore = {
@@ -288,6 +289,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockConfigStore.upsertMount as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+    // Activity-axis writers are best-effort promises (resetAllMocks wiped the inline resolves); the
+    // review_plan handler re-asserts `turn` after the review, so setActivity must resolve.
+    (mockStore.setActivity as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.endTurnActivity as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.setHalted as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.resetAllActivity as ReturnType<typeof vi.fn>).mockResolvedValue(0);
 
     // By default: no existing open job on the thread → openJob creates a fresh one.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -2109,7 +2117,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       getSecretCard: vi.fn().mockResolvedValue(null),
       markSecretDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
-      setTurnActive: vi.fn().mockResolvedValue(undefined),
+      setActivity: vi.fn().mockResolvedValue(undefined),
+      endTurnActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
@@ -2938,7 +2947,8 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       getSecretCard: vi.fn().mockResolvedValue(null),
       markSecretDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
-      setTurnActive: vi.fn().mockResolvedValue(undefined),
+      setActivity: vi.fn().mockResolvedValue(undefined),
+      endTurnActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
       ...storeOverrides,
     } as unknown as BrainStoreService;
@@ -3079,7 +3089,8 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
   } = {}) {
     const store = {
       loadJob: overrides.loadJob ?? vi.fn().mockResolvedValue(runningJob),
-      setTurnActive: vi.fn().mockResolvedValue(undefined),
+      setActivity: vi.fn().mockResolvedValue(undefined),
+      endTurnActivity: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox:
