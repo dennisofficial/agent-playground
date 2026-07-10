@@ -73,6 +73,7 @@ import {
 } from '../driver/job-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { BuildShipService } from '../driver/build-ship.service';
+import { BrainGateway } from '../brain-gateway';
 import { threadDirName } from '../driver/thread-dir-name';
 import { Agent, PromptService } from '../prompt-kit';
 import { decisionsBlock, shipOpenPrBody } from '../prompt-kit';
@@ -152,6 +153,7 @@ import type {
   EngineRunResult,
 } from '../engine/engine.types';
 import type { EngineHomeKey } from '../engine/engine-home';
+import { threadKindSpec } from '../thread-kind';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import type {
@@ -368,6 +370,11 @@ export class AgentSessionManager
     // demote). @Optional matching this constructor's convention — always present in prod (global
     // ScheduleModule); unit tests never promote, so the sweep (and this registry) is never touched.
     @Optional() private readonly scheduler?: SchedulerRegistry,
+    // The neutral driver→brain seam: this service registers itself into it on bootstrap so the driver can
+    // reach these methods (openPrAtShip + the wakes) WITHOUT construct-depending on the brain (which would
+    // deadlock DI — the brain constructs the driver). @Optional matching this constructor's convention —
+    // the @Global BrainGatewayModule supplies it live; unit tests that never boot the seam omit it.
+    @Optional() private readonly brainGateway?: BrainGateway,
   ) {}
 
   /**
@@ -410,6 +417,11 @@ export class AgentSessionManager
    * instance is already leader.
    */
   onApplicationBootstrap(): void {
+    // Register THIS brain as the handler behind the neutral driver→brain gateway, so the driver's
+    // openPrAtShip / thread-halt / thread-done / provisioning-failure calls forward here — without the
+    // driver construct-depending on the brain (which would deadlock DI).
+    this.brainGateway?.bind(this);
+
     // Register the two input-accepting thread transports on the shared send seam, so a generic caller can
     // `postToThread(lane, ctx, message)` without knowing the kind. Delivery is UNCHANGED — the seam just
     // routes to these existing paths (see `ThreadInputService`).
@@ -2096,6 +2108,9 @@ export class AgentSessionManager
       ...(grantedSkills && grantedSkills.size > 0 ? { grantedSkills: Array.from(grantedSkills) } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
+      ...(threadKindSpec('main').reasoningEffort
+        ? { modelReasoningEffort: threadKindSpec('main').reasoningEffort }
+        : {}),
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       steerable: true, // streaming-input mode: operator messages steer this turn mid-flight (priority:'now')
       ...(sessionId ? { sessionId } : {}),
@@ -2807,8 +2822,8 @@ export class AgentSessionManager
         };
       },
 
-      // Retract the ship-review gate (READY TO SHIP) back to planning — the tool sibling of the manual
-      // "Back to building" click. Calls the SAME `DriverStoreService.retractShip` CAS transition + card
+      // Retract the ship-review gate (READY TO SHIP) to `amending` — the tool sibling of the manual
+      // "Amend build" click. Calls the SAME `DriverStoreService.retractShip` CAS transition + card
       // neutralization the click uses (already injected here as `driverStore` — no ThreadDriver import
       // needed), so there is one authoritative retract regardless of who triggers it.
       withdraw_ship: async (args) => {
@@ -2823,12 +2838,12 @@ export class AgentSessionManager
         }
         await this.store.appendAtlasMessage(
           stimulus.jobId,
-          `↩︎ Ship-review retracted — back to planning for changes${reason ? `: ${reason}` : ''}.`,
+          `↩︎ Ship-review retracted — amending the build${reason ? `: ${reason}` : ''}.`,
         );
         return {
           ok: true,
           message:
-            'Ship-review retracted — the job is back in planning. Do the follow-up work; the ship gate ' +
+            'Ship-review retracted — the job is now **amending**. Do the follow-up work; the ship gate ' +
             're-arms automatically once it completes.',
         };
       },
@@ -3840,6 +3855,7 @@ export class AgentSessionManager
       withdraw_file_request: this.buildWithdrawFileRequestTool(stimulus),
       write_workspace_config: this.buildWriteWorkspaceConfigTool(stimulus),
       write_setup_script: this.buildWriteSetupScriptTool(stimulus),
+      read_setup_script: this.buildReadSetupScriptTool(stimulus),
       derive_secret: this.buildDeriveSecretTool(stimulus),
       reset_sandbox: this.buildResetSandboxTool(stimulus),
       // Skills + MCP servers are Workspace Profile dimensions like mounts/setup — maintainable INCREMENTALLY
@@ -4308,6 +4324,25 @@ export class AgentSessionManager
         return { ok: true, saved: !!script };
       } catch (err) {
         this.logger.warn(`write_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `read_setup_script()` — return the repo's CURRENT cold-boot setup script (the raw body, not just its
+   * length like the profile snapshot). Read-before-edit for `write_setup_script`, which REPLACES the whole
+   * script: read it here, edit the body, then write the full new script back. Pure read — no mutation, no
+   * system event. org/repo come from the closure (never tool args) — tenant safety. Reuses the same store
+   * (`WorkspaceConfigStore.getSetupScript`) that resolves the script on cold attach.
+   */
+  private buildReadSetupScriptTool(stimulus: ChatStimulus): ToolImpl {
+    return async () => {
+      try {
+        const script = await this.configStore.getSetupScript(stimulus.orgId, stimulus.repoId);
+        return { ok: true, present: script !== null, script };
+      } catch (err) {
+        this.logger.warn(`read_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
@@ -5375,7 +5410,8 @@ export class AgentSessionManager
     if (!existing) return {};
     // Statuses past the approval gate (post-`awaiting_approval`) — never (re)propose over these. A build
     // FAILURE is now the orthogonal `halt` axis (JobStatus has no 'failed'/'paused'); a failed/paused job
-    // keeps its phase (typically 'running'), so it's still caught here.
+    // keeps its phase (typically 'running'), so it's still caught here. `amending` is deliberately NOT
+    // listed — like `planning`, it's a shaping state where a fresh propose_plan is allowed.
     const pastGate: JobStatus[] = ['running', 'awaiting_ship_review', 'done', 'cancelled', 'deleting'];
     if (pastGate.includes(existing.status)) {
       return { refuse: `This job is already '${existing.status}' — can’t (re)propose a plan for it.` };

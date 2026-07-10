@@ -357,8 +357,8 @@ export class DriverStoreService {
     return (res.affected ?? 0) > 0;
   }
 
-  /** Retract the ship-review gate back to planning (Atlas `withdraw_ship` tool OR the manual
-   *  "Back to building" click). CONDITIONAL on `awaiting_ship_review` — single-winner vs a racing
+  /** Retract the ship-review gate back to `amending` (Atlas `withdraw_ship` tool OR the manual
+   *  "Amend build" click). CONDITIONAL on `awaiting_ship_review` — single-winner vs a racing
    *  "Ship it" click; a stale/double retract is a no-op. Does NOT touch `ship_review_approved_at`
    *  (already null here) nor the decision record (the plan was approved — nothing to supersede).
    *  Also neutralizes EVERY still-actionable durable ship card so its inline "Ship it" button can't
@@ -369,7 +369,7 @@ export class DriverStoreService {
         .getRepository(JobEntity)
         .createQueryBuilder()
         .update(JobEntity)
-        .set({ status: 'planning', activity: 'idle' })
+        .set({ status: 'amending', activity: 'idle' })
         .where('id = :jobId', { jobId })
         .andWhere("status = 'awaiting_ship_review'")
         .execute();
@@ -386,7 +386,7 @@ export class DriverStoreService {
           jobId,
           title,
           'retracted',
-          '↩︎ Retracted — back to planning for changes.',
+          '↩︎ Retracted — amending the build.',
         ) as unknown as Record<string, unknown>;
         await messages.save(row);
       }

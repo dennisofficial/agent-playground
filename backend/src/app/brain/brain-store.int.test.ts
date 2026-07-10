@@ -753,6 +753,17 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await jobStatus(dataSource, jobId)).toBe('planning'); // unchanged
   }, 30_000);
 
+  it('openJobOnThread anchors an `amending` job too, not just `planning` — a ship-retract resumes as ONE build', async () => {
+    // Regression: post-withdraw_ship the job sits in `amending`; before this fix openJobOnThread only
+    // recognized `planning`, so the next chat message would re-anchor onto a FRESH job instead of
+    // continuing the amendment on the existing one.
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-amending-it');
+    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'amend me', kind: 'feature' });
+    await dataSource.query(`UPDATE jobs SET status = 'amending' WHERE id = $1`, [jobId]);
+
+    expect(await store.openJobOnThread(jobId)).toBe(jobId);
+  }, 30_000);
+
   it('RACE: withdrawPlan wins over a stale approve — approve(jobId, recId, approvedBy) returns null once withdrawn', async () => {
     const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-race-it');
     const approverId = await seedApprover(dataSource);

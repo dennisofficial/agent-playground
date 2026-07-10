@@ -80,7 +80,7 @@ export const VIEW_PLAN_ACTION_ID = "atlas_approval:view_plan";
  *  plan stage), clicked while the job is `awaiting_ship_review`. POSTs to the SAME `/approve` endpoint with
  *  a `value` of just `{ jobId }` (no decision record — nothing to re-rule, just resume the build). */
 export const SHIP_ACTION_ID = "atlas_approval:ship";
-/** The ship-review gate's manual "Back to building" retract — sends `awaiting_ship_review → planning`
+/** The ship-review gate's manual "Amend build" retract — sends `awaiting_ship_review → amending`
  *  without discarding completed work (mirrors the Atlas `withdraw_ship` tool). POSTs to the SAME
  *  `/approve` endpoint with the ship card's `{ jobId }` value. Must match the backend string in
  *  `approval-blocks.ts`. */
@@ -602,6 +602,13 @@ export interface ServiceInfo {
    * `unknown` (couldn't probe: no running container, null pgid/startedAt, or a transient exec failure).
    */
   status: "running" | "stopped" | "unknown";
+  /** The port the service declared via `atlas-svc run --port` (null = not an HTTP service). */
+  port: number | null;
+  /**
+   * Public HTTPS URL when the service is exposed (has a port, not opted out, running) and the
+   * backend's preview feature is on; otherwise null (feature off, or nothing to expose).
+   */
+  url: string | null;
 }
 
 // ── UI job model ───────────────────────────────────────────────────────────────────────────────
@@ -612,6 +619,7 @@ export type JobStatus =
   | "plan_review"
   | "awaiting_approval"
   | "awaiting_ship_review"
+  | "amending"
   | "done"
   | "triaging"
   | "cancelled"

@@ -2,7 +2,7 @@ import { tmpdir } from 'node:os';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { ModuleRef } from '@nestjs/core';
+import type { BrainGateway } from '../brain-gateway';
 import { EngineAuthError, EngineSessionLimitError } from '../engine';
 import type { EngineRunnerPort, ToolBridgeOptions } from '../engine';
 import {
@@ -916,7 +916,7 @@ function assemble(
   // mid-drive leadership loss (demotion). Mirrors production: `isLeader()` is false while draining.
   const electionState = { draining: false, leader: true };
   const judge = opts.judge ?? defaultTestJudge();
-  // Captures the driver's Phase-3 brain wakes (`notifyThreadHalted`) fired via the lazy ModuleRef brain.
+  // Captures the driver's Phase-3 brain wakes (`notifyThreadHalted`) fired via the BrainGateway.
   const wakes: Array<{
     jobId: string;
     threadId: string;
@@ -925,26 +925,24 @@ function assemble(
   // Records each seeded open-PR turn (`BuildShipService` → `brain.openPrAtShip`). Replaces the old proxy of
   // "an engine execute/claude call happened" now that the ship step is a brain turn, not a separate session.
   const shipSeeds: Array<{ jobId: string; branch: string }> = [];
-  // ModuleRef: the lazy brain lookup shared by the driver (halt wakes) AND BuildShipService
-  // (the seeded open-PR turn). A stub brain records `notifyThreadHalted` wakes + `openPrAtShip` seeds (the
-  // seeded turns themselves are exercised in the brain specs — here the host latches by branch discovery).
-  const brainModuleRef = {
-    get: () => ({
-      openPrAtShip: async (input: { jobId: string; branch: string }) => {
-        shipSeeds.push({ jobId: input.jobId, branch: input.branch });
-      },
-      notifyThreadHalted: async (
-        jobId: string,
-        threadId: string,
-        outcome: 'blocked' | 'incomplete' | 'failed',
-        gen: number,
-      ) => {
-        wakes.push({ jobId, threadId, outcome });
-        // Simulate the REAL brain: it stamps `halt_waked_at` (gen-keyed) on the wake turn's SUCCESS tail.
-        await store.markHaltWaked(threadId, gen);
-      },
-    }),
-  } as unknown as ModuleRef;
+  // The neutral BrainGateway both BuildShipService (openPrAtShip) and ThreadDriver (halt wakes) reach the
+  // brain through. Records each seeded `openPrAtShip` turn + the driver's Phase-3 `notifyThreadHalted`
+  // wakes (the seeded/wake turns themselves are exercised in the brain specs — here the host latches by
+  // branch discovery, and the fake mirrors the brain stamping `halt_waked_at`).
+  const brainGateway = {
+    openPrAtShip: async (input: { jobId: string; branch: string }) => {
+      shipSeeds.push({ jobId: input.jobId, branch: input.branch });
+    },
+    notifyThreadHalted: async (
+      jobId: string,
+      threadId: string,
+      outcome: 'blocked' | 'incomplete' | 'failed',
+      gen: number,
+    ) => {
+      wakes.push({ jobId, threadId, outcome });
+      await store.markHaltWaked(threadId, gen);
+    },
+  } as unknown as BrainGateway;
   const driver = new ThreadDriver(
     store,
     repos,
@@ -965,6 +963,10 @@ function assemble(
       brainTranscriptProjectsDir: () => null,
       supervisorDirHost: () => null,
       probeLiveness: async () => ({ status: 'unknown' as const }),
+      sandboxContainerName: () => 'atlas-sbx-thread-test',
+      bridgeCaddyToSandbox: async () => undefined,
+      unbridgeCaddyFromSandbox: async () => undefined,
+      listLiveThreadJobIds: async () => [],
     },
     // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.
     {
@@ -1002,9 +1004,9 @@ function assemble(
       contextDirHost: (_jobId: string, _orgId: string) => opts.contextDirHost ?? '/ctx',
     } as unknown as import('./job-lifecycle.service').JobLifecycleService,
     // BuildShipService: the real terminal "ship" over the same git/pr/store fakes, so the leak-scan/latch
-    // assertions hold. The open-PR step is now a SEEDED BRAIN TURN resolved via `brainModuleRef` (no separate
-    // engine session), and the host latches the PR by branch discovery.
-    new BuildShipService(git, pr, store, brainModuleRef),
+    // assertions hold. The open-PR step is now a SEEDED BRAIN TURN reached via the neutral BrainGateway (no
+    // separate engine session), and the host latches the PR by branch discovery.
+    new BuildShipService(git, pr, store, brainGateway),
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     {
       appendMarker: async () => undefined,
@@ -1025,8 +1027,8 @@ function assemble(
     (opts.turnRegistry ?? {
       listRunning: async () => [],
     }) as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
-    // ModuleRef: the lazy brain lookup (halt wakes), shared with BuildShipService above.
-    brainModuleRef,
+    // BrainGateway: the driver's neutral brain seam (Phase-3 halt wakes).
+    brainGateway,
     judge,
     taskSink,
   );
@@ -1282,6 +1284,56 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // spec declares no children), so it materializes none.
     expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(1);
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
+  });
+
+  it('a claude builder turn — AND its follow-up GATE turn — both forward modelReasoningEffort: "high"', async () => {
+    // The registry pins the `builder` thread-kind to 'high' reasoning effort; both the primary execute
+    // turn and the diagnostics done-gate's follow-up turn (kind:'gate') read it off the same spec, so
+    // both must forward the SAME value to the engine.
+    const runs: Array<{ engine: string; effort?: string; gateKind?: string }> = [];
+    const { turn: baseTurn } = makeTurn({});
+    const turn = {
+      runTurn: vi.fn(
+        async (input: {
+          mode: string;
+          engine: string;
+          modelReasoningEffort?: string;
+          stepId?: string | null;
+          jobId: string;
+          toolBridge?: ToolBridgeOptions;
+          turnMeta?: { kind?: string };
+        }) => {
+          runs.push({
+            engine: input.engine,
+            effort: input.modelReasoningEffort,
+            gateKind: input.turnMeta?.kind,
+          });
+          return (baseTurn.runTurn as unknown as (i: typeof input) => Promise<unknown>)(input);
+        },
+      ),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { turn });
+    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']); // a .ts change kicks the gate
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    const builderRuns = runs.filter((r) => r.gateKind !== 'gate');
+    const gateRuns = runs.filter((r) => r.gateKind === 'gate');
+    expect(builderRuns.length).toBeGreaterThan(0);
+    expect(gateRuns.length).toBeGreaterThan(0);
+    expect(builderRuns.every((r) => r.engine === 'claude' && r.effort === 'high')).toBe(true);
+    expect(gateRuns.every((r) => r.engine === 'claude' && r.effort === 'high')).toBe(true);
   });
 
   it('build turns ride the shared transcript spine: richStream on, blocks tagged meta.phaseId, a build_anchor per thread batch', async () => {

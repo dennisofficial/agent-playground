@@ -184,4 +184,27 @@ export interface SandboxProvider {
    * Optional on the port so test fakes needn't implement it.
    */
   kickMcpHubRefresh?(input: { jobId: string; servers: ResolvedMcpServer[] }): Promise<void>;
+
+  /**
+   * The DETERMINISTIC container name of a thread's sandbox (`atlas-sbx-thread-<jobId>`) — the host the
+   * preview reverse-proxy dials as its upstream. Derived from the same naming scheme `attach` uses, so it
+   * resolves without a live container lookup.
+   */
+  sandboxContainerName(jobId: string): string;
+
+  /**
+   * Connect the Caddy container into this sandbox's isolated `-net` so the reverse proxy can reach the
+   * dev-server upstream by container name. Idempotent (an already-connected Caddy resolves quietly) and a
+   * feature-gated no-op when preview exposure is disabled.
+   */
+  bridgeCaddyToSandbox(jobId: string): Promise<void>;
+
+  /**
+   * Disconnect the Caddy container from this sandbox's `-net` — the inverse of {@link bridgeCaddyToSandbox}.
+   * Idempotent (a Caddy not on the net resolves quietly); feature-gated no-op when exposure is disabled.
+   */
+  unbridgeCaddyFromSandbox(jobId: string): Promise<void>;
+
+  /** The jobIds of every currently-RUNNING managed thread sandbox — the set the reconciler sweeps. */
+  listLiveThreadJobIds(): Promise<string[]>;
 }

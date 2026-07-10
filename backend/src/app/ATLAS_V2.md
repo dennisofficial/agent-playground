@@ -158,7 +158,7 @@ Built 2026-06-20 (plan: `/Users/dennis/.claude/plans/this-ai-orchestrator-is-gre
 | Base image | `sandbox/image/Dockerfile` + `sandbox-init.sh` + `sandbox/sandbox-image.builder.ts` | node+pnpm+git+docker+dockerd + the bundled engine entrypoint + the 2 SDKs; PID1 starts inner dockerd. Boot-memoized build (tag `SANDBOX_IMAGE`, default `atlas-sandbox:latest`) |
 | Engine entrypoint | `sandbox/image/engine-entrypoint.ts` → esbuild → `.mjs` (`bundleEngine`) | runs the SAME `engine/engine-core.ts` (extracted, Nest-free) in-container: stdin JSON spec → NDJSON events → final result. **HOT — the API re-bundles it on every (re)start (`bundleEngine`, via `SandboxImageBuilder`) and bind-mounts it live into every sandbox**, so engine code edits land on the NEXT turn — NO manual bundle step, NO image rebuild, NO container recreate. (The Dockerfile bakes a copy at image-build time as a fallback only; the live mount overrides it.) A dev `--watch` restart and a prod deploy-restart both trigger the re-bundle. |
 | Host transport | `sandbox/docker-engine-runner.ts` | `docker exec atlas-engine-turn`, creds via exec ENV, NDJSON→`onEvent`→`EngineRunResult` |
-| Lifecycle | `sandbox/sandbox-manager.service.ts` | acquire (reuse-by-name, inner-dockerd readiness poll, soft concurrency cap), teardown, reapStopped; per-sandbox network + DinD volume + privileged |
+| Lifecycle | `sandbox/sandbox-manager.service.ts` | acquire (reuse-by-name, inner-dockerd readiness poll), teardown, reapOrphanedArtifacts; per-sandbox network + DinD volume + privileged |
 | Refs | `sandbox/sandbox-refs.service.ts` | host-maintained read-only `/refs` library (mount + clone/fetch; mechanism only) |
 
 **Key decisions (as built):**
@@ -173,7 +173,7 @@ Built 2026-06-20 (plan: `/Users/dennis/.claude/plans/this-ai-orchestrator-is-gre
 SANDBOX_MODE=docker pnpm gate -- --repo <url>   # assembled docker proof (dry-run; add --live + --channel for a real PR)
 SANDBOX_MODE=docker pnpm e2e -- --live --repo <url>   # full feature drive, every turn in-container (NOT yet run — billed + opens a PR)
 ```
-**Env (in `_core/config/env/validation.ts`):** `SANDBOX_MODE`, `SANDBOX_IMAGE`, `DOCKER_SOCKET_PATH`(?? `DOCKER_SOCKET_PATH`), `REFS_ROOT`(?? `REFS_ROOT`), `MAX_CONCURRENT_SANDBOXES`. The old v1 `WORKSPACE_*` daemon/redis vars are orphaned (marked deprecated; full prune is a follow-up).
+**Env (in `_core/config/env/validation.ts`):** `SANDBOX_MODE`, `SANDBOX_IMAGE`, `DOCKER_SOCKET_PATH`(?? `DOCKER_SOCKET_PATH`), `REFS_ROOT`(?? `REFS_ROOT`). The old v1 `WORKSPACE_*` daemon/redis vars are orphaned (marked deprecated; full prune is a follow-up).
 
 **Open follow-ups (designed, not built):** human-facing dev-server **exposure** (reverse-proxy by hostname / TLS — the next plan; per-sandbox networks + labels are in place); the `/refs` per-repo-token registry + refresh/GC + an agent tool; TTL reaping of idle *running* sandboxes (needs job-state awareness — only stopped ones are reaped now); pinning the in-image SDK versions to the host via build args; rebuild the image for the deploy arch (built linux/arm64 on the Mac; OVH is x64); prune the dead `WORKSPACE_*` env vars; the full `e2e --live` docker run.
 

@@ -5,11 +5,13 @@ import { AuthModule } from './auth';
 import { ClusterModule } from './cluster';
 import { AutoFixModule } from './autofix';
 import { BrainModule } from './brain';
+import { BrainGatewayModule } from './brain-gateway';
 import { DecisionGateModule } from './decision-gate';
 import { DriverModule, LiveVerificationModule } from './driver';
 import { IngressModule } from './ingress';
 import { RunnerModule } from './runner';
 import { SandboxModule } from './sandbox';
+import { CaddyModule, ExposureModule } from './exposure';
 import { StimulusModule } from './stimulus';
 import { LiveTurnModule, SurfaceModule } from './surface';
 import { MemoryModule } from './memory';
@@ -67,6 +69,8 @@ import { ThreadKindModule } from './thread-kind';
     TitlingModule,
     TicketsModule,
     SandboxModule,
+    CaddyModule,
+    ExposureModule,
     RealtimeModule,
     LiveTurnModule,
     SurfaceModule,
@@ -76,6 +80,7 @@ import { ThreadKindModule } from './thread-kind';
     IngressModule,
     DecisionGateModule,
     AutoFixModule,
+    BrainGatewayModule,
     BrainModule,
     DriverModule,
     LiveVerificationModule,
