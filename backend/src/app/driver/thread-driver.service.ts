@@ -1350,13 +1350,21 @@ export class ThreadDriver implements JobDispatcher {
     // e. HANDOFF — summarize what this thread produced for the next.
     const handoffOut = this.summarizeHandoff(thread, steps, reports);
     await this.store.setThreadHandoffOut(thread.id, handoffOut);
+    // Host backstop: the model already got its one in-gate reminder to reconcile its checklist, so flip any
+    // task it STILL left open to `dropped` — a finished thread must never render with a task frozen
+    // in-progress. Only on the clean `done` path; a blocked/halted thread's open tasks stay legitimately open.
+    const droppedTasks = await this.store.dropOpenThreadTasks(thread.id).catch(() => 0);
+    if (droppedTasks > 0) {
+      this.logger.log(`thread ${thread.ordinal} — dropped ${droppedTasks} unreconciled open task(s) on done`);
+    }
     await this.store.setThreadStatus(thread.id, 'done');
     await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
     this.logger.log(`thread ${thread.ordinal} done`);
     await this.recordMilestone(
       job.id,
       `thread:${thread.id}:done`,
-      `Thread "${thread.brief}" finished building.`,
+      `Thread "${thread.brief}" finished building.` +
+        (droppedTasks > 0 ? ` (${droppedTasks} unreconciled task(s) dropped)` : ''),
     );
     // Decision d1 — a clean `done` is normally cheap note-and-queue; a NOTABLE one (gaps left) also owes an
     // autonomous brain wake so the operator isn't the first to notice. The wake resolves the transcript anchor
@@ -1680,6 +1688,10 @@ export class ThreadDriver implements JobDispatcher {
     // explicit STOP directive: re-asserting the SAME state succeeds (nothing to retry); a CONFLICTING assertion
     // is refused but still told to stop, never to retry.
     let terminated: null | 'done' | 'blocked' = null;
+    // ONE-SHOT task double-check: the first `done` assertion with an unreconciled checklist is bounced back
+    // (below) so the model can finish/close its own tasks in-turn; a subsequent assertion is let through
+    // regardless (the done transition then drops any stragglers). Guards against wedging a validated thread.
+    let taskNudgedOnce = false;
     const afterTerminal = (attempted: 'done' | 'blocked') => {
       const stop =
         `This thread already asserted \`${terminated}\` this turn — it is recorded and final. ` +
@@ -1696,6 +1708,20 @@ export class ThreadDriver implements JobDispatcher {
           const summary = String(args['summary'] ?? '').trim();
           if (!summary) {
             return { ok: false, error: 'summary is required (one line: what this thread built)' };
+          }
+          // Task double-check — BEFORE the live-verification gate: on the FIRST `done` claim, if the durable
+          // checklist still has open items, bounce once (not latched) so the model reconciles its own tasks
+          // in-turn (finishing genuinely-unfinished work, which then flows through the gate + commit). One
+          // reminder only; the retry skips this and proceeds, and the done transition flips any leftovers to
+          // `dropped`.
+          if (!taskNudgedOnce) {
+            const open = (await this.store.getThreadTasks(thread.id).catch(() => [] as TaskItem[])).filter(
+              (t) => t.status === 'pending' || t.status === 'in_progress',
+            );
+            if (open.length) {
+              taskNudgedOnce = true;
+              return { ok: true, warning: renderOpenTasksWarning(open) };
+            }
           }
           const asStrings = (v: unknown): string[] | undefined =>
             Array.isArray(v) && v.length
@@ -3439,6 +3465,25 @@ function renderOpenLegTasks(tasks: TaskItem[]): string {
     'durable checklist). Continue these — do NOT recreate completed items or restart finished ones:',
     ...lines,
     '</carried_tasks>',
+  ].join('\n');
+}
+
+/** The warning-retry payload for the done-gate task double-check. Lists the still-OPEN tasks and directs the
+ *  model to reconcile each before re-asserting `done`. The caller only builds this when `open` is non-empty,
+ *  so it never renders an empty block. This is the model's ONE reminder — anything still open after the next
+ *  `complete_thread` is host-dropped from the checklist at the done transition. */
+function renderOpenTasksWarning(open: TaskItem[]): string {
+  const lines = open.map((t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`);
+  return [
+    `NOT marked done yet — your task list still has ${open.length} open item(s). Reconcile it before you`,
+    'assert done. For EACH task below: if the work is genuinely finished, mark it completed' +
+      ' (`TaskUpdate` status: completed); if it still needs doing, DO it now (commit + push any changes),' +
+      ' then mark it completed; if it is no longer needed, delete it (`TaskUpdate` status: deleted). Then',
+    'call `complete_thread` again. This is your ONE reminder — anything still open after your next',
+    '`complete_thread` will be dropped from the checklist.',
+    '<open_tasks>',
+    ...lines,
+    '</open_tasks>',
   ].join('\n');
 }
 

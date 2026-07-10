@@ -414,6 +414,46 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     ]);
   });
 
+  it('dropOpenThreadTasks flips open (pending/in_progress) tasks to `dropped`, leaves completed, returns the count', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'drop open tasks',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const thread = await threads.save(
+      threads.create({
+        kind: 'builder',
+        job_id: job.id,
+        org_id: ORG_ID,
+        ordinal: 10,
+        brief: 'Backend — drop open tasks',
+        status: 'executing',
+        tasks: [
+          { id: 't1', subject: 'Done work', status: 'completed' },
+          { id: 't2', subject: 'Forgotten tick', status: 'in_progress' },
+          { id: 't3', subject: 'Never started', status: 'pending' },
+        ],
+      }),
+    );
+
+    const dropped = await store.dropOpenThreadTasks(thread.id);
+    expect(dropped).toBe(2);
+    expect(await store.getThreadTasks(thread.id)).toEqual([
+      { id: 't1', subject: 'Done work', status: 'completed' },
+      { id: 't2', subject: 'Forgotten tick', status: 'dropped' },
+      { id: 't3', subject: 'Never started', status: 'dropped' },
+    ]);
+
+    // Idempotent: a second pass finds nothing open, returns 0, and writes nothing new.
+    expect(await store.dropOpenThreadTasks(thread.id)).toBe(0);
+  });
+
   it('persists the repo-orientation cheat-sheet and surfaces it on the mapped thread (resume-durable)', async () => {
     const job = await jobs.save(
       jobs.create({
