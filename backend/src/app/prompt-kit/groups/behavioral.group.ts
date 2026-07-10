@@ -17,6 +17,7 @@ import {
   CLARITY_OVER_COMMENTS_NOTE,
   DOC_VERSION_VERIFY_NOTE,
   MINIMAL_CODE_NOTE,
+  RUNNABLE_WORKSPACE_NOTE,
   SPIKE_FIRST_NOTE,
   TS_STYLE_NOTE,
 } from '../fragments';
@@ -39,6 +40,14 @@ export class BehavioralGroup {
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8005 })
   authorLiveValidation(): string {
     return AUTHOR_LIVE_VALIDATION_NOTE;
+  }
+
+  /** A RUNNABLE WORKSPACE IS THE HAPPY PATH — the environment-side of verification for the brain: when the
+   *  work can't be run because the env isn't ready, fix the workspace profile (request the secret, correct
+   *  setup) or ask the operator and wait — never skip, never author a plan that validates against a stand-in. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8006 })
+  runnableWorkspace(): string {
+    return RUNNABLE_WORKSPACE_NOTE;
   }
 
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 8010 })

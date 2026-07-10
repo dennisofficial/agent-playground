@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   Body,
   Controller,
@@ -21,7 +22,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { createReadStream, existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
@@ -66,6 +67,8 @@ import type { McpProposalServer } from './web-mcp-proposal-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
+import { resolveSafeTarget } from '../driver/worktree-path-guard';
+import { LocalGitService } from '../git/local-git.service';
 import { CONTAINER_CONTEXT, type ServiceLivenessProbe } from '../sandbox';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
@@ -564,6 +567,9 @@ export class WebSurfaceController {
     private readonly skillFiles: SkillFileWriter,
     // Vendors a maintained skill from git on an `install`-mode proposal approval (provenance:'git'). @Global.
     private readonly skillInstaller: SkillInstallerService,
+    // Repo-file endpoints (`/repo/tree`, `/repo/file`) read the job worktree via `git ls-files`. From the
+    // (non-@Global) GitModule, imported into WebSurfaceModule for this injection to resolve.
+    private readonly git: LocalGitService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -622,6 +628,9 @@ export class WebSurfaceController {
               url: t.pr_url,
             }
           : null,
+        // The observed CI/CD aggregate (`success|failure|pending|null`) — drives the sidebar row's CI
+        // dot on first paint / when realtime is disabled (realtime carries it independently).
+        ciStatus: t.ci_status,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,
@@ -1857,6 +1866,82 @@ export class WebSurfaceController {
   }
 
   /**
+   * `GET …/jobs/:jobId/repo/tree` — the job worktree's TRACKED-file manifest (`git ls-files`), so the spec/
+   * plan viewer can verify which inline-code spans name a real file before linkifying them. Gitignored files
+   * (e.g. the hydrator's secret files) are never tracked, so they never appear here. Empty when the worktree
+   * is gone (closed/reset) — the frontend then simply linkifies nothing.
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/repo/tree')
+  @UseGuards(OrgMembershipGuard)
+  async repoTree(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<{ files: string[] }> {
+    await this.requireThread(jobId, org.id);
+    const sandbox = await this.threadLifecycle.findSandbox(jobId, org.id);
+    if (!sandbox) return { files: [] };
+    return { files: await this.git.listTrackedFiles(sandbox.worktreePath) };
+  }
+
+  /**
+   * `GET …/jobs/:jobId/repo/file?path=backend/sandbox/Dockerfile` — read ONE repo file from the LIVE job
+   * worktree (accurate at approval; may drift after a build edits files). Same size-cap/MIME shape as
+   * `contextFile`, but rooted at the worktree with `resolveSafeTarget` (rejects traversal/symlink/absolute).
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/repo/file')
+  @UseGuards(OrgMembershipGuard)
+  async repoFile(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Query('path') relPath: string,
+  ): Promise<ContextFileContent> {
+    await this.requireThread(jobId, org.id);
+    if (!relPath) throw new BadRequestException('path is required');
+    const sandbox = await this.threadLifecycle.findSandbox(jobId, org.id);
+    if (!sandbox) throw new NotFoundException('worktree not available');
+    let abs: string;
+    try {
+      abs = resolveSafeTarget(sandbox.worktreePath, relPath);
+    } catch {
+      throw new BadRequestException('unsafe path');
+    }
+    // SECURITY GATE: only serve TRACKED files. The worktree also holds gitignored secret files the hydrator
+    // writes into it (e.g. backend/.env.keys, service-account JSON) — resolveSafeTarget keeps us INSIDE the
+    // worktree but does not distinguish a secret from source. `isTracked` (git ls-files) excludes gitignored
+    // paths, so an untracked/secret path returns 404, matching the tracked-only manifest.
+    if (!(await this.git.isTracked(sandbox.worktreePath, relPath))) {
+      throw new NotFoundException('file not found');
+    }
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(abs);
+    } catch {
+      throw new NotFoundException('file not found');
+    }
+    if (!st.isFile()) throw new NotFoundException('not a file');
+    if (st.size > MAX_CONTEXT_FILE_BYTES) {
+      throw new PayloadTooLargeException(
+        `file too large to preview (${st.size} bytes; limit ${MAX_CONTEXT_FILE_BYTES})`,
+      );
+    }
+    const ext = extname(abs).toLowerCase();
+    const { mime, binary } = MIME_BY_EXT[ext] ?? {
+      mime: 'text/plain',
+      binary: false,
+    };
+    const buf = readFileSync(abs);
+    return {
+      name: basename(abs),
+      path: relative(realpathSync(sandbox.worktreePath), abs).split(sep).join('/'),
+      size: st.size,
+      mtime: st.mtime.toISOString(),
+      encoding: binary ? 'base64' : 'text',
+      mime,
+      content: binary ? buf.toString('base64') : buf.toString('utf8'),
+    };
+  }
+
+  /**
    * `GET …/threads/:jobId/context/file/raw?path=uploads/xx.png` — STREAM one composer attachment as raw
    * binary (correct `Content-Type`), for `<img>` thumbnails and file downloads in the transcript.
    * Deliberately NOT the base64 `contextFile` endpoint above: a large image would block the host event
@@ -2181,9 +2266,23 @@ export class WebSurfaceController {
   async deleteThread(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('jobId') jobId: string,
+    @Query('prAction') prAction?: string,
   ): Promise<{ ok: boolean }> {
     // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable.
-    await this.requireThread(jobId, org.id);
+    const job = await this.requireThread(jobId, org.id);
+    if (prAction != null && prAction !== 'close' && prAction !== 'leave') {
+      throw new BadRequestException("prAction must be 'close' or 'leave'");
+    }
+    if (prAction === 'close') {
+      try {
+        await this.threadLifecycle.closeJobPullRequest(job);
+      } catch (err) {
+        // Abort the delete (decision d3: never silently orphan). The job stays in its normal status.
+        throw new BadGatewayException(
+          err instanceof Error ? err.message : 'Could not close the pull request',
+        );
+      }
+    }
     // Atomically flip the job to `deleting` and COMMIT it before responding, so the durable state is
     // visible to the next thread-list/realtime frame (the sidebar shows "Deleting…" instead of freezing).
     // The claim also serializes concurrent deletes — a second click matches 0 rows and is a no-op.

@@ -24,7 +24,12 @@ import {
   JobEntity,
   CodexReviewEntity,
 } from '../persistence/entities';
-import type { DeviationEntry, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
+import type {
+  DeviationEntry,
+  SessionAnchor,
+  TaskItem,
+  ThreadTerminalRecord,
+} from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
 import { isDriverExecutableKind, laneDefaultFooter, threadKindSpec } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
@@ -737,6 +742,59 @@ export class DriverStoreService {
       .execute();
   }
 
+  // ── Completion-wake (decision d1) — mirrors the halt trio above, no generation CAS ─────────────
+
+  /** Mark a `done` thread as OWED a brain wake — `'final'` (whole build parked at ship gate) or `'notable'`
+   *  (done-with-gaps). Idempotent: a repeat call re-asserts the same owed row. */
+  async setDoneWakeOwed(threadId: string, reason: 'final' | 'notable'): Promise<void> {
+    await this.threads.update(
+      { id: threadId },
+      { done_wake_owed: true, done_wake_reason: reason, done_waked_at: null },
+    );
+  }
+
+  /** Threads whose completion is owed a brain wake (`done_wake_owed`, not yet waked). Optionally scoped to
+   *  one job. Mirrors `threadsAwaitingHaltWake`'s shape (no `gen` — a `done` thread is never re-driven). */
+  async threadsAwaitingDoneWake(
+    jobId?: string,
+  ): Promise<{ jobId: string; threadId: string; reason: 'final' | 'notable' }[]> {
+    const qb = this.threads
+      .createQueryBuilder('t')
+      .select(['t.id', 't.job_id', 't.done_wake_reason'])
+      .where('t.done_wake_owed IS TRUE')
+      .andWhere('t.done_waked_at IS NULL');
+    if (jobId) qb.andWhere('t.job_id = :jobId', { jobId });
+    const rows = await qb.getMany();
+    return rows.map((r) => ({
+      jobId: r.job_id,
+      threadId: r.id,
+      reason: r.done_wake_reason as 'final' | 'notable',
+    }));
+  }
+
+  /** Stamp the completion wake delivered and clear the owed flag — idempotent (keyed on `done_wake_owed`
+   *  still true + `done_waked_at` still null, so a repeat/racing call matches zero rows). */
+  async markDoneWaked(threadId: string): Promise<void> {
+    await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ done_waked_at: () => 'now()', done_wake_owed: false })
+      .where('id = :threadId', { threadId })
+      .andWhere('done_wake_owed IS TRUE')
+      .andWhere('done_waked_at IS NULL')
+      .execute();
+  }
+
+  /** The job's `master_review` thread id — the carrier for the `'final'` completion wake — or null if the
+   *  job has none (yet). */
+  async masterReviewThreadId(jobId: string): Promise<string | null> {
+    const row = await this.threads.findOne({
+      where: { job_id: jobId, kind: 'master_review' },
+      select: { id: true },
+    });
+    return row?.id ?? null;
+  }
+
   /** Clear the halt signal on a re-drive so a FRESH block re-arms a fresh wake (both the owed flag and the
    *  dedup marker). The `halt_fix_attempts` budget is intentionally NOT cleared (it's a lifetime counter). */
   async clearHalt(threadId: string): Promise<void> {
@@ -857,6 +915,39 @@ export class DriverStoreService {
       order: { ordinal: 'ASC' },
     });
     return rows.map(toStep);
+  }
+
+  /**
+   * The AUTHORITATIVE transcript anchor for a thread — the engine `sessionId` (+ Leg ordinal) the wake hands
+   * the brain to read the halted/completed lane's raw JSONL (`atlas-tx show <sessionId>`). Resolved from the
+   * most-recent `build_legs` row with a non-null `session_id` (preferred — carries the Leg ordinal), else the
+   * latest `steps.session_id`. Read from steps/legs — which exist for EVERY thread that ran a turn — NOT from
+   * `terminal_record`, so it works even for an `incomplete` halt whose record is null. The host has ground
+   * truth here; a builder-written value is never trusted. `undefined` only when the thread never got a session
+   * (e.g. halted in provisioning).
+   */
+  async resolveSessionAnchor(threadId: string): Promise<SessionAnchor | undefined> {
+    const legs = await this.getLegs(threadId);
+    const legWithSession = [...legs]
+      .reverse()
+      .find((l) => l.session_id != null);
+    if (legWithSession?.session_id) {
+      return {
+        sessionId: legWithSession.session_id,
+        legOrdinal: legWithSession.ordinal,
+      };
+    }
+    const steps = await this.stepsForThread(threadId);
+    const stepWithSession = [...steps]
+      .reverse()
+      .find((s) => s.sessionId != null);
+    if (stepWithSession?.sessionId) {
+      return {
+        sessionId: stepWithSession.sessionId,
+        legOrdinal: stepWithSession.legOrdinal,
+      };
+    }
+    return undefined;
   }
 
   /**
@@ -1016,6 +1107,9 @@ export class DriverStoreService {
       // instead of hardcoding "open" (it would otherwise show a stale green "open" after a merge/close).
       prState: thread.pr_state,
       prMergeable: thread.pr_mergeable,
+      // The observed CI/CD aggregate for the PR head (`success|failure|pending|null`) — drives the
+      // navigator PR-row CI glyph, kept fresh by the webhook CI-sync + the 30-min reconciler backstop.
+      ciStatus: thread.ci_status,
       featureBranch: thread.feature_branch,
       // The OBSERVED live branch (what the agent's HEAD is actually on) — drives the navigator drift badge
       // when it diverges from the host-named featureBranch. Null until first sampled / on detached HEAD.

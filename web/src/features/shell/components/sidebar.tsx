@@ -15,7 +15,7 @@ import {
   SECTION_LABEL,
   type JobSection,
 } from "@/lib/api/job-section";
-import { PrStatusIcon, StatusPie } from "@/components/ui/badges";
+import { CiStatusDot, PrStatusIcon, StatusPie } from "@/components/ui/badges";
 import { AccountMenu } from "./account-menu";
 
 /**
@@ -712,7 +712,8 @@ function ThreadRow({
         active
           ? {
               background: "var(--accent-soft)",
-              border: "1px solid var(--accent-line)",
+              outline: "1px solid var(--accent-line)",
+              outlineOffset: "-1px",
             }
           : undefined
       }
@@ -736,6 +737,7 @@ function ThreadRow({
             aria-label="Halted"
           />
         ) : null}
+        {thread.pr ? <CiStatusDot ci={thread.ci} /> : null}
       </span>
       <span className="min-w-0 flex-1">
         <span className="line-clamp-2 text-[12px] font-normal leading-[1.32] text-text">

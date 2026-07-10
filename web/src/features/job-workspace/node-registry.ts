@@ -25,6 +25,23 @@ export type NodeResolution = "loading" | "found" | "not_found";
 export const threadNode = (threadId: string): string => threadId;
 export const stepNode = (stepId: string): string => stepId;
 
+// ── stacked repo-file view id (rides its own `?file=` param, like `subagent:` rides `?sub=`) ─────────
+/** A stacked repo-file view id: `file:<path>` with an optional `::L<a>[-<b>]` line target. */
+export const fileNode = (path: string, lines?: string): string =>
+  `file:${path}${lines ? `::L${lines}` : ""}`;
+
+/** Parse a `file:<path>[::L<lines>]` token back to its parts, or null if it isn't a file node. */
+export function parseFileNode(
+  token: string,
+): { path: string; lines: string | null } | null {
+  if (!token.startsWith("file:")) return null;
+  const rest = token.slice("file:".length);
+  const i = rest.indexOf("::L");
+  return i >= 0
+    ? { path: rest.slice(0, i), lines: rest.slice(i + 3) }
+    : { path: rest, lines: null };
+}
+
 // ── placement: which pane a node opens in ───────────────────────────────────────────────────────
 /** Literals that render from card/derived data in the RIGHT detail pane. */
 const DETAIL_LITERALS = new Set(["plan", "decision", "diff", "tickets"]);
@@ -68,6 +85,8 @@ export function resolveNode(
     return "found";
   // Subagent runs self-handle a missing run inside SubagentView. Always resolvable.
   if (node.startsWith("subagent:")) return "found";
+  // A stacked repo-file view self-handles a missing/deleted file inside FilePane. Always resolvable.
+  if (node.startsWith("file:")) return "found";
   // The Codex review lane self-handles an empty transcript inside TranscriptView. Always resolvable.
   if (node.startsWith("codex-review:")) return "found";
   // Sandbox ports are a design-stage mock — always resolvable.
@@ -120,6 +139,34 @@ export function parseLegNode(
 ): { threadId: string; ordinal: number } | null {
   const m = /^(.+)~leg(\d+)$/.exec(node);
   return m ? { threadId: m[1], ordinal: Number(m[2]) } : null;
+}
+
+// ── conversation /context link → node id ────────────────────────────────────────────────────────
+/**
+ * Map a conversation markdown-link href that points at a `/context` file — absolute
+ * `/context/<bucket>/<path>` OR bucket-relative `<bucket>/<path>` (bucket ∈ specs|generated|artifacts) — to
+ * its navigator node id (`spec:`/`gen:`/`artifact:` + bucket-relative path), or null when it isn't a context
+ * link (unknown bucket, missing path, or a `..` traversal). This is the conversation-side analogue of
+ * {@link contextNodeForLink} (which resolves links relative to a "current file"); here the href already
+ * carries its own bucket, so there is no `fromPath`.
+ */
+export function contextConvoNodeForHref(href: string): string | null {
+  const clean = href
+    .split(/[?#]/)[0]
+    .replace(/^\/context\//, "")
+    .replace(/^\//, "");
+  const [bucket, ...rest] = clean.split("/");
+  const prefix =
+    bucket === "specs"
+      ? "spec:"
+      : bucket === "generated"
+        ? "gen:"
+        : bucket === "artifacts"
+          ? "artifact:"
+          : null;
+  if (!prefix || rest.length === 0 || rest.some((s) => s === "" || s === ".."))
+    return null;
+  return prefix + rest.join("/");
 }
 
 // ── transcript lane for a node (null = not a transcript-backed node) ────────────────────────────

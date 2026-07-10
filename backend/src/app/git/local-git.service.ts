@@ -366,6 +366,30 @@ export class LocalGitService {
     }
   }
 
+  /** Tracked files in the worktree as they currently exist (git ls-files) — repo-relative POSIX paths.
+   *  Excludes gitignored files (e.g. hydrated secret files), which is exactly what the viewer must not link. */
+  async listTrackedFiles(worktreePath: string): Promise<string[]> {
+    try {
+      const out = await this.git(['ls-files'], { cwd: worktreePath });
+      return out ? out.split('\n').filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** True iff `relPath` is a TRACKED file in the worktree (git ls-files --error-unmatch exits 0). Untracked /
+   *  gitignored / nonexistent paths → false. The content endpoint's authorization gate against secret files. */
+  async isTracked(worktreePath: string, relPath: string): Promise<boolean> {
+    try {
+      await this.git(['ls-files', '--error-unmatch', '--', relPath], {
+        cwd: worktreePath,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** True iff the repo has git submodules at its base branch (drives clone-vs-worktree provisioning). */
   async hasSubmodules(repo: ProjectRepo): Promise<boolean> {
     return (await this.readFileAtRef(repo.repoPath, `origin/${repo.defaultBranch}`, '.gitmodules')) !== null;

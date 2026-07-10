@@ -22,6 +22,8 @@ import { SandboxManager } from './sandbox-manager.service';
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
 
+type CreatingStampHarness = { creating: Map<string, number> };
+
 let dockerUp = false;
 beforeAll(async () => {
   try {
@@ -254,6 +256,9 @@ describe('SandboxManager (integration, needs Docker)', () => {
     // Simulate a crash: drop ONLY the container (teardown never ran) — net + volume are now orphaned.
     await engine.remove(attached.containerId!, { force: true });
     containerId = undefined;
+    // `attach()` protects just-created artifacts from the reaper for a short grace window. This test is
+    // about a later catch-all sweep, so age the in-memory stamp past that window instead of sleeping.
+    (manager as unknown as CreatingStampHarness).creating.set(containerName, 0);
     expect(await netExists()).toBe(true);
     expect(await volExists()).toBe(true);
 

@@ -28,7 +28,6 @@ import {
   EngineAuthError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
-  unwrapBridgeArgs,
   type EngineEvent,
   type EngineHomeKey,
   type EngineHomeType,
@@ -56,7 +55,12 @@ import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
-import type { ActiveTurnEntity, TaskItem, ThreadTerminalRecord } from '../persistence/entities';
+import type {
+  ActiveTurnEntity,
+  SessionAnchor,
+  TaskItem,
+  ThreadTerminalRecord,
+} from '../persistence/entities';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
@@ -173,6 +177,14 @@ interface BrainSurface {
     threadId: string,
     outcome: 'blocked' | 'incomplete' | 'failed',
     gen: number,
+  ): Promise<void>;
+
+  /** Wake the job brain for a `done` completion owed a wake (decision d1) — `'final'` (whole build parked
+   *  at ship gate) or `'notable'` (finished done but carrying gaps/unverified items). */
+  notifyThreadDone(
+    jobId: string,
+    threadId: string,
+    reason: 'final' | 'notable',
   ): Promise<void>;
 }
 
@@ -516,6 +528,35 @@ export class ThreadDriver implements JobDispatcher {
     await brain.notifyThreadHalted(t.jobId, t.threadId, t.outcome, t.gen);
   }
 
+  /**
+   * Decision d1 — deliver any OWED completion brain wakes (`'final'`/`'notable'`). Called from the periodic
+   * chat-delivery sweep and the leader boot sweep (all jobs). For each owed thread: wake the brain, which
+   * stamps the dedup marker on its own success tail. Fire-and-forget per thread; a wake-turn failure leaves
+   * the marker un-stamped so the boot sweep re-fires (at-least-once).
+   */
+  async deliverOwedDoneWakes(jobId?: string): Promise<void> {
+    const owed = await this.store.threadsAwaitingDoneWake(jobId).catch(() => []);
+    for (const t of owed) {
+      if (this.active.has(t.jobId)) continue; // defer — NEVER wake during an active drive (a notable wake can fire mid-build; the build continues; deliver on the next quiescent sweep tick)
+      void this.deliverOneDoneWake(t).catch((err) =>
+        this.logger.warn(
+          `done wake failed for thread=${t.threadId} (boot sweep will retry): ${err}`,
+        ),
+      );
+    }
+  }
+
+  private async deliverOneDoneWake(t: {
+    jobId: string;
+    threadId: string;
+    reason: 'final' | 'notable';
+  }): Promise<void> {
+    const brain = await this.brain();
+    // Stamp is NOT here — the brain stamps `done_waked_at` on the wake turn's SUCCESS tail, so a
+    // failed/steered/detached wake stays owed for the sweeps.
+    await brain.notifyThreadDone(t.jobId, t.threadId, t.reason);
+  }
+
   // ── the pipeline ───────────────────────────────────────────────────────────────────────────────
 
   /** Guard the job against a concurrent drive, then run it to a PR (or `failed`). */
@@ -834,6 +875,15 @@ export class ThreadDriver implements JobDispatcher {
       `ship-review:${job.id}`,
       'The build finished and passed master review; it is parked awaiting your ship-review approval before the PR opens.',
     ).catch(() => undefined);
+    // Decision d1 — the FINAL wake, additive to the milestone above. Carried by the job's master-review
+    // thread (the whole-build carrier). If none resolves, skip the wake rather than guess — the milestone
+    // still informs.
+    const masterReviewId = await this.store.masterReviewThreadId(job.id).catch(() => null);
+    if (masterReviewId) {
+      await this.store
+        .setDoneWakeOwed(masterReviewId, 'final')
+        .catch((e) => this.logger.warn(`could not set final done-wake for job=${job.id}: ${e}`));
+    }
   }
 
   /**
@@ -988,9 +1038,14 @@ export class ThreadDriver implements JobDispatcher {
       threadDirName(thread),
     );
     await mkdir(dir, { recursive: true });
+    // Resolve the anchor DIRECTLY (not off `term`) so the Transcript line renders even for an `incomplete`
+    // halt whose terminal record is null.
+    const anchor = await this.store
+      .resolveSessionAnchor(thread.id)
+      .catch(() => undefined);
     await writeFile(
       join(dir, 'completion.md'),
-      renderCompletionMd(thread, outcome, term, new Date().toISOString()),
+      renderCompletionMd(thread, outcome, term, new Date().toISOString(), anchor),
       'utf8',
     );
   }
@@ -1126,6 +1181,17 @@ export class ThreadDriver implements JobDispatcher {
       `thread:${thread.id}:done`,
       `Thread "${thread.brief}" finished building.`,
     );
+    // Decision d1 — a clean `done` is normally cheap note-and-queue; a NOTABLE one (gaps left) also owes an
+    // autonomous brain wake so the operator isn't the first to notice. The wake resolves the transcript anchor
+    // itself at delivery time. (No live-verification sub-clause here: a runtime-touched-but-inadequate record is
+    // already downgraded to `blocked` upstream, so a `done` record's verdict is always adequate.)
+    const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
+    const isNotable = term != null && (term.gaps?.length ?? 0) > 0;
+    if (isNotable) {
+      await this.store
+        .setDoneWakeOwed(thread.id, 'notable')
+        .catch((e) => this.logger.warn(`could not set notable done-wake for thread=${thread.id}: ${e}`));
+    }
     await this.post(route, `:white_check_mark: Thread done — *${thread.brief}*`);
     return { outcome: 'done', handoff: handoffOut };
   }
@@ -2277,6 +2343,7 @@ export class ThreadDriver implements JobDispatcher {
           systemPrompt: renderAgentPrompt(spec.agent, {
             jobKind: job.kind,
             settings: { repoConventions },
+            turnPhase: 'commit',
           }),
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
@@ -2427,6 +2494,7 @@ export class ThreadDriver implements JobDispatcher {
     const systemPrompt = renderAgentPrompt(spec.agent, {
       jobKind: job.kind,
       settings: { repoConventions },
+      turnPhase: 'batch',
     });
     // Leg-rotation occupancy watch: fires SOFT once, then a REMINDER on each further +delta as this builder
     // session's main-agent context fills. Codex/master-review turns emit no per-call occupancy, so the watch
@@ -2849,12 +2917,10 @@ export class ThreadDriver implements JobDispatcher {
     const bareName = e.name.startsWith(prefix) ? e.name.slice(prefix.length) : e.name;
     const impl = toolBridge.tools[bareName];
     if (!impl) return;
-    // The replayed `tool_use` carries `block.input` verbatim — the model's raw (often MIS-NESTED) payload:
-    // the proxy tools use a generic `{ args }` schema and the model double-wraps / stringifies against it
-    // (`{ args: { args: { passed: true } } }`, `{ args: "{…}" }`). Normalise it the same way the live dispatch
-    // does (`unwrapBridgeArgs`), or the handler reads `args['passed']` off a wrapper → undefined → a false
-    // `passed:false` → the gate falsely halts even though the orchestrator reported passed.
-    void impl(unwrapBridgeArgs(e.input));
+    // The replayed `tool_use` carries `block.input` verbatim — the model's FLAT payload against the tool's
+    // real per-tool schema (no `{ args }` wrapper), already strict-validated client-side — so the replay
+    // path drives the handler with it directly, exactly like the live dispatch.
+    void impl((e.input ?? {}) as Record<string, unknown>);
   }
 
   /** KICK a fresh gate-iteration turn — resumes the orchestrator's persisted session (via `stepId`) with the
@@ -2894,6 +2960,7 @@ export class ThreadDriver implements JobDispatcher {
           systemPrompt: renderAgentPrompt(Agent.WORKER, {
             jobKind: job.kind,
             settings: { repoConventions },
+            turnPhase: 'gate',
           }),
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
@@ -3264,6 +3331,7 @@ export function renderCompletionMd(
   outcome: 'blocked' | 'incomplete' | 'failed',
   term: ThreadTerminalRecord | null,
   at: string,
+  anchor?: SessionAnchor,
 ): string {
   const lines: string[] = [
     `# Thread halted: ${thread.brief}`,
@@ -3272,6 +3340,12 @@ export function renderCompletionMd(
     `- **Thread:** \`${thread.id}\` (ordinal ${thread.ordinal})`,
     `- **When:** ${at}`,
   ];
+  if (anchor)
+    lines.push(
+      `- **Transcript:** session \`${anchor.sessionId}\`${
+        anchor.legOrdinal ? ` (Leg ${anchor.legOrdinal})` : ''
+      } — \`atlas-tx show ${anchor.sessionId}\``,
+    );
   if (term?.summary) lines.push(``, `## Summary`, term.summary);
   if (term?.blocked) {
     lines.push(
@@ -3364,12 +3438,6 @@ export function renderGateTask(
     : '';
   return [
     `Verification gate (required before your work is accepted) — attempt ${iteration}.`,
-    `\nTHIS TURN'S TOOLS ARE DIFFERENT from your last one: the ONLY host tool available right now is` +
-      ` \`report_verification\`. Your system prompt's mention of \`complete_thread\`/\`request_operator_input\`` +
-      ` describes the BATCH turn you just finished, not this one — they are NOT callable here, and you` +
-      ` already called \`complete_thread\` to get here. Do not ask the operator anything; just do the work` +
-      ` below and call \`report_verification\` when you're done — it IS registered for this turn even though` +
-      ` your system prompt doesn't mention it by name.`,
     `\nThis thread's changes touched these files:\n${fileList}`,
     priorBlock,
     `\n1. Run \`mcp__atlas-lsp-ts__diagnostics\` on each changed file above — a fast per-file check.`,

@@ -10,6 +10,7 @@ import {
   DOC_VERSION_VERIFY_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
   REPORT_ONLY_NOTE,
+  RUNNABLE_WORKSPACE_NOTE,
   SANDBOX_FILESYSTEM_MAP_NOTE,
   SUBAGENT_KERNEL_NOTE,
   SOLE_AUTHOR_NOTE,
@@ -207,6 +208,21 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(out).toContain('/context/artifacts');
   });
 
+  it('RUNNABLE_WORKSPACE_NOTE reaches the build-touching lanes (brain, worker, master review) once, not the advisories', () => {
+    // the stance that a not-yet-runnable env is fixed-or-escalated (never skipped) rides the lanes that build
+    // and verify: the planning brain, the thread orchestrator, and the ship-time master review.
+    for (const agent of [Agent.WORKER, Agent.MASTER_REVIEW]) {
+      const out = renderAgentPrompt(agent, { jobKind: 'feature' });
+      expect(out.split(RUNNABLE_WORKSPACE_NOTE).length - 1, String(agent)).toBe(1);
+    }
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' })).toContain(RUNNABLE_WORKSPACE_NOTE);
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' })).toContain(RUNNABLE_WORKSPACE_NOTE);
+    // read-only advisories don't own verification — they never get it.
+    for (const agent of [Agent.EXPLORE, Agent.DOCS, Agent.REVIEW_AGENT, Agent.DEBUG, Agent.TEST, Agent.FAN_OUT]) {
+      expect(renderAgentPrompt(agent), String(agent)).not.toContain(RUNNABLE_WORKSPACE_NOTE);
+    }
+  });
+
   it('the worker behavioral tail (validate + spike) follows the job-kind block, in order', () => {
     const out = renderAgentPrompt(Agent.WORKER, { jobKind: 'feature' });
     const jobKindAt = out.indexOf('JOB KIND — FEATURE');
@@ -215,6 +231,37 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(jobKindAt).toBeGreaterThan(0);
     expect(validateAt).toBeGreaterThan(jobKindAt);
     expect(spikeAt).toBeGreaterThan(validateAt);
+  });
+});
+
+describe('turn-aware WORKER prose — batch-only host-tool instructions gated by turnPhase', () => {
+  const BATCH_ONLY_MARKERS = [
+    '`complete_thread`',
+    '`record_deviation`',
+    '`capture_ticket`',
+    'Before you call `complete_thread`',
+  ];
+
+  it('gate and commit turns carry NO instruction for batch-only host tools', () => {
+    for (const turnPhase of ['gate', 'commit'] as const) {
+      const out = renderAgentPrompt(Agent.WORKER, { turnPhase });
+      for (const marker of BATCH_ONLY_MARKERS) {
+        expect(out, `${turnPhase} / ${marker}`).not.toContain(marker);
+      }
+      expect(out, `${turnPhase} / DEVIATION_NOTE`).not.toContain(DEVIATION_NOTE);
+      expect(out, `${turnPhase} / EVIDENCE_ARTIFACTS_NOTE`).not.toContain(EVIDENCE_ARTIFACTS_NOTE);
+    }
+  });
+
+  it('batch turn (and the bare no-ctx default) DO carry the batch-only host-tool prose', () => {
+    for (const out of [
+      renderAgentPrompt(Agent.WORKER, { turnPhase: 'batch' }),
+      renderAgentPrompt(Agent.WORKER),
+    ]) {
+      expect(out).toContain('`complete_thread`');
+      expect(out).toContain(DEVIATION_NOTE);
+      expect(out).toContain(EVIDENCE_ARTIFACTS_NOTE);
+    }
   });
 });
 

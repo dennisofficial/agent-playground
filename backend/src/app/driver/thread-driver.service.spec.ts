@@ -43,6 +43,7 @@ import type {
 } from '../domain';
 import type { ThreadTerminalRecord } from '../persistence/entities';
 import type { LiveVerificationJudge, LiveVerificationVerdict } from './live-verification-judge';
+import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 
 /**
  * W4 — the SECTION/PHASE DRIVER unit tests. Every dependency is mocked (NO real LLM / git / network):
@@ -291,6 +292,9 @@ function makeStore(state: StoreState): {
       const s = state.threads.find((x) => x.id === threadId);
       return (s as { terminal_record?: ThreadTerminalRecord | null })?.terminal_record ?? null;
     }),
+    // Transcript anchor (halt-wake) — no steps/legs session seeded in these tests, so the anchor resolves
+    // undefined; present so `writeCompletionMd` doesn't call an undefined fn.
+    resolveSessionAnchor: vi.fn(async (_threadId: string) => undefined),
     // ── Leg rotation (context-rot mitigation) — no prior rotation in these tests, so the driver folds no seed
     //    and rotates ONLY on a self-authored handoff. `completeLegRotation` is present for the type only. ──
     getPendingLegSeed: vi.fn(async (_anchorStepId: string) => null),
@@ -371,6 +375,14 @@ function makeStore(state: StoreState): {
         }
       }
       return n;
+    }),
+    // Decision d1 — completion wake (mirrors the halt trio's presence-for-type-only stubbing above).
+    setDoneWakeOwed: vi.fn(async (_threadId: string, _reason: 'final' | 'notable') => undefined),
+    threadsAwaitingDoneWake: vi.fn(async (_jobId?: string) => []),
+    markDoneWaked: vi.fn(async (_threadId: string) => undefined),
+    masterReviewThreadId: vi.fn(async (jobId: string) => {
+      const s = state.threads.find((x) => x.jobId === jobId && x.kind === 'master_review');
+      return s?.id ?? null;
     }),
   } as unknown as DriverStoreService;
   return { store, state };
@@ -2940,16 +2952,14 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     // that never redelivers. So the ONLY way the verdict can be recovered (and the job reach `done`) is the
     // fix replay-driving the handler from this event.
     const reattach = vi.fn(async (input: Parameters<TurnRunnerService['reattach']>[0]) => {
-      // The replayed `tool_use` carries `block.input` VERBATIM — the model's raw payload against the proxy's
-      // generic `{ args }` schema, which it DOUBLE-WRAPS in practice (`{ args: { args: { passed: true } } }`;
-      // sometimes even stringified). The replay path must normalise it (`unwrapBridgeArgs`) exactly like the
-      // live dispatch, or the handler reads `args['passed']` off a wrapper → `undefined` → a false
-      // `passed:false` → the thread falsely halts. This is the real prod shape (see job b30616d2).
+      // The replayed `tool_use` carries `block.input` VERBATIM — the model's FLAT payload against the tool's
+      // real per-tool schema (strict-validated client-side, no `{ args }` wrapper). The replay path drives
+      // the handler with it directly, exactly like the live dispatch.
       input.onEvent?.({
         kind: 'tool_use',
         id: 'rv-1',
         name: 'mcp__atlas-host-bridge__report_verification',
-        input: { args: { args: { passed: true } } },
+        input: { passed: true },
       });
       return {
         report: 'gate resumed',
@@ -3229,6 +3239,16 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     const incompleteMd = renderCompletionMd(t, 'incomplete', null, '2026-07-04T00:00:00.000Z');
     expect(incompleteMd).toContain('**Outcome:** incomplete');
     expect(incompleteMd).toContain('without asserting completion');
+  });
+
+  it('renderCompletionMd renders the Transcript line from the resolved anchor (even with a null record)', () => {
+    const t = thread('sec-be', 10, 'Backend');
+    const md = renderCompletionMd(t, 'incomplete', null, '2026-07-04T00:00:00.000Z', {
+      sessionId: 'sess-xyz',
+      legOrdinal: 3,
+    });
+    expect(md).toContain('**Transcript:** session `sess-xyz` (Leg 3)');
+    expect(md).toContain('atlas-tx show sess-xyz');
   });
 });
 
@@ -3518,6 +3538,22 @@ describe('ThreadDriver — master-review bridged task list', () => {
     const builderTools = bridgeFor(h, thread('be', 10, 'Backend')).tools;
     expect(builderTools.task_create).toBeUndefined();
     expect(builderTools.task_update).toBeUndefined();
+  });
+
+  // Drift guard: every tool a turn bridge actually registers MUST have a TOOL_SHAPES entry, or the
+  // Claude SDK bridge would silently strip every argument that tool's handler reads (a strict zod
+  // object drops unknown keys before the handler ever sees them). The gate bridge (`buildGateToolBridge`)
+  // is skipped here — it's heavier to construct and only adds `report_verification`, which this already
+  // covers via the builder/master-review bridges.
+  it('every buildTurnBridge()-registered tool (master-review + builder) has a TOOL_SHAPES entry', () => {
+    const h = assemble(baseState());
+    const masterReviewTools = bridgeFor(h, thread('mr', 90, 'Master review', 'executing', true)).tools;
+    const builderTools = bridgeFor(h, thread('be', 10, 'Backend')).tools;
+    for (const tools of [masterReviewTools, builderTools]) {
+      for (const name of Object.keys(tools)) {
+        expect(TOOL_SHAPES, `driver tool "${name}" must have a TOOL_SHAPES entry`).toHaveProperty(name);
+      }
+    }
   });
 
   it('folds task_create into the thread scope with sequential ids, and returns the id to the model', async () => {

@@ -10,7 +10,12 @@
 # Put fnm on PATH + install the cd hook, then resolve + (download-and-cache if missing) the repo's pinned
 # version in CWD. The SDK Bash tool starts shells in the worktree, so this resolves at shell startup.
 eval "$(fnm env --use-on-cd --shell bash)" 2>/dev/null || true
-fnm use --install-if-missing 2>/dev/null || true
+# Redirect STDOUT too, not just stderr: `fnm use` prints "Using Node vX" to stdout, and because this file
+# is sourced via BASH_ENV at the start of EVERY non-interactive bash, that line would otherwise be prepended
+# to the stdout of every agent command — corrupting shell-composable CLIs whose output is piped (e.g.
+# `atlas-tx cat <sid> | jq`, `rg foo "$(atlas-tx path <sid>)"`). The version switch is a filesystem/PATH
+# side effect, unaffected by silencing the message.
+fnm use --install-if-missing >/dev/null 2>&1 || true
 
 # fnm just prepended the repo-selected Node's bin. Re-prepend the image-pinned corepack shims so `pnpm`/
 # `yarn` route through corepack@0.34.6 (modern signing keys), NOT the selected Node's possibly-old bundled

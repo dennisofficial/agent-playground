@@ -6,10 +6,17 @@ export function JobMenu({
   onStartRename,
   onDelete,
   deleting,
+  hasOpenPr,
+  deleteReady,
 }: {
   onStartRename?: () => void;
   onDelete?: () => void;
   deleting?: boolean;
+  /** True when the job's PR is open — a single click opens the PR-choice dialog instead of arming the
+   *  inline two-click confirm. */
+  hasOpenPr?: boolean;
+  /** True once the PR state is known — disables delete until then. */
+  deleteReady?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState(false);
@@ -56,9 +63,12 @@ export function JobMenu({
           {onDelete ? (
             <button
               type="button"
-              disabled={deleting}
+              disabled={deleting || deleteReady === false}
               onClick={() => {
-                if (confirm) {
+                if (hasOpenPr) {
+                  // The modal is the confirmation — fire on a single click.
+                  onDelete?.();
+                } else if (confirm) {
                   // Keep the menu open so the button's "Deleting…" state is visible while the request is
                   // in flight (don't close it out from under the user — that was the "frozen, no feedback"
                   // window). The menu unmounts on the post-success navigation anyway.
