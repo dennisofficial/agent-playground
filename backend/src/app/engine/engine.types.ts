@@ -231,20 +231,31 @@ export function resolveContextLimit(model?: string, engine?: SessionEngine): num
 }
 
 /**
- * WHERE a turn executes. Absent (the default) → run in-process on the host (the `local` runner). When
- * present, the `docker` runner `docker exec`s the engine entrypoint inside `containerId` as `user`.
- * Passed explicitly through the port so the runner never has to derive a container from a string.
+ * The commit identity injected into the sandbox for the agent's own commits — the GitHub account that
+ * owns the org's push PAT (resolved via `GET /user`), so commits are attributed to that account. `email`
+ * is the account's GitHub noreply address (`<id>+<login>@users.noreply.github.com`); `name` is its
+ * display name (or login). Threaded onto {@link GitAuth} and turned into the GIT_AUTHOR/GIT_COMMITTER env.
  */
 export interface SandboxGitIdentity {
   name: string;
   email: string;
 }
+
+/**
+ * Authenticated-git for a turn: the remote url + org PAT the sandbox agent uses to fetch/push, plus the
+ * resolved commit {@link SandboxGitIdentity} to attribute its commits to. See {@link ExecutionTarget.gitAuth}.
+ */
 export interface GitAuth {
   gitUrl: string;
   token?: string;
   identity?: SandboxGitIdentity;
 }
 
+/**
+ * WHERE a turn executes. Absent (the default) → run in-process on the host (the `local` runner). When
+ * present, the `docker` runner `docker exec`s the engine entrypoint inside `containerId` as `user`.
+ * Passed explicitly through the port so the runner never has to derive a container from a string.
+ */
 export interface ExecutionTarget {
   /** The sandbox container to exec the turn inside. */
   containerId: string;

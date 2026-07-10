@@ -17,18 +17,18 @@ export class GitIdentityService {
   async resolve(token: string | undefined): Promise<SandboxGitIdentity | undefined> {
     if (!token) return undefined;
     if (this.cache.has(token)) return this.cache.get(token) ?? undefined;
-    let identity: SandboxGitIdentity | null = null;
+    let u: Awaited<ReturnType<GithubPrService['getAuthenticatedUser']>>;
     try {
-      const u = await this.github.getAuthenticatedUser(token);
-      if (u) {
-        identity = {
-          name: u.name?.trim() || u.login,
-          email: `${u.id}+${u.login}@users.noreply.github.com`,
-        };
-      }
+      u = await this.github.getAuthenticatedUser(token);
     } catch {
-      identity = null; // fail-open: unresolved → commits keep working with git defaults
+      // Transient failure (network blip / 5xx / timeout): fail-open for THIS commit but do NOT
+      // cache — a permanent miss would leave every later commit unattributed until a restart.
+      return undefined;
     }
+    // Definitive outcome (resolved user, or explicit null from a permanent 401/non-OK): cache it.
+    const identity: SandboxGitIdentity | null = u
+      ? { name: u.name?.trim() || u.login, email: `${u.id}+${u.login}@users.noreply.github.com` }
+      : null;
     this.cache.set(token, identity);
     return identity ?? undefined;
   }
