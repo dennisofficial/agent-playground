@@ -16,6 +16,8 @@ import {
   fetchMessages,
   fetchOrgRepos,
   fetchRepoBranches,
+  fetchRepoTree,
+  fetchRepoFile,
   fetchPipeline,
   fetchServices,
   fetchThreadContext,
@@ -76,6 +78,27 @@ export function useContextFile(ref: JobRef, path: string | null) {
   return useQuery({
     queryKey: qk.threadContextFile(ref, path ?? ""),
     queryFn: () => fetchContextFile(ref, path!),
+    enabled: hasRef(ref) && Boolean(path),
+    staleTime: 5_000,
+  });
+}
+
+/** The job worktree's tracked-file manifest — fetched once per viewing session to verify file-path spans.
+ *  The tree rarely changes while viewing, so keep it fresh for the whole session. */
+export function useRepoTree(ref: JobRef) {
+  return useQuery({
+    queryKey: qk.repoTree(ref),
+    queryFn: () => fetchRepoTree(ref),
+    enabled: hasRef(ref),
+    staleTime: Infinity,
+  });
+}
+
+/** One repo file's content (LIVE worktree). Lazy — only when a path is set (a file view is open). */
+export function useRepoFile(ref: JobRef, path: string | null) {
+  return useQuery({
+    queryKey: qk.repoFile(ref, path ?? ""),
+    queryFn: () => fetchRepoFile(ref, path!),
     enabled: hasRef(ref) && Boolean(path),
     staleTime: 5_000,
   });

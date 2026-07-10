@@ -5,6 +5,7 @@ import { Subscription } from 'rxjs';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { GitModule } from '../git/git.module';
 import { MessageEntity, RepoEntity, JobEntity } from '../persistence/entities';
 import { WebSurface } from './web-surface';
 import {
@@ -38,7 +39,15 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
  * Zero v1 imports.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([JobEntity, MessageEntity, RepoEntity], DB_CONNECTION)],
+  imports: [
+    TypeOrmModule.forFeature(
+      [JobEntity, MessageEntity, RepoEntity],
+      DB_CONNECTION,
+    ),
+    // Repo-file endpoints need `LocalGitService` (git ls-files over the job worktree); GitModule is not
+    // `@Global`, so it must be imported for the injected service to resolve.
+    GitModule,
+  ],
   providers: [
     WebSurface,
     // `JobTitleService` injects `JOB_TITLE_CHAIN`, now provided by the `@Global` `TitlingModule`.

@@ -464,6 +464,56 @@ function ToolBtn({
   );
 }
 
+/**
+ * Single source of truth for rendering an inline/block `<code>`: a ```mermaid fence → diagram, a fenced
+ * block → {@link CodeBlock}, else a plain inline code chip. When `resolveFileLink` is provided (spec/plan
+ * panes), an inline span that names a manifest-verified repo file becomes a clickable {@link FilePill}
+ * instead of a plain chip. Both `COMPONENTS.code` and the file-link override delegate here so chip styling
+ * and block detection never drift.
+ */
+function renderCode({
+  className,
+  children,
+  resolveFileLink,
+}: {
+  className?: string;
+  children?: ReactNode;
+  resolveFileLink?: (
+    raw: string,
+  ) => { url: string; onSelect: () => void } | null;
+}) {
+  const cls = className ?? "";
+  const match = /language-(\w+)/.exec(cls);
+  // A ```mermaid fence becomes a rendered diagram instead of a code frame.
+  if (match?.[1] === "mermaid")
+    return <Mermaid chart={nodeText(children).replace(/\n$/, "")} />;
+  // rehype-highlight tags fenced block code (and only block code) with `hljs`; fall back to a
+  // newline sniff for the rare un-highlighted block.
+  const isBlock =
+    cls.includes("hljs") ||
+    Boolean(match) ||
+    String(children ?? "").includes("\n");
+  if (isBlock) return <CodeBlock lang={match?.[1]}>{children}</CodeBlock>;
+  // Inline span: linkify a manifest-verified file path into a pill (spec/plan panes only).
+  if (resolveFileLink) {
+    const link = resolveFileLink(nodeText(children));
+    if (link)
+      return (
+        <FilePill url={link.url} onSelect={link.onSelect}>
+          {children}
+        </FilePill>
+      );
+  }
+  return (
+    <code
+      className="rounded-[3px] px-[5px] py-px font-mono text-[12px]"
+      style={{ background: "var(--surface-3)" }}
+    >
+      {children}
+    </code>
+  );
+}
+
 const COMPONENTS: Components = {
   h1: ({ children }) => (
     <h1 className="mb-1 mt-1 font-disp text-[21px] font-bold leading-tight tracking-[-0.02em] text-text">
@@ -539,30 +589,40 @@ const COMPONENTS: Components = {
       {children}
     </td>
   ),
-  code: ({ className, children }) => {
-    const cls = className ?? "";
-    const match = /language-(\w+)/.exec(cls);
-    // A ```mermaid fence becomes a rendered diagram instead of a code frame.
-    if (match?.[1] === "mermaid")
-      return <Mermaid chart={nodeText(children).replace(/\n$/, "")} />;
-    // rehype-highlight tags fenced block code (and only block code) with `hljs`; fall back to a
-    // newline sniff for the rare un-highlighted block.
-    const isBlock =
-      cls.includes("hljs") ||
-      Boolean(match) ||
-      String(children ?? "").includes("\n");
-    if (isBlock) return <CodeBlock lang={match?.[1]}>{children}</CodeBlock>;
-    return (
-      <code
-        className="rounded-[3px] px-[5px] py-px font-mono text-[12px]"
-        style={{ background: "var(--surface-3)" }}
-      >
-        {children}
-      </code>
-    );
-  },
+  code: ({ className, children }) => renderCode({ className, children }),
   pre: ({ children }) => <>{children}</>,
 };
+
+/** A clickable file-path chip (spec/plan panes only). Left-click navigates in-app to the stacked file view;
+ *  modified/middle click opens the deep link in a new tab. */
+function FilePill({
+  url,
+  onSelect,
+  children,
+}: {
+  url: string;
+  onSelect: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <a
+      href={url}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0)
+          return;
+        e.preventDefault();
+        onSelect();
+      }}
+      className="cursor-pointer rounded-[3px] px-[5px] py-px font-mono text-[12px] text-accent hover:underline"
+      style={{
+        background: "var(--surface-3)",
+        borderBottom: "1px solid var(--accent-line)",
+      }}
+    >
+      {children}
+    </a>
+  );
+}
 
 /** The default external link (new tab) — used for absolute/scheme/anchor hrefs. */
 function ExternalAnchor({
@@ -609,6 +669,7 @@ function isContextHref(href: string | undefined): href is string {
 export const Markdown = memo(function Markdown({
   children,
   resolveRelativeLink,
+  resolveFileLink,
 }: {
   children: string;
   /** Resolve a RELATIVE link (e.g. a spec file linking `sections/01-backend.md`) to a real in-app deep
@@ -618,12 +679,18 @@ export const Markdown = memo(function Markdown({
   resolveRelativeLink?: (
     href: string,
   ) => { url: string; onSelect: () => void } | null;
+  /** Linkify an inline-code span that names a REAL repo file into a clickable pill. Given the raw span text
+   *  (e.g. `web/src/…/markdown.tsx:18-24`), return `{ url, onSelect }` to render a pill, or null to keep it a
+   *  plain code chip. Absent → all inline code stays plain (used only in the spec/plan panes). */
+  resolveFileLink?: (
+    raw: string,
+  ) => { url: string; onSelect: () => void } | null;
 }) {
   const components = useMemo<Components>(() => {
-    if (!resolveRelativeLink) return COMPONENTS;
-    return {
-      ...COMPONENTS,
-      a: ({ href, children }) => {
+    if (!resolveRelativeLink && !resolveFileLink) return COMPONENTS;
+    const next: Components = { ...COMPONENTS };
+    if (resolveRelativeLink) {
+      next.a = ({ href, children }) => {
         const r =
           isRelativeHref(href) || isContextHref(href)
             ? resolveRelativeLink(href)
@@ -655,9 +722,14 @@ export const Markdown = memo(function Markdown({
             {children}
           </a>
         );
-      },
-    };
-  }, [resolveRelativeLink]);
+      };
+    }
+    if (resolveFileLink) {
+      next.code = ({ className, children }) =>
+        renderCode({ className, children, resolveFileLink });
+    }
+    return next;
+  }, [resolveRelativeLink, resolveFileLink]);
   return (
     <div className="text-[14px] leading-[1.62] text-text">
       <ReactMarkdown
