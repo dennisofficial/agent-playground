@@ -3,6 +3,14 @@ name: CI
 on:
   push:
     branches: [main]
+    # A docs-only push to main skips the whole workflow (and thus deploy.yml's
+    # workflow_run) — no images to rebuild or deploy. Kept in sync with the `changes`
+    # job's `code` filter so a push that touches any non-doc file always runs full CI.
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.mdx"
+      - "docs/**"
+      - "LICENSE"
   pull_request:
 
 # Serialize by ref and drop superseded runs. A new commit on a PR cancels that PR's
@@ -14,10 +22,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Change detection ──────────────────────────────────────────────────────────
+  # On pull_request, a docs-only change sets code=false so the heavy jobs skip; the
+  # push trigger already filters docs at the workflow level (paths-ignore above), so
+  # a push here is always code-bearing. Globs mirror on.push.paths-ignore.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Filter paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            code:
+              - "**"
+              - "!**/*.md"
+              - "!**/*.mdx"
+              - "!docs/**"
+              - "!LICENSE"
+
   # ── Typecheck ─────────────────────────────────────────────────────────────────
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
@@ -31,16 +65,15 @@ jobs:
       - name: Backend typecheck
         run: pnpm --filter backend typecheck
 
-  # ── Unit tests (sharded) ──────────────────────────────────────────────────────
-  # The unit suite is module-load/transform bound; a single 4-core hosted runner caps
-  # parallelism, so we split the files across 4 shards that run on separate runners.
+  # ── Unit tests ────────────────────────────────────────────────────────────────
+  # Runs as a single job: GitHub bills each job rounded up to the whole minute, so the
+  # former 4-shard matrix (4 runners + 4× checkout/setup) cost far more billed minutes
+  # than the suite's wall time saved. Vitest still parallelizes across the runner's cores.
   unit-tests:
-    name: Unit tests (shard ${{ matrix.shard }}/4)
+    name: Unit tests
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
@@ -51,25 +84,28 @@ jobs:
         uses: ./.github/actions/setup-workspace
 
       - name: Unit tests
-        run: pnpm --filter backend exec vitest run --mode unit --shard=${{ matrix.shard }}/4
+        run: pnpm --filter backend exec vitest run --mode unit
 
   # ── Aggregate gate ────────────────────────────────────────────────────────────
   # Single required status check. Named to match the existing branch-protection check
-  # ("CI / Typecheck + unit tests") so splitting the job needs no settings change, and
-  # so the required check is robust to future shard-count changes.
+  # ("CI / Typecheck + unit tests") so the required check is stable across job changes.
+  # Runs on every PR (even docs-only) so the required check always reports: a `skipped`
+  # code job (docs-only change) is treated as passing; only a real `failure` blocks.
   ci-gate:
     name: Typecheck + unit tests
     runs-on: ubuntu-latest
     needs: [typecheck, unit-tests]
     if: always()
     steps:
-      - name: Require typecheck + all shards to pass
+      - name: Require typecheck + unit tests to pass (or be skipped)
         run: |
-          [ "${{ needs.typecheck.result }}" = "success" ] \
-            && [ "${{ needs.unit-tests.result }}" = "success" ] || exit 1
+          tc="${{ needs.typecheck.result }}"
+          ut="${{ needs.unit-tests.result }}"
+          [ "$tc" = "success" ] || [ "$tc" = "skipped" ] || exit 1
+          [ "$ut" = "success" ] || [ "$ut" = "skipped" ] || exit 1
 
   # ── Build and push images ─────────────────────────────────────────────────────
-  # Only runs on push to main (not PRs) and requires typecheck + all test shards to pass.
+  # Only runs on push to main (not PRs) and requires typecheck + unit tests to pass.
   build-images:
     name: Build + push Docker images
     runs-on: ubuntu-latest
@@ -130,8 +166,11 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.sha_tag }}
             ${{ steps.meta.outputs.backend_image }}:latest
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
+          # Registry-backed layer cache (GHCR), NOT type=gha: the gha cache is capped at
+          # 10 GB/repo and mode=max Docker blobs evicted themselves (and the pnpm cache),
+          # forcing cold builds. A GHCR :buildcache tag has no such cap and persists.
+          cache-from: type=registry,ref=${{ steps.meta.outputs.backend_image }}:buildcache
+          cache-to: type=registry,ref=${{ steps.meta.outputs.backend_image }}:buildcache,mode=max
 
       # ── Backend migrator image (--target migrator) ─────────────────────────────
       - name: Build + push migrator image
@@ -144,8 +183,12 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.migrator_image }}:${{ steps.meta.outputs.sha_tag }}
             ${{ steps.meta.outputs.migrator_image }}:latest
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
+          # Reads the backend buildcache too — the migrator is a stage of the same
+          # backend.Dockerfile, so it reuses those already-cached layers.
+          cache-from: |
+            type=registry,ref=${{ steps.meta.outputs.migrator_image }}:buildcache
+            type=registry,ref=${{ steps.meta.outputs.backend_image }}:buildcache
+          cache-to: type=registry,ref=${{ steps.meta.outputs.migrator_image }}:buildcache,mode=max
 
       # ── Web image ─────────────────────────────────────────────────────────────
       - name: Build + push web image
@@ -160,8 +203,8 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.web_image }}:${{ steps.meta.outputs.sha_tag }}
             ${{ steps.meta.outputs.web_image }}:latest
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,mode=max,scope=web
+          cache-from: type=registry,ref=${{ steps.meta.outputs.web_image }}:buildcache
+          cache-to: type=registry,ref=${{ steps.meta.outputs.web_image }}:buildcache,mode=max
 
       - name: Summary
         run: |
