@@ -7,6 +7,7 @@ import { In, IsNull, Not, Repository } from 'typeorm';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver, OnboardingService } from '../onboarding';
+import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, JobEntity, JobSandboxEntity } from '../persistence/entities';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
@@ -123,8 +124,13 @@ export class JobLifecycleService {
     private readonly provisioner: WorktreeProvisioner,
     private readonly tickets: TicketService,
     private readonly turnRegistry: TurnRegistry,
-    // Lazily resolves brain-module services (e.g. the onboarding + wake handlers) to avoid a load cycle.
+    // Kept for the lazy `OnboardingService` lookup (revalidateRepo) that would otherwise close a load
+    // cycle with the @Global onboarding module. The brain wake now comes through the neutral gateway.
     private readonly moduleRef: ModuleRef,
+    // The cold-boot provisioning-failure wake seam — the neutral driver→brain gateway (the brain binds
+    // itself into it on bootstrap). Injecting it forms no construction cycle, unlike a
+    // `useExisting: AgentSessionManager` port (the brain constructs this service → DI deadlock).
+    private readonly brainGateway: BrainGateway,
     private readonly skillUpdater: SkillUpdaterService,
   ) {}
 
@@ -921,15 +927,13 @@ export class JobLifecycleService {
   }
 
   /**
-   * WAKE the job brain to deal with a cold-boot setup-script failure (see {@link AgentSessionManager.
-   * wakeForProvisioningFailure}). Resolved lazily through ModuleRef — the brain module already depends on
-   * this service, so a static import would be a cycle (same pattern the driver uses everywhere it reaches
-   * the brain). The concrete error is delivered into the woken turn from the sandbox row's `setup_error`.
+   * WAKE the job brain to deal with a cold-boot setup-script failure — reached through the neutral
+   * `BrainGateway` (the brain binds itself into it on bootstrap), which avoids the DI construction cycle a
+   * direct brain dependency would form. The concrete error is delivered into the woken turn from the
+   * sandbox row's `setup_error`.
    */
   private async wakeBrainForSetupFailure(jobId: string, orgId: string, repoId: string): Promise<void> {
-    const { AgentSessionManager } = await import('../brain/agent-session-manager.service.js');
-    const brain = this.moduleRef.get(AgentSessionManager, { strict: false });
-    await brain.wakeForProvisioningFailure(jobId, orgId, repoId);
+    await this.brainGateway.wakeForProvisioningFailure(jobId, orgId, repoId);
   }
 
   /** Resolve the `ProjectRepo` (clone path + token) for a sandbox row — keyed by the repo's SLUG. */
