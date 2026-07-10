@@ -460,6 +460,12 @@ export class TurnHarnessFactory {
           const ctxLimit =
             turnMeta.contextLimit ??
             (ctxTokens != null ? resolveContextLimit(u.contextModel ?? u.model, u.engine) : null);
+          // How long the turn actually worked: `now − startedAt`, read from the still-live turn state (the
+          // SAME clock that drove the "Atlas is working… 19m 24s" indicator, so the footer matches the last
+          // reading). `snapshot` is valid here — `persistAll()` ends the live lane only afterwards; a turn
+          // that pushed no events (no snapshot) simply carries no duration.
+          const startedAt = this.liveTurns.snapshot(channel, jobId, lane)?.startedAt;
+          const workedMs = startedAt != null ? Math.max(0, Date.now() - startedAt) : undefined;
           blocks.push({
             kind: 'turn_meta',
             emittedAt: stamp(),
@@ -468,6 +474,7 @@ export class TurnHarnessFactory {
               usage: turnMeta.usage as unknown as Record<string, unknown>,
               contextTokens: ctxTokens,
               contextLimit: ctxLimit,
+              ...(workedMs != null ? { workedMs } : {}),
             },
           });
         }
