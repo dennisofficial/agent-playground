@@ -3694,6 +3694,14 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     expect(freshTask).toContain('<session_rotated>');
     expect(freshTask).toContain('FAILED: `pnpm build` → TS2345');
     expect(freshTask).toContain('\n\n---\n\n'); // seed folded ahead of the original batch task
+    // Recency ordering: the handoff/preamble lead (PRIMACY, top), the original batch task sits in the middle, and
+    // the operative resume directive trails LAST (RECENCY slot) — see foldLegSeed / ROTATION_RESUME_TAIL.
+    const iPreamble = freshTask.indexOf('<session_rotated>');
+    const iBaseTask = freshTask.indexOf('Feature overview:');
+    const iResume = freshTask.indexOf('<resume_here>');
+    expect(iResume).toBeGreaterThan(-1);
+    expect(iPreamble).toBeLessThan(iBaseTask);
+    expect(iBaseTask).toBeLessThan(iResume);
     // The thread + job finished cleanly on the fresh Leg.
     expect(state.threads[0].status).toBe('done');
     expect(state.job.status).toBe('done');

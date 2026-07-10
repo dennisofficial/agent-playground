@@ -69,6 +69,7 @@ import {
   COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
   ROTATION_PREAMBLE,
+  ROTATION_RESUME_TAIL,
   ROTATION_SOFT_NUDGE,
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
@@ -2038,7 +2039,7 @@ export class ThreadDriver implements JobDispatcher {
     // instead of restarting the batch. The seed is cleared the instant the fresh session is born (turn-runner
     // clear-on-birth). Mirrors the brain's `pending_compaction_seed` fold in `runChatTurnInner`.
     const legSeed = await this.store.getPendingLegSeed(anchor.id);
-    const task = legSeed ? `${legSeed}\n\n---\n\n${baseTask}` : baseTask;
+    const task = this.foldLegSeed(legSeed, baseTask);
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2153,7 +2154,7 @@ export class ThreadDriver implements JobDispatcher {
           );
           result = null;
           const seed = await this.store.getPendingLegSeed(anchor.id);
-          legTask = seed ? `${seed}\n\n---\n\n${baseTask}` : baseTask;
+          legTask = this.foldLegSeed(seed, baseTask);
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
           rotationState.softReached = false;
@@ -2167,7 +2168,7 @@ export class ThreadDriver implements JobDispatcher {
         // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
         result = null;
         const seed = await this.store.getPendingLegSeed(anchor.id);
-        legTask = seed ? `${seed}\n\n---\n\n${baseTask}` : baseTask;
+        legTask = this.foldLegSeed(seed, baseTask);
       }
       report = result!.report;
 
@@ -2722,6 +2723,16 @@ export class ThreadDriver implements JobDispatcher {
     const tasks = await this.store.getThreadTasks(threadId).catch(() => [] as TaskItem[]);
     const tasksBlock = renderOpenLegTasks(tasks);
     return [ROTATION_PREAMBLE, handoff, ...(tasksBlock ? [tasksBlock] : [])].join('\n\n');
+  }
+
+  /**
+   * Fold a rotation seed into the fresh Leg's turn task. The seed ({@link buildLegSeed} — preamble + handoff +
+   * carried checklist) leads so it lands in the PRIMACY slot; the original batch task sits in the middle; and the
+   * {@link ROTATION_RESUME_TAIL} operative directive trails LAST, in the RECENCY slot where LLM recall is highest.
+   * A non-rotated Leg (no seed) gets the bare batch task unchanged.
+   */
+  private foldLegSeed(seed: string | null, baseTask: string): string {
+    return seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask;
   }
 
   /**
