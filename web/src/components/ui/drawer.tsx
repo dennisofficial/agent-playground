@@ -18,6 +18,25 @@ const DEFAULT_SIDE_WIDTH_CLASS = "w-[85vw] max-w-[360px]";
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
 
+let bodyScrollLockCount = 0;
+let previousBodyOverflow = "";
+
+function lockBodyScroll() {
+  if (bodyScrollLockCount === 0) {
+    previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+  }
+  bodyScrollLockCount += 1;
+}
+
+function unlockBodyScroll(): boolean {
+  bodyScrollLockCount = Math.max(0, bodyScrollLockCount - 1);
+  if (bodyScrollLockCount !== 0) return false;
+  document.body.style.overflow = previousBodyOverflow;
+  previousBodyOverflow = "";
+  return true;
+}
+
 /**
  * An accessible off-canvas panel — an inline `fixed` overlay (no portal needed at this z-index scale).
  * Traps focus and locks body scroll while open; restores focus to the trigger on close.
@@ -49,9 +68,7 @@ export function Drawer({
 
     lastFocused.current = document.activeElement as HTMLElement | null;
     panelRef.current?.focus();
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    lockBodyScroll();
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -80,8 +97,7 @@ export function Drawer({
 
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-      lastFocused.current?.focus();
+      if (unlockBodyScroll()) lastFocused.current?.focus();
     };
   }, [open]);
 

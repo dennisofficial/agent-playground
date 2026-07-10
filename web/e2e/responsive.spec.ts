@@ -16,8 +16,8 @@ import { encodeJobRef } from "@/lib/routes";
  * itself renders against, so a future threshold change updates both sides together.
  */
 
-const DEV_EMAIL = "dev@atlas.dev";
-const DEV_PASSWORD = "atlas-dev-pw";
+const DEV_EMAIL = process.env.ADMIN_SEED_EMAIL ?? "admin@atlas.dev";
+const DEV_PASSWORD = process.env.ADMIN_SEED_PASSWORD;
 
 const ORG_ID = "e9af869c-309a-466e-ba1b-51b870106b3f";
 const REPO_ID = "63ad1635-966a-427f-8e52-9cc8a8ecfc8b";
@@ -39,6 +39,11 @@ const AUTH_FILE = path.join(__dirname, ".auth", "user.json");
 test.use({ storageState: AUTH_FILE });
 
 test.beforeAll(async ({ browser, baseURL }) => {
+  if (!DEV_PASSWORD) {
+    throw new Error(
+      "ADMIN_SEED_PASSWORD is required for responsive e2e auth. Run via `pnpm test:e2e` so the backend seed env is injected.",
+    );
+  }
   const context: BrowserContext = await browser.newContext({
     baseURL,
     storageState: undefined,
