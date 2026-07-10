@@ -1738,6 +1738,8 @@ export class WebSurfaceController {
       provenance: 'custom',
       forked_from: name,
       surfaces: source?.surfaces,
+      ...(source?.reviewForTypes ? { reviewForTypes: source.reviewForTypes } : {}),
+      ...(source?.reviewForGlobs ? { reviewForGlobs: source.reviewForGlobs } : {}),
       enabled: true,
     });
     return forkName;

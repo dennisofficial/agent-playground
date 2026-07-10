@@ -26,6 +26,14 @@ const baseCtx: AutoFixContext = {
 // ── (a) skill-frontmatter: list-valued reviewForTypes/reviewForGlobs + stripSkillFrontmatter ────────
 
 describe('parseSkillFrontmatter — reviewForTypes/reviewForGlobs', () => {
+  it('parses the documented snake_case list keys into the camelCase DTO fields', () => {
+    const md =
+      '---\nname: x\nreview_for_types: [frontend]\nreview_for_globs: **/*.tsx\n---\nbody';
+    const fm = parseSkillFrontmatter(md);
+    expect(fm.reviewForTypes).toEqual(['frontend']);
+    expect(fm.reviewForGlobs).toEqual(['**/*.tsx']);
+  });
+
   it('parses the bracketed list form `[a, b]` into a string array', () => {
     const md = '---\nname: x\nreviewForTypes: [frontend, backend]\n---\nbody';
     expect(parseSkillFrontmatter(md).reviewForTypes).toEqual(['frontend', 'backend']);

@@ -1,7 +1,7 @@
 ---
 name: react-review-checklist
 description: React/Next.js conformance rules for reviewing frontend changes — hook dependencies, list keys, effect cleanup, and render-time purity. Applied by the framework-conformance review lens on frontend threads.
-reviewForTypes: [frontend]
+review_for_types: [frontend]
 metadata:
   trigger: Reviewing a React/Next.js change for framework-conformance defects
   version: 1.0.0

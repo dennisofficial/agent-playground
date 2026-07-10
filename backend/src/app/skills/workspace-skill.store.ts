@@ -50,6 +50,10 @@ export interface SkillView {
   update_policy: SkillUpdatePolicy | null;
   forked_from: string | null;
   surfaces: McpSurface[];
+  /** Applicability for the framework-conformance review lens. */
+  reviewForTypes: string[];
+  /** Applicability for the framework-conformance review lens. */
+  reviewForGlobs: string[];
   enabled: boolean;
   /** Set by `SkillUpdaterService` for a `pinned`/`manual` git skill whose remote has moved past
    *  `installed_sha` — the console's "update available" badge. Always false for non-git skills. */
@@ -105,6 +109,8 @@ export class WorkspaceSkillStore {
       update_policy: r.update_policy,
       forked_from: r.forked_from,
       surfaces: r.surfaces,
+      reviewForTypes: Array.isArray(r.review_for_types) ? r.review_for_types : [],
+      reviewForGlobs: Array.isArray(r.review_for_globs) ? r.review_for_globs : [],
       enabled: r.enabled,
       update_available: r.update_available,
     };

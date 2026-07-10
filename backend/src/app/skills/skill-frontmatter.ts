@@ -44,13 +44,18 @@ export function parseSkillFrontmatter(md: string): SkillFrontmatter {
   if (!block) return {};
   const out: SkillFrontmatter = {};
   for (const line of block[1].split('\n')) {
-    const kv = /^(name|description|reviewForTypes|reviewForGlobs):\s*(.+?)\s*$/.exec(line);
+    const kv = /^(name|description|reviewForTypes|reviewForGlobs|review_for_types|review_for_globs):\s*(.+?)\s*$/.exec(line);
     if (!kv) continue;
     const key = kv[1];
-    if (key === 'reviewForTypes' || key === 'reviewForGlobs') {
+    if (
+      key === 'reviewForTypes' ||
+      key === 'reviewForGlobs' ||
+      key === 'review_for_types' ||
+      key === 'review_for_globs'
+    ) {
       const list = parseListValue(kv[2]);
       if (list.length > 0) {
-        if (key === 'reviewForTypes') out.reviewForTypes = list;
+        if (key === 'reviewForTypes' || key === 'review_for_types') out.reviewForTypes = list;
         else out.reviewForGlobs = list;
       }
       continue;

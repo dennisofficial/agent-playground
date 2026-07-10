@@ -1219,7 +1219,7 @@ export class DriverStoreService {
         id: s.id,
         ordinal: s.ordinal,
         brief: s.brief,
-        type: s.type,
+        type: coerceThreadType(s.type),
         status: s.status,
         condition: s.condition,
         // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's kind.
