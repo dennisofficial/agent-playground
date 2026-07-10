@@ -650,6 +650,8 @@ export interface SystemSkill {
   name: string;
   description: string;
   surfaces: McpSurface[];
+  reviewForTypes?: string[];
+  reviewForGlobs?: string[];
   git?: { url: string; subpath: string; ref: string };
   synced?: boolean;
 }
@@ -668,6 +670,8 @@ export interface Skill {
   updatePolicy: SkillUpdatePolicy | null;
   forkedFrom: string | null;
   surfaces: McpSurface[];
+  reviewForTypes: string[];
+  reviewForGlobs: string[];
   enabled: boolean;
   /** True for a `pinned`/`manual` git skill whose remote has moved past `installedSha`. */
   updateAvailable: boolean;
@@ -686,6 +690,8 @@ interface SkillWire {
   update_policy: SkillUpdatePolicy | null;
   forked_from: string | null;
   surfaces: McpSurface[];
+  reviewForTypes?: string[];
+  reviewForGlobs?: string[];
   enabled: boolean;
   update_available: boolean;
 }
@@ -703,6 +709,8 @@ function fromWire(s: SkillWire): Skill {
     updatePolicy: s.update_policy,
     forkedFrom: s.forked_from,
     surfaces: s.surfaces,
+    reviewForTypes: s.reviewForTypes ?? [],
+    reviewForGlobs: s.reviewForGlobs ?? [],
     enabled: s.enabled,
     updateAvailable: s.update_available,
   };
@@ -763,6 +771,8 @@ export interface SaveSkillBody {
   description: string;
   provenance?: SkillProvenance;
   surfaces?: McpSurface[];
+  reviewForTypes?: string[];
+  reviewForGlobs?: string[];
   enabled?: boolean;
   updatePolicy?: SkillUpdatePolicy;
   /** `SKILL.md` body (frontmatter-stripped) — custom skills only. */
@@ -783,6 +793,8 @@ export function useSaveSkill(orgId: string) {
             description: body.description,
             provenance: body.provenance,
             surfaces: body.surfaces,
+            reviewForTypes: body.reviewForTypes,
+            reviewForGlobs: body.reviewForGlobs,
             enabled: body.enabled,
             update_policy: body.updatePolicy,
             body: body.body,
