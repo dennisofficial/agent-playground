@@ -575,6 +575,13 @@ export interface ServiceInfo {
    * `unknown` (couldn't probe: no running container, null pgid/startedAt, or a transient exec failure).
    */
   status: "running" | "stopped" | "unknown";
+  /** The port the service declared via `atlas-svc run --port` (null = not an HTTP service). */
+  port: number | null;
+  /**
+   * Public HTTPS URL when the service is exposed (has a port, not opted out, running) and the
+   * backend's preview feature is on; otherwise null (feature off, or nothing to expose).
+   */
+  url: string | null;
 }
 
 // ── UI job model ───────────────────────────────────────────────────────────────────────────────
