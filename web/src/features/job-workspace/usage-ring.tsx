@@ -67,35 +67,28 @@ function Ring({
   );
 }
 
-/**
- * One window's row in the usage panel — a thin bar + reset time. Always rendered (session/weekly/…): when
- * the window is unknown it shows a muted "unknown" placeholder rather than disappearing, so the panel always
- * lists every window the operator expects.
- */
-function WindowRow({ label, window }: { label: string; window: UsageWindow }) {
-  const pct = window ? Math.min(1, Math.max(0, window.utilization / 100)) : 0;
+/** One window's row in the usage panel — a thin bar + reset time. Only rendered for windows we have data for. */
+function WindowRow({
+  label,
+  window,
+}: {
+  label: string;
+  window: NonNullable<UsageWindow>;
+}) {
+  const pct = Math.min(1, Math.max(0, window.utilization / 100));
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center justify-between gap-3">
         <span className="text-[11px] text-dim">{label}</span>
-        {window ? (
-          <span className="font-mono text-[10px] tabular-nums text-faint">
-            {Math.round(window.utilization)}% · resets{" "}
-            {formatClockTime(window.resetsAt)}
-          </span>
-        ) : (
-          <span className="font-mono text-[10px] tabular-nums text-faint">
-            unknown
-          </span>
-        )}
+        <span className="font-mono text-[10px] tabular-nums text-faint">
+          {Math.round(window.utilization)}% · resets {formatClockTime(window.resetsAt)}
+        </span>
       </div>
       <div className="h-[3px] w-full overflow-hidden rounded-full bg-border">
-        {window ? (
-          <div
-            className="h-full rounded-full"
-            style={{ width: `${pct * 100}%`, background: ringColor(pct) }}
-          />
-        ) : null}
+        <div
+          className="h-full rounded-full"
+          style={{ width: `${pct * 100}%`, background: ringColor(pct) }}
+        />
       </div>
     </div>
   );
@@ -103,10 +96,10 @@ function WindowRow({ label, window }: { label: string; window: UsageWindow }) {
 
 /**
  * A subscription-usage ring (Claude Code `/usage` style) for the composer footer — the SESSION (5-hour)
- * window as a small SVG arc + %. CLICK it to open a panel breaking out every window
- * (session/weekly/Opus/Sonnet); each unknown window shows "unknown" so the panel always lists all four.
- * DEGRADED (loading, `ok:false`, or no 5-hour window): the ring renders dimmed with no number — the usage
- * endpoint is best-effort and must never block or error the composer — but the panel still opens on click.
+ * window as a small SVG arc + %. CLICK it to open a panel that lists ONLY the windows we have data for
+ * (session/weekly/Opus/Sonnet — rendered dynamically, absent windows are omitted). The ring stays visible
+ * with a "none" state (dimmed, no number) when we have nothing yet — the usage endpoint is best-effort and
+ * must never block or error the composer.
  */
 export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }) {
   const { data, isLoading } = useOrgUsage(orgId);
@@ -162,26 +155,33 @@ export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }
           <div className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
             Claude usage
           </div>
-          <div className="flex flex-col gap-2">
-            <WindowRow label="Session (5h)" window={data?.fiveHour ?? null} />
-            <WindowRow label="Weekly (7d)" window={data?.sevenDay ?? null} />
-            <WindowRow label="Opus (7d)" window={data?.sevenDayOpus ?? null} />
-            <WindowRow label="Sonnet (7d)" window={data?.sevenDaySonnet ?? null} />
-          </div>
           {(() => {
-            const hasAnyWindow = Boolean(
-              data?.fiveHour ??
-                data?.sevenDay ??
-                data?.sevenDayOpus ??
-                data?.sevenDaySonnet,
+            const entries: [string, UsageWindow][] = [
+              ["Session (5h)", data?.fiveHour ?? null],
+              ["Weekly (7d)", data?.sevenDay ?? null],
+              ["Opus (7d)", data?.sevenDayOpus ?? null],
+              ["Sonnet (7d)", data?.sevenDaySonnet ?? null],
+            ];
+            const rows = entries.filter(
+              (r): r is [string, NonNullable<UsageWindow>] => r[1] !== null,
             );
-            const updated = hasAnyWindow ? timeAgo(data?.fetchedAt) : null;
+            if (rows.length === 0) {
+              return <div className="text-[11px] text-faint">No usage data yet.</div>;
+            }
             return (
-              <div className="mt-2 border-t pt-1.5 text-[10px] text-faint" style={{ borderColor: "var(--border)" }}>
-                {hasAnyWindow
-                  ? `Updated ${updated ?? "recently"}`
-                  : "Usage is unavailable right now."}
-              </div>
+              <>
+                <div className="flex flex-col gap-2">
+                  {rows.map(([label, window]) => (
+                    <WindowRow key={label} label={label} window={window} />
+                  ))}
+                </div>
+                <div
+                  className="mt-2 border-t pt-1.5 text-[10px] text-faint"
+                  style={{ borderColor: "var(--border)" }}
+                >
+                  Updated {timeAgo(data?.fetchedAt) ?? "recently"}
+                </div>
+              </>
             );
           })()}
         </div>
