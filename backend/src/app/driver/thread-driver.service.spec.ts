@@ -821,7 +821,7 @@ function assemble(
   } as unknown as EnvService;
   // The shared transcript spine over a fake live store + a capturing durable sink — so build turns persist
   // their transcript (and the `build_anchor`) through the same path production uses, and tests can assert it.
-  const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
+  const liveTurns = { push: vi.fn(), end: vi.fn(), snapshot: vi.fn(() => null) } as unknown as LiveTurnStore;
   const sunk: Array<{
     jobId: string;
     block: {
