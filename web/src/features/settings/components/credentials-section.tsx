@@ -638,13 +638,21 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
       return;
     }
     setError("");
+    // Open the window synchronously within the click handler so popup blockers
+    // don't block it after the mutation's network round-trip loses the user gesture.
+    const loginWindow = window.open("", "_blank", "noopener,noreferrer");
     try {
       const result = await createAuthorizeUrl.mutateAsync({
         label: trimmedLabel,
       });
-      window.open(result.url, "_blank", "noopener,noreferrer");
+      if (loginWindow) {
+        loginWindow.location.href = result.url;
+      } else {
+        window.open(result.url, "_blank", "noopener,noreferrer");
+      }
       setPending({ state: result.state, label: result.label });
     } catch (e) {
+      loginWindow?.close();
       setError((e as Error)?.message || "Could not start Claude login.");
     }
   }
