@@ -20,12 +20,20 @@ export type { SessionLimitHit } from './session-limit';
 export type EngineAuth = {
   secret: string;
   /**
+   * NON-secret discriminator for Claude: `'personal'` credentials are an OAuth login delivered as the
+   * `.credentials.json` file and are refreshable; `'setup-token'` credentials are a static env var. Absent
+   * for Codex (whose `secret` is always an `auth.json` blob). Safe to serialize — carried over the wire on
+   * `TurnSpec.auth.kind` so the in-container engine can tell the two apart.
+   */
+  kind?: 'setup-token' | 'personal';
+  /**
    * HOST-SIDE provenance for the auth-refresh write-back: where to persist a refreshed `auth.json` back
    * to. Set ONLY when `secret` came from an org credential (never the env fallback — a process env var
    * can't be persisted). It is STRIPPED before the turn spec enters the container (the container never
    * needs it), so it never rides Redis into the sandbox. Absent → no write-back (env/local-dev runs).
+   * `credentialId` lets the write-back target the exact `claude_credentials` row it came from.
    */
-  refreshBack?: { orgId: string; engine: SessionEngine };
+  refreshBack?: { orgId: string; engine: SessionEngine; credentialId?: string };
 };
 
 /**
@@ -687,8 +695,12 @@ export interface TurnSpec extends Pick<RunEngineArgs, SpecVerbatimKey> {
   cwd: string;
   /** Rewritten to container mount paths. */
   writableRoots: string[];
-  /** Secret only — the host-only `refreshBack` provenance is stripped so org ids never ride Redis in. */
-  auth?: { secret: string };
+  /**
+   * Secret + the non-secret `kind` discriminator (the container needs it to tell a Claude personal
+   * credential from a setup-token) — the host-only `refreshBack` provenance is stripped so org ids never
+   * ride Redis in.
+   */
+  auth?: { secret: string; kind?: 'setup-token' | 'personal' };
   /** Non-secret gate telling the in-container engine to write refreshed auth back (derived from `auth.refreshBack`). */
   persistAuthRefresh?: boolean;
   /** When present, activates the tool bridge — the host tool names to proxy via an MCP server. */

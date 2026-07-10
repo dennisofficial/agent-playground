@@ -6,6 +6,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   OrganizationEntity,
+  OrgClaudeCredentialEntity,
   OrgCredentialsEntity,
   OrgWorkspaceSecretFileEntity,
   OrgWorkspaceMountEntity,
@@ -15,6 +16,7 @@ import {
   JobSandboxEntity,
 } from '../persistence/entities';
 import { AuthRefreshSinkService } from './auth-refresh.sink';
+import { ClaudeCredentialStore } from './claude-credential.store';
 import { CredentialResolver } from './credential-resolver.service';
 import { OrgCredentialsController } from './credentials.controller';
 import { OauthUsageService } from './oauth-usage.service';
@@ -43,6 +45,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
     TypeOrmModule.forFeature(
       [
         OrgCredentialsEntity,
+        OrgClaudeCredentialEntity,
         OrgWorkspaceSecretFileEntity,
         OrgWorkspaceMountEntity,
         OrganizationEntity,
@@ -64,6 +67,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
   ],
   providers: [
     TenantCredentialStore,
+    ClaudeCredentialStore,
     WorkspaceSecretFileStore,
     WorkspaceConfigStore,
     CredentialResolver,
@@ -74,6 +78,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
   ],
   exports: [
     TenantCredentialStore,
+    ClaudeCredentialStore,
     WorkspaceSecretFileStore,
     WorkspaceConfigStore,
     CredentialResolver,
