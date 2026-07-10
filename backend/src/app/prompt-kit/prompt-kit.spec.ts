@@ -236,6 +236,37 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 });
 
+describe('turn-aware WORKER prose — batch-only host-tool instructions gated by turnPhase', () => {
+  const BATCH_ONLY_MARKERS = [
+    '`complete_thread`',
+    '`record_deviation`',
+    '`capture_ticket`',
+    'Before you call `complete_thread`',
+  ];
+
+  it('gate and commit turns carry NO instruction for batch-only host tools', () => {
+    for (const turnPhase of ['gate', 'commit'] as const) {
+      const out = renderAgentPrompt(Agent.WORKER, { turnPhase });
+      for (const marker of BATCH_ONLY_MARKERS) {
+        expect(out, `${turnPhase} / ${marker}`).not.toContain(marker);
+      }
+      expect(out, `${turnPhase} / DEVIATION_NOTE`).not.toContain(DEVIATION_NOTE);
+      expect(out, `${turnPhase} / EVIDENCE_ARTIFACTS_NOTE`).not.toContain(EVIDENCE_ARTIFACTS_NOTE);
+    }
+  });
+
+  it('batch turn (and the bare no-ctx default) DO carry the batch-only host-tool prose', () => {
+    for (const out of [
+      renderAgentPrompt(Agent.WORKER, { turnPhase: 'batch' }),
+      renderAgentPrompt(Agent.WORKER),
+    ]) {
+      expect(out).toContain('`complete_thread`');
+      expect(out).toContain(DEVIATION_NOTE);
+      expect(out).toContain(EVIDENCE_ARTIFACTS_NOTE);
+    }
+  });
+});
+
 describe('shared review scope', () => {
   it('the master review and the review subagent hunt the SAME dimensions', () => {
     for (const agent of [Agent.MASTER_REVIEW, Agent.REVIEW_AGENT]) {

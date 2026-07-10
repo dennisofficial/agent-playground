@@ -6765,12 +6765,7 @@ function asDecisionClass(v: unknown): DecisionClass | undefined {
   return DECISION_CLASSES.has(norm) ? (norm as DecisionClass) : undefined;
 }
 
-/**
- * The bridge wraps every tool's parameters under a single `args` object (the SDK schema strips
- * unrecognized top-level keys). When the model forgets the wrapper, the host receives `{}` and a
- * field-specific error ("decisionClass must be one of…") MISLEADS it into fixing the wrong thing.
- * Detect the empty-args case up front and return a hint that points at the real cause: the envelope.
- */
+/** Return a focused missing-arguments hint before field-specific validation picks a misleading first error. */
 function missingArgsEnvelope(
   args: Record<string, unknown>,
 ): { ok: false; reason: string } | null {
@@ -6778,8 +6773,8 @@ function missingArgsEnvelope(
   return {
     ok: false,
     reason:
-      'No arguments received — pass ALL parameters inside a single `args` object ' +
-      '(e.g. { args: { decisionClass, ruling, title } }), not at the top level.',
+      'No arguments received — pass the required fields directly in this tool call ' +
+      '(e.g. { decisionClass, ruling, title }).',
   };
 }
 

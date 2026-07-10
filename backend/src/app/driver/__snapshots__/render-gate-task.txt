@@ -1,7 +1,5 @@
 Verification gate (required before your work is accepted) — attempt 2.
 
-THIS TURN'S TOOLS ARE DIFFERENT from your last one: the ONLY host tool available right now is `report_verification`. Your system prompt's mention of `complete_thread`/`request_operator_input` describes the BATCH turn you just finished, not this one — they are NOT callable here, and you already called `complete_thread` to get here. Do not ask the operator anything; just do the work below and call `report_verification` when you're done — it IS registered for this turn even though your system prompt doesn't mention it by name.
-
 This thread's changes touched these files:
 - src/a.ts
 - src/b.ts

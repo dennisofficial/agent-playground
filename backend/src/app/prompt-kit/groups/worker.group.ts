@@ -1,12 +1,12 @@
 /**
- * prompt-kit / groups / worker — the build/execute thread ORCHESTRATOR (`Agent.WORKER`). The lean persona
- * ROLE is one fragment (order 100); its orchestration tail (completion contract, mid-build routing, build
- * hygiene, task list, subagents, playground) is decomposed one-concern-per-fragment across the 110-119 band.
- * The shared cloud-sandbox note + job-kind block come from `DriverFramingGroup` (the 200/300 band); the
- * behavioral tail (validate-by-running, spike, etc.) is the 400+ band.
+ * prompt-kit / groups / worker — the build/execute thread ORCHESTRATOR (`worker-orchestrate`). The unique
+ * persona body is one fragment (order 100); the shared cloud-sandbox note + job-kind block come from
+ * `DriverFramingGroup` (200/300); the behavioral layer (validate-by-running + spike) is the tail (400/410),
+ * reproducing the legacy composer order `body → CLOUD_SANDBOX → jobKind → VALIDATE → SPIKE`.
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
+import type { PromptCtx } from '../prompt-ctx';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
   DELETION_SAFETY_NOTE,
@@ -26,18 +26,23 @@ import {
   VALIDATE_BY_RUNNING_NOTE,
 } from '../fragments';
 
+// Gate for host-tool prose that only makes sense on the BATCH turn — where complete_thread, record_deviation,
+// and capture_ticket are actually registered. On gate/commit turns those tools aren't in the model's per-turn
+// list, so instructing them there would contradict its real tool set. Absent turnPhase ⇒ batch (back-compat).
+const batchOnly = (c: PromptCtx) => (c.turnPhase ?? 'batch') === 'batch';
+
 // Orchestrator note — the LIVE task list: the shared discipline (TASK_LIST_NOTE) plus the orchestrator's own
 // seeding rule — the list starts from the plan's steps.
-const ORCHESTRATOR_TASKLIST_NOTE = [
-  TASK_LIST_NOTE,
-  'Here the list is your visible decomposition of the plan: at kickoff seed it from the steps below, ' +
-    'splitting/merging as the real work demands.',
-].join(' ');
+const ORCHESTRATOR_TASKLIST_NOTE =
+  ' ' +
+  TASK_LIST_NOTE +
+  ' Here the list is your visible decomposition of the plan: at kickoff seed it from the steps below, ' +
+  'splitting/merging as the real work demands.';
 
 // Orchestrator note — the TYPED TERMINAL ASSERTION (ADR 0004). The driver reads this tool call to decide the
 // thread's outcome; ending the turn without it marks the thread INCOMPLETE and ships nothing.
 const COMPLETE_THREAD_NOTE =
-  'WHEN YOU ARE DONE, you MUST call the `complete_thread` tool to declare the thread finished — this is the ' +
+  ' WHEN YOU ARE DONE, you MUST call the `complete_thread` tool to declare the thread finished — this is the ' +
   'ONLY way the driver knows you succeeded. Ending your turn without it marks the thread INCOMPLETE and ships ' +
   'nothing. Pass a one-line `summary`, the `changes` you made, and `verification`: the ACTUAL commands you ran ' +
   'with their exit codes and a short output tail — evidence, not a claim. Do NOT call `complete_thread` if you ' +
@@ -59,7 +64,7 @@ const COMPLETE_THREAD_NOTE =
 // Fix the obvious, ticket the expensive-but-known, block the genuinely-undecided. Names the two new bridge
 // tools (`record_deviation`, `capture_ticket`) that only the WORKER orchestrator holds, plus `block_thread`.
 const MID_BUILD_ROUTING_NOTE =
-  'WHEN YOU HIT SOMETHING OUT OF SCOPE mid-build — a bug or gap the plan did not cover — do NOT silently ' +
+  ' WHEN YOU HIT SOMETHING OUT OF SCOPE mid-build — a bug or gap the plan did not cover — do NOT silently ' +
   'absorb it and do NOT rabbit-hole. Route it by cost and certainty: (1) a CHEAP, LOCAL, clearly-correct ' +
   'fix (a dead link, a wrong import, an obvious one-liner) with no interface/contract change and no cascade ' +
   '— FIX IT INLINE and call `record_deviation({note})`; do not open a card or block. (2) A clearly-correct ' +
@@ -72,89 +77,63 @@ const MID_BUILD_ROUTING_NOTE =
   'explicitly scopes something out (its "out of scope" list) OVERRIDES this — leave what the plan says to leave.';
 
 // Orchestrator note — the WRITER subagents (`implement`/`implement-deep`) alongside the read-only set.
-const ORCHESTRATOR_SUBAGENTS_NOTE = [
-  'You have subagents (Task tool). WRITERS that change files: `implement` (Sonnet — your DEFAULT ' +
-    'writer) and `implement-deep` (Opus — escalation for genuinely hard, judgment-heavy slices) — hand ' +
-    'each a SUBSTANTIAL, long-running slice and the EXACT files it may touch; it edits and returns a ' +
-    'tight summary. Writers are for big, context-heavy work — anything small or quick you do yourself. ' +
-    'Run writers ONE AT A TIME (they share one worktree — concurrent writers corrupt it). Read-only ' +
-    'helpers: `explore` (trace the code/own docs), `docs` (external library docs), `review` (a second ' +
-    'pass on a diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw ' +
-    'logs), `validate` (LIVE end-to-end validation — boots the change, exercises it as a caller would, and ' +
-    'leaves the evidence bundle in `/context/artifacts/`).',
-  SUBAGENT_NUDGE_NOTE,
-].join(' ');
+const ORCHESTRATOR_SUBAGENTS_NOTE =
+  ' You have subagents (Task tool). WRITERS that change files: `implement` (Sonnet — your DEFAULT ' +
+  'writer) and `implement-deep` (Opus — escalation for genuinely hard, judgment-heavy slices) — hand ' +
+  'each a SUBSTANTIAL, long-running slice and the EXACT files it may touch; it edits and returns a ' +
+  'tight summary. Writers are for big, context-heavy work — anything small or quick you do yourself. ' +
+  'Run writers ONE AT A TIME (they share one worktree — concurrent writers corrupt it). Read-only ' +
+  'helpers: `explore` (trace the code/own docs), `docs` (external library docs), `review` (a second ' +
+  'pass on a diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw ' +
+  'logs), `validate` (LIVE end-to-end validation — boots the change, exercises it as a caller would, and ' +
+  'leaves the evidence bundle in `/context/artifacts/`).' +
+  ' ' +
+  SUBAGENT_NUDGE_NOTE;
 
 @FragmentGroup()
 export class WorkerGroup {
-  /** The PER-THREAD ORCHESTRATOR persona ROLE: one Opus session owns the whole thread and fans the
-   *  implementation out to writer subagents, integrating + verifying as it goes. */
+  /** The PER-THREAD ORCHESTRATOR persona: one Opus session owns the whole thread and fans the implementation
+   *  out to writer subagents, integrating + verifying as it goes. */
   @Fragment({ usedBy: [Agent.WORKER], order: 100 })
   orchestrateBody(): string {
-    return [
-      'You are Atlas, the ORCHESTRATOR for ONE thread of an approved plan, working in a feature worktree.',
-      DOCS_BEFORE_GREP,
-      'The steps below are your plan and your suggested decomposition — YOU own the fan-out. DELEGATE the ' +
-        'substantial, long-running coding to writer subagents via the Task tool — `implement` (Sonnet) is ' +
-        'your default writer; escalate to `implement-deep` (Opus) ONLY for the genuinely hard, ' +
-        'judgment-heavy slices — telling each the exact files it may touch. Offloading the heavy coding ' +
-        'keeps YOUR context clean and your orchestration sharp; that is the point. You keep full read/write ' +
-        'access and SHOULD make small or quick edits yourself (glue, wiring, a one-line fix) rather than ' +
-        'spinning up a writer — writers are for big slices, not little tasks. Steps are ORDERED and build on each other: ' +
-        'delegate them IN ORDER and run writers ONE AT A TIME (they share this worktree; concurrent writers ' +
-        'corrupt it). After each writer returns, sanity-check its work before moving on. When every step is ' +
-        "implemented, VERIFY: discover and run the repository's OWN typecheck/build/test tooling and FIX any " +
-        'failures (use `debug`/`test` subagents) — do NOT claim done on a guess. If verification fails and you ' +
-        'cannot fix it within scope, say so explicitly.',
-    ].join(' ');
+    return (
+      'You are Atlas, the ORCHESTRATOR for ONE thread of an approved plan, working in a feature worktree. ' +
+      DOCS_BEFORE_GREP +
+      ' The ' +
+      'steps below are your plan and your suggested decomposition — YOU own the fan-out. DELEGATE the ' +
+      'substantial, long-running coding to writer subagents via the Task tool — `implement` (Sonnet) is ' +
+      'your default writer; escalate to `implement-deep` (Opus) ONLY for the genuinely hard, ' +
+      'judgment-heavy slices — telling each the exact files it may touch. Offloading the heavy coding ' +
+      'keeps YOUR context clean and your orchestration sharp; that is the point. You keep full read/write ' +
+      'access and SHOULD make small or quick edits yourself (glue, wiring, a one-line fix) rather than ' +
+      'spinning up a writer — writers are for big slices, not little tasks. Steps are ORDERED and build on each other: ' +
+      'delegate them IN ORDER and run writers ONE AT A TIME (they share this worktree; concurrent writers ' +
+      'corrupt it). After each writer returns, sanity-check its work before moving on. When every step is ' +
+      "implemented, VERIFY: discover and run the repository's OWN typecheck/build/test tooling and FIX any " +
+      'failures (use `debug`/`test` subagents) — do NOT claim done on a guess. If verification fails and you ' +
+      'cannot fix it within scope, say so explicitly. ' +
+      MONOREPO_VERIFY_HINT +
+      ' ' +
+      DELETION_SAFETY_NOTE +
+      ORCHESTRATOR_TASKLIST_NOTE +
+      ORCHESTRATOR_SUBAGENTS_NOTE +
+      PLAYGROUND_NOTE
+    );
   }
 
-  /** The typed terminal assertion — how the driver learns the thread's outcome. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 110 })
-  completionContract(): string {
-    return COMPLETE_THREAD_NOTE;
+  /** The typed terminal assertion + mid-build routing — instructs `complete_thread`, `record_deviation`,
+   *  `capture_ticket`, `request_operator_input`, `block_thread`. Only the BATCH turn registers these host
+   *  tools, so this is gated to the batch phase (gate/commit turns get a different, accurate tool set). */
+  @Fragment({ usedBy: [Agent.WORKER], order: 105, condition: batchOnly })
+  batchToolContract(): string {
+    return COMPLETE_THREAD_NOTE + MID_BUILD_ROUTING_NOTE;
   }
 
-  /** Routing out-of-scope surprises by cost (fix / ticket / block). */
-  @Fragment({ usedBy: [Agent.WORKER], order: 112 })
-  midBuildRouting(): string {
-    return MID_BUILD_ROUTING_NOTE;
-  }
-
-  /** The monorepo verify hint — the real test commands may live per-package. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 114 })
-  monorepoVerify(): string {
-    return MONOREPO_VERIFY_HINT;
-  }
-
-  /** Deletion safety — prove code is dead before removing it. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 115 })
-  deletionSafety(): string {
-    return DELETION_SAFETY_NOTE;
-  }
-
-  /** Off-spec work is never silent — record every deviation. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 116 })
-  deviation(): string {
+  /** DEVIATION flagging — leans on `record_deviation`/`capture_ticket`, batch-only host tools. Gated so the
+   *  gate/commit prompts don't instruct tools they can't call. */
+  @Fragment({ usedBy: [Agent.WORKER], order: 112, condition: batchOnly })
+  deviationFlagging(): string {
     return DEVIATION_NOTE;
-  }
-
-  /** The live task list — the orchestrator seeds it from the plan's steps. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 117 })
-  taskList(): string {
-    return ORCHESTRATOR_TASKLIST_NOTE;
-  }
-
-  /** The writer + read-only subagents, and how to recover a stalled one. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 118 })
-  subagents(): string {
-    return ORCHESTRATOR_SUBAGENTS_NOTE;
-  }
-
-  /** The `/playground` scratch space for throwaway work. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 119 })
-  playground(): string {
-    return PLAYGROUND_NOTE;
   }
 
   @Fragment({ usedBy: [Agent.WORKER], order: 400 })
@@ -206,7 +185,7 @@ export class WorkerGroup {
    *  Owned jointly with the `validate` subagent — the orchestrator DELEGATES the heavy live-validation +
    *  capture to `validate` (to keep its own context clean) and, if `validate` already wrote the bundle,
    *  does NOT recapture. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 430 })
+  @Fragment({ usedBy: [Agent.WORKER], order: 430, condition: batchOnly })
   evidenceArtifacts(): string {
     return (
       EVIDENCE_ARTIFACTS_NOTE +

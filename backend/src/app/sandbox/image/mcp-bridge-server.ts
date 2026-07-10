@@ -25,9 +25,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
 import { ToolBridgeReader } from './tool-bridge-reader';
-import { TOOL_SCHEMAS } from './mcp-bridge-schemas';
-
-const PERMISSIVE_SCHEMA = { type: 'object', additionalProperties: true } as const;
+import { toolJsonSchema, TOOL_DESCRIPTIONS } from './host-tool-schemas';
 
 async function main(): Promise<void> {
   const turnId = process.env.TURN_ID;
@@ -77,8 +75,8 @@ async function main(): Promise<void> {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: toolNames.map((name) => ({
       name,
-      description: TOOL_SCHEMAS[name]?.description ?? `Host-side tool '${name}' proxied via the Atlas bridge.`,
-      inputSchema: TOOL_SCHEMAS[name]?.inputSchema ?? PERMISSIVE_SCHEMA,
+      description: TOOL_DESCRIPTIONS[name] ?? `Host-side tool '${name}' proxied via the Atlas bridge.`,
+      inputSchema: toolJsonSchema(name),
     })),
   }));
 
