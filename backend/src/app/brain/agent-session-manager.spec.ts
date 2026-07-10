@@ -123,6 +123,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockDriverStore = {
     getPipelineState: vi.fn(),
     getDecisionRecord: vi.fn(),
+    retractShip: vi.fn(),
     // ADR 0004 Phase 3 — halt wake + bounded fix
     loadJob: vi.fn(),
     getThread: vi.fn(),
@@ -302,6 +303,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
     // Default loadJob: no prior job state (propose_plan's idempotency guard proceeds; other tests override).
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockDriverStore.retractShip as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
     // Working-set decisions default to empty; card lookups default to none (reset wiped inline defaults).
     (mockStore.pendingDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -1438,9 +1440,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(raced).toMatchObject({ ok: false });
   });
 
-  it('(e4) buildTools() exposes withdraw_plan', () => {
+  it('(e4) buildTools() exposes withdraw_plan and withdraw_ship', () => {
     const tools = manager.buildTools(fakeStimulus);
     expect(tools['withdraw_plan']).toBeDefined();
+    expect(tools['withdraw_ship']).toBeDefined();
   });
 
   it('(e5) withdraw_plan retracts a pending proposal — cancels the live handle + posts the notice; a non-awaiting job is a no-op', async () => {
@@ -1464,6 +1467,22 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const notPending = await tools['withdraw_plan']({});
     expect(notPending).toMatchObject({ ok: false });
     expect(mockApprovals.cancel).not.toHaveBeenCalled();
+    expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+  });
+
+  it('(e6) withdraw_ship retracts a parked ship-review gate and posts the notice; a non-parked job is a no-op', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+
+    (mockDriverStore.retractShip as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const ok = await tools['withdraw_ship']({ reason: 'more polish' });
+    expect(mockDriverStore.retractShip).toHaveBeenCalledWith(THREAD_ID);
+    expect(ok).toMatchObject({ ok: true });
+    expect(mockStore.appendAtlasMessage).toHaveBeenCalledWith(THREAD_ID, expect.stringContaining('more polish'));
+
+    (mockDriverStore.retractShip as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockClear();
+    const notParked = await tools['withdraw_ship']({});
+    expect(notParked).toMatchObject({ ok: false });
     expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
   });
 

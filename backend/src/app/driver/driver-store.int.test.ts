@@ -25,8 +25,10 @@ import {
   StepEntity,
   ThreadEntity,
   JobEntity,
+  MessageEntity,
 } from '../persistence/entities';
 import { DriverStoreService } from './driver-store.service';
+import { webShipReviewCard } from '../surface/web-approval-card';
 
 const ORG_ID = '21111111-1111-4111-8111-111111111111';
 const BASE_BRANCH = 'main';
@@ -55,6 +57,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   let jobs: Repository<JobEntity>;
   let threads: Repository<ThreadEntity>;
   let steps: Repository<StepEntity>;
+  let messages: Repository<MessageEntity>;
   let repoId: string;
 
   beforeAll(async () => {
@@ -71,6 +74,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
     steps = mod.get(getRepositoryToken(StepEntity, DB_CONNECTION));
+    messages = mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION));
 
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
@@ -759,5 +763,110 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     const state = (await store.getPipelineState(job.id, ORG_ID)) as { halt: unknown };
     expect(state.halt).toBeNull();
+  });
+
+  // ── retractShip (the ship-review gate's retract CAS + card neutralization) ───────────────────────
+
+  async function seedShipParkedJob(): Promise<{ jobId: string }> {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'ship-parked',
+        kind: 'feature',
+        status: 'awaiting_ship_review',
+        activity: 'idle',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    return { jobId: job.id };
+  }
+
+  async function seedShipCardRow(jobId: string): Promise<void> {
+    const card = webShipReviewCard({
+      jobId,
+      title: 'Ready to ship',
+      summary: 'The build is ready.',
+    });
+    await messages.save(
+      messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: 'Ready to ship',
+        kind: 'card',
+        ts: `ship-review:${jobId}`,
+        card: card as unknown as Record<string, unknown>,
+      }),
+    );
+  }
+
+  it('retractShip flips awaiting_ship_review -> planning and neutralizes the durable ship card', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+
+    const acted = await store.retractShip(jobId);
+    expect(acted).toBe(true);
+
+    const row = await jobs.findOne({ where: { id: jobId } });
+    expect(row?.status).toBe('planning');
+    expect(row?.activity).toBe('idle');
+    expect(row?.ship_review_approved_at).toBeNull();
+
+    const cardRow = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    expect(cardRow?.card).toMatchObject({ type: 'verdict_card' });
+    expect((cardRow?.card as Record<string, unknown> | undefined)?.actions).toBeUndefined();
+  });
+
+  it('a second retractShip call is a no-op (idempotent, returns false)', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+
+    expect(await store.retractShip(jobId)).toBe(true);
+    expect(await store.retractShip(jobId)).toBe(false);
+
+    const row = await jobs.findOne({ where: { id: jobId } });
+    expect(row?.status).toBe('planning'); // unchanged by the no-op second call
+  });
+
+  it('retractShip does not act on a job in a DIFFERENT status', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'running job',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+
+    expect(await store.retractShip(job.id)).toBe(false);
+    const row = await jobs.findOne({ where: { id: job.id } });
+    expect(row?.status).toBe('running'); // untouched
+  });
+
+  it('neutralizes EVERY ship-review card row across a re-arm cycle (no unique (job_id,ts,kind) constraint)', async () => {
+    const { jobId } = await seedShipParkedJob();
+    // Two rows with the SAME ts (simulating a re-arm: park → retract → park again inserted a second row).
+    await seedShipCardRow(jobId);
+    await seedShipCardRow(jobId);
+
+    const acted = await store.retractShip(jobId);
+    expect(acted).toBe(true);
+
+    const rows = await messages.find({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.card).toMatchObject({ type: 'verdict_card' });
+      expect((row.card as Record<string, unknown> | null)?.actions).toBeUndefined();
+    }
   });
 });

@@ -2605,6 +2605,32 @@ export class AgentSessionManager
         };
       },
 
+      // Retract the ship-review gate (READY TO SHIP) back to planning — the tool sibling of the manual
+      // "Back to building" click. Calls the SAME `DriverStoreService.retractShip` CAS transition + card
+      // neutralization the click uses (already injected here as `driverStore` — no ThreadDriver import
+      // needed), so there is one authoritative retract regardless of who triggers it.
+      withdraw_ship: async (args) => {
+        const reason = String(args['reason'] ?? '').trim();
+        const acted = await this.driverStore.retractShip(stimulus.jobId);
+        if (!acted) {
+          return {
+            ok: false,
+            message:
+              'The job is not currently parked at the ship-review gate — nothing to retract.',
+          };
+        }
+        await this.store.appendAtlasMessage(
+          stimulus.jobId,
+          `↩︎ Ship-review retracted — back to planning for changes${reason ? `: ${reason}` : ''}.`,
+        );
+        return {
+          ok: true,
+          message:
+            'Ship-review retracted — the job is back in planning. Do the follow-up work; the ship gate ' +
+            're-arms automatically once it completes.',
+        };
+      },
+
       // Classify (or re-classify) THIS job's kind — e.g. this is a PR review, not a build. The next turn's
       // system prompt reflects the new kind automatically (it's read fresh each turn). Operator/system kinds
       // ('event'/'onboarding') are NOT settable here. Prefer letting propose_plan/start_direct_build carry

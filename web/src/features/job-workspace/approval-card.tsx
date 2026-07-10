@@ -17,6 +17,7 @@ import { isSubmitCombo } from "@/lib/keyboard";
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
+  RETRACT_SHIP_ACTION_ID,
   type ApprovalActionId,
   type WebApprovalCard,
   type WebCardAction,
@@ -48,7 +49,7 @@ export function ApprovalCardView({
   onSelectNode?: (node: string) => void;
 }) {
   // The ship-review gate reuses this same `approval_card` payload (discriminated by `kind: 'ship'`) but
-  // is a much smaller card — a title/summary + a single "Ship it" button, rendered generically off
+  // is a much smaller card — a title/summary + ship-gate buttons, rendered generically off
   // `card.actions` (never a hardcoded action id, so the card doesn't drift from whatever the backend sends).
   if (card.kind === "ship") {
     return <ShipCardView card={card} jobRef={jobRef} />;
@@ -186,8 +187,7 @@ function PlanApprovalCardView({
 
 /**
  * The inline ship-review card — the SECOND human gate (after the plan-approval card above), posted once
- * the build + master review finish. Just a title/summary and a single "Ship it" button; there is no
- * "Deny"/"Request changes" — declining is done via prose in chat, same as the plan gate.
+ * the build + master review finish. Just a title/summary and the backend-provided ship-gate actions.
  */
 function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef }) {
   return (
@@ -238,13 +238,21 @@ function ShipActionButton({
   action: WebCardAction;
 }) {
   const approve = useApprove(jobRef);
+  const variant =
+    action.style === "danger"
+      ? "danger"
+      : action.style === "default"
+        ? "ghost"
+        : "primary";
+  const loadingText =
+    action.actionId === RETRACT_SHIP_ACTION_ID ? "Retracting…" : "Shipping…";
   return (
     <div className="flex flex-col gap-2">
       <Button
         size="sm"
-        variant={action.style === "danger" ? "danger" : "primary"}
+        variant={variant}
         loading={approve.isPending}
-        loadingText="Shipping…"
+        loadingText={loadingText}
         onClick={() =>
           approve.mutate({
             actionId: action.actionId,
@@ -257,7 +265,7 @@ function ShipActionButton({
       </Button>
       {approve.isError ? (
         <p className="text-[11.5px] text-red">
-          Could not ship. Try again.
+          Could not submit. Try again.
         </p>
       ) : null}
     </div>
