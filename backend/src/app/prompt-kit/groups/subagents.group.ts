@@ -137,7 +137,9 @@ export class SubagentsGroup {
         'endpoint and check the status/body, drive the UI with Playwright (install on demand: ' +
         '`npx playwright install --with-deps chromium`) and take screenshots, and/or run the repo\'s OWN ' +
         'e2e/smoke tooling — read package.json scripts / Makefile / repo docs for the REAL commands, do not ' +
-        'assume them.',
+        'assume them. If the change is internal plumbing whose effect is never echoed in an HTTP/UI/CLI surface ' +
+        '(e.g. an option/value handed to an SDK), instead capture a log line from the booted process proving the ' +
+        'changed value was passed at runtime.',
       MONOREPO_VERIFY_HINT,
       'Do throwaway harness/probe work in `/playground` (outside the worktree), never in `/workspace`.',
       EVIDENCE_ARTIFACTS_NOTE,

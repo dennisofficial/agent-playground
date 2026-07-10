@@ -62,6 +62,14 @@ const SETUP_SCRIPT_TIMEOUT_MS = 300_000;
 /** How much of the setup script's combined stdout+stderr to keep as the failure `tail` surfaced to the brain. */
 const SETUP_SCRIPT_TAIL_BYTES = 2_000;
 
+/** Grace window during which a just-created `-net`/`-dind` is protected from {@link SandboxManager.reapOrphanedArtifacts}.
+ *  `attach()` creates the network BEFORE the container that references it (the container-create is preceded by
+ *  slow bind/mount setup), so for that window the network exists with no container and would otherwise look
+ *  orphaned. `attach()` stamps the stem in `creating` at network-create time; the sweep skips any stem stamped
+ *  within this window. Generous — the ensureNetwork→createContainer span is seconds — so a genuinely leaked
+ *  network from a crashed create is still reclaimed on a later sweep once its stamp ages out. */
+const CREATE_GRACE_MS = 5 * 60 * 1000;
+
 /** realpath a path, falling back to the input if it can't be resolved (e.g. doesn't exist yet). */
 function realpathSafe(p: string): string {
   try {
@@ -217,6 +225,14 @@ export function dedupeBindsByTarget(binds: string[]): {
 export class SandboxManager implements SandboxProvider {
   private readonly logger = new Logger(SandboxManager.name);
 
+  /**
+   * Container-name stems whose per-sandbox `-net`/`-dind` are mid-creation, keyed to the wall-clock ms when
+   * `attach()` first created the network. Read by {@link reapOrphanedArtifacts} to skip in-flight artifacts
+   * (see {@link CREATE_GRACE_MS}). Self-cleaning: entries are re-stamped on each attach attempt and pruned once
+   * stale, so it never needs an explicit delete on the many early-return / throw paths of `attach()`.
+   */
+  private readonly creating = new Map<string, number>();
+
   constructor(
     @Inject(CONTAINER_ENGINE) private readonly engine: ContainerEngine,
     private readonly images: SandboxImageBuilder,
@@ -268,6 +284,12 @@ export class SandboxManager implements SandboxProvider {
     }
 
     await this.softCapCheck();
+
+    // Guard the create window: the `-net` (and `-dind`) exist from here until `createContainer` below wires
+    // them to a live container. Stamp the stem NOW so a concurrent `reapOrphanedArtifacts` sweep (timer or
+    // promotion) doesn't see a network with no container yet and reap it out from under this attach. The
+    // stamp ages out on its own — no cleanup needed on the throw / early-return paths.
+    this.creating.set(name, Date.now());
 
     const network = `${name}-net`;
     await this.engine.ensureNetwork(network);
@@ -527,8 +549,18 @@ export class SandboxManager implements SandboxProvider {
    */
   async reapOrphanedArtifacts(): Promise<{ networks: number; volumes: number }> {
     const live = new Set((await this.engine.list({ all: true })).map((c) => c.name));
-    const isOrphan = (name: string, suffix: string): boolean =>
-      name.startsWith('atlas-sbx-') && name.endsWith(suffix) && !live.has(name.slice(0, -suffix.length));
+    // Prune stale create-stamps, then treat any still-fresh stem as protected: its container is mid-create
+    // (network exists, container not yet), so it must NOT be reaped despite having no live container.
+    const now = Date.now();
+    for (const [stem, at] of this.creating) {
+      if (now - at >= CREATE_GRACE_MS) this.creating.delete(stem);
+    }
+    const isCreating = (stem: string): boolean => now - (this.creating.get(stem) ?? 0) < CREATE_GRACE_MS;
+    const isOrphan = (name: string, suffix: string): boolean => {
+      if (!name.startsWith('atlas-sbx-') || !name.endsWith(suffix)) return false;
+      const stem = name.slice(0, -suffix.length);
+      return !live.has(stem) && !isCreating(stem);
+    };
 
     let networks = 0;
     for (const n of await this.engine.listNetworks()) {

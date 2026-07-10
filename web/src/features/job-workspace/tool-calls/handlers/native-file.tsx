@@ -1,10 +1,10 @@
 "use client";
 
 import type { ToolHandler, ToolItem } from "../types";
-import { asRecord, basename, str } from "../util";
+import { asRecord, basename, formatPayload, str } from "../util";
 import { editDiffstat } from "../diffstat";
 import { langFromPath } from "../highlight";
-import { DiffView, TerminalBlock, WriteFileView } from "../ui";
+import { DiffView, StructuredPanel, TerminalBlock, WriteFileView } from "../ui";
 
 const FILE_TOOLS = new Set(["edit", "multiedit", "write", "notebookedit"]);
 const isWriteName = (name: string) =>
@@ -20,8 +20,8 @@ function filePath(input: unknown): string {
   return str(inp.file_path ?? inp.path ?? inp.notebook_path);
 }
 
-/** Expanded body: a created-file listing for a Write, or a unified diff (per edit) for an Edit. */
-function FileBody({ tool }: { tool: ToolItem }) {
+/** The success-path body: a created-file listing for a Write, or a unified diff (per edit) for an Edit. */
+function FileBodyContent({ tool }: { tool: ToolItem }) {
   const inp = asRecord(tool.input);
   const lang = langFromPath(filePath(tool.input));
 
@@ -57,6 +57,22 @@ function FileBody({ tool }: { tool: ToolItem }) {
         );
       })}
     </div>
+  );
+}
+
+/**
+ * Expanded body: the attempted change (diff / created-file listing) plus, when the tool FAILED, the
+ * backend's error text appended below — so a failed edit shows both what it tried to do and why it
+ * failed, instead of a bare "error" badge with no message.
+ */
+function FileBody({ tool }: { tool: ToolItem }) {
+  return (
+    <>
+      <FileBodyContent tool={tool} />
+      {tool.isError ? (
+        <StructuredPanel result={formatPayload(tool.result)} isError />
+      ) : null}
+    </>
   );
 }
 
