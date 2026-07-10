@@ -56,6 +56,11 @@ export interface IEnvConfig {
   // default (containerized turns are unavailable until Redis appears).
   REDIS_URL?: string;
 
+  // Claude subscription OAuth. Both have code defaults (DEFAULT_CLAUDE_OAUTH_CONFIG) matching the real
+  // claude.ai/platform.claude.com endpoints — only set to point at a different OAuth deployment.
+  CLAUDE_OAUTH_AUTHORIZE_URL?: string;
+  CLAUDE_OAUTH_CLIENT_ID?: string;
+
   // Slack/approval boss user id (set in the shared dev config). installed_by wins when set.
   APPROVAL_BOSS_USER_ID?: string;
 
@@ -168,6 +173,10 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
 
   // Redis (host↔sandbox engine bus)
   REDIS_URL: Joi.string().uri().optional(),
+
+  // Claude subscription OAuth
+  CLAUDE_OAUTH_AUTHORIZE_URL: Joi.string().uri().optional(),
+  CLAUDE_OAUTH_CLIENT_ID: Joi.string().optional(),
 
   APPROVAL_BOSS_USER_ID: Joi.string().optional(),
 
