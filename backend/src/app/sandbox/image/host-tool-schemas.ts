@@ -123,16 +123,16 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   ask_question: {
     question: z.string(),
     options: z
-      .union([
-        z.array(z.string()),
-        z.array(
+      .array(
+        z.union([
+          z.string(),
           z.object({
             label: z.string(),
             id: z.string().optional(),
             description: z.string().optional(),
           }),
-        ),
-      ])
+        ]),
+      )
       .optional(),
     decisionClass: z.string().optional(),
     header: z.string().optional(),
@@ -263,11 +263,11 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
       .array(
         z.object({
           path: z.string(),
-          mode: z.enum(['shared-ro', 'shared-rw', 'per-thread']).optional(),
+          mode: z.string().optional(),
         }),
       )
       .optional(),
-    secrets: z.array(z.unknown()).optional(),
+    secrets: z.unknown().optional(),
   },
   write_setup_script: {
     script: z.string().optional(),
@@ -287,14 +287,14 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     name: z.string(),
     description: z.string(),
     rationale: z.string(),
-    scope: z.enum(['org', 'repo']).optional(),
+    scope: z.string().optional(),
   },
   propose_skill_install: {
     sourceUrl: z.string(),
     ref: z.string().optional(),
     subpath: z.string().optional(),
     rationale: z.string(),
-    scope: z.enum(['org', 'repo']).optional(),
+    scope: z.string().optional(),
   },
   request_skill_edit_access: {
     skill: z.string(),
@@ -303,7 +303,7 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   propose_skill_removal: {
     name: z.string(),
     rationale: z.string(),
-    scope: z.enum(['org', 'repo']).optional(),
+    scope: z.string().optional(),
   },
   propose_mcp_servers: {
     servers: z.array(
@@ -331,16 +331,16 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
             }),
           )
           .optional(),
-        surfaces: z.array(z.enum(['brain', 'build', 'review'])).optional(),
+        surfaces: z.array(z.string()).optional(),
         reason: z.string().optional(),
       }),
     ),
-    scope: z.enum(['org', 'repo']).optional(),
+    scope: z.string().optional(),
   },
   propose_mcp_removal: {
     name: z.string(),
     rationale: z.string(),
-    scope: z.enum(['org', 'repo']).optional(),
+    scope: z.string().optional(),
   },
   propose_convention_profile: {
     slug: z.string().optional(),

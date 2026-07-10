@@ -1576,13 +1576,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.updateDecision).toHaveBeenCalledWith(THREAD_ID, 'd1', { decisionClass: 'data_model' });
   });
 
-  it('(g1d) create_decision with no args returns the `args` envelope hint, not a field error', async () => {
-    // When the model omits the bridge `args` wrapper the host receives {}; the error must point at the
-    // envelope, not mislead with "decisionClass must be one of…".
+  it('(g1d) create_decision with no args returns a missing-arguments hint, not a field error', async () => {
+    // When no payload reaches the host, the error must point at the missing arguments broadly, not mislead
+    // with "decisionClass must be one of…".
     const tools = manager.buildTools(fakeStimulus);
     const result = (await tools['create_decision']({})) as { ok: boolean; reason: string };
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/args/);
+    expect(result.reason).toMatch(/required fields/);
     expect(result.reason).not.toMatch(/must be one of/);
     expect(mockStore.createDecision).not.toHaveBeenCalled();
   });

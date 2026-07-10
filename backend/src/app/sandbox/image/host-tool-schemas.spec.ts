@@ -92,7 +92,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   remember: { fact: 'The ledger uses Postgres.', scope: 'repo' },
   ask_question: {
     question: 'Which option should we go with?',
-    options: [{ label: 'Postgres', id: 'pg', description: 'Use Postgres for the ledger.' }],
+    options: ['SQLite', { label: 'Postgres', id: 'pg', description: 'Use Postgres for the ledger.' }],
     decisionClass: 'data_model',
     header: 'Datastore choice',
     allowOther: true,
@@ -180,8 +180,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   request_file: { path: 'config/local.json', description: 'Local override config.' },
   withdraw_file_request: { requestId: 'r1', reason: 'No longer needed.' },
   write_workspace_config: {
-    mounts: [{ path: '/x', mode: 'shared-ro' }],
-    secrets: [{ name: 'X' }],
+    mounts: [{ path: '/x', mode: 'cache' }],
+    secrets: { name: 'X' },
   },
   write_setup_script: { script: '#!/bin/sh\nnpm ci' },
   derive_secret: {
@@ -212,7 +212,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
         args: ['--flag'],
         headers: [{ name: 'Authorization', secret: true, value: 'Bearer x' }],
         env: [{ name: 'STRIPE_TOKEN', secret: true, value: 'x' }],
-        surfaces: ['brain'],
+        surfaces: ['brain', 'experimental'],
         reason: 'Needed for billing tasks.',
       },
     ],
