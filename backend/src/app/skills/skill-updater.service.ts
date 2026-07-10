@@ -3,9 +3,11 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  Optional,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LeaderElectionService } from '../cluster';
@@ -19,6 +21,8 @@ import { SkillInstallerService } from './skill-installer.service';
  *  (unlike PR/CI state) — an infrequent cadence is deliberate; job-start reconciliation (below) covers the
  *  "I just changed a source and want it now" case without waiting on the interval. */
 const RECONCILE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+/** SchedulerRegistry interval name (process-unique) for the leader-gated reconcile sweep. */
+const SKILL_UPDATER_INTERVAL = 'skills:skill-updater';
 
 /**
  * LEADER-ONLY reconciler for `provenance:'git'` skills (custom/forked rows are never touched — they have
@@ -43,7 +47,6 @@ export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicatio
   private readonly logger = new Logger(SkillUpdaterService.name);
   private promoteSub?: { unsubscribe(): void };
   private demoteSub?: { unsubscribe(): void };
-  private timer?: ReturnType<typeof setInterval>;
 
   constructor(
     @InjectRepository(WorkspaceSkillEntity, DB_CONNECTION)
@@ -53,6 +56,9 @@ export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicatio
     private readonly creds: CredentialResolver,
     private readonly election: LeaderElectionService,
     private readonly env: EnvService,
+    // Prod always injects the scheduler (global ScheduleModule); unit tests omit it and never promote, so
+    // the reconciler never starts there.
+    @Optional() private readonly scheduler?: SchedulerRegistry,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -71,17 +77,19 @@ export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicatio
   }
 
   private start(): void {
-    if (this.timer) return;
+    if (!this.scheduler) return;
+    if (this.scheduler.doesExist('interval', SKILL_UPDATER_INTERVAL)) return;
     void this.reconcileAll(); // boot/promotion sweep
-    this.timer = setInterval(() => void this.reconcileAll(), RECONCILE_INTERVAL_MS);
-    this.timer.unref?.();
+    const iv = setInterval(() => void this.reconcileAll(), RECONCILE_INTERVAL_MS);
+    iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
+    this.scheduler.addInterval(SKILL_UPDATER_INTERVAL, iv);
     this.logger.log('skill updater started (leader)');
   }
 
   private stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
+    // deleteInterval clears the interval AND removes it from the registry.
+    if (this.scheduler?.doesExist('interval', SKILL_UPDATER_INTERVAL)) {
+      this.scheduler.deleteInterval(SKILL_UPDATER_INTERVAL);
     }
   }
 

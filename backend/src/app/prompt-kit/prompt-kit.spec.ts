@@ -371,6 +371,32 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 });
 
+describe('public preview exposure prompt (auto-expose sequence)', () => {
+  it('the PUBLIC PREVIEW URLS block composes into the build brain under notOnboarding', () => {
+    for (const jobKind of ['feature', 'bugfix', 'event'] as const) {
+      const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind });
+      expect(out, jobKind).toContain('PUBLIC PREVIEW URLS');
+      expect(out, jobKind).toContain('--port <n>');
+      expect(out, jobKind).toContain('$ATLAS_PREVIEW_ID');
+      expect(out, jobKind).toContain('$ATLAS_PREVIEW_DOMAIN');
+      // the load-bearing ordering + the 0.0.0.0 binding gotcha must survive assembly
+      expect(out, jobKind).toContain('BIND TO 0.0.0.0');
+      expect(out, jobKind).toContain('--no-expose');
+    }
+  });
+
+  it('is absent during onboarding (previews are a build-brain concern)', () => {
+    const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' });
+    expect(out).not.toContain('PUBLIC PREVIEW URLS');
+  });
+
+  it('sandboxRuntime documents the --port flag alongside the run form', () => {
+    const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    expect(out).toContain('atlas-svc run --name <id> [--port <n>] -- <cmd>');
+    expect(out).toContain('PORTS panel');
+  });
+});
+
 describe('turn-aware WORKER prose — batch-only host-tool instructions gated by turnPhase', () => {
   const BATCH_ONLY_MARKERS = [
     '`complete_thread`',

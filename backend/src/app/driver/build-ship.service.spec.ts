@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ModuleRef } from '@nestjs/core';
 import type { Job } from '../domain';
 import type { FeatureSandbox, GithubPrService, LocalGitService } from '../git';
+import type { BrainGateway } from '../brain-gateway';
 import { BuildShipService } from './build-ship.service';
 import type { DriverStoreService } from './driver-store.service';
 import type { ResolvedRepo } from './repo-resolver';
@@ -41,11 +41,11 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     currentBranch: null,
   } as unknown as Job;
 
-  /** A stub brain (returned by the lazy ModuleRef lookup) that records the open-PR seed. */
+  /** A stub `BrainGateway` that records the open-PR seed. */
   function makeBrain() {
     const openPrAtShip = vi.fn(async () => undefined);
-    const moduleRef = { get: () => ({ openPrAtShip }) } as unknown as ModuleRef;
-    return { openPrAtShip, moduleRef };
+    const brainGateway = { openPrAtShip } as unknown as BrainGateway;
+    return { openPrAtShip, brainGateway };
   }
 
   function baseGit(over: Partial<Record<string, unknown>> = {}): LocalGitService {
@@ -68,9 +68,9 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setJobStatus: vi.fn(async () => undefined),
       setCurrentBranch: vi.fn(async () => undefined),
     } as unknown as DriverStoreService;
-    const { openPrAtShip, moduleRef } = makeBrain();
+    const { openPrAtShip, brainGateway } = makeBrain();
 
-    const svc = new BuildShipService(git, pr, store, moduleRef);
+    const svc = new BuildShipService(git, pr, store, brainGateway);
     const result = await svc.ship({
       job,
       record: {
@@ -112,9 +112,9 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setJobStatus: vi.fn(async () => undefined),
       setCurrentBranch: vi.fn(async () => undefined),
     } as unknown as DriverStoreService;
-    const { openPrAtShip, moduleRef } = makeBrain();
+    const { openPrAtShip, brainGateway } = makeBrain();
 
-    const svc = new BuildShipService(git, pr, store, moduleRef);
+    const svc = new BuildShipService(git, pr, store, brainGateway);
     const result = await svc.ship({ job, record: null, repo, sandbox });
 
     expect(openPrAtShip).toHaveBeenCalled();
@@ -147,9 +147,9 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setJobStatus: vi.fn(async () => undefined),
       setCurrentBranch: vi.fn(async () => undefined),
     } as unknown as DriverStoreService;
-    const { openPrAtShip, moduleRef } = makeBrain();
+    const { openPrAtShip, brainGateway } = makeBrain();
 
-    const svc = new BuildShipService(git, pr, store, moduleRef);
+    const svc = new BuildShipService(git, pr, store, brainGateway);
     await svc.ship({ job: liveJob, record: null, repo, sandbox });
 
     expect(openPrAtShip).toHaveBeenCalledWith(
@@ -169,10 +169,10 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setPrReady: vi.fn(async () => undefined),
       setCurrentBranch: vi.fn(async () => undefined),
     } as unknown as DriverStoreService;
-    const { openPrAtShip, moduleRef } = makeBrain();
+    const { openPrAtShip, brainGateway } = makeBrain();
     const noTokenRepo = { ...repo, token: undefined } as unknown as ResolvedRepo;
 
-    const svc = new BuildShipService(git, pr, store, moduleRef);
+    const svc = new BuildShipService(git, pr, store, brainGateway);
     const result = await svc.ship({ job, record: null, repo: noTokenRepo, sandbox });
 
     // Gated before any open-PR turn — the brain was never seeded.
@@ -189,9 +189,9 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setPrReady: vi.fn(async () => undefined),
       setCurrentBranch: vi.fn(async () => undefined),
     } as unknown as DriverStoreService;
-    const { openPrAtShip, moduleRef } = makeBrain();
+    const { openPrAtShip, brainGateway } = makeBrain();
 
-    const svc = new BuildShipService(git, pr, store, moduleRef);
+    const svc = new BuildShipService(git, pr, store, brainGateway);
     const result = await svc.ship({ job, record: null, repo, sandbox });
 
     expect(scanBranchForForbidden).toHaveBeenCalledWith('/wt/feat', 'origin/main');
@@ -211,9 +211,9 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setPrReady: vi.fn(async () => undefined),
       setCurrentBranch: vi.fn(async () => undefined),
     } as unknown as DriverStoreService;
-    const { openPrAtShip, moduleRef } = makeBrain();
+    const { openPrAtShip, brainGateway } = makeBrain();
 
-    const svc = new BuildShipService(git, pr, store, moduleRef);
+    const svc = new BuildShipService(git, pr, store, brainGateway);
     const result = await svc.ship({ job, record: null, repo, sandbox });
 
     expect(openPrAtShip).not.toHaveBeenCalled();
@@ -226,9 +226,9 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     const git = baseGit({ scanBranchForForbidden });
     const pr = { findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
     const store = { setCurrentBranch: vi.fn(async () => undefined) } as unknown as DriverStoreService;
-    const { moduleRef } = makeBrain();
+    const { brainGateway } = makeBrain();
 
-    const svc = new BuildShipService(git, pr, store, moduleRef);
+    const svc = new BuildShipService(git, pr, store, brainGateway);
     const ok = await svc.preShip(job, repo, sandbox);
     // The host NEVER commits — `preShip` only leak-scans the branch (over commits AND the working tree).
     expect(scanBranchForForbidden).toHaveBeenCalledWith('/wt/feat', 'origin/main');
@@ -239,9 +239,9 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     const git = baseGit({ scanBranchForForbidden: vi.fn(async () => ['.env.local']) });
     const pr = { findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
     const store = { setCurrentBranch: vi.fn(async () => undefined) } as unknown as DriverStoreService;
-    const { moduleRef } = makeBrain();
+    const { brainGateway } = makeBrain();
 
-    const svc = new BuildShipService(git, pr, store, moduleRef);
+    const svc = new BuildShipService(git, pr, store, brainGateway);
     const blocked = await svc.preShip(job, repo, sandbox);
     expect(blocked).toEqual({ ok: false, reason: 'leak-scan', leaked: ['.env.local'] });
   });

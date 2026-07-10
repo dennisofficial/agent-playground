@@ -79,13 +79,13 @@ class FakeGitService {
   async createBaseWorktree(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     return { repoId: repo.repoId, branch: 'main', worktreePath: `${repo.repoPath}/.worktrees/thread-${jobId}`, gitUrl: repo.gitUrl };
   }
+  async hasSubmodules(): Promise<boolean> {
+    return false;
+  }
   async switchBranch(sandbox: FeatureSandbox, _repo: ProjectRepo, featureBranch: string): Promise<FeatureSandbox> {
     return { ...sandbox, branch: featureBranch };
   }
   // Provision-path no-ops (no real git/cache/submodules/index in the fake).
-  async hasSubmodules(): Promise<boolean> {
-    return false;
-  }
   async createBaseClone(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     return this.createBaseWorktree(repo, jobId);
   }

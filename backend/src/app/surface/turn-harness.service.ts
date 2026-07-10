@@ -194,6 +194,9 @@ export interface TurnHarness {
   finish(finalText?: string, turnMeta?: TurnEndMeta): Promise<void>;
   /** Persist whatever partials accumulated (no fallback) and end the live lane — for error/timeout paths. */
   abort(): Promise<void>;
+  /** End the live lane and persist NOTHING — for a benign abort that will be RE-DELIVERED in full, so the
+   *  truncated partial never becomes a durable half-message. */
+  discard(): Promise<void>;
 }
 
 export interface TurnHarnessOptions {
@@ -460,6 +463,12 @@ export class TurnHarnessFactory {
           const ctxLimit =
             turnMeta.contextLimit ??
             (ctxTokens != null ? resolveContextLimit(u.contextModel ?? u.model, u.engine) : null);
+          // How long the turn actually worked: `now − startedAt`, read from the still-live turn state (the
+          // SAME clock that drove the "Atlas is working… 19m 24s" indicator, so the footer matches the last
+          // reading). `snapshot` is valid here — `persistAll()` ends the live lane only afterwards; a turn
+          // that pushed no events (no snapshot) simply carries no duration.
+          const startedAt = this.liveTurns.snapshot(channel, jobId, lane)?.startedAt;
+          const workedMs = startedAt != null ? Math.max(0, Date.now() - startedAt) : undefined;
           blocks.push({
             kind: 'turn_meta',
             emittedAt: stamp(),
@@ -468,6 +477,7 @@ export class TurnHarnessFactory {
               usage: turnMeta.usage as unknown as Record<string, unknown>,
               contextTokens: ctxTokens,
               contextLimit: ctxLimit,
+              ...(workedMs != null ? { workedMs } : {}),
             },
           });
         }
@@ -478,6 +488,15 @@ export class TurnHarnessFactory {
         if (closed) return;
         closed = true;
         await persistAll();
+      },
+
+      discard: async () => {
+        if (closed) return;
+        closed = true;
+        // End the live lane WITHOUT persisting the accumulated blocks — the caller is about to re-deliver
+        // this turn in full (a benign stream abort on an at-least-once wake), so a flushed partial would
+        // become a durable truncated half-message alongside the complete re-run.
+        this.liveTurns.end(channel, jobId, lane);
       },
     };
   }

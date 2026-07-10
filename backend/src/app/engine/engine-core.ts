@@ -34,6 +34,7 @@ import {
   type EngineRunResult,
   type EngineUsage,
   type ModelUsageBreakdown,
+  type ReasoningEffort,
   type RunEngineArgs,
   type StructuredPatchHunk,
   resolveContextLimit,
@@ -248,6 +249,17 @@ function isTurnGenuinelyDone(m: { terminal_reason?: string; stop_reason?: string
   if (m.terminal_reason === 'completed') return true;
   if (m.terminal_reason == null && m.stop_reason === 'end_turn') return true;
   return false;
+}
+
+// Claude's Options.effort has no 'minimal'; map it to the nearest ('low'). Others pass through.
+export function toClaudeEffort(e?: ReasoningEffort): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined {
+  if (!e) return undefined;
+  return e === 'minimal' ? 'low' : e;
+}
+// Codex's effort has no 'max'; clamp to its ceiling ('xhigh'). Others pass through.
+export function toCodexEffort(e?: ReasoningEffort): CodexReasoningEffort | undefined {
+  if (!e) return undefined;
+  return e === 'max' ? 'xhigh' : e;
 }
 
 /**
@@ -622,10 +634,10 @@ export class EngineCore {
   /**
    * Stamp display-only provenance the engine paths don't carry themselves onto the returned usage: the
    * `engine` that ran (so a Codex turn with no `model` still labels as "Codex") and the `reasoningEffort`
-   * the run was given (a Codex-only input, never surfaced by the SDK). Applied at BOTH dispatch wrappers
-   * (`run` / `runWithExtras`) so every engine turn — build, Codex review, autofix — is covered without
-   * touching `runClaude`/`runCodex` internals or any transcript `metaTag` call site. `??=` so a path that
-   * ever populates these itself wins. No-op when the run produced no usage.
+   * the run was given (engine-agnostic — Codex AND Claude, never surfaced by either SDK's result). Applied
+   * at BOTH dispatch wrappers (`run` / `runWithExtras`) so every engine turn — build, Codex review, autofix —
+   * is covered without touching `runClaude`/`runCodex` internals or any transcript `metaTag` call site.
+   * `??=` so a path that ever populates these itself wins. No-op when the run produced no usage.
    */
   private stampUsageProvenance(res: EngineRunResult, args: RunEngineArgs): EngineRunResult {
     if (res.usage) {
@@ -864,6 +876,8 @@ export class EngineCore {
     const svcNudgeEnabled = !svcNudgeDisabled();
     const svcNudgeDeltaTokens = resolveSvcNudgeDeltaTokens();
 
+    const claudeEffort = toClaudeEffort(args.modelReasoningEffort);
+
     const options: Options = {
       cwd,
       systemPrompt,
@@ -917,6 +931,7 @@ export class EngineCore {
       stderr: captureStderr,
       ...(sessionId ? { resume: sessionId } : {}),
       ...(model ? { model } : {}),
+      ...(claudeEffort ? { effort: claudeEffort } : {}),
       // Enable the 1M-token context window explicitly. Opus 4.x and Sonnet 5 negotiate it automatically, but
       // we pass the beta as belt-and-suspenders so a builder session that fills past 200k does NOT truncate —
       // Leg rotation's HARD threshold (200k) depends on there being headroom ABOVE it to author the handoff
@@ -1370,7 +1385,7 @@ export class EngineCore {
         : undefined;
 
     const client = this.getCodex(sandboxKey, auth, bridge, extraMcpServers);
-    const opts = this.codexThreadOptions(cwd, model, args.modelReasoningEffort);
+    const opts = this.codexThreadOptions(cwd, model, toCodexEffort(args.modelReasoningEffort));
     const thread = sessionId ? client.resumeThread(sessionId, opts) : client.startThread(opts);
 
     // Codex has no systemPrompt option — seed the persona as a first-turn preamble. Resumes already

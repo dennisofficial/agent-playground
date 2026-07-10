@@ -89,9 +89,12 @@ export class ThreadEntity extends TimestampedEntity {
   brief!: string;
 
   /**
-   * The scope TYPE of this thread (backend/frontend/docs/testing/analytics/infra/…) — selects the
-   * review agents that check it. A fixed vocabulary (THREAD_TYPES) with an allow-other escape hatch;
-   * defaults to 'general' for arg-less callers (bugfix/direct build).
+   * The scope TYPE of this thread — the deterministic routing key that selects the review agents that
+   * check it. A CLOSED vocabulary (THREAD_TYPES: backend | frontend | docs | testing | infra | data |
+   * general), enforced at write via `coerceThreadType`; 'general' is the total fallback for arg-less
+   * callers (bugfix/direct build) and any unrecognized value. Stays a `text` column (no DB enum) — the
+   * app layer is the validator, so legacy rows with off-vocabulary values are tolerated and coerce to
+   * 'general' at selection time.
    */
   @Column({ type: 'text', default: 'general' })
   type!: string;
@@ -203,6 +206,17 @@ export class ThreadEntity extends TimestampedEntity {
    *  while owed), so a crash before the stamp lets the boot sweep re-fire (at-least-once). */
   @Column({ type: 'timestamptz', nullable: true })
   done_waked_at!: Date | null;
+
+  /**
+   * Completion-wake GENERATION token (mirrors {@link halt_fix_attempts}) — the wake-stamp CAS key AND the
+   * partial-supersede key. Atomically bumped by `claimDoneWakeGen` at each delivery START; the fresh value
+   * tags every durable block of that delivery (`meta.doneWakeGen` / `meta.doneWakeThreadId` via the harness
+   * `metaTag`) and keys `markDoneWaked`'s CAS. So a stale (crashed mid-stream) attempt's late stamp matches
+   * zero rows, and its truncated partial rows are deleted by the next attempt's `supersedeDoneWakeMessages`.
+   * Never resets — a `done` thread is never re-driven.
+   */
+  @Column({ type: 'int', default: 0 })
+  done_wake_gen!: number;
 
   /**
    * The thread's START HEAD — the feature-branch sha captured ONCE, the first time the thread begins

@@ -182,18 +182,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.threads).toHaveLength(1);
     const [sec] = state.threads;
     expect(sec.hasPlan).toBe(true);
-    // Review children are data-driven. With no materialized child rows yet (an un-reviewed / executing
-    // builder), getPipelineState SYNTHESIZES the review set from the thread-kind registry so the rows + their
-    // transcript lanes stay visible — the default lenses + the post-review fix, queued at `pending`.
-    expect(
-      sec.children.filter((c) => c.kind === 'review_lens').map((c) => c.lensId),
-    ).toEqual(['best_practices', 'correctness', 'consistency', 'minimalism']);
-    expect(sec.children.find((c) => c.kind === 'post_review')).toBeTruthy();
-    expect(sec.children.every((c) => c.status === 'pending')).toBe(true);
-    // Each synthesized child carries its real transcript lane (where the historical review turns live).
-    expect(sec.children.find((c) => c.lensId === 'best_practices')?.lane).toBe(
-      `autofix:${sec.id}:best_practices`,
-    );
+    // Review children are data-driven. Before the review stage materializes child rows, the read model has
+    // no synthetic review lanes; materialized children are covered by the next test.
+    expect(sec.children).toEqual([]);
     expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
     expect(sec.steps[0].status).toBe('building');
     expect(sec.steps[1].status).toBe('pending');
@@ -414,6 +405,46 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     ]);
   });
 
+  it('dropOpenThreadTasks flips open (pending/in_progress) tasks to `dropped`, leaves completed, returns the count', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'drop open tasks',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const thread = await threads.save(
+      threads.create({
+        kind: 'builder',
+        job_id: job.id,
+        org_id: ORG_ID,
+        ordinal: 10,
+        brief: 'Backend — drop open tasks',
+        status: 'executing',
+        tasks: [
+          { id: 't1', subject: 'Done work', status: 'completed' },
+          { id: 't2', subject: 'Forgotten tick', status: 'in_progress' },
+          { id: 't3', subject: 'Never started', status: 'pending' },
+        ],
+      }),
+    );
+
+    const dropped = await store.dropOpenThreadTasks(thread.id);
+    expect(dropped).toBe(2);
+    expect(await store.getThreadTasks(thread.id)).toEqual([
+      { id: 't1', subject: 'Done work', status: 'completed' },
+      { id: 't2', subject: 'Forgotten tick', status: 'dropped' },
+      { id: 't3', subject: 'Never started', status: 'dropped' },
+    ]);
+
+    // Idempotent: a second pass finds nothing open, returns 0, and writes nothing new.
+    expect(await store.dropOpenThreadTasks(thread.id)).toBe(0);
+  });
+
   it('persists the repo-orientation cheat-sheet and surfaces it on the mapped thread (resume-durable)', async () => {
     const job = await jobs.save(
       jobs.create({
@@ -468,7 +499,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({
       status: 'no_job',
       mainTasks: [],
-      mainDefaultFooter: { engine: 'claude', model: 'opus' },
+      mainDefaultFooter: { engine: 'claude', model: 'opus', effort: 'high' },
     });
   });
 
@@ -559,7 +590,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(oks[0]).toEqual({ ok: true, used: 2 });
   });
 
-  // ── Decision d1 — completion-wake store methods (mirrors the halt trio, no generation CAS) ────────
+  // ── Decision d1 — completion-wake store methods (mirrors the halt trio, WITH a generation CAS) ─────
 
   it('setDoneWakeOwed → threadsAwaitingDoneWake selects only owed+un-waked rows', async () => {
     const { jobId, threadId } = await seedJobThread();
@@ -578,30 +609,97 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
 
     await store.setDoneWakeOwed(threadId, 'notable');
     await store.setDoneWakeOwed(otherThread.id, 'final');
-    await store.markDoneWaked(otherThread.id); // already waked — must be excluded
+    const g = await store.claimDoneWakeGen(otherThread.id);
+    await store.markDoneWaked(otherThread.id, g!); // already waked — must be excluded
 
     const owed = await store.threadsAwaitingDoneWake(jobId);
     expect(owed).toEqual([{ jobId, threadId, reason: 'notable' }]);
   });
 
-  it('markDoneWaked stamps `done_waked_at`, clears the owed flag, and is idempotent (repeat is a no-op)', async () => {
+  it('claimDoneWakeGen bumps monotonically while owed, and returns null once not owed', async () => {
+    const { threadId } = await seedJobThread();
+    // Not owed yet → nothing to claim.
+    expect(await store.claimDoneWakeGen(threadId)).toBeNull();
+
+    await store.setDoneWakeOwed(threadId, 'final');
+    expect(await store.claimDoneWakeGen(threadId)).toBe(1);
+    expect(await store.claimDoneWakeGen(threadId)).toBe(2); // a re-delivery attempt gets a fresh gen
+
+    // Once stamped (with the current gen) the wake is no longer owed → further claims are null.
+    await store.markDoneWaked(threadId, 2);
+    expect(await store.claimDoneWakeGen(threadId)).toBeNull();
+  });
+
+  it('markDoneWaked is a GENERATION-KEYED CAS — a stale gen is a no-op, only the current gen stamps', async () => {
     const { jobId, threadId } = await seedJobThread();
     await store.setDoneWakeOwed(threadId, 'final');
+    const gen1 = await store.claimDoneWakeGen(threadId); // 1
+    const gen2 = await store.claimDoneWakeGen(threadId); // 2 (a newer attempt superseded gen1)
+
+    // The stale gen-1 attempt completing late must NOT clear the owed flag out from under gen 2.
+    await store.markDoneWaked(threadId, gen1!);
     expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([
       { jobId, threadId, reason: 'final' },
     ]);
+    let row = await threads.findOne({ where: { id: threadId } });
+    expect(row?.done_waked_at).toBeNull();
 
-    await store.markDoneWaked(threadId);
+    // The live gen-2 attempt stamps it.
+    await store.markDoneWaked(threadId, gen2!);
     expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([]);
-    const row = await threads.findOne({ where: { id: threadId } });
+    row = await threads.findOne({ where: { id: threadId } });
     expect(row?.done_wake_owed).toBe(false);
     expect(row?.done_waked_at).toBeInstanceOf(Date);
-    const firstStamp = row?.done_waked_at;
+  });
 
-    // A repeat call matches zero rows (owed is already false) — the stamp does not move.
-    await store.markDoneWaked(threadId);
-    const rowAgain = await threads.findOne({ where: { id: threadId } });
-    expect(rowAgain?.done_waked_at).toEqual(firstStamp);
+  it('supersedeDoneWakeMessages deletes only THIS thread\'s below-gen rows — spares other threads and untagged rows', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    const otherThread = await threads.save(
+      threads.create({
+        kind: 'builder',
+        job_id: jobId,
+        org_id: ORG_ID,
+        ordinal: 21,
+        brief: 'Other lane',
+        status: 'done',
+      }),
+    );
+    const mk = async (meta: Record<string, unknown> | null, text: string) =>
+      (
+        await messages.save(
+          messages.create({
+            job_id: jobId,
+            author: 'Atlas',
+            author_id: 'atlas',
+            text,
+            kind: 'chat',
+            meta,
+          }),
+        )
+      ).id;
+
+    const stalePartial = await mk(
+      { doneWakeThreadId: threadId, doneWakeGen: 1 },
+      'truncated gen-1 partial',
+    );
+    const currentSummary = await mk(
+      { doneWakeThreadId: threadId, doneWakeGen: 2 },
+      'complete gen-2 summary',
+    );
+    const otherThreadSummary = await mk(
+      { doneWakeThreadId: otherThread.id, doneWakeGen: 1 },
+      'other thread gen-1 summary',
+    );
+    const untagged = await mk(null, 'normal operator chat');
+
+    // Deliver gen 2 for `threadId` → supersede its gen<2 rows only.
+    await store.supersedeDoneWakeMessages(jobId, threadId, 2);
+
+    const survivors = (await messages.find({ where: { job_id: jobId } })).map((m) => m.id);
+    expect(survivors).not.toContain(stalePartial); // the truncated gen-1 partial is gone
+    expect(survivors).toEqual(
+      expect.arrayContaining([currentSummary, otherThreadSummary, untagged]),
+    );
   });
 
   it('masterReviewThreadId returns the job\'s master_review thread id, or null when it has none', async () => {
@@ -803,7 +901,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
   }
 
-  it('retractShip flips awaiting_ship_review -> planning and neutralizes the durable ship card', async () => {
+  it('retractShip flips awaiting_ship_review -> amending and neutralizes the durable ship card', async () => {
     const { jobId } = await seedShipParkedJob();
     await seedShipCardRow(jobId);
 
@@ -811,7 +909,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(acted).toBe(true);
 
     const row = await jobs.findOne({ where: { id: jobId } });
-    expect(row?.status).toBe('planning');
+    expect(row?.status).toBe('amending');
     expect(row?.activity).toBe('idle');
     expect(row?.ship_review_approved_at).toBeNull();
 
@@ -830,7 +928,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(await store.retractShip(jobId)).toBe(false);
 
     const row = await jobs.findOne({ where: { id: jobId } });
-    expect(row?.status).toBe('planning'); // unchanged by the no-op second call
+    expect(row?.status).toBe('amending'); // unchanged by the no-op second call
   });
 
   it('retractShip does not act on a job in a DIFFERENT status', async () => {

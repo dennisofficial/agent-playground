@@ -121,6 +121,50 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(persisted).toHaveLength(1);
   });
 
+  it('discard: ends the lane but persists NOTHING (the partial will be re-delivered in full)', async () => {
+    const { live, persisted, factory } = setup();
+    const h = factory.create({
+      jobId: 'T',
+      channel: 'R',
+      lane: 'main',
+      metaTag: { doneWakeGen: 2, doneWakeThreadId: 'th-x' },
+    });
+    h.onEvent({ kind: 'text', text: 'What shipped — truncated par' });
+    await h.discard();
+
+    // No durable rows written — the truncated partial never becomes a half-message.
+    expect(persisted).toHaveLength(0);
+    // …but the live lane is ended (the in-flight buffer is dropped).
+    expect(live.snapshot('R', 'T', 'main')).toBeNull();
+
+    // Idempotent + drops late events, like abort/finish.
+    await h.finish('ignored');
+    h.onEvent({ kind: 'text', text: 'late' });
+    expect(persisted).toHaveLength(0);
+  });
+
+  it('metaTag doneWakeGen/doneWakeThreadId tags every completion-wake block (chat/thinking/tool)', async () => {
+    const { persisted, factory } = setup();
+    const h = factory.create({
+      jobId: 'T',
+      channel: 'R',
+      lane: 'main',
+      metaTag: { doneWakeGen: 3, doneWakeThreadId: 'th-mr' },
+    });
+    h.onEvent({ kind: 'thinking', text: 'review' });
+    h.onEvent({ kind: 'text', text: 'What shipped — …' });
+    h.onEvent({ kind: 'tool_use', id: 't1', name: 'Bash', input: {} });
+    h.onEvent({ kind: 'tool_result', id: 't1', result: 'ok' });
+    await h.finish('What shipped — …', { usage: { inputTokens: 1, outputTokens: 1 } as never });
+
+    // Every persisted block (including the turn_meta divider) carries the wake tag → supersede can find them.
+    expect(
+      persisted.every(
+        (p) => p.block.meta?.doneWakeGen === 3 && p.block.meta?.doneWakeThreadId === 'th-mr',
+      ),
+    ).toBe(true);
+  });
+
   it('brain lane (no metaTag): blocks carry no phase tag; a subagent block keeps its parentToolUseId', async () => {
     const { persisted, factory } = setup();
     const h = factory.create({ jobId: 'T', channel: 'R' }); // default `main` lane, no metaTag
@@ -148,6 +192,21 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(meta.usage).toMatchObject({ inputTokens: 1200, outputTokens: 340, costUsd: 0.02, model: 'claude-opus-4-8' });
     expect(meta.contextTokens).toBe(1200);
     expect(meta.contextLimit).toBe(1_000_000);
+    // Per-turn work duration: computed from the still-live turn's `startedAt` (set by the first `onEvent`),
+    // so the footer can show "worked <elapsed>". A non-negative number in ms.
+    expect(typeof meta.workedMs).toBe('number');
+    expect(meta.workedMs as number).toBeGreaterThanOrEqual(0);
+  });
+
+  it('finish turn_meta: carries no workedMs when the turn pushed no events (no live start captured)', async () => {
+    const { persisted, factory } = setup();
+    // No `onEvent` at all → no live turn state → `snapshot` is null → duration is simply omitted.
+    const h = factory.create({ jobId: 'T', channel: 'R' });
+    await h.finish('reply', {
+      usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, model: 'claude-opus-4-8' },
+    });
+    const meta = persisted.find((p) => p.block.kind === 'turn_meta')!.block.meta!;
+    expect(meta.workedMs).toBeUndefined();
   });
 
   it('finish without usage: no turn_meta block is written', async () => {

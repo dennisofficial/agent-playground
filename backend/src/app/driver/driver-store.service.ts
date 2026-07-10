@@ -32,7 +32,12 @@ import type {
   ThreadTerminalRecord,
 } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
-import { isDriverExecutableKind, laneDefaultFooter, threadKindSpec } from '../thread-kind';
+import {
+  coerceThreadType,
+  isDriverExecutableKind,
+  laneDefaultFooter,
+  threadKindSpec,
+} from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import { webVerdictCard } from '../surface/web-approval-card';
@@ -352,8 +357,8 @@ export class DriverStoreService {
     return (res.affected ?? 0) > 0;
   }
 
-  /** Retract the ship-review gate back to planning (Atlas `withdraw_ship` tool OR the manual
-   *  "Back to building" click). CONDITIONAL on `awaiting_ship_review` — single-winner vs a racing
+  /** Retract the ship-review gate back to `amending` (Atlas `withdraw_ship` tool OR the manual
+   *  "Amend build" click). CONDITIONAL on `awaiting_ship_review` — single-winner vs a racing
    *  "Ship it" click; a stale/double retract is a no-op. Does NOT touch `ship_review_approved_at`
    *  (already null here) nor the decision record (the plan was approved — nothing to supersede).
    *  Also neutralizes EVERY still-actionable durable ship card so its inline "Ship it" button can't
@@ -364,7 +369,7 @@ export class DriverStoreService {
         .getRepository(JobEntity)
         .createQueryBuilder()
         .update(JobEntity)
-        .set({ status: 'planning', activity: 'idle' })
+        .set({ status: 'amending', activity: 'idle' })
         .where('id = :jobId', { jobId })
         .andWhere("status = 'awaiting_ship_review'")
         .execute();
@@ -381,7 +386,7 @@ export class DriverStoreService {
           jobId,
           title,
           'retracted',
-          '↩︎ Retracted — back to planning for changes.',
+          '↩︎ Retracted — amending the build.',
         ) as unknown as Record<string, unknown>;
         await messages.save(row);
       }
@@ -670,6 +675,25 @@ export class DriverStoreService {
     return Array.isArray(row?.tasks) ? row!.tasks : [];
   }
 
+  /** Host backstop for a thread that reached `done` with an unreconciled checklist: flip every still-open task
+   *  (`pending`/`in_progress`) to `dropped` — NOT `completed` (the host must not claim work it did not verify;
+   *  a `dropped` row renders struck-through / drops out of the live navigator checklist).
+   *  Returns how many were flipped. A plain read-modify-write is safe here: this runs at the done transition,
+   *  after the thread's turn(s) have finished, so no concurrent task fold races it. */
+  async dropOpenThreadTasks(threadId: string): Promise<number> {
+    const tasks = await this.getThreadTasks(threadId);
+    let dropped = 0;
+    const next = tasks.map((t) => {
+      if (t.status === 'pending' || t.status === 'in_progress') {
+        dropped++;
+        return { ...t, status: 'dropped' as const };
+      }
+      return t;
+    });
+    if (dropped > 0) await this.threads.update({ id: threadId }, { tasks: next });
+    return dropped;
+  }
+
   /** Live single-thread read (not the run-start snapshot). Used to detect a thread a concurrent/stale drive
    *  has already finished, so we don't re-execute or re-review it. */
   async getThread(threadId: string): Promise<DriverThread | null> {
@@ -859,14 +883,56 @@ export class DriverStoreService {
     }));
   }
 
-  /** Stamp the completion wake delivered and clear the owed flag — idempotent (keyed on `done_wake_owed`
-   *  still true + `done_waked_at` still null, so a repeat/racing call matches zero rows). */
-  async markDoneWaked(threadId: string): Promise<void> {
+  /** CAS-claim a fresh completion-wake generation at delivery START — atomically bump `done_wake_gen` and
+   *  return the new value, iff the wake is still owed + un-stamped. Returns null when nothing is owed
+   *  (already delivered/superseded → the caller no-ops). Mirrors the halt CAS but does the bump HERE (not
+   *  out-of-band like `retry_thread`): a plain read would hand two concurrent sweeps the SAME gen and let
+   *  both claim it, whereas the atomic bump gives each a distinct gen so the loser's late stamp is invalid. */
+  async claimDoneWakeGen(threadId: string): Promise<number | null> {
+    const res = await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ done_wake_gen: () => 'done_wake_gen + 1' })
+      .where('id = :threadId', { threadId })
+      .andWhere('done_wake_owed IS TRUE')
+      .andWhere('done_waked_at IS NULL')
+      .returning('done_wake_gen')
+      .execute();
+    const gen = (res.raw as { done_wake_gen?: number }[] | undefined)?.[0]?.done_wake_gen;
+    return typeof gen === 'number' ? gen : null;
+  }
+
+  /** Supersede a prior (dead) completion-wake attempt: delete every `messages` row for THIS originating wake
+   *  thread whose `meta.doneWakeGen` is below the current gen. Scoped by `doneWakeThreadId` (NOT just
+   *  job+gen) because `done_wake_gen` is per-thread and the owed-wake sweep iterates every owed thread of a
+   *  job — a job-wide `gen<N` delete would erase another thread's valid summary. Untagged rows (normal chat,
+   *  seed pills) carry no `doneWakeThreadId` → never matched. Called at delivery START so a truncated partial
+   *  from attempt N-1 is gone before the gen-N summary lands. */
+  async supersedeDoneWakeMessages(
+    jobId: string,
+    threadId: string,
+    gen: number,
+  ): Promise<void> {
+    await this.messages
+      .createQueryBuilder()
+      .delete()
+      .where('job_id = :jobId', { jobId })
+      .andWhere(`(meta ->> 'doneWakeThreadId') = :threadId`, { threadId })
+      .andWhere(`(meta ->> 'doneWakeGen')::int < :gen`, { gen })
+      .execute();
+  }
+
+  /** Stamp the completion wake delivered and clear the owed flag — GENERATION-KEYED CAS (mirrors
+   *  `markHaltWaked`): stamp only if `done_wake_gen` still equals the `gen` captured at delivery start (no
+   *  newer attempt superseded this one) and the wake is still owed + un-stamped. A stale attempt completing
+   *  after a newer claim matches zero rows, so it can't clear owed out from under the live attempt. */
+  async markDoneWaked(threadId: string, gen: number): Promise<void> {
     await this.threads
       .createQueryBuilder()
       .update(ThreadEntity)
       .set({ done_waked_at: () => 'now()', done_wake_owed: false })
       .where('id = :threadId', { threadId })
+      .andWhere('done_wake_gen = :gen', { gen })
       .andWhere('done_wake_owed IS TRUE')
       .andWhere('done_waked_at IS NULL')
       .execute();
@@ -908,6 +974,22 @@ export class DriverStoreService {
       .execute();
     const used = res.raw?.[0]?.halt_fix_attempts as number | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
+  /** The thread's owed-halt outcome (`halt_outcome`), or null if no halt-wake has been persisted yet. Lets
+   *  the re-halt short-circuit tell a genuinely already-notified block (owed-wake row exists → safe to
+   *  suppress the redundant re-notify) from a blocked terminal record whose `haltJob` hasn't run yet (crash
+   *  between `block_thread`'s record write and `haltJob` → must still notify once, else the wake is lost). */
+  async haltOutcome(
+    threadId: string,
+  ): Promise<'blocked' | 'incomplete' | 'failed' | null> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, halt_outcome: true },
+    });
+    return (
+      (row?.halt_outcome as 'blocked' | 'incomplete' | 'failed' | null) ?? null
+    );
   }
 
   /** The thread's spent autonomous re-drive budget (0 if unset). Read by `haltJob` to decide whether a
@@ -1214,7 +1296,7 @@ export class DriverStoreService {
         id: s.id,
         ordinal: s.ordinal,
         brief: s.brief,
-        type: s.type,
+        type: coerceThreadType(s.type),
         status: s.status,
         condition: s.condition,
         // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's kind.
@@ -1354,6 +1436,7 @@ function toThread(row: ThreadEntity): DriverThread {
     status: row.status as ThreadStatus,
     condition: (row.condition as ThreadCondition) ?? 'none',
     kind: row.kind,
+    type: coerceThreadType(row.type),
     parentThreadId: row.parent_thread_id ?? null,
     startSha: row.start_sha ?? null,
   };
@@ -1397,13 +1480,11 @@ interface PipelineLeg {
 }
 
 /**
- * A builder's review children for the `/pipeline` read model. When the child rows are MATERIALIZED (the new
- * child-thread flow — after the builder finished executing), map them directly (real status + findings). When
- * they are NOT (a pre-review builder that hasn't reviewed yet, OR a historical job built before review became
- * child threads), SYNTHESIZE the review set from the thread-kind registry so the rows — and their transcript
- * lanes (the historical review turns still live in `messages` on `autofix:*`) — stay visible. Master-review
- * threads have no review children (they ARE the review). This keeps the review sub-tree data-driven (from the
- * registry, not the dropped `review_agents` jsonb) without the rows vanishing.
+ * A builder's review children for the `/pipeline` read model. Reflects MATERIALIZED rows only (the
+ * `review_lens` × N + `post_review` children the driver's `runReviewChildren` inserts once it computes
+ * the type-routed lens selection via `reviewAgentsForThread`) — empty before the review pass materializes
+ * them, operator-approved (no independent re-derivation of the selection here; the driver is the single
+ * source of truth). Master-review threads have no review children (they ARE the review).
  */
 function pipelineReviewChildren(
   parent: ThreadEntity,
@@ -1414,9 +1495,10 @@ function pipelineReviewChildren(
   const spec = threadKindSpec('builder');
   if (!spec.children) return [];
   // A done builder was reviewed (auto-fix ran before it completed) → show the synthesized rows `done`; an
-  // in-flight/pending builder shows them queued at `pending` (the review preview). The real per-lens
-  // status/findings a historical job once had were in the dropped jsonb, so they degrade to this heuristic —
-  // the navigable transcript on each lane is the durable record.
+  // in-flight/pending builder shows them queued at `pending` (the review preview). Review-lens selection is
+  // now type-routed and diff-dependent (`reviewAgentsForThread`), so the registry's `children` factory only
+  // declares the statically-known `post_review` child — the lens preview rows appear once the driver
+  // materializes them (no static list to synthesize ahead of the diff).
   const status = parent.status === 'done' ? 'done' : 'pending';
   return spec.children({ id: parent.id, config: {} }).map((c) => {
     const lensId = (c.config as { lensId?: string }).lensId;

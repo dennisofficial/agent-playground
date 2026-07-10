@@ -184,6 +184,7 @@ function makeService(opts: {
         opts.onFinish?.();
       },
       abort: async () => undefined,
+      discard: async () => undefined,
     }),
   } as unknown as TurnHarnessFactory;
   const blockSink = {

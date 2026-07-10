@@ -1,17 +1,19 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
+import { Sema } from 'async-sema';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { threadDirName } from './thread-dir-name';
 import { PlanVisibilityService } from '../decision-gate';
+import { BrainGateway } from '../brain-gateway';
 import {
   AutoFixStage,
   dedupeFindings,
   meetsSeverity,
   lensById,
+  reviewAgentsForThread,
   type AutoFixContext,
   type FindingSeverity,
 } from '../autofix';
@@ -78,7 +80,7 @@ import {
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
 } from '../prompt-kit';
-import { isDriverExecutableKind, threadKindSpec } from '../thread-kind';
+import { isDriverExecutableKind, threadKindSpec, type ThreadRowKind } from '../thread-kind';
 import { BuildShipService } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
@@ -147,6 +149,13 @@ interface BatchResult {
 interface ThreadResult {
   outcome: ThreadOutcome;
   handoff: string | null;
+  /** Set ONLY by the "already blocked → re-halt" short-circuit, and ONLY when the durable owed-wake row
+   *  already exists (`halt_outcome` set → `haltJob` already posted the card + persisted the wake) AND this
+   *  is not a `judge_unavailable` transient hold. When true, `runJob` SKIPS `haltJob` — no re-post, no
+   *  re-arm — which stops the every-reap "Thread blocked → Holding." spam. Left unset for a fresh block, for
+   *  a `judge_unavailable` hold (whose periodic re-wake IS its recovery), and when `halt_outcome` is still
+   *  missing (crash between `block_thread`'s record write and `haltJob`) so `haltJob` runs once to create it. */
+  suppressHaltNotify?: boolean;
 }
 
 /**
@@ -174,27 +183,6 @@ function isTransientDriveError(err: unknown): boolean {
 /** Infra-blip signatures a bounded silent retry papers over (see {@link isTransientDriveError}). */
 const TRANSIENT_ERROR_RE =
   /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
-
-/** The narrow brain surface the driver needs (Phase-3 halt wake) — resolved
- *  lazily to avoid the brain⇄driver module cycle. */
-interface BrainSurface {
-  /** Wake the job brain to triage a halted thread (ADR 0004 rider 4). The brain loads the job + terminal
-   *  record itself and runs a trusted harness turn; a no-op if the thread is no longer owed a wake. */
-  notifyThreadHalted(
-    jobId: string,
-    threadId: string,
-    outcome: 'blocked' | 'incomplete' | 'failed',
-    gen: number,
-  ): Promise<void>;
-
-  /** Wake the job brain for a `done` completion owed a wake (decision d1) — `'final'` (whole build parked
-   *  at ship gate) or `'notable'` (finished done but carrying gaps/unverified items). */
-  notifyThreadDone(
-    jobId: string,
-    threadId: string,
-    reason: 'final' | 'notable',
-  ): Promise<void>;
-}
 
 @Injectable()
 export class ThreadDriver implements JobDispatcher {
@@ -237,9 +225,10 @@ export class ThreadDriver implements JobDispatcher {
     // The durable registry of in-flight Redis-transport turns — lets a build batch RE-ATTACH its still-live
     // engine stream after a restart (like the brain) instead of re-running. @Global via SandboxModule.
     private readonly turnRegistry: TurnRegistry,
-    // Lazily resolves the brain (AgentSessionManager) for the Phase-3 halt wake,
-    // dodging the brain⇄driver constructor cycle.
-    private readonly moduleRef: ModuleRef,
+    // The neutral driver→brain gateway (Phase-3 halt + `done` completion wakes; the brain binds itself
+    // into it on bootstrap). Injecting it forms no construction cycle — unlike a
+    // `useExisting: AgentSessionManager` port, which would deadlock DI (the brain constructs this service).
+    private readonly brainGateway: BrainGateway,
     // The ADR-0005 live-verification judge — gates `complete_thread`'s `done` claim (see `gateLiveVerification`).
     @Inject(LIVE_VERIFICATION_JUDGE) private readonly liveVerificationJudge: LiveVerificationJudge,
     // Folds a Codex master-review thread's `task_create`/`task_update` bridge calls into its `tasks` column
@@ -293,6 +282,13 @@ export class ThreadDriver implements JobDispatcher {
     const raw = Number(this.env.get('PHASE_TIMEOUT_MS'));
     if (Number.isFinite(raw) && raw > 0) return raw;
     return 60 * 60_000;
+  }
+
+  /** Total in-flight review-lens turns cap (d5). I/O-bound LLM calls; bounds nested fanout too. Default 8. */
+  private get reviewLensConcurrency(): number {
+    const raw = Number(this.env.get('REVIEW_LENS_CONCURRENCY'));
+    if (Number.isFinite(raw) && raw > 0) return raw;
+    return 8;
   }
 
   /** Base backoff between transient-error drive retries (ADR 0004). Grows linearly per attempt. Default 2s;
@@ -541,10 +537,9 @@ export class ThreadDriver implements JobDispatcher {
     gen: number;
     outcome: 'blocked' | 'incomplete' | 'failed';
   }): Promise<void> {
-    const brain = await this.brain();
     // The stamp is NOT here — the brain stamps `halt_waked_at` on the wake turn's SUCCESS tail (keyed by the
     // captured `gen`), so a wake turn that fails/steers/detaches leaves the halt owed for the sweeps to retry.
-    await brain.notifyThreadHalted(t.jobId, t.threadId, t.outcome, t.gen);
+    await this.brainGateway.notifyThreadHalted(t.jobId, t.threadId, t.outcome, t.gen);
   }
 
   /**
@@ -570,10 +565,9 @@ export class ThreadDriver implements JobDispatcher {
     threadId: string;
     reason: 'final' | 'notable';
   }): Promise<void> {
-    const brain = await this.brain();
     // Stamp is NOT here — the brain stamps `done_waked_at` on the wake turn's SUCCESS tail, so a
     // failed/steered/detached wake stays owed for the sweeps.
-    await brain.notifyThreadDone(t.jobId, t.threadId, t.reason);
+    await this.brainGateway.notifyThreadDone(t.jobId, t.threadId, t.reason);
   }
 
   // ── the pipeline ───────────────────────────────────────────────────────────────────────────────
@@ -940,7 +934,15 @@ export class ThreadDriver implements JobDispatcher {
         // HALT the build (ADR 0004): an unfinished thread must not ship. Relay a durable card, flip the job
         // to a needs-you state, record the owed brain wake + trail, and SKIP finalizeBuild — no PR on an
         // unfinished build. The brain wake fires from `drive()` once the job leaves the active window.
-        await this.haltJob(job, route, thread, res.outcome);
+        //
+        // EXCEPT a re-halt of an already-notified brain-owned block (`suppressHaltNotify`): the card was
+        // already posted and the owed-wake row persists in the DB (delivered→acked stays acked; never
+        // delivered stays owed and the 30s sweep still delivers it once). Skipping `haltJob` here kills the
+        // every-30-min "Thread blocked → Holding." spam without dropping a genuine first wake. A fresh block
+        // or a `judge_unavailable` re-halt still notifies.
+        if (!res.suppressHaltNotify) {
+          await this.haltJob(job, route, thread, res.outcome);
+        }
         return;
       }
       handoff = res.handoff;
@@ -1038,10 +1040,10 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * SHIP-REVIEW RETRACT (the Atlas `withdraw_ship` tool OR the manual "Back to building" click). Flip
-   * `awaiting_ship_review → planning` (idempotent in the store — acts only while parked, so a stale/double
+   * SHIP-REVIEW RETRACT (the Atlas `withdraw_ship` tool OR the manual "Amend build" click). Flip
+   * `awaiting_ship_review → amending` (idempotent in the store — acts only while parked, so a stale/double
    * retract is a no-op) and post a durable note. Unlike {@link resolveShipApprovalDurably}, this does NOT
-   * re-drive — the job sits in `planning` for the operator/Atlas to do the follow-up work, and the gate
+   * re-drive — the job sits in `amending` for the operator/Atlas to do the follow-up work, and the gate
    * re-arms automatically once that work reaches `parkForShipReview` again.
    */
   async retractShipDurably(jobId: string, ruledBy: string): Promise<void> {
@@ -1052,11 +1054,11 @@ export class ThreadDriver implements JobDispatcher {
       );
       return;
     }
-    this.logger.log(`ship retract for job=${jobId} by ${ruledBy} — back to planning`);
+    this.logger.log(`ship retract for job=${jobId} by ${ruledBy} → amending`);
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
-        text: '↩︎ Ship-review retracted — back to planning for changes.',
+        text: '↩︎ Ship-review retracted — amending the build.',
         meta: { source: 'system_operator' },
       })
       .catch(() => undefined);
@@ -1232,13 +1234,29 @@ export class ThreadDriver implements JobDispatcher {
     // thread. (Live-observed on job 43705139 — the master review "blocked again" hundreds of times.)
     const prior = await this.store.getTerminalRecord(thread.id).catch(() => null);
     if (prior?.status === 'blocked') {
+      // Suppress the redundant re-notify (re-posted card + re-armed brain wake) ONLY when the durable
+      // owed-wake row already exists (`halt_outcome` set → `haltJob` already ran) AND this isn't the
+      // transient `judge_unavailable` hold. If `halt_outcome` is still missing (crash between
+      // `block_thread`'s terminal-record write and `haltJob`), fall through so `haltJob` runs once and
+      // creates it — else `threadsAwaitingHaltWake` has nothing to deliver and the wake is lost forever. A
+      // `judge_unavailable` hold recovers ONLY via the periodic re-wake driving the brain to `retry_thread`
+      // (no judge health-poll exists), so it must keep re-arming.
+      const owedHaltExists =
+        (await this.store.haltOutcome(thread.id).catch(() => null)) != null;
+      const transientHold = prior.blocked?.reason === 'judge_unavailable';
+      const suppressHaltNotify = owedHaltExists && !transientHold;
       this.logger.log(
-        `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)`,
+        `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)` +
+          (suppressHaltNotify
+            ? ' [suppressing redundant re-notify]'
+            : transientHold
+              ? ' [judge_unavailable: re-arming wake]'
+              : ' [owed-wake row missing: running haltJob to create it]'),
       );
       await this.store
         .setThreadCondition(thread.id, 'paused')
         .catch(() => undefined);
-      return { outcome: 'blocked', handoff: null };
+      return { outcome: 'blocked', handoff: null, suppressHaltNotify };
     }
 
     // A thread already `done` must NOT be re-run. The runJob loop skips `done` threads from its start-of-run
@@ -1319,13 +1337,21 @@ export class ThreadDriver implements JobDispatcher {
     // e. HANDOFF — summarize what this thread produced for the next.
     const handoffOut = this.summarizeHandoff(thread, steps, reports);
     await this.store.setThreadHandoffOut(thread.id, handoffOut);
+    // Host backstop: the model already got its one in-gate reminder to reconcile its checklist, so flip any
+    // task it STILL left open to `dropped` — a finished thread must never render with a task frozen
+    // in-progress. Only on the clean `done` path; a blocked/halted thread's open tasks stay legitimately open.
+    const droppedTasks = await this.store.dropOpenThreadTasks(thread.id).catch(() => 0);
+    if (droppedTasks > 0) {
+      this.logger.log(`thread ${thread.ordinal} — dropped ${droppedTasks} unreconciled open task(s) on done`);
+    }
     await this.store.setThreadStatus(thread.id, 'done');
     await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
     this.logger.log(`thread ${thread.ordinal} done`);
     await this.recordMilestone(
       job.id,
       `thread:${thread.id}:done`,
-      `Thread "${thread.brief}" finished building.`,
+      `Thread "${thread.brief}" finished building.` +
+        (droppedTasks > 0 ? ` (${droppedTasks} unreconciled task(s) dropped)` : ''),
     );
     // Decision d1 — a clean `done` is normally cheap note-and-queue; a NOTABLE one (gaps left) also owes an
     // autonomous brain wake so the operator isn't the first to notice. The wake resolves the transcript anchor
@@ -1386,23 +1412,11 @@ export class ThreadDriver implements JobDispatcher {
     // The review window: show the builder `auto_fixing` (the unchanged web affordance) while children run.
     await this.store.setThreadStatus(thread.id, 'auto_fixing').catch(() => undefined);
 
-    const childSpecs = spec.children({ id: thread.id, config: {} });
-    const children = await this.store
-      .materializeReviewChildren(
-        { id: thread.id, jobId: job.id, orgId: thread.orgId },
-        childSpecs,
-      )
-      .catch((err) => {
-        this.logger.warn(`review-children materialize failed (skipping review): ${err}`);
-        return [] as ReviewChildThread[];
-      });
-    if (children.length === 0) return;
-
-    const lensChildren = children.filter((c) => c.kind === 'review_lens');
-    const postReview = children.find((c) => c.kind === 'post_review');
     const channel = route.channel ?? job.repoId;
 
-    // The shared review context — derive the diff ONCE and share it across every lens + the fix turn.
+    // The shared review context — derive the diff ONCE, BEFORE selection/materialization, so a future
+    // file-glob axis (Thread 4's framework lens) has `ctx.changedFiles` to route on, and so an empty diff
+    // is caught before anything new is materialized.
     const baseCtx: AutoFixContext = {
       worktreePath: sandbox.worktreePath,
       sandboxKey: jobHomeKey(job, 'autofix'),
@@ -1430,21 +1444,15 @@ export class ThreadDriver implements JobDispatcher {
     };
     const ctx = await this.autofix.ensureContextDiff(baseCtx).catch(() => baseCtx);
 
-    // ANCHOR — same web contract as before: the `autofix_anchor` row + change-signal post (the review card
-    // latches `meta.autofixAnchor`; each lens/fix turn streams on `autofix:*` lanes).
-    await this.postAutofixAnchor(job, route, {
-      autofixId: thread.id,
-      scope: 'thread',
-      label: thread.brief,
-      lensIds: lensChildren.map((c) => String((c.config as { lensId?: string }).lensId ?? c.id)),
-    });
-
-    // Empty diff → nothing to review: mark every non-done child `done` (idempotent) and skip the turns. Post
-    // a short notice on each child's lane FIRST, so a skipped review reads as an explicit "nothing to review"
-    // line in its pane rather than a silent blank (the symptom that hid a stale-`start_sha` empty range).
+    // Empty diff → nothing to review: nothing is materialized (resume-safe — a re-entry on the same empty
+    // diff must not synthesize new rows). If children were ALREADY materialized by a prior, non-empty run
+    // of this thread, mark every non-done one `done` (idempotent) and skip the turns; a short notice posts
+    // to each child's lane FIRST, so a skipped review reads as an explicit "nothing to review" line rather
+    // than a silent blank (the symptom that hid a stale-`start_sha` empty range).
     if (!ctx.changedFiles?.length) {
+      const already = await this.store.reviewChildren(thread.id);
       const notice = `No changes to review in this section (empty diff for "${thread.brief}") — this review was skipped.`;
-      for (const c of children) {
+      for (const c of already) {
         if (c.status === 'done') continue;
         const sub =
           c.kind === 'review_lens'
@@ -1463,12 +1471,65 @@ export class ThreadDriver implements JobDispatcher {
       return;
     }
 
-    // Drive the LENSES concurrently (capped) — each an independent row (a `done` lens fast-forwards).
-    const concurrency = 3;
-    for (let i = 0; i < lensChildren.length; i += concurrency) {
-      const batch = lensChildren.slice(i, i + concurrency);
-      await Promise.all(batch.map((c) => this.runOneReviewLens(ctx, c)));
-    }
+    // Framework-conformance lens (d4): resolve the `review`-surface skills whose applicability matches this
+    // thread (by type OR a changed-file glob), force-inject their SKILL.md bodies. Best-effort — a resolver
+    // failure must never sink the review pass, so fall back to no framework skills.
+    const frameworkSkills = await this.skills
+      .resolveReviewSkillsForThread(job.orgId, job.repoId, thread.type, ctx.changedFiles ?? [])
+      .catch((err) => {
+        this.logger.warn(`framework-skill resolution failed (no framework lens): ${err}`);
+        return [] as { name: string; body: string }[];
+      });
+    const frameworkSkillNames = frameworkSkills.map((s) => s.name);
+
+    // THE selection — reviewAgentsForThread is the single source of truth for WHICH lenses run, routed on
+    // the thread's (closed-vocabulary) type. Composed with the registry's post_review child spec.
+    const lenses = reviewAgentsForThread(thread.type, frameworkSkillNames);
+    const childSpecs = [
+      ...lenses.map((l) => ({
+        kind: 'review_lens' as ThreadRowKind,
+        brief: l.label,
+        config: l.id === 'framework' ? { lensId: l.id, skills: frameworkSkillNames } : { lensId: l.id },
+      })),
+      ...spec.children({ id: thread.id, config: {} }),
+    ];
+    const children = await this.store
+      .materializeReviewChildren(
+        { id: thread.id, jobId: job.id, orgId: thread.orgId },
+        childSpecs,
+      )
+      .catch((err) => {
+        this.logger.warn(`review-children materialize failed (skipping review): ${err}`);
+        return [] as ReviewChildThread[];
+      });
+    if (children.length === 0) return;
+
+    const lensChildren = children.filter((c) => c.kind === 'review_lens');
+    const postReview = children.find((c) => c.kind === 'post_review');
+
+    // ANCHOR — same web contract as before: the `autofix_anchor` row + change-signal post (the review card
+    // latches `meta.autofixAnchor`; each lens/fix turn streams on `autofix:*` lanes).
+    await this.postAutofixAnchor(job, route, {
+      autofixId: thread.id,
+      scope: 'thread',
+      label: thread.brief,
+      lensIds: lensChildren.map((c) => String((c.config as { lensId?: string }).lensId ?? c.id)),
+    });
+
+    // Drive the LENSES concurrently through a semaphore capped at `reviewLensConcurrency` (d5) — each an
+    // independent row (a `done` lens fast-forwards). Unlike a fixed batch loop, the next lens starts the
+    // instant a slot frees rather than waiting on a batch barrier.
+    const sema = new Sema(this.reviewLensConcurrency);
+    await Promise.all(
+      lensChildren.map(async (c) => {
+        await sema.acquire();
+        try {
+          await this.runOneReviewLens(ctx, c, frameworkSkills);
+        } finally {
+          sema.release();
+        }
+      }),
+    );
 
     // Then the POST-REVIEW fix pass over the deduped, severity-filtered union of the lenses' findings.
     if (postReview && postReview.status !== 'done') {
@@ -1488,7 +1549,11 @@ export class ThreadDriver implements JobDispatcher {
    * findings + terminal status on its OWN row. Never throws — a lens failure is isolated to its row (marked
    * `failed`), never blocking its siblings or the build. A lens already `done` (resume) fast-forwards.
    */
-  private async runOneReviewLens(ctx: AutoFixContext, child: ReviewChildThread): Promise<void> {
+  private async runOneReviewLens(
+    ctx: AutoFixContext,
+    child: ReviewChildThread,
+    frameworkBodies: { name: string; body: string }[] = [],
+  ): Promise<void> {
     if (child.status === 'done') return;
     const lensId = String((child.config as { lensId?: string }).lensId ?? '');
     const lens = lensById(lensId);
@@ -1504,7 +1569,8 @@ export class ThreadDriver implements JobDispatcher {
     // Clear any stale halt overlay from a prior run before (re)running the lens's turn.
     await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     try {
-      const findings = await this.autofix.runReviewLens(ctx, lens);
+      const lensCtx = lens.scope === 'framework' ? { ...ctx, frameworkBodies } : ctx;
+      const findings = await this.autofix.runReviewLens(lensCtx, lens);
       await this.store.setThreadReviewFindings(child.id, findings);
       await this.store.setThreadStatus(child.id, 'done');
       await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
@@ -1649,6 +1715,10 @@ export class ThreadDriver implements JobDispatcher {
     // explicit STOP directive: re-asserting the SAME state succeeds (nothing to retry); a CONFLICTING assertion
     // is refused but still told to stop, never to retry.
     let terminated: null | 'done' | 'blocked' = null;
+    // ONE-SHOT task double-check: the first `done` assertion with an unreconciled checklist is bounced back
+    // (below) so the model can finish/close its own tasks in-turn; a subsequent assertion is let through
+    // regardless (the done transition then drops any stragglers). Guards against wedging a validated thread.
+    let taskNudgedOnce = false;
     const afterTerminal = (attempted: 'done' | 'blocked') => {
       const stop =
         `This thread already asserted \`${terminated}\` this turn — it is recorded and final. ` +
@@ -1665,6 +1735,20 @@ export class ThreadDriver implements JobDispatcher {
           const summary = String(args['summary'] ?? '').trim();
           if (!summary) {
             return { ok: false, error: 'summary is required (one line: what this thread built)' };
+          }
+          // Task double-check — BEFORE the live-verification gate: on the FIRST `done` claim, if the durable
+          // checklist still has open items, bounce once (not latched) so the model reconciles its own tasks
+          // in-turn (finishing genuinely-unfinished work, which then flows through the gate + commit). One
+          // reminder only; the retry skips this and proceeds, and the done transition flips any leftovers to
+          // `dropped`.
+          if (!taskNudgedOnce) {
+            const open = (await this.store.getThreadTasks(thread.id).catch(() => [] as TaskItem[])).filter(
+              (t) => t.status === 'pending' || t.status === 'in_progress',
+            );
+            if (open.length) {
+              taskNudgedOnce = true;
+              return { ok: true, warning: renderOpenTasksWarning(open) };
+            }
           }
           const asStrings = (v: unknown): string[] | undefined =>
             Array.isArray(v) && v.length
@@ -3130,6 +3214,9 @@ export class ThreadDriver implements JobDispatcher {
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
+          ...(threadKindSpec('builder').reasoningEffort
+            ? { modelReasoningEffort: threadKindSpec('builder').reasoningEffort }
+            : {}),
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
           richStream: true,
           toolBridge,
@@ -3179,13 +3266,6 @@ export class ThreadDriver implements JobDispatcher {
       sandbox,
       notify: (m) => this.post(route, m),
     });
-  }
-
-  /** Lazily resolve the brain — a dynamic import keeps the brain⇄driver dependency out of module load. */
-  private async brain(): Promise<BrainSurface> {
-    const { AgentSessionManager } =
-      await import('../brain/agent-session-manager.service.js');
-    return this.moduleRef.get(AgentSessionManager, { strict: false });
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
@@ -3408,6 +3488,25 @@ function renderOpenLegTasks(tasks: TaskItem[]): string {
     'durable checklist). Continue these — do NOT recreate completed items or restart finished ones:',
     ...lines,
     '</carried_tasks>',
+  ].join('\n');
+}
+
+/** The warning-retry payload for the done-gate task double-check. Lists the still-OPEN tasks and directs the
+ *  model to reconcile each before re-asserting `done`. The caller only builds this when `open` is non-empty,
+ *  so it never renders an empty block. This is the model's ONE reminder — anything still open after the next
+ *  `complete_thread` is host-dropped from the checklist at the done transition. */
+function renderOpenTasksWarning(open: TaskItem[]): string {
+  const lines = open.map((t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`);
+  return [
+    `NOT marked done yet — your task list still has ${open.length} open item(s). Reconcile it before you`,
+    'assert done. For EACH task below: if the work is genuinely finished, mark it completed' +
+      ' (`TaskUpdate` status: completed); if it still needs doing, DO it now (commit + push any changes),' +
+      ' then mark it completed; if it is no longer needed, delete it (`TaskUpdate` status: deleted). Then',
+    'call `complete_thread` again. This is your ONE reminder — anything still open after your next',
+    '`complete_thread` will be dropped from the checklist.',
+    '<open_tasks>',
+    ...lines,
+    '</open_tasks>',
   ].join('\n');
 }
 

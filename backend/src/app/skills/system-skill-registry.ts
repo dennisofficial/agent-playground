@@ -33,6 +33,12 @@ export interface SystemSkill {
   surfaces: McpSurface[];
   /** Present → git-sourced (see above); absent → static/in-repo. */
   git?: SystemSkillGitSource;
+  /** Applicability for the framework-conformance review lens — only meaningful for a skill whose
+   *  `surfaces` includes `'review'`. Same shape as `WorkspaceSkillEntity.review_for_types`. */
+  reviewForTypes?: string[];
+  /** Applicability for the framework-conformance review lens — only meaningful for a skill whose
+   *  `surfaces` includes `'review'`. Same shape as `WorkspaceSkillEntity.review_for_globs`. */
+  reviewForGlobs?: string[];
 }
 
 /**
@@ -70,6 +76,15 @@ export function buildSystemSkills(): SystemSkill[] {
         'complex," "over-engineered," Strategy, Factory, Observer, Adapter, Decorator, State, Command, or any GoF ' +
         'pattern by name.',
       surfaces: ['brain', 'build', 'review'],
+    },
+    {
+      name: 'react-review-checklist',
+      description:
+        'React/Next.js conformance rules for reviewing frontend changes — hook dependencies, list keys, ' +
+        'effect cleanup, and render-time purity. Applied by the framework-conformance review lens on ' +
+        'frontend threads.',
+      surfaces: ['review'],
+      reviewForTypes: ['frontend'],
     },
     {
       name: 'playwright-cli',

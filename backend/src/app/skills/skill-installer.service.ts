@@ -200,6 +200,8 @@ export class SkillInstallerService {
       installed_sha: sha,
       update_policy: input.updatePolicy ?? 'track-ref',
       surfaces: input.surfaces,
+      reviewForTypes: frontmatter.reviewForTypes,
+      reviewForGlobs: frontmatter.reviewForGlobs,
       enabled: true,
     });
     this.logger.log(`installed skill '${name}' org=${input.orgId} scope=${input.scope} from ${input.sourceUrl}@${ref}`);

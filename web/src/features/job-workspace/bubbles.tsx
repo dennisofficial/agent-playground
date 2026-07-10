@@ -615,6 +615,8 @@ interface TurnMeta {
   };
   contextTokens?: number | null;
   contextLimit?: number | null;
+  /** How long the turn worked, in ms (start→end). Absent on turns from before this shipped. */
+  workedMs?: number;
 }
 
 /** Format a USD cost: sub-cent as 4dp ($0.0042), otherwise 2dp ($0.03). */
@@ -635,6 +637,8 @@ export function TurnMetaDivider({ message }: { message: JobMessage }) {
   if (u.outputTokens != null) parts.push(`${formatTokens(u.outputTokens)} out`);
   if (u.cacheReadTokens) parts.push(`${formatTokens(u.cacheReadTokens)} cache`);
   if (u.costUsd != null) parts.push(formatCost(u.costUsd));
+  if (typeof meta.workedMs === "number" && meta.workedMs > 0)
+    parts.push(`worked ${formatElapsed(Math.round(meta.workedMs / 1000))}`);
   return (
     <div className="anim-fadeUp flex items-center gap-1.5 pl-0.5">
       <MessageTime iso={message.postedAt} tone="turn" />

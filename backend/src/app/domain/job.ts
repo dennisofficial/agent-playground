@@ -19,6 +19,9 @@
 // and re-exported as the domain's `JobStatus` so the brain/driver keep importing it from `../domain`.
 import type { JobStatus, JobHalt, JobActivity } from '@workspace/shared';
 import { JOB_ACTIVITIES } from '@workspace/shared';
+// Type-only: `thread-types.ts` imports nothing, so this is cycle-free even though `thread-kind`'s
+// registry imports from `autofix`, which imports domain types.
+import type { ThreadType } from '../thread-kind/thread-types';
 export { JOB_ACTIVITIES };
 export type { JobStatus, JobHalt, JobActivity };
 
@@ -33,6 +36,7 @@ const OPERATOR_OWNED_STATUSES = new Set([
   'planning',
   'awaiting_approval',
   'awaiting_ship_review',
+  'amending',
 ]);
 
 /**
@@ -197,6 +201,9 @@ export interface Thread {
    *  single differentiator across all thread-like concepts (a `master_review` is the whole-diff Codex
    *  review-&-fix appended last). See {@link ThreadEntity.kind}. */
   kind: string;
+  /** The scope TYPE (`backend | frontend | docs | testing | infra | data | general`) — the deterministic
+   *  routing key `reviewAgentsForThread` selects review lenses on. See {@link ThreadEntity.type}. */
+  type: ThreadType;
   /** The parent thread in the tree (a builder is the parent of its review-lens/post-review children);
    *  null for root/job-level rows. See {@link ThreadEntity.parent_thread_id}. */
   parentThreadId: string | null;
