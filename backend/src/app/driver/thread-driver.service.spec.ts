@@ -960,7 +960,7 @@ function assemble(
     // McpOAuthService: no OAuth servers in tests (and the fake SANDBOX_PROVIDER has no kickMcpHubRefresh anyway).
     { refreshForSandbox: async () => ({ rotated: false }) } as never,
     // SkillResolver: no skills in tests.
-    { resolveForTurn: async () => [] } as never,
+    { resolveForTurn: async () => [], resolveReviewSkillsForThread: async () => [] } as never,
     // JobLifecycleService: returns the thread's pre-provisioned sandbox — the ONLY sandbox path now
     // (the brain provisions every thread before any build runs). Its branch is the source of truth.
     {

@@ -68,8 +68,22 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
     expect(out).toEqual(
       expect.arrayContaining([
-        { name: 'shared', description: 'managed description', dirPath: 'shared', managed: true },
-        { name: 'managed-only', description: 'only on the system tier', dirPath: 'managed-only', managed: true },
+        {
+          name: 'shared',
+          description: 'managed description',
+          dirPath: 'shared',
+          managed: true,
+          reviewForTypes: [],
+          reviewForGlobs: [],
+        },
+        {
+          name: 'managed-only',
+          description: 'only on the system tier',
+          dirPath: 'managed-only',
+          managed: true,
+          reviewForTypes: [],
+          reviewForGlobs: [],
+        },
       ]),
     );
   });
@@ -79,7 +93,13 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
     await store.write('org1', '*', 'shared', { description: 'org override' });
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
     const shared = out.find((s) => s.name === 'shared');
-    expect(shared).toEqual({ name: 'shared', description: 'org override', dirPath: 'shared' });
+    expect(shared).toEqual({
+      name: 'shared',
+      description: 'org override',
+      dirPath: 'shared',
+      reviewForTypes: [],
+      reviewForGlobs: [],
+    });
     expect(shared?.managed).toBeUndefined();
   });
 
@@ -91,6 +111,8 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
       name: 'shared',
       description: 'repo override',
       dirPath: 'repos/repo-1/shared',
+      reviewForTypes: [],
+      reviewForGlobs: [],
     });
   });
 
@@ -110,6 +132,8 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
           description: 'git-sourced managed description',
           dirPath: 'git-shared',
           managedGit: true,
+          reviewForTypes: [],
+          reviewForGlobs: [],
         },
       ]),
     );
@@ -120,7 +144,13 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
     await store.write('org1', '*', 'git-shared', { description: 'org override' });
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
     const gitShared = out.find((s) => s.name === 'git-shared');
-    expect(gitShared).toEqual({ name: 'git-shared', description: 'org override', dirPath: 'git-shared' });
+    expect(gitShared).toEqual({
+      name: 'git-shared',
+      description: 'org override',
+      dirPath: 'git-shared',
+      reviewForTypes: [],
+      reviewForGlobs: [],
+    });
     expect(gitShared?.managed).toBeUndefined();
     expect(gitShared?.managedGit).toBeUndefined();
   });

@@ -95,6 +95,12 @@ describe('SkillResolver.resolveForTurn', () => {
   it('returns name/description/dirPath (plain data, no secrets or file content)', async () => {
     await store.write('org1', '*', 'k', { description: 'Use when X', surfaces: ['brain'] });
     const [s] = await resolver.resolveForTurn('org1', 'repo-1', 'brain');
-    expect(s).toEqual({ name: 'k', description: 'Use when X', dirPath: 'k' });
+    expect(s).toEqual({
+      name: 'k',
+      description: 'Use when X',
+      dirPath: 'k',
+      reviewForTypes: [],
+      reviewForGlobs: [],
+    });
   });
 });
