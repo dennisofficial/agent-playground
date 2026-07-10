@@ -11,6 +11,7 @@
 
 import type { EnvService } from '@core/config/env/env.service';
 import type { ModuleRef } from '@nestjs/core';
+import type { BrainGateway } from '../brain-gateway';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -80,6 +81,7 @@ function makeService(
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
+    { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
     { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
   );
 }
@@ -114,6 +116,7 @@ function makeServiceWithMocks(
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
+    { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
     { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
   );
   return { svc, sandboxes, provisionAndAttach };
@@ -158,6 +161,7 @@ function makeServiceForReset(
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { failRunningForJob } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
+    { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
     { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
   );
   return { svc, sandboxes, teardown, activity, failRunningForJob };
@@ -410,6 +414,7 @@ describe('JobLifecycleService.applyGithubPrState', () => {
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
+      { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
     svc.detachJobContainer = vi.fn(async () => {
@@ -476,6 +481,7 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
+      { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
     return { svc, projects, closePullRequest, githubToken };
@@ -585,6 +591,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
+      { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
     return { svc, sandboxes, update, teardownByIdentity, removeSandbox };
@@ -638,6 +645,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
+      { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
 
@@ -670,6 +678,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
+      { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
     return { svc, getPullState };
@@ -713,6 +722,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
+      { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
     // Spy the two reclaim effects on the instance — we assert the DECISION, not closeJob/rmSync internals.

@@ -93,6 +93,18 @@ export class WorkspaceSkillEntity extends TimestampedEntity {
   @Column({ type: 'jsonb', default: ['build'] })
   surfaces!: McpSurface[];
 
+  /** The ThreadType(s) whose review this skill's knowledge applies to (framework-conformance lens). Plain-literal
+   *  default (NOT a `()=>'…'::jsonb` expression) so TypeORM's jsonb default-diff doesn't regenerate the migration
+   *  forever — mirrors `surfaces`. A review-surface skill matches a thread when this includes the thread's type
+   *  OR a `review_for_globs` entry matches a changed file. */
+  @Column({ type: 'jsonb', default: [] })
+  review_for_types!: string[];
+
+  /** File globs (e.g. `**\/*.tsx`, `backend/**`) matched against a thread's changedFiles — the orthogonal,
+   *  path-based applicability axis alongside {@link review_for_types}. Same plain-literal-default rationale. */
+  @Column({ type: 'jsonb', default: [] })
+  review_for_globs!: string[];
+
   /** Master on/off switch — a disabled skill is never resolved onto a turn. */
   @Column({ type: 'boolean', default: true })
   enabled!: boolean;

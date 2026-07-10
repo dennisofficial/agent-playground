@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AutoFixStage } from './autofix.stage';
+import { lensById } from './autofix-lenses';
 import type { EngineHomeKey, EngineRunnerPort } from '../engine';
 import type { LocalGitService } from '../git';
 import type { TurnHarnessFactory } from '../surface/turn-harness.service';
@@ -54,29 +55,48 @@ function reviewLensId(sandboxKey: EngineHomeKey): string | undefined {
   return sandboxKey.subId?.startsWith('review-') ? sandboxKey.subId.slice('review-'.length) : undefined;
 }
 
+type EngineCall = {
+  mode: string;
+  engine?: string;
+  sandboxKey: EngineHomeKey;
+  richStream?: boolean;
+  hasOnEvent: boolean;
+  modelReasoningEffort?: string;
+};
+
 function mockEngine(opts: {
   reviewReports: Record<string, string>;
   fixReport?: string;
 }): {
   engine: EngineRunnerPort;
-  calls: Array<{ mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; hasOnEvent: boolean }>;
+  calls: EngineCall[];
 } {
-  const calls: Array<{ mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; hasOnEvent: boolean }> = [];
+  const calls: EngineCall[] = [];
   const run = vi.fn(
-    async (args: { mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; onEvent?: unknown }) => {
+    async (args: {
+      mode: string;
+      engine?: string;
+      sandboxKey: EngineHomeKey;
+      richStream?: boolean;
+      onEvent?: unknown;
+      modelReasoningEffort?: string;
+    }) => {
       calls.push({
         mode: args.mode,
+        engine: args.engine,
         sandboxKey: args.sandboxKey,
         richStream: args.richStream,
         hasOnEvent: typeof args.onEvent === 'function',
+        modelReasoningEffort: args.modelReasoningEffort,
       });
       if (args.mode === 'execute') {
-      return { result: opts.fixReport ?? 'fixed finding 1', sessionId: 'fix-sess' };
-    }
-    // review turn — pick the report by the lens embedded in the sandbox key.
-    const lensId = reviewLensId(args.sandboxKey);
-    return { result: opts.reviewReports[lensId ?? ''] ?? reportWith([]), sessionId: `rev-${lensId}` };
-  });
+        return { result: opts.fixReport ?? 'fixed finding 1', sessionId: 'fix-sess' };
+      }
+      // review turn — pick the report by the lens embedded in the sandbox key.
+      const lensId = reviewLensId(args.sandboxKey);
+      return { result: opts.reviewReports[lensId ?? ''] ?? reportWith([]), sessionId: `rev-${lensId}` };
+    },
+  );
   return { engine: { run } as unknown as EngineRunnerPort, calls };
 }
 
@@ -166,6 +186,50 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     expect(summary.commits).toEqual([
       { sha: 'commitsha1', message: expect.stringContaining('thread review fixes') },
     ]);
+  });
+
+  it('threads Autofix effort only onto matching Claude child turns, preserving Codex defaults', async () => {
+    const finding = {
+      lens: 'l1',
+      severity: 'high' as const,
+      file: 'src/x.ts',
+      title: 'finding A',
+      detail: 'fix it',
+    };
+
+    const claude = mockEngine({
+      reviewReports: { l1: reportWith([finding]) },
+      fixReport: 'fixed finding A.',
+    });
+    const claudeStage = new AutoFixStage(claude.engine, mockGit({ sha: 'claude-sha' }).git, mockHarness().factory);
+
+    await claudeStage.runReviewLens(ctx, LENSES[0]);
+    expect(claude.calls[0]).toMatchObject({
+      mode: 'review',
+      engine: 'claude',
+      modelReasoningEffort: 'high',
+    });
+
+    await claudeStage.applyReviewFindings(ctx, [finding]);
+    expect(claude.calls[1]).toMatchObject({
+      mode: 'execute',
+      engine: 'claude',
+      modelReasoningEffort: 'high',
+    });
+
+    const codex = mockEngine({
+      reviewReports: { l1: reportWith([finding]) },
+      fixReport: 'fixed finding A.',
+    });
+    const codexStage = new AutoFixStage(codex.engine, mockGit({ sha: 'codex-sha' }).git, mockHarness().factory);
+
+    await codexStage.runReviewLens(ctx, LENSES[0], { engine: 'codex' });
+    expect(codex.calls[0]).toMatchObject({ mode: 'review', engine: 'codex' });
+    expect(codex.calls[0].modelReasoningEffort).toBeUndefined();
+
+    await codexStage.applyReviewFindings(ctx, [finding], { engine: 'codex' });
+    expect(codex.calls[1]).toMatchObject({ mode: 'execute', engine: 'codex' });
+    expect(codex.calls[1].modelReasoningEffort).toBeUndefined();
   });
 
   it('PR-tail mode tags the commit message + summary mode (from the agent-authored HEAD)', async () => {
@@ -409,5 +473,51 @@ describe('AutoFixStage — streaming onto the transcript spine', () => {
     // l1 threw → its harness aborted; l2 succeeded → finished. Never both for one turn.
     expect(h.abort).toHaveBeenCalledTimes(1);
     expect(h.finish).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AutoFixStage — framework lens injects skill bodies into the runtime engine turn', () => {
+  // The unit tests in framework-lens.spec.ts prove `buildReviewPrompt` renders the injected body. THIS
+  // test drives the real stage runner end-to-end (`runReviewLens`) with a fake engine that CAPTURES the
+  // `task` it was actually handed at runtime — proving the force-injected skill body crosses the
+  // engine.run boundary (not just the pure prompt builder) and that a returned findings block is parsed.
+  // The raw model inference itself needs a provider credential the sandbox lacks; everything up to the
+  // engine call is exercised live here.
+  const injectedRule = 'Never use array index as a list key.';
+  const frameworkLens = lensById('framework')!;
+
+  const frameworkCtx: AutoFixContext = {
+    ...ctx,
+    frameworkBodies: [{ name: 'react-review-checklist', body: `# Rules\n\n- ${injectedRule}` }],
+  };
+
+  it('hands the injected skill body to engine.run and parses the returned finding', async () => {
+    let capturedTask: string | undefined;
+    let capturedMode: string | undefined;
+    const run = vi.fn(
+      async (args: { mode: string; task: string; sandboxKey: EngineHomeKey }) => {
+        capturedTask = args.task;
+        capturedMode = args.mode;
+        return {
+          result: reportWith([
+            { severity: 'high', file: 'src/List.tsx', title: 'array index used as key' },
+          ]),
+          sessionId: 'rev-framework',
+        };
+      },
+    );
+    const engine = { run } as unknown as EngineRunnerPort;
+    const { git } = mockGit({});
+    const stage = new AutoFixStage(engine, git, mockHarness().factory);
+
+    const findings = await stage.runReviewLens(frameworkCtx, frameworkLens);
+
+    // The injected body reached the engine turn at RUNTIME (not just the pure prompt builder).
+    expect(capturedMode).toBe('review');
+    expect(capturedTask).toContain(injectedRule);
+    expect(capturedTask).toContain('react-review-checklist');
+    // …and the returned report was parsed into a finding tagged with the framework lens.
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ lens: 'framework', severity: 'high', file: 'src/List.tsx' });
   });
 });

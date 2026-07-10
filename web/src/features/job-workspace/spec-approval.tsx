@@ -29,9 +29,10 @@ import {
  * rely on the mutation's message/pipeline invalidation to flip the job onward (`awaiting_approval →
  * running` / `awaiting_ship_review → running`). Each surface ALSO carries a secondary
  * {@link RetractButton} — "Back to planning" at the plan gate ({@link REQUEST_CHANGES_ACTION_ID}) and
- * "Back to building" at the ship gate ({@link RETRACT_SHIP_ACTION_ID}) — a guaranteed escape hatch that
- * sends the job back to `planning` WITHOUT discarding completed work (the Atlas `withdraw_plan` /
- * `withdraw_ship` tools cover the intent-judged side). Declining/cancelling outright is still chat or the
+ * "Amend build" at the ship gate ({@link RETRACT_SHIP_ACTION_ID}) — a guaranteed escape hatch that
+ * steps the job back a stage WITHOUT discarding completed work (plan gate → `planning`, ship gate →
+ * `amending`; the Atlas `withdraw_plan` / `withdraw_ship` tools cover the intent-judged side).
+ * Declining/cancelling outright is still chat or the
  * plan-gate Deny; retract only steps the job back a stage. The parent only renders these surfaces while
  * the job sits at the matching status, so a successful verdict naturally unmounts them once the refetch
  * lands; a brief in-place "done" state covers the gap.
@@ -71,8 +72,8 @@ function useRetractPlan(jobRef: JobRef, value: string) {
   return useVerdictAction(jobRef, REQUEST_CHANGES_ACTION_ID, value);
 }
 
-/** The ship-gate retract ("Back to building") — POSTs {@link RETRACT_SHIP_ACTION_ID}, the sibling of
- *  the Atlas `withdraw_ship` tool (`awaiting_ship_review → planning`). */
+/** The ship-gate retract ("Amend build") — POSTs {@link RETRACT_SHIP_ACTION_ID}, the sibling of
+ *  the Atlas `withdraw_ship` tool (`awaiting_ship_review → amending`). */
 function useRetractShip(jobRef: JobRef, value: string) {
   return useVerdictAction(jobRef, RETRACT_SHIP_ACTION_ID, value);
 }
@@ -301,8 +302,8 @@ export function NavigatorShipButton({
         pending={retract.pending}
         done={retract.approved}
         blocked={pending || approved}
-        idleLabel="Back to building"
-        doneLabel="Back to building"
+        idleLabel="Amend build"
+        doneLabel="Amend build"
         className="mt-1.5 w-full text-[10.5px]"
         style={{ borderRadius: "7px", padding: "6px 0" }}
         iconSize={11}
@@ -365,8 +366,8 @@ export function PersistentShipBar({
         pending={retract.pending}
         done={retract.approved}
         blocked={pending || approved}
-        idleLabel="Back to building"
-        doneLabel="Back to building"
+        idleLabel="Amend build"
+        doneLabel="Amend build"
         className="text-[11.5px]"
         style={{ borderRadius: "8px", padding: "8px 14px" }}
         iconSize={13}
@@ -450,8 +451,9 @@ function VerdictButton({
 }
 
 // ── shared secondary retract button ─────────────────────────────────────────────────────────────────
-/** The secondary "retract" button shared by both gates — steps the job back to `planning` without
- *  discarding completed work ("Back to building" at the ship gate, "Back to planning" at the plan gate).
+/** The secondary "retract" button shared by both gates — steps the job back a stage without
+ *  discarding completed work ("Amend build" → `amending` at the ship gate, "Back to planning" →
+ *  `planning` at the plan gate).
  *  Deliberately quiet: an outline/ghost look (panel bg, `--line` border, muted text) with an undo
  *  affordance, so it never competes with the green primary. Mirrors {@link VerdictButton}'s
  *  pending/done handling; pending copy is always "Retracting…". */

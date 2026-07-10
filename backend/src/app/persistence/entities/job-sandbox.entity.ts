@@ -95,8 +95,8 @@ export class JobSandboxEntity extends TimestampedEntity {
   compacting_session_id!: string | null;
 
   /**
-   * Last time a turn ran for this thread (bumped at turn start). Drives the idle reaper + LRU eviction:
-   * an `attached` row idle past `SANDBOX_IDLE_TTL_MS` is reaped to `detached`. Null until the first turn.
+   * Last time a turn ran for this thread (bumped at turn start). Drives the idle reaper: an `attached` row
+   * idle past the idle TTL is reaped to `detached`. Null until the first turn.
    */
   @Column({ type: 'timestamptz', nullable: true })
   last_active_at!: Date | null;

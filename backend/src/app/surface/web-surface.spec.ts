@@ -364,7 +364,7 @@ describe('webApprovalCard (pure builder)', () => {
       style: 'primary',
     });
     expect(actions.get(RETRACT_SHIP_ACTION_ID)).toMatchObject({
-      label: 'Back to building',
+      label: 'Amend build',
       style: 'default',
     });
     expect(parseWebApprovalMeta(actions.get(RETRACT_SHIP_ACTION_ID)!.value)).toEqual({

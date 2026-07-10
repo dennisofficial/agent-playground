@@ -166,6 +166,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockConfigStore = {
     listMounts: vi.fn().mockResolvedValue([]),
     upsertMount: vi.fn().mockResolvedValue(undefined),
+    getSetupScript: vi.fn().mockResolvedValue(null),
+    setSetupScript: vi.fn().mockResolvedValue(undefined),
   } as unknown as WorkspaceConfigStore;
 
   const mockGit = {
@@ -688,6 +690,27 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(persistArgs.stepsByThread).toBeUndefined();
   });
 
+  it('(a) propose_plan: an off-vocabulary thread `type` coerces to the `general` fallback', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'o',
+      decisions: [],
+      threadTitles: ['S', 'T', 'U'],
+    });
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'some overview',
+      threads: [
+        { title: 'S', type: 'analytics' }, // dropped legacy label → general
+        { title: 'T', type: 'BACKEND' }, // valid, case-insensitive → backend
+        { title: 'U' }, // absent → general
+      ],
+    });
+    expect(result).toMatchObject({ ok: true });
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(persistArgs.threadTypes).toEqual(['general', 'backend', 'general']);
+  });
+
   it('(a) propose_plan: returns error if overview is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['propose_plan']({
@@ -1139,6 +1162,33 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(noDescription).toMatchObject({ ok: false });
 
     expect(mockSecretStore.write).not.toHaveBeenCalled();
+  });
+
+  it('read_setup_script returns the stored script (read-before-edit for write_setup_script)', async () => {
+    const getSetupScript = mockConfigStore.getSetupScript as ReturnType<typeof vi.fn>;
+    getSetupScript.mockResolvedValueOnce(null);
+    const tools = manager.buildTools(fakeStimulus);
+
+    // Unset → present:false, script:null.
+    const empty = await tools['read_setup_script']({});
+    expect(empty).toEqual({ ok: true, present: false, script: null });
+    expect(getSetupScript).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
+
+    // Set → the raw body is surfaced verbatim (not just its length like the profile snapshot).
+    const body = '#!/usr/bin/env bash\nset -euo pipefail\npnpm install --frozen-lockfile';
+    getSetupScript.mockResolvedValueOnce(body);
+    const present = await tools['read_setup_script']({});
+    expect(present).toEqual({ ok: true, present: true, script: body });
+
+    // Pure read — never mutates.
+    expect(mockConfigStore.setSetupScript).not.toHaveBeenCalled();
+  });
+
+  it('read_setup_script resolves in buildTools for normal + onboarding kinds', () => {
+    for (const kind of [null, 'onboarding'] as const) {
+      const tools = manager.buildTools(fakeStimulus, kind);
+      expect(typeof tools['read_setup_script'], `kind=${kind}`).toBe('function');
+    }
   });
 
   it('finish_onboarding refuses without a substantive `verified` (green-gate)', async () => {

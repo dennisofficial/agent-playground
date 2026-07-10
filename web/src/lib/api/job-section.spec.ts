@@ -39,6 +39,12 @@ describe("sectionOf", () => {
     ).toBe("ready_to_ship");
   });
 
+  it("maps amending to its own amending section", () => {
+    expect(sectionOf(makeThread({ status: "amending" as JobStatus }))).toBe(
+      "amending",
+    );
+  });
+
   it("d1: a running job with pr.state='open' still lands in building, not pr_open", () => {
     const thread = makeThread({
       status: "running",

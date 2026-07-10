@@ -4,6 +4,7 @@ import {
   Inject,
   Logger,
   Module,
+  Optional,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
@@ -44,13 +45,16 @@ import { GithubCiStateSync } from './github-ci-state-sync.service';
 import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
+import { ExposureService } from '../exposure';
 
 // SchedulerRegistry interval names (process-unique) for the leader-gated driver timers. Registered on
 // promote, deleted on demote — the leader-only lifecycle is unchanged; only the timer plumbing moved off
 // hand-rolled setInterval onto @nestjs/schedule.
 const REAP_INTERVAL = 'driver:reap';
+const REAP_IDLE_INTERVAL = 'driver:reap-idle';
 const POLL_INTERVAL = 'driver:poll';
 const SESSION_RESUME_INTERVAL = 'driver:session-resume';
+const PREVIEW_INTERVAL = 'driver:preview';
 
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
@@ -135,6 +139,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private demoteSub?: Subscription;
   private pollInFlight = false; // skip a heartbeat if the prior tick is still running (slow GitHub / many PRs)
   private sessionResumeInFlight = false; // skip a tick if the prior session-resume sweep is still running
+  private previewInFlight = false; // skip a preview reconcile if the prior tick is still converging Caddy
   private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
   private webhooksBackfilled = false; // per-repo webhook backfill runs ONCE per process on leadership
@@ -149,6 +154,10 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly onboarding: OnboardingService,
     private readonly scheduler: SchedulerRegistry,
+    // Sandbox-preview reconciler — swept on a short leader-only timer so marker writes become Caddy routes
+    // without relying on an open console tab. From the @Global ExposureModule; inert when disabled. @Optional
+    // so the module's direct-construction unit test compiles without a trailing argument.
+    @Optional() private readonly exposure?: ExposureService,
   ) {}
 
   /**
@@ -205,42 +214,46 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       // the drive's yield checkpoint); yielded jobs are re-driven and runJob fast-forwards completed work.
       await this.driver.resume();
       this.startReapTimer(); // transient: stopped on demote, restarted on every promote
+      this.startReapIdleTimer(); // fast idle-reap sweep (1 min), leader-only
       this.startPollTimer(); // the fast adaptive PR-state heartbeat (leader-only, like the reap timer)
       this.startSessionResumeTimer(); // auto-resume lanes parked on a Claude session limit (leader-only)
+      this.startPreviewTimer(); // the marker → Caddy-route reconciler (leader-only, exposure-gated)
     });
     this.demoteSub = this.election.onDemote(() => {
       this.stopReapTimer();
+      this.stopReapIdleTimer();
       this.stopPollTimer();
       this.stopSessionResumeTimer();
+      this.stopPreviewTimer();
     });
   }
 
   /**
-   * Periodically reap idle thread-sandbox containers (worktrees survive) AND close threads whose PR has
-   * merged/closed (reclaims container + worktree). unref so it never keeps the process alive. The GitHub
-   * PR-state observation itself now rides the fast `startPollTimer` heartbeat, NOT this slow sweep — this
-   * timer keeps only idle-reap + the `pollPrClosures` merge/close-teardown backstop (teardown is already
+   * The slow housekeeping sweep: close threads whose PR has merged/closed (reclaims container + worktree),
+   * re-drive stranded jobs, GC merged-job disk, and reclaim orphaned Docker artifacts. unref so it never
+   * keeps the process alive. Idle-reap is NOT here — it rides its own fast `startReapIdleTimer` (1 min) so a
+   * quiet container is reclaimed promptly; the GitHub PR-state observation rides the fast `startPollTimer`
+   * heartbeat. This timer keeps only the `pollPrClosures` merge/close-teardown backstop (teardown is already
    * real-time via the `/webhooks/github/state` webhook) + the stranded-job re-drive backstop + the
    * orphaned-artifact sweep (leaked `-net`/`-dind` reclaim, so the Docker address pool can't exhaust).
+   * `pollPrClosures` hits the GitHub API, so it stays on the slow cadence — do NOT move it to the fast timer.
    */
   private startReapTimer(): void {
     if (this.scheduler.doesExist('interval', REAP_INTERVAL)) return;
-    const everyMs = 30 * 60 * 1000; // 30m — idle-reap + PR-merge cleanup sweep cadence.
+    const everyMs = 30 * 60 * 1000; // 30m — PR-merge cleanup + housekeeping sweep cadence.
     const iv = setInterval(() => {
       // At-least-once re-drive backstop: leadership-fenced drives yield on demotion, and the promote-time
       // resume() covers the normal re-promote — but a demote landing DURING a drive's yield (before drive()
       // clears its `active` guard) can race the re-promote resume() and strand the job `running`. This
       // idempotent sweep re-drives any such stranded job within one interval (skips in-flight via `active`).
       void this.driver.resume().catch(() => undefined);
-      void this.lifecycle.reapIdle().catch(() => undefined);
       void this.lifecycle.pollPrClosures().catch(() => undefined);
       void this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
       // Disk GC: reclaim the worktree + scratch dirs of merged/closed jobs whose sandbox has sat detached
       // past the TTL (RAM was freed at merge; this bounds the worktree growth detach leaves behind).
       void this.lifecycle.reapMergedSandboxes().catch(() => undefined);
       // Reclaim leaked per-sandbox `-net`/`-dind` artifacts so Docker's address pool can't be exhausted by
-      // networks orphaned across restarts/crashes. Decoupled from MAX_CONCURRENT_SANDBOXES (the softCapCheck
-      // gate that previously left this sweep unscheduled in prod).
+      // networks orphaned across restarts/crashes.
       void this.lifecycle.reapOrphanedSandboxArtifacts().catch(() => undefined);
     }, everyMs);
     iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
@@ -251,6 +264,29 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     // deleteInterval clears the interval AND removes it from the registry.
     if (this.scheduler.doesExist('interval', REAP_INTERVAL)) {
       this.scheduler.deleteInterval(REAP_INTERVAL);
+    }
+  }
+
+  /**
+   * Fast idle-reap sweep (1 min): detach any attached-but-quiet container past the idle TTL (~30 min) to
+   * free its RAM (the box bottleneck) — worktree + branch + session survive, so the next turn cold-reattaches.
+   * `reapIdle` is cheap (a scoped DB read + per-row busy/activity guards) and skips mid-turn containers, so
+   * running it every minute just tightens detection latency from up to ~30 min down to ~1 min. Leader-only
+   * (like the other driver timers); unref so it never keeps the process alive.
+   */
+  private startReapIdleTimer(): void {
+    if (this.scheduler.doesExist('interval', REAP_IDLE_INTERVAL)) return;
+    const everyMs = 60 * 1000; // 1m — how often we check for containers past the idle TTL.
+    const iv = setInterval(() => {
+      void this.lifecycle.reapIdle().catch(() => undefined);
+    }, everyMs);
+    iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
+    this.scheduler.addInterval(REAP_IDLE_INTERVAL, iv);
+  }
+
+  private stopReapIdleTimer(): void {
+    if (this.scheduler.doesExist('interval', REAP_IDLE_INTERVAL)) {
+      this.scheduler.deleteInterval(REAP_IDLE_INTERVAL);
     }
   }
 
@@ -315,12 +351,44 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     }
   }
 
+  /**
+   * The sandbox-preview reconcile heartbeat (~10s) — the leader turns supervised-service markers into live
+   * Caddy routes (and prunes stale ones) without relying on an open console tab. Leader-only (it mutates
+   * shared Caddy state) and inert unless the ExposureService is enabled (PREVIEW_BASE_DOMAIN set); `unref`
+   * so it never keeps the process alive; `previewInFlight` guards against overlap when a tick runs long.
+   */
+  private startPreviewTimer(): void {
+    if (!this.exposure?.enabled) return; // exposure disabled (no PREVIEW_BASE_DOMAIN) — nothing to reconcile
+    if (this.scheduler.doesExist('interval', PREVIEW_INTERVAL)) return;
+    const everyMs = 10 * 1000; // 10s — a marker write becomes a public route within a tick.
+    const iv = setInterval(() => {
+      if (this.previewInFlight) return;
+      this.previewInFlight = true;
+      void this.exposure
+        ?.reconcileAll()
+        .catch((err) => this.logger.warn(`preview reconcile failed: ${err}`))
+        .finally(() => {
+          this.previewInFlight = false;
+        });
+    }, everyMs);
+    iv.unref?.();
+    this.scheduler.addInterval(PREVIEW_INTERVAL, iv);
+  }
+
+  private stopPreviewTimer(): void {
+    if (this.scheduler.doesExist('interval', PREVIEW_INTERVAL)) {
+      this.scheduler.deleteInterval(PREVIEW_INTERVAL);
+    }
+  }
+
   onApplicationShutdown(): void {
     this.resumeSub?.unsubscribe();
     this.promoteSub?.unsubscribe();
     this.demoteSub?.unsubscribe();
     this.stopReapTimer();
+    this.stopReapIdleTimer();
     this.stopPollTimer();
     this.stopSessionResumeTimer();
+    this.stopPreviewTimer();
   }
 }

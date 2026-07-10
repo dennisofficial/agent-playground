@@ -85,6 +85,9 @@ import { TurnRecoveryService } from './turn-recovery.service';
       }),
     },
     // OUTPUT SEAM (`JOB_DISPATCHER`) is bound by W4's @Global DriverModule (useExisting: ThreadDriver).
+    // DRIVER→BRAIN SEAM: the driver reaches the brain through the @Global neutral `BrainGateway`
+    // (BrainGatewayModule); AgentSessionManager registers itself into it on bootstrap. Binding it here as
+    // a `useExisting` port would close a DI construction cycle (the brain constructs the driver services).
   ],
   exports: [
     AgentSessionManager,

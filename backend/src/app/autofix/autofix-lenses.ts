@@ -8,6 +8,9 @@
  * Zero imports from `harness/**` / the v1 surface — pure strings + this subfolder's types.
  */
 import { fence } from '../prompt-fence';
+// Direct path (not the `../thread-kind` barrel, which re-exports `registry.ts` — that file imports
+// FROM here, so going through the barrel would cycle). `thread-types.ts` itself imports nothing.
+import type { ThreadType } from '../thread-kind/thread-types';
 import type {
   AutoFixContext,
   FindingSeverity,
@@ -16,17 +19,22 @@ import type {
 } from './autofix.types';
 
 /**
- * The default fan-out: four complementary read-only lenses. Conservative + non-overlapping focuses so
- * the deduped union stays signal-rich. Callers override via `AutoFixOptions.lenses`.
+ * The five ALWAYS-ON lenses: four narrow diff-scoped lenses plus one always-on HOLISTIC lens. The four
+ * narrow lenses are complementary + non-overlapping so the deduped union stays signal-rich; the holistic
+ * lens counters their by-design tunnel vision by judging the change as a whole against its intent. Each
+ * focus defers to the shared ship-blocker bar in the output contract — the focus says WHAT to look at,
+ * the contract says how high the bar is. Callers override via `AutoFixOptions.lenses`.
  */
-export const DEFAULT_LENSES: ReviewLens[] = [
+const ALWAYS_ON: ReviewLens[] = [
   {
     id: 'best_practices',
     label: 'Best practices & conventions',
     focus:
-      'Idiomatic, maintainable code: naming, structure, error handling, dead code, obvious ' +
-      'performance/security footguns, and adherence to the language/framework conventions visible in ' +
-      'the surrounding files. Do NOT propose broad refactors — only fixes scoped to the change set.',
+      'Genuine best-practice defects this change introduces: broken or missing error handling, ' +
+      'resource or security footguns, dead/unreachable code, and clear breaks from a language or ' +
+      'framework convention the surrounding files consistently follow. Do NOT flag naming, formatting, ' +
+      'or stylistic taste — defer to the ship-blocker bar. No broad refactors; only fixes scoped to the ' +
+      'change set.',
   },
   {
     id: 'correctness',
@@ -34,54 +42,113 @@ export const DEFAULT_LENSES: ReviewLens[] = [
     focus:
       'Logic correctness: off-by-one, null/undefined handling, missed edge cases, incorrect async/' +
       'await or error propagation, resource leaks, and behavior that diverges from the stated intent. ' +
-      'Flag bugs the change introduced, not pre-existing ones outside the diff. Pay special attention to ' +
-      'REMOVED code that is still referenced: if the change deletes a symbol/file/export, verify nothing ' +
-      'in the repo still imports or calls it (including intra-file and dynamic/string references) — a ' +
-      'still-referenced deletion is a high-severity bug. Also flag changes that claim to be complete but ' +
-      'leave the build/types broken.',
+      'Flag only bugs THIS change introduced, not pre-existing ones outside the diff. Pay special ' +
+      'attention to REMOVED code that is still referenced: if the change deletes a symbol/file/export, ' +
+      'verify nothing in the repo still imports or calls it (including intra-file and dynamic/string ' +
+      'references) — a still-referenced deletion is a high-severity bug. Also flag a change that claims ' +
+      'to be complete but leaves the build or types broken.',
   },
   {
     id: 'consistency',
     label: 'Consistency with the codebase',
     focus:
-      'Consistency with existing patterns in this repo: does the new code match how the codebase ' +
-      'already does logging, DI, types, imports, file placement, and tests? Read neighbouring files ' +
-      'to judge the house style; flag deviations the change introduced.',
+      "Consistency with THIS repo's established patterns for logging, DI, types, imports, file " +
+      'placement, and tests. Read neighbouring files to judge the house style, then flag a deviation ' +
+      'only when the surrounding code is actually consistent and this change breaks it in a way that ' +
+      'would mislead a maintainer — not where it merely differs in taste. Defer to the ship-blocker bar.',
   },
   {
     id: 'minimalism',
     label: 'Minimal code / no over-engineering',
     focus:
-      'Over-engineering introduced by THIS change: a new abstraction, dependency, service, wrapper, or ' +
+      'Over-engineering THIS change introduces: a new abstraction, dependency, service, wrapper, or ' +
       'config where reuse of something already in the repo, the stdlib, a native platform feature, or a ' +
-      'one-liner would do; needless indirection; speculative flexibility or options nobody asked for; ' +
-      'code that builds more than the stated intent needs. Flag the leaner alternative concretely. ' +
-      'NEVER flag input validation, error handling, security, or accessibility as "excess" — those are ' +
-      'required. Do NOT propose broad refactors — only reductions scoped to the change set.',
+      'one-liner would do; needless indirection; speculative flexibility or options nobody asked for. ' +
+      'Flag the leaner alternative concretely. NEVER flag input validation, error handling, security, or ' +
+      'accessibility as "excess" — those are required. No broad refactors; only reductions scoped to the ' +
+      'change set.',
+  },
+  {
+    id: 'holistic',
+    label: 'Holistic: change vs intent',
+    scope: 'holistic',
+    focus:
+      'The change as a WHOLE against its stated intent. Does it actually accomplish the goal? Are all ' +
+      'the pieces the intent implies actually present — no half-wired feature, missing call site, ' +
+      'unhandled branch, or TODO left where behavior was promised? Do the changed files integrate ' +
+      'correctly with each other AND with the existing code that calls them? Flag the cross-file, ' +
+      'integration, and completeness problems the narrow lenses miss. You MAY read beyond the diff to ' +
+      'judge integration, but only flag issues THIS change introduced or left incomplete — never ' +
+      'pre-existing debt.',
   },
 ];
 
-/** One review agent as the `/pipeline` read-model surfaces it: a stable id + a human label. */
-export interface ReviewAgentInfo {
-  id: string;
-  label: string;
-}
+/** Public alias — the five always-on lenses, for callers (e.g. `AutoFixOptions.lenses`'s default) that
+ *  don't need the type-routed selection below. */
+export const DEFAULT_LENSES: ReviewLens[] = ALWAYS_ON;
+
+/**
+ * Lenses gated on `thread.type` rather than always-on — composed into the run list by
+ * `reviewAgentsForThread` per its routing rules below.
+ */
+const CONDITIONAL: ReviewLens[] = [
+  {
+    id: 'data_safety',
+    label: 'Data & migration safety',
+    focus:
+      'Schema/data-migration safety: destructive or irreversible changes (dropped columns/tables, type ' +
+      'narrowing) without a safe rollout; migrations not backwards-compatible with the currently-deployed ' +
+      'code, or that lock tables; missing/incorrect down-migration; data loss; unindexed FKs/queries. ' +
+      'Prefer expand/contract, backfill, nullable-first — name the safer alternative concretely.',
+  },
+];
+
+/** The conditional FRAMEWORK-CONFORMANCE lens (d4). Appended by `reviewAgentsForThread` only when the
+ *  thread has ≥1 applicable `review`-surface skill; its body is force-injected at prompt time (d8 v1 =
+ *  one lens carrying the concatenated skill bodies). */
+const FRAMEWORK_LENS: ReviewLens = {
+  id: 'framework',
+  label: 'Framework conformance',
+  scope: 'framework',
+  focus:
+    'Conformance of THIS change to the framework/library best-practices injected below (sourced from the ' +
+    "repo's opted-in review skills). Judge ONLY against those documented rules — do not invent general " +
+    'style opinions or flag anything the injected guidance does not cover. Flag a violation only where the ' +
+    'changed code actually breaks a stated rule, and name the rule + the concrete fix. A change that ' +
+    'conforms (or that the injected rules simply do not touch) gets an empty report.',
+};
+
+/** Every lens definition — `ALWAYS_ON` + `CONDITIONAL` + `FRAMEWORK_LENS` — for id resolution. */
+const ALL_LENSES: ReviewLens[] = [...ALWAYS_ON, ...CONDITIONAL, FRAMEWORK_LENS];
 
 /** Resolve a lens by its stable id (a `review_lens` thread's `config.lensId` → the lens definition). */
 export function lensById(id: string): ReviewLens | undefined {
-  return DEFAULT_LENSES.find((l) => l.id === id);
+  return ALL_LENSES.find((l) => l.id === id);
 }
 
 /**
- * The review agents SELECTED TO RUN over a thread's diff — the list the navigator renders. Seam-only
- * today: every thread gets the fixed `DEFAULT_LENSES` set (the auto-fix fan-out runs exactly these), so
- * the rendered list matches what actually executes. The `thread` arg is the future hook point for
- * scope-/condition-based selection (review agents chosen like skills, gated per thread); it is
- * intentionally unused now. This is the SELECTED RUN LIST, not a public catalog — the lens definitions,
- * focuses, and any future gating metadata stay private to the backend.
+ * THE single source of truth for WHICH review lenses run over a thread's diff — the deterministic
+ * selection the driver's auto-fix fan-out drives AND the navigator's rendered list both read, so they
+ * never drift. Routes on TWO independent axes:
+ *  - the thread's (closed-vocabulary) `type`:
+ *    - `docs` drops `correctness` + `minimalism` (they assume executable code — pure noise on prose).
+ *    - `data` adds `data_safety` on top of the five always-on lenses.
+ *    - everything else (`backend`/`frontend`/`infra`/`testing`/`general`) gets the five always-on lenses.
+ *  - `frameworkSkillNames`: when non-empty (≥1 opted-in `review`-surface skill matched this thread), the
+ *    FRAMEWORK_LENS is appended LAST, regardless of `type`.
+ * Returns an ordered, deterministic `ReviewLens[]`.
  */
-export function reviewAgentsForThread(_thread?: { type?: string }): ReviewAgentInfo[] {
-  return DEFAULT_LENSES.map((l) => ({ id: l.id, label: l.label }));
+export function reviewAgentsForThread(
+  type: ThreadType,
+  frameworkSkillNames: string[] = [],
+): ReviewLens[] {
+  const base =
+    type === 'docs'
+      ? ALWAYS_ON.filter((l) => l.id !== 'correctness' && l.id !== 'minimalism')
+      : type === 'data'
+        ? [...ALWAYS_ON, ...CONDITIONAL]
+        : ALWAYS_ON;
+  return frameworkSkillNames.length > 0 ? [...base, FRAMEWORK_LENS] : base;
 }
 
 /** Severity rank for thresholds + sort (high first). */
@@ -92,20 +159,61 @@ export function meetsSeverity(sev: FindingSeverity, min: FindingSeverity): boole
   return SEVERITY_RANK[sev] >= SEVERITY_RANK[min];
 }
 
-/** The contract every review pass must satisfy — appended to each lens prompt. */
-const REVIEW_OUTPUT_CONTRACT = `
-Return your findings as a SINGLE fenced JSON code block and nothing else after it:
+/** The JSON shape every review pass returns — identical across scopes, so parse + dedupe are untouched. */
+const REVIEW_OUTPUT_FORMAT = `Return your findings as a SINGLE fenced JSON code block and nothing else after it:
 
 \`\`\`json
 { "findings": [ { "severity": "low|medium|high", "file": "path/relative/to/repo or null", "title": "one line", "detail": "what is wrong + the concrete fix" } ] }
-\`\`\`
+\`\`\``;
+
+/**
+ * The ship-blocker bar + honest-severity rubric — shared by EVERY scope. This is the anti-nitpicking
+ * lever: the post-review fix pass only acts on findings >= medium, so an honest severity here directly
+ * shrinks what the fix pass churns on (no threshold change needed).
+ */
+const SHIP_BLOCKER_BAR = `Bar for reporting — report ONLY what a senior engineer would raise in a PR review that BLOCKS approval:
+- Do NOT report style preferences, restate what a linter/formatter already handles, or nitpick a pattern the surrounding code already accepts.
+- An empty report is the correct, expected outcome for a clean change — return { "findings": [] } and never pad it to look thorough.
+
+Assign severity honestly — do NOT inflate:
+- high = breaks production, loses data, or is a real bug.
+- medium = a real defect or a maintainability problem worth fixing before merge.
+- low = minor.
+- When unsure an issue truly matters, use low or omit it.`;
+
+/** The scope clause — how far the pass may look. The narrow lenses stay diff-only; holistic may read out. */
+const SCOPE_CLAUSE: Record<NonNullable<ReviewLens['scope']>, string> = {
+  diff: 'ONLY report issues introduced by (or directly within) the change set below — never pre-existing issues outside it.',
+  holistic:
+    'Judge the change as a WHOLE against its stated intent. You MAY read beyond the diff — into the files it touches and the existing code that calls them — to judge integration and completeness. But only FLAG problems THIS change introduced or left incomplete; never report pre-existing debt outside the change\'s responsibility.',
+  framework:
+    'Report ONLY violations of the injected framework best-practices, and only within the change set below — never pre-existing issues outside it, and never a general style opinion the injected guidance does not state.',
+};
+
+/** The output contract appended to a review pass, tuned to the lens's scope (shared bar + format). */
+function reviewOutputContract(scope: NonNullable<ReviewLens['scope']>): string {
+  return `
+Scope of what you may report:
+- ${SCOPE_CLAUSE[scope]}
+
+${SHIP_BLOCKER_BAR}
+
+${REVIEW_OUTPUT_FORMAT}
 
 Rules:
-- ONLY report issues introduced by (or directly within) the change set below — never pre-existing
-  issues outside it, and never style opinions the surrounding code already violates.
-- If the change set is clean, return { "findings": [] }.
 - Keep each finding scoped to a concrete, safe fix. No speculative rewrites.
 - "file" must be repo-relative (or null for a cross-cutting note).`;
+}
+
+/** Render the force-injected framework skill bodies as fenced, per-skill labelled blocks for the
+ *  `scope:'framework'` lens. Empty (returns '') when nothing was injected — defensive: the driver only
+ *  appends the lens when ≥1 skill matched, but a lens must never render a dangling empty contract. */
+function frameworkInjection(ctx: AutoFixContext): string {
+  const bodies = ctx.frameworkBodies ?? [];
+  if (bodies.length === 0) return '';
+  const blocks = bodies.map((b) => fence(`framework best-practices: ${b.name}`, b.body)).join('\n\n');
+  return `\nFramework best-practices to enforce for THIS pass (authoritative — sourced from the repo's opted-in review skills):\n\n${blocks}\n`;
+}
 
 /** Build one read-only review pass's prompt for a given lens + context. */
 export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): string {
@@ -115,14 +223,17 @@ export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): string
   const diffBlock = ctx.diff
     ? `\nDiff under review:\n\n\`\`\`diff\n${ctx.diff}\n\`\`\`\n`
     : '\n(No diff was supplied — inspect the worktree git state to review the change set.)\n';
+  const scope = lens.scope ?? 'diff';
+  const frameworkBlock = scope === 'framework' ? frameworkInjection(ctx) : '';
   return [
     `You are a focused code reviewer. LENS: ${lens.label}.`,
     `\nFocus of THIS pass: ${lens.focus}`,
     `\nWhat the change was meant to do (intent):\n${fence('intent', ctx.intent)}`,
+    frameworkBlock,
     files,
     diffBlock,
     'This is a READ-ONLY review turn — do not modify any files. You may read files for context.',
-    REVIEW_OUTPUT_CONTRACT,
+    reviewOutputContract(scope),
   ].join('\n');
 }
 

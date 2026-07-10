@@ -1,5 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
@@ -33,6 +33,10 @@ import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port'
 import { hostExecUser } from './host-exec-user';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import type { SandboxAttachInput, SandboxProvider, ServiceLivenessProbe, SetupScriptResult } from './sandbox-provider.port';
+// Narrow sub-path imports (NOT the '../exposure' barrel) so the sandbox layer takes no dependency on
+// ExposureService — which itself imports the sandbox port — avoiding an import cycle.
+import { CaddyAdminClient } from '../exposure/caddy-admin.client';
+import { previewId, routePrefix } from '../exposure/exposure-naming';
 
 const execFileAsync = promisify(execFile);
 
@@ -193,7 +197,7 @@ const L_CFG = 'atlas.cfg';
  * paths so in-container git resolves, plus a host-owned agent-home at {@link CONTAINER_AGENT_HOME} so
  * engine sessions persist across turns/restarts. Turns are then `docker exec`'d in by the
  * `DockerEngineRunner`. Containers are kept alive after a build (so a dev server stays reachable);
- * `teardown` / `reapStopped` reclaim them. Labels are the source of truth for adoption (no new table).
+ * `teardown` reclaims them. Labels are the source of truth for adoption (no new table).
  *
  * Inner dockerd (DinD) comes from `--privileged` + a per-sandbox /var/lib/docker volume (proven in D0);
  * `attach` waits for it to report ready before returning so the first build turn can use it.
@@ -237,6 +241,9 @@ export class SandboxManager implements SandboxProvider {
     @Inject(CONTAINER_ENGINE) private readonly engine: ContainerEngine,
     private readonly images: SandboxImageBuilder,
     private readonly env: EnvService,
+    // @Optional so the direct-construction unit tests (`new SandboxManager(engine, images, env)`) still
+    // compile + run; resolved from the @Global CaddyModule in the app.
+    @Optional() private readonly caddy?: CaddyAdminClient,
   ) {}
 
   async attach(input: SandboxAttachInput): Promise<FeatureSandbox> {
@@ -282,8 +289,6 @@ export class SandboxManager implements SandboxProvider {
         return this.applySetupScript(this.augment(sandbox, existing.id, warm), existing.id, warm ? null : input.setupScript);
       }
     }
-
-    await this.softCapCheck();
 
     // Guard the create window: the `-net` (and `-dind`) exist from here until `createContainer` below wires
     // them to a live container. Stamp the stem NOW so a concurrent `reapOrphanedArtifacts` sweep (timer or
@@ -457,6 +462,17 @@ export class SandboxManager implements SandboxProvider {
       privileged: true,
       binds: this.dedupeBindsByTarget(binds),
       volumes: [{ name: `${name}-dind`, path: '/var/lib/docker' }],
+      // Bake the preview identity so `atlas-svc` can advertise a service's public URL from inside the
+      // box. Non-secret (a public host token + domain), so baking at create is fine. Only when exposure
+      // is enabled AND this is a thread sandbox.
+      ...(this.previewEnabled() && jobId
+        ? {
+            env: {
+              ATLAS_PREVIEW_ID: previewId(jobId, this.previewSecret()),
+              ATLAS_PREVIEW_DOMAIN: this.env.get('PREVIEW_BASE_DOMAIN')!,
+            },
+          }
+        : {}),
       labels: {
         [L_MANAGED]: '1',
         [L_TEAM]: orgId,
@@ -484,6 +500,34 @@ export class SandboxManager implements SandboxProvider {
     if (!bus) return;
     await this.engine.ensureNetwork(bus);
     await this.engine.connectNetwork(containerId, bus);
+  }
+
+  /** The deterministic container name of a thread's sandbox — the preview reverse-proxy upstream host. */
+  sandboxContainerName(jobId: string): string {
+    return this.containerName('', '', '', jobId);
+  }
+
+  /** Bridge the Caddy container into a thread sandbox's `-net` so the proxy can reach the dev-server by
+   *  name. Idempotent (connectNetwork ignores "already exists"); no-op when exposure is disabled. */
+  async bridgeCaddyToSandbox(jobId: string): Promise<void> {
+    if (!this.previewEnabled()) return;
+    await this.engine.connectNetwork(this.caddyContainer(), `${this.containerName('', '', '', jobId)}-net`);
+  }
+
+  /** Disconnect the Caddy container from a thread sandbox's `-net`. Idempotent; no-op when disabled. */
+  async unbridgeCaddyFromSandbox(jobId: string): Promise<void> {
+    if (!this.previewEnabled()) return;
+    await this.engine.disconnectNetwork(this.caddyContainer(), `${this.containerName('', '', '', jobId)}-net`);
+  }
+
+  /** JobIds of every currently-running managed THREAD sandbox (mirrors the {@link containerName} scheme). */
+  async listLiveThreadJobIds(): Promise<string[]> {
+    const cs = await this.engine.list({ label: `${L_MANAGED}=1`, all: false });
+    const prefix = 'atlas-sbx-thread-';
+    return cs
+      .map((c) => c.name)
+      .filter((n) => n.startsWith(prefix))
+      .map((n) => n.slice(prefix.length));
   }
 
   async teardown(sandbox: FeatureSandbox): Promise<void> {
@@ -520,28 +564,9 @@ export class SandboxManager implements SandboxProvider {
     }
   }
 
-  /** Remove STOPPED managed containers (safe reclaim — never touches a running sandbox a dev server
-   * might be using). TTL-based reaping of running-but-idle sandboxes needs job-state awareness and is
-   * deferred. */
-  async reapStopped(): Promise<number> {
-    const managed = await this.engine.list({ label: `${L_MANAGED}=1`, all: true });
-    let reaped = 0;
-    for (const c of managed) {
-      if (c.state !== 'running') {
-        await this.engine.remove(c.id, { force: true }).catch(() => undefined);
-        await this.cleanupArtifacts(c.name);
-        reaped++;
-      }
-    }
-    if (reaped) this.logger.log(`reaped ${reaped} stopped sandbox(es)`);
-    // Catch-all sweep for artifacts whose container is already gone (crashes / pre-fix leaks).
-    await this.reapOrphanedArtifacts();
-    return reaped;
-  }
-
   /**
    * Reclaim FULLY ORPHANED sandbox artifacts — `atlas-sbx-*-net` networks and `atlas-sbx-*-dind`
-   * volumes whose owning container no longer exists. {@link teardown}/{@link reapStopped} handle the
+   * volumes whose owning container no longer exists. {@link teardown} handles the
    * normal path; this is the catch-all for leaks from crashes, `kill -9`, or pre-fix runs (where
    * teardown dropped the container but not its network/volume). Each artifact's name stem is checked
    * against live container names, so one still attached to a container is never touched. Best-effort —
@@ -566,7 +591,7 @@ export class SandboxManager implements SandboxProvider {
     for (const n of await this.engine.listNetworks()) {
       if (!isOrphan(n.name, '-net')) continue;
       try {
-        await this.engine.removeNetwork(n.name);
+        await this.removeSandboxNet(n.name);
         networks++;
       } catch (err) {
         this.logger.debug(`orphan network ${n.name} not removed: ${err}`);
@@ -660,12 +685,44 @@ export class SandboxManager implements SandboxProvider {
   private async cleanupArtifacts(containerName: string): Promise<void> {
     const net = `${containerName}-net`;
     const vol = `${containerName}-dind`;
-    await this.engine.removeNetwork(net).catch((err) => {
+    await this.removeSandboxNet(net).catch((err) => {
       this.logger.debug(`could not remove network ${net}: ${err}`);
     });
     await this.engine.removeVolume(vol).catch((err) => {
       this.logger.debug(`could not remove volume ${vol}: ${err}`);
     });
+  }
+
+  /**
+   * Remove a sandbox's `-net`, first tearing down any preview attachments that reference it: when the net
+   * belongs to a THREAD sandbox and exposure is on, drop the job's Caddy routes and unbridge Caddy from
+   * the net FIRST (Docker refuses to remove a network with active endpoints). All preview steps are
+   * best-effort so a never-exposed / feature-off sandbox tears down exactly as before. The caller owns the
+   * final removeNetwork's error semantics.
+   */
+  private async removeSandboxNet(netName: string): Promise<void> {
+    const m = netName.match(/^atlas-sbx-thread-(.+)-net$/);
+    if (m && this.caddy && this.previewEnabled()) {
+      const jobId = m[1];
+      await this.caddy.deleteRoutesByPrefix(routePrefix(jobId, this.previewSecret())).catch(() => undefined);
+      await this.engine.disconnectNetwork(this.caddyContainer(), netName).catch(() => undefined);
+    }
+    await this.engine.removeNetwork(netName);
+  }
+
+  /** True when sandbox-preview exposure is configured (a base domain is set). */
+  private previewEnabled(): boolean {
+    return !!this.env.get('PREVIEW_BASE_DOMAIN');
+  }
+
+  /** The Caddy container to bridge into sandbox nets (default `atlas-caddy`). */
+  private caddyContainer(): string {
+    return this.env.get('CADDY_CONTAINER_NAME') ?? 'atlas-caddy';
+  }
+
+  /** The HMAC key for preview tokens — falls back to the at-rest secrets key so dev works without extra config. */
+  private previewSecret(): string {
+    return this.env.get('PREVIEW_ID_SECRET') ?? this.env.get('SECRETS_ENCRYPTION_KEY');
   }
 
   private agentHomeRootHost(): string {
@@ -1043,17 +1100,6 @@ export class SandboxManager implements SandboxProvider {
       return stdout.trim() || undefined;
     } catch {
       return undefined;
-    }
-  }
-
-  /** Soft cap: warn (and reclaim stopped) if too many sandboxes are live — never blocks the drive. */
-  private async softCapCheck(): Promise<void> {
-    const cap = this.env.get('MAX_CONCURRENT_SANDBOXES');
-    if (!cap) return;
-    const running = (await this.engine.list({ label: `${L_MANAGED}=1`, all: false })).length;
-    if (running >= cap) {
-      this.logger.warn(`live sandboxes (${running}) at/over MAX_CONCURRENT_SANDBOXES (${cap}) — reaping stopped`);
-      await this.reapStopped();
     }
   }
 

@@ -37,7 +37,7 @@ export interface WebApprovalCard {
   /**
    * Which gate the card is for:
    * - `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval (Approve/Deny buttons).
-   * - `ship` — the ship-review gate (`Ship it` + `Back to building`; `threads`/`decisions` empty).
+   * - `ship` — the ship-review gate (`Ship it` + `Amend build`; `threads`/`decisions` empty).
    * The web labels the list "Sections" vs "Changes"; a `ship` card renders ship-gate actions.
    */
   kind?: 'plan' | 'direct' | 'ship';
@@ -112,7 +112,7 @@ export function webApprovalCard(card: DecisionApprovalCard): WebApprovalCard {
 
 /**
  * Build the SHIP-REVIEW gate card — the terminal human gate. Its action values carry only `{ jobId }`
- * (no decision record: ship resumes the driver; retract sends the job back to planning). Reuses the
+ * (no decision record: ship resumes the driver; retract sends the job to `amending`). Reuses the
  * `approval_card` payload type (so the web's inline card renderer needs no new branch — it renders
  * `actions` generically), discriminated by `kind: 'ship'`.
  */
@@ -139,7 +139,7 @@ export function webShipReviewCard(input: {
       },
       {
         actionId: RETRACT_SHIP_ACTION_ID,
-        label: 'Back to building',
+        label: 'Amend build',
         style: 'default',
         value,
       },
