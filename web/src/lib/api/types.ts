@@ -7,7 +7,11 @@
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
-import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@workspace/shared";
+import type {
+  JobActivity as WireJobActivity,
+  JobHalt as WireJobHalt,
+  JobStatus as WireJobStatus,
+} from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
@@ -17,6 +21,11 @@ import type { JobHalt as WireJobHalt, JobStatus as WireJobStatus } from "@worksp
 export type { WireJobStatus };
 /** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
 export type { WireJobHalt };
+/**
+ * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
+ * single-sourced in `@workspace/shared`. Carried on the realtime row; the dot itself reads `needsYou`.
+ */
+export type { WireJobActivity };
 
 export type WireJobKind =
   | "feature"
@@ -243,6 +252,13 @@ export interface WebMcpProposalServer {
   /** Header names; `secret:true` marks a slot the owner fills after approval (via request_secret). */
   headers?: { name: string; secret?: boolean; value?: string }[];
   env?: { name: string; secret?: boolean; value?: string }[];
+  /**
+   * `"static"` (default when absent) = header/env credential slots. `"oauth"` = interactive OAuth 2.1 the
+   * owner completes after approving by clicking Connect in MCP settings (no secret slot to fill).
+   */
+  authKind?: "static" | "oauth";
+  /** Non-secret OAuth knobs; only meaningful when `authKind==="oauth"`. */
+  oauth?: { scope?: string; tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic" };
   /** The brain's one-line rationale for why this server suits the repo. */
   reason?: string;
 }

@@ -12,13 +12,21 @@
  * Pure — no I/O, no NestJS. Mirrors `web-secret-input-card.ts` / `web-file-request-card.ts` and is
  * deliberately VALUE-FREE. Per-card lifecycle (no thread pointer): `proposed → approved (approved_at)`.
  */
-import type { McpSurface } from '../persistence/entities';
+import type { McpSurface, StoredMcpOAuthConfig } from '../persistence/entities';
 
 /** One proposed server in a proposal card — the non-secret definition only (no header/env VALUES). */
 export interface McpProposalServer {
   /** Tool namespace (`mcp__<name>__…`); must not collide with a reserved system server. */
   name: string;
   transport: 'http' | 'sse' | 'stdio';
+  /**
+   * `'static'` (default when absent — legacy-safe) = header/env credential slots the owner fills after
+   * approval via `request_secret`. `'oauth'` = interactive OAuth 2.1 the OWNER completes in the console
+   * ("Connect") after approving; http/sse only, no secret slots. Determines the committed row's `auth_kind`.
+   */
+  authKind?: 'static' | 'oauth';
+  /** Non-secret OAuth knobs (scope / token-auth method); only meaningful when `authKind==='oauth'`. */
+  oauth?: StoredMcpOAuthConfig;
   /** Remote (http/sse) endpoint. */
   url?: string;
   /** stdio launch command + args. */

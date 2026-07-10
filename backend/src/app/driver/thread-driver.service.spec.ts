@@ -43,6 +43,7 @@ import type {
 } from '../domain';
 import type { ThreadTerminalRecord } from '../persistence/entities';
 import type { LiveVerificationJudge, LiveVerificationVerdict } from './live-verification-judge';
+import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 
 /**
  * W4 — the SECTION/PHASE DRIVER unit tests. Every dependency is mocked (NO real LLM / git / network):
@@ -101,8 +102,12 @@ function makeStore(state: StoreState): {
     setJobStatus: vi.fn(async (_id: string, status: Job['status']) => {
       state.job.status = status;
     }),
+    setActivity: vi.fn(async (_id: string, activity: Job['activity']) => {
+      state.job.activity = activity;
+    }),
     setJobHalt: vi.fn(async (_id: string, halt: Job['halt']) => {
       state.job.halt = halt;
+      state.job.activity = 'idle';
     }),
     clearJobHalt: vi.fn(async (_id: string) => {
       state.job.halt = null;
@@ -113,11 +118,13 @@ function makeStore(state: StoreState): {
     setPrReady: vi.fn(async (_id: string, prUrl: string) => {
       state.job.prUrl = prUrl;
       state.job.status = 'done';
+      state.job.activity = 'idle';
     }),
     // ── ship-review gate fakes ───────────────────────────────────────────────────────────────────────
     parkForShipReview: vi.fn(async (_id: string) => {
       if (state.job.status !== 'running') return false;
       state.job.status = 'awaiting_ship_review';
+      state.job.activity = 'idle';
       return true;
     }),
     approveShip: vi.fn(async (_id: string) => {
@@ -705,6 +712,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     baseBranch: null,
     kind: 'feature',
     status: 'running',
+    activity: 'build',
     halt: null,
     decisionRecordId: 'dr-1',
     featureBranch: null,
@@ -2951,16 +2959,14 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     // that never redelivers. So the ONLY way the verdict can be recovered (and the job reach `done`) is the
     // fix replay-driving the handler from this event.
     const reattach = vi.fn(async (input: Parameters<TurnRunnerService['reattach']>[0]) => {
-      // The replayed `tool_use` carries `block.input` VERBATIM — the model's raw payload against the proxy's
-      // generic `{ args }` schema, which it DOUBLE-WRAPS in practice (`{ args: { args: { passed: true } } }`;
-      // sometimes even stringified). The replay path must normalise it (`unwrapBridgeArgs`) exactly like the
-      // live dispatch, or the handler reads `args['passed']` off a wrapper → `undefined` → a false
-      // `passed:false` → the thread falsely halts. This is the real prod shape (see job b30616d2).
+      // The replayed `tool_use` carries `block.input` VERBATIM — the model's FLAT payload against the tool's
+      // real per-tool schema (strict-validated client-side, no `{ args }` wrapper). The replay path drives
+      // the handler with it directly, exactly like the live dispatch.
       input.onEvent?.({
         kind: 'tool_use',
         id: 'rv-1',
         name: 'mcp__atlas-host-bridge__report_verification',
-        input: { args: { args: { passed: true } } },
+        input: { passed: true },
       });
       return {
         report: 'gate resumed',
@@ -3539,6 +3545,22 @@ describe('ThreadDriver — master-review bridged task list', () => {
     const builderTools = bridgeFor(h, thread('be', 10, 'Backend')).tools;
     expect(builderTools.task_create).toBeUndefined();
     expect(builderTools.task_update).toBeUndefined();
+  });
+
+  // Drift guard: every tool a turn bridge actually registers MUST have a TOOL_SHAPES entry, or the
+  // Claude SDK bridge would silently strip every argument that tool's handler reads (a strict zod
+  // object drops unknown keys before the handler ever sees them). The gate bridge (`buildGateToolBridge`)
+  // is skipped here — it's heavier to construct and only adds `report_verification`, which this already
+  // covers via the builder/master-review bridges.
+  it('every buildTurnBridge()-registered tool (master-review + builder) has a TOOL_SHAPES entry', () => {
+    const h = assemble(baseState());
+    const masterReviewTools = bridgeFor(h, thread('mr', 90, 'Master review', 'executing', true)).tools;
+    const builderTools = bridgeFor(h, thread('be', 10, 'Backend')).tools;
+    for (const tools of [masterReviewTools, builderTools]) {
+      for (const name of Object.keys(tools)) {
+        expect(TOOL_SHAPES, `driver tool "${name}" must have a TOOL_SHAPES entry`).toHaveProperty(name);
+      }
+    }
   });
 
   it('folds task_create into the thread scope with sequential ids, and returns the id to the model', async () => {

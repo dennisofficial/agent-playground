@@ -1,17 +1,17 @@
 /**
- * prompt-kit / groups / safety — the closing discipline: act-with-care / report-truthfully (normal brain),
+ * prompt-kit / groups / safety — the closing discipline: act-with-care / report-truthfully (build brain),
  * and how onboarding finishes (the FINISH gate + the "you don't plan here" scope line).
  *
  * TOPIC bucket: acting safely & finishing.
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { isOnboarding, notOnboarding } from '../conditions';
+import { isBuildBrain, isOnboarding } from '../conditions';
 
 @FragmentGroup()
 export class SafetyGroup {
-  /** normal block 29 — act with care, report truthfully. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1290, condition: notOnboarding })
+  /** Act with care, report truthfully. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1290, condition: isBuildBrain })
   actWithCare(): string {
     return [
       'ACT WITH CARE, REPORT TRUTHFULLY: the approval gate is your safety net, not a substitute for judgment.',
@@ -26,7 +26,7 @@ export class SafetyGroup {
     ].join('\n');
   }
 
-  /** onboarding block 12 — FINISH (only when the fleet is green). */
+  /** FINISH (only when the fleet is green). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2120, condition: isOnboarding })
   finish(): string {
     return [
@@ -48,7 +48,7 @@ export class SafetyGroup {
     ].join('\n');
   }
 
-  /** onboarding block 13 — you do NOT plan/grill/build here. */
+  /** You do NOT plan/grill/build here. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2130, condition: isOnboarding })
   noPlanHere(): string {
     return 'You do NOT plan, grill for decisions, or build features here — this session only makes the repo runnable.';

@@ -1,0 +1,10 @@
+1. Scope & files — every file you touched, by path, each with a one-word status: done / WIP / not-started.
+2. Failed attempts — every approach that did NOT work, WITH its verbatim error text. Never drop an error:
+   the fresh session needs it so it does not walk back into the same dead end.
+3. On-disk state NOW — exactly what is committed vs uncommitted WIP in the worktree; name the current commit SHA.
+4. Decisions — choices you made this session that are not already written into `/context/specs`.
+5. Verification — commands you ran, their exit codes, and the tail of their output (evidence, not claims).
+6. Next safe action — the SINGLE concrete next step the fresh session should take. One step, not a plan.
+7. Open questions — each with the options you were weighing, so the next session neither re-derives nor re-asks.
+8. Pointers — the durable artifacts to re-read (`/context/specs`, the commit SHA). Reference
+   them by path; do not re-transcribe them.

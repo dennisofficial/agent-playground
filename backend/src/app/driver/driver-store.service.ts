@@ -11,6 +11,7 @@ import type {
   ThreadStatus,
   ThreadCondition,
   Job,
+  JobActivity,
   JobStatus,
   JobHalt,
 } from '../domain';
@@ -222,10 +223,18 @@ export class DriverStoreService {
     await this.jobs.update({ id: jobId }, { status });
   }
 
+  /** Set the job's `activity` axis (see {@link JobActivity} / `deriveNeedsYou`) — the driver's build/review
+   *  boundary writer, mirroring the brain's turn writer. */
+  async setActivity(jobId: string, activity: JobActivity): Promise<void> {
+    await this.jobs.update({ id: jobId }, { activity });
+  }
+
   /** Record a phase-preserving job HALT (see {@link JobHalt}) — the status/phase is left untouched. Named
-   *  JOB-level to stay distinct from {@link clearHalt} (the per-thread halt table). */
+   *  JOB-level to stay distinct from {@link clearHalt} (the per-thread halt table). A halt means the build
+   *  STOPPED, so `activity` is cleared to `idle` in the same write (a stale `build`/`master_review` must not
+   *  mask the halt in `deriveNeedsYou`). */
   async setJobHalt(jobId: string, halt: JobHalt): Promise<void> {
-    await this.jobs.update({ id: jobId }, { halt });
+    await this.jobs.update({ id: jobId }, { halt, activity: 'idle' });
   }
 
   /** Clear the phase-preserving job halt on operator re-engagement / a brain re-drive. */
@@ -249,10 +258,10 @@ export class DriverStoreService {
   // ── ship-review gate (the terminal human gate: reviewed diff → operator clicks "Ship it" → PR) ────────
 
   /**
-   * PARK the job at the ship-review gate in one txn: flip `running → awaiting_ship_review` and post the
-   * durable "Ship it" card. The status flip is CONDITIONAL on `running`, so it's the single-park guard — a
-   * concurrent drive (or a re-drive) that finds the job already parked affects 0 rows and skips the card,
-   * returning false. Returns whether THIS caller parked it.
+   * PARK the job at the ship-review gate in one txn: flip `running → awaiting_ship_review`, clear activity
+   * to `idle`, and post the durable "Ship it" card. The status flip is CONDITIONAL on `running`, so it's
+   * the single-park guard — a concurrent drive (or a re-drive) that finds the job already parked affects 0
+   * rows and skips the card, returning false. Returns whether THIS caller parked it.
    */
   async parkForShipReview(
     jobId: string,
@@ -264,7 +273,7 @@ export class DriverStoreService {
         .getRepository(JobEntity)
         .createQueryBuilder()
         .update(JobEntity)
-        .set({ status: 'awaiting_ship_review' })
+        .set({ status: 'awaiting_ship_review', activity: 'idle' })
         .where('id = :jobId', { jobId })
         .andWhere("status = 'running'")
         .execute();
@@ -321,6 +330,7 @@ export class DriverStoreService {
         pr_url: prUrl,
         ...(prNumber != null ? { pr_number: prNumber } : {}),
         status: 'done',
+        activity: 'idle',
         // Latch the PR lifecycle to `open` HERE (not on a later reconcile) so the sidebar shows the
         // pull-request glyph the moment the PR is recorded — the reap-timer reconcile is up to 30 min away.
         pr_state: 'open',
@@ -1240,6 +1250,7 @@ function toJob(row: JobEntity): Job {
     baseBranch: row.base_branch,
     kind: row.kind as Job['kind'],
     status: row.status as JobStatus,
+    activity: row.activity,
     halt: row.halt ?? null,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,

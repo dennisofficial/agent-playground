@@ -1,0 +1,20 @@
+Feature overview:
+Build the widget catalog end-to-end.
+
+Locked decisions (respect these):
+- [data_model] Use pgvector: HNSW index on embeddings
+- [cross_cutting] Ship in-sandbox: Atlas opens the PR itself
+
+This is the FINAL review-and-fix pass over the whole feature branch before its pull request opens.
+
+TRACK YOUR WORK: keep a live checklist via the `task_create` / `task_update` host tools (from the "atlasbridge" MCP server) so the operator can watch your progress: `task_create` returns a task id, and `task_update({ taskId, status: "in_progress" })` as you start each item and `"completed"` when it is done, keeping exactly one task in_progress at a time. Up front, `task_create` one task for each step below.
+
+1. Review the whole merged diff: `git diff origin/main...HEAD`. Look for real, in-scope defects — correctness bugs, security issues, and cross-thread integration mistakes (where two threads' changes don't line up). Ignore style nits and anything outside this feature's scope.
+
+2. FIX what you find: the smallest safe change per finding, never expanding scope; skip anything unsafe or ambiguous rather than guessing. Make edits directly under `/workspace`.
+
+3. VERIFY: run the repo's own typecheck/build/test commands and confirm they pass — do this even if you changed nothing (a clean review still deserves a green build). If verification fails, fix and re-verify rather than leaving it red.
+
+4. COMMIT: if you made fixes, `git add -A`, commit with a clear message, and `git push` — leave a CLEAN tree. Do NOT open a PR (Atlas does the final ship). If the review found nothing actionable, change nothing and skip the commit.
+
+5. FINISH: when done and the build is green (and your fixes, if any, are committed + pushed), you MUST call the `complete_thread` host tool (available via the "atlasbridge" MCP server) with a one-line `summary` of what you reviewed/fixed and the `verification` you ran. This is how you signal completion — the review is NOT recorded as done until you call it. If you genuinely cannot proceed, call `block_thread` with a reason and detail instead.

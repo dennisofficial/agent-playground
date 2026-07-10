@@ -1,0 +1,7 @@
+<context_pressure phase="reminder">
+You still owe a handoff and your context has grown further since the last signal — recall and reasoning are
+degrading. Nothing will force this for you: rotation happens ONLY when you call `record_leg_handoff`. Get to a
+safe stopping point NOW, then call `record_leg_handoff` with the structured handoff described earlier (scope &
+files by status; FAILED attempts with verbatim errors; committed-vs-WIP on-disk state + commit SHA; the single
+next safe action; open questions with options; pointers). Then yield. Do not start anything new.
+</context_pressure>

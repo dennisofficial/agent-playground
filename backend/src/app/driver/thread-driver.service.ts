@@ -28,7 +28,6 @@ import {
   EngineAuthError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
-  unwrapBridgeArgs,
   type EngineEvent,
   type EngineHomeKey,
   type EngineHomeType,
@@ -66,6 +65,8 @@ import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
   Agent,
+  CODEX_TASK_LIST_NOTE,
+  COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
   ROTATION_PREAMBLE,
   ROTATION_SOFT_NUDGE,
@@ -770,6 +771,8 @@ export class ThreadDriver implements JobDispatcher {
       );
       return;
     }
+    // The driver now owns this job's work — mark it building (system-owned; suppresses the needs-you dot).
+    await this.store.setActivity(jobId, 'build').catch(() => undefined);
     // Cap the BUILDER lanes at MAX_SECTIONS, but NEVER drop the master-review thread (it rides on top of the
     // builders and must always run last) — partition by kind, cap the builders, re-append the review last.
     const featureSections = executable.filter((s) => s.kind === 'builder');
@@ -808,6 +811,11 @@ export class ThreadDriver implements JobDispatcher {
           `job=${job.id} lost leadership mid-drive — yielding (a leader will re-drive; job left running)`,
         );
         return;
+      }
+      if (thread.kind === 'master_review') {
+        await this.store
+          .setActivity(job.id, 'master_review')
+          .catch(() => undefined);
       }
       const res = await this.runThread(
         job,
@@ -848,6 +856,8 @@ export class ThreadDriver implements JobDispatcher {
       return;
     }
     await this.finalizeBuild(job, record, route, repo, sandbox);
+    // Build shipped — the system is done working this job; hand it back to idle.
+    await this.store.setActivity(job.id, 'idle').catch(() => undefined);
   }
 
   /**
@@ -2344,6 +2354,7 @@ export class ThreadDriver implements JobDispatcher {
           systemPrompt: renderAgentPrompt(spec.agent, {
             jobKind: job.kind,
             settings: { repoConventions },
+            turnPhase: 'commit',
           }),
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
@@ -2494,6 +2505,7 @@ export class ThreadDriver implements JobDispatcher {
     const systemPrompt = renderAgentPrompt(spec.agent, {
       jobKind: job.kind,
       settings: { repoConventions },
+      turnPhase: 'batch',
     });
     // Leg-rotation occupancy watch: fires SOFT once, then a REMINDER on each further +delta as this builder
     // session's main-agent context fills. Codex/master-review turns emit no per-call occupancy, so the watch
@@ -2916,12 +2928,10 @@ export class ThreadDriver implements JobDispatcher {
     const bareName = e.name.startsWith(prefix) ? e.name.slice(prefix.length) : e.name;
     const impl = toolBridge.tools[bareName];
     if (!impl) return;
-    // The replayed `tool_use` carries `block.input` verbatim — the model's raw (often MIS-NESTED) payload:
-    // the proxy tools use a generic `{ args }` schema and the model double-wraps / stringifies against it
-    // (`{ args: { args: { passed: true } } }`, `{ args: "{…}" }`). Normalise it the same way the live dispatch
-    // does (`unwrapBridgeArgs`), or the handler reads `args['passed']` off a wrapper → undefined → a false
-    // `passed:false` → the gate falsely halts even though the orchestrator reported passed.
-    void impl(unwrapBridgeArgs(e.input));
+    // The replayed `tool_use` carries `block.input` verbatim — the model's FLAT payload against the tool's
+    // real per-tool schema (no `{ args }` wrapper), already strict-validated client-side — so the replay
+    // path drives the handler with it directly, exactly like the live dispatch.
+    void impl((e.input ?? {}) as Record<string, unknown>);
   }
 
   /** KICK a fresh gate-iteration turn — resumes the orchestrator's persisted session (via `stepId`) with the
@@ -2961,6 +2971,7 @@ export class ThreadDriver implements JobDispatcher {
           systemPrompt: renderAgentPrompt(Agent.WORKER, {
             jobKind: job.kind,
             settings: { repoConventions },
+            turnPhase: 'gate',
           }),
           task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
@@ -3308,18 +3319,11 @@ export function renderBatchTask(
 }
 
 /**
- * Shared writer instruction — YOU (the writer session) own the commit. The host no longer commits your
- * work; it only reads what you leave. So before you call `complete_thread`, LEAVE A CLEAN TREE: stage,
- * commit, and push your own changes. `.gitignore` governs what's tracked — if build/cache junk (a
- * package store, node_modules, a build dir) shows up in `git status`, add it to `.gitignore` rather than
- * committing it. Used by every writer prompt (builder batch, verification gate, master-review).
+ * The batch writer's commit instruction — the shared `COMMIT_AND_PUSH_NOTE`, prefixed with the leading
+ * newline the surrounding task body splices on. YOU (the writer session) own the commit: the host reads what
+ * you leave and does NOT commit for you, so leave a CLEAN tree before you call `complete_thread`.
  */
-export const COMMIT_AND_PUSH_INSTRUCTION =
-  `\nCOMMIT YOUR WORK (required — the host does NOT commit for you): once the work is done and verified,` +
-  ` run \`git add -A\` (your \`.gitignore\` governs what's tracked; if build or cache junk appears in` +
-  ` \`git status\`, add it to \`.gitignore\` instead of committing it), commit with a clear message, and` +
-  ` \`git push\` your branch. Leave the working tree CLEAN. THEN call \`complete_thread\`. If you finish` +
-  ` without committing, your work is treated as unfinished.`;
+export const COMMIT_AND_PUSH_INSTRUCTION = '\n' + COMMIT_AND_PUSH_NOTE;
 
 /**
  * Render the durable halt trail for `/context/generated/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
@@ -3401,10 +3405,7 @@ export function renderMasterReviewTask(record: DecisionRecord | null, repo: Reso
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nThis is the FINAL review-and-fix pass over the whole feature branch before its pull request opens.`,
-    `\nTRACK YOUR WORK: use the \`task_create\` / \`task_update\` host tools (the "atlasbridge" MCP server) to` +
-      ` keep a live checklist the operator can watch — up front, \`task_create\` one task for each step below,` +
-      ` then \`task_update({ taskId, status: "in_progress" })\` as you start each and \`"completed"\` when it's` +
-      ` done (\`task_create\` returns the id to pass back). Keep exactly one task in_progress at a time.`,
+    `\nTRACK YOUR WORK: ${CODEX_TASK_LIST_NOTE} Up front, \`task_create\` one task for each step below.`,
     `\n1. Review the whole merged diff: \`git diff origin/${repo.defaultBranch}...HEAD\`. Look for real,` +
       ` in-scope defects — correctness bugs, security issues, and cross-thread integration mistakes (where` +
       ` two threads' changes don't line up). Ignore style nits and anything outside this feature's scope.`,
@@ -3438,12 +3439,6 @@ export function renderGateTask(
     : '';
   return [
     `Verification gate (required before your work is accepted) — attempt ${iteration}.`,
-    `\nTHIS TURN'S TOOLS ARE DIFFERENT from your last one: the ONLY host tool available right now is` +
-      ` \`report_verification\`. Your system prompt's mention of \`complete_thread\`/\`request_operator_input\`` +
-      ` describes the BATCH turn you just finished, not this one — they are NOT callable here, and you` +
-      ` already called \`complete_thread\` to get here. Do not ask the operator anything; just do the work` +
-      ` below and call \`report_verification\` when you're done — it IS registered for this turn even though` +
-      ` your system prompt doesn't mention it by name.`,
     `\nThis thread's changes touched these files:\n${fileList}`,
     priorBlock,
     `\n1. Run \`mcp__atlas-lsp-ts__diagnostics\` on each changed file above — a fast per-file check.`,
@@ -3513,4 +3508,3 @@ export function shortReason(err: unknown): string {
     .join(' | ');
   return detail.length > 500 ? `${detail.slice(0, 497)}...` : detail || 'unknown error';
 }
-

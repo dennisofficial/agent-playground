@@ -36,6 +36,7 @@ import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
+import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
 import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
@@ -112,10 +113,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     threadTicketId: vi.fn().mockResolvedValue(null),
     // ADR-0005 direct-build live-verification verdict (persisted on both pass + refusal paths).
     recordDirectBuildVerification: vi.fn().mockResolvedValue(undefined),
-    // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
-    setTurnActive: vi.fn().mockResolvedValue(undefined),
+    // The "needs you" activity axis is best-effort; the manager brackets every chat turn with it.
+    setActivity: vi.fn().mockResolvedValue(undefined),
+    endTurnActivity: vi.fn().mockResolvedValue(undefined),
     setHalted: vi.fn().mockResolvedValue(undefined),
-    resetAllTurnActive: vi.fn().mockResolvedValue(0),
+    resetAllActivity: vi.fn().mockResolvedValue(0),
   } as unknown as BrainStoreService;
 
   const mockDriverStore = {
@@ -287,6 +289,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockConfigStore.upsertMount as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+    // Activity-axis writers are best-effort promises (resetAllMocks wiped the inline resolves); the
+    // review_plan handler re-asserts `turn` after the review, so setActivity must resolve.
+    (mockStore.setActivity as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.endTurnActivity as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.setHalted as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.resetAllActivity as ReturnType<typeof vi.fn>).mockResolvedValue(0);
 
     // By default: no existing open job on the thread → openJob creates a fresh one.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -1140,6 +1149,20 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(WORKSPACE_PROFILE_TOOL_NAMES as readonly string[]).not.toContain('reset_sandbox');
   });
 
+  // Drift guard: every tool the brain actually registers — across every curated kind — MUST have a
+  // TOOL_SHAPES entry, or the SDK bridge would silently strip every argument that tool's handler reads
+  // (a strict zod object drops unknown keys before the handler ever sees them).
+  it('every buildTools()-registered tool (all kinds) has a TOOL_SHAPES entry', () => {
+    for (const kind of [null, 'review', 'onboarding']) {
+      const tools = manager.buildTools(fakeStimulus, kind);
+      for (const name of Object.keys(tools)) {
+        expect(TOOL_SHAPES, `brain tool "${name}" (kind=${kind}) must have a TOOL_SHAPES entry`).toHaveProperty(
+          name,
+        );
+      }
+    }
+  });
+
   // Drift guard for the shared backend↔web contract (`ATLAS_HOST_BRIDGE_TOOLS` in @workspace/shared).
   // The host-bridge tool set is `Object.keys(buildTools())` MINUS the workspace-profile server's tools,
   // unioned across every session kind. This asserts the contract equals what the backend actually
@@ -1299,6 +1322,57 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       servers: [{ name: 'svc', transport: 'stdio' }],
     });
     expect(noCommand).toMatchObject({ ok: false });
+    expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
+  });
+
+  it('propose_mcp_servers with authKind:"oauth" carries it onto the card + tells the brain the owner must Connect', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [
+        {
+          name: 'jira',
+          transport: 'sse',
+          url: 'https://mcp.atlassian.com/v1/sse',
+          authKind: 'oauth',
+          oauth: { scope: 'read:jira-work', tokenAuthMethod: 'none' },
+          reason: 'Issue tracking',
+        },
+      ],
+    });
+    expect(result).toMatchObject({ ok: true, proposed: ['jira'] });
+    const arg = (mockStore.openMcpProposal as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(arg.card.servers[0].authKind).toBe('oauth');
+    expect(arg.card.servers[0].oauth).toEqual({ scope: 'read:jira-work', tokenAuthMethod: 'none' });
+    const message = (result as { message: string }).message;
+    expect(message).toContain('Connect');
+    expect(message).toContain('jira');
+  });
+
+  it('propose_mcp_servers rejects oauth on a stdio transport (oauth is http/sse only)', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [{ name: 'svc', transport: 'stdio', command: 'svc-mcp', authKind: 'oauth' }],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('oauth');
+    expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
+  });
+
+  it('propose_mcp_servers rejects an oauth server that also declares a secret slot', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+    const result = await tools['propose_mcp_servers']({
+      servers: [
+        {
+          name: 'svc',
+          transport: 'http',
+          url: 'https://x',
+          authKind: 'oauth',
+          headers: [{ name: 'Authorization', secret: true }],
+        },
+      ],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('secret');
     expect(mockStore.openMcpProposal).not.toHaveBeenCalled();
   });
 
@@ -1594,13 +1668,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.updateDecision).toHaveBeenCalledWith(THREAD_ID, 'd1', { decisionClass: 'data_model' });
   });
 
-  it('(g1d) create_decision with no args returns the `args` envelope hint, not a field error', async () => {
-    // When the model omits the bridge `args` wrapper the host receives {}; the error must point at the
-    // envelope, not mislead with "decisionClass must be one of…".
+  it('(g1d) create_decision with no args returns a missing-arguments hint, not a field error', async () => {
+    // When no payload reaches the host, the error must point at the missing arguments broadly, not mislead
+    // with "decisionClass must be one of…".
     const tools = manager.buildTools(fakeStimulus);
     const result = (await tools['create_decision']({})) as { ok: boolean; reason: string };
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/args/);
+    expect(result.reason).toMatch(/required fields/);
     expect(result.reason).not.toMatch(/must be one of/);
     expect(mockStore.createDecision).not.toHaveBeenCalled();
   });
@@ -2094,7 +2168,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       getSecretCard: vi.fn().mockResolvedValue(null),
       markSecretDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
-      setTurnActive: vi.fn().mockResolvedValue(undefined),
+      setActivity: vi.fn().mockResolvedValue(undefined),
+      endTurnActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
@@ -2923,7 +2998,8 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       getSecretCard: vi.fn().mockResolvedValue(null),
       markSecretDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
-      setTurnActive: vi.fn().mockResolvedValue(undefined),
+      setActivity: vi.fn().mockResolvedValue(undefined),
+      endTurnActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
       ...storeOverrides,
     } as unknown as BrainStoreService;
@@ -3064,7 +3140,8 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
   } = {}) {
     const store = {
       loadJob: overrides.loadJob ?? vi.fn().mockResolvedValue(runningJob),
-      setTurnActive: vi.fn().mockResolvedValue(undefined),
+      setActivity: vi.fn().mockResolvedValue(undefined),
+      endTurnActivity: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox:

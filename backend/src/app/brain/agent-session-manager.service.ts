@@ -58,7 +58,14 @@ import {
   CodexReviewEntity,
   MessageEntity,
 } from '../persistence/entities';
-import type { McpSurface, SessionAnchor, ThreadTerminalRecord } from '../persistence/entities';
+import type {
+  McpAuthKind,
+  McpOAuthTokenAuthMethod,
+  McpSurface,
+  SessionAnchor,
+  StoredMcpOAuthConfig,
+  ThreadTerminalRecord,
+} from '../persistence/entities';
 import {
   ProvisioningNotReadyError,
   JobLifecycleService,
@@ -449,17 +456,15 @@ export class AgentSessionManager
     if (this.bootSweepsDone) return;
     this.bootSweepsDone = true;
 
-    // 1) Clear any `turn_active` flag left set by a crash mid-turn — re-attach (below) re-sets it for any
-    //    turn it resumes, so a leftover-true flag on a non-resumable thread is stale and would suppress its
+    // 1) Reset any non-idle `activity` left set by a crash mid-work — re-attach (below) re-sets it for any
+    //    turn it resumes, so a leftover flag on a non-resumable thread is stale and would suppress its
     //    "needs you" dot.
     try {
-      const reset = await this.store.resetAllTurnActive();
+      const reset = await this.store.resetAllActivity();
       if (reset > 0)
-        this.logger.log(
-          `Leader: cleared stale turn_active on ${reset} thread(s)`,
-        );
+        this.logger.log(`Leader: reset stale activity on ${reset} thread(s)`);
     } catch (err) {
-      this.logger.warn(`turn_active reconciliation failed: ${err}`);
+      this.logger.warn(`activity reconciliation failed: ${err}`);
     }
 
     // 2) RE-ATTACH every interrupted turn this service owns (brain + compaction — same discipline as the
@@ -1419,7 +1424,7 @@ export class AgentSessionManager
     const sandboxRow = await this.sandboxRows.findOne({
       where: { job_id: row.job_id, org_id: row.org_id },
     });
-    await this.store.setTurnActive(row.job_id, true).catch(() => undefined);
+    await this.store.setActivity(row.job_id, 'turn').catch(() => undefined);
     try {
       const result = await this.engineRunner.reattach!(
         row.turn_id,
@@ -1477,7 +1482,7 @@ export class AgentSessionManager
       await streamer.finish();
     } finally {
       await this.store
-        .setTurnActive(row.job_id, false)
+        .endTurnActivity(row.job_id)
         .catch(() => undefined);
     }
   }
@@ -1493,7 +1498,7 @@ export class AgentSessionManager
     opts?: TurnDeliveryOpts,
   ): Promise<void> {
     await this.store
-      .setTurnActive(stimulus.jobId, true)
+      .setActivity(stimulus.jobId, 'turn')
       .catch(() => undefined);
     // A new turn is starting (a fresh operator message OR the Resume nudge) — clear any outstanding halted
     // flag so the thread reads as working again. Best-effort; never block the turn.
@@ -1505,7 +1510,7 @@ export class AgentSessionManager
     } finally {
       await this.latchDirectBuildAtTurnEnd(stimulus);
       await this.store
-        .setTurnActive(stimulus.jobId, false)
+        .endTurnActivity(stimulus.jobId)
         .catch(() => undefined);
     }
   }
@@ -2763,6 +2768,11 @@ export class AgentSessionManager
           ...(note ? { note } : {}),
         });
 
+        // The review just finalized `activity` to `idle`, but this tool ran INSIDE the still-live brain
+        // turn — re-assert `turn` so the brief idle window before the turn-end writer settles it can't
+        // false-light the "needs you" dot.
+        await this.store.setActivity(jobId, 'turn').catch(() => undefined);
+
         if (outcome.status === 'failed') {
           return {
             ok: true,
@@ -3731,6 +3741,19 @@ export class AgentSessionManager
           return { ok: false, reason: "mcp.slot must be 'header' or 'env'" };
         }
         if (!key) return { ok: false, reason: 'mcp.key is required (the header/env key name)' };
+        // An OAuth server has NO fillable secret slot — its Authorization is minted by the console "Connect"
+        // flow (McpOAuthService), so a request_secret against it would inject a bearer that bypasses the token
+        // lifecycle. Reject early (the host provideSecret lane enforces this authoritatively too). MCP secrets
+        // land on THIS repo's scope, so check the repo-scoped row.
+        const oauthRow = await this.mcpStore
+          ?.rawRow(stimulus.orgId, stimulus.repoId, server)
+          .catch(() => null);
+        if (oauthRow?.auth_kind === 'oauth') {
+          return {
+            ok: false,
+            reason: `MCP server "${server}" uses OAuth — it is connected by the OWNER in the console (MCP settings → Connect), not via a secret slot. Do not request a secret or inject an Authorization/Bearer header for it.`,
+          };
+        }
         const requestId = `s-${randomUUID()}`;
         const card = webSecretInputCard({
           jobId: stimulus.jobId,
@@ -4146,6 +4169,33 @@ export class AgentSessionManager
           Array.isArray(s['surfaces']) ? (s['surfaces'] as unknown[]).map((x) => String(x)) : []
         ).filter((x): x is McpSurface => VALID_SURFACES.has(x as McpSurface));
         const reason = String(s['reason'] ?? '').trim() || undefined;
+        // Auth kind: 'static' (header/env slots filled via request_secret) or 'oauth' (interactive OAuth 2.1
+        // the OWNER completes in the console). OAuth is http/sse-only and owns the Authorization header itself,
+        // so a secret slot on an oauth server is invalid (it would read as an unfillable gap). Mirrors
+        // McpServersController.assertShape.
+        const authKind: McpAuthKind = s['authKind'] === 'oauth' ? 'oauth' : 'static';
+        if (authKind === 'oauth') {
+          if (transport === 'stdio') {
+            return { ok: false, reason: `server "${name}": oauth is only supported for http/sse transports` };
+          }
+          if ((headers ?? []).some((h) => h.secret) || (env ?? []).some((e) => e.secret)) {
+            return {
+              ok: false,
+              reason: `server "${name}": an oauth server must NOT declare secret header/env slots — the OWNER completes OAuth in the console (MCP settings → Connect); OAuth manages the Authorization header itself`,
+            };
+          }
+        }
+        const oauthRaw = (s['oauth'] ?? {}) as Record<string, unknown>;
+        const oauthScope = String(oauthRaw['scope'] ?? '').trim() || undefined;
+        const oauthTam = ['none', 'client_secret_post', 'client_secret_basic'].includes(
+          String(oauthRaw['tokenAuthMethod'] ?? ''),
+        )
+          ? (String(oauthRaw['tokenAuthMethod']) as McpOAuthTokenAuthMethod)
+          : undefined;
+        const oauth: StoredMcpOAuthConfig | undefined =
+          authKind === 'oauth' && (oauthScope || oauthTam)
+            ? { ...(oauthScope ? { scope: oauthScope } : {}), ...(oauthTam ? { tokenAuthMethod: oauthTam } : {}) }
+            : undefined;
         servers.push({
           name,
           transport,
@@ -4156,6 +4206,8 @@ export class AgentSessionManager
           ...(env ? { env } : {}),
           ...(surfaces.length ? { surfaces } : {}),
           ...(reason ? { reason } : {}),
+          ...(authKind === 'oauth' ? { authKind } : {}),
+          ...(oauth ? { oauth } : {}),
         });
       }
       const lowerNames = servers.map((s) => s.name.toLowerCase());
@@ -4180,6 +4232,7 @@ export class AgentSessionManager
           ...(s.headers ?? []).filter((h) => h.secret).map((h) => `${s.name} header:${h.name}`),
           ...(s.env ?? []).filter((e) => e.secret).map((e) => `${s.name} env:${e.name}`),
         ]);
+        const oauthNames = servers.filter((s) => s.authKind === 'oauth').map((s) => s.name);
         return {
           ok: true,
           requestId,
@@ -4189,7 +4242,12 @@ export class AgentSessionManager
             `it to register ${scope === 'org' ? 'them org-wide (every repo)' : 'them on this repo'} — you ` +
             'cannot register servers yourself. Stop and wait for approval. After approval, use request_secret ' +
             '(with an mcp target) to fill each secret slot' +
-            (needSecrets.length ? `: ${needSecrets.join('; ')}.` : '.'),
+            (needSecrets.length ? `: ${needSecrets.join('; ')}.` : '.') +
+            (oauthNames.length
+              ? ` OAuth server(s) [${oauthNames.join(', ')}] have NO secret to fill — after approval the OWNER ` +
+                'must Connect them in the console (MCP settings → Connect) to complete consent. You cannot ' +
+                'consent yourself; do NOT try to inject an Authorization/Bearer header via request_secret.'
+              : ''),
         };
       } catch (err) {
         this.logger.warn(`propose_mcp_servers failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
@@ -4360,6 +4418,10 @@ export class AgentSessionManager
           surfaces: s.surfaces,
           enabled: s.enabled,
           secretKeys: s.secretKeys,
+          // Auth model, so the brain reads a 401 correctly: `authKind:'oauth'` + `oauthConnected:false` means
+          // the OWNER must Connect it in the console (NOT a request_secret target); `'static'` uses secretKeys.
+          authKind: s.authKind,
+          oauthConnected: s.oauthConnected,
           // Secret-SAFE failure state so a brain that lists servers sees a broken one directly (not only
           // via the PROFILE GAPS block): `validationError` is a safe message; `needsReauth` is OAuth-only.
           validationError: s.validationError,
@@ -4368,9 +4430,13 @@ export class AgentSessionManager
         return {
           ok: true,
           servers,
-          message: servers.length
-            ? 'Existing MCP servers — propose_mcp_servers with the SAME name to REPLACE one, or a new name to add one.'
-            : 'No MCP servers registered yet — propose_mcp_servers to add the first (owner-approved).',
+          message:
+            (servers.length
+              ? 'Existing MCP servers — propose_mcp_servers with the SAME name to REPLACE one, or a new name to add one.'
+              : 'No MCP servers registered yet — propose_mcp_servers to add the first (owner-approved).') +
+            (servers.some((s) => s.authKind === 'oauth' && !s.oauthConnected)
+              ? ' An oauth server with oauthConnected:false is NOT broken auth you can fix — the OWNER must Connect it in the console (MCP settings → Connect). Do not use request_secret / inject an Authorization header for it.'
+              : ''),
         };
       } catch (err) {
         this.logger.warn(`list_mcp_servers failed for org=${stimulus.orgId}: ${err}`);
@@ -6251,7 +6317,7 @@ const COMPACTION_INSTRUCTION = [
  * Prepended to the compaction summary when it seeds the FRESH session (folded into the next turn by
  * `runChatTurnInner`). Frames the summary as recovered context and tells the session to keep going.
  */
-const CONTINUATION_PREAMBLE = [
+export const CONTINUATION_PREAMBLE = [
   '<session_compacted>',
   'Your previous session was compacted to keep the context lean while the build runs. It is summarized below.',
   'Treat it as your own recovered memory. Re-read the durable artifacts it points to (`/context/specs`,',
@@ -6765,12 +6831,7 @@ function asDecisionClass(v: unknown): DecisionClass | undefined {
   return DECISION_CLASSES.has(norm) ? (norm as DecisionClass) : undefined;
 }
 
-/**
- * The bridge wraps every tool's parameters under a single `args` object (the SDK schema strips
- * unrecognized top-level keys). When the model forgets the wrapper, the host receives `{}` and a
- * field-specific error ("decisionClass must be one of…") MISLEADS it into fixing the wrong thing.
- * Detect the empty-args case up front and return a hint that points at the real cause: the envelope.
- */
+/** Return a focused missing-arguments hint before field-specific validation picks a misleading first error. */
 function missingArgsEnvelope(
   args: Record<string, unknown>,
 ): { ok: false; reason: string } | null {
@@ -6778,8 +6839,8 @@ function missingArgsEnvelope(
   return {
     ok: false,
     reason:
-      'No arguments received — pass ALL parameters inside a single `args` object ' +
-      '(e.g. { args: { decisionClass, ruling, title } }), not at the top level.',
+      'No arguments received — pass the required fields directly in this tool call ' +
+      '(e.g. { decisionClass, ruling, title }).',
   };
 }
 

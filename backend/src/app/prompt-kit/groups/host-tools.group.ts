@@ -3,7 +3,7 @@
  * wrapper contract, and the create_job / tickets tools; plus the onboarding session's curated tool list.
  *
  * TOPIC bucket: host tools. Interpolates the runtime `BRIDGE_SERVER_NAME` and reuses the shared
- * `TOOL_QUALIFICATION_NOTE` catalog block, exactly as the source bodies did.
+ * `TOOL_QUALIFICATION_NOTE` catalog block.
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
@@ -14,7 +14,7 @@ import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class HostToolsGroup {
-  /** normal block 04 — the host tools (qualification + enumeration + ambient capability tools). */
+  /** The host tools — qualification + enumeration + ambient capability tools. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1040, condition: isBuildBrain })
   hostTools(): string {
     return [
@@ -57,7 +57,7 @@ export class HostToolsGroup {
   }
 
   /**
-   * normal block 045 — the LSP tools (`atlas-lsp-ts`, a SEPARATE MCP server from the host bridge above;
+   * The LSP tools (`atlas-lsp-ts`, a SEPARATE MCP server from the host bridge above;
    * the SDK spawns it directly, no host round-trip). Unlike the host-bridge tools, these carry real,
    * specific descriptions from mcp-language-server's own tool registration, so — unlike `hostTools()`
    * above — there is no need to hand-enumerate what each one does here; just the behavioral nudge.
@@ -67,7 +67,7 @@ export class HostToolsGroup {
     return LSP_TOOLS_NOTE;
   }
 
-  /** normal block 05 — the args-wrapper calling convention. */
+  /** The args-wrapper calling convention. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1050, condition: notOnboarding })
   argsWrapper(): string {
     return [
@@ -78,7 +78,7 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /** normal block 06 — create_job (spin off a follow-up thread NOW). */
+  /** create_job — spin off a follow-up thread NOW. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1060, condition: isBuildBrain })
   createJob(): string {
     return [
@@ -90,7 +90,7 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /** normal block 07 — tickets (the repo board/backlog). */
+  /** Tickets — the repo board/backlog. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1070, condition: isBuildBrain })
   tickets(): string {
     return [
@@ -114,7 +114,7 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /** onboarding block 05 — the onboarding session's curated host tools. */
+  /** The onboarding session's curated host tools. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2050, condition: isOnboarding })
   onboardingTools(): string {
     return [
@@ -145,12 +145,16 @@ export class HostToolsGroup {
       '    a two-call confirm (first call explains what is lost; call again to do it); refuses on a dirty/unpushed tree.',
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__propose_mcp_servers  — recommend stack-matched MCP servers ({ servers }) for`,
       '    the OWNER to approve (see MCP SERVERS). Posts a proposal card; you never register servers yourself.',
-      '    Declare a credential slot by name with `secret: true`; fill it after approval via request_secret (mcp).',
+      '    Declare a static credential slot by name with `secret: true`; fill it after approval via request_secret',
+      '    (mcp). For a server that needs INTERACTIVE login, set authKind:"oauth" instead (http/sse only, NO secret',
+      '    slot): the OWNER completes consent in the console (MCP settings → Connect) — you cannot, and must never',
+      "    inject an Authorization/Bearer header. NOTE: Claude's own design MCP (/design-login, claude.ai design",
+      '    files) is NOT onboardable as an MCP here — to use a .dc.html, ask the operator to UPLOAD it.',
       `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: only after the stack boots green (see FINISH)`,
     ].join('\n');
   }
 
-  /** review block 05 — the review session's curated host tools (order 1041: unique vs hostTools@1040). */
+  /** The review session's curated host tools (order 1041: unique vs hostTools@1040). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1041, condition: isReview })
   reviewTools(): string {
     return [

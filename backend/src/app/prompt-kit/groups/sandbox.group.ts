@@ -9,7 +9,12 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
-import { SANDBOX_FILESYSTEM_MAP_NOTE, SOLE_AUTHOR_NOTE } from '../fragments';
+import {
+  CLOUD_SANDBOX_NOTE,
+  PLAYGROUND_NOTE,
+  SANDBOX_FILESYSTEM_MAP_NOTE,
+  SOLE_AUTHOR_NOTE,
+} from '../fragments';
 
 /**
  * The sandbox OS + the toolkit pre-baked into the image, shown to BOTH the normal and onboarding brains so
@@ -40,43 +45,42 @@ const BUILT_IN_TOOLKIT_NOTE = [
 
 @FragmentGroup()
 export class SandboxGroup {
-  /** normal block 01 — where you run (cloud sandbox, long framing). */
+  /** Where you run — the cloud sandbox (long framing): the shared core (CLOUD_SANDBOX_NOTE) plus the
+   *  brain-specific additions (the `/playground` pointer, the phone/no-checkout framing, the concrete
+   *  impossible-request examples, and the request_secret/request_file/ask_question routing). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1010, condition: notOnboarding })
   cloudSandbox(): string {
     return [
-      "WHERE YOU RUN — A CLOUD SANDBOX, NOT THE OPERATOR'S MACHINE: you live in your own cloud container",
-      'with the repo checked out at `/workspace` (and a durable `/playground` scratch pad OUTSIDE it for',
-      'throwaway work — see THE /playground SCRATCH SPACE below). The operator is NOT at a terminal next to you — they talk',
-      'to you through a web console (often from a phone) and share NO filesystem, shell, or running services',
-      'with you. "Local" means YOUR sandbox and nothing else; there is no operator-side checkout for you to',
-      'point at. NEVER hand the operator work that assumes one — "run this locally", "check your terminal",',
-      '"edit the file on your machine", "start the dev server and tell me what you see" are all impossible',
-      'requests. Anything that must happen in the repo or its environment, YOU do in the sandbox; anything',
-      'you genuinely cannot do routes through your tools (request_secret/request_file for credentials,',
-      'ask_question for decisions and facts only the operator knows). Your work reaches their world ONLY',
-      'through what you ship (the PR) and what you post in chat.',
+      CLOUD_SANDBOX_NOTE,
+      'A durable `/playground` scratch pad sits OUTSIDE the checkout for throwaway work (see THE /playground ' +
+        'SCRATCH SPACE below); the operator often follows along from a phone, and there is no operator-side ' +
+        'checkout for you to point at. NEVER hand the operator work that assumes one — "run this locally", ' +
+        '"check your terminal", "edit the file on your machine", "start the dev server and tell me what you ' +
+        'see" are all impossible requests. Anything you genuinely cannot do yourself routes through your tools ' +
+        '(request_secret/request_file for credentials, ask_question for decisions and facts only the operator ' +
+        'knows).',
     ].join('\n');
   }
 
-  /** normal block 01c — the sandbox filesystem map (mount split: what git sees vs infra mounts). */
+  /** The sandbox filesystem map (mount split: what git sees vs infra mounts). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1011, condition: notOnboarding })
   filesystemMap(): string {
     return SANDBOX_FILESYSTEM_MAP_NOTE;
   }
 
-  /** normal block 01a — the sandbox OS + the pre-baked toolkit (also shown in onboarding, below). */
+  /** The sandbox OS + the pre-baked toolkit (also shown in onboarding, below). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1012, condition: notOnboarding })
   builtInToolkit(): string {
     return BUILT_IN_TOOLKIT_NOTE;
   }
 
-  /** normal block 01b — you are the sole author of the checkout (no phantom outside/concurrent editor). */
+  /** You are the sole author of the checkout (no phantom outside/concurrent editor). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1015, condition: notOnboarding })
   soleAuthor(): string {
     return SOLE_AUTHOR_NOTE;
   }
 
-  /** normal block 02 — you own git in the sandbox. */
+  /** You own git in the sandbox. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1020, condition: notOnboarding })
   gitOwnership(): string {
     return [
@@ -91,7 +95,7 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** normal block 03 — the host watches your PR and relays CI/conflict/review events. */
+  /** The host watches your PR and relays CI/conflict/review events. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1030, condition: notOnboarding })
   hostWatchesPr(): string {
     return [
@@ -104,23 +108,19 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** normal block 16 — the /playground scratch space. */
+  /** The /playground scratch space: the shared core (PLAYGROUND_NOTE) plus the brain-specific additions
+   *  (durable across restarts, shared across the job's build lanes, and the `/.atlas` engine-dir warning). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1160, condition: notOnboarding })
   playgroundScratch(): string {
     return [
-      'THE /playground SCRATCH SPACE: `/playground` is your durable scratch pad, OUTSIDE the repo. Put',
-      'THROWAWAY work here — spike scripts, one-off test/verification harnesses, screenshot-driving scripts,',
-      'ad-hoc `npm install`s, a helper script for a login/setup dance (e.g. `gcloud-login.sh`) — instead of',
-      'writing temp files into `/workspace` (which pollutes the git diff and risks landing junk in the PR).',
-      "It survives container restarts and is shared across the job's build lanes. It is NOT a deliverable:",
-      "nothing in `/playground` is ever committed. Reach for it any time you'd otherwise scribble a temporary",
-      'file into the repo or `/tmp` (which is wiped on restart). NEVER write your own files into `/.atlas` —',
-      "that is the ENGINE's own dir (session transcripts, atlas-svc supervisor markers); it is not a general",
-      'scratch space and its layout is not yours to use.',
+      PLAYGROUND_NOTE,
+      "It survives container restarts and is shared across the job's build lanes. NEVER write your own files " +
+        "into `/.atlas` — that is the ENGINE's own dir (session transcripts, atlas-svc supervisor markers); " +
+        'it is not a general scratch space and its layout is not yours to use.',
     ].join('\n');
   }
 
-  /** normal block 26 — the atlas-svc runtime + shared-machine frugality. */
+  /** The atlas-svc runtime + shared-machine frugality. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1260, condition: notOnboarding })
   sandboxRuntime(): string {
     return [
@@ -141,7 +141,7 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** normal block 26b — reading build/brain lane transcripts via atlas-tx (the wake-orientation "means"). */
+  /** Reading build/brain lane transcripts via atlas-tx (the wake-orientation "means"). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1265, condition: notOnboarding })
   transcriptAccess(): string {
     return [
@@ -159,7 +159,7 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** onboarding block 01 — where you run (cloud sandbox, short framing). */
+  /** Where you run — the cloud sandbox (short framing). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2010, condition: isOnboarding })
   onboardingSandbox(): string {
     return [
@@ -173,7 +173,7 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** onboarding block 01a — same OS + pre-baked toolkit note, so onboarding does not reinstall built-ins. */
+  /** Same OS + pre-baked toolkit note, so onboarding does not reinstall built-ins. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2012, condition: isOnboarding })
   onboardingBuiltInToolkit(): string {
     return BUILT_IN_TOOLKIT_NOTE;
