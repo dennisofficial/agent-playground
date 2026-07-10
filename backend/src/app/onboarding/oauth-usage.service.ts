@@ -33,6 +33,17 @@ const FETCH_TIMEOUT_MS = 10_000;
 
 const FALLBACK_CLAUDE_CODE_VERSION = '2.1.204';
 
+const ANTHROPIC_VERSION = '2023-06-01';
+/** Cheapest current model — the probe only needs a valid model to get a 200 + the rate-limit headers. */
+const USAGE_PROBE_MODEL = 'claude-haiku-4-5-20251001';
+/** The Claude-Code system prompt the CLI sends; without it the OAuth token is rejected off the CLI surface. */
+const CLAUDE_CODE_SYSTEM = "You are Claude Code, Anthropic's official CLI for Claude.";
+/** The `anthropic-ratelimit-unified-<prefix>-*` header window prefixes → the OrgUsage field they fill. */
+const HEADER_PREFIX_TO_WINDOW: ReadonlyArray<readonly [string, WindowKey]> = [
+  ['5h', 'fiveHour'],
+  ['7d', 'sevenDay'],
+];
+
 type LiveCacheEntry = {
   usage: OrgUsage;
   fetchedAtMs: number;
@@ -93,9 +104,11 @@ export class OauthUsageService {
   }
 
   /**
-   * COLD/FALLBACK. Hits the unofficial `/api/oauth/usage` endpoint with the org's Claude OAuth secret.
-   * Never throws — any failure (no credential, non-200, timeout, unparsable body) returns a degraded
-   * `{ ok:false, source:'stale' }` snapshot.
+   * COLD/FALLBACK. The subscription session/weekly utilization rides on the `anthropic-ratelimit-unified-*`
+   * RESPONSE HEADERS of any `/v1/messages` call — which, unlike the `/api/oauth/usage` endpoint, need NO
+   * `user:profile` scope, so they work with the inference-scoped token we already store. We make the
+   * smallest possible inference call (`max_tokens:1`) purely to read those headers. Never throws — any
+   * failure (no credential, non-200, timeout) returns a degraded `{ ok:false, source:'stale' }` snapshot.
    */
   async fetchLive(orgId: string): Promise<OrgUsage> {
     try {
@@ -105,26 +118,33 @@ export class OauthUsageService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       try {
-        const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
           headers: {
             Authorization: `Bearer ${auth.secret}`,
+            'anthropic-version': ANTHROPIC_VERSION,
             'anthropic-beta': 'oauth-2025-04-20',
             'User-Agent': `claude-code/${this.claudeCodeVersion}`,
-            'Content-Type': 'application/json',
+            'content-type': 'application/json',
           },
+          body: JSON.stringify({
+            model: USAGE_PROBE_MODEL,
+            max_tokens: 1,
+            system: CLAUDE_CODE_SYSTEM,
+            messages: [{ role: 'user', content: '.' }],
+          }),
           signal: controller.signal,
         });
         if (!res.ok) {
-          this.logger.warn(`usage fetch failed org=${orgId}: HTTP ${res.status}`);
+          this.logger.warn(`usage probe failed org=${orgId}: HTTP ${res.status}`);
           return degradedUsage();
         }
-        const body: unknown = await res.json();
-        return parseUsageResponse(body);
+        return parseUnifiedHeaders(res.headers);
       } finally {
         clearTimeout(timeout);
       }
     } catch (err) {
-      this.logger.warn(`usage fetch failed org=${orgId}: ${err}`);
+      this.logger.warn(`usage probe failed org=${orgId}: ${err}`);
       return degradedUsage();
     }
   }
@@ -189,44 +209,43 @@ function degradedUsage(): OrgUsage {
 }
 
 /**
- * Parse ONE `/api/oauth/usage` window entry. The response shape is UNOFFICIAL (undocumented, reverse
- * engineered) — every field is guarded, and anything missing/malformed coerces to `null` rather than
- * throwing.
+ * Read ONE window from the `anthropic-ratelimit-unified-<prefix>-*` response headers. `-utilization` is a
+ * 0–1 fraction (→ 0–100); `-reset` is a Unix epoch (seconds); `-status` of `rejected` means the window is
+ * capped (100% even if `-utilization` is absent). Anything missing/unparseable → `null` (window omitted).
  */
-function parseWindow(raw: unknown): UsageWindow {
-  if (!raw || typeof raw !== 'object') return null;
-  const w = raw as { utilization?: unknown; resets_at?: unknown };
-  const utilization = typeof w.utilization === 'number' ? w.utilization : null;
-  if (utilization == null) return null;
-  const resetsAtRaw = w.resets_at;
-  const resetsAtMs =
-    typeof resetsAtRaw === 'string' || typeof resetsAtRaw === 'number'
-      ? new Date(resetsAtRaw).getTime()
-      : NaN;
-  if (Number.isNaN(resetsAtMs)) return null;
-  return { utilization, resetsAt: new Date(resetsAtMs).toISOString() };
+function windowFromHeaders(headers: Headers, prefix: string): UsageWindow {
+  const utilRaw = headers.get(`anthropic-ratelimit-unified-${prefix}-utilization`);
+  const status = headers.get(`anthropic-ratelimit-unified-${prefix}-status`);
+  const resetsAt = resetEpochToIso(numberOrUndefined(headers.get(`anthropic-ratelimit-unified-${prefix}-reset`)));
+  if (!resetsAt) return null;
+
+  const fraction = utilRaw != null ? Number(utilRaw) : status === 'rejected' ? 1 : null;
+  if (fraction == null || Number.isNaN(fraction)) return null;
+  return { utilization: Math.round(Math.min(1, Math.max(0, fraction)) * 100), resetsAt };
+}
+
+function numberOrUndefined(raw: string | null): number | undefined {
+  if (raw == null) return undefined;
+  const n = Number(raw);
+  return Number.isNaN(n) ? undefined : n;
 }
 
 /**
- * Parse the full `/api/oauth/usage` body — same unofficial-shape caveat as {@link parseWindow}. The
- * windows sit at the TOP LEVEL of the body (`{ five_hour, seven_day, seven_day_opus, seven_day_sonnet }`);
- * older/alternate shapes nest them under `windows` or `rate_limits`, so we look through both defensively.
+ * Build the usage snapshot from a `/v1/messages` response's `anthropic-ratelimit-unified-*` headers. Only
+ * the 5-hour (session) and 7-day (weekly · all-models) windows ride on these headers; the per-model Opus /
+ * Sonnet windows are not exposed here, so they stay `null` and the panel simply omits them.
  */
-function parseUsageResponse(body: unknown): OrgUsage {
-  const root = (body ?? {}) as Record<string, unknown>;
-  const nested =
-    (root.windows as Record<string, unknown> | undefined) ??
-    (root.rate_limits as Record<string, unknown> | undefined) ??
-    {};
-  const pick = (key: string): unknown => root[key] ?? nested[key];
+function parseUnifiedHeaders(headers: Headers): OrgUsage {
+  const windows: Record<WindowKey, UsageWindow> = { ...EMPTY_WINDOWS };
+  for (const [prefix, key] of HEADER_PREFIX_TO_WINDOW) {
+    windows[key] = windowFromHeaders(headers, prefix);
+  }
+  const ok = Boolean(windows.fiveHour ?? windows.sevenDay);
   return {
-    fiveHour: parseWindow(pick('five_hour')),
-    sevenDay: parseWindow(pick('seven_day')),
-    sevenDayOpus: parseWindow(pick('seven_day_opus')),
-    sevenDaySonnet: parseWindow(pick('seven_day_sonnet')),
+    ...windows,
     fetchedAt: new Date().toISOString(),
-    source: 'usage_api',
-    ok: true,
+    source: ok ? 'usage_api' : 'stale',
+    ok,
   };
 }
 
