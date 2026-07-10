@@ -68,6 +68,14 @@ access via the auto-provided `GITHUB_TOKEN`.
 
 ## Notes
 
+- **Shared runners, uniform full checkouts.** CI and deploy share the `atlas-box`
+  runner pool and the same per-repo `_work/<repo>/<repo>` checkout dir (self-hosted
+  runners reuse `_work` between jobs). Both must therefore do a **full** checkout —
+  `deploy.yml` used to sparse-checkout `infra/` only, but `actions/checkout@v4` does not
+  clear a leftover sparse cone, so a sparse deploy would pin the tree and break the next
+  CI job's `.github/actions` resolution. Deploy now does a full checkout too. If a runner
+  ever gets stuck with a stale sparse cone, clear it once per runner:
+  `sudo -u gha-runner git -C /opt/actions-runner-<i>/_work/<repo>/<repo> sparse-checkout disable`.
 - **Rollout order:** provision + prove the runners healthy (`systemctl restart
   actions-runner@1` reconnects; a real deploy still succeeds) **before** relying on them
   for CI, and keep at least one `atlas-box` runner online throughout any migration so
