@@ -1,9 +1,11 @@
 import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import {
   test,
   expect,
   type Page,
   type BrowserContext,
+  type Locator,
 } from "@playwright/test";
 import { BREAKPOINTS } from "@/lib/use-breakpoint";
 import { encodeJobRef } from "@/lib/routes";
@@ -48,6 +50,7 @@ test.beforeAll(async ({ browser, baseURL }) => {
   await page.getByRole("button", { name: "Sign in" }).click();
   // A successful sign-in redirects off /auth/login onto the app (dashboard by default).
   await page.waitForURL((url) => !url.pathname.startsWith("/auth/login"));
+  await mkdir(path.dirname(AUTH_FILE), { recursive: true });
   await context.storageState({ path: AUTH_FILE });
   await context.close();
 });
@@ -64,9 +67,20 @@ async function expectNoHorizontalOverflow(page: Page) {
 }
 
 async function screenshot(page: Page, name: string) {
+  await mkdir("/context/artifacts", { recursive: true });
   await page.screenshot({
     path: `/context/artifacts/${name}.png`,
     fullPage: true,
+  });
+}
+
+async function waitForAnimations(locator: Locator) {
+  await locator.evaluate(async (element) => {
+    await Promise.all(
+      element
+        .getAnimations()
+        .map((animation) => animation.finished.catch(() => undefined)),
+    );
   });
 }
 
@@ -106,6 +120,7 @@ test.describe("workspace route — responsive tiers", () => {
 
     const detailDialog = page.getByRole("dialog", { name: "Detail" });
     await expect(detailDialog).toBeVisible();
+    await waitForAnimations(detailDialog);
     await expect(detailDialog.getByTestId("detail-pane")).toBeVisible();
     await screenshot(page, "bp-workspace-1120-detail-drawer");
   });
@@ -128,6 +143,7 @@ test.describe("workspace route — responsive tiers", () => {
 
     const navDialog = page.getByRole("dialog", { name: "Navigator" });
     await expect(navDialog).toBeVisible();
+    await waitForAnimations(navDialog);
     await screenshot(page, "bp-workspace-820-nav-drawer");
 
     // Selecting the always-present "Changes" row (a detail node) closes the Navigator drawer —
@@ -153,6 +169,7 @@ test.describe("workspace route — responsive tiers", () => {
 
     const navigationDialog = page.getByRole("dialog", { name: "Navigation" });
     await expect(navigationDialog).toBeVisible();
+    await waitForAnimations(navigationDialog);
     await expect(navigationDialog.getByTestId("app-sidebar")).toBeVisible();
     await screenshot(page, "bp-workspace-375-nav-drawer");
     await page.keyboard.press("Escape");
@@ -163,14 +180,19 @@ test.describe("workspace route — responsive tiers", () => {
     await panelsToggle.click();
     const navigatorSheet = page.getByRole("dialog", { name: "Navigator" });
     await expect(navigatorSheet).toBeVisible();
+    await waitForAnimations(navigatorSheet);
     await screenshot(page, "bp-workspace-375-navigator-sheet");
 
-    // Opening an output from the Navigator sheet opens the full-screen Detail view with a working
-    // back affordance (the drawer's own close button — see Drawer's focus-trap/backdrop behavior).
+    // Opening an output from the Navigator sheet opens the full-screen Detail view with a visible Back
+    // affordance in the detail top bar.
     await navigatorSheet.getByRole("button", { name: /Changes/ }).click();
     const detailDialog = page.getByRole("dialog", { name: "Detail" });
     await expect(detailDialog).toBeVisible();
+    await waitForAnimations(detailDialog);
     await expect(detailDialog.getByTestId("detail-pane")).toBeVisible();
+    const detailBox = await detailDialog.boundingBox();
+    expect(detailBox?.x).toBeLessThanOrEqual(1);
+    expect(detailBox?.width).toBeGreaterThanOrEqual(VIEWPORTS.mobile.width - 1);
     await screenshot(page, "bp-workspace-375-detail-fullscreen");
 
     await page.keyboard.press("Escape");
@@ -208,6 +230,7 @@ test.describe("tickets route — responsive tiers", () => {
 
     const repoDialog = page.getByRole("dialog", { name: "Repositories" });
     await expect(repoDialog).toBeVisible();
+    await waitForAnimations(repoDialog);
     await expect(repoDialog.getByText("REPOSITORIES")).toBeVisible();
     await screenshot(page, "bp-tickets-375-repo-drawer");
   });
@@ -232,7 +255,9 @@ test.describe("org settings route — responsive tiers", () => {
     }) => {
       await page.setViewportSize(viewport);
       await page.goto(SETTINGS_PATH);
-      await expect(page.getByRole("heading", { name: /general/i })).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: /general/i }),
+      ).toBeVisible();
 
       await expectNoHorizontalOverflow(page);
       await screenshot(page, `bp-settings-${viewport.width}`);
@@ -245,7 +270,9 @@ test.describe("org settings route — responsive tiers", () => {
     await page.setViewportSize(VIEWPORTS.mobile);
     await page.goto(SETTINGS_PATH);
 
-    await expect(page.getByText("ORGANIZATION", { exact: true })).not.toBeVisible();
+    await expect(
+      page.getByText("ORGANIZATION", { exact: true }),
+    ).not.toBeVisible();
 
     const hamburger = page.getByRole("button", {
       name: "Open settings navigation",
@@ -257,7 +284,10 @@ test.describe("org settings route — responsive tiers", () => {
       name: "Settings navigation",
     });
     await expect(settingsNavDialog).toBeVisible();
-    await expect(settingsNavDialog.getByText("ORGANIZATION", { exact: true })).toBeVisible();
+    await waitForAnimations(settingsNavDialog);
+    await expect(
+      settingsNavDialog.getByText("ORGANIZATION", { exact: true }),
+    ).toBeVisible();
     await screenshot(page, "bp-settings-375-nav-drawer");
   });
 

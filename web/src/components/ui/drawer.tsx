@@ -11,9 +11,9 @@ const PANEL_SIDE_CLASS: Record<Side, string> = {
   bottom: "bottom-0 left-0 right-0 max-h-[85vh] border-t anim-drawer-bottom",
 };
 
-/** Default width cap for the side-anchored panels; overridable via the `widthClass` prop (e.g. a
- * full-width Detail sheet on mobile). The bottom sheet spans the full width, so it opts out. */
-const DEFAULT_SIDE_WIDTH_CLASS = "max-w-[85vw]";
+/** Default width for side-anchored panels; overridable via the `widthClass` prop (e.g. a full-width Detail
+ * sheet on mobile). The bottom sheet spans the full width, so it opts out. */
+const DEFAULT_SIDE_WIDTH_CLASS = "w-[85vw] max-w-[360px]";
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
@@ -89,7 +89,10 @@ export function Drawer({
 
   return (
     <div className="fixed inset-0 z-40" onClick={onClose}>
-      <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.3)" }} />
+      <div
+        className="absolute inset-0"
+        style={{ background: "rgba(0,0,0,0.3)" }}
+      />
       <div
         ref={panelRef}
         role="dialog"

@@ -79,6 +79,7 @@ export function PhaseView({
   selectedNode,
   onConversation,
   onSelectNode,
+  onBack,
   onOpenNav,
   onOpenDetail,
   tracksComments = false,
@@ -95,6 +96,8 @@ export function PhaseView({
   /** Select another navigator node (URL `?node=`) — lets a rendered spec file's relative links open the
    *  linked file in-app. */
   onSelectNode?: (node: string) => void;
+  /** Drawer-backed detail views use this as the visible back affordance that clears `?node=`. */
+  onBack?: () => void;
   /** Below xl: top-bar toggles for the Navigator / Detail drawers (undefined = no button, desktop). */
   onOpenNav?: () => void;
   onOpenDetail?: () => void;
@@ -367,7 +370,8 @@ export function PhaseView({
     // The in-flight turn is shared across the thread's Legs (one lane), so only the LIVE Leg's pane may render
     // it — otherwise a rotated Leg re-paints the active Leg's streaming tail + spinner at its own bottom.
     const legIsLive =
-      (legThread.legs ?? []).find((l) => l.ordinal === legRef.ordinal)?.status === "active";
+      (legThread.legs ?? []).find((l) => l.ordinal === legRef.ordinal)
+        ?.status === "active";
     body = (
       <TranscriptView
         jobRef={jobRef}
@@ -419,6 +423,7 @@ export function PhaseView({
         title={title}
         subtitle={subtitle || undefined}
         actions={actions}
+        onBack={onBack}
         onOpenNav={onOpenNav}
         onOpenDetail={onOpenDetail}
       />
@@ -477,7 +482,9 @@ function SubagentView({
   const footer: ComposerFooter = {
     model: ctxModel ?? subagentModel(summary?.type ?? ""),
     context:
-      typeof ctxTokens === "number" && typeof ctxLimit === "number" && ctxLimit > 0
+      typeof ctxTokens === "number" &&
+      typeof ctxLimit === "number" &&
+      ctxLimit > 0
         ? { tokens: ctxTokens, limit: ctxLimit, model: ctxModel }
         : null,
   };
@@ -533,7 +540,11 @@ function SubagentView({
           ) : null}
           <div ref={tail.endRef} />
           {/* Reserve space so the last transcript lines clear the absolute footer bar below. */}
-          <div className="shrink-0" style={{ height: composerHeight }} aria-hidden />
+          <div
+            className="shrink-0"
+            style={{ height: composerHeight }}
+            aria-hidden
+          />
         </div>
       </div>
       {/* Read-only footer bar — the reused Composer in `subagent` variant (no input/send; model + ring). */}
@@ -1299,12 +1310,15 @@ async function imageDataUrlToPngBlob(dataUrl: string): Promise<Blob> {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not get a 2D canvas context for image copy.");
+  if (!ctx)
+    throw new Error("Could not get a 2D canvas context for image copy.");
   ctx.drawImage(img, 0, 0);
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (blob) =>
-        blob ? resolve(blob) : reject(new Error("Canvas produced no PNG blob.")),
+        blob
+          ? resolve(blob)
+          : reject(new Error("Canvas produced no PNG blob.")),
       "image/png",
     ),
   );

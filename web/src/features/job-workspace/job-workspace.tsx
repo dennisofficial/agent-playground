@@ -226,8 +226,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     }
     return "";
   }, [shipCard, job, status]);
-  const awaitingShip =
-    status === "awaiting_ship_review" && Boolean(shipValue);
+  const awaitingShip = status === "awaiting_ship_review" && Boolean(shipValue);
   const specCount = context?.specs?.length ?? 0;
   const stepCount =
     job?.threads.reduce((n, t) => n + (t.steps?.length ?? 0), 0) ?? 0;
@@ -315,7 +314,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     );
 
   // The detail-pane content — the same node body whether it fills the desktop Panel or the right drawer.
-  const detailBody = (
+  const detailBody = (onBack?: () => void) => (
     <div
       data-testid="detail-pane"
       className="relative flex min-h-0 flex-1 flex-col"
@@ -341,6 +340,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
           selectedNode={detailNode}
           onConversation={closeDetail}
           onSelectNode={(node) => selectNode(node, { push: true })}
+          onBack={onBack}
           tracksComments
         />
       ) : (
@@ -419,7 +419,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
                 minSize="32%"
                 className="flex min-w-0 flex-col"
               >
-                {detailBody}
+                {detailBody()}
                 {footerBar}
               </Panel>
             </Group>
@@ -450,10 +450,12 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
               open={detailDrawerOpen}
               onClose={closeDetail}
               label="Detail"
-              widthClass="max-w-[85vw] max-md:max-w-none max-md:w-full"
+              widthClass={
+                isMobile ? "w-full max-w-none" : "w-[min(720px,85vw)]"
+              }
             >
               <div className="flex h-full min-h-0 flex-col bg-surface">
-                {detailBody}
+                {detailBody(closeDetail)}
                 {footerBar}
               </div>
             </Drawer>
@@ -482,12 +484,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
  *  terminal `done` are excluded; a lane halted with a `failed`/`incomplete` condition is filtered out at the
  *  call site (a `paused` lane still counts — it's parked mid-build, waiting on you). */
 const RUNNING_THREAD_STATUSES: ReadonlySet<ThreadStatus> =
-  new Set<ThreadStatus>([
-    "planning",
-    "reviewing",
-    "executing",
-    "auto_fixing",
-  ]);
+  new Set<ThreadStatus>(["planning", "reviewing", "executing", "auto_fixing"]);
 
 /** The `?lane=` id of the build lane to open when a job is first opened, or `null` to stay on Main. Picks the
  *  highest-ordinal running thread (the current build frontier in a sequential run); the id IS the lane token

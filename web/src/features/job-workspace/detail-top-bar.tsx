@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { Menu, PanelRight } from "lucide-react";
+import { ChevronLeft, Menu, PanelRight } from "lucide-react";
 
 /**
  * The single top bar shared by the main conversation AND every lane/detail pane (build thread/step, subagent
@@ -13,6 +13,7 @@ export function DetailTopBar({
   title,
   subtitle,
   actions,
+  onBack,
   onOpenNav,
   onOpenDetail,
 }: {
@@ -20,6 +21,8 @@ export function DetailTopBar({
   subtitle?: string;
   /** Right-aligned controls. Defaults to the standard {@link TopBarActions} group. */
   actions?: React.ReactNode;
+  /** Closes a drawer-backed detail view, clearing the selected URL node. */
+  onBack?: () => void;
   /** Below xl: opens the Navigator drawer via a leading `Menu` button (undefined = no button, desktop). */
   onOpenNav?: () => void;
   /** Below xl: opens the Detail drawer via a trailing `PanelRight` button (undefined = no button). */
@@ -27,6 +30,11 @@ export function DetailTopBar({
 }) {
   return (
     <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-5">
+      {onBack ? (
+        <TopBarButton title="Back" onClick={onBack}>
+          <ChevronLeft size={16} />
+        </TopBarButton>
+      ) : null}
       {onOpenNav ? (
         <TopBarButton title="Panels" onClick={onOpenNav}>
           <Menu size={15} />
@@ -138,6 +146,7 @@ export function TopBarButton({
     <button
       type="button"
       title={title}
+      aria-label={title}
       onClick={onClick}
       className="flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text"
     >

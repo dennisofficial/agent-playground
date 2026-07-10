@@ -30,12 +30,16 @@ const REPO_2_ID = 'da700000-0000-4000-8000-000000000001';
 /** The one job that also gets threads/steps/messages, for Navigator/Conversation/Detail content. */
 export const RICH_JOB_ID = 'da700000-0000-4000-8000-000000000104';
 
-const jobId = (n: number): string => `da700000-0000-4000-8000-0000000001${String(n).padStart(2, '0')}`;
-const threadId = (n: number): string => `da700000-0000-4000-8000-000000002${String(n).padStart(3, '0')}`;
-const stepId = (n: number): string => `da700000-0000-4000-8000-000000003${String(n).padStart(3, '0')}`;
-const messageId = (n: number): string => `da700000-0000-4000-8000-000000004${String(n).padStart(3, '0')}`;
+const jobId = (n: number): string =>
+  `da700000-0000-4000-8000-0000000001${String(n).padStart(2, '0')}`;
+const threadId = (n: number): string =>
+  `da700000-0000-4000-8000-000000002${String(n).padStart(3, '0')}`;
+const stepId = (n: number): string =>
+  `da700000-0000-4000-8000-000000003${String(n).padStart(3, '0')}`;
+const messageId = (n: number): string =>
+  `da700000-0000-4000-8000-000000004${String(n).padStart(3, '0')}`;
 
-interface DemoJob {
+type DemoJob = {
   id: string;
   repo_id: string;
   kind: 'feature' | 'bugfix';
@@ -48,8 +52,11 @@ interface DemoJob {
   halted?: boolean;
   halt?: { at: string; kind: 'failed'; reason: string };
   section: string;
-}
+};
 
+// Do not seed unhalted `running` rows here: the real backend boot sweep treats those as resumable
+// build work. A halted `running` row is safe because the driver only retries it after explicit operator
+// re-engagement, while still giving the responsive UI a phase-preserving halt fixture.
 const DEMO_JOBS: DemoJob[] = [
   {
     id: jobId(1),
@@ -80,9 +87,10 @@ const DEMO_JOBS: DemoJob[] = [
     id: jobId(4),
     repo_id: REPO_1_ID,
     kind: 'feature',
-    title: 'Implement real-time collaborative cursor presence in the job workspace conversation view',
-    status: 'running',
-    section: 'building (rich job)',
+    title:
+      'Implement real-time collaborative cursor presence in the job workspace conversation view',
+    status: 'awaiting_ship_review',
+    section: 'ready_to_ship (rich job)',
   },
   {
     id: jobId(5),
@@ -94,7 +102,8 @@ const DEMO_JOBS: DemoJob[] = [
     halt: {
       at: new Date('2026-07-09T18:42:00.000Z').toISOString(),
       kind: 'failed',
-      reason: 'Verification command exited 1: `pnpm test:e2e` — 3 failing specs in webhook-delivery.spec.ts',
+      reason:
+        'Verification command exited 1: `pnpm test:e2e` — 3 failing specs in webhook-delivery.spec.ts',
     },
     section: 'building (halted)',
   },
@@ -103,9 +112,8 @@ const DEMO_JOBS: DemoJob[] = [
     repo_id: REPO_1_ID,
     kind: 'feature',
     title: 'Polish onboarding empty states',
-    status: 'running',
-    ship_review_approved_at: new Date('2026-07-10T12:00:00.000Z'),
-    section: 'ready_to_ship (shipping)',
+    status: 'awaiting_ship_review',
+    section: 'ready_to_ship',
   },
   {
     id: jobId(7),
@@ -150,8 +158,8 @@ const DEMO_JOBS: DemoJob[] = [
     repo_id: REPO_2_ID,
     kind: 'bugfix',
     title: 'Bug: flaky test',
-    status: 'running',
-    section: 'building',
+    status: 'awaiting_approval',
+    section: 'awaiting',
   },
   {
     id: jobId(12),
@@ -174,46 +182,81 @@ const DEMO_JOBS: DemoJob[] = [
     repo_id: REPO_1_ID,
     kind: 'bugfix',
     title: 'Cleanup dead code',
-    status: 'running',
-    section: 'building',
+    status: 'planning',
+    section: 'planning',
   },
 ];
 
-interface DemoThread {
+type DemoThread = {
   id: string;
   ordinal: number;
   kind: 'main' | 'builder' | 'master_review';
   brief: string;
-}
+};
 
 const RICH_THREADS: DemoThread[] = [
   { id: threadId(1), ordinal: 100, kind: 'main', brief: 'Main conversation' },
-  { id: threadId(2), ordinal: 200, kind: 'builder', brief: 'Wire up presence websocket channel' },
-  { id: threadId(3), ordinal: 300, kind: 'builder', brief: 'Render remote cursors in the editor' },
-  { id: threadId(4), ordinal: 400, kind: 'master_review', brief: 'Master review of the full diff' },
+  {
+    id: threadId(2),
+    ordinal: 200,
+    kind: 'builder',
+    brief: 'Wire up presence websocket channel',
+  },
+  {
+    id: threadId(3),
+    ordinal: 300,
+    kind: 'builder',
+    brief: 'Render remote cursors in the editor',
+  },
+  {
+    id: threadId(4),
+    ordinal: 400,
+    kind: 'master_review',
+    brief: 'Master review of the full diff',
+  },
 ];
 
-interface DemoStep {
+type DemoStep = {
   id: string;
   thread_id: string;
   ordinal: number;
   brief: string;
-}
+};
 
 const RICH_STEPS: DemoStep[] = [
-  { id: stepId(1), thread_id: threadId(2), ordinal: 100, brief: 'Add presence channel to the realtime gateway' },
-  { id: stepId(2), thread_id: threadId(2), ordinal: 200, brief: 'Broadcast cursor position on pointermove' },
-  { id: stepId(3), thread_id: threadId(3), ordinal: 100, brief: 'Subscribe to peer cursor events client-side' },
-  { id: stepId(4), thread_id: threadId(3), ordinal: 200, brief: 'Paint remote cursors with author color + label' },
+  {
+    id: stepId(1),
+    thread_id: threadId(2),
+    ordinal: 100,
+    brief: 'Add presence channel to the realtime gateway',
+  },
+  {
+    id: stepId(2),
+    thread_id: threadId(2),
+    ordinal: 200,
+    brief: 'Broadcast cursor position on pointermove',
+  },
+  {
+    id: stepId(3),
+    thread_id: threadId(3),
+    ordinal: 100,
+    brief: 'Subscribe to peer cursor events client-side',
+  },
+  {
+    id: stepId(4),
+    thread_id: threadId(3),
+    ordinal: 200,
+    brief: 'Paint remote cursors with author color + label',
+  },
 ];
 
-interface DemoMessage {
+type DemoMessage = {
   id: string;
   author: string;
   author_id: string;
   author_bot_id: string | null;
   text: string;
-}
+};
 
 const RICH_MESSAGES: DemoMessage[] = [
   {
@@ -247,10 +290,10 @@ const RICH_MESSAGES: DemoMessage[] = [
       '--- a/src/app/realtime/presence.gateway.ts',
       '+++ b/src/app/realtime/presence.gateway.ts',
       '@@ -12,6 +12,18 @@ export class PresenceGateway {',
-      '   @SubscribeMessage(\'cursor:move\')',
+      "   @SubscribeMessage('cursor:move')",
       '   onCursorMove(client: Socket, payload: CursorMovePayload) {',
       '+    const room = `job:${payload.jobId}`;',
-      '+    client.to(room).emit(\'cursor:moved\', {',
+      "+    client.to(room).emit('cursor:moved', {",
       '+      userId: client.data.userId,',
       '+      x: payload.x,',
       '+      y: payload.y,',
@@ -279,7 +322,9 @@ const RICH_MESSAGES: DemoMessage[] = [
 
 async function upsertRepo2(ds: DataSource): Promise<void> {
   const repos = ds.getRepository(RepoEntity);
-  const row = (await repos.findOne({ where: { id: REPO_2_ID } })) ?? repos.create({ id: REPO_2_ID, org_id: ORG_ID, slug: 'demo-repo-2' });
+  const row =
+    (await repos.findOne({ where: { id: REPO_2_ID } })) ??
+    repos.create({ id: REPO_2_ID, org_id: ORG_ID, slug: 'demo-repo-2' });
   row.name = 'demo-repo-2';
   row.git_url = 'https://github.com/dennisofficial/demo-repo-2';
   row.default_branch = 'main';
@@ -291,7 +336,9 @@ async function upsertRepo2(ds: DataSource): Promise<void> {
 
 async function upsertJob(ds: DataSource, demo: DemoJob): Promise<void> {
   const jobs = ds.getRepository(JobEntity);
-  const row = (await jobs.findOne({ where: { id: demo.id } })) ?? jobs.create({ id: demo.id });
+  const row =
+    (await jobs.findOne({ where: { id: demo.id } })) ??
+    jobs.create({ id: demo.id });
   row.org_id = ORG_ID;
   row.repo_id = demo.repo_id;
   row.origin = 'chat';
@@ -304,17 +351,22 @@ async function upsertJob(ds: DataSource, demo: DemoJob): Promise<void> {
   row.pr_number = demo.pr_number ?? null;
   // These PRs are fixtures, not real GitHub PRs. Park the reconciler's durable poll clock far in the
   // future so GitStateReconciler never marks them DUE and re-latches pr_state to 'closed' after a 404.
-  row.next_poll_at = demo.pr_number != null ? new Date('2999-01-01T00:00:00Z') : null;
+  row.next_poll_at =
+    demo.pr_number != null ? new Date('2999-01-01T00:00:00Z') : null;
   row.halted = demo.halted ?? false;
   row.halt = demo.halt ?? null;
   await jobs.save(row);
-  console.log(`  seeded job "${demo.title.slice(0, 60)}${demo.title.length > 60 ? '…' : ''}" [${demo.section}] (${demo.id})`);
+  console.log(
+    `  seeded job "${demo.title.slice(0, 60)}${demo.title.length > 60 ? '…' : ''}" [${demo.section}] (${demo.id})`,
+  );
 }
 
 async function upsertRichThreads(ds: DataSource): Promise<void> {
   const threads = ds.getRepository(ThreadEntity);
   for (const t of RICH_THREADS) {
-    const row = (await threads.findOne({ where: { id: t.id } })) ?? threads.create({ id: t.id });
+    const row =
+      (await threads.findOne({ where: { id: t.id } })) ??
+      threads.create({ id: t.id });
     row.job_id = RICH_JOB_ID;
     row.org_id = ORG_ID;
     row.ordinal = t.ordinal;
@@ -329,7 +381,9 @@ async function upsertRichThreads(ds: DataSource): Promise<void> {
 async function upsertRichSteps(ds: DataSource): Promise<void> {
   const steps = ds.getRepository(StepEntity);
   for (const s of RICH_STEPS) {
-    const row = (await steps.findOne({ where: { id: s.id } })) ?? steps.create({ id: s.id });
+    const row =
+      (await steps.findOne({ where: { id: s.id } })) ??
+      steps.create({ id: s.id });
     row.thread_id = s.thread_id;
     row.job_id = RICH_JOB_ID;
     row.org_id = ORG_ID;
@@ -337,13 +391,24 @@ async function upsertRichSteps(ds: DataSource): Promise<void> {
     row.brief = s.brief;
     await steps.save(row);
   }
-  console.log(`  seeded ${RICH_STEPS.length} steps on rich job's builder threads`);
+  console.log(
+    `  seeded ${RICH_STEPS.length} steps on rich job's builder threads`,
+  );
 }
 
 async function upsertRichMessages(ds: DataSource): Promise<void> {
   const messages = ds.getRepository(MessageEntity);
+  const fixtureIds = RICH_MESSAGES.map((m) => m.id);
+  await messages
+    .createQueryBuilder()
+    .delete()
+    .where('job_id = :jobId', { jobId: RICH_JOB_ID })
+    .andWhere('id NOT IN (:...fixtureIds)', { fixtureIds })
+    .execute();
   for (const m of RICH_MESSAGES) {
-    const row = (await messages.findOne({ where: { id: m.id } })) ?? messages.create({ id: m.id });
+    const row =
+      (await messages.findOne({ where: { id: m.id } })) ??
+      messages.create({ id: m.id });
     row.job_id = RICH_JOB_ID;
     row.author = m.author;
     row.author_id = m.author_id;
@@ -364,7 +429,9 @@ async function main(): Promise<void> {
     await upsertRichThreads(ds);
     await upsertRichSteps(ds);
     await upsertRichMessages(ds);
-    console.log(`seed-demo-jobs: done — ${DEMO_JOBS.length} jobs, rich job = ${RICH_JOB_ID}`);
+    console.log(
+      `seed-demo-jobs: done — ${DEMO_JOBS.length} jobs, rich job = ${RICH_JOB_ID}`,
+    );
   } finally {
     await ds.destroy();
   }
