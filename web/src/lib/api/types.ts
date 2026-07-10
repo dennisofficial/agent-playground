@@ -77,7 +77,9 @@ export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
   | typeof REQUEST_CHANGES_ACTION_ID
-  | typeof DENY_ACTION_ID;
+  | typeof DENY_ACTION_ID
+  | typeof SHIP_ACTION_ID
+  | typeof RETRACT_SHIP_ACTION_ID;
 
 export interface ApprovalDecision {
   decisionClass: string;
@@ -103,7 +105,8 @@ export interface WebApprovalCard {
   decisionRecordId?: string;
   /**
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
-   * vs "Changes". `ship` — the ship-review gate (a single "Ship it" button; `threads`/`decisions` empty).
+   * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
+   * `threads`/`decisions` empty).
    */
   kind?: "plan" | "direct" | "ship";
   title: string;

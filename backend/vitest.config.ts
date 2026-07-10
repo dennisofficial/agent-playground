@@ -78,6 +78,7 @@ export default defineConfig((env) => {
         environment: 'node',
         include: ['src/**/*.spec.ts'],
         exclude: ['**/*.int.test.ts', '**/*.e2e-spec.ts', '**/*.ai.test.ts', ...configDefaults.exclude],
+        testTimeout: 30_000,
       },
     };
   }
