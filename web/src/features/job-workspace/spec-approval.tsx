@@ -120,6 +120,7 @@ export function NavigatorApprovalCallout({
         onClick={submit}
         pending={pending}
         approved={approved}
+        blocked={retract.pending || retract.approved}
         directBuild={directBuild}
         className="mt-[9px] w-full justify-center text-[11px]"
         style={{ borderRadius: "7px", padding: "7px 0" }}
@@ -129,6 +130,7 @@ export function NavigatorApprovalCallout({
         onClick={retract.submit}
         pending={retract.pending}
         done={retract.approved}
+        blocked={pending || approved}
         idleLabel="Back to planning"
         doneLabel="Back to planning"
         className="mt-1.5 w-full text-[10.5px]"
@@ -164,6 +166,7 @@ export function NavigatorApproveButton({
         onClick={submit}
         pending={pending}
         approved={approved}
+        blocked={retract.pending || retract.approved}
         directBuild={directBuild}
         className="w-full justify-center text-[11px]"
         style={{ borderRadius: "7px", padding: "7px 0" }}
@@ -173,6 +176,7 @@ export function NavigatorApproveButton({
         onClick={retract.submit}
         pending={retract.pending}
         done={retract.approved}
+        blocked={pending || approved}
         idleLabel="Back to planning"
         doneLabel="Back to planning"
         className="mt-1.5 w-full text-[10.5px]"
@@ -244,6 +248,7 @@ export function PersistentApprovalBar({
         onClick={retract.submit}
         pending={retract.pending}
         done={retract.approved}
+        blocked={pending || approved}
         idleLabel="Back to planning"
         doneLabel="Back to planning"
         className="text-[11.5px]"
@@ -254,6 +259,7 @@ export function PersistentApprovalBar({
         onClick={submit}
         pending={pending}
         approved={approved}
+        blocked={retract.pending || retract.approved}
         directBuild={directBuild}
         className="text-[11.5px]"
         style={{
@@ -285,6 +291,7 @@ export function NavigatorShipButton({
         onClick={submit}
         pending={pending}
         approved={approved}
+        blocked={retract.pending || retract.approved}
         className="w-full justify-center text-[11px]"
         style={{ borderRadius: "7px", padding: "7px 0" }}
         iconSize={12}
@@ -293,6 +300,7 @@ export function NavigatorShipButton({
         onClick={retract.submit}
         pending={retract.pending}
         done={retract.approved}
+        blocked={pending || approved}
         idleLabel="Back to building"
         doneLabel="Back to building"
         className="mt-1.5 w-full text-[10.5px]"
@@ -356,6 +364,7 @@ export function PersistentShipBar({
         onClick={retract.submit}
         pending={retract.pending}
         done={retract.approved}
+        blocked={pending || approved}
         idleLabel="Back to building"
         doneLabel="Back to building"
         className="text-[11.5px]"
@@ -366,6 +375,7 @@ export function PersistentShipBar({
         onClick={submit}
         pending={pending}
         approved={approved}
+        blocked={retract.pending || retract.approved}
         className="text-[11.5px]"
         style={{
           borderRadius: "8px",
@@ -386,6 +396,7 @@ function VerdictButton({
   onClick,
   pending,
   approved,
+  blocked = false,
   idleLabel,
   pendingLabel,
   doneLabel,
@@ -396,6 +407,9 @@ function VerdictButton({
   onClick: () => void;
   pending: boolean;
   approved: boolean;
+  /** Disable (without changing the label) while the sibling retract verdict is in flight/succeeded,
+   *  so only one verdict can be submitted per gate. */
+  blocked?: boolean;
   idleLabel: string;
   pendingLabel: string;
   doneLabel: string;
@@ -407,7 +421,7 @@ function VerdictButton({
     <button
       type="button"
       onClick={onClick}
-      disabled={pending || approved}
+      disabled={pending || approved || blocked}
       className={`inline-flex items-center gap-1.5 font-bold text-white transition hover:brightness-95 disabled:cursor-default disabled:opacity-90 ${className}`}
       style={{
         background: "var(--green)",
@@ -445,6 +459,7 @@ function RetractButton({
   onClick,
   pending,
   done,
+  blocked = false,
   idleLabel,
   doneLabel,
   className = "",
@@ -454,6 +469,9 @@ function RetractButton({
   onClick: () => void;
   pending: boolean;
   done: boolean;
+  /** Disable (without changing the label) while the sibling approve/ship verdict is in flight/succeeded,
+   *  so only one verdict can be submitted per gate. */
+  blocked?: boolean;
   idleLabel: string;
   doneLabel: string;
   className?: string;
@@ -464,7 +482,7 @@ function RetractButton({
     <button
       type="button"
       onClick={onClick}
-      disabled={pending || done}
+      disabled={pending || done || blocked}
       className={`inline-flex items-center justify-center gap-1.5 font-semibold text-dim transition hover:brightness-95 disabled:cursor-default disabled:opacity-70 ${className}`}
       style={{
         background: "var(--panel)",
