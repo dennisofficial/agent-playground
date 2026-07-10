@@ -555,6 +555,68 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(oks[0]).toEqual({ ok: true, used: 2 });
   });
 
+  // ── Decision d1 — completion-wake store methods (mirrors the halt trio, no generation CAS) ────────
+
+  it('setDoneWakeOwed → threadsAwaitingDoneWake selects only owed+un-waked rows', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    // A second thread on the SAME job, already waked — must never resurface as owed.
+    const otherThread = await threads.save(
+      threads.create({
+        kind: 'builder',
+        job_id: jobId,
+        org_id: ORG_ID,
+        ordinal: 20,
+        brief: 'Frontend — done',
+        status: 'done',
+      }),
+    );
+    expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([]);
+
+    await store.setDoneWakeOwed(threadId, 'notable');
+    await store.setDoneWakeOwed(otherThread.id, 'final');
+    await store.markDoneWaked(otherThread.id); // already waked — must be excluded
+
+    const owed = await store.threadsAwaitingDoneWake(jobId);
+    expect(owed).toEqual([{ jobId, threadId, reason: 'notable' }]);
+  });
+
+  it('markDoneWaked stamps `done_waked_at`, clears the owed flag, and is idempotent (repeat is a no-op)', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    await store.setDoneWakeOwed(threadId, 'final');
+    expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([
+      { jobId, threadId, reason: 'final' },
+    ]);
+
+    await store.markDoneWaked(threadId);
+    expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([]);
+    const row = await threads.findOne({ where: { id: threadId } });
+    expect(row?.done_wake_owed).toBe(false);
+    expect(row?.done_waked_at).toBeInstanceOf(Date);
+    const firstStamp = row?.done_waked_at;
+
+    // A repeat call matches zero rows (owed is already false) — the stamp does not move.
+    await store.markDoneWaked(threadId);
+    const rowAgain = await threads.findOne({ where: { id: threadId } });
+    expect(rowAgain?.done_waked_at).toEqual(firstStamp);
+  });
+
+  it('masterReviewThreadId returns the job\'s master_review thread id, or null when it has none', async () => {
+    const { jobId } = await seedJobThread();
+    expect(await store.masterReviewThreadId(jobId)).toBeNull();
+
+    const masterReview = await threads.save(
+      threads.create({
+        kind: 'master_review',
+        job_id: jobId,
+        org_id: ORG_ID,
+        ordinal: 999,
+        brief: 'master review',
+        status: 'executing',
+      }),
+    );
+    expect(await store.masterReviewThreadId(jobId)).toBe(masterReview.id);
+  });
+
   // ── Leg rotation (context-rot: one build thread → many sequential engine sessions) ─────────────────
 
   async function seedJobThreadStep(
@@ -644,6 +706,36 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       session_id: 'sess-1',
       context_tokens_peak: 120_000,
     });
+  });
+
+  // ── Transcript anchor (the halt-wake's session pointer) ────────────────────────────────────────────
+
+  it('resolveSessionAnchor returns the MOST-RECENT Leg\'s session id + ordinal (no terminal record needed)', async () => {
+    const { threadId, anchorStepId } = await seedJobThreadStep('sess-1');
+    await store.recordActiveLeg(anchorStepId, 'sess-1', 100_000); // leg 1
+    await store.completeLegRotation({ anchorStepId, handoff: 'h', seed: 's' }); // bumps to leg 2
+    await store.recordActiveLeg(anchorStepId, 'sess-2', 120_000); // leg 2
+
+    // No terminal_record was ever written — the anchor must resolve from steps/legs regardless.
+    expect(await store.getTerminalRecord(threadId)).toBeNull();
+    expect(await store.resolveSessionAnchor(threadId)).toEqual({
+      sessionId: 'sess-2',
+      legOrdinal: 2,
+    });
+  });
+
+  it('resolveSessionAnchor falls back to the anchor step session when no Leg row exists', async () => {
+    const { threadId } = await seedJobThreadStep('sess-step-only');
+    expect(await store.getLegs(threadId)).toEqual([]);
+    expect(await store.resolveSessionAnchor(threadId)).toEqual({
+      sessionId: 'sess-step-only',
+      legOrdinal: 1,
+    });
+  });
+
+  it('resolveSessionAnchor is undefined when the thread never got a session', async () => {
+    const { threadId } = await seedJobThreadStep(null);
+    expect(await store.resolveSessionAnchor(threadId)).toBeUndefined();
   });
 
   // ── Regression: the prod `get_pipeline_state` "empty Error" incident (missing `AddJobHalt` migration) ──

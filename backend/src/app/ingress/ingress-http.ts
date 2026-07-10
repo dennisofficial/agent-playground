@@ -13,7 +13,7 @@ import type {
   RawNotification,
 } from '../domain';
 import type { IntakeOutcome, StimulusIntake } from '../stimulus';
-import type { GithubPrStateSync, GitStateReconciler } from '../driver';
+import type { GithubCiStateSync, GithubPrStateSync, GitStateReconciler } from '../driver';
 import type { GithubNotificationSource } from './github-notification.source';
 
 /** Express request shape the ingress controllers read (rawBody enabled on the Nest app). */
@@ -69,7 +69,20 @@ export async function runIngress(
   req: RawBodyRequest,
 ): Promise<Record<string, unknown>> {
   const result: IngressResult = await adapter.handle(toRawNotification(req));
+  return mapTriageToHttp(logger, adapter, intake, result);
+}
 
+/**
+ * Map a triage `IngressResult` (already verified/routed/parsed by an adapter) to the intake → HTTP status
+ * plumbing shared by every work-events door. Extracted from `runIngress` so `runWorkEvent` (the door that
+ * ALSO schedules the silent CI-status sync) can reuse the identical mapping.
+ */
+export async function mapTriageToHttp(
+  logger: Logger,
+  adapter: NotificationSource,
+  intake: StimulusIntake,
+  result: IngressResult,
+): Promise<Record<string, unknown>> {
   if (result.outcome === 'rejected') {
     logger.warn(`${adapter.source} rejected (${result.reason}): ${result.detail ?? ''}`);
     throw rejectionToHttp(result.reason, result.detail);
@@ -95,6 +108,24 @@ export async function runIngress(
     stimulusId: outcome.stimulusId,
     jobId: outcome.jobId,
   };
+}
+
+/**
+ * `/webhooks/github/events` front door — triage same as `runIngress`, PLUS scheduling the silent
+ * CI-status sync from the SAME verified/routed payload (`GithubNotificationSource.handleWorkEvent`
+ * parses both in one pass so they can never disagree). The CI schedule is fire-and-forget/debounced —
+ * it never blocks the 202 response or the triage path.
+ */
+export async function runWorkEvent(
+  logger: Logger,
+  adapter: GithubNotificationSource,
+  intake: StimulusIntake,
+  ciSync: GithubCiStateSync,
+  req: RawBodyRequest,
+): Promise<Record<string, unknown>> {
+  const { triage, ci } = await adapter.handleWorkEvent(toRawNotification(req));
+  if (ci) ciSync.schedule(ci); // fire-and-forget, debounced — never blocks the 202 or the triage path
+  return mapTriageToHttp(logger, adapter, intake, triage);
 }
 
 /**

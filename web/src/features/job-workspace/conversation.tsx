@@ -798,6 +798,7 @@ function buildLogItems(
             card={c.card}
             jobRef={jobRef}
             onOpenPlan={onOpenPlan}
+            onSelectNode={onSelectNode}
           />,
         );
         break;
@@ -895,7 +896,13 @@ function buildLogItems(
         break;
       case "claude":
       default:
-        push(<ClaudeBubble key={message.ts} message={message} />);
+        push(
+          <ClaudeBubble
+            key={message.ts}
+            message={message}
+            onSelectNode={onSelectNode}
+          />,
+        );
         break;
     }
   }

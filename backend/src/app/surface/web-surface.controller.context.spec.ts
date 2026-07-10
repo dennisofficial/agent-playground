@@ -31,7 +31,17 @@ function makeController(threadOrgId: string) {
       where.org_id === threadOrgId ? { id: where.id, org_id: threadOrgId, repo_id: 'repo-1' } : null,
     ),
   };
-  const threadLifecycle = { contextDirHost: vi.fn(() => root) };
+  // The repo endpoints treat `root` as the job worktree. Only `specs/plan.md` is "tracked" — `secret.txt`
+  // sits inside the worktree but is untracked (the gitignored-secret analog), so the content gate must 404 it.
+  const trackedFiles = ['specs/plan.md'];
+  const threadLifecycle = {
+    contextDirHost: vi.fn(() => root),
+    findSandbox: vi.fn(async (): Promise<{ worktreePath: string } | null> => ({ worktreePath: root })),
+  };
+  const git = {
+    listTrackedFiles: vi.fn(async () => trackedFiles),
+    isTracked: vi.fn(async (_w: string, relPath: string) => trackedFiles.includes(relPath)),
+  };
   const controller = new WebSurfaceController(
     {} as never, // surface
     {} as never, // liveTurns
@@ -55,8 +65,9 @@ function makeController(threadOrgId: string) {
     {} as never, // skillStore (WorkspaceSkillStore)
     {} as never, // skillFiles (SkillFileWriter)
     {} as never, // skillInstaller (SkillInstallerService)
+    git as never,
   );
-  return { controller, threads, threadLifecycle };
+  return { controller, threads, threadLifecycle, git };
 }
 
 describe('WebSurfaceController.contextFile', () => {
@@ -181,5 +192,75 @@ describe('WebSurfaceController.contextRaw', () => {
       controller.contextRaw(ORG, 'leaked-thread-id', ['artifacts', 'sidebar redesign', 'index.html']),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(threadLifecycle.contextDirHost).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `GET …/repo/tree` + `…/repo/file` read the LIVE job worktree (via `findSandbox().worktreePath`).
+ * `makeController` points `findSandbox` at the temp `root` and mocks the tracked-file set, so these exercise
+ * the real path-traversal guard (`resolveSafeTarget`) plus the tracked-file security gate against a file that
+ * physically sits inside the worktree but is untracked (the gitignored-secret analog). Own fixture, since the
+ * earlier describes tear `root` down in their `afterAll`.
+ */
+describe('WebSurfaceController repo endpoints', () => {
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'repo-'));
+    mkdirSync(join(root, 'specs'), { recursive: true });
+    writeFileSync(join(root, 'specs', 'plan.md'), '# Plan\n\nHello.');
+    writeFileSync(join(root, 'secret.txt'), 'not in a bucket');
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  describe('repoTree', () => {
+    it('returns the worktree tracked-file manifest', async () => {
+      const { controller } = makeController('orgB');
+      expect(await controller.repoTree(ORG, 'thread-1')).toEqual({ files: ['specs/plan.md'] });
+    });
+
+    it('returns an empty manifest when the worktree is gone (closed/reset)', async () => {
+      const { controller, threadLifecycle } = makeController('orgB');
+      threadLifecycle.findSandbox.mockResolvedValueOnce(null);
+      expect(await controller.repoTree(ORG, 'thread-1')).toEqual({ files: [] });
+    });
+  });
+
+  describe('repoFile', () => {
+    it('reads a tracked file from the worktree', async () => {
+      const { controller } = makeController('orgB');
+      const res = await controller.repoFile(ORG, 'thread-1', 'specs/plan.md');
+      expect(res.path).toBe('specs/plan.md');
+      expect(res.encoding).toBe('text');
+      expect(res.content).toBe('# Plan\n\nHello.');
+    });
+
+    it('rejects ".." traversal that escapes the worktree', async () => {
+      const { controller } = makeController('orgB');
+      await expect(
+        controller.repoFile(ORG, 'thread-1', '../../../etc/passwd'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('404s an untracked (gitignored/secret) file inside the worktree', async () => {
+      const { controller, git } = makeController('orgB');
+      await expect(controller.repoFile(ORG, 'thread-1', 'secret.txt')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(git.isTracked).toHaveBeenCalledWith(root, 'secret.txt');
+    });
+
+    it('requires a path', async () => {
+      const { controller } = makeController('orgB');
+      await expect(controller.repoFile(ORG, 'thread-1', '')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('404s when the worktree is gone', async () => {
+      const { controller, threadLifecycle } = makeController('orgB');
+      threadLifecycle.findSandbox.mockResolvedValueOnce(null);
+      await expect(controller.repoFile(ORG, 'thread-1', 'specs/plan.md')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
   });
 });

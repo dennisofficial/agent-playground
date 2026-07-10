@@ -401,6 +401,23 @@ export function fetchContextFile(
   );
 }
 
+// ── Repo files (live job worktree — for spec/plan file-path links) ────────────────────────────────
+/** The job worktree's TRACKED-file manifest (git ls-files) — used to verify which inline-code spans name a
+ *  real repo file before linkifying them. Empty when the worktree is gone (closed/reset). */
+export function fetchRepoTree(ref: JobRef): Promise<{ files: string[] }> {
+  return webJson<{ files: string[] }>(threadPath(ref, "/repo/tree"));
+}
+
+/** Read one repo file from the LIVE job worktree by git-relative path (tracked files only; 404 otherwise). */
+export function fetchRepoFile(
+  ref: JobRef,
+  path: string,
+): Promise<ContextFileContent> {
+  return webJson<ContextFileContent>(
+    threadPath(ref, `/repo/file?path=${encodeURIComponent(path)}`),
+  );
+}
+
 // ── Rename (the only thread Update op) ───────────────────────────────────────────────────────────
 export function renameJob(
   ref: JobRef,
@@ -413,8 +430,12 @@ export function renameJob(
 }
 
 // ── Delete ─────────────────────────────────────────────────────────────────────────────────────
-export function deleteThread(ref: JobRef): Promise<{ ok: boolean }> {
-  return webJson(threadPath(ref), { method: "DELETE" });
+export function deleteThread(
+  ref: JobRef,
+  prAction?: "close" | "leave",
+): Promise<{ ok: boolean }> {
+  const q = prAction ? `?prAction=${prAction}` : "";
+  return webJson(`${threadPath(ref)}${q}`, { method: "DELETE" });
 }
 
 // ── Repos (create-job picker + the settings Repos tab) ────────────────────────────────────────

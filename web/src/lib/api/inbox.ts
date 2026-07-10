@@ -13,6 +13,7 @@ import type {
   JobStatus,
   JobKind,
   InboxPr,
+  CiStatus,
 } from "./types";
 
 /**
@@ -44,6 +45,9 @@ export interface RawInboxThread {
   createdAt: string;
   /** The observed PR (null until one exists) — drives the sidebar PR-status glyph. */
   pr?: InboxPr | null;
+  /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — the backend list projection emits it as
+   *  `ciStatus`. null = no checks reported. */
+  ciStatus?: CiStatus | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt?: WireJobHalt | null;
   org: { id: string; slug?: string; name?: string };
@@ -66,6 +70,8 @@ export interface InboxThread {
   /** The observed PR (null until one exists) — when present the sidebar shows a PR-status glyph
    *  instead of the build `status` pie. */
   pr: InboxPr | null;
+  /** Aggregate CI outcome for the PR head — drives the sidebar CI dot. null = no checks reported. */
+  ci: CiStatus | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt: WireJobHalt | null;
   org: { id: string; slug: string; name: string };
@@ -99,6 +105,7 @@ export function normalize(r: RawInboxThread): InboxThread {
     halted: r.halted ?? false,
     createdAt: r.createdAt,
     pr: r.pr ?? null,
+    ci: r.ciStatus ?? null,
     halt: r.halt ?? null,
     org: {
       id: r.org.id,

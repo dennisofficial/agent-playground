@@ -47,6 +47,7 @@ function makeController(threadOrgId: string) {
     {} as never, // skillStore (WorkspaceSkillStore)
     {} as never, // skillFiles (SkillFileWriter)
     {} as never, // skillInstaller (SkillInstallerService)
+    {} as never, // git (LocalGitService)
   );
   return { controller, deleteJobDeep, claimDeleteJob, threads, messages };
 }

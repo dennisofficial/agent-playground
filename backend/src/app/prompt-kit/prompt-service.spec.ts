@@ -57,6 +57,14 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
     for (const out of [feature, onboarding]) expect(out).toContain('SPIKE BEFORE YOU COMMIT');
   });
 
+  it('carries the UI-preview + context-link guidance on build brains, not onboarding', () => {
+    const feature = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' });
+    expect(feature).toContain('UI PREVIEW BY DEFAULT');
+    expect(feature).toContain('REFERENCE /context FILES AS CLICKABLE LINKS');
+    expect(onboarding).not.toContain('UI PREVIEW BY DEFAULT'); // isBuildBrain gate
+  });
+
   it('appends the operator/org instructions ONLY when set (and never otherwise)', () => {
     const marker = 'OPERATOR / ORG INSTRUCTIONS';
     const custom = 'Always prefer pnpm over npm in this workspace.';

@@ -47,6 +47,7 @@ export interface ThreadPipelineAwareness {
  */
 @Entity({ name: 'jobs' })
 @Index(['org_id', 'repo_id'])
+@Index('uq_threads_ticket_id', ['ticket_id'], { unique: true, where: '"ticket_id" IS NOT NULL' })
 export class JobEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -86,8 +87,9 @@ export class JobEntity extends TimestampedEntity {
   /**
    * The ticket this thread was promoted from / works (FK → tickets.id); null for a thread not tied to a
    * ticket. A thread works AT MOST one ticket — enforced 1:1 by a partial unique index
-   * (`uq_threads_ticket_id` WHERE ticket_id IS NOT NULL), hand-added in the migration. SET NULL if the
-   * ticket is deleted (the thread/PR outlives the board entry).
+   * (`uq_threads_ticket_id` WHERE ticket_id IS NOT NULL), modeled on this entity via
+   * `@Index('uq_threads_ticket_id', …)`. SET NULL if the ticket is deleted (the thread/PR outlives the
+   * board entry).
    */
   @Column({ type: 'uuid', nullable: true })
   ticket_id!: string | null;

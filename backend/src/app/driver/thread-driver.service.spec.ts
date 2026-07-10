@@ -297,6 +297,9 @@ function makeStore(state: StoreState): {
       const s = state.threads.find((x) => x.id === threadId);
       return (s as { terminal_record?: ThreadTerminalRecord | null })?.terminal_record ?? null;
     }),
+    // Transcript anchor (halt-wake) — no steps/legs session seeded in these tests, so the anchor resolves
+    // undefined; present so `writeCompletionMd` doesn't call an undefined fn.
+    resolveSessionAnchor: vi.fn(async (_threadId: string) => undefined),
     // ── Leg rotation (context-rot mitigation) — no prior rotation in these tests, so the driver folds no seed
     //    and rotates ONLY on a self-authored handoff. `completeLegRotation` is present for the type only. ──
     getPendingLegSeed: vi.fn(async (_anchorStepId: string) => null),
@@ -377,6 +380,14 @@ function makeStore(state: StoreState): {
         }
       }
       return n;
+    }),
+    // Decision d1 — completion wake (mirrors the halt trio's presence-for-type-only stubbing above).
+    setDoneWakeOwed: vi.fn(async (_threadId: string, _reason: 'final' | 'notable') => undefined),
+    threadsAwaitingDoneWake: vi.fn(async (_jobId?: string) => []),
+    markDoneWaked: vi.fn(async (_threadId: string) => undefined),
+    masterReviewThreadId: vi.fn(async (jobId: string) => {
+      const s = state.threads.find((x) => x.jobId === jobId && x.kind === 'master_review');
+      return s?.id ?? null;
     }),
   } as unknown as DriverStoreService;
   return { store, state };
@@ -3236,6 +3247,16 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     const incompleteMd = renderCompletionMd(t, 'incomplete', null, '2026-07-04T00:00:00.000Z');
     expect(incompleteMd).toContain('**Outcome:** incomplete');
     expect(incompleteMd).toContain('without asserting completion');
+  });
+
+  it('renderCompletionMd renders the Transcript line from the resolved anchor (even with a null record)', () => {
+    const t = thread('sec-be', 10, 'Backend');
+    const md = renderCompletionMd(t, 'incomplete', null, '2026-07-04T00:00:00.000Z', {
+      sessionId: 'sess-xyz',
+      legOrdinal: 3,
+    });
+    expect(md).toContain('**Transcript:** session `sess-xyz` (Leg 3)');
+    expect(md).toContain('atlas-tx show sess-xyz');
   });
 });
 
