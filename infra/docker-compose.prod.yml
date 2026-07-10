@@ -5,6 +5,7 @@
 #   - /srv/atlas/pgdata/            (Postgres data directory)
 #   - /srv/atlas/data/{repos,agent-home,refs,skills,golden,engine}/
 #   - /srv/atlas/caddy/{data,config}/
+#   - /srv/atlas/caddy/admin/       (Caddy admin API unix socket — mounted into caddy + backend)
 #   - /srv/atlas/state/             (blue/green active-color + tag)
 #   - /var/run/docker.sock          (the host Docker daemon socket)
 #
@@ -173,14 +174,27 @@ services:
 
   # ── Caddy (reverse proxy + auto-TLS) ───────────────────────────────────────────
   caddy:
-    image: caddy:2
+    # Custom image = stock caddy:2 + the caddy-dns/cloudflare module (infra/caddy.Dockerfile),
+    # required for the `*.atlas.dltechnologies.co` wildcard cert via DNS-01. Built + pushed in CI
+    # like the backend/web images; deploy.sh pulls it by tag.
+    image: ghcr.io/dennisofficial/atlas-caddy:${ATLAS_IMAGE_TAG:-latest}
+    # Fixed name so the backend can `docker network connect atlas-caddy <sandbox>-net`
+    # deterministically on first exposure (mirrors atlas-postgres above).
+    container_name: atlas-caddy
     ports:
       - "80:80"
       - "443:443"
+    # CLOUDFLARE_API_TOKEN (scoped Zone:Read + DNS:Edit on dltechnologies.co) lives in the box
+    # secrets file; Caddy reads it as {env.CLOUDFLARE_API_TOKEN} for the DNS-01 challenge.
+    env_file:
+      - /srv/atlas/secrets/atlas.env
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /srv/atlas/caddy/data:/data
       - /srv/atlas/caddy/config:/config
+      # Admin API unix socket — same host dir mounted at the SAME path into the backend
+      # (backend-common) so the socket is one shared inode. NO TCP admin listener exists.
+      - /srv/atlas/caddy/admin:/srv/atlas/caddy/admin
     networks:
       - atlas
     restart: unless-stopped
