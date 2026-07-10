@@ -11,6 +11,7 @@ import { Agent, ENGINE_SUBAGENTS } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
+  DESIGN_DISCIPLINE_NOTE,
   DEVIATION_NOTE,
   DOC_VERSION_VERIFY_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
@@ -166,6 +167,7 @@ export class SubagentsGroup {
       SOLE_AUTHOR_NOTE,
       CLARITY_OVER_COMMENTS_NOTE,
       MINIMAL_CODE_NOTE,
+      DESIGN_DISCIPLINE_NOTE,
       TS_STYLE_NOTE,
       DOC_VERSION_VERIFY_NOTE,
       'When you finish, return a ' +

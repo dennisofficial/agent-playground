@@ -6,6 +6,7 @@ import {
   CLARITY_OVER_COMMENTS_NOTE,
   CLOUD_SANDBOX_NOTE,
   DELETION_SAFETY_NOTE,
+  DESIGN_DISCIPLINE_NOTE,
   DEVIATION_NOTE,
   DOC_VERSION_VERIFY_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
@@ -76,6 +77,22 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     for (const agent of [Agent.EXPLORE, Agent.DOCS, Agent.REVIEW_AGENT, Agent.DEBUG, Agent.TEST]) {
       expect(renderAgentPrompt(agent), String(agent)).not.toContain(TS_STYLE_NOTE);
     }
+  });
+
+  it('DESIGN_DISCIPLINE_NOTE reaches the code-authoring personas (brain + worker + fan-out writers) and points at the skill', () => {
+    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.FAN_OUT]) {
+      const out = renderAgentPrompt(agent, { jobKind: 'feature' });
+      expect(out.split(DESIGN_DISCIPLINE_NOTE).length - 1, String(agent)).toBe(1);
+      expect(out, String(agent)).toContain('DESIGN DISCIPLINE');
+      expect(out, String(agent)).toContain('`design-patterns` skill');
+    }
+    // onboarding brain authors code too (script fixes) — it rides the un-gated behavioral tail.
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' })).toContain(DESIGN_DISCIPLINE_NOTE);
+    // the external-PR review brain and read-only advisories never author code — no recognition trigger.
+    for (const agent of [Agent.EXPLORE, Agent.DOCS, Agent.REVIEW_AGENT, Agent.DEBUG, Agent.TEST]) {
+      expect(renderAgentPrompt(agent), String(agent)).not.toContain(DESIGN_DISCIPLINE_NOTE);
+    }
+    expect(renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'review' })).not.toContain(DESIGN_DISCIPLINE_NOTE);
   });
 
   it('DOC_VERSION_VERIFY_NOTE reaches the three code authors but not the fix lanes or advisories', () => {
@@ -313,6 +330,7 @@ describe('brain vs worker behavioral tails do not leak into each other', () => {
       SPIKE_FIRST_NOTE,
       CLARITY_OVER_COMMENTS_NOTE,
       MINIMAL_CODE_NOTE,
+      DESIGN_DISCIPLINE_NOTE,
       TS_STYLE_NOTE,
       DOC_VERSION_VERIFY_NOTE,
     ]) {

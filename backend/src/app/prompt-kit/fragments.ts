@@ -317,6 +317,25 @@ export const MINIMAL_CODE_NOTE =
   'prevents data loss, security, accessibility, and anything the task explicitly asked for — leanness is ' +
   'about scope and cleverness, never about dropping a guardrail.';
 
+/**
+ * DESIGN DISCIPLINE — the always-on recognition trigger for the `design-patterns` skill. Rides on top of
+ * {@link MINIMAL_CODE_NOTE}: it does NOT teach the 22 patterns (the skill does) — it just makes the agent
+ * NOTICE the smell and reach for the skill, which is the step that was missing ("knows patterns, never
+ * applies them"). Shared by every code-authoring persona (brain direct-builds + plans, worker orchestrator,
+ * fan-out writers). Restraint-first by construction so it can never fight the YAGNI ladder above it.
+ */
+export const DESIGN_DISCIPLINE_NOTE =
+  'DESIGN DISCIPLINE — good structure is diagnosed, not decorated. When you are writing or refactoring ' +
+  'non-trivial code, watch for the smell: you are fighting the existing structure to add a feature, one ' +
+  'change forces edits in many places, a class/function is doing too much, conditionals are tangling. A ' +
+  'smell is the cue to improve structure — but climb the same ladder as WRITE THE LEAST CODE: try the boring ' +
+  'refactoring first (extract, rename, inline, guard clause), and reach for a named design pattern ONLY when ' +
+  'a real smell justifies it — never a pattern with a single caller or one implementation (that is itself a ' +
+  'smell). Consistency over conformance: match the codebase pattern for incidental choices, but when the ' +
+  'current pattern no longer fits the new requirement, MIGRATE it deliberately and COMPLETELY (move the ' +
+  'callers, never leave it half-done) — and surface a large refactor rather than hacking around it. For the ' +
+  'smell catalog and per-pattern guidance, use the `design-patterns` skill.';
+
 // ── SUBAGENT POLICY BLOCKS ──────────────────────────────────────────────────────────────────────────
 
 /**
