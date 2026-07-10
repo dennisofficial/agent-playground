@@ -599,6 +599,13 @@ function isRelativeHref(href: string | undefined): href is string {
   );
 }
 
+/** A site-absolute link into a `/context` bucket — e.g. `/context/artifacts/preview.html`. These are
+ *  rejected by {@link isRelativeHref} (leading `/`) but must still reach the resolver so a conversation link
+ *  to a spec/generated/artifact file opens it in the detail pane. */
+function isContextHref(href: string | undefined): href is string {
+  return !!href && /^\/context\/(specs|generated|artifacts)\//.test(href);
+}
+
 export const Markdown = memo(function Markdown({
   children,
   resolveRelativeLink,
@@ -617,7 +624,10 @@ export const Markdown = memo(function Markdown({
     return {
       ...COMPONENTS,
       a: ({ href, children }) => {
-        const r = isRelativeHref(href) ? resolveRelativeLink(href) : null;
+        const r =
+          isRelativeHref(href) || isContextHref(href)
+            ? resolveRelativeLink(href)
+            : null;
         if (!r) return <ExternalAnchor href={href}>{children}</ExternalAnchor>;
         return (
           <a
