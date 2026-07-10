@@ -7,8 +7,15 @@
  */
 import type { Agent } from './agent';
 import type { PromptCtx } from './prompt-ctx';
-import { getFragmentMetaMap, type LoadedFragment } from './fragment.decorator';
+import { getFragmentMetaMap, type FragmentMeta, type LoadedFragment } from './fragment.decorator';
 import { FRAGMENT_GROUPS } from './groups';
+
+/** Resolve a fragment's sort key for one agent: a bare number applies to all audiences; a map picks the
+ *  audience's entry (missing → NaN, caught as a non-finite order by `validateFragments`). */
+function resolveOrder(meta: FragmentMeta, agent: Agent): number {
+  const o = meta.order;
+  return typeof o === 'number' ? o : (o[agent] ?? Number.NaN);
+}
 
 /** Reflect every `@Fragment` method off the given group instances into a flat, render-bound list. */
 export function loadFragmentsFromInstances(instances: unknown[]): LoadedFragment[] {
@@ -42,7 +49,7 @@ export function assembleFragments(
   return fragments
     .filter((f) => f.meta.usedBy.includes(agent))
     .filter((f) => f.meta.condition?.(ctx) ?? true)
-    .sort((a, b) => a.meta.order - b.meta.order)
+    .sort((a, b) => resolveOrder(a.meta, agent) - resolveOrder(b.meta, agent))
     .map((f) => f.render(ctx).trim())
     .filter((s) => s.length > 0)
     .join('\n\n');
@@ -58,18 +65,21 @@ export function validateFragments(fragments: LoadedFragment[]): void {
     if (!f.meta.usedBy.length) {
       throw new Error(`prompt-kit: fragment "${f.id}" has an empty usedBy.`);
     }
-    if (!Number.isFinite(f.meta.order)) {
-      throw new Error(`prompt-kit: fragment "${f.id}" has a non-finite order (${f.meta.order}).`);
-    }
     for (const agent of f.meta.usedBy) {
-      const seen = perAgentOrders.get(agent) ?? new Map<number, string>();
-      const clash = seen.get(f.meta.order);
-      if (clash) {
+      const order = resolveOrder(f.meta, agent);
+      if (!Number.isFinite(order)) {
         throw new Error(
-          `prompt-kit: duplicate order ${f.meta.order} for agent "${agent}" — "${clash}" and "${f.id}".`,
+          `prompt-kit: fragment "${f.id}" has a non-finite order (${order}) for agent "${agent}".`,
         );
       }
-      seen.set(f.meta.order, f.id);
+      const seen = perAgentOrders.get(agent) ?? new Map<number, string>();
+      const clash = seen.get(order);
+      if (clash) {
+        throw new Error(
+          `prompt-kit: duplicate order ${order} for agent "${agent}" — "${clash}" and "${f.id}".`,
+        );
+      }
+      seen.set(order, f.id);
       perAgentOrders.set(agent, seen);
     }
   }

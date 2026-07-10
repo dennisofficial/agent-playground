@@ -102,16 +102,10 @@ export const REVIEW_SCOPE_NOTE =
 // ── WORKER / EXECUTE POLICY BLOCKS (reused across the execute prompts + writer/verify subagents) ─────
 
 /**
- * VERIFY — the build/test FLOOR every executor must clear before claiming done. Shared by the worker
- * execute prompts (STEP/BATCH/ORCHESTRATE). Coexists with {@link VALIDATE_BY_RUNNING_NOTE} (the "then
- * actually run it" step): this is the floor, that is beyond it.
- */
-/**
- * MONOREPO discovery hint for the verify step — shared by {@link VERIFY_NOTE} (STEP/BATCH executors), the
- * ORCHESTRATE prompt's inline verify clause, and the `test` subagent. A single root `package.json` with no
- * aggregate test script does NOT mean "no tests": in a workspace the real commands live per-package or in
- * the workspace tooling. Kept as its own const so the three verify surfaces can't drift. (Declared before
- * VERIFY_NOTE, which concatenates it — module-const init order matters.)
+ * MONOREPO discovery hint for the verify step — shared by the ORCHESTRATE prompt's inline verify clause
+ * ({@link WorkerGroup} `orchestrateBody`) and the `test` subagent ({@link SubagentsGroup}). A single root
+ * `package.json` with no aggregate test script does NOT mean "no tests": in a workspace the real commands live
+ * per-package or in the workspace tooling. Kept as its own const so the verify surfaces can't drift.
  */
 export const MONOREPO_VERIFY_HINT =
   "In a monorepo/workspace the real typecheck/build/test commands often live in a sub-package's " +
@@ -169,13 +163,6 @@ export const DOC_VERSION_VERIFY_NOTE =
   'your approach do not clearly line up, STOP and surface the mismatch — name the options and the safest ' +
   'path — rather than guessing. (VERIFY CURRENCY governs claiming something IS current; this governs writing ' +
   'code that actually matches the version in your hands.)';
-
-export const VERIFY_NOTE =
-  "VERIFY before you finish: discover and run the repository's OWN typecheck/build/test tooling (read the " +
-  'package.json scripts / Makefile / repo docs for the REAL commands — do not assume them) and make sure ' +
-  'the change compiles and the relevant tests pass — do NOT claim the work is done on the basis of a guess. ' +
-  'If verification fails and you cannot fix it within scope, say so explicitly rather than reporting success. ' +
-  MONOREPO_VERIFY_HINT;
 
 /**
  * LSP TOOLS (full) — for the personas that can actually rename (the orchestrator + the `implement`/
@@ -274,7 +261,7 @@ export const DELETION_SAFETY_NOTE =
  * A POSITIVE decision procedure run AFTER you understand the problem, not a licence to cut corners — it climbs
  * from "does this need to exist" to "minimum viable code", stopping at the lowest rung that works. Deliberately
  * carries its own SAFETY carve-out so it can never be read as skipping validation/error-handling/security, and
- * stays OUT of the review/verify lanes (VERIFY_NOTE / VALIDATE_BY_RUNNING_NOTE own that) and the comment lane
+ * stays OUT of the review/verify lanes (VALIDATE_BY_RUNNING_NOTE owns that) and the comment lane
  * (CLARITY_OVER_COMMENTS_NOTE) — this is only about how much to build. The "prefer an already-installed
  * dependency over a new one" rung reinforces the always-ask gate (a NEW dependency is still an ask).
  */
@@ -383,7 +370,7 @@ export const VALIDATE_BY_RUNNING_NOTE =
 
 /**
  * EVIDENCE ARTIFACTS — the human-facing PROOF that live-validation actually happened. Shared by the build
- * agents that own capture (EVIDENCE_OWNERS = the WORKER orchestrator + the `validate` subagent). Complements
+ * agents that own capture (the WORKER orchestrator + the `validate` subagent). Complements
  * {@link VALIDATE_BY_RUNNING_NOTE} (which says "actually run it"): this says "and leave the proof on disk."
  * `/context/artifacts/` is the ONE `/context` bucket builders write; `specs/` + `generated/` are read-only
  * grounding. The web ARTIFACTS panel lists this folder and renders logs/markdown as text and screenshots
@@ -403,27 +390,6 @@ export const EVIDENCE_ARTIFACTS_NOTE =
   '`boot.png`). EVIDENCE, NOT CLAIMS: prefer a captured artifact over prose, and where something genuinely ' +
   'cannot be validated in this Linux sandbox (a Windows GUI app, real device hardware), SAY SO plainly in ' +
   'RESULTS.md — validate everything you can and mark the honest remainder, never fabricate a result.';
-
-/**
- * SPIKE FIRST — for planning + workers. Prove a risky/unverified assumption (especially an SDK or library
- * capability) with a tiny throwaway spike BEFORE committing to a plan that rests on it. Covers BOTH
- * directions of a capability claim: building ON one you assume works, AND ruling OUT a path because you
- * assume it "can't be done" — the negative claim is the more dangerous one, since it silently steers the
- * design toward a workaround and never trips the "before you build on it" guardrails.
- */
-export const SPIKE_FIRST_NOTE =
-  'SPIKE BEFORE YOU COMMIT to an approach that rests on an UNVERIFIED assumption — above all a claim about ' +
-  'what an SDK, library, API, or tool can actually do ("does X support Y?", "can this be called ' +
-  'mid-stream?"). A claim that something CANNOT be done — "not expressible", "not supported", "the library ' +
-  'can\'t do this", so you reach for a workaround — is the MOST dangerous version of this and carries the ' +
-  'HIGHEST burden of proof, not the lowest: you cannot prove a negative from memory, and "I don\'t recall a ' +
-  'way" is not "there is no way". Treat any impossibility claim that would change your approach exactly like ' +
-  '"does X support Y?" — verify it against the actual current docs/source for the installed version (or a ' +
-  'spike) and CITE what you found (a doc URL or source path:line) before you let it steer the design; an ' +
-  'uncited "can\'t" does not get to rule out a path. Rather than design several steps on top of a guess and ' +
-  'discover the premise was false, write the smallest throwaway spike that calls the real thing and RUN it ' +
-  'to prove the assumption first. A five-minute spike beats a derailed plan. Keep spikes in throwaway ' +
-  'scratch space; never commit them.';
 
 /**
  * BASELINE FIRST — for planning. Reproduce and observe the CURRENT behavior of the thing you're about to

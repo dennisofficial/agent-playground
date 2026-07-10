@@ -1,26 +1,25 @@
 /**
  * prompt-kit / groups / worker — the build/execute thread ORCHESTRATOR (`worker-orchestrate`). The unique
  * persona body is one fragment (order 100); the shared cloud-sandbox note + job-kind block come from
- * `DriverFramingGroup` (200/300); the behavioral layer (validate-by-running + spike) is the tail (400/410),
- * reproducing the legacy composer order `body → CLOUD_SANDBOX → jobKind → VALIDATE → SPIKE`.
+ * `DriverFramingGroup` (200/300); the behavioral tail is `validateByRunning` (400), `lspTools` (405), and
+ * `evidenceArtifacts` (430). The five shared code-authoring notes that once lived here as WORKER twins
+ * (`spikeFirst` 410 / `clarityOverComments` 415 / `minimalCode` 420 / `tsStyle` 421 / `docVersionVerify` 422)
+ * now live in `BehavioralGroup` as multi-audience fragments carrying a per-audience `order` map, so they sit
+ * at those same worker positions — reproducing the legacy order `body → CLOUD_SANDBOX → jobKind → VALIDATE →
+ * LSP → SPIKE → CLARITY → MINIMAL → TS → DOC-VERIFY → EVIDENCE`.
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
-  CLARITY_OVER_COMMENTS_NOTE,
   DELETION_SAFETY_NOTE,
   DEVIATION_NOTE,
-  DOC_VERSION_VERIFY_NOTE,
   DOCS_BEFORE_GREP,
   EVIDENCE_ARTIFACTS_NOTE,
   LSP_TOOLS_NOTE,
-  MINIMAL_CODE_NOTE,
   MONOREPO_VERIFY_HINT,
   PLAYGROUND_NOTE,
-  SPIKE_FIRST_NOTE,
   SUBAGENT_NUDGE_NOTE,
   TASK_LIST_NOTE,
-  TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from '../fragments';
 
@@ -123,34 +122,6 @@ export class WorkerGroup {
   @Fragment({ usedBy: [Agent.WORKER], order: 405 })
   lspTools(): string {
     return LSP_TOOLS_NOTE;
-  }
-
-  @Fragment({ usedBy: [Agent.WORKER], order: 410 })
-  spikeFirst(): string {
-    return SPIKE_FIRST_NOTE;
-  }
-
-  @Fragment({ usedBy: [Agent.WORKER], order: 415 })
-  clarityOverComments(): string {
-    return CLARITY_OVER_COMMENTS_NOTE;
-  }
-
-  @Fragment({ usedBy: [Agent.WORKER], order: 420 })
-  minimalCode(): string {
-    return MINIMAL_CODE_NOTE;
-  }
-
-  /** TYPESCRIPT TYPE STYLE — the orchestrator makes small edits itself; same house rule the brain + writers
-   *  carry. No-op on non-TS repos by its own wording. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 421 })
-  tsStyle(): string {
-    return TS_STYLE_NOTE;
-  }
-
-  /** VERIFY DOCS + INSTALLED VERSION before building on a dependency. Shared with the brain + fan-out writers. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 422 })
-  docVersionVerify(): string {
-    return DOC_VERSION_VERIFY_NOTE;
   }
 
   /** The evidence-artifact mandate: every build thread leaves durable PROOF in `/context/artifacts/`.

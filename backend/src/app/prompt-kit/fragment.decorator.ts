@@ -27,8 +27,9 @@ export type FragmentRender = (ctx: PromptCtx) => string;
 export interface FragmentMeta {
   /** Which agents this fragment is addressed to. Empty is a boot error. */
   usedBy: Agent[];
-  /** Global sort key WITHIN an agent — must be unique per agent (enforced at boot). */
-  order: number;
+  /** Global sort key WITHIN an agent — a bare number applies to every audience, or a per-audience map.
+   *  Must resolve to a finite, unique order per used-by agent (enforced at boot). */
+  order: number | Partial<Record<Agent, number>>;
   /** Optional gate: the fragment is included only when this returns true (default: always). */
   condition?: (ctx: PromptCtx) => boolean;
 }

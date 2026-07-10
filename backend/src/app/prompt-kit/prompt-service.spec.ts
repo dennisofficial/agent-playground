@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { PromptService } from './prompt.service';
 import { Agent } from './agent';
 import { Fragment, FragmentGroup, getFragmentMetaMap } from './fragment.decorator';
-import { loadFragmentsFromInstances, renderAgentPrompt, validateFragments } from './assemble';
+import {
+  assembleFragments,
+  loadFragmentsFromInstances,
+  renderAgentPrompt,
+  validateFragments,
+} from './assemble';
 
 /**
  * The fragment-library assembler, exercised on the brain (`ATLAS_MAIN`). The brain is now assembled ONLY from
@@ -111,5 +116,45 @@ describe('validateFragments — fails loudly', () => {
     expect(() => validateFragments(loadFragmentsFromInstances([instance]))).toThrow(
       /duplicate order 5000 for agent/,
     );
+  });
+
+  it('throws when a per-audience order map omits an entry for one of its used-by agents', () => {
+    @FragmentGroup()
+    class PartialOrderGroup {
+      @Fragment({ usedBy: [Agent.ATLAS_MAIN, Agent.WORKER], order: { [Agent.ATLAS_MAIN]: 10 } })
+      lonely(): string {
+        return 'X';
+      }
+    }
+    // WORKER has no entry in the map → resolves to NaN → non-finite order for that agent.
+    expect(() => validateFragments(loadFragmentsFromInstances([new PartialOrderGroup()]))).toThrow(
+      /non-finite order .* for agent "worker"/,
+    );
+  });
+});
+
+describe('per-audience order — one fragment sits at a different position per agent', () => {
+  it('a per-audience order map orders a shared fragment differently for each audience', () => {
+    @FragmentGroup()
+    class PerAudienceGroup {
+      // `shared` renders LAST for the brain (high order) but FIRST for the worker (low order).
+      @Fragment({
+        usedBy: [Agent.ATLAS_MAIN, Agent.WORKER],
+        order: { [Agent.ATLAS_MAIN]: 900, [Agent.WORKER]: 100 },
+      })
+      shared(): string {
+        return 'SHARED';
+      }
+
+      @Fragment({ usedBy: [Agent.ATLAS_MAIN, Agent.WORKER], order: 500 })
+      middle(): string {
+        return 'MIDDLE';
+      }
+    }
+    const fragments = loadFragmentsFromInstances([new PerAudienceGroup()]);
+    validateFragments(fragments); // the map is valid for both audiences
+
+    expect(assembleFragments(fragments, Agent.ATLAS_MAIN, {})).toBe('MIDDLE\n\nSHARED');
+    expect(assembleFragments(fragments, Agent.WORKER, {})).toBe('SHARED\n\nMIDDLE');
   });
 });

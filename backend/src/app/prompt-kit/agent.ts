@@ -35,30 +35,17 @@ export enum Agent {
   // are host-side LangChain chains — their prompts live WITH those chains, not in prompt-kit at all.
 }
 
-/** Every agent — for a fragment that belongs in every assembled prompt. */
-export const ALL: Agent[] = Object.values(Agent);
-
-/** The code-changing build agents (worker orchestrator + its fan-out writers). */
-export const BUILDERS: Agent[] = [Agent.WORKER, Agent.FAN_OUT];
-
-/** The build agents that own capturing evidence artifacts into `/context/artifacts/` (the orchestrator
- *  + its dedicated live-validation subagent). Shared audience for `EVIDENCE_ARTIFACTS_NOTE`. */
-export const EVIDENCE_OWNERS: Agent[] = [Agent.WORKER, Agent.VALIDATE];
-
-/** The read-only advisory subagents (spawned via Task). */
-export const ADVISORY: Agent[] = [
+/** EVERY engine subagent spawnable via `Task` inside a turn — the read-only advisory set (`explore`/`docs`/
+ *  `review`/`debug`/`test`) plus the file-writing writers (`implement`/`implement-deep`) and the live
+ *  `validate` subagent. These are the single-turn, no-conversation helpers; shared audience for
+ *  `SUBAGENT_KERNEL_NOTE`. (Excludes the ship-time PR/master-review turns, which are full sessions, not Task
+ *  subagents.) */
+export const ENGINE_SUBAGENTS: Agent[] = [
   Agent.EXPLORE,
   Agent.DOCS,
   Agent.REVIEW_AGENT,
   Agent.DEBUG,
   Agent.TEST,
+  Agent.VALIDATE,
+  Agent.FAN_OUT,
 ];
-
-/** EVERY engine subagent spawnable via `Task` inside a turn — the read-only advisory set plus the
- *  file-writing writers (`implement`/`implement-deep`) and the live `validate` subagent. These are the
- *  single-turn, no-conversation helpers; shared audience for `SUBAGENT_KERNEL_NOTE`. (Excludes the ship-time
- *  PR/master-review turns, which are full sessions, not Task subagents.) */
-export const ENGINE_SUBAGENTS: Agent[] = [...ADVISORY, Agent.VALIDATE, Agent.FAN_OUT];
-
-/** Every code-review surface (the per-diff `review` subagent + the ship-time master review). */
-export const REVIEWERS: Agent[] = [Agent.REVIEW_AGENT, Agent.MASTER_REVIEW];

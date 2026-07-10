@@ -13,7 +13,6 @@ import {
   SANDBOX_FILESYSTEM_MAP_NOTE,
   SUBAGENT_KERNEL_NOTE,
   SOLE_AUTHOR_NOTE,
-  SPIKE_FIRST_NOTE,
   SUBAGENT_NUDGE_NOTE,
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
@@ -211,7 +210,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     const out = renderAgentPrompt(Agent.WORKER, { jobKind: 'feature' });
     const jobKindAt = out.indexOf('JOB KIND — FEATURE');
     const validateAt = out.indexOf(VALIDATE_BY_RUNNING_NOTE);
-    const spikeAt = out.indexOf(SPIKE_FIRST_NOTE);
+    const spikeAt = out.indexOf('SPIKE BEFORE YOU COMMIT');
     expect(jobKindAt).toBeGreaterThan(0);
     expect(validateAt).toBeGreaterThan(jobKindAt);
     expect(spikeAt).toBeGreaterThan(validateAt);
@@ -236,7 +235,7 @@ describe('brain vs worker behavioral tails do not leak into each other', () => {
   it('the brain carries baseline+author-live-validation+spike; the worker carries validate+spike', () => {
     const brain = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
     expect(brain).toContain(BASELINE_FIRST_NOTE);
-    expect(brain).toContain(SPIKE_FIRST_NOTE);
+    expect(brain).toContain('SPIKE BEFORE YOU COMMIT');
     // The brain gets the AUTHORING twin (author validation as a live run, never optional), NOT the worker's
     // run-it note — distinct consts so the split stays assertable.
     expect(brain).toContain(AUTHOR_LIVE_VALIDATION_NOTE);
