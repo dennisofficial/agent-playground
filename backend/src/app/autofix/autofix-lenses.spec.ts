@@ -6,6 +6,7 @@ import {
   dedupeFindings,
   meetsSeverity,
   parseFindings,
+  reviewAgentsForThread,
 } from './autofix-lenses';
 import type { AutoFixContext, ReviewFinding } from './autofix.types';
 
@@ -130,6 +131,52 @@ describe('DEFAULT_LENSES', () => {
       'minimalism',
     ]);
     for (const l of narrow) expect(l.scope ?? 'diff').toBe('diff');
+  });
+});
+
+describe('reviewAgentsForThread', () => {
+  it('backend gets the five always-on lenses, in stable order', () => {
+    expect(reviewAgentsForThread('backend').map((l) => l.id)).toEqual([
+      'best_practices',
+      'correctness',
+      'consistency',
+      'minimalism',
+      'holistic',
+    ]);
+  });
+
+  it('docs drops correctness + minimalism (pure noise on prose)', () => {
+    const ids = reviewAgentsForThread('docs').map((l) => l.id);
+    expect(ids).toEqual(['best_practices', 'consistency', 'holistic']);
+    expect(ids).not.toContain('correctness');
+    expect(ids).not.toContain('minimalism');
+  });
+
+  it('data adds data_safety on top of the five always-on lenses', () => {
+    expect(reviewAgentsForThread('data').map((l) => l.id)).toEqual([
+      'best_practices',
+      'correctness',
+      'consistency',
+      'minimalism',
+      'holistic',
+      'data_safety',
+    ]);
+  });
+
+  it('general (and any other type) gets the five always-on lenses', () => {
+    expect(reviewAgentsForThread('general').map((l) => l.id)).toEqual([
+      'best_practices',
+      'correctness',
+      'consistency',
+      'minimalism',
+      'holistic',
+    ]);
+  });
+
+  it('is deterministic — same type, same order, every call', () => {
+    expect(reviewAgentsForThread('data').map((l) => l.id)).toEqual(
+      reviewAgentsForThread('data').map((l) => l.id),
+    );
   });
 });
 

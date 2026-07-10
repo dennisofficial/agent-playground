@@ -758,6 +758,7 @@ function thread(
   status: ThreadStatus = 'pending',
   isMasterReview = false,
   condition: ThreadCondition = 'none',
+  type: Thread['type'] = 'general',
 ): DriverThread {
   return {
     id,
@@ -772,6 +773,7 @@ function thread(
     status,
     condition,
     kind: isMasterReview ? 'master_review' : 'builder',
+    type,
     parentThreadId: null,
     startSha: null,
   };
@@ -2051,6 +2053,111 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
     // The build proceeded to completion carrying the answer in its report.
     expect(state.job.status).toBe('done');
+  });
+});
+
+// ── Thread 3 — dynamic (type-routed) lens selection + the async-sema concurrency cap ────────────────
+
+describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurrency', () => {
+  function lensIdsMaterialized(state: StoreState): (string | undefined)[] {
+    return (state.reviewChildren ?? [])
+      .filter((c) => c.kind === 'review_lens')
+      .map((c) => (c.config as { lensId?: string }).lensId);
+  }
+
+  it('materializes the composed set (five always-on + data_safety) for a `data` thread', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-data', 10, 'Data migration', 'pending', false, 'none', 'data')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(lensIdsMaterialized(state).sort()).toEqual(
+      ['best_practices', 'correctness', 'consistency', 'minimalism', 'holistic', 'data_safety'].sort(),
+    );
+  });
+
+  it('drops correctness + minimalism for a `docs` thread', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-docs', 10, 'Docs pass', 'pending', false, 'none', 'docs')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    const lensIds = lensIdsMaterialized(state);
+    expect(lensIds).not.toContain('correctness');
+    expect(lensIds).not.toContain('minimalism');
+    expect(lensIds.sort()).toEqual(['best_practices', 'consistency', 'holistic'].sort());
+  });
+
+  it('bounds in-flight review-lens turns at the configured REVIEW_LENS_CONCURRENCY cap', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend', 'pending', false, 'none', 'general')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { env: { REVIEW_LENS_CONCURRENCY: '2' } });
+    let inFlight = 0;
+    let peak = 0;
+    h.autofix.runReviewLens.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return [];
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // Never exceeds the cap, but DID run more than one at a time (proves it's a real semaphore, not serial).
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  it('with cap >= lens count, ALL lenses start concurrently — the fixed-batch-of-3 barrier is gone', async () => {
+    // 'general' composes the five always-on lenses; the default cap (8) comfortably covers all five, so a
+    // real semaphore (vs. the old `concurrency = 3` batch loop) lets every lens acquire at once.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend', 'pending', false, 'none', 'general')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    let inFlight = 0;
+    let peak = 0;
+    h.autofix.runReviewLens.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return [];
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(peak).toBe(5);
   });
 });
 
@@ -3427,6 +3534,7 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
       status: 'pending',
       condition: 'none',
       kind: 'main',
+      type: 'general',
       parentThreadId: null,
       startSha: null,
     };

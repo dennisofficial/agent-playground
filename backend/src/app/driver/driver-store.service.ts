@@ -32,7 +32,12 @@ import type {
   ThreadTerminalRecord,
 } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
-import { isDriverExecutableKind, laneDefaultFooter, threadKindSpec } from '../thread-kind';
+import {
+  coerceThreadType,
+  isDriverExecutableKind,
+  laneDefaultFooter,
+  threadKindSpec,
+} from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import { webVerdictCard } from '../surface/web-approval-card';
@@ -1354,6 +1359,7 @@ function toThread(row: ThreadEntity): DriverThread {
     status: row.status as ThreadStatus,
     condition: (row.condition as ThreadCondition) ?? 'none',
     kind: row.kind,
+    type: coerceThreadType(row.type),
     parentThreadId: row.parent_thread_id ?? null,
     startSha: row.start_sha ?? null,
   };
@@ -1397,13 +1403,11 @@ interface PipelineLeg {
 }
 
 /**
- * A builder's review children for the `/pipeline` read model. When the child rows are MATERIALIZED (the new
- * child-thread flow — after the builder finished executing), map them directly (real status + findings). When
- * they are NOT (a pre-review builder that hasn't reviewed yet, OR a historical job built before review became
- * child threads), SYNTHESIZE the review set from the thread-kind registry so the rows — and their transcript
- * lanes (the historical review turns still live in `messages` on `autofix:*`) — stay visible. Master-review
- * threads have no review children (they ARE the review). This keeps the review sub-tree data-driven (from the
- * registry, not the dropped `review_agents` jsonb) without the rows vanishing.
+ * A builder's review children for the `/pipeline` read model. Reflects MATERIALIZED rows only (the
+ * `review_lens` × N + `post_review` children the driver's `runReviewChildren` inserts once it computes
+ * the type-routed lens selection via `reviewAgentsForThread`) — empty before the review pass materializes
+ * them, operator-approved (no independent re-derivation of the selection here; the driver is the single
+ * source of truth). Master-review threads have no review children (they ARE the review).
  */
 function pipelineReviewChildren(
   parent: ThreadEntity,
@@ -1414,9 +1418,10 @@ function pipelineReviewChildren(
   const spec = threadKindSpec('builder');
   if (!spec.children) return [];
   // A done builder was reviewed (auto-fix ran before it completed) → show the synthesized rows `done`; an
-  // in-flight/pending builder shows them queued at `pending` (the review preview). The real per-lens
-  // status/findings a historical job once had were in the dropped jsonb, so they degrade to this heuristic —
-  // the navigable transcript on each lane is the durable record.
+  // in-flight/pending builder shows them queued at `pending` (the review preview). Review-lens selection is
+  // now type-routed and diff-dependent (`reviewAgentsForThread`), so the registry's `children` factory only
+  // declares the statically-known `post_review` child — the lens preview rows appear once the driver
+  // materializes them (no static list to synthesize ahead of the diff).
   const status = parent.status === 'done' ? 'done' : 'pending';
   return spec.children({ id: parent.id, config: {} }).map((c) => {
     const lensId = (c.config as { lensId?: string }).lensId;

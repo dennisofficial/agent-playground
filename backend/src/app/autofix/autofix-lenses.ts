@@ -8,6 +8,9 @@
  * Zero imports from `harness/**` / the v1 surface — pure strings + this subfolder's types.
  */
 import { fence } from '../prompt-fence';
+// Direct path (not the `../thread-kind` barrel, which re-exports `registry.ts` — that file imports
+// FROM here, so going through the barrel would cycle). `thread-types.ts` itself imports nothing.
+import type { ThreadType } from '../thread-kind/thread-types';
 import type {
   AutoFixContext,
   FindingSeverity,
@@ -16,13 +19,13 @@ import type {
 } from './autofix.types';
 
 /**
- * The default fan-out: four narrow diff-scoped lenses plus one always-on HOLISTIC lens. The four narrow
- * lenses are complementary + non-overlapping so the deduped union stays signal-rich; the holistic lens
- * counters their by-design tunnel vision by judging the change as a whole against its intent. Each focus
- * defers to the shared ship-blocker bar in the output contract — the focus says WHAT to look at, the
- * contract says how high the bar is. Callers override via `AutoFixOptions.lenses`.
+ * The five ALWAYS-ON lenses: four narrow diff-scoped lenses plus one always-on HOLISTIC lens. The four
+ * narrow lenses are complementary + non-overlapping so the deduped union stays signal-rich; the holistic
+ * lens counters their by-design tunnel vision by judging the change as a whole against its intent. Each
+ * focus defers to the shared ship-blocker bar in the output contract — the focus says WHAT to look at,
+ * the contract says how high the bar is. Callers override via `AutoFixOptions.lenses`.
  */
-export const DEFAULT_LENSES: ReviewLens[] = [
+const ALWAYS_ON: ReviewLens[] = [
   {
     id: 'best_practices',
     label: 'Best practices & conventions',
@@ -80,27 +83,51 @@ export const DEFAULT_LENSES: ReviewLens[] = [
   },
 ];
 
-/** One review agent as the `/pipeline` read-model surfaces it: a stable id + a human label. */
-export interface ReviewAgentInfo {
-  id: string;
-  label: string;
-}
+/** Public alias — the five always-on lenses, for callers (e.g. `AutoFixOptions.lenses`'s default) that
+ *  don't need the type-routed selection below. */
+export const DEFAULT_LENSES: ReviewLens[] = ALWAYS_ON;
+
+/**
+ * Lenses gated on `thread.type` rather than always-on — composed into the run list by
+ * `reviewAgentsForThread` per its routing rules below.
+ */
+const CONDITIONAL: ReviewLens[] = [
+  {
+    id: 'data_safety',
+    label: 'Data & migration safety',
+    focus:
+      'Schema/data-migration safety: destructive or irreversible changes (dropped columns/tables, type ' +
+      'narrowing) without a safe rollout; migrations not backwards-compatible with the currently-deployed ' +
+      'code, or that lock tables; missing/incorrect down-migration; data loss; unindexed FKs/queries. ' +
+      'Prefer expand/contract, backfill, nullable-first — name the safer alternative concretely.',
+  },
+];
+
+/** Every lens definition — `ALWAYS_ON` + `CONDITIONAL` — for id resolution. */
+const ALL_LENSES: ReviewLens[] = [...ALWAYS_ON, ...CONDITIONAL];
 
 /** Resolve a lens by its stable id (a `review_lens` thread's `config.lensId` → the lens definition). */
 export function lensById(id: string): ReviewLens | undefined {
-  return DEFAULT_LENSES.find((l) => l.id === id);
+  return ALL_LENSES.find((l) => l.id === id);
 }
 
 /**
- * The review agents SELECTED TO RUN over a thread's diff — the list the navigator renders. Seam-only
- * today: every thread gets the fixed `DEFAULT_LENSES` set (the auto-fix fan-out runs exactly these), so
- * the rendered list matches what actually executes. The `thread` arg is the future hook point for
- * scope-/condition-based selection (review agents chosen like skills, gated per thread); it is
- * intentionally unused now. This is the SELECTED RUN LIST, not a public catalog — the lens definitions,
- * focuses, and any future gating metadata stay private to the backend.
+ * THE single source of truth for WHICH review lenses run over a thread's diff — the deterministic
+ * selection the driver's auto-fix fan-out drives AND the navigator's rendered list both read, so they
+ * never drift. Routes on the thread's (closed-vocabulary) `type`:
+ *  - `docs` drops `correctness` + `minimalism` (they assume executable code — pure noise on prose).
+ *  - `data` adds `data_safety` on top of the five always-on lenses.
+ *  - everything else (`backend`/`frontend`/`infra`/`testing`/`general`) gets the five always-on lenses.
+ * Returns an ordered, deterministic `ReviewLens[]`.
  */
-export function reviewAgentsForThread(_thread?: { type?: string }): ReviewAgentInfo[] {
-  return DEFAULT_LENSES.map((l) => ({ id: l.id, label: l.label }));
+export function reviewAgentsForThread(type: ThreadType): ReviewLens[] {
+  if (type === 'docs') {
+    return ALWAYS_ON.filter((l) => l.id !== 'correctness' && l.id !== 'minimalism');
+  }
+  if (type === 'data') {
+    return [...ALWAYS_ON, ...CONDITIONAL];
+  }
+  return ALWAYS_ON;
 }
 
 /** Severity rank for thresholds + sort (high first). */
