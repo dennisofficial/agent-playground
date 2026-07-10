@@ -62,4 +62,6 @@ export const qk = {
     ["repo-convention-profile", orgId, repoId] as const,
   /** One org's skills registry (`GET /web/orgs/:orgId/skills`). */
   orgSkills: (orgId: string) => ["org-skills", orgId] as const,
+  /** One org's Claude subscription usage snapshot (`GET /web/orgs/:orgId/usage`). */
+  orgUsage: (orgId: string) => ["org-usage", orgId] as const,
 };

@@ -30,6 +30,7 @@ import { StimulusModule } from '../stimulus';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { GitStateReconciler } from './git-state-reconciler.service';
+import { SessionResumeSweep } from './session-resume-sweep.service';
 import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
@@ -92,6 +93,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     GithubPrStateSync,
     GithubCiStateSync,
     GitStateReconciler,
+    SessionResumeSweep,
     WorktreeHydrator,
     WorktreeProvisioner,
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
@@ -120,6 +122,8 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private reapTimer?: ReturnType<typeof setInterval>;
   private pollTimer?: ReturnType<typeof setInterval>;
   private pollInFlight = false; // skip a heartbeat if the prior tick is still running (slow GitHub / many PRs)
+  private sessionResumeTimer?: NodeJS.Timeout;
+  private sessionResumeInFlight = false; // skip a tick if the prior session-resume sweep is still running
   private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
   private webhooksBackfilled = false; // per-repo webhook backfill runs ONCE per process on leadership
@@ -129,6 +133,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     private readonly env: EnvService,
     private readonly lifecycle: JobLifecycleService,
     private readonly reconciler: GitStateReconciler,
+    private readonly sessionResumeSweep: SessionResumeSweep,
     private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly onboarding: OnboardingService,
@@ -189,10 +194,12 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       await this.driver.resume();
       this.startReapTimer(); // transient: stopped on demote, restarted on every promote
       this.startPollTimer(); // the fast adaptive PR-state heartbeat (leader-only, like the reap timer)
+      this.startSessionResumeTimer(); // auto-resume lanes parked on a Claude session limit (leader-only)
     });
     this.demoteSub = this.election.onDemote(() => {
       this.stopReapTimer();
       this.stopPollTimer();
+      this.stopSessionResumeTimer();
     });
   }
 
@@ -263,11 +270,41 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     }
   }
 
+  /**
+   * The auto-resume heartbeat (~30s) — the leader un-parks every lane whose durable `session_resume_at` clock
+   * is due (a Claude session/usage limit that has now reset). Leader-only (like the reap/poll timers): it
+   * re-drives builds + wakes brains, which must never run in two processes. `unref` so it never keeps the
+   * process alive; `sessionResumeInFlight` guards against overlap when a tick runs long.
+   */
+  private startSessionResumeTimer(): void {
+    if (this.sessionResumeTimer) return;
+    const everyMs = 30 * 1000; // 30s — the resume-clock granularity; a few seconds past reset is fine.
+    this.sessionResumeTimer = setInterval(() => {
+      if (this.sessionResumeInFlight) return;
+      this.sessionResumeInFlight = true;
+      void this.sessionResumeSweep
+        .tick()
+        .catch((err) => this.logger.warn(`session-resume tick failed: ${err}`))
+        .finally(() => {
+          this.sessionResumeInFlight = false;
+        });
+    }, everyMs);
+    this.sessionResumeTimer.unref?.();
+  }
+
+  private stopSessionResumeTimer(): void {
+    if (this.sessionResumeTimer) {
+      clearInterval(this.sessionResumeTimer);
+      this.sessionResumeTimer = undefined;
+    }
+  }
+
   onApplicationShutdown(): void {
     this.resumeSub?.unsubscribe();
     this.promoteSub?.unsubscribe();
     this.demoteSub?.unsubscribe();
     this.stopReapTimer();
     this.stopPollTimer();
+    this.stopSessionResumeTimer();
   }
 }

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
+import { DataSource, IsNull, MoreThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import type {
   Decision,
@@ -241,6 +241,45 @@ export class DriverStoreService {
   /** Clear the phase-preserving job halt on operator re-engagement / a brain re-drive. */
   async clearJobHalt(jobId: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { halt: null });
+  }
+
+  /**
+   * Has an IDENTICAL system→operator notice already landed on this thread recently? Mirrors the brain-store
+   * guard, but build-lane notices are authored through the shared block sink (`author_id='atlas'`) and marked
+   * operator-only by `meta.source`, so match on that source rather than author.
+   */
+  async hasRecentSystemOperatorNotice(
+    jobId: string,
+    text: string,
+    withinMs = 120_000,
+  ): Promise<boolean> {
+    const since = new Date(Date.now() - withinMs);
+    const existing = await this.messages.find({
+      where: { job_id: jobId, text, created_at: MoreThan(since) },
+      select: { id: true, meta: true },
+    });
+    return existing.some(
+      (m) => (m.meta as { source?: unknown } | null)?.source === 'system_operator',
+    );
+  }
+
+  /**
+   * Set (or clear) the durable auto-resume clock a lane parks on when it hits a Claude session/usage limit.
+   * `resumeAt=null` (with `meta=null`) clears the clock so the leader sweep never re-fires — called on every
+   * un-park path (retry / resumePaused / the sweep itself). See {@link JobEntity.session_resume_at}.
+   */
+  async setSessionResume(
+    jobId: string,
+    resumeAt: string | null,
+    meta: JobEntity['session_resume'],
+  ): Promise<void> {
+    await this.jobs.update(
+      { id: jobId },
+      {
+        session_resume_at: resumeAt ? new Date(resumeAt) : null,
+        session_resume: meta,
+      },
+    );
   }
 
   /** Record the feature branch all threads stack on (set once, when the sandbox is cut). */
