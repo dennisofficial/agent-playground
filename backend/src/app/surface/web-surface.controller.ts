@@ -9,6 +9,7 @@ import {
   Inject,
   Logger,
   NotFoundException,
+  Optional,
   Param,
   Patch,
   PayloadTooLargeException,
@@ -71,6 +72,8 @@ import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
 import { CONTAINER_CONTEXT, type ServiceLivenessProbe } from '../sandbox';
+import { ExposureService } from '../exposure/exposure.service';
+import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
@@ -160,6 +163,13 @@ export interface ServiceInfo {
   pid: number | null;
   pgid: number | null;
   startedAt: string | null;
+  /** The dev-server port the process advertised via `atlas-svc --port`; null when unmarked. */
+  port: number | null;
+  /**
+   * The public https preview URL when the service is exposed (`expose !== false`), currently `running`,
+   * and the preview feature is on; otherwise null.
+   */
+  url: string | null;
   /** Size of the paired `<id>.log`, 0 if none yet. */
   logBytes: number;
   /** Last-modified time of the log file — a recency signal, not a liveness guarantee. */
@@ -178,33 +188,6 @@ const SERVICE_ID_RE = /^[a-z0-9_-]+$/;
 /** Reuse-window for the in-container liveness probe (see `probeLivenessMemoized`). Comfortably shorter
  *  than the ~5s status poll so a genuine state change still surfaces on the next tick. */
 const LIVENESS_MEMO_TTL_MS = 2_500;
-/** Slack for the generation gate: `atlas-svc` markers are second-precision (`date +%FT%TZ`) while Docker
- *  `StartedAt` is sub-second, so a service started in the SAME second as container boot can truncate just
- *  below it. Only treat a marker as previous-generation when it predates boot by more than this — genuine
- *  stale markers predate boot by minutes/hours, so the tolerance never lets a reused old pgid through. */
-const GENERATION_SKEW_MS = 2_000;
-
-/**
- * Map one supervised process's durable marker + the container-wide liveness probe to its live `status`.
- * The container-GENERATION gate is load-bearing: a marker whose `startedAt` predates the current
- * container boot is from a previous PID namespace and is dead even if its old pgid was reused and now
- * answers `kill -0` — so we must reject it BEFORE consulting `alive`.
- */
-export function serviceStatus(
-  marker: Pick<ServiceInfo, 'pgid' | 'startedAt'>,
-  probe: ServiceLivenessProbe,
-): ServiceInfo['status'] {
-  if (probe.status === 'unknown') return 'unknown';
-  if (probe.status === 'down') return 'stopped'; // no running container ⇒ every marker is dead
-  // probe.status === 'up' — verify the marker belongs to THIS container generation before trusting alive.
-  if (marker.pgid == null || marker.startedAt == null) return 'unknown';
-  const started = Date.parse(marker.startedAt);
-  const generation = Date.parse(probe.containerStartedAt);
-  if (!Number.isFinite(started) || !Number.isFinite(generation))
-    return 'unknown';
-  if (started < generation - GENERATION_SKEW_MS) return 'stopped'; // previous container — reused pgid must not read as running
-  return probe.alive.includes(marker.pgid) ? 'running' : 'stopped';
-}
 /** Tail cap for the logs endpoint — a long-running dev server's log can grow large. */
 const MAX_SERVICE_LOG_TAIL_BYTES = 512 * 1024;
 /** How often the SSE log tail polls the file for new bytes — see `serviceLogEvents` doc comment. */
@@ -575,6 +558,10 @@ export class WebSurfaceController {
     // Repo-file endpoints (`/repo/tree`, `/repo/file`) read the job worktree via `git ls-files`. From the
     // (non-@Global) GitModule, imported into WebSurfaceModule for this injection to resolve.
     private readonly git: LocalGitService,
+    // Sandbox-preview exposure — renders each service's public URL + triggers a per-poll Caddy reconcile.
+    // From the @Global ExposureModule (inert unless PREVIEW_BASE_DOMAIN is set). @Optional so the
+    // controller's direct-construction unit tests (positional args) compile without a trailing argument.
+    @Optional() private readonly exposure?: ExposureService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -2090,49 +2077,25 @@ export class WebSurfaceController {
     await this.requireThread(jobId, org.id);
     const dir = this.threadLifecycle.supervisorDirHost(jobId);
     if (!dir) return { services: [] };
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return { services: [] };
-    }
-    const services: ServiceInfo[] = [];
-    for (const f of entries) {
-      if (!f.endsWith('.json')) continue;
-      const id = f.slice(0, -'.json'.length);
-      if (!SERVICE_ID_RE.test(id)) continue; // defensive — atlas-svc only ever writes validated names
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<
-          string,
-          unknown
-        >;
-      } catch {
-        continue; // a marker mid-write / corrupt — skip rather than fail the whole list
-      }
-      let logBytes = 0;
-      let logUpdatedAt: string | null = null;
-      try {
-        const st = statSync(join(dir, `${id}.log`));
-        logBytes = st.size;
-        logUpdatedAt = st.mtime.toISOString();
-      } catch {
-        /* no log yet */
-      }
-      services.push({
-        id,
-        name: typeof parsed.name === 'string' ? parsed.name : id,
-        cmd: typeof parsed.cmd === 'string' ? parsed.cmd : '',
-        pid: typeof parsed.pid === 'number' ? parsed.pid : null,
-        pgid: typeof parsed.pgid === 'number' ? parsed.pgid : null,
-        startedAt:
-          typeof parsed.startedAt === 'string' ? parsed.startedAt : null,
-        logBytes,
-        logUpdatedAt,
-        status: 'unknown', // overwritten by the liveness probe below
-      });
-    }
-    services.sort((a, b) => a.id.localeCompare(b.id));
+    const markers = readServiceMarkers(dir);
+    // Preserve `expose` alongside each marker so URL rendering can honor an opt-out, then project to the
+    // wire shape (status/url filled below).
+    const byId = new Map(markers.map((m) => [m.id, m] as const));
+    const services: ServiceInfo[] = markers
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        cmd: m.cmd,
+        pid: m.pid,
+        pgid: m.pgid,
+        startedAt: m.startedAt,
+        port: m.port,
+        url: null,
+        logBytes: m.logBytes,
+        logUpdatedAt: m.logUpdatedAt,
+        status: 'unknown' as ServiceInfo['status'], // overwritten by the liveness probe below
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id));
 
     // Join the durable markers with a LIVE liveness probe (exec `kill -0` into the container), gated on
     // the container generation so a recreated container reusing a pgid can't fake `running`. Memoized so
@@ -2141,7 +2104,20 @@ export class WebSurfaceController {
       .map((s) => s.pgid)
       .filter((p): p is number => p != null);
     const probe = await this.probeLivenessMemoized(jobId, pgids);
-    for (const s of services) s.status = serviceStatus(s, probe);
+    const exposure = this.exposure;
+    for (const s of services) {
+      s.status = serviceStatus(s, probe);
+      const expose = byId.get(s.id)?.expose ?? true;
+      const live = s.port != null && expose && s.status === 'running';
+      // urlFor already returns null when exposure is disabled, so this is null unless a base domain is set.
+      s.url = live ? (exposure?.urlFor(jobId, s.name) ?? null) : null;
+    }
+
+    // Fire-and-forget: converge Caddy to the freshly-observed live set on every poll (immediacy), never
+    // blocking the response. No-op when exposure is disabled.
+    if (exposure?.enabled) {
+      void exposure.reconcile(jobId).catch(() => undefined);
+    }
 
     return { services };
   }

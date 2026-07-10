@@ -4,6 +4,7 @@ import {
   Inject,
   Logger,
   Module,
+  Optional,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
@@ -44,6 +45,7 @@ import { GithubCiStateSync } from './github-ci-state-sync.service';
 import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
+import { ExposureService } from '../exposure';
 
 // SchedulerRegistry interval names (process-unique) for the leader-gated driver timers. Registered on
 // promote, deleted on demote — the leader-only lifecycle is unchanged; only the timer plumbing moved off
@@ -51,6 +53,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
 const REAP_INTERVAL = 'driver:reap';
 const POLL_INTERVAL = 'driver:poll';
 const SESSION_RESUME_INTERVAL = 'driver:session-resume';
+const PREVIEW_INTERVAL = 'driver:preview';
 
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
@@ -135,6 +138,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private demoteSub?: Subscription;
   private pollInFlight = false; // skip a heartbeat if the prior tick is still running (slow GitHub / many PRs)
   private sessionResumeInFlight = false; // skip a tick if the prior session-resume sweep is still running
+  private previewInFlight = false; // skip a preview reconcile if the prior tick is still converging Caddy
   private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
   private webhooksBackfilled = false; // per-repo webhook backfill runs ONCE per process on leadership
@@ -149,6 +153,10 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly onboarding: OnboardingService,
     private readonly scheduler: SchedulerRegistry,
+    // Sandbox-preview reconciler — swept on a short leader-only timer so marker writes become Caddy routes
+    // without relying on an open console tab. From the @Global ExposureModule; inert when disabled. @Optional
+    // so the module's direct-construction unit test compiles without a trailing argument.
+    @Optional() private readonly exposure?: ExposureService,
   ) {}
 
   /**
@@ -207,11 +215,13 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       this.startReapTimer(); // transient: stopped on demote, restarted on every promote
       this.startPollTimer(); // the fast adaptive PR-state heartbeat (leader-only, like the reap timer)
       this.startSessionResumeTimer(); // auto-resume lanes parked on a Claude session limit (leader-only)
+      this.startPreviewTimer(); // the marker → Caddy-route reconciler (leader-only, exposure-gated)
     });
     this.demoteSub = this.election.onDemote(() => {
       this.stopReapTimer();
       this.stopPollTimer();
       this.stopSessionResumeTimer();
+      this.stopPreviewTimer();
     });
   }
 
@@ -315,6 +325,36 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     }
   }
 
+  /**
+   * The sandbox-preview reconcile heartbeat (~10s) — the leader turns supervised-service markers into live
+   * Caddy routes (and prunes stale ones) without relying on an open console tab. Leader-only (it mutates
+   * shared Caddy state) and inert unless the ExposureService is enabled (PREVIEW_BASE_DOMAIN set); `unref`
+   * so it never keeps the process alive; `previewInFlight` guards against overlap when a tick runs long.
+   */
+  private startPreviewTimer(): void {
+    if (!this.exposure?.enabled) return; // exposure disabled (no PREVIEW_BASE_DOMAIN) — nothing to reconcile
+    if (this.scheduler.doesExist('interval', PREVIEW_INTERVAL)) return;
+    const everyMs = 10 * 1000; // 10s — a marker write becomes a public route within a tick.
+    const iv = setInterval(() => {
+      if (this.previewInFlight) return;
+      this.previewInFlight = true;
+      void this.exposure
+        ?.reconcileAll()
+        .catch((err) => this.logger.warn(`preview reconcile failed: ${err}`))
+        .finally(() => {
+          this.previewInFlight = false;
+        });
+    }, everyMs);
+    iv.unref?.();
+    this.scheduler.addInterval(PREVIEW_INTERVAL, iv);
+  }
+
+  private stopPreviewTimer(): void {
+    if (this.scheduler.doesExist('interval', PREVIEW_INTERVAL)) {
+      this.scheduler.deleteInterval(PREVIEW_INTERVAL);
+    }
+  }
+
   onApplicationShutdown(): void {
     this.resumeSub?.unsubscribe();
     this.promoteSub?.unsubscribe();
@@ -322,5 +362,6 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     this.stopReapTimer();
     this.stopPollTimer();
     this.stopSessionResumeTimer();
+    this.stopPreviewTimer();
   }
 }

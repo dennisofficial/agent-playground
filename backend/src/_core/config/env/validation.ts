@@ -93,6 +93,12 @@ export interface IEnvConfig {
   JWT_REFRESH_SECRET: string;
   ADMIN_API_TOKEN?: string; // gates the admin REST endpoints; unset → disabled
   COOKIE_DOMAIN?: string; // scopes session cookies across subdomains in deploy; host-only in dev
+  // Sandbox preview exposure (see the exposure module). All optional — the feature is OFF (no routing,
+  // no injected env) unless PREVIEW_BASE_DOMAIN is set, so dev/local is unchanged.
+  PREVIEW_BASE_DOMAIN?: string; // e.g. `atlas.dltechnologies.co`; unset → exposure disabled
+  CADDY_ADMIN_SOCKET?: string; // Caddy admin unix socket path; default /srv/atlas/caddy/admin/admin.sock
+  CADDY_CONTAINER_NAME?: string; // Caddy container to bridge into sandbox nets; default `atlas-caddy`
+  PREVIEW_ID_SECRET?: string; // HMAC key for the previewId token; derives from SECRETS_ENCRYPTION_KEY if unset
   ADMIN_SEED_EMAIL?: string; // provisions the dev admin on boot (+ seeds); unset → no auto-seed
   ADMIN_SEED_PASSWORD?: string;
   GITHUB_WEBHOOK_SECRET?: string; // HMAC-verifies GitHub webhooks; unset → /ingress/github refuses all
@@ -197,6 +203,10 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   JWT_REFRESH_SECRET: Joi.string().required(),
   ADMIN_API_TOKEN: Joi.string().optional(),
   COOKIE_DOMAIN: Joi.string().optional(),
+  PREVIEW_BASE_DOMAIN: Joi.string().optional(),
+  CADDY_ADMIN_SOCKET: Joi.string().optional(),
+  CADDY_CONTAINER_NAME: Joi.string().optional(),
+  PREVIEW_ID_SECRET: Joi.string().optional(),
   ADMIN_SEED_EMAIL: Joi.string().email().optional(),
   ADMIN_SEED_PASSWORD: Joi.string().optional(),
   GITHUB_WEBHOOK_SECRET: Joi.string().optional(),

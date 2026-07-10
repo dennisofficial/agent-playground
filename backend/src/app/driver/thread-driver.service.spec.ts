@@ -965,6 +965,10 @@ function assemble(
       brainTranscriptProjectsDir: () => null,
       supervisorDirHost: () => null,
       probeLiveness: async () => ({ status: 'unknown' as const }),
+      sandboxContainerName: () => 'atlas-sbx-thread-test',
+      bridgeCaddyToSandbox: async () => undefined,
+      unbridgeCaddyFromSandbox: async () => undefined,
+      listLiveThreadJobIds: async () => [],
     },
     // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.
     {
