@@ -38,6 +38,7 @@ import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
 import { JobLifecycleService } from './job-lifecycle.service';
+import { JOB_TEARDOWN } from './job-teardown.port';
 import { GithubPrStateSync } from './github-pr-state-sync.service';
 import { GithubCiStateSync } from './github-ci-state-sync.service';
 import { OnboardingService } from '../onboarding';
@@ -106,11 +107,16 @@ const SESSION_RESUME_INTERVAL = 'driver:session-resume';
     WorktreeProvisioner,
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
     { provide: JOB_DISPATCHER, useExisting: ThreadDriver },
+    // The physical job-teardown seam — lets callers outside the driver (OrganizationService.deleteOrg)
+    // reclaim a job's container + worktree WITHOUT a static import of the driver (which would close an
+    // ES module cycle). @Global export, so no `imports: [DriverModule]` edge is needed either.
+    { provide: JOB_TEARDOWN, useExisting: JobLifecycleService },
   ],
   exports: [
     ThreadDriver,
     JOB_DISPATCHER,
     JobLifecycleService,
+    JOB_TEARDOWN,
     GithubPrStateSync,
     GithubCiStateSync,
     // Exported so the @Global surface + the ingress state-webhook controller can reach `markRepoDue`
