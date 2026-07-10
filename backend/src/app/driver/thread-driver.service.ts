@@ -73,6 +73,7 @@ import {
   COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
   ROTATION_PREAMBLE,
+  ROTATION_RESUME_TAIL,
   ROTATION_SOFT_NUDGE,
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
@@ -146,6 +147,13 @@ interface BatchResult {
 interface ThreadResult {
   outcome: ThreadOutcome;
   handoff: string | null;
+  /** Set ONLY by the "already blocked → re-halt" short-circuit, and ONLY when the durable owed-wake row
+   *  already exists (`halt_outcome` set → `haltJob` already posted the card + persisted the wake) AND this
+   *  is not a `judge_unavailable` transient hold. When true, `runJob` SKIPS `haltJob` — no re-post, no
+   *  re-arm — which stops the every-reap "Thread blocked → Holding." spam. Left unset for a fresh block, for
+   *  a `judge_unavailable` hold (whose periodic re-wake IS its recovery), and when `halt_outcome` is still
+   *  missing (crash between `block_thread`'s record write and `haltJob`) so `haltJob` runs once to create it. */
+  suppressHaltNotify?: boolean;
 }
 
 /**
@@ -939,7 +947,15 @@ export class ThreadDriver implements JobDispatcher {
         // HALT the build (ADR 0004): an unfinished thread must not ship. Relay a durable card, flip the job
         // to a needs-you state, record the owed brain wake + trail, and SKIP finalizeBuild — no PR on an
         // unfinished build. The brain wake fires from `drive()` once the job leaves the active window.
-        await this.haltJob(job, route, thread, res.outcome);
+        //
+        // EXCEPT a re-halt of an already-notified brain-owned block (`suppressHaltNotify`): the card was
+        // already posted and the owed-wake row persists in the DB (delivered→acked stays acked; never
+        // delivered stays owed and the 30s sweep still delivers it once). Skipping `haltJob` here kills the
+        // every-30-min "Thread blocked → Holding." spam without dropping a genuine first wake. A fresh block
+        // or a `judge_unavailable` re-halt still notifies.
+        if (!res.suppressHaltNotify) {
+          await this.haltJob(job, route, thread, res.outcome);
+        }
         return;
       }
       handoff = res.handoff;
@@ -1231,13 +1247,29 @@ export class ThreadDriver implements JobDispatcher {
     // thread. (Live-observed on job 43705139 — the master review "blocked again" hundreds of times.)
     const prior = await this.store.getTerminalRecord(thread.id).catch(() => null);
     if (prior?.status === 'blocked') {
+      // Suppress the redundant re-notify (re-posted card + re-armed brain wake) ONLY when the durable
+      // owed-wake row already exists (`halt_outcome` set → `haltJob` already ran) AND this isn't the
+      // transient `judge_unavailable` hold. If `halt_outcome` is still missing (crash between
+      // `block_thread`'s terminal-record write and `haltJob`), fall through so `haltJob` runs once and
+      // creates it — else `threadsAwaitingHaltWake` has nothing to deliver and the wake is lost forever. A
+      // `judge_unavailable` hold recovers ONLY via the periodic re-wake driving the brain to `retry_thread`
+      // (no judge health-poll exists), so it must keep re-arming.
+      const owedHaltExists =
+        (await this.store.haltOutcome(thread.id).catch(() => null)) != null;
+      const transientHold = prior.blocked?.reason === 'judge_unavailable';
+      const suppressHaltNotify = owedHaltExists && !transientHold;
       this.logger.log(
-        `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)`,
+        `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)` +
+          (suppressHaltNotify
+            ? ' [suppressing redundant re-notify]'
+            : transientHold
+              ? ' [judge_unavailable: re-arming wake]'
+              : ' [owed-wake row missing: running haltJob to create it]'),
       );
       await this.store
         .setThreadCondition(thread.id, 'paused')
         .catch(() => undefined);
-      return { outcome: 'blocked', handoff: null };
+      return { outcome: 'blocked', handoff: null, suppressHaltNotify };
     }
 
     // A thread already `done` must NOT be re-run. The runJob loop skips `done` threads from its start-of-run
@@ -2172,7 +2204,7 @@ export class ThreadDriver implements JobDispatcher {
     // instead of restarting the batch. The seed is cleared the instant the fresh session is born (turn-runner
     // clear-on-birth). Mirrors the brain's `pending_compaction_seed` fold in `runChatTurnInner`.
     const legSeed = await this.store.getPendingLegSeed(anchor.id);
-    const task = legSeed ? `${legSeed}\n\n---\n\n${baseTask}` : baseTask;
+    const task = this.foldLegSeed(legSeed, baseTask);
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2287,7 +2319,7 @@ export class ThreadDriver implements JobDispatcher {
           );
           result = null;
           const seed = await this.store.getPendingLegSeed(anchor.id);
-          legTask = seed ? `${seed}\n\n---\n\n${baseTask}` : baseTask;
+          legTask = this.foldLegSeed(seed, baseTask);
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
           rotationState.softReached = false;
@@ -2301,7 +2333,7 @@ export class ThreadDriver implements JobDispatcher {
         // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
         result = null;
         const seed = await this.store.getPendingLegSeed(anchor.id);
-        legTask = seed ? `${seed}\n\n---\n\n${baseTask}` : baseTask;
+        legTask = this.foldLegSeed(seed, baseTask);
       }
       report = result!.report;
 
@@ -2863,6 +2895,16 @@ export class ThreadDriver implements JobDispatcher {
     const tasks = await this.store.getThreadTasks(threadId).catch(() => [] as TaskItem[]);
     const tasksBlock = renderOpenLegTasks(tasks);
     return [ROTATION_PREAMBLE, handoff, ...(tasksBlock ? [tasksBlock] : [])].join('\n\n');
+  }
+
+  /**
+   * Fold a rotation seed into the fresh Leg's turn task. The seed ({@link buildLegSeed} — preamble + handoff +
+   * carried checklist) leads so it lands in the PRIMACY slot; the original batch task sits in the middle; and the
+   * {@link ROTATION_RESUME_TAIL} operative directive trails LAST, in the RECENCY slot where LLM recall is highest.
+   * A non-rotated Leg (no seed) gets the bare batch task unchanged.
+   */
+  private foldLegSeed(seed: string | null, baseTask: string): string {
+    return seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask;
   }
 
   /**

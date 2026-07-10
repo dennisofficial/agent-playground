@@ -859,14 +859,56 @@ export class DriverStoreService {
     }));
   }
 
-  /** Stamp the completion wake delivered and clear the owed flag — idempotent (keyed on `done_wake_owed`
-   *  still true + `done_waked_at` still null, so a repeat/racing call matches zero rows). */
-  async markDoneWaked(threadId: string): Promise<void> {
+  /** CAS-claim a fresh completion-wake generation at delivery START — atomically bump `done_wake_gen` and
+   *  return the new value, iff the wake is still owed + un-stamped. Returns null when nothing is owed
+   *  (already delivered/superseded → the caller no-ops). Mirrors the halt CAS but does the bump HERE (not
+   *  out-of-band like `retry_thread`): a plain read would hand two concurrent sweeps the SAME gen and let
+   *  both claim it, whereas the atomic bump gives each a distinct gen so the loser's late stamp is invalid. */
+  async claimDoneWakeGen(threadId: string): Promise<number | null> {
+    const res = await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ done_wake_gen: () => 'done_wake_gen + 1' })
+      .where('id = :threadId', { threadId })
+      .andWhere('done_wake_owed IS TRUE')
+      .andWhere('done_waked_at IS NULL')
+      .returning('done_wake_gen')
+      .execute();
+    const gen = (res.raw as { done_wake_gen?: number }[] | undefined)?.[0]?.done_wake_gen;
+    return typeof gen === 'number' ? gen : null;
+  }
+
+  /** Supersede a prior (dead) completion-wake attempt: delete every `messages` row for THIS originating wake
+   *  thread whose `meta.doneWakeGen` is below the current gen. Scoped by `doneWakeThreadId` (NOT just
+   *  job+gen) because `done_wake_gen` is per-thread and the owed-wake sweep iterates every owed thread of a
+   *  job — a job-wide `gen<N` delete would erase another thread's valid summary. Untagged rows (normal chat,
+   *  seed pills) carry no `doneWakeThreadId` → never matched. Called at delivery START so a truncated partial
+   *  from attempt N-1 is gone before the gen-N summary lands. */
+  async supersedeDoneWakeMessages(
+    jobId: string,
+    threadId: string,
+    gen: number,
+  ): Promise<void> {
+    await this.messages
+      .createQueryBuilder()
+      .delete()
+      .where('job_id = :jobId', { jobId })
+      .andWhere(`(meta ->> 'doneWakeThreadId') = :threadId`, { threadId })
+      .andWhere(`(meta ->> 'doneWakeGen')::int < :gen`, { gen })
+      .execute();
+  }
+
+  /** Stamp the completion wake delivered and clear the owed flag — GENERATION-KEYED CAS (mirrors
+   *  `markHaltWaked`): stamp only if `done_wake_gen` still equals the `gen` captured at delivery start (no
+   *  newer attempt superseded this one) and the wake is still owed + un-stamped. A stale attempt completing
+   *  after a newer claim matches zero rows, so it can't clear owed out from under the live attempt. */
+  async markDoneWaked(threadId: string, gen: number): Promise<void> {
     await this.threads
       .createQueryBuilder()
       .update(ThreadEntity)
       .set({ done_waked_at: () => 'now()', done_wake_owed: false })
       .where('id = :threadId', { threadId })
+      .andWhere('done_wake_gen = :gen', { gen })
       .andWhere('done_wake_owed IS TRUE')
       .andWhere('done_waked_at IS NULL')
       .execute();
@@ -908,6 +950,22 @@ export class DriverStoreService {
       .execute();
     const used = res.raw?.[0]?.halt_fix_attempts as number | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
+  /** The thread's owed-halt outcome (`halt_outcome`), or null if no halt-wake has been persisted yet. Lets
+   *  the re-halt short-circuit tell a genuinely already-notified block (owed-wake row exists → safe to
+   *  suppress the redundant re-notify) from a blocked terminal record whose `haltJob` hasn't run yet (crash
+   *  between `block_thread`'s record write and `haltJob` → must still notify once, else the wake is lost). */
+  async haltOutcome(
+    threadId: string,
+  ): Promise<'blocked' | 'incomplete' | 'failed' | null> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, halt_outcome: true },
+    });
+    return (
+      (row?.halt_outcome as 'blocked' | 'incomplete' | 'failed' | null) ?? null
+    );
   }
 
   /** The thread's spent autonomous re-drive budget (0 if unset). Read by `haltJob` to decide whether a

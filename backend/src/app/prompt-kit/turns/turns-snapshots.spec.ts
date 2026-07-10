@@ -6,6 +6,7 @@ import {
   RECORD_LEG_HANDOFF_STOP,
   ROTATION_PREAMBLE,
   ROTATION_REMINDER_NUDGE,
+  ROTATION_RESUME_TAIL,
   ROTATION_SOFT_NUDGE,
 } from './build-handoff';
 
@@ -41,6 +42,10 @@ describe('turns / golden snapshots', () => {
 
   it('ROTATION_PREAMBLE', async () => {
     await expect(ROTATION_PREAMBLE).toMatchFileSnapshot('./__snapshots__/rotation-preamble.txt');
+  });
+
+  it('ROTATION_RESUME_TAIL', async () => {
+    await expect(ROTATION_RESUME_TAIL).toMatchFileSnapshot('./__snapshots__/rotation-resume-tail.txt');
   });
 
   it('ROTATION_SOFT_NUDGE', async () => {
