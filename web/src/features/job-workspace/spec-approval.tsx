@@ -1,10 +1,15 @@
 "use client";
 
-import { Check, ClipboardCheck, Lock } from "lucide-react";
+import { Check, ClipboardCheck, Lock, Undo2 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useApprove } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
-import { APPROVE_ACTION_ID, SHIP_ACTION_ID } from "@/lib/api/types";
+import {
+  APPROVE_ACTION_ID,
+  REQUEST_CHANGES_ACTION_ID,
+  RETRACT_SHIP_ACTION_ID,
+  SHIP_ACTION_ID,
+} from "@/lib/api/types";
 
 /**
  * The async spec-approval surfaces (handoff: "Async Spec / Plan Approval Components") — mirrored for
@@ -22,10 +27,14 @@ import { APPROVE_ACTION_ID, SHIP_ACTION_ID } from "@/lib/api/types";
  * All of these POST the SAME verdict the inline approval card does ({@link APPROVE_ACTION_ID} /
  * {@link SHIP_ACTION_ID} + the card's verbatim `value`) via the shared {@link useVerdictAction} hook, and
  * rely on the mutation's message/pipeline invalidation to flip the job onward (`awaiting_approval →
- * running` / `awaiting_ship_review → running`). There is intentionally **no** "Request changes"/"Deny"
- * control on any of these surfaces — that's typed into chat. The parent only renders them while the job
- * sits at the matching status, so a successful verdict naturally unmounts them once the refetch lands; a
- * brief in-place "done" state covers the gap.
+ * running` / `awaiting_ship_review → running`). Each surface ALSO carries a secondary
+ * {@link RetractButton} — "Back to planning" at the plan gate ({@link REQUEST_CHANGES_ACTION_ID}) and
+ * "Back to building" at the ship gate ({@link RETRACT_SHIP_ACTION_ID}) — a guaranteed escape hatch that
+ * sends the job back to `planning` WITHOUT discarding completed work (the Atlas `withdraw_plan` /
+ * `withdraw_ship` tools cover the intent-judged side). Declining/cancelling outright is still chat or the
+ * plan-gate Deny; retract only steps the job back a stage. The parent only renders these surfaces while
+ * the job sits at the matching status, so a successful verdict naturally unmounts them once the refetch
+ * lands; a brief in-place "done" state covers the gap.
  */
 const RULED_BY = "U-OPERATOR";
 
@@ -55,6 +64,19 @@ function useApproveShip(jobRef: JobRef, value: string) {
   return useVerdictAction(jobRef, SHIP_ACTION_ID, value);
 }
 
+/** The plan-gate retract ("Back to planning") — reuses the already-wired `request_changes` verdict
+ *  (`awaiting_approval → planning`). A separate mutation instance from the approve button, so their
+ *  pending/done state don't collide. */
+function useRetractPlan(jobRef: JobRef, value: string) {
+  return useVerdictAction(jobRef, REQUEST_CHANGES_ACTION_ID, value);
+}
+
+/** The ship-gate retract ("Back to building") — POSTs {@link RETRACT_SHIP_ACTION_ID}, the sibling of
+ *  the Atlas `withdraw_ship` tool (`awaiting_ship_review → planning`). */
+function useRetractShip(jobRef: JobRef, value: string) {
+  return useVerdictAction(jobRef, RETRACT_SHIP_ACTION_ID, value);
+}
+
 // ── Component 1 — Navigator Approval Callout ───────────────────────────────────────────────────────
 /**
  * The navigator callout — sits above the SPECS header. Title row ("Plan ready for review") + a full-width
@@ -70,6 +92,7 @@ export function NavigatorApprovalCallout({
   directBuild?: boolean;
 }) {
   const { submit, pending, approved, error } = useApprovePlan(jobRef, value);
+  const retract = useRetractPlan(jobRef, value);
   return (
     <div
       className="mx-1.5 mb-3 rounded-lg border"
@@ -97,10 +120,22 @@ export function NavigatorApprovalCallout({
         onClick={submit}
         pending={pending}
         approved={approved}
+        blocked={retract.pending || retract.approved}
         directBuild={directBuild}
         className="mt-[9px] w-full justify-center text-[11px]"
         style={{ borderRadius: "7px", padding: "7px 0" }}
         iconSize={12}
+      />
+      <RetractButton
+        onClick={retract.submit}
+        pending={retract.pending}
+        done={retract.approved}
+        blocked={pending || approved}
+        idleLabel="Back to planning"
+        doneLabel="Back to planning"
+        className="mt-1.5 w-full text-[10.5px]"
+        style={{ borderRadius: "7px", padding: "6px 0" }}
+        iconSize={11}
       />
       {error ? (
         <p className="mt-1.5 text-[10px] text-red">
@@ -124,16 +159,29 @@ export function NavigatorApproveButton({
   directBuild?: boolean;
 }) {
   const { submit, pending, approved, error } = useApprovePlan(jobRef, value);
+  const retract = useRetractPlan(jobRef, value);
   return (
     <>
       <ApproveButton
         onClick={submit}
         pending={pending}
         approved={approved}
+        blocked={retract.pending || retract.approved}
         directBuild={directBuild}
         className="w-full justify-center text-[11px]"
         style={{ borderRadius: "7px", padding: "7px 0" }}
         iconSize={12}
+      />
+      <RetractButton
+        onClick={retract.submit}
+        pending={retract.pending}
+        done={retract.approved}
+        blocked={pending || approved}
+        idleLabel="Back to planning"
+        doneLabel="Back to planning"
+        className="mt-1.5 w-full text-[10.5px]"
+        style={{ borderRadius: "7px", padding: "6px 0" }}
+        iconSize={11}
       />
       {error ? (
         <p className="mt-1 text-[10px] text-red">
@@ -164,6 +212,7 @@ export function PersistentApprovalBar({
   directBuild?: boolean;
 }) {
   const { submit, pending, approved, error } = useApprovePlan(jobRef, value);
+  const retract = useRetractPlan(jobRef, value);
   return (
     <div
       className="flex shrink-0 items-center gap-[11px] border-t"
@@ -195,10 +244,22 @@ export function PersistentApprovalBar({
           {stepCount === 1 ? "" : "s"} · approve from anywhere in this pane
         </div>
       </div>
+      <RetractButton
+        onClick={retract.submit}
+        pending={retract.pending}
+        done={retract.approved}
+        blocked={pending || approved}
+        idleLabel="Back to planning"
+        doneLabel="Back to planning"
+        className="text-[11.5px]"
+        style={{ borderRadius: "8px", padding: "8px 14px" }}
+        iconSize={13}
+      />
       <ApproveButton
         onClick={submit}
         pending={pending}
         approved={approved}
+        blocked={retract.pending || retract.approved}
         directBuild={directBuild}
         className="text-[11.5px]"
         style={{
@@ -223,15 +284,28 @@ export function NavigatorShipButton({
   value: string;
 }) {
   const { submit, pending, approved, error } = useApproveShip(jobRef, value);
+  const retract = useRetractShip(jobRef, value);
   return (
     <>
       <ShipButton
         onClick={submit}
         pending={pending}
         approved={approved}
+        blocked={retract.pending || retract.approved}
         className="w-full justify-center text-[11px]"
         style={{ borderRadius: "7px", padding: "7px 0" }}
         iconSize={12}
+      />
+      <RetractButton
+        onClick={retract.submit}
+        pending={retract.pending}
+        done={retract.approved}
+        blocked={pending || approved}
+        idleLabel="Back to building"
+        doneLabel="Back to building"
+        className="mt-1.5 w-full text-[10.5px]"
+        style={{ borderRadius: "7px", padding: "6px 0" }}
+        iconSize={11}
       />
       {error ? (
         <p className="mt-1 text-[10px] text-red">
@@ -255,6 +329,7 @@ export function PersistentShipBar({
   value: string;
 }) {
   const { submit, pending, approved, error } = useApproveShip(jobRef, value);
+  const retract = useRetractShip(jobRef, value);
   return (
     <div
       className="flex shrink-0 items-center gap-[11px] border-t"
@@ -285,10 +360,22 @@ export function PersistentShipBar({
           Master review passed. Review the diff, then ship when you’re happy.
         </div>
       </div>
+      <RetractButton
+        onClick={retract.submit}
+        pending={retract.pending}
+        done={retract.approved}
+        blocked={pending || approved}
+        idleLabel="Back to building"
+        doneLabel="Back to building"
+        className="text-[11.5px]"
+        style={{ borderRadius: "8px", padding: "8px 14px" }}
+        iconSize={13}
+      />
       <ShipButton
         onClick={submit}
         pending={pending}
         approved={approved}
+        blocked={retract.pending || retract.approved}
         className="text-[11.5px]"
         style={{
           borderRadius: "8px",
@@ -309,6 +396,7 @@ function VerdictButton({
   onClick,
   pending,
   approved,
+  blocked = false,
   idleLabel,
   pendingLabel,
   doneLabel,
@@ -319,6 +407,9 @@ function VerdictButton({
   onClick: () => void;
   pending: boolean;
   approved: boolean;
+  /** Disable (without changing the label) while the sibling retract verdict is in flight/succeeded,
+   *  so only one verdict can be submitted per gate. */
+  blocked?: boolean;
   idleLabel: string;
   pendingLabel: string;
   doneLabel: string;
@@ -330,7 +421,7 @@ function VerdictButton({
     <button
       type="button"
       onClick={onClick}
-      disabled={pending || approved}
+      disabled={pending || approved || blocked}
       className={`inline-flex items-center gap-1.5 font-bold text-white transition hover:brightness-95 disabled:cursor-default disabled:opacity-90 ${className}`}
       style={{
         background: "var(--green)",
@@ -352,6 +443,62 @@ function VerdictButton({
         <>
           <Check size={iconSize} strokeWidth={2.6} />
           {idleLabel}
+        </>
+      )}
+    </button>
+  );
+}
+
+// ── shared secondary retract button ─────────────────────────────────────────────────────────────────
+/** The secondary "retract" button shared by both gates — steps the job back to `planning` without
+ *  discarding completed work ("Back to building" at the ship gate, "Back to planning" at the plan gate).
+ *  Deliberately quiet: an outline/ghost look (panel bg, `--line` border, muted text) with an undo
+ *  affordance, so it never competes with the green primary. Mirrors {@link VerdictButton}'s
+ *  pending/done handling; pending copy is always "Retracting…". */
+function RetractButton({
+  onClick,
+  pending,
+  done,
+  blocked = false,
+  idleLabel,
+  doneLabel,
+  className = "",
+  style,
+  iconSize,
+}: {
+  onClick: () => void;
+  pending: boolean;
+  done: boolean;
+  /** Disable (without changing the label) while the sibling approve/ship verdict is in flight/succeeded,
+   *  so only one verdict can be submitted per gate. */
+  blocked?: boolean;
+  idleLabel: string;
+  doneLabel: string;
+  className?: string;
+  style?: React.CSSProperties;
+  iconSize: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={pending || done || blocked}
+      className={`inline-flex items-center justify-center gap-1.5 font-semibold text-dim transition hover:brightness-95 disabled:cursor-default disabled:opacity-70 ${className}`}
+      style={{
+        background: "var(--panel)",
+        border: "1px solid var(--border-2)",
+        ...style,
+      }}
+    >
+      {pending ? (
+        <>
+          <Spinner className="h-3 w-3" />
+          Retracting…
+        </>
+      ) : (
+        <>
+          <Undo2 size={iconSize} strokeWidth={2.4} />
+          {done ? doneLabel : idleLabel}
         </>
       )}
     </button>

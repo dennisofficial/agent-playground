@@ -23,6 +23,7 @@ export const BRIDGE_TOOL_LABELS: Record<AtlasHostBridgeTool, string> = {
   create_decision: "Lock decision",
   withdraw_question: "Withdraw question",
   withdraw_plan: "Withdraw plan",
+  withdraw_ship: "Withdraw ship review",
   set_job_kind: "Set job kind",
   update_decision: "Update decision",
   delete_decision: "Delete decision",

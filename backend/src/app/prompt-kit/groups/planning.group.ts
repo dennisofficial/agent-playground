@@ -163,6 +163,9 @@ export class PlanningGroup {
       'while it is still pending, call `withdraw_plan` to clear the pending approval (or just call `propose_plan`',
       'again — it cleanly supersedes the old one). Never leave a stale, no-longer-current plan sitting there',
       'approvable while you keep working.',
+      'SAME CONTROL AT THE SHIP GATE: if the operator messages you while parked at READY TO SHIP asking for MORE',
+      'changes (not merely a question about the built work), call `withdraw_ship` FIRST, then do the work — the',
+      'gate re-arms automatically once it completes.',
     ].join('\n');
   }
 

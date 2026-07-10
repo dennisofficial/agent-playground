@@ -44,6 +44,7 @@ import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
+  RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
@@ -105,6 +106,9 @@ const VALID_ACTION_IDS = new Set([
   // The ship-review gate's "Ship it" button — same endpoint, but the `approval$` bridge routes it to the
   // driver's ship-resume instead of a plan verdict (see WebSurfaceModule).
   SHIP_ACTION_ID,
+  // The ship-review gate's "Back to building" button — the sibling retract of SHIP_ACTION_ID, routed to
+  // the driver's ship-retract instead of a plan verdict (see WebSurfaceModule).
+  RETRACT_SHIP_ACTION_ID,
 ]);
 /** Author fields for an operator-authored web message — the REAL signed-in user (display name falls back
  *  to email), so the brain's `<user name=…>` attribution names the actual person, not a generic "Operator".
@@ -1078,7 +1082,7 @@ export class WebSurfaceController {
     }
     // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
     const thread = await this.requireThread(meta.jobId, org.id);
-    if (actionId !== SHIP_ACTION_ID) {
+    if (actionId !== SHIP_ACTION_ID && actionId !== RETRACT_SHIP_ACTION_ID) {
       const mismatch =
         thread.status !== 'awaiting_approval' ||
         !meta.decisionRecordId ||
@@ -1123,6 +1127,9 @@ export class WebSurfaceController {
    * `running`, fast-forwards finished work, continues at the first unfinished step). `status` (the build
    * phase) is untouched by the halt, so retry resumes it in place. No-op if the thread isn't halted.
    * Scoped to the caller's org via the membership guard + `requireThread`.
+   *
+   * Also the build-lane FORCE-resume for a `session_limit` park: `ThreadDriver.retry` un-halts any halt kind
+   * (session_limit included) and clears the auto-resume clock, so this same endpoint resumes a parked build early.
    */
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/retry')
   @UseGuards(OrgMembershipGuard)
@@ -1167,6 +1174,9 @@ export class WebSurfaceController {
         chunkKey: `seed:retry:${jobId}:${Date.now()}`,
       },
     });
+    // Force-resume of a Main-lane session-limit park: clear the durable auto-resume clock so the leader sweep
+    // never re-fires the resume it has now been done early. Harmless when the thread wasn't parked (no-op update).
+    await this.store.setSessionResume(jobId, null, null);
     return { ok: true };
   }
 

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
+import { DataSource, IsNull, MoreThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import type {
   Decision,
@@ -35,6 +35,7 @@ import type { ReviewFinding } from '../autofix';
 import { isDriverExecutableKind, laneDefaultFooter, threadKindSpec } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
+import { webVerdictCard } from '../surface/web-approval-card';
 import type { PlannedStep } from './render-plan';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
@@ -242,6 +243,45 @@ export class DriverStoreService {
     await this.jobs.update({ id: jobId }, { halt: null });
   }
 
+  /**
+   * Has an IDENTICAL system→operator notice already landed on this thread recently? Mirrors the brain-store
+   * guard, but build-lane notices are authored through the shared block sink (`author_id='atlas'`) and marked
+   * operator-only by `meta.source`, so match on that source rather than author.
+   */
+  async hasRecentSystemOperatorNotice(
+    jobId: string,
+    text: string,
+    withinMs = 120_000,
+  ): Promise<boolean> {
+    const since = new Date(Date.now() - withinMs);
+    const existing = await this.messages.find({
+      where: { job_id: jobId, text, created_at: MoreThan(since) },
+      select: { id: true, meta: true },
+    });
+    return existing.some(
+      (m) => (m.meta as { source?: unknown } | null)?.source === 'system_operator',
+    );
+  }
+
+  /**
+   * Set (or clear) the durable auto-resume clock a lane parks on when it hits a Claude session/usage limit.
+   * `resumeAt=null` (with `meta=null`) clears the clock so the leader sweep never re-fires — called on every
+   * un-park path (retry / resumePaused / the sweep itself). See {@link JobEntity.session_resume_at}.
+   */
+  async setSessionResume(
+    jobId: string,
+    resumeAt: string | null,
+    meta: JobEntity['session_resume'],
+  ): Promise<void> {
+    await this.jobs.update(
+      { id: jobId },
+      {
+        session_resume_at: resumeAt ? new Date(resumeAt) : null,
+        session_resume: meta,
+      },
+    );
+  }
+
   /** Record the feature branch all threads stack on (set once, when the sandbox is cut). */
   async setFeatureBranch(jobId: string, branch: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { feature_branch: branch });
@@ -310,6 +350,43 @@ export class DriverStoreService {
       .andWhere("status = 'awaiting_ship_review'")
       .execute();
     return (res.affected ?? 0) > 0;
+  }
+
+  /** Retract the ship-review gate back to planning (Atlas `withdraw_ship` tool OR the manual
+   *  "Back to building" click). CONDITIONAL on `awaiting_ship_review` — single-winner vs a racing
+   *  "Ship it" click; a stale/double retract is a no-op. Does NOT touch `ship_review_approved_at`
+   *  (already null here) nor the decision record (the plan was approved — nothing to supersede).
+   *  Also neutralizes EVERY still-actionable durable ship card so its inline "Ship it" button can't
+   *  be clicked when the gate re-arms. */
+  async retractShip(jobId: string): Promise<boolean> {
+    return this.dataSource.transaction(async (m) => {
+      const res = await m
+        .getRepository(JobEntity)
+        .createQueryBuilder()
+        .update(JobEntity)
+        .set({ status: 'planning', activity: 'idle' })
+        .where('id = :jobId', { jobId })
+        .andWhere("status = 'awaiting_ship_review'")
+        .execute();
+      if ((res.affected ?? 0) === 0) return false;
+      const messages = m.getRepository(MessageEntity);
+      const rows = await messages.find({
+        where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+      });
+      for (const row of rows) {
+        const card = row.card as Record<string, unknown> | null;
+        if (card?.['type'] !== 'approval_card') continue;
+        const title = String(card?.['title'] ?? 'Ship review');
+        row.card = webVerdictCard(
+          jobId,
+          title,
+          'retracted',
+          '↩︎ Retracted — back to planning for changes.',
+        ) as unknown as Record<string, unknown>;
+        await messages.save(row);
+      }
+      return true;
+    });
   }
 
   /** Clear the ship-review approval marker so the NEXT build cycle re-gates. Called when a fresh build is

@@ -11,6 +11,7 @@ import type {
   JobActivity as WireJobActivity,
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
+  OrgUsage,
 } from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
@@ -21,6 +22,17 @@ import type {
 export type { WireJobStatus };
 /** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
 export type { WireJobHalt };
+/**
+ * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`, plus OPTIONAL
+ * multi-account display fields the backend doesn't populate yet (both undefined until then; the usage
+ * panel falls back to a neutral single-account header when absent).
+ */
+export type WireOrgUsage = OrgUsage & {
+  /** Display label for the connected account (e.g. an email) — absent until multi-account ships. */
+  accountLabel?: string;
+  /** Subscription plan label (e.g. "Max plan") — absent until multi-account ships. */
+  plan?: string;
+};
 /**
  * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
  * single-sourced in `@workspace/shared`. Carried on the realtime row; the dot itself reads `needsYou`.
@@ -68,11 +80,18 @@ export const VIEW_PLAN_ACTION_ID = "atlas_approval:view_plan";
  *  plan stage), clicked while the job is `awaiting_ship_review`. POSTs to the SAME `/approve` endpoint with
  *  a `value` of just `{ jobId }` (no decision record — nothing to re-rule, just resume the build). */
 export const SHIP_ACTION_ID = "atlas_approval:ship";
+/** The ship-review gate's manual "Back to building" retract — sends `awaiting_ship_review → planning`
+ *  without discarding completed work (mirrors the Atlas `withdraw_ship` tool). POSTs to the SAME
+ *  `/approve` endpoint with the ship card's `{ jobId }` value. Must match the backend string in
+ *  `approval-blocks.ts`. */
+export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
   | typeof REQUEST_CHANGES_ACTION_ID
-  | typeof DENY_ACTION_ID;
+  | typeof DENY_ACTION_ID
+  | typeof SHIP_ACTION_ID
+  | typeof RETRACT_SHIP_ACTION_ID;
 
 export interface ApprovalDecision {
   decisionClass: string;
@@ -98,7 +117,8 @@ export interface WebApprovalCard {
   decisionRecordId?: string;
   /**
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
-   * vs "Changes". `ship` — the ship-review gate (a single "Ship it" button; `threads`/`decisions` empty).
+   * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
+   * `threads`/`decisions` empty).
    */
   kind?: "plan" | "direct" | "ship";
   title: string;

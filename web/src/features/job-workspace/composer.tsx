@@ -14,6 +14,7 @@ import { AttachmentTray } from "./attachment-tray";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
 import { useAllJobs } from "@/lib/api/inbox";
 import { ContextMeter } from "./bubbles";
+import { UsageRing } from "./usage-ring";
 import { CommentTray } from "./comment-tray";
 import { useReviewComments } from "./review-comments";
 import { formatEffort, formatModelLabel } from "@/lib/format";
@@ -298,6 +299,7 @@ export function Composer({
               </>
             )}
             <div className="flex-1" />
+            {!isSubagent && jobRef.orgId ? <UsageRing orgId={jobRef.orgId} /> : null}
             {/* Live: the model · effort the lane's latest turn ran on (threads `turn_meta.usage`). */}
             {modelLabel ? (
               <span className="font-mono text-[11px] text-dim">

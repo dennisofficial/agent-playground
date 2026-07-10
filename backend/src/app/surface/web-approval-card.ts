@@ -12,6 +12,7 @@ import type { DecisionApprovalCard, ApprovalDecision } from './approval-blocks';
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
+  RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
   VIEW_PLAN_ACTION_ID,
 } from './approval-blocks';
@@ -36,8 +37,8 @@ export interface WebApprovalCard {
   /**
    * Which gate the card is for:
    * - `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval (Approve/Deny buttons).
-   * - `ship` — the ship-review gate (a single "Ship it" button; `threads`/`decisions` empty).
-   * The web labels the list "Sections" vs "Changes"; a `ship` card renders just the ship action.
+   * - `ship` — the ship-review gate (`Ship it` + `Back to building`; `threads`/`decisions` empty).
+   * The web labels the list "Sections" vs "Changes"; a `ship` card renders ship-gate actions.
    */
   kind?: 'plan' | 'direct' | 'ship';
   title: string;
@@ -110,10 +111,10 @@ export function webApprovalCard(card: DecisionApprovalCard): WebApprovalCard {
 }
 
 /**
- * Build the SHIP-REVIEW gate card — the terminal human gate. A single "Ship it" primary button whose
- * `value` carries only `{ jobId }` (no decision record: the click just resumes the driver, it doesn't
- * re-rule anything). Reuses the `approval_card` payload type (so the web's inline card renderer needs no
- * new branch — it renders `actions` generically), discriminated by `kind: 'ship'`.
+ * Build the SHIP-REVIEW gate card — the terminal human gate. Its action values carry only `{ jobId }`
+ * (no decision record: ship resumes the driver; retract sends the job back to planning). Reuses the
+ * `approval_card` payload type (so the web's inline card renderer needs no new branch — it renders
+ * `actions` generically), discriminated by `kind: 'ship'`.
  */
 export function webShipReviewCard(input: {
   jobId: string;
@@ -134,6 +135,12 @@ export function webShipReviewCard(input: {
         actionId: SHIP_ACTION_ID,
         label: 'Ship it',
         style: 'primary',
+        value,
+      },
+      {
+        actionId: RETRACT_SHIP_ACTION_ID,
+        label: 'Back to building',
+        style: 'default',
         value,
       },
     ],

@@ -17,10 +17,12 @@ import {
 import { AuthRefreshSinkService } from './auth-refresh.sink';
 import { CredentialResolver } from './credential-resolver.service';
 import { OrgCredentialsController } from './credentials.controller';
+import { OauthUsageService } from './oauth-usage.service';
 import { OnboardingController } from './onboarding.controller';
 import { OnboardingService } from './onboarding.service';
 import { RepoController } from './repo.controller';
 import { TenantCredentialStore } from './tenant-credential.store';
+import { OrgUsageController } from './usage.controller';
 import { WorkspaceSecretFileStore } from './workspace-secret.store';
 import { WorkspaceConfigStore } from './workspace-config.store';
 import { WorkspaceSecretsController } from './workspace-secrets.controller';
@@ -58,6 +60,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
     WorkspaceSecretsController,
     RepoController,
     OnboardingController,
+    OrgUsageController,
   ],
   providers: [
     TenantCredentialStore,
@@ -67,6 +70,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
     OnboardingService,
     AuthRefreshSinkService,
     { provide: AUTH_REFRESH_SINK, useExisting: AuthRefreshSinkService },
+    OauthUsageService,
   ],
   exports: [
     TenantCredentialStore,
@@ -75,6 +79,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
     CredentialResolver,
     OnboardingService,
     AUTH_REFRESH_SINK,
+    OauthUsageService,
   ],
 })
 export class OnboardingModule {}
