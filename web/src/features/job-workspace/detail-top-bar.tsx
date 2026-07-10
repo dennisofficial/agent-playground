@@ -2,6 +2,7 @@
 
 import type React from "react";
 import { ChevronLeft, Menu, PanelRight } from "lucide-react";
+import { cn } from "@/lib/cn";
 
 /**
  * The single top bar shared by the main conversation AND every lane/detail pane (build thread/step, subagent
@@ -29,14 +30,18 @@ export function DetailTopBar({
   onOpenDetail?: () => void;
 }) {
   return (
-    <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-5">
+    <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3 md:px-4">
       {onBack ? (
-        <TopBarButton title="Back" onClick={onBack}>
+        <TopBarButton title="Back" onClick={onBack} className="-ml-1">
           <ChevronLeft size={16} />
         </TopBarButton>
       ) : null}
       {onOpenNav ? (
-        <TopBarButton title="Panels" onClick={onOpenNav}>
+        <TopBarButton
+          title="Panels"
+          onClick={onOpenNav}
+          className={onBack ? undefined : "-ml-1"}
+        >
           <Menu size={15} />
         </TopBarButton>
       ) : null}
@@ -137,10 +142,12 @@ export function TopBarButton({
   title,
   onClick,
   children,
+  className,
 }: {
   title: string;
   onClick?: () => void;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
     <button
@@ -148,7 +155,10 @@ export function TopBarButton({
       title={title}
       aria-label={title}
       onClick={onClick}
-      className="flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text"
+      className={cn(
+        "flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text",
+        className,
+      )}
     >
       {children}
     </button>
