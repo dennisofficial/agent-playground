@@ -120,6 +120,9 @@ export function useAllJobsRealtime(): void {
           pr: row.prState
             ? {
                 state: row.prState as PrState,
+                // The number and url are stable once a PR exists and the flat WAL row omits them —
+                // preserve the enriched values so a live state transition re-glyphs without dropping them.
+                number: next[idx].pr?.number ?? null,
                 mergeable: row.prMergeable ?? null,
                 url: next[idx].pr?.url ?? null,
               }

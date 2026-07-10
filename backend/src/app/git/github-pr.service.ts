@@ -18,8 +18,13 @@ export const WORK_EVENTS = [
   'pull_request_review_comment',
   'issue_comment',
 ];
-/** Events delivered to the silent PR-state-sync front door (`/webhooks/github/state`). */
-export const STATE_EVENTS = ['pull_request'];
+/**
+ * Events delivered to the silent PR-state-sync front door (`/webhooks/github/state`). `pull_request`
+ * drives the open/merge/close sync; `push` drives the real-time base-move-conflict unlock — a push to a
+ * repo's DEFAULT branch marks that repo's open PRs due-now so the reconciler re-checks mergeability in
+ * seconds (GitHub emits no webhook for a base-induced conflict).
+ */
+export const STATE_EVENTS = ['pull_request', 'push'];
 
 export interface OpenPullRequestArgs {
   owner: string;

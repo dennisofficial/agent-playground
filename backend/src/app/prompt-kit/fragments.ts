@@ -377,7 +377,9 @@ export const VALIDATE_BY_RUNNING_NOTE =
   'green build: actually run it and exercise it the way a caller would before you report done. Start ' +
   'long-running services with the `atlas-svc` supervisor (`run`/`logs`/`ps`) so they outlive the turn, ' +
   'then hit them — `curl` the endpoint and check the status/body, drive the UI with Playwright, or run ' +
-  "the repo's own e2e/smoke tooling — and confirm the OBSERVED behavior matches the intent.";
+  "the repo's own e2e/smoke tooling — and confirm the OBSERVED behavior matches the intent. If the change " +
+  'is internal plumbing whose effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed ' +
+  'to an SDK), instead capture a log line from the booted process proving the changed value was passed at runtime.';
 
 /**
  * EVIDENCE ARTIFACTS — the human-facing PROOF that live-validation actually happened. Shared by the build
@@ -404,14 +406,24 @@ export const EVIDENCE_ARTIFACTS_NOTE =
 
 /**
  * SPIKE FIRST — for planning + workers. Prove a risky/unverified assumption (especially an SDK or library
- * capability) with a tiny throwaway spike BEFORE committing to a plan that rests on it.
+ * capability) with a tiny throwaway spike BEFORE committing to a plan that rests on it. Covers BOTH
+ * directions of a capability claim: building ON one you assume works, AND ruling OUT a path because you
+ * assume it "can't be done" — the negative claim is the more dangerous one, since it silently steers the
+ * design toward a workaround and never trips the "before you build on it" guardrails.
  */
 export const SPIKE_FIRST_NOTE =
   'SPIKE BEFORE YOU COMMIT to an approach that rests on an UNVERIFIED assumption — above all a claim about ' +
   'what an SDK, library, API, or tool can actually do ("does X support Y?", "can this be called ' +
-  'mid-stream?"). Rather than design several steps on top of a guess and discover the premise was false, ' +
-  'write the smallest throwaway spike that calls the real thing and RUN it to prove the assumption first. ' +
-  'A five-minute spike beats a derailed plan. Keep spikes in throwaway scratch space; never commit them.';
+  'mid-stream?"). A claim that something CANNOT be done — "not expressible", "not supported", "the library ' +
+  'can\'t do this", so you reach for a workaround — is the MOST dangerous version of this and carries the ' +
+  'HIGHEST burden of proof, not the lowest: you cannot prove a negative from memory, and "I don\'t recall a ' +
+  'way" is not "there is no way". Treat any impossibility claim that would change your approach exactly like ' +
+  '"does X support Y?" — verify it against the actual current docs/source for the installed version (or a ' +
+  'spike) and CITE what you found (a doc URL or source path:line) before you let it steer the design; an ' +
+  'uncited "can\'t" does not get to rule out a path. Rather than design several steps on top of a guess and ' +
+  'discover the premise was false, write the smallest throwaway spike that calls the real thing and RUN it ' +
+  'to prove the assumption first. A five-minute spike beats a derailed plan. Keep spikes in throwaway ' +
+  'scratch space; never commit them.';
 
 /**
  * BASELINE FIRST — for planning. Reproduce and observe the CURRENT behavior of the thing you're about to
@@ -438,7 +450,9 @@ export const AUTHOR_LIVE_VALIDATION_NOTE =
   'PROVE IT BY RUNNING IT — Atlas knows work is done because it SAW it run, not because the build was green. ' +
   'When a change has ANY runtime surface (an endpoint, a UI, a CLI, a job, a script), the proof is actually ' +
   'RUNNING it and observing the result — `curl` the endpoint and check the body, drive the UI, run the CLI — ' +
-  'and typecheck/build/test is only the FLOOR beneath that. This holds both ways: in a PLAN, author each ' +
+  'and typecheck/build/test is only the FLOOR beneath that. For internal plumbing whose effect is never echoed ' +
+  'in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), the proof is a log line from the booted ' +
+  'process showing the changed value was passed at runtime. This holds both ways: in a PLAN, author each ' +
   "thread's `## Validation` as that live run and NEVER mark it \"optional\"/\"nice to have\"/\"smoke (optional)\"; " +
   'and on a DIRECT build you run yourself, live-validate before you finalize. The only work that validates by ' +
   'tests alone is work with genuinely no runtime surface — and then say that is why.';

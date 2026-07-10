@@ -145,6 +145,12 @@ export function Navigator({
   directBuild?: boolean;
 }) {
   const job = pipelineJob(pipeline);
+  // A COMMITTED direct build (durable `jobs.build_path`, stamped only at approval) never grows build lanes,
+  // a `plan.md`, or generated plan docs — so its plan-oriented empty-state placeholders are pure noise.
+  // Gates on the persisted field, NOT the `directBuild` approval-CTA hint (which is derived from message
+  // history and only meaningful at the approval gate). Null while still awaiting approval ⇒ false ⇒ a
+  // requested-but-unapproved direct build keeps its placeholders (it can still convert to a full plan).
+  const isDirectBuild = job?.buildPath === "direct";
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
   // DRIFT: the agent switched the sandbox HEAD to a branch other than the host-named featureBranch. Surfaced
   // (never blocked) — the live branch is what actually ships. Null when there's no divergence to show.
@@ -417,6 +423,7 @@ export function Navigator({
           jobId={jobRef.jobId}
           laneNode={laneNode}
           onSelectNode={onSelectNode}
+          isDirectBuild={isDirectBuild}
         />
 
         {/* The whole-diff master review is now just another thread in the THREADS list above (rendered
@@ -429,6 +436,7 @@ export function Navigator({
           loading={contextLoading}
           detailNode={detailNode}
           onSelectNode={onSelectNode}
+          isDirectBuild={isDirectBuild}
         />
 
         {/* SERVICES — real atlas-svc supervised processes (dev servers Atlas brought up on demand). Open in
@@ -517,12 +525,15 @@ function ThreadRows({
   jobId,
   laneNode,
   onSelectNode,
+  isDirectBuild,
 }: {
   status: JobStatus;
   job: PipelineJob | null;
   jobId: string;
   laneNode: string | null;
   onSelectNode: (node: string) => void;
+  /** A committed direct build has no lanes by design — suppress the "approve the plan" empty state. */
+  isDirectBuild?: boolean;
 }) {
   // Triaging — the autonomous lane: triage findings, not a build tree.
   if (status === "triaging") {
@@ -551,9 +562,10 @@ function ThreadRows({
   }
 
   // One renderer for every stage: running/done/failed threads expand to their live task list; pre-approval
-  // drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the hero ghost row.
+  // drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the hero ghost row —
+  // EXCEPT a committed direct build, which never grows lanes, so its "approve the plan" ghost is just noise.
   if (!job || job.threads.length === 0) {
-    return <BuildLanesEmpty />;
+    return isDirectBuild ? null : <BuildLanesEmpty />;
   }
   return (
     <PipelineTree
@@ -574,12 +586,16 @@ function OutputsRegion({
   loading,
   detailNode,
   onSelectNode,
+  isDirectBuild,
 }: {
   status: JobStatus;
   context: JobContext | undefined;
   loading?: boolean;
   detailNode: string | null;
   onSelectNode: (node: string) => void;
+  /** A committed direct build has no `plan.md` and (usually) no generated plan docs — hide those groups
+   *  entirely when empty, instead of showing their plan-oriented ghost rows. */
+  isDirectBuild?: boolean;
 }) {
   const specs = context?.specs ?? [];
   const generated = context?.generated ?? [];
@@ -597,6 +613,7 @@ function OutputsRegion({
         files={specs}
         prefix="spec"
         loading={loading}
+        hideWhenEmpty={isDirectBuild}
         emptyIcon={<FileText size={13} />}
         emptyText={
           <>
@@ -646,6 +663,7 @@ function OutputsRegion({
         prefix="gen"
         generated
         loading={loading}
+        hideWhenEmpty={isDirectBuild}
         emptyIcon={<Lock size={13} />}
         emptyText="Nothing generated yet"
         detailNode={detailNode}
@@ -677,6 +695,7 @@ function OutputGroup({
   prefix,
   generated,
   loading,
+  hideWhenEmpty,
   emptyIcon,
   emptyText,
   detailNode,
@@ -688,6 +707,9 @@ function OutputGroup({
   prefix: "spec" | "artifact" | "gen";
   generated?: boolean;
   loading?: boolean;
+  /** Drop the whole group (divider + empty row) when it has no files and nothing is loading/pending —
+   *  used to hide the plan-oriented SPECS/GENERATED groups for a direct build, where they never populate. */
+  hideWhenEmpty?: boolean;
   emptyIcon: ReactNode;
   emptyText: ReactNode;
   detailNode: string | null;
@@ -711,6 +733,9 @@ function OutputGroup({
       else next.add(path);
       return next;
     });
+  // Drop the group whole (no divider, no ghost row) when asked to hide-when-empty and there's genuinely
+  // nothing to show — placed AFTER the hooks above so their order stays unconditional.
+  if (hideWhenEmpty && files.length === 0 && !loading && !children) return null;
   return (
     <>
       <Divider

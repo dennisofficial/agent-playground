@@ -45,6 +45,7 @@ import { BRAIN_SINK } from '../stimulus/stimulus-consumer';
 import { JobTitler } from '../titling';
 import { GithubPrStateSync } from '../driver/github-pr-state-sync.service';
 import { GithubCiStateSync } from '../driver/github-ci-state-sync.service';
+import { GitStateReconciler } from '../driver/git-state-reconciler.service';
 import { GithubNotificationSource } from './github-notification.source';
 import {
   GithubEventsWebhookController,
@@ -275,7 +276,10 @@ describe('GithubStateWebhookController PR-state path', () => {
     const prSync = {
       dispatch: vi.fn(async () => undefined),
     } as unknown as GithubPrStateSync;
-    const controller = new GithubStateWebhookController(adapter, prSync);
+    const reconciler = {
+      markRepoDue: vi.fn(async () => 0),
+    } as unknown as GitStateReconciler;
+    const controller = new GithubStateWebhookController(adapter, prSync, reconciler);
 
     const res = await controller.receive({ body: {}, headers: {} });
 
@@ -289,5 +293,24 @@ describe('GithubStateWebhookController PR-state path', () => {
       url: 'https://github.com/acme/web/pull/7',
       merged: true,
     });
+    expect(reconciler.markRepoDue).not.toHaveBeenCalled();
+  });
+
+  it('dispatches a default-branch push (repo-push) to GitStateReconciler.markRepoDue, never prSync', async () => {
+    const adapter = {
+      source: 'github',
+      handlePrWebhook: async () => ({ outcome: 'repo-push' as const, orgId: ORG_ID, repoId: 'repo-1' }),
+    } as unknown as GithubNotificationSource;
+    const prSync = { dispatch: vi.fn(async () => undefined) } as unknown as GithubPrStateSync;
+    const reconciler = {
+      markRepoDue: vi.fn(async () => 2),
+    } as unknown as GitStateReconciler;
+    const controller = new GithubStateWebhookController(adapter, prSync, reconciler);
+
+    const res = await controller.receive({ body: {}, headers: {} });
+
+    expect(res).toEqual({ status: 'accepted', marked: 2 });
+    expect(reconciler.markRepoDue).toHaveBeenCalledWith(ORG_ID, 'repo-1');
+    expect(prSync.dispatch).not.toHaveBeenCalled();
   });
 });

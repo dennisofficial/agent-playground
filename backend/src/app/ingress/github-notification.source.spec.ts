@@ -527,6 +527,42 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
     );
     expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
   });
+
+  it('maps a verified push to the DEFAULT branch → repo-push (marks the repo due)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const push = {
+      ref: 'refs/heads/main',
+      repository: { full_name: 'Acme/Web', default_branch: 'main' },
+    };
+    const json = JSON.stringify(push);
+    const res = await src.handlePrWebhook(
+      raw(push, { 'x-hub-signature-256': sign(json), 'x-github-event': 'push' }),
+    );
+    expect(res).toMatchObject({ outcome: 'repo-push', orgId: 'T1', repoId: 'web' });
+  });
+
+  it('ignores a push to a NON-default branch (a feature head moving is caught by the PR cadence)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const push = {
+      ref: 'refs/heads/feat/x',
+      repository: { full_name: 'Acme/Web', default_branch: 'main' },
+    };
+    const json = JSON.stringify(push);
+    const res = await src.handlePrWebhook(
+      raw(push, { 'x-hub-signature-256': sign(json), 'x-github-event': 'push' }),
+    );
+    expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
+  });
+
+  it('ignores a push with no default_branch in the payload (can\'t confirm it\'s the base)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const push = { ref: 'refs/heads/main', repository: { full_name: 'Acme/Web' } };
+    const json = JSON.stringify(push);
+    const res = await src.handlePrWebhook(
+      raw(push, { 'x-hub-signature-256': sign(json), 'x-github-event': 'push' }),
+    );
+    expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
+  });
 });
 
 describe('GithubNotificationSource.handleWorkEvent', () => {
