@@ -550,7 +550,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(oks[0]).toEqual({ ok: true, used: 2 });
   });
 
-  // ── Decision d1 — completion-wake store methods (mirrors the halt trio, no generation CAS) ────────
+  // ── Decision d1 — completion-wake store methods (mirrors the halt trio, WITH a generation CAS) ─────
 
   it('setDoneWakeOwed → threadsAwaitingDoneWake selects only owed+un-waked rows', async () => {
     const { jobId, threadId } = await seedJobThread();
@@ -569,30 +569,97 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
 
     await store.setDoneWakeOwed(threadId, 'notable');
     await store.setDoneWakeOwed(otherThread.id, 'final');
-    await store.markDoneWaked(otherThread.id); // already waked — must be excluded
+    const g = await store.claimDoneWakeGen(otherThread.id);
+    await store.markDoneWaked(otherThread.id, g!); // already waked — must be excluded
 
     const owed = await store.threadsAwaitingDoneWake(jobId);
     expect(owed).toEqual([{ jobId, threadId, reason: 'notable' }]);
   });
 
-  it('markDoneWaked stamps `done_waked_at`, clears the owed flag, and is idempotent (repeat is a no-op)', async () => {
+  it('claimDoneWakeGen bumps monotonically while owed, and returns null once not owed', async () => {
+    const { threadId } = await seedJobThread();
+    // Not owed yet → nothing to claim.
+    expect(await store.claimDoneWakeGen(threadId)).toBeNull();
+
+    await store.setDoneWakeOwed(threadId, 'final');
+    expect(await store.claimDoneWakeGen(threadId)).toBe(1);
+    expect(await store.claimDoneWakeGen(threadId)).toBe(2); // a re-delivery attempt gets a fresh gen
+
+    // Once stamped (with the current gen) the wake is no longer owed → further claims are null.
+    await store.markDoneWaked(threadId, 2);
+    expect(await store.claimDoneWakeGen(threadId)).toBeNull();
+  });
+
+  it('markDoneWaked is a GENERATION-KEYED CAS — a stale gen is a no-op, only the current gen stamps', async () => {
     const { jobId, threadId } = await seedJobThread();
     await store.setDoneWakeOwed(threadId, 'final');
+    const gen1 = await store.claimDoneWakeGen(threadId); // 1
+    const gen2 = await store.claimDoneWakeGen(threadId); // 2 (a newer attempt superseded gen1)
+
+    // The stale gen-1 attempt completing late must NOT clear the owed flag out from under gen 2.
+    await store.markDoneWaked(threadId, gen1!);
     expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([
       { jobId, threadId, reason: 'final' },
     ]);
+    let row = await threads.findOne({ where: { id: threadId } });
+    expect(row?.done_waked_at).toBeNull();
 
-    await store.markDoneWaked(threadId);
+    // The live gen-2 attempt stamps it.
+    await store.markDoneWaked(threadId, gen2!);
     expect(await store.threadsAwaitingDoneWake(jobId)).toEqual([]);
-    const row = await threads.findOne({ where: { id: threadId } });
+    row = await threads.findOne({ where: { id: threadId } });
     expect(row?.done_wake_owed).toBe(false);
     expect(row?.done_waked_at).toBeInstanceOf(Date);
-    const firstStamp = row?.done_waked_at;
+  });
 
-    // A repeat call matches zero rows (owed is already false) — the stamp does not move.
-    await store.markDoneWaked(threadId);
-    const rowAgain = await threads.findOne({ where: { id: threadId } });
-    expect(rowAgain?.done_waked_at).toEqual(firstStamp);
+  it('supersedeDoneWakeMessages deletes only THIS thread\'s below-gen rows — spares other threads and untagged rows', async () => {
+    const { jobId, threadId } = await seedJobThread();
+    const otherThread = await threads.save(
+      threads.create({
+        kind: 'builder',
+        job_id: jobId,
+        org_id: ORG_ID,
+        ordinal: 21,
+        brief: 'Other lane',
+        status: 'done',
+      }),
+    );
+    const mk = async (meta: Record<string, unknown> | null, text: string) =>
+      (
+        await messages.save(
+          messages.create({
+            job_id: jobId,
+            author: 'Atlas',
+            author_id: 'atlas',
+            text,
+            kind: 'chat',
+            meta,
+          }),
+        )
+      ).id;
+
+    const stalePartial = await mk(
+      { doneWakeThreadId: threadId, doneWakeGen: 1 },
+      'truncated gen-1 partial',
+    );
+    const currentSummary = await mk(
+      { doneWakeThreadId: threadId, doneWakeGen: 2 },
+      'complete gen-2 summary',
+    );
+    const otherThreadSummary = await mk(
+      { doneWakeThreadId: otherThread.id, doneWakeGen: 1 },
+      'other thread gen-1 summary',
+    );
+    const untagged = await mk(null, 'normal operator chat');
+
+    // Deliver gen 2 for `threadId` → supersede its gen<2 rows only.
+    await store.supersedeDoneWakeMessages(jobId, threadId, 2);
+
+    const survivors = (await messages.find({ where: { job_id: jobId } })).map((m) => m.id);
+    expect(survivors).not.toContain(stalePartial); // the truncated gen-1 partial is gone
+    expect(survivors).toEqual(
+      expect.arrayContaining([currentSummary, otherThreadSummary, untagged]),
+    );
   });
 
   it('masterReviewThreadId returns the job\'s master_review thread id, or null when it has none', async () => {
