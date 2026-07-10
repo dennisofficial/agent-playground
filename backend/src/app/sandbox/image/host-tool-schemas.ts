@@ -387,7 +387,10 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'diagnostics + the repo typecheck are clean AND — if you touched a runtime surface (HTTP endpoint, UI ' +
     'page/component, CLI entry point, or background job) — you have ACTUALLY EXERCISED IT LIVE (booted the ' +
     'process and curled the endpoint / drove the UI / ran the CLI for real). Include that live evidence in ' +
-    '`verification` (the real command, its exit code, a tail of its output). finalize_build runs a ' +
+    '`verification` (the real command, its exit code, a tail of its output). Before passing passed:true, ' +
+    'actually LOOK at the evidence you captured — a screenshot showing an error / "connection lost" / blank ' +
+    'page (or a log full of failures) means the check FAILED, not passed; do not report it as green. ' +
+    'finalize_build runs a ' +
     'live-verification judge over this evidence and refuses to ship a runtime change you only typechecked. ' +
     'If you cannot get things clean, pass passed:false with `remaining` listing the specific errors.',
 
