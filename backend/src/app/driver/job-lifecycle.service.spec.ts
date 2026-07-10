@@ -11,6 +11,7 @@
 
 import type { EnvService } from '@core/config/env/env.service';
 import type { ModuleRef } from '@nestjs/core';
+import type { BrainGateway } from '../brain-gateway';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -80,6 +81,7 @@ function makeService(
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
+    { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
     { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
   );
 }
@@ -114,6 +116,7 @@ function makeServiceWithMocks(
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
+    { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
     { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
   );
   return { svc, sandboxes, provisionAndAttach };
@@ -158,6 +161,7 @@ function makeServiceForReset(
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { failRunningForJob } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
+    { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
     { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
   );
   return { svc, sandboxes, teardown, activity, failRunningForJob };
@@ -409,6 +413,7 @@ describe('JobLifecycleService.applyGithubPrState', () => {
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
+      { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
     svc.closeJob = vi.fn(async () => {
@@ -475,6 +480,7 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
+      { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
     return { svc, projects, closePullRequest, githubToken };
@@ -581,6 +587,7 @@ describe('JobLifecycleService.ensureProvisioned — merged/closed conversations 
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
+      { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
     // Stub the heavy cold-provision (real git/container) on the instance — we only assert the closed-row

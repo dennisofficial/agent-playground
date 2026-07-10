@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
 import type { DecisionRecord, Job } from '../domain';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
+import { BrainGateway } from '../brain-gateway';
 import { DriverStoreService } from './driver-store.service';
 import type { ResolvedRepo } from './repo-resolver';
 
@@ -30,19 +30,6 @@ export type PreShipResult =
 
 /** The slice of the decision record the ship step needs (overview + decisions → the PR body). */
 export type ShipRecord = Pick<DecisionRecord, 'overview' | 'decisions'>;
-
-/** The brain seam the ship step drives — resolved lazily to avoid the build-ship⇄brain module cycle. */
-interface ShipBrain {
-  openPrAtShip(input: {
-    jobId: string;
-    orgId: string;
-    repoId: string;
-    branch: string;
-    defaultBranch: string;
-    title: string;
-    decisions: ReadonlyArray<{ title: string; decisionClass: string; ruling: string }>;
-  }): Promise<void>;
-}
 
 export interface ShipInput {
   job: Job;
@@ -80,9 +67,10 @@ export class BuildShipService {
     private readonly git: LocalGitService,
     private readonly pr: GithubPrService,
     private readonly store: DriverStoreService,
-    // The brain is resolved lazily (dynamic import) — build-ship and the brain live in modules that would
-    // otherwise form a load-time cycle. Mirrors `ThreadDriver.brain()`.
-    private readonly moduleRef: ModuleRef,
+    // The neutral driver→brain gateway (the brain binds itself into it on bootstrap). Injecting it forms
+    // no construction cycle — the gateway depends on nothing, unlike a `useExisting: AgentSessionManager`
+    // port (the brain constructs this service, so that would deadlock DI).
+    private readonly brainGateway: BrainGateway,
   ) {}
 
   /** The DRIVER / boot ship path (brain IDLE): host gate → seed the brain's open-PR turn → latch the PR.
@@ -114,8 +102,7 @@ export class BuildShipService {
     // base, pushes, authors the body, and `gh pr create`s, all with its own authenticated git + `gh`. This
     // AWAITS the brain turn to completion. No host "opening the PR" system
     // message here — the seeded turn renders on Main with its own "Opening the pull request." pill.
-    const brain = await this.brain();
-    await brain.openPrAtShip({
+    await this.brainGateway.openPrAtShip({
       jobId: job.id,
       orgId: job.orgId,
       repoId: job.repoId,
@@ -225,14 +212,6 @@ export class BuildShipService {
         this.logger.debug(`ship notify failed (continuing): ${err}`);
       }
     };
-  }
-
-  /** Lazily resolve the brain — a dynamic import keeps the brain⇄build-ship dependency out of module load. */
-  private async brain(): Promise<ShipBrain> {
-    const { AgentSessionManager } = await import(
-      '../brain/agent-session-manager.service.js'
-    );
-    return this.moduleRef.get(AgentSessionManager, { strict: false });
   }
 
   /**

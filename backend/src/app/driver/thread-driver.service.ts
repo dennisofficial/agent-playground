@@ -1,12 +1,12 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { threadDirName } from './thread-dir-name';
 import { PlanVisibilityService } from '../decision-gate';
+import { BrainGateway } from '../brain-gateway';
 import {
   AutoFixStage,
   dedupeFindings,
@@ -182,27 +182,6 @@ function isTransientDriveError(err: unknown): boolean {
 const TRANSIENT_ERROR_RE =
   /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
 
-/** The narrow brain surface the driver needs (Phase-3 halt wake) — resolved
- *  lazily to avoid the brain⇄driver module cycle. */
-interface BrainSurface {
-  /** Wake the job brain to triage a halted thread (ADR 0004 rider 4). The brain loads the job + terminal
-   *  record itself and runs a trusted harness turn; a no-op if the thread is no longer owed a wake. */
-  notifyThreadHalted(
-    jobId: string,
-    threadId: string,
-    outcome: 'blocked' | 'incomplete' | 'failed',
-    gen: number,
-  ): Promise<void>;
-
-  /** Wake the job brain for a `done` completion owed a wake (decision d1) — `'final'` (whole build parked
-   *  at ship gate) or `'notable'` (finished done but carrying gaps/unverified items). */
-  notifyThreadDone(
-    jobId: string,
-    threadId: string,
-    reason: 'final' | 'notable',
-  ): Promise<void>;
-}
-
 @Injectable()
 export class ThreadDriver implements JobDispatcher {
   private readonly logger = new Logger(ThreadDriver.name);
@@ -244,9 +223,10 @@ export class ThreadDriver implements JobDispatcher {
     // The durable registry of in-flight Redis-transport turns — lets a build batch RE-ATTACH its still-live
     // engine stream after a restart (like the brain) instead of re-running. @Global via SandboxModule.
     private readonly turnRegistry: TurnRegistry,
-    // Lazily resolves the brain (AgentSessionManager) for the Phase-3 halt wake,
-    // dodging the brain⇄driver constructor cycle.
-    private readonly moduleRef: ModuleRef,
+    // The neutral driver→brain gateway (Phase-3 halt + `done` completion wakes; the brain binds itself
+    // into it on bootstrap). Injecting it forms no construction cycle — unlike a
+    // `useExisting: AgentSessionManager` port, which would deadlock DI (the brain constructs this service).
+    private readonly brainGateway: BrainGateway,
     // The ADR-0005 live-verification judge — gates `complete_thread`'s `done` claim (see `gateLiveVerification`).
     @Inject(LIVE_VERIFICATION_JUDGE) private readonly liveVerificationJudge: LiveVerificationJudge,
     // Folds a Codex master-review thread's `task_create`/`task_update` bridge calls into its `tasks` column
@@ -548,10 +528,9 @@ export class ThreadDriver implements JobDispatcher {
     gen: number;
     outcome: 'blocked' | 'incomplete' | 'failed';
   }): Promise<void> {
-    const brain = await this.brain();
     // The stamp is NOT here — the brain stamps `halt_waked_at` on the wake turn's SUCCESS tail (keyed by the
     // captured `gen`), so a wake turn that fails/steers/detaches leaves the halt owed for the sweeps to retry.
-    await brain.notifyThreadHalted(t.jobId, t.threadId, t.outcome, t.gen);
+    await this.brainGateway.notifyThreadHalted(t.jobId, t.threadId, t.outcome, t.gen);
   }
 
   /**
@@ -577,10 +556,9 @@ export class ThreadDriver implements JobDispatcher {
     threadId: string;
     reason: 'final' | 'notable';
   }): Promise<void> {
-    const brain = await this.brain();
     // Stamp is NOT here — the brain stamps `done_waked_at` on the wake turn's SUCCESS tail, so a
     // failed/steered/detached wake stays owed for the sweeps.
-    await brain.notifyThreadDone(t.jobId, t.threadId, t.reason);
+    await this.brainGateway.notifyThreadDone(t.jobId, t.threadId, t.reason);
   }
 
   // ── the pipeline ───────────────────────────────────────────────────────────────────────────────
@@ -3210,13 +3188,6 @@ export class ThreadDriver implements JobDispatcher {
       sandbox,
       notify: (m) => this.post(route, m),
     });
-  }
-
-  /** Lazily resolve the brain — a dynamic import keeps the brain⇄driver dependency out of module load. */
-  private async brain(): Promise<BrainSurface> {
-    const { AgentSessionManager } =
-      await import('../brain/agent-session-manager.service.js');
-    return this.moduleRef.get(AgentSessionManager, { strict: false });
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
