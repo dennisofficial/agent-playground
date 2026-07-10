@@ -29,6 +29,10 @@ export interface SkillInput {
   update_policy?: SkillUpdatePolicy | null;
   forked_from?: string | null;
   surfaces?: McpSurface[];
+  /** Applicability for the framework-conformance review lens — see `WorkspaceSkillEntity.review_for_types`. */
+  reviewForTypes?: string[];
+  /** Applicability for the framework-conformance review lens — see `WorkspaceSkillEntity.review_for_globs`. */
+  reviewForGlobs?: string[];
   enabled?: boolean;
 }
 
@@ -122,6 +126,8 @@ export class WorkspaceSkillStore {
     row.update_policy = input.update_policy ?? null;
     row.forked_from = input.forked_from ?? null;
     row.surfaces = input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['build'];
+    row.review_for_types = input.reviewForTypes ?? [];
+    row.review_for_globs = input.reviewForGlobs ?? [];
     row.enabled = input.enabled ?? true;
     await this.skills.save(row);
     this.logger.log(`wrote skill org=${orgId} scope=${dbScope} name=${name}`);

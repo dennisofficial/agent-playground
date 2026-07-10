@@ -165,6 +165,9 @@ importers:
       pgvector:
         specifier: ^0.3.0
         version: 0.3.0
+      picomatch:
+        specifier: ^4.0.4
+        version: 4.0.4
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -211,6 +214,9 @@ importers:
       '@types/pg':
         specifier: ^8.11.10
         version: 8.20.0
+      '@types/picomatch':
+        specifier: ^4.0.0
+        version: 4.0.3
       '@types/supertest':
         specifier: ^6.0.2
         version: 6.0.3
@@ -2902,6 +2908,9 @@ packages:
 
   '@types/pg@8.20.0':
     resolution: {integrity: sha512-bEPFOaMAHTEP1EzpvHTbmwR8UsFyHSKsRisLIHVMXnpNefSbGA1bD6CVy+qKjGSqmZqNqBDV2azOBo8TgkcVow==}
+
+  '@types/picomatch@4.0.3':
+    resolution: {integrity: sha512-iG0T6+nYJ9FAPmx9SsUlnwcq1ZVRuCXcVEvWnntoPlrOpwtSTKNDC9uVAxTsC3PUvJ+99n4RpAcNgBbHX3JSnQ==}
 
   '@types/qs@6.15.1':
     resolution: {integrity: sha512-GZHUBZR9hckSUhrxmp1nG6NwdpM9fCunJwyThLW1X3AyHgd9IlHb6VANpQQqDr2o/qQp6McZ3y/IA2rVzKzSbw==}
@@ -8777,6 +8786,8 @@ snapshots:
       '@types/node': 25.9.2
       pg-protocol: 1.14.0
       pg-types: 2.2.0
+
+  '@types/picomatch@4.0.3': {}
 
   '@types/qs@6.15.1': {}
 

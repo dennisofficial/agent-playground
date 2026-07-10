@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
+import type { EnvService } from '@core/config/env/env.service';
 import type { WorkspaceSkillEntity } from '../persistence/entities';
 import { SkillResolver } from './skill-resolver.service';
 import { WorkspaceSkillStore } from './workspace-skill.store';
+
+/** Minimal `EnvService` stub — none of these tests exercise `resolveReviewSkillsForThread`'s disk reads. */
+const fakeEnv = { get: () => undefined } as unknown as EnvService;
 
 // Stubs the system-tier registry so this file can assert the MERGE/precedence behavior without depending
 // on whatever's actually shipped in `system-skill-registry.ts` (which ships empty by design — see its
@@ -55,7 +59,7 @@ class FakeRepo {
 function make(): { resolver: SkillResolver; store: WorkspaceSkillStore } {
   const repo = new FakeRepo();
   const store = new WorkspaceSkillStore(repo as unknown as Repository<WorkspaceSkillEntity>);
-  return { resolver: new SkillResolver(store), store };
+  return { resolver: new SkillResolver(store, fakeEnv), store };
 }
 
 describe('SkillResolver.resolveForTurn — managed (system) tier precedence', () => {

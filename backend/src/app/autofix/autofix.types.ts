@@ -41,9 +41,11 @@ export interface ReviewLens {
    * Review scope, defaulting to `'diff'` when omitted. `'diff'` = the strict, tunnel-visioned lenses
    * that only flag issues within the change set. `'holistic'` = judges the whole change against its
    * intent (integration + completeness) and MAY read beyond the diff, while still only flagging what
-   * this change is responsible for. Drives which output contract `buildReviewPrompt` appends.
+   * this change is responsible for. `'framework'` = a dedicated framework-conformance pass carrying
+   * force-injected skill bodies (the repo's opted-in review skills). Drives which output contract
+   * `buildReviewPrompt` appends.
    */
-  scope?: 'diff' | 'holistic';
+  scope?: 'diff' | 'holistic' | 'framework';
 }
 
 /** A commit the stage produced (a fix commit). */
@@ -188,4 +190,10 @@ export interface AutoFixContext {
   orgId?: string;
   /** The repo under review — for resolving its attached house-style profile. */
   repoId?: string;
+  /**
+   * Force-injected framework best-practices bodies for the `scope:'framework'` lens (d4/d8) — the resolved
+   * `{name, body}` of each `review`-surface skill whose applicability matched this thread. Read fresh per run
+   * (never persisted on the row); only the framework lens's `buildReviewPrompt` branch consumes it.
+   */
+  frameworkBodies?: { name: string; body: string }[];
 }

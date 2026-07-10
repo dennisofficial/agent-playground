@@ -1454,14 +1454,25 @@ export class ThreadDriver implements JobDispatcher {
       return;
     }
 
+    // Framework-conformance lens (d4): resolve the `review`-surface skills whose applicability matches this
+    // thread (by type OR a changed-file glob), force-inject their SKILL.md bodies. Best-effort — a resolver
+    // failure must never sink the review pass, so fall back to no framework skills.
+    const frameworkSkills = await this.skills
+      .resolveReviewSkillsForThread(job.orgId, job.repoId, thread.type, ctx.changedFiles ?? [])
+      .catch((err) => {
+        this.logger.warn(`framework-skill resolution failed (no framework lens): ${err}`);
+        return [] as { name: string; body: string }[];
+      });
+    const frameworkSkillNames = frameworkSkills.map((s) => s.name);
+
     // THE selection — reviewAgentsForThread is the single source of truth for WHICH lenses run, routed on
     // the thread's (closed-vocabulary) type. Composed with the registry's post_review child spec.
-    const lenses = reviewAgentsForThread(thread.type);
+    const lenses = reviewAgentsForThread(thread.type, frameworkSkillNames);
     const childSpecs = [
       ...lenses.map((l) => ({
         kind: 'review_lens' as ThreadRowKind,
         brief: l.label,
-        config: { lensId: l.id },
+        config: l.id === 'framework' ? { lensId: l.id, skills: frameworkSkillNames } : { lensId: l.id },
       })),
       ...spec.children({ id: thread.id, config: {} }),
     ];
@@ -1496,7 +1507,7 @@ export class ThreadDriver implements JobDispatcher {
       lensChildren.map(async (c) => {
         await sema.acquire();
         try {
-          await this.runOneReviewLens(ctx, c);
+          await this.runOneReviewLens(ctx, c, frameworkSkills);
         } finally {
           sema.release();
         }
@@ -1521,7 +1532,11 @@ export class ThreadDriver implements JobDispatcher {
    * findings + terminal status on its OWN row. Never throws — a lens failure is isolated to its row (marked
    * `failed`), never blocking its siblings or the build. A lens already `done` (resume) fast-forwards.
    */
-  private async runOneReviewLens(ctx: AutoFixContext, child: ReviewChildThread): Promise<void> {
+  private async runOneReviewLens(
+    ctx: AutoFixContext,
+    child: ReviewChildThread,
+    frameworkBodies: { name: string; body: string }[] = [],
+  ): Promise<void> {
     if (child.status === 'done') return;
     const lensId = String((child.config as { lensId?: string }).lensId ?? '');
     const lens = lensById(lensId);
@@ -1537,7 +1552,8 @@ export class ThreadDriver implements JobDispatcher {
     // Clear any stale halt overlay from a prior run before (re)running the lens's turn.
     await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     try {
-      const findings = await this.autofix.runReviewLens(ctx, lens);
+      const lensCtx = lens.scope === 'framework' ? { ...ctx, frameworkBodies } : ctx;
+      const findings = await this.autofix.runReviewLens(lensCtx, lens);
       await this.store.setThreadReviewFindings(child.id, findings);
       await this.store.setThreadStatus(child.id, 'done');
       await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);

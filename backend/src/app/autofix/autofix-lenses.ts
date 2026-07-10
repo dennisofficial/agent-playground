@@ -103,8 +103,23 @@ const CONDITIONAL: ReviewLens[] = [
   },
 ];
 
-/** Every lens definition — `ALWAYS_ON` + `CONDITIONAL` — for id resolution. */
-const ALL_LENSES: ReviewLens[] = [...ALWAYS_ON, ...CONDITIONAL];
+/** The conditional FRAMEWORK-CONFORMANCE lens (d4). Appended by `reviewAgentsForThread` only when the
+ *  thread has ≥1 applicable `review`-surface skill; its body is force-injected at prompt time (d8 v1 =
+ *  one lens carrying the concatenated skill bodies). */
+const FRAMEWORK_LENS: ReviewLens = {
+  id: 'framework',
+  label: 'Framework conformance',
+  scope: 'framework',
+  focus:
+    'Conformance of THIS change to the framework/library best-practices injected below (sourced from the ' +
+    "repo's opted-in review skills). Judge ONLY against those documented rules — do not invent general " +
+    'style opinions or flag anything the injected guidance does not cover. Flag a violation only where the ' +
+    'changed code actually breaks a stated rule, and name the rule + the concrete fix. A change that ' +
+    'conforms (or that the injected rules simply do not touch) gets an empty report.',
+};
+
+/** Every lens definition — `ALWAYS_ON` + `CONDITIONAL` + `FRAMEWORK_LENS` — for id resolution. */
+const ALL_LENSES: ReviewLens[] = [...ALWAYS_ON, ...CONDITIONAL, FRAMEWORK_LENS];
 
 /** Resolve a lens by its stable id (a `review_lens` thread's `config.lensId` → the lens definition). */
 export function lensById(id: string): ReviewLens | undefined {
@@ -114,20 +129,26 @@ export function lensById(id: string): ReviewLens | undefined {
 /**
  * THE single source of truth for WHICH review lenses run over a thread's diff — the deterministic
  * selection the driver's auto-fix fan-out drives AND the navigator's rendered list both read, so they
- * never drift. Routes on the thread's (closed-vocabulary) `type`:
- *  - `docs` drops `correctness` + `minimalism` (they assume executable code — pure noise on prose).
- *  - `data` adds `data_safety` on top of the five always-on lenses.
- *  - everything else (`backend`/`frontend`/`infra`/`testing`/`general`) gets the five always-on lenses.
+ * never drift. Routes on TWO independent axes:
+ *  - the thread's (closed-vocabulary) `type`:
+ *    - `docs` drops `correctness` + `minimalism` (they assume executable code — pure noise on prose).
+ *    - `data` adds `data_safety` on top of the five always-on lenses.
+ *    - everything else (`backend`/`frontend`/`infra`/`testing`/`general`) gets the five always-on lenses.
+ *  - `frameworkSkillNames`: when non-empty (≥1 opted-in `review`-surface skill matched this thread), the
+ *    FRAMEWORK_LENS is appended LAST, regardless of `type`.
  * Returns an ordered, deterministic `ReviewLens[]`.
  */
-export function reviewAgentsForThread(type: ThreadType): ReviewLens[] {
-  if (type === 'docs') {
-    return ALWAYS_ON.filter((l) => l.id !== 'correctness' && l.id !== 'minimalism');
-  }
-  if (type === 'data') {
-    return [...ALWAYS_ON, ...CONDITIONAL];
-  }
-  return ALWAYS_ON;
+export function reviewAgentsForThread(
+  type: ThreadType,
+  frameworkSkillNames: string[] = [],
+): ReviewLens[] {
+  const base =
+    type === 'docs'
+      ? ALWAYS_ON.filter((l) => l.id !== 'correctness' && l.id !== 'minimalism')
+      : type === 'data'
+        ? [...ALWAYS_ON, ...CONDITIONAL]
+        : ALWAYS_ON;
+  return frameworkSkillNames.length > 0 ? [...base, FRAMEWORK_LENS] : base;
 }
 
 /** Severity rank for thresholds + sort (high first). */
@@ -165,6 +186,8 @@ const SCOPE_CLAUSE: Record<NonNullable<ReviewLens['scope']>, string> = {
   diff: 'ONLY report issues introduced by (or directly within) the change set below — never pre-existing issues outside it.',
   holistic:
     'Judge the change as a WHOLE against its stated intent. You MAY read beyond the diff — into the files it touches and the existing code that calls them — to judge integration and completeness. But only FLAG problems THIS change introduced or left incomplete; never report pre-existing debt outside the change\'s responsibility.',
+  framework:
+    'Report ONLY violations of the injected framework best-practices, and only within the change set below — never pre-existing issues outside it, and never a general style opinion the injected guidance does not state.',
 };
 
 /** The output contract appended to a review pass, tuned to the lens's scope (shared bar + format). */
@@ -182,6 +205,16 @@ Rules:
 - "file" must be repo-relative (or null for a cross-cutting note).`;
 }
 
+/** Render the force-injected framework skill bodies as fenced, per-skill labelled blocks for the
+ *  `scope:'framework'` lens. Empty (returns '') when nothing was injected — defensive: the driver only
+ *  appends the lens when ≥1 skill matched, but a lens must never render a dangling empty contract. */
+function frameworkInjection(ctx: AutoFixContext): string {
+  const bodies = ctx.frameworkBodies ?? [];
+  if (bodies.length === 0) return '';
+  const blocks = bodies.map((b) => fence(`framework best-practices: ${b.name}`, b.body)).join('\n\n');
+  return `\nFramework best-practices to enforce for THIS pass (authoritative — sourced from the repo's opted-in review skills):\n\n${blocks}\n`;
+}
+
 /** Build one read-only review pass's prompt for a given lens + context. */
 export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): string {
   const files = ctx.changedFiles?.length
@@ -190,14 +223,17 @@ export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): string
   const diffBlock = ctx.diff
     ? `\nDiff under review:\n\n\`\`\`diff\n${ctx.diff}\n\`\`\`\n`
     : '\n(No diff was supplied — inspect the worktree git state to review the change set.)\n';
+  const scope = lens.scope ?? 'diff';
+  const frameworkBlock = scope === 'framework' ? frameworkInjection(ctx) : '';
   return [
     `You are a focused code reviewer. LENS: ${lens.label}.`,
     `\nFocus of THIS pass: ${lens.focus}`,
     `\nWhat the change was meant to do (intent):\n${fence('intent', ctx.intent)}`,
+    frameworkBlock,
     files,
     diffBlock,
     'This is a READ-ONLY review turn — do not modify any files. You may read files for context.',
-    reviewOutputContract(lens.scope ?? 'diff'),
+    reviewOutputContract(scope),
   ].join('\n');
 }
 

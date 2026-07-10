@@ -80,6 +80,7 @@ import { McpServerStore } from '../mcp/mcp-server.store';
 import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
 import { ConventionProfileResolver } from '../conventions';
 import { SkillFileWriter, SkillInstallerService, WorkspaceSkillStore } from '../skills';
+import { parseSkillFrontmatter } from '../skills/skill-frontmatter';
 import { McpProbeService } from '../mcp/mcp-probe.service';
 import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -1639,11 +1640,14 @@ export class WebSurfaceController {
       if (!srcDir || !existsSync(join(srcDir, 'SKILL.md'))) {
         throw new BadRequestException('the authored skill draft is missing — ask the brain to propose it again');
       }
+      const fm = parseSkillFrontmatter(readFileSync(join(srcDir, 'SKILL.md'), 'utf8'));
       this.skillFiles.vendorDir(srcDir, org.id, dbScope, card.name);
       await this.skillStore.write(org.id, dbScope, card.name, {
         description: card.description,
         provenance: 'custom',
         surfaces: ALL_SURFACES,
+        reviewForTypes: fm.reviewForTypes,
+        reviewForGlobs: fm.reviewForGlobs,
       });
       this.skillFiles.removeStaging(org.id, requestId);
       // Drop the now-stale /context draft so the brain edits the durable store copy (via edit-access) instead.

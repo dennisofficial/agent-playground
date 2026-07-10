@@ -1,8 +1,12 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { Repository } from 'typeorm';
+import type { EnvService } from '@core/config/env/env.service';
 import type { WorkspaceSkillEntity } from '../persistence/entities';
 import { SkillResolver } from './skill-resolver.service';
 import { WorkspaceSkillStore } from './workspace-skill.store';
+
+/** Minimal `EnvService` stub — none of these tests exercise `resolveReviewSkillsForThread`'s disk reads. */
+const fakeEnv = { get: () => undefined } as unknown as EnvService;
 
 // This file tests the ORG/REPO tier in isolation from whatever `system-skill-registry.ts` actually ships
 // (real content since P5+#14) — an empty system tier here, exactly like `skill-resolver.managed-tier.spec.ts`
@@ -44,7 +48,7 @@ class FakeRepo {
 function make(): { resolver: SkillResolver; store: WorkspaceSkillStore } {
   const repo = new FakeRepo();
   const store = new WorkspaceSkillStore(repo as unknown as Repository<WorkspaceSkillEntity>);
-  return { resolver: new SkillResolver(store), store };
+  return { resolver: new SkillResolver(store, fakeEnv), store };
 }
 
 describe('SkillResolver.resolveForTurn', () => {
