@@ -275,6 +275,7 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   write_setup_script: {
     script: z.string().optional(),
   },
+  read_setup_script: {},
   derive_secret: {
     name: z.string(),
     path: z.string(),
@@ -437,6 +438,9 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   withdraw_file_request: 'Withdraw a pending file request you no longer need.',
   write_workspace_config: 'Write the workspace config (mounts) for this repo.',
   write_setup_script: 'Write the per-sandbox setup script for this workspace.',
+  read_setup_script:
+    'Read the repo\'s current cold-boot setup script (the raw body, not just its length) so you can edit it ' +
+    'safely before calling write_setup_script — which REPLACES the whole script. Returns { ok, present, script }.',
   derive_secret: 'Derive and store a secret file at a path from a computed value.',
   reset_sandbox:
     'Recreate this job’s sandbox so you can PROVE it cold-boots from durable config. Default: recreates the ' +
