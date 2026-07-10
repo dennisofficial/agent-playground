@@ -17,6 +17,9 @@ import type { ReviewFinding } from '../../autofix/autofix.types';
 @Entity({ name: 'threads' })
 @Index(['job_id'])
 @Index(['parent_thread_id'])
+// Hands-off: uq_threads_job_parent_ordinal is UNIQUE … NULLS NOT DISTINCT, unexpressible in TypeORM
+// metadata. The DDL lives in the migrations; this only tells migration:generate never to DROP it.
+@Index('uq_threads_job_parent_ordinal', { synchronize: false })
 export class ThreadEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

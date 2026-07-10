@@ -558,14 +558,20 @@ export function DiffView({
 }
 
 /** A numbered code listing on the dark frame: right-aligned line-number gutter + highlighted code. */
-function CodeListing({
+export function CodeListing({
   rows,
   lang,
   leftAccent = false,
+  activeNos,
+  maxHeight = CODE_MAX_HEIGHT,
 }: {
   rows: Array<{ no: number | string; code: string }>;
   lang: string | null;
   leftAccent?: boolean;
+  /** Line numbers to highlight with a band background (the referenced `:line`/`:range`). */
+  activeNos?: ReadonlySet<number>;
+  /** Scroll-window cap; pass `"100%"` to fill a taller container (the FilePane). Defaults to CODE_MAX_HEIGHT. */
+  maxHeight?: number | string;
 }) {
   // Size the gutter to the widest line number so big-file numbers don't wrap or clip.
   const widest = rows.reduce((m, r) => Math.max(m, String(r.no).length), 0);
@@ -581,24 +587,42 @@ function CodeListing({
     >
       <div
         className="overflow-auto py-2 font-mono text-[11px]"
-        style={{ lineHeight: 1.75, maxHeight: CODE_MAX_HEIGHT }}
+        style={{ lineHeight: 1.75, maxHeight }}
       >
-        {rows.map((r, i) => (
-          <div key={i} className="flex">
-            <span
-              className="shrink-0 text-right tabular-nums"
-              style={{
-                width: gutter,
-                padding: "0 8px",
-                color: "var(--term-dim)",
-                opacity: 0.7,
-              }}
+        {rows.map((r, i) => {
+          const active =
+            activeNos != null &&
+            typeof r.no === "number" &&
+            activeNos.has(r.no);
+          return (
+            <div
+              key={i}
+              data-line={r.no}
+              className="flex"
+              style={
+                active
+                  ? {
+                      background:
+                        "color-mix(in srgb, var(--blue) 13%, transparent)",
+                    }
+                  : undefined
+              }
             >
-              {r.no === "" ? NBSP : r.no}
-            </span>
-            <CodeText code={r.code} lang={lang} />
-          </div>
-        ))}
+              <span
+                className="shrink-0 text-right tabular-nums"
+                style={{
+                  width: gutter,
+                  padding: "0 8px",
+                  color: "var(--term-dim)",
+                  opacity: 0.7,
+                }}
+              >
+                {r.no === "" ? NBSP : r.no}
+              </span>
+              <CodeText code={r.code} lang={lang} />
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -36,7 +36,7 @@ import {
 import { Navigator, type JobMeta } from "./navigator";
 import { Conversation } from "./conversation";
 import { MarkdownActionsProvider } from "./markdown";
-import { PhaseView, EmptyPane, SubagentPane } from "./step-view";
+import { PhaseView, EmptyPane, SubagentPane, FilePane } from "./step-view";
 import { PersistentApprovalBar, PersistentShipBar } from "./spec-approval";
 import { useSelectedNode } from "./use-selected-node";
 import { ReviewCommentsProvider } from "./review-comments";
@@ -86,6 +86,9 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     openConversation,
     closeDetail,
     closeSub,
+    fileNode,
+    fileLines,
+    closeFile,
   } = useSelectedNode();
 
   // Persist the conversation/detail split ratio across reloads (per-browser). `panelIds` lets the
@@ -309,7 +312,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
             >
               {/* The detail pane content fills the column; the persistent approval bar (when awaiting) pins to
               its base as a `flex:none` footer — present no matter what the pane is showing. */}
-              <div className="flex min-h-0 flex-1 flex-col">
+              <div className="relative flex min-h-0 flex-1 flex-col">
                 {subNode ? (
                   // A sub-agent stacked on top of the right pane — a second-level page with a breadcrumb back to
                   // the base detail node (which stays selected in the navigator underneath).
@@ -336,6 +339,17 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
                 ) : (
                   <EmptyPane />
                 )}
+                {fileNode ? (
+                  <div className="absolute inset-0 z-10 bg-surface">
+                    <FilePane
+                      jobRef={ref}
+                      path={fileNode}
+                      lines={fileLines}
+                      base={detailNode ? baseCrumbLabel(detailNode) : null}
+                      onBack={closeFile}
+                    />
+                  </div>
+                ) : null}
               </div>
               {awaitingApproval ? (
                 <PersistentApprovalBar

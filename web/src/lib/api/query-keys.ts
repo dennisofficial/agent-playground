@@ -32,6 +32,14 @@ export const qk = {
     ref: { orgId: string; repoId: string; jobId: string },
     path: string,
   ) => ["thread-context-file", ref.orgId, ref.repoId, ref.jobId, path] as const,
+  /** The job worktree's tracked-file manifest (repo/tree). */
+  repoTree: (ref: { orgId: string; repoId: string; jobId: string }) =>
+    ["repo-tree", ref.orgId, ref.repoId, ref.jobId] as const,
+  /** One repo file's content (repo/file). The 4-element prefix matches every open repo file for the thread. */
+  repoFile: (
+    ref: { orgId: string; repoId: string; jobId: string },
+    path: string,
+  ) => ["repo-file", ref.orgId, ref.repoId, ref.jobId, path] as const,
   /** One thread's `atlas-svc` supervised-process list. */
   threadServices: (ref: { orgId: string; repoId: string; jobId: string }) =>
     ["thread-services", ref.orgId, ref.repoId, ref.jobId] as const,

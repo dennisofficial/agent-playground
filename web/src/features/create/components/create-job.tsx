@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Check, Paperclip, Plug, Upload } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
+import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { BranchPicker, Dropdown } from "@/components/branch-picker";
 import { useOrgs } from "@/lib/api/me";
 import { useOrgRepos, useCreateThread } from "@/lib/api/job-queries";
@@ -15,6 +16,7 @@ import { useFileDrop } from "@/features/job-workspace/use-file-drop";
 import { AttachmentTray } from "@/features/job-workspace/attachment-tray";
 import { orgSwatch, orgInitials } from "@/lib/org-display";
 import { ROUTES, threadHref } from "@/lib/routes";
+import { isSubmitCombo } from "@/lib/keyboard";
 
 /**
  * Create-thread form — shared by the `@dialog` modal and the `/new` full-page fallback (single source).
@@ -266,6 +268,14 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            // ⌘+Enter (Mac) / Ctrl+Enter (Windows/Linux) submits, mirroring the Create thread button.
+            // Plain Enter still inserts a newline. No-op while a create is in flight or there are no repos.
+            if (!isSubmitCombo(e)) return;
+            e.preventDefault();
+            if (create.isPending || repos.length === 0) return;
+            submit();
+          }}
           onPaste={(e) => {
             if (addPastedImages(e)) e.preventDefault();
           }}
@@ -311,6 +321,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           disabled={repos.length === 0}
         >
           Create thread
+          <ShortcutHint />
         </Button>
       </div>
     </div>

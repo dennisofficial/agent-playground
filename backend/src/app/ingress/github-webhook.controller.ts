@@ -1,9 +1,9 @@
 import { Controller, HttpCode, Logger, Post, Req } from '@nestjs/common';
 import { Public } from '@workspace/auth/server';
 import { GithubNotificationSource } from './github-notification.source';
-import { runIngress, runPrWebhook, type RawBodyRequest } from './ingress-http';
+import { runPrWebhook, runWorkEvent, type RawBodyRequest } from './ingress-http';
 import { StimulusIntake } from '../stimulus';
-import { GithubPrStateSync, GitStateReconciler } from '../driver';
+import { GithubCiStateSync, GithubPrStateSync, GitStateReconciler } from '../driver';
 
 /**
  * `POST /webhooks/github/events` — the GitHub WORK-EVENTS webhook (CI results, reviews, PR/issue
@@ -26,12 +26,13 @@ export class GithubEventsWebhookController {
   constructor(
     private readonly adapter: GithubNotificationSource,
     private readonly intake: StimulusIntake,
+    private readonly ciSync: GithubCiStateSync,
   ) {}
 
   @Post()
   @HttpCode(202)
   async receive(@Req() req: RawBodyRequest): Promise<Record<string, unknown>> {
-    return runIngress(this.logger, this.adapter, this.intake, req);
+    return runWorkEvent(this.logger, this.adapter, this.intake, this.ciSync, req);
   }
 }
 

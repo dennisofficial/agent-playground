@@ -7,6 +7,7 @@ import { Markdown } from "./markdown";
 import { useAnswerQuestion } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import type { WebQuestionCard } from "@/lib/api/types";
+import { isSubmitCombo } from "@/lib/keyboard";
 
 const ANSWERED_BY = "U-OPERATOR";
 
@@ -127,6 +128,13 @@ export function QuestionCardView({
               autoFocus
               value={other}
               onChange={(e) => setOther(e.target.value)}
+              onKeyDown={(e) => {
+                // ⌘/Ctrl+Enter sends the answer; plain Enter still inserts a newline.
+                if (!isSubmitCombo(e)) return;
+                e.preventDefault();
+                if (pending) return;
+                submit(other);
+              }}
               placeholder="Type your answer…"
               rows={2}
               className="w-full resize-y rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12.5px] text-text outline-none placeholder:text-faint focus:border-accent"
