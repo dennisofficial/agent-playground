@@ -8,7 +8,7 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { isOnboarding, notOnboarding } from '../conditions';
+import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
 import {
   CLOUD_SANDBOX_NOTE,
   PLAYGROUND_NOTE,
@@ -144,8 +144,9 @@ export class SandboxGroup {
   }
 
   /** Auto-expose: how a ported service becomes a public preview URL, and the provision→write-env→start
-   *  ordering the operator must follow (only active when the ATLAS_PREVIEW_* env vars are injected). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1262, condition: notOnboarding })
+   *  ordering the operator must follow (only active when the ATLAS_PREVIEW_* env vars are injected). A
+   *  build-brain concern — a review job never boots its own branch, so it gates `isBuildBrain`. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1262, condition: isBuildBrain })
   publicExposure(): string {
     return [
       'PUBLIC PREVIEW URLS: a supervised service started with a port is automatically exposed on the public',
