@@ -383,8 +383,9 @@ describe('JobLifecycleService — cold-boot setup_error stamping (ensureContaine
 
 describe('JobLifecycleService.applyGithubPrState', () => {
   /**
-   * Build a service whose `jobs.update` and `closeJob` (spied on the instance) both push a label into
-   * a shared `order` array, so tests can assert both invocation AND sequence.
+   * Build a service whose `jobs.update` and `detachJobContainer` (spied on the instance) both push a label
+   * into a shared `order` array, so tests can assert both invocation AND sequence. Merge now DETACHES (frees
+   * RAM, keeps worktree + session) rather than closing — so a follow-up can resume with full context.
    */
   function makeServiceForApply() {
     const order: string[] = [];
@@ -411,44 +412,44 @@ describe('JobLifecycleService.applyGithubPrState', () => {
       { get: vi.fn() } as unknown as ModuleRef,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
-    svc.closeJob = vi.fn(async () => {
-      order.push('closeJob');
+    svc.detachJobContainer = vi.fn(async () => {
+      order.push('detach');
     });
     return { svc, jobs, order };
   }
 
   const job = { id: 'job-1', org_id: 'T1', repo_id: 'repo-1' } as JobEntity;
 
-  it("state='open' is a no-op — no update, no closeJob", async () => {
+  it("state='open' is a no-op — no update, no teardown", async () => {
     const { svc, jobs } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'open');
     expect(result).toBe('noop');
     expect(jobs.update).not.toHaveBeenCalled();
-    expect(svc.closeJob).not.toHaveBeenCalled();
+    expect(svc.detachJobContainer).not.toHaveBeenCalled();
   });
 
-  it("state='merged' writes pr_state=merged, then closes — in that order", async () => {
+  it("state='merged' writes pr_state=merged, then DETACHES (frees RAM, keeps worktree) — in that order", async () => {
     const { svc, jobs, order } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'merged');
     expect(result).toBe('closed');
     expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'merged' });
-    expect(order).toEqual(['update:merged', 'closeJob']);
+    expect(order).toEqual(['update:merged', 'detach']);
   });
 
-  it("state='closed' writes pr_state=closed, then closes", async () => {
+  it("state='closed' writes pr_state=closed, then detaches", async () => {
     const { svc, jobs, order } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'closed');
     expect(result).toBe('closed');
     expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'closed' });
-    expect(order).toEqual(['update:closed', 'closeJob']);
+    expect(order).toEqual(['update:closed', 'detach']);
   });
 
-  it("state='gone' folds to pr_state=closed and still closes the job", async () => {
+  it("state='gone' folds to pr_state=closed and still detaches the job", async () => {
     const { svc, jobs, order } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'gone');
     expect(result).toBe('closed');
     expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'closed' });
-    expect(order).toEqual(['update:closed', 'closeJob']);
+    expect(order).toEqual(['update:closed', 'detach']);
   });
 });
 
@@ -552,5 +553,199 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
       } as JobEntity),
     ).rejects.toThrow(/job-1/);
     expect(closePullRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox disk GC', () => {
+  // detachJobContainer: the RAM-free twin of closeJob — reclaim the container by identity, KEEP the worktree
+  // + session, mark 'detached'. Exposes the teardown + worktree spies so we can assert what it does/doesn't do.
+  function makeServiceForDetach(row: JobSandboxEntity | null) {
+    const teardownByIdentity = vi.fn().mockResolvedValue(undefined);
+    const removeSandbox = vi.fn().mockResolvedValue(undefined);
+    const update = vi.fn().mockResolvedValue({ affected: 1 });
+    const sandboxes = {
+      findOne: vi.fn().mockResolvedValue(row),
+      update,
+      save: vi.fn(),
+      create: vi.fn(),
+      find: vi.fn(),
+    } as unknown as Repository<JobSandboxEntity>;
+    const svc = new JobLifecycleService(
+      { findOne: vi.fn().mockResolvedValue({ id: 'thread-1', feature_branch: 'atlas/f', base_branch: 'main' }) } as unknown as Repository<JobEntity>,
+      sandboxes,
+      { findOne: vi.fn().mockResolvedValue({ id: 'repo-uuid-1', slug: 'proj', default_branch: 'main', git_url: 'https://github.com/a/b' }) } as unknown as Repository<RepoEntity>,
+      { removeSandbox } as unknown as LocalGitService,
+      { getPullState: vi.fn() } as unknown as GithubPrService,
+      { githubToken: vi.fn() } as unknown as CredentialResolver,
+      { get: vi.fn() } as unknown as EnvService,
+      new SandboxActivityRegistry(),
+      { resolve: vi.fn() } as unknown as DriverRepoResolver,
+      { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity } as unknown as SandboxProvider,
+      { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
+      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
+      { get: vi.fn() } as unknown as ModuleRef,
+      { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    );
+    return { svc, sandboxes, update, teardownByIdentity, removeSandbox };
+  }
+
+  it('detachJobContainer frees the container (by identity) + marks detached, but KEEPS the worktree + session', async () => {
+    const row = makeRow({ lifecycle: 'attached', container_id: 'c1', worktree_path: '/wt', session_id: 'sess-1' });
+    const { svc, update, teardownByIdentity, removeSandbox } = makeServiceForDetach(row);
+
+    await svc.detachJobContainer('thread-1', 'T1');
+
+    expect(teardownByIdentity).toHaveBeenCalledTimes(1); // container reclaimed by deterministic name
+    expect(removeSandbox).not.toHaveBeenCalled(); // worktree KEPT (the whole point — resume needs it)
+    // Scoped update, container freed, lifecycle detached; session_id untouched (not in the patch).
+    expect(update).toHaveBeenCalledWith({ id: row.id }, { container_id: null, lifecycle: 'detached' });
+  });
+
+  it('detachJobContainer still tears down a boot-reconciled DETACHED row (container_id null but real container may run)', async () => {
+    const row = makeRow({ lifecycle: 'detached', container_id: null, worktree_path: '/wt' });
+    const { svc, teardownByIdentity } = makeServiceForDetach(row);
+
+    await svc.detachJobContainer('thread-1', 'T1');
+
+    expect(teardownByIdentity).toHaveBeenCalledTimes(1); // does NOT short-circuit on 'detached'
+  });
+
+  it('detachJobContainer no-ops on an already-CLOSED row (fully torn down)', async () => {
+    const row = makeRow({ lifecycle: 'closed', container_id: null });
+    const { svc, update, teardownByIdentity } = makeServiceForDetach(row);
+
+    await svc.detachJobContainer('thread-1', 'T1');
+
+    expect(teardownByIdentity).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('a detached row with worktree + feature_branch is RESUMABLE — ensureProvisioned returns it (not null)', async () => {
+    const row = makeRow({ lifecycle: 'detached', worktree_path: '/wt/thread-1', session_id: 'sess-1' });
+    const svc = new JobLifecycleService(
+      { findOne: vi.fn().mockResolvedValue({ id: 'thread-1', feature_branch: 'atlas/f', base_branch: 'main' }) } as unknown as Repository<JobEntity>,
+      { findOne: vi.fn().mockResolvedValue(row), update: vi.fn(), save: vi.fn(), create: vi.fn() } as unknown as Repository<JobSandboxEntity>,
+      { findOne: vi.fn().mockResolvedValue({ id: 'repo-uuid-1', slug: 'proj', default_branch: 'main' }) } as unknown as Repository<RepoEntity>,
+      {} as unknown as LocalGitService,
+      { getPullState: vi.fn() } as unknown as GithubPrService,
+      { githubToken: vi.fn() } as unknown as CredentialResolver,
+      { get: vi.fn() } as unknown as EnvService,
+      new SandboxActivityRegistry(),
+      { resolve: vi.fn() } as unknown as DriverRepoResolver,
+      { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
+      { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
+      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
+      { get: vi.fn() } as unknown as ModuleRef,
+      { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    );
+
+    const out = await svc.ensureProvisioned('thread-1', 'T1');
+    expect(out).toBe(row); // resumable — contrast the 'closed' → null gate
+  });
+
+  // ── pollPrClosures no longer re-polls already-terminal (detached merged) jobs ──────────────────────
+  function makeServiceForPoll(
+    job: Partial<JobEntity>,
+    sandbox: JobSandboxEntity | null,
+    pullState: 'open' | 'merged' | 'closed' = 'open',
+  ) {
+    const getPullState = vi.fn().mockResolvedValue(pullState);
+    const svc = new JobLifecycleService(
+      {
+        find: vi.fn().mockResolvedValue([{ id: 'thread-1', org_id: 'T1', repo_id: 'repo-1', pr_number: 5, ...job }]),
+        update: vi.fn().mockResolvedValue({ affected: 1 }),
+      } as unknown as Repository<JobEntity>,
+      { findOne: vi.fn().mockResolvedValue(sandbox) } as unknown as Repository<JobSandboxEntity>,
+      { findOne: vi.fn().mockResolvedValue({ id: 'repo-1', git_url: 'https://github.com/a/b' }) } as unknown as Repository<RepoEntity>,
+      {} as unknown as LocalGitService,
+      { getPullState } as unknown as GithubPrService,
+      { githubToken: vi.fn().mockResolvedValue('ghtok') } as unknown as CredentialResolver,
+      { get: vi.fn() } as unknown as EnvService,
+      new SandboxActivityRegistry(),
+      { resolve: vi.fn() } as unknown as DriverRepoResolver,
+      { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
+      { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
+      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
+      { get: vi.fn() } as unknown as ModuleRef,
+      { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    );
+    return { svc, getPullState };
+  }
+
+  it('pollPrClosures SKIPS a job whose pr_state is already terminal (a detached merged job) — no re-poll, no re-count', async () => {
+    const { svc, getPullState } = makeServiceForPoll(
+      { pr_state: 'merged' },
+      makeRow({ lifecycle: 'detached' }),
+    );
+    const closed = await svc.pollPrClosures();
+    expect(getPullState).not.toHaveBeenCalled(); // already handled — don't re-observe
+    expect(closed).toBe(0);
+  });
+
+  it('pollPrClosures STILL observes a job whose PR is open (pr_state open) — the first terminal transition', async () => {
+    const { svc, getPullState } = makeServiceForPoll(
+      { pr_state: 'open' },
+      makeRow({ lifecycle: 'attached' }),
+    );
+    await svc.pollPrClosures();
+    expect(getPullState).toHaveBeenCalledTimes(1);
+  });
+
+  // ── reapMergedSandboxes: reclaim disk (worktree + scratch) for long-detached terminal jobs ──────────
+  function makeServiceForGc(jobs: Array<{ id: string; org_id: string }>, sandboxByJob: Record<string, JobSandboxEntity | null>) {
+    const svc = new JobLifecycleService(
+      { find: vi.fn().mockResolvedValue(jobs) } as unknown as Repository<JobEntity>,
+      {
+        findOne: vi.fn(async ({ where }: { where: { job_id: string } }) => sandboxByJob[where.job_id] ?? null),
+      } as unknown as Repository<JobSandboxEntity>,
+      { findOne: vi.fn() } as unknown as Repository<RepoEntity>,
+      {} as unknown as LocalGitService,
+      { getPullState: vi.fn() } as unknown as GithubPrService,
+      { githubToken: vi.fn() } as unknown as CredentialResolver,
+      { get: vi.fn() } as unknown as EnvService,
+      new SandboxActivityRegistry(),
+      { resolve: vi.fn() } as unknown as DriverRepoResolver,
+      { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
+      { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
+      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
+      { get: vi.fn() } as unknown as ModuleRef,
+      { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    );
+    // Spy the two reclaim effects on the instance — we assert the DECISION, not closeJob/rmSync internals.
+    const closeJob = vi.fn().mockResolvedValue(undefined);
+    const removeScratch = vi.fn();
+    svc.closeJob = closeJob;
+    (svc as unknown as { removeJobScratchDirs: (o: string, j: string) => void }).removeJobScratchDirs = removeScratch;
+    return { svc, closeJob, removeScratch };
+  }
+
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it('reapMergedSandboxes reclaims a detached + past-TTL row (worktree + scratch), leaving recent / attached / others alone', async () => {
+    const old = new Date(Date.now() - 8 * DAY); // past the 7-day TTL
+    const fresh = new Date();
+    const { svc, closeJob, removeScratch } = makeServiceForGc(
+      [
+        { id: 'stale', org_id: 'T1' },
+        { id: 'recent', org_id: 'T1' },
+        { id: 'attached', org_id: 'T1' },
+      ],
+      {
+        stale: makeRow({ job_id: 'stale', lifecycle: 'detached', updated_at: old }),
+        recent: makeRow({ job_id: 'recent', lifecycle: 'detached', updated_at: fresh }),
+        attached: makeRow({ job_id: 'attached', lifecycle: 'attached', updated_at: old }),
+      },
+    );
+
+    const n = await svc.reapMergedSandboxes();
+
+    expect(n).toBe(1);
+    expect(closeJob).toHaveBeenCalledTimes(1);
+    expect(closeJob).toHaveBeenCalledWith('stale', 'T1'); // worktree + container reclaimed
+    expect(removeScratch).toHaveBeenCalledWith('T1', 'stale'); // /context + /playground reclaimed too
   });
 });
