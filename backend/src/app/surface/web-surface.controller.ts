@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   Body,
   Controller,
@@ -615,7 +616,12 @@ export class WebSurfaceController {
         // The observed PR (null until one exists) — drives the sidebar's PR-status glyph. `mergeable`
         // ('dirty' = conflict) refines the open state; `state` gives merged/closed.
         pr: t.pr_state
-          ? { state: t.pr_state, mergeable: t.pr_mergeable, url: t.pr_url }
+          ? {
+              state: t.pr_state,
+              number: t.pr_number,
+              mergeable: t.pr_mergeable,
+              url: t.pr_url,
+            }
           : null,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
@@ -2176,9 +2182,23 @@ export class WebSurfaceController {
   async deleteThread(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('jobId') jobId: string,
+    @Query('prAction') prAction?: string,
   ): Promise<{ ok: boolean }> {
     // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable.
-    await this.requireThread(jobId, org.id);
+    const job = await this.requireThread(jobId, org.id);
+    if (prAction != null && prAction !== 'close' && prAction !== 'leave') {
+      throw new BadRequestException("prAction must be 'close' or 'leave'");
+    }
+    if (prAction === 'close') {
+      try {
+        await this.threadLifecycle.closeJobPullRequest(job);
+      } catch (err) {
+        // Abort the delete (decision d3: never silently orphan). The job stays in its normal status.
+        throw new BadGatewayException(
+          err instanceof Error ? err.message : 'Could not close the pull request',
+        );
+      }
+    }
     // Atomically flip the job to `deleting` and COMMIT it before responding, so the durable state is
     // visible to the next thread-list/realtime frame (the sidebar shows "Deleting…" instead of freezing).
     // The claim also serializes concurrent deletes — a second click matches 0 rows and is a no-op.

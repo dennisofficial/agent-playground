@@ -413,8 +413,12 @@ export function renameJob(
 }
 
 // ── Delete ─────────────────────────────────────────────────────────────────────────────────────
-export function deleteThread(ref: JobRef): Promise<{ ok: boolean }> {
-  return webJson(threadPath(ref), { method: "DELETE" });
+export function deleteThread(
+  ref: JobRef,
+  prAction?: "close" | "leave",
+): Promise<{ ok: boolean }> {
+  const q = prAction ? `?prAction=${prAction}` : "";
+  return webJson(`${threadPath(ref)}${q}`, { method: "DELETE" });
 }
 
 // ── Repos (create-job picker + the settings Repos tab) ────────────────────────────────────────

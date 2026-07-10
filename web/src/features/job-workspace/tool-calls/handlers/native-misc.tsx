@@ -130,37 +130,45 @@ function TodoBody({ tool }: { tool: ToolItem }) {
     );
   }
   return (
-    <div
-      className="my-[3px] rounded-[7px] border border-border px-[11px] py-2"
-      style={{ background: "var(--panel)" }}
-    >
-      {todos.map((raw, i) => {
-        const t = asRecord(raw);
-        const status = str(t.status);
-        const dot = STATUS_DOT[status] ?? STATUS_DOT.pending;
-        const content = str(t.content) || str(t.activeForm);
-        const done = status === "completed";
-        return (
-          <div key={i} className="flex items-center gap-2 py-[3px] text-[12px]">
-            <span
-              className="h-[10px] w-[10px] shrink-0 rounded-full"
-              style={{
-                background: dot.fill ? dot.color : "transparent",
-                border: `1.5px solid ${dot.color}`,
-              }}
-            />
-            <span
-              style={{
-                color: done ? "var(--faint)" : "var(--text)",
-                textDecoration: done ? "line-through" : "none",
-              }}
+    <>
+      <div
+        className="my-[3px] rounded-[7px] border border-border px-[11px] py-2"
+        style={{ background: "var(--panel)" }}
+      >
+        {todos.map((raw, i) => {
+          const t = asRecord(raw);
+          const status = str(t.status);
+          const dot = STATUS_DOT[status] ?? STATUS_DOT.pending;
+          const content = str(t.content) || str(t.activeForm);
+          const done = status === "completed";
+          return (
+            <div
+              key={i}
+              className="flex items-center gap-2 py-[3px] text-[12px]"
             >
-              {content}
-            </span>
-          </div>
-        );
-      })}
-    </div>
+              <span
+                className="h-[10px] w-[10px] shrink-0 rounded-full"
+                style={{
+                  background: dot.fill ? dot.color : "transparent",
+                  border: `1.5px solid ${dot.color}`,
+                }}
+              />
+              <span
+                style={{
+                  color: done ? "var(--faint)" : "var(--text)",
+                  textDecoration: done ? "line-through" : "none",
+                }}
+              >
+                {content}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {tool.isError ? (
+        <StructuredPanel result={formatPayload(tool.result)} isError />
+      ) : null}
+    </>
   );
 }
 

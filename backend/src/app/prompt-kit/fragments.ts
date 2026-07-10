@@ -377,7 +377,36 @@ export const VALIDATE_BY_RUNNING_NOTE =
   'green build: actually run it and exercise it the way a caller would before you report done. Start ' +
   'long-running services with the `atlas-svc` supervisor (`run`/`logs`/`ps`) so they outlive the turn, ' +
   'then hit them — `curl` the endpoint and check the status/body, drive the UI with Playwright, or run ' +
-  "the repo's own e2e/smoke tooling — and confirm the OBSERVED behavior matches the intent.";
+  "the repo's own e2e/smoke tooling — and confirm the OBSERVED behavior matches the intent. If the change " +
+  'is internal plumbing whose effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed ' +
+  'to an SDK), instead capture a log line from the booted process proving the changed value was passed at runtime.';
+
+/**
+ * RUNNABLE WORKSPACE IS THE HAPPY PATH — for every build-touching lane (worker orchestrator, brain, master
+ * review). The environment-side twin of VALIDATE_BY_RUNNING: that note says "actually run it," this one
+ * says "a not-yet-runnable environment is a problem you FIX or ASK about, never a licence to skip." Encodes
+ * decision d1 (operator-confirmed): treat a set-up, runnable repo as the EXPECTED default; verification is a
+ * hard requirement. Lane-agnostic on purpose — the brain provisions via the workspace-profile tools, a build
+ * thread hands a genuinely-missing secret to Atlas via `block_thread({reason:"needs_env"})`; the STANCE is
+ * shared. The named failure ("secret-gated" server whose key was present) is the real reported incident.
+ */
+export const RUNNABLE_WORKSPACE_NOTE =
+  'A RUNNABLE WORKSPACE IS THE HAPPY PATH — a correctly-set-up, runnable repo is the EXPECTED default, not a ' +
+  'hope, and VERIFYING your work is a hard requirement, not a courtesy. So when you cannot run or verify ' +
+  'something because the environment is not ready — a missing secret, an unstarted service, an unfinished ' +
+  'setup step — that is a PROBLEM TO FIX, never a licence to skip. (1) ASSUME IT IS MEANT TO WORK AND CHECK ' +
+  'FIRST: before concluding anything is missing, confirm it actually is — the secret may already be granted ' +
+  'and the service may just need starting. The classic failure is giving up on a "secret-gated" server whose ' +
+  'key was present the whole time, then screenshotting a broken stand-in. (2) MAKE IT WORK: boot the service, ' +
+  'run the setup, and fix the DURABLE workspace profile (request the missing secret, correct the setup ' +
+  'script) so it stays fixed for the next job — from a build thread you cannot provision it yourself, so hand ' +
+  'the genuinely-missing piece to Atlas via `block_thread({reason:"needs_env"})`. (3) ASK for what only the ' +
+  "operator can supply and WAIT — \"why didn't you just ask?\" is the failure to design out. (4) NEVER " +
+  'FABRICATE A STAND-IN that dodges the real environment — a throwaway harness that skips the real app config, ' +
+  'a mock that bypasses the real service — and call it validated: that is a FALSE GREEN, worse than no check ' +
+  'because it lies. Validate the REAL thing in its REAL environment. The ONLY acceptable skip is something ' +
+  'GENUINELY impossible in this Linux sandbox (device hardware, a Windows-only GUI) — and then SAY SO ' +
+  'explicitly; never silently report done on work you did not actually run.';
 
 /**
  * EVIDENCE ARTIFACTS — the human-facing PROOF that live-validation actually happened. Shared by the build
@@ -404,14 +433,24 @@ export const EVIDENCE_ARTIFACTS_NOTE =
 
 /**
  * SPIKE FIRST — for planning + workers. Prove a risky/unverified assumption (especially an SDK or library
- * capability) with a tiny throwaway spike BEFORE committing to a plan that rests on it.
+ * capability) with a tiny throwaway spike BEFORE committing to a plan that rests on it. Covers BOTH
+ * directions of a capability claim: building ON one you assume works, AND ruling OUT a path because you
+ * assume it "can't be done" — the negative claim is the more dangerous one, since it silently steers the
+ * design toward a workaround and never trips the "before you build on it" guardrails.
  */
 export const SPIKE_FIRST_NOTE =
   'SPIKE BEFORE YOU COMMIT to an approach that rests on an UNVERIFIED assumption — above all a claim about ' +
   'what an SDK, library, API, or tool can actually do ("does X support Y?", "can this be called ' +
-  'mid-stream?"). Rather than design several steps on top of a guess and discover the premise was false, ' +
-  'write the smallest throwaway spike that calls the real thing and RUN it to prove the assumption first. ' +
-  'A five-minute spike beats a derailed plan. Keep spikes in throwaway scratch space; never commit them.';
+  'mid-stream?"). A claim that something CANNOT be done — "not expressible", "not supported", "the library ' +
+  'can\'t do this", so you reach for a workaround — is the MOST dangerous version of this and carries the ' +
+  'HIGHEST burden of proof, not the lowest: you cannot prove a negative from memory, and "I don\'t recall a ' +
+  'way" is not "there is no way". Treat any impossibility claim that would change your approach exactly like ' +
+  '"does X support Y?" — verify it against the actual current docs/source for the installed version (or a ' +
+  'spike) and CITE what you found (a doc URL or source path:line) before you let it steer the design; an ' +
+  'uncited "can\'t" does not get to rule out a path. Rather than design several steps on top of a guess and ' +
+  'discover the premise was false, write the smallest throwaway spike that calls the real thing and RUN it ' +
+  'to prove the assumption first. A five-minute spike beats a derailed plan. Keep spikes in throwaway ' +
+  'scratch space; never commit them.';
 
 /**
  * BASELINE FIRST — for planning. Reproduce and observe the CURRENT behavior of the thing you're about to
@@ -438,7 +477,9 @@ export const AUTHOR_LIVE_VALIDATION_NOTE =
   'PROVE IT BY RUNNING IT — Atlas knows work is done because it SAW it run, not because the build was green. ' +
   'When a change has ANY runtime surface (an endpoint, a UI, a CLI, a job, a script), the proof is actually ' +
   'RUNNING it and observing the result — `curl` the endpoint and check the body, drive the UI, run the CLI — ' +
-  'and typecheck/build/test is only the FLOOR beneath that. This holds both ways: in a PLAN, author each ' +
+  'and typecheck/build/test is only the FLOOR beneath that. For internal plumbing whose effect is never echoed ' +
+  'in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), the proof is a log line from the booted ' +
+  'process showing the changed value was passed at runtime. This holds both ways: in a PLAN, author each ' +
   "thread's `## Validation` as that live run and NEVER mark it \"optional\"/\"nice to have\"/\"smoke (optional)\"; " +
   'and on a DIRECT build you run yourself, live-validate before you finalize. The only work that validates by ' +
   'tests alone is work with genuinely no runtime surface — and then say that is why.';

@@ -9,6 +9,7 @@ import {
   CLOUD_SANDBOX_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
   REVIEW_SCOPE_NOTE,
+  RUNNABLE_WORKSPACE_NOTE,
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from '../fragments';
@@ -35,6 +36,8 @@ export class ShipGroup {
       'VERIFY THE INTEGRATED WHOLE — this is the first time the merged feature runs end-to-end (each builder ' +
       'only smoked its own slice), so do not stop at a green build. ' +
       VALIDATE_BY_RUNNING_NOTE +
+      ' ' +
+      RUNNABLE_WORKSPACE_NOTE +
       ' ' +
       EVIDENCE_ARTIFACTS_NOTE +
       '\n\nWhen your fixes are in, the build is green, and the live smoke is captured, COMMIT your changes and ' +

@@ -622,6 +622,7 @@ const SECTION_COLOR: Record<JobSection, string> = {
   planning: "var(--blue)",
   awaiting: "var(--slate)",
   building: "var(--accent)",
+  ready_to_ship: "var(--green)",
   done: "var(--green)",
   pr_open: "var(--green)",
   merged: "var(--purple)",
@@ -711,7 +712,8 @@ function ThreadRow({
         active
           ? {
               background: "var(--accent-soft)",
-              border: "1px solid var(--accent-line)",
+              outline: "1px solid var(--accent-line)",
+              outlineOffset: "-1px",
             }
           : undefined
       }
@@ -741,6 +743,11 @@ function ThreadRow({
           {thread.title}
         </span>
       </span>
+      {thread.pr?.number != null ? (
+        <span className="mt-px flex-none font-mono text-[10px] text-faint">
+          #{thread.pr.number}
+        </span>
+      ) : null}
       {thread.needsYou ? (
         <span
           className="mt-1 h-1.5 w-1.5 flex-none rounded-full"

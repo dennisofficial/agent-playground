@@ -4,7 +4,6 @@ import type {
   JobKind,
   JobStatus,
   StepStatus,
-  ThreadStatus,
 } from "./types";
 
 /**
@@ -98,66 +97,11 @@ export function toJobKind(kind: WireJobKind | null | undefined): JobKind {
   }
 }
 
-/** Per-thread dot color for the navigator pipeline tree. */
-export function threadColor(status: ThreadStatus): {
-  color: string;
-  pulse: boolean;
-} {
-  switch (status) {
-    case "done":
-      return { color: "var(--green)", pulse: false };
-    case "executing":
-    case "planning":
-    case "reviewing":
-    case "auto_fixing":
-      return { color: "var(--accent)", pulse: true };
-    case "awaiting_approval":
-    // A mid-build `request_operator_input` pause — same muted "needs you" slate as awaiting_approval.
-    case "awaiting_input":
-      return { color: "var(--slate)", pulse: false };
-    case "failed":
-      return { color: "var(--red)", pulse: false };
-    // Halted without asserting completion (ADR 0004) — a needs-attention amber, distinct from a crash (red).
-    case "incomplete":
-      return { color: "var(--amber)", pulse: false };
-    case "pending":
-    default:
-      return { color: "var(--border-2)", pulse: false };
-  }
-}
-
-/**
- * Per-step / per-session dot for the navigator's execute-folder leaves. Same dot grammar as threads
- * (handoff §Dots): active = accent + pulse, done = green, failed = red, skipped = faint, pending = the
- * neutral pending dot. `skipped` is rendered as a hollow ring + strikethrough at the call site.
- */
-export function stepColor(status: StepStatus): {
-  color: string;
-  pulse: boolean;
-} {
-  switch (status) {
-    case "done":
-      return { color: "var(--green)", pulse: false };
-    case "building":
-    case "reviewing":
-      return { color: "var(--accent)", pulse: true };
-    case "failed":
-      return { color: "var(--red)", pulse: false };
-    case "skipped":
-      return { color: "var(--faint)", pulse: false };
-    case "pending":
-    default:
-      return { color: "var(--border-2)", pulse: false };
-  }
-}
-
 const PHASE_LABEL: Record<StepStatus, string> = {
   pending: "pending",
   building: "building",
   reviewing: "reviewing",
   done: "done",
-  failed: "failed",
-  skipped: "skipped",
 };
 
 export function phaseLabel(status: StepStatus): string {

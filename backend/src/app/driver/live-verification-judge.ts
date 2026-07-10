@@ -1,4 +1,5 @@
 import { ChatAnthropic } from '@langchain/anthropic';
+import { Logger } from '@nestjs/common';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { SystemMessage } from '@langchain/core/messages';
 import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
@@ -96,6 +97,11 @@ export namespace JudgeLiveVerificationChain {
     '   (a command + exit code + output), not merely claimed in prose? Typecheck, build, lint, and the unit/',
     '   integration TEST SUITE running are explicitly NOT live verification on their own, no matter how',
     '   thorough — they prove the code compiles and its own tests pass, not that the running system works.',
+    '   ONE more form counts as adequate: when the change\'s effect is an internal option/value handed to an',
+    '   external SDK/library (or otherwise NEVER echoed in any user-facing HTTP/UI/CLI surface), a capture',
+    '   from the ACTUALLY-BOOTED process exercising the real code path — a log line proving the changed value',
+    '   was passed at runtime (a command + its output), NOT a unit/integration test asserting it — is enough.',
+    '   Do NOT demand an HTTP/UI/CLI observation that cannot exist for such a change.',
     '',
     'When genuinely unsure on EITHER question, resolve toward the STRICTER reading:',
     '`runtimeSurfaceTouched: true` and `liveVerificationAdequate: false`. A false "needs more evidence" is a',
@@ -134,6 +140,7 @@ export namespace JudgeLiveVerificationChain {
  * cached per key string.
  */
 export class AnthropicLiveVerificationJudge implements LiveVerificationJudge {
+  private readonly logger = new Logger('LiveVerificationJudge');
   private readonly chains = new Map<
     string,
     Runnable<JudgeLiveVerificationChain.Input, JudgeLiveVerificationChain.Output>
@@ -155,6 +162,10 @@ export class AnthropicLiveVerificationJudge implements LiveVerificationJudge {
           model: JudgeLiveVerificationChain.MODEL,
           maxTokens: 256,
           temperature: 0,
+          // Ride out transient Anthropic errors (429/5xx/overloaded/network) with exponential backoff
+          // INSIDE the SDK rather than surfacing them as `undefined` — a swallowed transient used to
+          // downgrade EVERY genuinely-done thread system-wide the instant the API blipped (07-09 incident).
+          maxRetries: 5,
         }),
       );
       this.chains.set(key, c);
@@ -182,8 +193,16 @@ export class AnthropicLiveVerificationJudge implements LiveVerificationJudge {
         reason: out.reason || '(no reason given)',
         ...(out.missingChecks ? { missingChecks: out.missingChecks } : {}),
       };
-    } catch {
-      // Malformed/blocked structured output → be conservative; the caller defaults accordingly.
+    } catch (err) {
+      // Malformed/blocked structured output or an exhausted-retry API error → be conservative; the caller
+      // defaults accordingly. But NEVER swallow it silently: this used to be a total black box, so a
+      // system-wide judge outage (e.g. Anthropic overload or a key hitting its credit/rate limit) looked
+      // identical to "your evidence is inadequate" with no way to tell them apart from the logs.
+      const e = err as { status?: number; name?: string; message?: string };
+      this.logger.warn(
+        `live-verification judge call failed (status=${e?.status ?? 'n/a'} ${e?.name ?? 'Error'}): ` +
+          `${String(e?.message ?? err).slice(0, 300)} — verdict defaults conservative (touched-but-unverified)`,
+      );
       return undefined;
     }
   }

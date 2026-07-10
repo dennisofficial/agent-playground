@@ -13,8 +13,10 @@
  *      `allowedTools` so they're auto-approved (host-controlled — never a permission prompt).
  */
 
-/** The in-process MCP server name the host-bridge tools are registered under. */
-export const BRIDGE_SERVER_NAME = 'atlas-host-bridge';
+// The server name is single-sourced in `@workspace/shared` (the backend↔web contract); re-export it
+// here so the many in-backend importers of `BRIDGE_SERVER_NAME` keep their existing import path.
+import { BRIDGE_SERVER_NAME } from '@workspace/shared';
+export { BRIDGE_SERVER_NAME };
 
 /** How the model addresses each host tool over the bridge: `mcp__<server>__<tool>`. */
 export function qualifyBridgeToolNames(toolNames: string[]): string[] {
