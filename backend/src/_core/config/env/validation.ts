@@ -82,8 +82,13 @@ export interface IEnvConfig {
   MAX_CONCURRENT_SANDBOXES?: number;
   // SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (falls back to REDIS_URL).
   // SANDBOX_BUS_NETWORK: the internal Docker network each sandbox joins (`atlas-bus` in prod; unset in dev).
+  // SANDBOX_MCP_NETWORK: the internal net the read-only diagnostics MCP reader lives on; a sandbox is
+  //   attached ONLY when its repo slug === ATLAS_REPO_SLUG (`atlas-mcp` in prod; unset in dev = no-op).
+  // ATLAS_REPO_SLUG: repos.slug of the Atlas repo itself; gates the MCP-network attach (fail-closed).
   SANDBOX_REDIS_URL?: string;
   SANDBOX_BUS_NETWORK?: string;
+  SANDBOX_MCP_NETWORK?: string;
+  ATLAS_REPO_SLUG?: string;
 
   // Secrets. SECRETS_ENCRYPTION_KEY (32-byte hex/base64) encrypts every `org_credentials` row at rest —
   // REQUIRED now that all credentials live there. JWT_* sign the web-console session cookies — REQUIRED
@@ -187,6 +192,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   MAX_CONCURRENT_SANDBOXES: Joi.number().integer().min(1).optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
+  SANDBOX_MCP_NETWORK: Joi.string().optional(),
+  ATLAS_REPO_SLUG: Joi.string().optional(),
 
   // Secrets
   SECRETS_ENCRYPTION_KEY: Joi.string().required(),
