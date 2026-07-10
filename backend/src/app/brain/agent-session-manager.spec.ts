@@ -36,6 +36,7 @@ import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
+import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
 import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
@@ -1148,6 +1149,20 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(WORKSPACE_PROFILE_TOOL_NAMES as readonly string[]).not.toContain('reset_sandbox');
   });
 
+  // Drift guard: every tool the brain actually registers — across every curated kind — MUST have a
+  // TOOL_SHAPES entry, or the SDK bridge would silently strip every argument that tool's handler reads
+  // (a strict zod object drops unknown keys before the handler ever sees them).
+  it('every buildTools()-registered tool (all kinds) has a TOOL_SHAPES entry', () => {
+    for (const kind of [null, 'review', 'onboarding']) {
+      const tools = manager.buildTools(fakeStimulus, kind);
+      for (const name of Object.keys(tools)) {
+        expect(TOOL_SHAPES, `brain tool "${name}" (kind=${kind}) must have a TOOL_SHAPES entry`).toHaveProperty(
+          name,
+        );
+      }
+    }
+  });
+
   // Drift guard for the shared backend↔web contract (`ATLAS_HOST_BRIDGE_TOOLS` in @workspace/shared).
   // The host-bridge tool set is `Object.keys(buildTools())` MINUS the workspace-profile server's tools,
   // unioned across every session kind. This asserts the contract equals what the backend actually
@@ -1602,13 +1617,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.updateDecision).toHaveBeenCalledWith(THREAD_ID, 'd1', { decisionClass: 'data_model' });
   });
 
-  it('(g1d) create_decision with no args returns the `args` envelope hint, not a field error', async () => {
-    // When the model omits the bridge `args` wrapper the host receives {}; the error must point at the
-    // envelope, not mislead with "decisionClass must be one of…".
+  it('(g1d) create_decision with no args returns a missing-arguments hint, not a field error', async () => {
+    // When no payload reaches the host, the error must point at the missing arguments broadly, not mislead
+    // with "decisionClass must be one of…".
     const tools = manager.buildTools(fakeStimulus);
     const result = (await tools['create_decision']({})) as { ok: boolean; reason: string };
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/args/);
+    expect(result.reason).toMatch(/required fields/);
     expect(result.reason).not.toMatch(/must be one of/);
     expect(mockStore.createDecision).not.toHaveBeenCalled();
   });
