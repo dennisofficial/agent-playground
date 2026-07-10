@@ -14,6 +14,24 @@ const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 /** Length of the public preview token. 50 bits of HMAC output — ample against guessing, short in a host. */
 const PREVIEW_ID_LENGTH = 10;
 
+/**
+ * Max service-name length for `<previewId>-<service>.<domain>`: DNS labels cap at 63 octets, and the
+ * preview prefix contributes 11 chars (`10 token + "-"`). Exposed service names must also avoid
+ * underscores and trailing hyphens so the generated URL is a real browser/DNS hostname.
+ */
+export const MAX_EXPOSED_SERVICE_NAME_LENGTH = 52;
+
+const EXPOSED_SERVICE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+/** Whether an `atlas-svc --name` can safely become the service part of a public preview hostname. */
+export function isValidExposedServiceName(name: string): boolean {
+  return (
+    name.length > 0 &&
+    name.length <= MAX_EXPOSED_SERVICE_NAME_LENGTH &&
+    EXPOSED_SERVICE_NAME_RE.test(name)
+  );
+}
+
 /** Encode bytes as RFC 4648 base32 (no padding) using the lowercased alphabet. */
 function base32(bytes: Buffer): string {
   let out = '';
@@ -43,12 +61,22 @@ export function previewId(jobId: string, secret: string): string {
 }
 
 /** The public preview host for a named dev service — `<previewId>-<name>.<baseDomain>`. */
-export function hostFor(jobId: string, name: string, secret: string, baseDomain: string): string {
+export function hostFor(
+  jobId: string,
+  name: string,
+  secret: string,
+  baseDomain: string,
+): string {
   return `${previewId(jobId, secret)}-${name}.${baseDomain}`;
 }
 
 /** The public preview URL for a named dev service — always https (Caddy terminates TLS). */
-export function urlFor(jobId: string, name: string, secret: string, baseDomain: string): string {
+export function urlFor(
+  jobId: string,
+  name: string,
+  secret: string,
+  baseDomain: string,
+): string {
   return `https://${hostFor(jobId, name, secret, baseDomain)}`;
 }
 

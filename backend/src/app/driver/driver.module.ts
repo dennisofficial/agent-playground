@@ -44,6 +44,8 @@ import { ExposureService } from '../exposure';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
+const PREVIEW_RECONCILE_INTERVAL_MS = 10_000;
+
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
  * turns an approved `Job` into ONE PR:
@@ -115,13 +117,17 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     DRIVER_REPO,
   ],
 })
-export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdown {
+export class DriverModule
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private resumeSub?: Subscription;
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
   private reapTimer?: ReturnType<typeof setInterval>;
   private pollTimer?: ReturnType<typeof setInterval>;
+  private previewTimer?: ReturnType<typeof setInterval>;
   private pollInFlight = false; // skip a heartbeat if the prior tick is still running (slow GitHub / many PRs)
+  private previewInFlight = false; // skip a preview reconcile if the prior tick is still converging Caddy
   private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
   private webhooksBackfilled = false; // per-repo webhook backfill runs ONCE per process on leadership
@@ -134,8 +140,8 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly onboarding: OnboardingService,
-    // Sandbox-preview reconciler — swept on the leader's reap timer so a missed webhook / restart
-    // self-heals Caddy's preview routes. From the @Global ExposureModule; inert when disabled. @Optional
+    // Sandbox-preview reconciler — swept on a short leader-only timer so marker writes become Caddy routes
+    // without relying on an open console tab. From the @Global ExposureModule; inert when disabled. @Optional
     // so the module's direct-construction unit test compiles without a trailing argument.
     @Optional() private readonly exposure?: ExposureService,
   ) {}
@@ -176,7 +182,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
         // is protected. Awaited (bounded, cheap); never blocks promotion on failure.
         await this.lifecycle
           .reapOrphanedSandboxArtifacts()
-          .catch((err) => this.logger.warn(`boot orphan-artifact sweep failed: ${err}`));
+          .catch((err) =>
+            this.logger.warn(`boot orphan-artifact sweep failed: ${err}`),
+          );
       }
       // Best-effort: register the GitHub delivery webhooks for already-connected repos so the fast path is
       // live without a re-connect. Once per process, fire-and-forget — never blocks resume, and skips
@@ -185,7 +193,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
         this.webhooksBackfilled = true;
         void this.onboarding
           .ensureWebhooksForActiveRepos()
-          .catch((err) => this.logger.warn(`webhook backfill sweep failed: ${err}`));
+          .catch((err) =>
+            this.logger.warn(`webhook backfill sweep failed: ${err}`),
+          );
       }
       // Re-drive `running` jobs on EVERY promotion — including a mid-life re-promote. Leadership-fenced
       // drives (see ThreadDriver.runJob) YIELD on demotion, so a re-promote must re-pick-up the yielded job or
@@ -195,10 +205,12 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       await this.driver.resume();
       this.startReapTimer(); // transient: stopped on demote, restarted on every promote
       this.startPollTimer(); // the fast adaptive PR-state heartbeat (leader-only, like the reap timer)
+      this.startPreviewTimer(); // the marker → Caddy-route reconciler (leader-only, exposure-gated)
     });
     this.demoteSub = this.election.onDemote(() => {
       this.stopReapTimer();
       this.stopPollTimer();
+      this.stopPreviewTimer();
     });
   }
 
@@ -226,8 +238,6 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       // networks orphaned across restarts/crashes. Decoupled from MAX_CONCURRENT_SANDBOXES (the softCapCheck
       // gate that previously left this sweep unscheduled in prod).
       void this.lifecycle.reapOrphanedSandboxArtifacts().catch(() => undefined);
-      // Converge Caddy's sandbox-preview routes to the live set (self-heals missed webhooks / restarts).
-      void this.exposure?.reconcileAll().catch(() => undefined);
     }, everyMs);
     this.reapTimer.unref?.();
   }
@@ -271,11 +281,39 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     }
   }
 
+  /** Short leader-only preview reconciler: `atlas-svc --port` marker writes become public Caddy routes even
+   *  when no operator has the workspace open to trigger the services endpoint. */
+  private startPreviewTimer(): void {
+    if (this.previewTimer || !this.exposure?.enabled) return;
+    const tick = (): void => {
+      if (this.previewInFlight) return;
+      this.previewInFlight = true;
+      void this.exposure
+        ?.reconcileAll()
+        .catch((err) => this.logger.warn(`preview reconcile failed: ${err}`))
+        .finally(() => {
+          this.previewInFlight = false;
+        });
+    };
+    tick();
+    this.previewTimer = setInterval(tick, PREVIEW_RECONCILE_INTERVAL_MS);
+    this.previewTimer.unref?.();
+  }
+
+  private stopPreviewTimer(): void {
+    if (this.previewTimer) {
+      clearInterval(this.previewTimer);
+      this.previewTimer = undefined;
+    }
+    this.previewInFlight = false;
+  }
+
   onApplicationShutdown(): void {
     this.resumeSub?.unsubscribe();
     this.promoteSub?.unsubscribe();
     this.demoteSub?.unsubscribe();
     this.stopReapTimer();
     this.stopPollTimer();
+    this.stopPreviewTimer();
   }
 }

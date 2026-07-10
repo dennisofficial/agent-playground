@@ -15,11 +15,20 @@ describe('readServiceMarkers', () => {
   });
 
   const write = (id: string, body: unknown): void => {
-    writeFileSync(join(dir, `${id}.json`), typeof body === 'string' ? body : JSON.stringify(body));
+    writeFileSync(
+      join(dir, `${id}.json`),
+      typeof body === 'string' ? body : JSON.stringify(body),
+    );
   };
 
   it('defaults a marker WITHOUT port/expose to port:null, expose:true (back-compat)', () => {
-    write('web', { name: 'web', cmd: 'pnpm dev', pid: 10, pgid: 10, startedAt: '2026-07-10T00:00:00Z' });
+    write('web', {
+      name: 'web',
+      cmd: 'pnpm dev',
+      pid: 10,
+      pgid: 10,
+      startedAt: '2026-07-10T00:00:00Z',
+    });
     const [m] = readServiceMarkers(dir);
     expect(m.port).toBeNull();
     expect(m.expose).toBe(true);
@@ -27,6 +36,13 @@ describe('readServiceMarkers', () => {
 
   it('parses explicit port + expose:false', () => {
     write('api', { name: 'api', port: 3000, expose: false });
+    const [m] = readServiceMarkers(dir);
+    expect(m.port).toBe(3000);
+    expect(m.expose).toBe(false);
+  });
+
+  it('does not expose a ported service whose name cannot form a valid DNS label', () => {
+    write('api_server', { name: 'api_server', port: 3000 });
     const [m] = readServiceMarkers(dir);
     expect(m.port).toBe(3000);
     expect(m.expose).toBe(false);

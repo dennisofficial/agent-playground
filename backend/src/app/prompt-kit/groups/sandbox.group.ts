@@ -171,7 +171,8 @@ export class SandboxGroup {
       'After starting, `curl https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN` and confirm a real response,',
       'not a 502, before telling the operator it is up.',
       'Use `--no-expose` for an internal-only service you do not want a public URL for. Naming: the `<svc>` name',
-      'becomes the subdomain label, so keep names short and clear (`web`, `api`).',
+      'becomes the subdomain label, so keep names short and DNS-safe: lowercase letters/digits/hyphens only,',
+      'start/end alphanumeric, max 52 chars (`web`, `api`, `admin-ui`).',
     ].join('\n');
   }
 

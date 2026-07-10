@@ -58,6 +58,10 @@ cmd_run() {
     if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
       echo "atlas-svc: --port must be an integer 1-65535" >&2; return 2
     fi
+    if [ "$no_expose" = 0 ] && ! [[ "$name" =~ ^([a-z0-9]|[a-z0-9][a-z0-9-]{0,50}[a-z0-9])$ ]]; then
+      echo "atlas-svc: exposed --port service names must be DNS-safe: [a-z0-9-], 1-52 chars, start/end alphanumeric (or pass --no-expose)" >&2
+      return 2
+    fi
   fi
   local marker="$SVC_DIR/$name.json" log="$SVC_DIR/$name.log"
   local cmd="$*"
@@ -114,6 +118,7 @@ cmd_ps() {
     printf '%-24s %-9s pgid=%-8s since=%s\n' "$name" "$status" "${pgid:-?}" "${started:-?}"
   done
   [ "$any" = 0 ] && echo "(no supervised processes)"
+  return 0
 }
 
 # Stop the process group recorded in a marker file (TERM, then KILL) and drop the marker. Safe on a

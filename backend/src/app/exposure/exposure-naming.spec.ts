@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { hostFor, previewId, routeId, routePrefix, urlFor } from './exposure-naming';
+import {
+  hostFor,
+  isValidExposedServiceName,
+  previewId,
+  routeId,
+  routePrefix,
+  urlFor,
+} from './exposure-naming';
 
 const SECRET = 'test-secret-key';
 const DOMAIN = 'atlas.example.co';
@@ -17,7 +24,9 @@ describe('previewId', () => {
 
   it('differs by job and by secret (unguessable without the secret)', () => {
     expect(previewId('job-1', SECRET)).not.toBe(previewId('job-2', SECRET));
-    expect(previewId('job-1', SECRET)).not.toBe(previewId('job-1', 'other-secret'));
+    expect(previewId('job-1', SECRET)).not.toBe(
+      previewId('job-1', 'other-secret'),
+    );
   });
 });
 
@@ -28,7 +37,23 @@ describe('hostFor / urlFor', () => {
   });
 
   it('urlFor is https over the host', () => {
-    expect(urlFor('job-1', 'web', SECRET, DOMAIN)).toBe(`https://${hostFor('job-1', 'web', SECRET, DOMAIN)}`);
+    expect(urlFor('job-1', 'web', SECRET, DOMAIN)).toBe(
+      `https://${hostFor('job-1', 'web', SECRET, DOMAIN)}`,
+    );
+  });
+});
+
+describe('isValidExposedServiceName', () => {
+  it('accepts DNS-safe service names that fit under the wildcard label', () => {
+    expect(isValidExposedServiceName('web')).toBe(true);
+    expect(isValidExposedServiceName('admin-ui')).toBe(true);
+    expect(isValidExposedServiceName('a'.repeat(52))).toBe(true);
+  });
+
+  it('rejects names that would produce invalid public hostnames', () => {
+    expect(isValidExposedServiceName('api_server')).toBe(false);
+    expect(isValidExposedServiceName('api-')).toBe(false);
+    expect(isValidExposedServiceName('a'.repeat(53))).toBe(false);
   });
 });
 

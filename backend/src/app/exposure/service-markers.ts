@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ServiceLivenessProbe } from '../sandbox/sandbox-provider.port';
+import { isValidExposedServiceName } from './exposure-naming';
 
 /**
  * One supervised process's durable `atlas-svc` marker (see `backend/sandbox/atlas-svc`), read from the
@@ -58,7 +59,8 @@ export function serviceStatus(
   if (marker.pgid == null || marker.startedAt == null) return 'unknown';
   const started = Date.parse(marker.startedAt);
   const generation = Date.parse(probe.containerStartedAt);
-  if (!Number.isFinite(started) || !Number.isFinite(generation)) return 'unknown';
+  if (!Number.isFinite(started) || !Number.isFinite(generation))
+    return 'unknown';
   if (started < generation - GENERATION_SKEW_MS) return 'stopped'; // previous container — reused pgid must not read as running
   return probe.alive.includes(marker.pgid) ? 'running' : 'stopped';
 }
@@ -83,7 +85,10 @@ export function readServiceMarkers(dir: string): ReadServiceMarker[] {
     if (!SERVICE_ID_RE.test(id)) continue; // defensive — atlas-svc only ever writes validated names
     let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<string, unknown>;
+      parsed = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<
+        string,
+        unknown
+      >;
     } catch {
       continue; // a marker mid-write / corrupt — skip rather than fail the whole list
     }
@@ -96,23 +101,35 @@ export function readServiceMarkers(dir: string): ReadServiceMarker[] {
     } catch {
       /* no log yet */
     }
+    const name =
+      typeof parsed.name === 'string' && SERVICE_ID_RE.test(parsed.name)
+        ? parsed.name
+        : id;
+    const port =
+      typeof parsed.port === 'number' &&
+      Number.isInteger(parsed.port) &&
+      parsed.port >= 1 &&
+      parsed.port <= 65535
+        ? parsed.port
+        : null;
     markers.push({
       id,
       // `name` feeds the public preview host + the Caddy admin `@id` path, so it MUST satisfy the same
       // path-safe regex as the id. A sandbox process could drop a marker whose filename passes the guard
       // but whose JSON `name` is arbitrary (e.g. `../../config/...`); fall back to the validated `id`.
-      name: typeof parsed.name === 'string' && SERVICE_ID_RE.test(parsed.name) ? parsed.name : id,
+      name,
       cmd: typeof parsed.cmd === 'string' ? parsed.cmd : '',
       pid: typeof parsed.pid === 'number' ? parsed.pid : null,
       pgid: typeof parsed.pgid === 'number' ? parsed.pgid : null,
       startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : null,
       // Only a real TCP port routes; reject NaN/negative/out-of-range so a hand-crafted marker can't
       // produce a broken `<host>:NaN` upstream dial (matches atlas-svc's own 1–65535 guard).
-      port:
-        typeof parsed.port === 'number' && Number.isInteger(parsed.port) && parsed.port >= 1 && parsed.port <= 65535
-          ? parsed.port
-          : null,
-      expose: parsed.expose !== false,
+      port,
+      // Exposed services become DNS host labels. Preserve old markers' default expose:true only when the
+      // name can actually form a valid public hostname; non-HTTP workers ignore this field.
+      expose:
+        parsed.expose !== false &&
+        (port == null || isValidExposedServiceName(name)),
       logBytes,
       logUpdatedAt,
     });
