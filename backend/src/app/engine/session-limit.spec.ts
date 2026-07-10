@@ -17,6 +17,22 @@ describe('limitFromRateEvent', () => {
     });
   });
 
+  it('interprets the SDK epoch-SECONDS resetsAt as 2026, not 1970', () => {
+    // Real `rate_limit_event` frames carry `resetsAt` in epoch SECONDS (10-digit, e.g. 1783650000). A naive
+    // `new Date(seconds)` treats it as ms and lands in Jan 1970 — the bug this guards against.
+    const seconds = 1783650000;
+    const hit = limitFromRateEvent({ status: 'rejected', resetsAt: seconds, rateLimitType: 'five_hour' });
+    expect(hit?.resetAt).toBe(new Date(seconds * 1000).toISOString());
+    expect(new Date(hit!.resetAt as string).getUTCFullYear()).toBe(2026);
+  });
+
+  it('passes an already-millisecond resetsAt through unchanged', () => {
+    const ms = Date.parse('2026-07-09T22:00:00.000Z');
+    expect(limitFromRateEvent({ status: 'rejected', resetsAt: ms })?.resetAt).toBe(
+      '2026-07-09T22:00:00.000Z',
+    );
+  });
+
   it('returns null for an allowed_warning frame', () => {
     expect(limitFromRateEvent({ status: 'allowed_warning', utilization: 82 })).toBeNull();
   });

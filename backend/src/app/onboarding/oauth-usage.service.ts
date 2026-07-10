@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Injectable, Logger } from '@nestjs/common';
 import type { OrgUsage, UsageWindow } from '@workspace/shared';
+import { resetEpochToIso } from '../engine/session-limit';
 import { CredentialResolver } from './credential-resolver.service';
 
 /** The four subscription rate-limit windows the SDK/API report, in `OrgUsage`'s field names. */
@@ -74,7 +75,10 @@ export class OauthUsageService {
     info: { status?: string; resetsAt?: number; rateLimitType?: string; utilization?: number },
   ): void {
     try {
-      if (info.resetsAt == null) return;
+      // The SDK reports `resetsAt` in epoch SECONDS; `resetEpochToIso` normalizes that (and tolerates a
+      // caller that already passes ms, e.g. the park sites). Drop frames with no usable reset instant.
+      const resetsAt = resetEpochToIso(info.resetsAt);
+      if (!resetsAt) return;
       // A `rejected` frame IS the hard limit — the window is full by definition, so paint it 100% even
       // when the frame omits `utilization`, and default an unlabeled rejection to the session window (the
       // binding day-to-day one). Non-rejected frames still require a real `utilization` to record.
@@ -86,10 +90,7 @@ export class OauthUsageService {
       const key = RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType];
       if (!key) return;
       const snapshot = this.harvested.get(orgId) ?? { windows: {}, fetchedAt: 0 };
-      snapshot.windows[key] = {
-        utilization,
-        resetsAt: new Date(info.resetsAt).toISOString(),
-      };
+      snapshot.windows[key] = { utilization, resetsAt };
       snapshot.fetchedAt = Date.now();
       this.harvested.set(orgId, snapshot);
     } catch (err) {
@@ -204,14 +205,23 @@ function parseWindow(raw: unknown): UsageWindow {
   return { utilization, resetsAt: new Date(resetsAtMs).toISOString() };
 }
 
-/** Parse the full `/api/oauth/usage` body — same unofficial-shape caveat as {@link parseWindow}. */
+/**
+ * Parse the full `/api/oauth/usage` body — same unofficial-shape caveat as {@link parseWindow}. The
+ * windows sit at the TOP LEVEL of the body (`{ five_hour, seven_day, seven_day_opus, seven_day_sonnet }`);
+ * older/alternate shapes nest them under `windows` or `rate_limits`, so we look through both defensively.
+ */
 function parseUsageResponse(body: unknown): OrgUsage {
-  const windows = (body as { windows?: Record<string, unknown> } | null)?.windows ?? {};
+  const root = (body ?? {}) as Record<string, unknown>;
+  const nested =
+    (root.windows as Record<string, unknown> | undefined) ??
+    (root.rate_limits as Record<string, unknown> | undefined) ??
+    {};
+  const pick = (key: string): unknown => root[key] ?? nested[key];
   return {
-    fiveHour: parseWindow(windows.five_hour),
-    sevenDay: parseWindow(windows.seven_day),
-    sevenDayOpus: parseWindow(windows.seven_day_opus),
-    sevenDaySonnet: parseWindow(windows.seven_day_sonnet),
+    fiveHour: parseWindow(pick('five_hour')),
+    sevenDay: parseWindow(pick('seven_day')),
+    sevenDayOpus: parseWindow(pick('seven_day_opus')),
+    sevenDaySonnet: parseWindow(pick('seven_day_sonnet')),
     fetchedAt: new Date().toISOString(),
     source: 'usage_api',
     ok: true,

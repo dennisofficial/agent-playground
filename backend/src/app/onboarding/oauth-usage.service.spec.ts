@@ -40,6 +40,19 @@ describe('OauthUsageService.applyHarvest', () => {
     expect(usage.fiveHour).toBeNull();
   });
 
+  it('normalizes an epoch-SECONDS resetsAt from a harvested frame (not 1970)', async () => {
+    const svc = makeService();
+    const seconds = 1783650000; // epoch seconds → 2026
+    svc.applyHarvest('org1', {
+      status: 'rejected',
+      rateLimitType: 'five_hour',
+      resetsAt: seconds,
+    });
+    const usage = await svc.get('org1');
+    expect(usage.fiveHour?.resetsAt).toBe(new Date(seconds * 1000).toISOString());
+    expect(new Date(usage.fiveHour!.resetsAt).getUTCFullYear()).toBe(2026);
+  });
+
   it('records a non-rejected frame at its reported utilization', async () => {
     const svc = makeService();
     const resetsAt = Date.now() + 60 * 60 * 1000;

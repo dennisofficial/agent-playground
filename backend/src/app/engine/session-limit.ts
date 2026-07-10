@@ -16,9 +16,22 @@ export type SessionLimitHit = {
 };
 
 /**
+ * Normalize the SDK's `rate_limit_event.resetsAt` epoch to an ISO string. The SDK reports it in epoch
+ * SECONDS (a 10-digit value like 1783650000), NOT milliseconds — so a bare `new Date(resetsAt)` lands in
+ * 1970. Guard both units: anything below 1e12 is treated as seconds and scaled to ms; a value already in ms
+ * passes through. Returns undefined for missing/NaN input.
+ */
+export function resetEpochToIso(resetsAt: number | undefined | null): string | undefined {
+  if (resetsAt == null) return undefined;
+  const ms = resetsAt < 1e12 ? resetsAt * 1000 : resetsAt;
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
+/**
  * PRIMARY structured signal. Reads the `SDKRateLimitInfo` shape (kept structural/loose so this util imports
- * no SDK types). `status: 'rejected'` is a HARD limit → return a hit (`resetAt` derived from the epoch-ms
- * `resetsAt`). Any other status (`allowed` / `allowed_warning`) is not a wall → return null.
+ * no SDK types). `status: 'rejected'` is a HARD limit → return a hit (`resetAt` derived from the epoch
+ * `resetsAt`, see {@link resetEpochToIso}). Any other status (`allowed` / `allowed_warning`) is not a wall.
  */
 export function limitFromRateEvent(info: {
   status: string;
@@ -28,7 +41,7 @@ export function limitFromRateEvent(info: {
 }): SessionLimitHit | null {
   if (info.status !== 'rejected') return null;
   return {
-    resetAt: info.resetsAt ? new Date(info.resetsAt).toISOString() : undefined,
+    resetAt: resetEpochToIso(info.resetsAt),
     rateLimitType: info.rateLimitType,
     utilization: info.utilization,
   };
