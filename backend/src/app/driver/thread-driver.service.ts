@@ -15,7 +15,13 @@ import {
   type AutoFixContext,
   type FindingSeverity,
 } from '../autofix';
-import type { DecisionRecord, Step, Job, SessionEngine, ThreadStatus } from '../domain';
+import type {
+  DecisionRecord,
+  Step,
+  Job,
+  SessionEngine,
+  ThreadCondition,
+} from '../domain';
 import { HALT_FIX_ATTEMPT_CAP } from '../domain';
 import { TICKET_AUTO_SKIP_SIM, TICKET_TERMINAL_STATUSES } from '../domain/ticket';
 import {
@@ -70,6 +76,7 @@ import {
   type LiveVerificationVerdict,
 } from './live-verification-judge';
 import {
+  clampEvidenceOutput,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
   renderTerminalRecordSummary,
@@ -462,6 +469,7 @@ export class ThreadDriver implements JobDispatcher {
     // re-drive must lift the halt or `runJob`/`drive`'s halt gate would refuse to re-drive.
     await this.store.clearJobHalt(jobId).catch(() => undefined);
     await this.store.setThreadStatus(threadId, 'executing').catch(() => undefined);
+    await this.store.setThreadCondition(threadId, 'none').catch(() => undefined);
     if (guidance) {
       await this.store.setThreadOrientation(threadId, guidance).catch(() => undefined);
     }
@@ -903,18 +911,27 @@ export class ThreadDriver implements JobDispatcher {
       text = `:x: Build failed in *${thread.brief}* — ${why}\n_The job is marked failed; reply in this thread to retry or adjust._`;
       severity = 'error';
     } else if (outcome === 'blocked') {
-      const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
-      if (spent >= HALT_FIX_ATTEMPT_CAP) {
-        // Autonomous budget exhausted → rest the job for the operator (no more brain wakes owed).
-        const reason = term?.blocked?.detail ?? 'needs your input';
-        await this.store
-          .setJobHalt(job.id, { kind: 'budget_exhausted', reason, at })
-          .catch(() => undefined);
-        owedWake = false;
-        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${reason}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
+      // A `judge_unavailable` block is a TRANSIENT infra hold, not a work defect: the live-verification judge
+      // was unreachable (Anthropic outage / key rate-or-credit limit), so a genuinely-done thread must HOLD and
+      // retry when the service recovers — NOT consume its autonomous fix budget and rest `budget_exhausted`
+      // (which would let a single Anthropic blip permanently stall EVERY in-flight job; 07-09 incident). Keep the
+      // job `running` with the thread `awaiting_input` + owed wake, regardless of prior attempts.
+      if (term?.blocked?.reason === 'judge_unavailable') {
+        text = `:hourglass_flowing_sand: *${thread.brief}* is done but the live-verification judge is temporarily unavailable — holding to retry when it recovers (not counted against the fix budget).`;
       } else {
-        // Budget remains: job stays `running`; the thread is `awaiting_input` (Phase 3 wakes the brain to fix).
-        text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
+        const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
+        if (spent >= HALT_FIX_ATTEMPT_CAP) {
+          // Autonomous budget exhausted → rest the job for the operator (no more brain wakes owed).
+          const reason = term?.blocked?.detail ?? 'needs your input';
+          await this.store
+            .setJobHalt(job.id, { kind: 'budget_exhausted', reason, at })
+            .catch(() => undefined);
+          owedWake = false;
+          text = `:raising_hand: Thread blocked — *${thread.brief}*: ${reason}. Atlas has used its ${HALT_FIX_ATTEMPT_CAP} autonomous fix attempts — *paused for you*. Reply or resume to re-arm and retry.`;
+        } else {
+          // Budget remains: job stays `running`; the thread is `awaiting_input` (Phase 3 wakes the brain to fix).
+          text = `:raising_hand: Thread blocked — *${thread.brief}*: ${term?.blocked?.detail ?? 'needs your input'}.`;
+        }
       }
     } else {
       // incomplete
@@ -1027,7 +1044,7 @@ export class ThreadDriver implements JobDispatcher {
         `thread ${thread.ordinal} "${thread.brief}" — already blocked; re-halting (the brain owns the retry)`,
       );
       await this.store
-        .setThreadStatus(thread.id, 'awaiting_input')
+        .setThreadCondition(thread.id, 'paused')
         .catch(() => undefined);
       return { outcome: 'blocked', handoff: null };
     }
@@ -1077,6 +1094,9 @@ export class ThreadDriver implements JobDispatcher {
     //    empty range → the review is silently skipped and the commit mis-recorded as `(nothing)`.
     const sectionStartSha = await this.resolveThreadStartSha(thread, sandbox);
     await this.store.setThreadStatus(thread.id, 'executing');
+    // Clear any stale halt overlay from a prior run — this (re)start of the turn puts the step back on the
+    // linear ladder, so a resumed/retried thread must not keep a persisted 'incomplete'|'failed'|'paused'.
+    await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
     const { outcome, reports } = await this.executeSteps(
       job, route, sandbox, thread, record, repo, sectionStartSha,
     );
@@ -1085,9 +1105,12 @@ export class ThreadDriver implements JobDispatcher {
     // skip auto-fix + handoff, set the thread status, and let runJob relay + skip finalize. NEVER fall through
     // to the done path (ADR 0004: a clean turn is not evidence of completion).
     if (outcome !== 'done') {
-      const status: ThreadStatus =
-        outcome === 'blocked' ? 'awaiting_input' : outcome; // 'incomplete' | 'failed'
-      await this.store.setThreadStatus(thread.id, status).catch(() => undefined);
+      // Leave the STEP at `executing` (where it halted) and record the halt on the orthogonal condition
+      // overlay instead. `outcome` here is 'blocked' | 'incomplete' | 'failed'; the latter two are valid
+      // conditions verbatim, and 'blocked' maps to the operator-pause condition 'paused'.
+      const condition: ThreadCondition =
+        outcome === 'blocked' ? 'paused' : outcome;
+      await this.store.setThreadCondition(thread.id, condition).catch(() => undefined);
       this.logger.warn(`thread ${thread.ordinal} "${thread.brief}" halted — ${outcome}`);
       return { outcome, handoff: null };
     }
@@ -1105,6 +1128,7 @@ export class ThreadDriver implements JobDispatcher {
     const handoffOut = this.summarizeHandoff(thread, steps, reports);
     await this.store.setThreadHandoffOut(thread.id, handoffOut);
     await this.store.setThreadStatus(thread.id, 'done');
+    await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
     this.logger.log(`thread ${thread.ordinal} done`);
     await this.recordMilestone(
       job.id,
@@ -1227,7 +1251,11 @@ export class ThreadDriver implements JobDispatcher {
         if (c.kind === 'review_lens') {
           await this.store.setThreadReviewFindings(c.id, []).catch(() => undefined);
         }
+        // The review lifecycle genuinely completed (there was nothing to review), so the STEP is `done` —
+        // this keeps the `=== 'done'` resume-idempotency guards intact — while `skipped` carries the
+        // "nothing to do" overlay that used to live in the status value.
         await this.store.setThreadStatus(c.id, 'done').catch(() => undefined);
+        await this.store.setThreadCondition(c.id, 'skipped').catch(() => undefined);
       }
       return;
     }
@@ -1263,14 +1291,20 @@ export class ThreadDriver implements JobDispatcher {
     const lens = lensById(lensId);
     if (!lens) {
       this.logger.warn(`review-lens child ${child.id} has unknown lensId "${lensId}" — skipping`);
-      await this.store.setThreadStatus(child.id, 'skipped').catch(() => undefined);
+      // Terminal `done` (matching the empty-diff skip) — nothing to review, so the step genuinely completed;
+      // this keeps the `=== 'done'` resume-idempotency guard intact while `skipped` carries the overlay.
+      await this.store.setThreadStatus(child.id, 'done').catch(() => undefined);
+      await this.store.setThreadCondition(child.id, 'skipped').catch(() => undefined);
       return;
     }
     await this.store.setThreadStatus(child.id, 'executing').catch(() => undefined);
+    // Clear any stale halt overlay from a prior run before (re)running the lens's turn.
+    await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     try {
       const findings = await this.autofix.runReviewLens(ctx, lens);
       await this.store.setThreadReviewFindings(child.id, findings);
       await this.store.setThreadStatus(child.id, 'done');
+      await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     } catch (err) {
       this.logger.warn(`review lens "${lensId}" failed (continuing): ${err}`);
       // Persist the reason on the lens's OWN lane so its pane explains itself instead of showing a
@@ -1279,7 +1313,7 @@ export class ThreadDriver implements JobDispatcher {
         .emitReviewNotice(ctx, { lensId }, `This review lens failed to run: ${shortReason(err)}`)
         .catch(() => undefined);
       await this.store.setThreadReviewFindings(child.id, []).catch(() => undefined);
-      await this.store.setThreadStatus(child.id, 'failed').catch(() => undefined);
+      await this.store.setThreadCondition(child.id, 'failed').catch(() => undefined);
     }
   }
 
@@ -1310,17 +1344,19 @@ export class ThreadDriver implements JobDispatcher {
           .emitReviewNotice(ctx, { fix: true }, 'No findings met the fix threshold — nothing to fix.')
           .catch(() => undefined);
         await this.store.setThreadStatus(child.id, 'done').catch(() => undefined);
+        await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
         return;
       }
       await this.autofix.applyReviewFindings(ctx, actionable);
       await this.store.setThreadStatus(child.id, 'done');
+      await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     } catch (err) {
       this.logger.warn(`post-review fix failed (continuing): ${err}`);
       // Persist the reason on the fix lane so a failed post-review explains itself, not a blank pane.
       await this.autofix
         .emitReviewNotice(ctx, { fix: true }, `Post-review fix failed to run: ${shortReason(err)}`)
         .catch(() => undefined);
-      await this.store.setThreadStatus(child.id, 'failed').catch(() => undefined);
+      await this.store.setThreadCondition(child.id, 'failed').catch(() => undefined);
     }
   }
 
@@ -1443,7 +1479,7 @@ export class ThreadDriver implements JobDispatcher {
                     kind: String(o['kind'] ?? '').trim(),
                     command: String(o['command'] ?? '').trim(),
                     exitCode: Number.isFinite(Number(o['exitCode'])) ? Number(o['exitCode']) : -1,
-                    outputTail: String(o['outputTail'] ?? '').slice(0, 2000),
+                    outputTail: clampEvidenceOutput(String(o['outputTail'] ?? '')),
                   };
                 })
                 .filter((v) => v.command)
@@ -1453,7 +1489,7 @@ export class ThreadDriver implements JobDispatcher {
                     kind: 'reported',
                     command: '(see outputTail)',
                     exitCode: 0,
-                    outputTail: args['verification'].trim().slice(0, 2000),
+                    outputTail: clampEvidenceOutput(args['verification'].trim()),
                   },
                 ]
               : undefined;
@@ -1489,8 +1525,10 @@ export class ThreadDriver implements JobDispatcher {
             existing?.questionId ??
             (await this.store.openOperatorInputCard(job.id, question)).questionId;
           if (!existing) {
+            // The STEP stays `executing` (the turn is still alive, polling for the answer); the pause is
+            // recorded on the orthogonal condition overlay instead.
             await this.store
-              .setThreadStatus(thread.id, 'awaiting_input')
+              .setThreadCondition(thread.id, 'paused')
               .catch(() => undefined);
             await this.post(
               route,
@@ -1509,6 +1547,9 @@ export class ThreadDriver implements JobDispatcher {
             await this.store.markOperatorInputDelivered(job.id, questionId).catch(() => undefined);
             await this.store
               .setThreadStatus(thread.id, 'executing')
+              .catch(() => undefined);
+            await this.store
+              .setThreadCondition(thread.id, 'none')
               .catch(() => undefined);
             return { answer };
           } finally {
@@ -1743,11 +1784,18 @@ export class ThreadDriver implements JobDispatcher {
 
     if (effective.runtimeSurfaceTouched && !effective.liveVerificationAdequate) {
       let detail = [effective.reason, effective.missingChecks].filter(Boolean).join(' — ');
-      // Distinguish "no key configured" from a generic judge failure so an operator isn't left guessing.
+      // The judge was CONSULTED (runtime diff) but returned nothing → it was UNAVAILABLE, not a real
+      // "inadequate" verdict. Distinguish the two so a transient judge outage doesn't masquerade as unverified
+      // work: `judge_unavailable` HOLDS + retries (see `haltJob`) instead of burning the fix budget. A missing
+      // key is a real config gap the operator must fix, so that stays a plain `unverified` block.
+      let reason: 'unverified' | 'judge_unavailable' = 'unverified';
       if (!nonRuntime && !verdict) {
         const hasKey = await this.creds.anthropicKey(job.orgId).catch(() => undefined);
         if (!hasKey) {
           detail = `no Anthropic API key configured for the live-verification judge — configure one. (${detail})`;
+        } else {
+          reason = 'judge_unavailable';
+          detail = `live-verification judge temporarily unavailable (transient infra) — the work may be fine; will retry when the service recovers. (${detail})`;
         }
       }
       const blocked: ThreadTerminalRecord = {
@@ -1757,12 +1805,15 @@ export class ThreadDriver implements JobDispatcher {
         ...(candidate.verification ? { verification: candidate.verification } : {}),
         ...(candidate.deviations ? { deviations: candidate.deviations } : {}),
         ...(candidate.gaps ? { gaps: candidate.gaps } : {}),
-        blocked: { reason: 'unverified', detail },
+        blocked: { reason, detail },
         liveVerification: { verdict: effective },
       };
       return {
         record: blocked,
-        warning: `Downgraded to blocked (unverified) by the live-verification judge: ${detail}`,
+        warning:
+          reason === 'judge_unavailable'
+            ? `Live-verification judge unavailable (transient) — holding ${thread.brief} to retry, not counted against the fix budget: ${detail}`
+            : `Downgraded to blocked (unverified) by the live-verification judge: ${detail}`,
       };
     }
 

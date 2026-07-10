@@ -43,6 +43,7 @@ import {
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
+import { SkillUpdaterService } from '../skills/skill-updater.service';
 import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, WorktreeProvisioner } from '../driver';
 import { TicketService } from '../tickets';
 import { OrganizationService } from './organization.service';
@@ -82,6 +83,9 @@ class FakeGitService {
     return { ...sandbox, branch: featureBranch };
   }
   // Provision-path no-ops (no real git/cache/submodules/index in the fake).
+  async hasSubmodules(): Promise<boolean> {
+    return false;
+  }
   async ensureSubmodules(): Promise<void> {}
   async isIgnored(): Promise<boolean> {
     return true;
@@ -211,6 +215,7 @@ beforeEach(async () => {
       { provide: WorktreeProvisioner, useValue: { provisionAndAttach: async ({ sandbox }: { sandbox: FeatureSandbox }) => ({ sandbox, hydrationSig: 'sig' }) } },
       { provide: TicketService, useValue: { revertForDeletedThread: async () => {} } },
       { provide: TurnRegistry, useValue: { failRunningForJob: async () => 0 } },
+      { provide: SkillUpdaterService, useValue: { reconcileOrgAsync: () => undefined } },
       JobLifecycleService,
       OrganizationService,
     ],

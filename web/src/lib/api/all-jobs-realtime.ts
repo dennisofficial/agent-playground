@@ -83,11 +83,14 @@ export function useAllJobsRealtime(): void {
       let found = false;
       let statusChanged = false;
       let haltChanged = false;
+      let prChanged = false;
       const nextStatus = uiStatus(row.status, row.origin);
       const nextBranch = row.currentBranch ?? null;
       const prevBranch = lastBranchByJob.get(row.jobId);
       const branchChanged = prevBranch !== undefined && prevBranch !== nextBranch;
       lastBranchByJob.set(row.jobId, nextBranch);
+      const nextPrState = row.prState ?? null;
+      const nextPrMergeable = row.prMergeable ?? null;
       const nextHalt = "halt" in row ? (row.halt ?? null) : undefined;
       qc.setQueryData<InboxThread[]>(qk.allJobs(), (prev) => {
         if (!prev) return prev;
@@ -95,6 +98,11 @@ export function useAllJobsRealtime(): void {
         if (idx === -1) return prev;
         found = true;
         statusChanged = prev[idx].status !== nextStatus;
+        // A PR-state or mergeable transition (e.g. a GitHub merge) moves only these fields — `status`
+        // was already latched to `done` when the PR opened — so it must trigger its own detail refresh.
+        prChanged =
+          (prev[idx].pr?.state ?? null) !== nextPrState ||
+          (prev[idx].pr?.mergeable ?? null) !== nextPrMergeable;
         const halt = nextHalt === undefined ? prev[idx].halt : nextHalt;
         haltChanged = !sameHalt(prev[idx].halt, halt);
         const next = [...prev];
@@ -111,6 +119,9 @@ export function useAllJobsRealtime(): void {
           pr: row.prState
             ? {
                 state: row.prState as PrState,
+                // The number and url are stable once a PR exists and the flat WAL row omits them —
+                // preserve the enriched values so a live state transition re-glyphs without dropping them.
+                number: next[idx].pr?.number ?? null,
                 mergeable: row.prMergeable ?? null,
                 url: next[idx].pr?.url ?? null,
               }
@@ -123,15 +134,18 @@ export function useAllJobsRealtime(): void {
         invalidate(); // a thread we don't have cached yet → refetch the enriched list
         return;
       }
-      // A status transition (e.g. approve → running, → building, cancelled), branch switch, or HALT change
-      // means the OPEN thread's detail pane is stale. Halt is intentionally orthogonal to status, so without
-      // the explicit haltChanged gate a failed/paused build could update the sidebar but leave the workspace
-      // banner and pipeline tree stale until a later refetch.
-      if (statusChanged || branchChanged || haltChanged) {
+      // A status transition (e.g. approve → running, → building, cancelled), branch switch, HALT change, or
+      // PR-state change means the OPEN thread's detail pane is stale. Halt is intentionally orthogonal to
+      // status, so without the explicit haltChanged gate a failed/paused build could update the sidebar but
+      // leave the workspace banner and pipeline tree stale until a later refetch. A GitHub-originated PR merge
+      // moves only pr_state (status already latched to `done` when the PR opened), so it needs its own gate.
+      if (statusChanged || branchChanged || haltChanged || prChanged) {
         const ref = { orgId: row.orgId, repoId: row.repoId, jobId: row.jobId };
-        // The pipeline carries the branch fields the drift badge reads — refresh on either a status flip or
-        // a live branch switch. Halt writes also append a durable operator message, so refresh both surfaces.
+        // The pipeline carries the branch fields the drift badge reads AND the PR state the workspace badge
+        // reads — refresh on a status flip, a live branch switch, or a PR-state/mergeable transition.
         void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+        // Halt writes also append a durable operator message; the PR-sync path does not, so PR changes alone
+        // don't refresh messages.
         if (statusChanged || haltChanged) {
           void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
         }

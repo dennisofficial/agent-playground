@@ -627,6 +627,17 @@ export class JobLifecycleService {
   }
 
   /**
+   * Reclaim leaked per-sandbox Docker artifacts (`-net` networks + `-dind` volumes) whose owning container is
+   * gone — the catch-all that keeps Docker's address pool from being exhausted by networks orphaned across
+   * crashes / restarts / swallowed `removeNetwork` races. Thin pass-through to the provider's optional
+   * {@link SandboxProvider.reapOrphanedArtifacts} (no-op for a provider that doesn't implement it, e.g. a test
+   * fake). Scheduled by the driver's leader-gated reap timer + once on leadership acquisition (see DriverModule).
+   */
+  async reapOrphanedSandboxArtifacts(): Promise<void> {
+    await this.sandboxProvider.reapOrphanedArtifacts?.();
+  }
+
+  /**
    * On boot, mark every non-`closed` row `detached` + null its `container_id`: after a restart no
    * container is confirmed live, so the next turn's `ensureContainer` re-resolves it. The worktree is
    * restored lazily on that next turn (on the FEATURE branch, via `ensureWorktree`). Also rescues

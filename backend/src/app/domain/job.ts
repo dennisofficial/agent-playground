@@ -148,21 +148,25 @@ export interface Message {
  */
 export const HALT_FIX_ATTEMPT_CAP = 2;
 
-/** A thread's lifecycle — explicit, resumable. The driver `await`s each transition. */
+/** A thread's PURE LINEAR STEP — explicit, resumable. The driver `await`s each transition. Pause/failure/
+ *  skip are NOT steps; they live on the orthogonal {@link ThreadCondition} overlay. */
 export type ThreadStatus =
   | 'pending' // not started
   | 'planning' // the thread's single step is being locked
   | 'reviewing' // Codex plan-review loop
-  | 'awaiting_approval' // an always-ask decision parked & asked async
   | 'executing' // the orchestrator turn is running
-  | 'awaiting_input' // the orchestrator paused mid-build to ask the operator (request_operator_input)
   | 'auto_fixing' // per-thread auto-fix stage (a builder while its review children run)
-  | 'skipped' // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
-  | 'done'
-  | 'incomplete' // the build turn ended without asserting completion (no `complete_thread`) — surfaced &
-  // halted, NEVER treated as done. Distinct from `failed` (nothing threw) and `awaiting_input` (an explicit
-  // pause). The driver relays a durable card and the job waits on a human/Atlas. See ADR 0004.
-  | 'failed';
+  | 'done';
+
+/** A lightweight denormalized overlay tag on a thread (like job-level `halt.kind`), ORTHOGONAL to the
+ *  linear {@link ThreadStatus} step: it records the pause/terminal CONDITION without moving the step.
+ *  Detail (stderr, block reason, verification) stays in `terminal_record`/`halt_outcome`. */
+export type ThreadCondition =
+  | 'none'
+  | 'paused'
+  | 'incomplete'
+  | 'failed'
+  | 'skipped';
 
 /** One thread of a thread's build — a coherent slice (e.g. backend) that becomes a phased plan. */
 export interface Thread {
@@ -187,6 +191,8 @@ export interface Thread {
   /** This thread's handoff note for the next thread (null until done). */
   handoffOut: string | null;
   status: ThreadStatus;
+  /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
+  condition: ThreadCondition;
   /** The thread KIND — `main | builder | master_review | review_lens | post_review | plan_review`. The
    *  single differentiator across all thread-like concepts (a `master_review` is the whole-diff Codex
    *  review-&-fix appended last). See {@link ThreadEntity.kind}. */
@@ -206,9 +212,7 @@ export type StepStatus =
   | 'pending'
   | 'building'
   | 'reviewing'
-  | 'done'
-  | 'failed'
-  | 'skipped';
+  | 'done';
 
 /**
  * One PHASE of a thread's locked plan — runs as a fresh session on the feature branch (fresh context

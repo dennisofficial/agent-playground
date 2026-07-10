@@ -11,12 +11,11 @@ import {
   type OnApplicationShutdown,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
 import type {
   ChatStimulus,
-  EventSeverity,
   EventStimulus,
   Job,
   JobKind,
@@ -83,6 +82,7 @@ import {
   type LiveVerificationVerdict,
 } from '../driver/live-verification-judge';
 import {
+  clampEvidenceOutput,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
   renderTerminalRecordSummary,
@@ -413,6 +413,10 @@ export class AgentSessionManager
     if (this.chatSweepTimer) return;
     this.chatSweepTimer = setInterval(() => {
       void this.sweepUndeliveredChat();
+      // Same leader cadence re-drives any routed GitHub event whose brain delivery never landed (a steer
+      // swallowed by a finishing turn, or a fresh turn that never registered). Events get the SAME periodic
+      // at-least-once backstop as operator chat — not just the once-per-boot sweep. Leader-guarded.
+      void this.sweepUndeliveredEvents();
       // Same leader cadence re-drives WORK-OWED Codex reviews (a `review_plan` stranded `running` after its
       // brain turn was finalized on the non-detached path — reattach can't recover it). Leader-guarded.
       void this.reconcileWorkOwedReviews();
@@ -569,22 +573,23 @@ export class AgentSessionManager
     //    pending-chat guards as the periodic pass — see reconcileWorkOwedReviews.
     await this.reconcileWorkOwedReviews();
 
-    // Event-delivery reconciliation (same at-least-once shape): an event seeds its thread + stimulus row
-    // BEFORE the brain turn runs (and intake does not await the turn — the webhook 202 must stay fast). If
-    // the host died between seed and the harness turn, the dedupe-protected stimulus would block a webhook
-    // retry, so re-deliver every event with `delivered_at` null whose thread still exists. `deliverEvent`
-    // is idempotent on `delivered_at` (stamped only after the turn completes).
+    // Event-delivery reconciliation (same durable-inbox at-least-once shape as operator chat): a routed event
+    // is a `stimuli` row (kind='event') persisted at intake; `delivered_at` is stamped only on a positive
+    // brain hand-off (engine `input_ack` for a steer, or the fresh turn's registration). Clear leases first
+    // (a row mid-attempt at crash never reached a stamping hand-off), then pump every undelivered event. The
+    // pump steers a re-attached live turn or runs a fresh one; the periodic sweep keeps re-driving after boot.
     try {
-      const undeliveredEvents = await this.findUndeliveredEvents();
-      if (undeliveredEvents.length > 0) {
+      await this.stimulusStore.resetEventLeases();
+      const events = await this.stimulusStore.eligiblePendingEvents(
+        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+      );
+      if (events.length > 0) {
         this.logger.log(
-          `Leader: re-delivering ${undeliveredEvents.length} seeded-but-undelivered event(s)`,
+          `Leader: re-driving ${events.length} seeded-but-undelivered event(s)`,
         );
-        for (const ev of undeliveredEvents) {
-          void this.deliverEvent(ev).catch((err) =>
-            this.logger.warn(
-              `boot event re-delivery failed for stimulus=${ev.id}: ${err}`,
-            ),
+        for (const ev of events) {
+          void this.pumpEvent(ev).catch((err) =>
+            this.logger.warn(`boot event re-drive failed for stimulus=${ev.id}: ${err}`),
           );
         }
       }
@@ -2338,7 +2343,7 @@ export class AgentSessionManager
                   kind: String(o['kind'] ?? '').trim(),
                   command: String(o['command'] ?? '').trim(),
                   exitCode: Number.isFinite(Number(o['exitCode'])) ? Number(o['exitCode']) : -1,
-                  outputTail: String(o['outputTail'] ?? '').slice(0, 2000),
+                  outputTail: clampEvidenceOutput(String(o['outputTail'] ?? '')),
                 };
               })
               .filter((v) => v.command)
@@ -2348,7 +2353,7 @@ export class AgentSessionManager
                   kind: 'reported',
                   command: '(see outputTail)',
                   exitCode: 0,
-                  outputTail: (args['verification'] as string).trim().slice(0, 2000),
+                  outputTail: clampEvidenceOutput((args['verification'] as string).trim()),
                 },
               ]
             : [];
@@ -3128,14 +3133,32 @@ export class AgentSessionManager
           .catch((err) => this.logger.debug(`recordDirectBuildVerification failed: ${err}`));
         if (effective.runtimeSurfaceTouched && !effective.liveVerificationAdequate) {
           let detail = [effective.reason, effective.missingChecks].filter(Boolean).join(' — ');
-          // Distinguish "no key configured" from a generic judge failure so the operator isn't left guessing
-          // (mirrors the driver gate). Only when the judge was actually consulted (runtime diff) but returned
-          // nothing.
+          // The judge was CONSULTED but returned nothing → UNAVAILABLE, not a real "inadequate" verdict.
+          // Distinguish infra-unavailability from genuinely-inadequate evidence so the brain retries the ship
+          // (rather than being told to go re-exercise work that may already be fine). A missing key is a real
+          // config gap the operator must fix.
+          let judgeUnavailable = false;
           if (!nonRuntime && !verdict) {
             const hasKey = await this.creds.anthropicKey(stimulus.orgId).catch(() => undefined);
             if (!hasKey) {
               detail = `no Anthropic API key configured for the live-verification judge — configure one. (${detail})`;
+            } else {
+              judgeUnavailable = true;
             }
+          }
+          if (judgeUnavailable) {
+            await this.store.appendSystemEvent(
+              jobId,
+              `Live-verification judge temporarily unavailable during direct-build ship — ${detail}`,
+            );
+            return {
+              ok: false,
+              jobId,
+              reason:
+                `The live-verification judge is temporarily unavailable (transient infra: Anthropic outage or ` +
+                `API-key rate/credit limit) — this is NOT a problem with your evidence. Wait a moment and call ` +
+                `finalize_build again; it should clear once the service recovers.`,
+            };
           }
           await this.store.appendSystemEvent(
             jobId,
@@ -3146,8 +3169,10 @@ export class AgentSessionManager
             jobId,
             reason:
               `Live validation inadequate — ${detail}. Actually exercise the changed runtime surface ` +
-              `(curl the endpoint / drive the UI / run the CLI), re-report_verification with the captured ` +
-              `evidence, then finalize_build again.`,
+              `(curl the endpoint / drive the UI / run the CLI) — or, if the change is internal plumbing ` +
+              `never echoed in an HTTP/UI/CLI surface, boot the process and capture a log line proving the ` +
+              `changed value was passed at runtime. Then re-report_verification with the captured evidence, ` +
+              `then finalize_build again.`,
           };
         }
 
@@ -5058,7 +5083,12 @@ export class AgentSessionManager
       // Prefer the record the OPERATOR clicked (the version pin); fall back to the handle's closure
       // record when a caller didn't supply one (e.g. a test, or a client that omitted decisionRecordId).
       const recId = resolution.clickedDecisionRecordId ?? decisionRecordId;
-      const running = await this.store.approve(job.id, recId, resolution.ruledBy);
+      const running = await this.store.approve(
+        job.id,
+        recId,
+        resolution.ruledBy,
+        isDirect ? 'direct' : 'plan',
+      );
       if (!running) {
         await this.say(
           stimulus,
@@ -5517,8 +5547,10 @@ export class AgentSessionManager
       'run `mcp__atlas-lsp-ts__diagnostics` on the files you changed and the repo\'s own typecheck, and fix ' +
       'anything they find. Then — if your change touched a runtime surface (an HTTP endpoint/route, a UI ' +
       'page/component, a CLI entry point, or a background job) — ACTUALLY EXERCISE IT LIVE: boot the process ' +
-      'and curl the endpoint / drive the UI / run the CLI for real. Typecheck, build, lint, and the test ' +
-      'suite are NOT live verification on their own. Report what you ran with ' +
+      'and curl the endpoint / drive the UI / run the CLI for real. If the change is internal plumbing whose ' +
+      'effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), instead boot ' +
+      'the process and capture a log line proving the changed value was passed at runtime. Typecheck, build, ' +
+      'lint, and the test suite are NOT live verification on their own. Report what you ran with ' +
       '`report_verification({ passed: true, verification: [{ kind, command, exitCode, outputTail }, …] })` — ' +
       'capture the real command, its exit code, and a tail of its output. `finalize_build` now runs a ' +
       'live-verification judge over that evidence and REFUSES to ship a runtime change you only typechecked. ' +
@@ -5620,61 +5652,120 @@ export class AgentSessionManager
     await this.handleChatTurn(stimulus);
   }
 
-  /**
-   * Deliver a seeded EVENT to its thread's brain as a HARNESS message — the one-brain replacement for the
-   * deleted event-triage lane. Atlas itself triages the event in-session (no second brain): frames it
-   * (trusted harness instruction) + the UNTRUSTED-fenced body, runs a server-initiated turn (serialized
-   * behind any in-flight turn by the turn queue), then stamps `delivered_at` so the boot sweep won't
-   * re-deliver. Idempotent on `delivered_at`; NOT awaited by intake (the webhook 202 must stay fast). The
-   * operator-visible artifact is the seeded message row — independent of whether this turn lands.
-   */
+  // ── Durable EVENT delivery: the one-brain replacement for the deleted event-triage lane ─────────────
+  //
+  // Mirrors the operator-chat pump (steer-into-live OR fresh queued turn), with the SAME at-least-once
+  // guarantee. The event's operator-visible `system_event` card is written at intake; the durable `stimuli`
+  // row (kind='event', `delivered_at` null) is the queue this drives. CRITICAL: delivery is NEVER stamped on
+  // a bare steer XADD — only the engine's `input_ack` (steer path) or the fresh turn's registration hand-off
+  // marks `delivered_at`. So an event steered into a turn that ENDS before consuming it stays undelivered
+  // (the engine leaves such a steer un-acked) and the sweep re-drives it — closing the swallowed-steer race.
+
+  /** BrainSink.deliverEvent — a routed event is ready; ensure the owning job's brain consumes it. */
   async deliverEvent(stimulus: EventStimulus): Promise<void> {
-    // Already delivered (a boot-sweep / intake race) → no-op. Cheap guard before paying the turn.
-    const row = await this.stimulusRows.findOne({ where: { id: stimulus.id } });
-    if (row?.delivered_at) return;
-
-    const delivery = eventDeliveryStimulus({
-      jobId: stimulus.jobId,
-      orgId: stimulus.orgId,
-      repoId: stimulus.repoId,
-      body: renderEventDelivery(stimulus),
-      // The untrusted event body is already a durable `system_event` row (seeded at intake) — don't dup it.
-      seedRow: 'skip',
-    });
-    await this.handleChatTurn(delivery);
-
-    // Reached only when the delivery turn completed — stamp delivered (at-least-once across restarts).
-    await this.stimulusRows.update(
-      { id: stimulus.id },
-      { delivered_at: new Date() },
-    );
+    await this.pumpEvent(stimulus);
   }
 
   /**
-   * Seeded events whose brain delivery never completed (`delivered_at` null) — the at-least-once boot
-   * sweep's worklist. Reconstructs the `EventStimulus` from the durable row (its body is the CLEAN text;
-   * `deliverEvent` re-fences it). The FK cascade removes the row with its thread, so a surviving row
-   * always has a live thread.
+   * Deliver ONE event to its job's brain. FAST PATH: a running brain turn is steered (the event-row id is the
+   * steer id, so the engine's `input_ack` stamps THIS row). SLOW PATH (no running turn): a fresh turn framed
+   * by `renderEventDelivery` is queued on the per-thread turn queue and stamps delivery at its registration
+   * hand-off. Idempotent (skips an already-delivered row); lease-guarded so a concurrent sweep can't
+   * double-drive. Deliberately does NOT go through `handleChatTurn` — that method's seed steer fast-path
+   * (`steerIntoLiveBrainTurn`) reports "handled" on a bare XADD, which would re-open the swallowed-steer race.
    */
-  private async findUndeliveredEvents(): Promise<EventStimulus[]> {
-    const rows = await this.stimulusRows.find({
-      where: { kind: 'event', delivered_at: IsNull() },
+  async pumpEvent(stimulus: EventStimulus): Promise<void> {
+    if (this.election.getState() === 'draining') return;
+
+    // Already delivered (an intake / sweep / boot race) → no-op. Cheap guard before paying a turn.
+    const row = await this.stimulusRows.findOne({ where: { id: stimulus.id } });
+    if (row?.delivered_at) return;
+
+    const body = renderEventDelivery(stimulus);
+    const live = await this.turnRegistry.runningBrainTurn(stimulus.jobId).catch(() => null);
+    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+      await this.steerEvent(live.turn_id, stimulus.id, body);
+      return;
+    }
+
+    // No running turn → deliver via a fresh turn, serialized on the per-thread turn queue.
+    const key = `${stimulus.orgId}:${stimulus.jobId}`;
+    const prev = this.turnQueues.get(key) ?? Promise.resolve();
+    const next = prev
+      .catch(() => undefined)
+      .then(() => this.deliverEventViaFreshTurn(stimulus, body));
+    this.turnQueues.set(
+      key,
+      next.finally(() => {
+        if (this.turnQueues.get(key) === next) this.turnQueues.delete(key);
+      }),
+    );
+    return next;
+  }
+
+  /** Steer an event into a live turn (lease first; the engine `input_ack` on the event-row id stamps delivered). */
+  private async steerEvent(turnId: string, eventRowId: string, body: string): Promise<void> {
+    await this.stimulusStore
+      .leaseChatStimuli([eventRowId]) // kind-agnostic (updates by id) — reused for the event row
+      .catch((err) => this.logger.debug(`pump: lease event failed (continuing): ${err}`));
+    await this.engineRunner
+      .steer!(turnId, eventRowId, body)
+      .catch((err) =>
+        this.logger.warn(`pump: steer event into turn ${turnId} failed (sweep will re-drive): ${err}`),
+      );
+  }
+
+  /** Run ONE fresh turn that consumes a single event, stamping delivery at the registration hand-off. */
+  private async deliverEventViaFreshTurn(stimulus: EventStimulus, body: string): Promise<void> {
+    // A turn may have appeared since pumpEvent's check (a boot re-attach resumed one). Steer it instead of
+    // starting a SECOND turn on the same session (never two concurrent turns resuming one session id).
+    const live = await this.turnRegistry.runningBrainTurn(stimulus.jobId).catch(() => null);
+    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+      await this.steerEvent(live.turn_id, stimulus.id, body);
+      return;
+    }
+
+    // Lease BEFORE dispatch (like the chat fresh path) so a concurrent sweep can't re-drive a duplicate
+    // while this potentially-long turn runs.
+    await this.stimulusStore.leaseChatStimuli([stimulus.id]);
+    const delivery = eventDeliveryStimulus({
+      id: stimulus.id, // the DURABLE event-row id — so `onRegistered` stamps THIS row (not a synthetic uuid)
+      jobId: stimulus.jobId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
+      body,
+      seedRow: 'skip', // the untrusted event body already has a durable `system_event` row from intake
     });
-    return rows
-      .filter((r) => Boolean(r.job_id))
-      .map((r) => ({
-        id: r.id,
-        orgId: r.org_id,
-        repoId: r.repo_id,
-        kind: 'event' as const,
-        trust: 'untrusted' as const,
-        jobId: r.job_id as string,
-        body: r.body,
-        source: r.source ?? 'webhook',
-        dedupeKey: r.dedupe_key ?? '',
-        severity: (r.severity as EventSeverity | null) ?? 'info',
-        receivedAt: r.created_at,
-      }));
+    await this.runChatTurn(delivery, {
+      // Restart-survivable hand-off: stamp delivered the instant the turn is registered + kicked (a later
+      // crash resumes THIS turn rather than re-running the event).
+      onRegistered: () => {
+        void this.stimulusStore
+          .markChatDelivered(stimulus.id)
+          .catch((err) =>
+            this.logger.debug(`event markDelivered ${stimulus.id} failed (sweep will retry): ${err}`),
+          );
+      },
+    });
+  }
+
+  /** LEADER periodic + boot re-drive of any routed event still undelivered (the event at-least-once sweep). */
+  private async sweepUndeliveredEvents(): Promise<void> {
+    if (this.election.getState() !== 'leader') return;
+    let events: EventStimulus[];
+    try {
+      events = await this.stimulusStore.eligiblePendingEvents(
+        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+      );
+    } catch (err) {
+      this.logger.debug(`event delivery sweep query failed (will retry): ${err}`);
+      return;
+    }
+    for (const ev of events) {
+      void this.pumpEvent(ev).catch((err) =>
+        this.logger.debug(`event sweep pump failed for stimulus=${ev.id}: ${err}`),
+      );
+    }
   }
 
   /**
@@ -6203,6 +6294,9 @@ function renderEventDelivery(stimulus: EventStimulus): string {
  * so this stays a `trust: 'trusted'` harness turn carrying clearly-fenced untrusted data.
  */
 function eventDeliveryStimulus(input: {
+  /** The DURABLE event-row id — pass it so a steer's `input_ack` and the fresh turn's `onRegistered` both
+   *  stamp the same `stimuli` row. Omitted only by callers that don't drive delivery bookkeeping. */
+  id?: string;
   jobId: string;
   orgId: string;
   repoId: string;
@@ -6210,7 +6304,7 @@ function eventDeliveryStimulus(input: {
   seedRow?: SeedRow;
 }): ChatStimulus {
   return {
-    id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
+    id: input.id ?? randomUUID(),
     orgId: input.orgId,
     repoId: input.repoId,
     body: input.body, // already framed + fenced by renderEventDelivery
@@ -6240,10 +6334,23 @@ function eventDeliveryStimulus(input: {
  * design decision on the operator's behalf. `needs_env` → verify the premise; `question`/`decision` →
  * retrieve-or-escalate; anything else (incomplete/failed, no self-reported reason) → the generic fix-or-escalate.
  */
-export function haltTriageGuidance(reason?: 'question' | 'needs_env' | 'decision' | 'unverified'): string[] {
+export function haltTriageGuidance(
+  reason?: 'question' | 'needs_env' | 'decision' | 'unverified' | 'judge_unavailable',
+): string[] {
   const budgetCaveat =
     `  You get a BOUNDED number of \`retry_thread\` attempts; only re-drive when you actually hold the answer` +
     ` and intend to resume — if the budget is exhausted, escalate to the operator instead of guessing.`;
+  if (reason === 'judge_unavailable') {
+    return [
+      `• This is a TRANSIENT infrastructure block, NOT a work defect: the live-verification judge was`,
+      `  unreachable (Anthropic outage or the org's API key hit its rate/credit limit). The thread's work may`,
+      `  well be complete and correct — do NOT redo or re-exercise anything.`,
+      `• Simply \`retry_thread\` the SAME thread to re-assert completion with the SAME evidence. If the judge is`,
+      `  back, it passes; if it's still down, say so plainly and hold (this block does NOT consume the fix`,
+      `  budget). Only escalate to the operator if it stays down long enough to matter (they may need to top up`,
+      `  the Anthropic key's credit/limit).`,
+    ];
+  }
   if (reason === 'needs_env') {
     return [
       `• FIRST verify the block is real: check the granted secrets / mounts / services — did the builder`,

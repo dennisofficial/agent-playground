@@ -227,6 +227,19 @@ export class JobEntity extends TimestampedEntity {
   pr_state!: string | null;
 
   /**
+   * The DURABLE adaptive-poll clock — "re-check this PR's GitHub state at/after this instant". Owned by
+   * the `GitStateReconciler`: its fast heartbeat selects only DUE jobs (`next_poll_at IS NULL OR <= now()`),
+   * reconciles each, then re-stamps this by an adaptive cadence — ~8s while GitHub is still computing
+   * `mergeable_state`, ~45s for a settled open PR, ~3min for a branch still building with no PR yet, and
+   * CLEARED (null) once the PR is merged/closed/gone (teardown owns it). Durable (not an in-memory timer)
+   * so it survives the constant prod restarts that starved the old fixed sweep, survives leader failover,
+   * AND lets a base-branch push mark every open PR on a repo due-now with one `UPDATE` (the real-time
+   * base-move-conflict unlock). Null = due immediately (a fresh row is polled on the next heartbeat).
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  next_poll_at!: Date | null;
+
+  /**
    * The MAIN brain session's own LLM-authored task list (the navigator's Main-row checklist), folded from
    * its `TaskCreate`/`TaskUpdate` calls on the `main` lane. LITERAL default — a function default loops
    * `migration:generate` (see the jsonb-default-loop memory).
@@ -285,4 +298,16 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   direct_build_verification!: { verdict: LiveVerificationVerdict; at: string } | null;
+
+  /**
+   * Which BUILD PATH was committed for this job: 'direct' (the fast, brain-implemented path) or 'plan'
+   * (the driver-run multi-thread path). Null until an approval commits the path — a proposal still sitting
+   * at `awaiting_approval` (which can still be re-proposed as the other path) has no value here, so a
+   * requested-but-unapproved direct build is NOT yet a committed direct build. Stamped ATOMICALLY with the
+   * `awaiting_approval → running` flip in `BrainStoreService.approve()`. The UI reads this (surfaced as
+   * `buildPath` on the pipeline DTO) to suppress the plan-oriented empty-state placeholders — build lanes,
+   * `plan.md`, generated docs — that never apply to a direct build.
+   */
+  @Column({ type: 'text', nullable: true })
+  build_path!: 'direct' | 'plan' | null;
 }

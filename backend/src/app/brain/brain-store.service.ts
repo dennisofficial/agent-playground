@@ -1666,15 +1666,18 @@ export class BrainStoreService {
     jobId: string,
     clickedDecisionRecordId: string,
     approvedBy: string,
+    buildPath: 'direct' | 'plan',
   ): Promise<Job | null> {
     return this.dataSource.transaction(async (m) => {
       const now = new Date();
       // A freshly approved plan is an explicit operator action that supersedes any stale halt, so the
       // dispatch that follows isn't refused by the halt-invariant guard (halt is cleared here, at the
-      // operator transition, never inside dispatch()).
+      // operator transition, never inside dispatch()). `build_path` is committed in the SAME update so a
+      // requested-but-unapproved direct build (still `awaiting_approval`, convertible to a plan) never
+      // carries a committed path — only an approval stamps it.
       const jobRes = await m.getRepository(JobEntity).update(
         { id: jobId, status: 'awaiting_approval', decision_record_id: clickedDecisionRecordId },
-        { status: 'running', halt: null },
+        { status: 'running', halt: null, build_path: buildPath },
       );
       if ((jobRes.affected ?? 0) !== 1) return null;
       await m.getRepository(DecisionRecordEntity).update(
