@@ -56,6 +56,19 @@ export type PrStateDelta = {
 };
 
 /**
+ * A parsed GitHub CI webhook (`check_run`/`check_suite`/`workflow_run`) correlation delta the silent
+ * CI-status sync recomputes against. Carries ONLY correlation keys — deliberately NOT the webhook's own
+ * head_sha: GitHub does not guarantee webhook delivery order, so recompute always reads the CURRENT PR
+ * head instead (an old commit's delayed CI webhook must never set the badge from its own SHA).
+ */
+export interface CiSyncDelta {
+  orgId: string;
+  repoId: string;
+  prNumber: number | null;
+  branch: string | null;
+}
+
+/**
  * An adapter's verdict on a raw notification. `accepted` carries the parsed event the intake then
  * normalizes; `rejected`/`ignored` carry a reason the controller maps to a status. `ignored` is a
  * SUCCESSFUL no-op (a verified-but-uninteresting payload, e.g. GitHub's `ping`), distinct from a

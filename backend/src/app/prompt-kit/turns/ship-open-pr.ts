@@ -9,6 +9,7 @@
  * learns the PR by BRANCH DISCOVERY after the turn (`findOpenPullByHead` → `setPrReady`, backstopped by the
  * git-state reconciler), so there is NO `report_pr_opened` tool to call — the brain just opens the PR.
  */
+import { GIT_SAFETY_NOTE } from '../fragments';
 
 /** A single locked decision as rendered into the PR body's host-owned `### Decisions` block. */
 export interface DecisionLine {
@@ -89,8 +90,7 @@ export function shipOpenPrBody(args: ShipOpenPrArgs): string {
     `silently; do NOT add a line about it to the operator (your PR-url line from step 4 stays the last ` +
     `thing you say).\n` +
     `\n` +
-    `GIT SAFETY: NEVER run destructive or irreversible git commands (\`push --force\`, \`reset --hard\`, ` +
-    `history rewrites, etc.) unless explicitly instructed. Never skip hooks (\`--no-verify\`) and never touch ` +
-    `git config. Make NO code changes beyond what a clean conflict resolution requires.`
+    GIT_SAFETY_NOTE +
+    ` Make NO code changes beyond what a clean conflict resolution requires.`
   );
 }

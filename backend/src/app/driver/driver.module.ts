@@ -38,6 +38,7 @@ import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
 import { JobLifecycleService } from './job-lifecycle.service';
 import { GithubPrStateSync } from './github-pr-state-sync.service';
+import { GithubCiStateSync } from './github-ci-state-sync.service';
 import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
@@ -90,6 +91,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     ThreadDriver,
     JobLifecycleService,
     GithubPrStateSync,
+    GithubCiStateSync,
     GitStateReconciler,
     SessionResumeSweep,
     WorktreeHydrator,
@@ -102,6 +104,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     JOB_DISPATCHER,
     JobLifecycleService,
     GithubPrStateSync,
+    GithubCiStateSync,
     // Exported so the @Global surface + the ingress state-webhook controller can reach `markRepoDue`
     // (a base-branch push marks the repo's open PRs due-now for the fast heartbeat).
     GitStateReconciler,

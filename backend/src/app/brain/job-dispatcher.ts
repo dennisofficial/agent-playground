@@ -58,6 +58,12 @@ export interface JobDispatcher {
    * job when `jobId` is given, else all jobs. Idempotent (generation-keyed stamp). Returns promptly.
    */
   deliverOwedHaltWakes(jobId?: string): Promise<void>;
+  /**
+   * Decision d1 — deliver any OWED completion brain wakes (`'final'`/`'notable'`), the clean-completion
+   * mirror of {@link deliverOwedHaltWakes}. Fired from the periodic chat-delivery sweep and the leader boot
+   * sweep. Scoped to one job when `jobId` is given, else all jobs. Idempotent. Returns promptly.
+   */
+  deliverOwedDoneWakes(jobId?: string): Promise<void>;
 }
 
 /**
@@ -98,6 +104,12 @@ export class LoggingJobDispatcher implements JobDispatcher {
   async deliverOwedHaltWakes(jobId?: string): Promise<void> {
     this.logger.log(
       `[no-op deliverOwedHaltWakes] ${jobId ?? '(all)'} — W4 ThreadDriver will wake the brain`,
+    );
+  }
+
+  async deliverOwedDoneWakes(jobId?: string): Promise<void> {
+    this.logger.log(
+      `[no-op deliverOwedDoneWakes] ${jobId ?? '(all)'} — W4 ThreadDriver will wake the brain`,
     );
   }
 }

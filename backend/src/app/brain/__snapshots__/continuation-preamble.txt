@@ -1,0 +1,6 @@
+<session_compacted>
+Your previous session was compacted to keep the context lean while the build runs. It is summarized below.
+Treat it as your own recovered memory. Re-read the durable artifacts it points to (`/context/specs`,
+`get_pipeline_state`) as needed, and continue from where you left off — do not restart
+planning and do not re-ask the operator anything already settled.
+</session_compacted>

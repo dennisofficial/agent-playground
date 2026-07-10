@@ -24,7 +24,12 @@ import {
   TicketIcon,
   Trash2,
 } from "lucide-react";
-import { Dot, KindBadge, StatusPie } from "@/components/ui/badges";
+import {
+  CiHeaderGlyph,
+  Dot,
+  KindBadge,
+  StatusPie,
+} from "@/components/ui/badges";
 import { STATUS_META } from "@/lib/api/status";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -38,10 +43,7 @@ import {
   haltThreadIdx,
 } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
-import {
-  NavigatorApproveButton,
-  NavigatorShipButton,
-} from "./spec-approval";
+import { NavigatorApproveButton, NavigatorShipButton } from "./spec-approval";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
@@ -114,6 +116,8 @@ export function Navigator({
   onRename,
   onDelete,
   deleting,
+  hasOpenPr,
+  deleteReady,
   directBuild,
 }: {
   meta: JobMeta;
@@ -139,6 +143,12 @@ export function Navigator({
   onRename?: (title: string) => void;
   onDelete?: () => void;
   deleting?: boolean;
+  /** True when the job's PR is open — routes delete through the secondary PR-choice dialog instead of the
+   *  inline double-click confirm. */
+  hasOpenPr?: boolean;
+  /** True once the PR state is known (resolved from either the pipeline or the inbox feed) — the delete
+   *  button stays disabled until then so we never delete before knowing whether a PR is open. */
+  deleteReady?: boolean;
   /** True when the awaiting approval is a direct build — flips the approve CTA to "Approve Direct Build". */
   directBuild?: boolean;
 }) {
@@ -198,6 +208,8 @@ export function Navigator({
               onStartRename={onRename ? () => setEditing(true) : undefined}
               onDelete={onDelete}
               deleting={deleting}
+              hasOpenPr={hasOpenPr}
+              deleteReady={deleteReady}
             />
           ) : null}
         </div>
@@ -277,6 +289,7 @@ export function Navigator({
                 job!.prMergeable,
               );
               const text = `${job!.prNumber != null ? `PR #${job!.prNumber}` : "pull request"} · ${label}`;
+              const showCi = job!.prNumber != null;
               // Link out only when we actually have the PR url; otherwise show the same status inline.
               return job!.prUrl ? (
                 <a
@@ -297,6 +310,7 @@ export function Navigator({
                   >
                     {text}
                   </span>
+                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
@@ -313,6 +327,7 @@ export function Navigator({
                   >
                     {text}
                   </span>
+                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
                 </div>
               );
             })()

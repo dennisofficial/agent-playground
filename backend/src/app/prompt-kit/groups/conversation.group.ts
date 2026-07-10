@@ -40,7 +40,7 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** normal block 09 — why you grill (the plan is a handoff). */
+  /** Why you grill — the plan is a handoff. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1090, condition: isBuildBrain })
   whyGrill(): string {
     return [
@@ -54,7 +54,7 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** normal block 10 — calibrate the interview to the work. */
+  /** Calibrate the interview to the work. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1100, condition: isBuildBrain })
   calibrate(): string {
     return [
@@ -67,7 +67,7 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** normal block 11 — the grilling protocol (always-ask classes). */
+  /** The grilling protocol (always-ask classes). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1110, condition: isBuildBrain })
   grillingProtocol(): string {
     return [
@@ -78,7 +78,7 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** normal block 12 — grill against the domain (the four moves). */
+  /** Grill against the domain (the four moves). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1120, condition: isBuildBrain })
   grillDomain(): string {
     return [
@@ -108,7 +108,7 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** normal block 13 — recommend ≠ decide + one decision per call. */
+  /** Recommend ≠ decide + one decision per call. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1130, condition: isBuildBrain })
   recommendDecide(): string {
     return [
@@ -126,7 +126,7 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** normal block 14 — ask via the tool + lock each decision (interpolates DECISION_CLASS_IDS). */
+  /** Ask via the tool + lock each decision (interpolates DECISION_CLASS_IDS). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1140, condition: isBuildBrain })
   askAndLock(): string {
     return [

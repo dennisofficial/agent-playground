@@ -62,6 +62,7 @@ function makeController(thread: {
     {} as never,
     {} as never,
     {} as never, // skillInstaller (SkillInstallerService)
+    {} as never, // git (LocalGitService)
   );
   return { controller, mocks };
 }

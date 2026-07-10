@@ -123,8 +123,12 @@ function makeServiceWithMocks(
  * Build a service whose sandbox repo + teardown provider + activity registry are controllable, for
  * `resetContainer` tests (which tear the container down but keep the worktree/session).
  */
-function makeServiceForReset(row: JobSandboxEntity | null) {
+function makeServiceForReset(
+  row: JobSandboxEntity | null,
+  jobActivity: JobEntity['activity'] = 'idle',
+) {
   const sandboxes = {
+    find: vi.fn().mockResolvedValue(row ? [row] : []),
     findOne: vi.fn().mockResolvedValue(row),
     save: vi.fn(),
     create: vi.fn(),
@@ -133,7 +137,14 @@ function makeServiceForReset(row: JobSandboxEntity | null) {
   const activity = new SandboxActivityRegistry();
   const failRunningForJob = vi.fn().mockResolvedValue(0);
   const svc = new JobLifecycleService(
-    { findOne: vi.fn().mockResolvedValue({ id: 'thread-1', feature_branch: null, base_branch: 'main' }) } as unknown as Repository<JobEntity>,
+    {
+      findOne: vi.fn().mockResolvedValue({
+        id: 'thread-1',
+        feature_branch: null,
+        base_branch: 'main',
+        activity: jobActivity,
+      }),
+    } as unknown as Repository<JobEntity>,
     sandboxes,
     { findOne: vi.fn().mockResolvedValue({ id: 'repo-uuid-1', slug: 'proj', default_branch: 'main' }) } as unknown as Repository<RepoEntity>,
     {} as unknown as LocalGitService,
@@ -299,6 +310,26 @@ describe('JobLifecycleService.resetContainer', () => {
   });
 });
 
+describe('JobLifecycleService.reapIdle', () => {
+  it('does not reap a sandbox while the durable job activity is non-idle', async () => {
+    const row = makeRow({ container_id: 'c-review', last_active_at: new Date(0) });
+    const { svc, teardown } = makeServiceForReset(row, 'plan_review');
+
+    expect(await svc.reapIdle()).toBe(0);
+    expect(teardown).not.toHaveBeenCalled();
+    expect(row.lifecycle).toBe('attached');
+  });
+
+  it('reaps an old attached sandbox once the durable job activity is idle', async () => {
+    const row = makeRow({ container_id: 'c-idle', last_active_at: new Date(0) });
+    const { svc, teardown } = makeServiceForReset(row);
+
+    expect(await svc.reapIdle()).toBe(1);
+    expect(teardown).toHaveBeenCalledTimes(1);
+    expect(row.lifecycle).toBe('detached');
+  });
+});
+
 describe('JobLifecycleService — onMilestone forwarding', () => {
   it('ensureContainer forwards onMilestone into provisionAndAttach', async () => {
     const wt = mkdtempSync(join(tmpdir(), 'atlas-milestone-'));
@@ -418,5 +449,108 @@ describe('JobLifecycleService.applyGithubPrState', () => {
     expect(result).toBe('closed');
     expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'closed' });
     expect(order).toEqual(['update:closed', 'closeJob']);
+  });
+});
+
+describe('JobLifecycleService.closeJobPullRequest', () => {
+  /** Build a service whose `projects`/`creds`/`pr` are controllable, for closeJobPullRequest tests. */
+  function makeServiceForClose(repo: Partial<RepoEntity> | null) {
+    const projects = {
+      findOne: vi.fn().mockResolvedValue(repo),
+    } as unknown as Repository<RepoEntity>;
+    const closePullRequest = vi.fn().mockResolvedValue(undefined);
+    const githubToken = vi.fn().mockResolvedValue('TOK');
+    const svc = new JobLifecycleService(
+      { findOne: vi.fn() } as unknown as Repository<JobEntity>,
+      { findOne: vi.fn(), save: vi.fn(), create: vi.fn() } as unknown as Repository<JobSandboxEntity>,
+      projects,
+      {} as unknown as LocalGitService,
+      { closePullRequest } as unknown as GithubPrService,
+      { githubToken } as unknown as CredentialResolver,
+      { get: vi.fn() } as unknown as EnvService,
+      new SandboxActivityRegistry(),
+      { resolve: vi.fn() } as unknown as DriverRepoResolver,
+      { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
+      { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
+      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
+      { get: vi.fn() } as unknown as ModuleRef,
+      { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    );
+    return { svc, projects, closePullRequest, githubToken };
+  }
+
+  it('no-ops (never calls pr.closePullRequest) when the job has no open PR', async () => {
+    const { svc, closePullRequest } = makeServiceForClose({
+      id: 'repo-1',
+      git_url: 'https://github.com/acme/app.git',
+    });
+
+    await svc.closeJobPullRequest({
+      id: 'job-1',
+      org_id: 'T1',
+      repo_id: 'repo-1',
+      pr_state: 'merged',
+      pr_number: 9,
+    } as JobEntity);
+
+    expect(closePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('throws when pr_state is open but pr_number is null', async () => {
+    const { svc, closePullRequest } = makeServiceForClose({
+      id: 'repo-1',
+      git_url: 'https://github.com/acme/app.git',
+    });
+
+    await expect(
+      svc.closeJobPullRequest({
+        id: 'job-1',
+        org_id: 'T1',
+        repo_id: 'repo-1',
+        pr_state: 'open',
+        pr_number: null,
+      } as JobEntity),
+    ).rejects.toThrow(/missing PR number/);
+
+    expect(closePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('resolves the repo + token and closes the PR when pr_state is open', async () => {
+    const { svc, projects, closePullRequest, githubToken } = makeServiceForClose({
+      id: 'repo-1',
+      git_url: 'https://github.com/acme/app.git',
+    });
+
+    await svc.closeJobPullRequest({
+      id: 'job-1',
+      org_id: 'T1',
+      repo_id: 'repo-1',
+      pr_state: 'open',
+      pr_number: 9,
+    } as JobEntity);
+
+    expect(projects.findOne).toHaveBeenCalledWith({ where: { id: 'repo-1', org_id: 'T1' } });
+    expect(githubToken).toHaveBeenCalledWith('T1');
+    expect(closePullRequest).toHaveBeenCalledWith('TOK', {
+      owner: 'acme',
+      repo: 'app',
+      number: 9,
+    });
+  });
+
+  it('throws when the repo or token cannot be resolved', async () => {
+    const { svc, closePullRequest } = makeServiceForClose(null);
+
+    await expect(
+      svc.closeJobPullRequest({
+        id: 'job-1',
+        org_id: 'T1',
+        repo_id: 'repo-1',
+        pr_state: 'open',
+        pr_number: 9,
+      } as JobEntity),
+    ).rejects.toThrow(/job-1/);
+    expect(closePullRequest).not.toHaveBeenCalled();
   });
 });

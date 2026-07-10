@@ -8,6 +8,7 @@ export * from './thread-driver.service';
 export * from './driver-store.service';
 export * from './job-lifecycle.service';
 export * from './github-pr-state-sync.service';
+export * from './github-ci-state-sync.service';
 export {
   GitStateReconciler,
   summarizeChecks,
@@ -42,6 +43,7 @@ export {
 } from './live-verification-judge';
 export { LiveVerificationModule } from './live-verification.module';
 export {
+  clampEvidenceOutput,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
   renderTerminalRecordSummary,

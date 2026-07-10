@@ -274,6 +274,11 @@ RUN chmod +x /usr/local/bin/sandbox-init.sh
 COPY atlas-svc /usr/local/bin/atlas-svc
 RUN chmod +x /usr/local/bin/atlas-svc
 
+# atlas-tx: the in-sandbox transcript reader (sessions/path/cat/show/grep) the agent — and an autonomous
+# halt/completion wake — drives via Bash to read a build/brain lane's raw JSONL under /.atlas. Read-only.
+COPY atlas-tx /usr/local/bin/atlas-tx
+RUN chmod +x /usr/local/bin/atlas-tx
+
 # Shared cross-thread fnm store (one host dir bound here by SandboxManager — see CONTAINER_FNM_STORE) +
 # activate fnm in every non-interactive agent bash via BASH_ENV. Set LAST so the build's own RUN steps
 # above are not affected by shell-init.sh.

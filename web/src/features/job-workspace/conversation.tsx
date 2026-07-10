@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { HelpCircle, Upload } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { classifyMessage } from "./classify";
+import { liveTurnVisibleForLeg } from "./live-turn-visibility";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
 import {
   buildLiveTurnItems,
@@ -109,6 +110,7 @@ export function TranscriptView({
   lane = MAIN_LANE,
   phaseIds,
   legOrdinal,
+  legIsLive,
   composer = false,
   readOnly = false,
   isLoading = false,
@@ -127,6 +129,10 @@ export function TranscriptView({
   /** For a per-LEG view of a build thread: show only rows tagged `meta.legOrdinal === this` (untagged = Leg 1).
    *  Each rotated session is its own navigable node; the Leg's handoff + continuation-seed rows ride this tag. */
   legOrdinal?: number;
+  /** For a per-LEG view: whether THIS Leg is the active (live) one. The in-flight turn is subscribed on
+   *  the thread's stable lane — shared by every Leg — so only the live Leg may render the live tail +
+   *  spinner; a rotated Leg passes `false` to suppress it. Ignored for non-Leg lanes (legOrdinal unset). */
+  legIsLive?: boolean;
   /** Show the composer. On Main it's interactive; on every other lane pass `readOnly` alongside. */
   composer?: boolean;
   /** Read-only lane (not Main): the composer's input + Send are disabled, but its footer stays live. */
@@ -162,6 +168,10 @@ export function TranscriptView({
   const liveTurn = useLiveTurn(jobRef.jobId, lane);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
 
+  // The in-flight turn is shared across every Leg of a thread (one lane). A rotated Leg's pane must NOT
+  // render it — only the live Leg (or a non-Leg lane) may show the live tail, spinner, and context ring.
+  const liveAllowed = liveTurnVisibleForLeg(legOrdinal, legIsLive);
+
   // The AUTHORITATIVE turn signal: the server-owned realtime `needsYou` (true = the AI is idle / awaiting
   // you — a turn is NOT running). If it flips true while a stale live turn still lingers (a dropped
   // `turn_end`), we treat the turn as OVER so the "working…" indicator self-heals OFF. Only the Main lane
@@ -183,7 +193,7 @@ export function TranscriptView({
   // wherever it lands in `log` — unless we split it out and time-merge it into the LIVE window instead (see
   // `trailing` below). Fallback (no live turn / startedAt unknown): behave exactly as today, one flat log.
   const startedAt = liveTurn?.startedAt;
-  const liveWindowActive = !!liveTurn?.active && startedAt != null;
+  const liveWindowActive = !!liveTurn?.active && startedAt != null && liveAllowed;
   const midTurnRows = useMemo(
     () =>
       liveWindowActive
@@ -199,6 +209,21 @@ export function TranscriptView({
     [messages, liveWindowActive, startedAt],
   );
 
+  // A turn-failure "Resume" card is only actionable while the thread is STILL halted (the failure is
+  // outstanding). `halted` is a single live bit, so the outstanding failure is always the MOST-RECENT
+  // retryable card; once the thread resumes it flips false and every past failure card shows a muted
+  // "Resumed" instead of a live CTA that could be pressed again by mistake. Unknown (realtime row not
+  // cached yet) keeps the button, so we never hide a genuinely-needed Resume.
+  const openThreadHalted = useThreadHalted(jobRef.jobId);
+  const outstandingRetryTs = useMemo<string | null>(() => {
+    if (openThreadHalted === false) return null;
+    let ts: string | null = null;
+    for (const m of messages) {
+      if (m.source === "system_operator" && m.meta?.retryable === true) ts = m.ts;
+    }
+    return ts;
+  }, [messages, openThreadHalted]);
+
   // The composer footer — model · effort (from the latest `turn_meta`, else the lane's config default) + the
   // context ring. Computed for every lane that shows a composer (Main + read-only), scoped to the lane. The
   // ring prefers a LIVE occupancy value (`liveTurn.contextTokens`, streamed mid-turn by the engine's `usage`
@@ -208,7 +233,7 @@ export function TranscriptView({
     if (!composer) return null;
     const base = laneFooterMeta(messages, lane, phaseIds, legOrdinal) ?? defaultFooterAsComposer(defaultFooter);
     const liveContext =
-      turnActive && typeof liveTurn?.contextTokens === "number" && liveTurn.contextLimit
+      turnActive && liveAllowed && typeof liveTurn?.contextTokens === "number" && liveTurn.contextLimit
         ? {
             tokens: liveTurn.contextTokens,
             limit: liveTurn.contextLimit,
@@ -224,6 +249,7 @@ export function TranscriptView({
     phaseIds,
     defaultFooter,
     turnActive,
+    liveAllowed,
     liveTurn?.contextTokens,
     liveTurn?.contextLimit,
     liveTurn?.contextModel,
@@ -233,8 +259,8 @@ export function TranscriptView({
   // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
   const items = useMemo(
     () =>
-      buildLogItems(log, jobRef, { lane, phaseIds, legOrdinal, onOpenPlan, onSelectNode }),
-    [log, jobRef, lane, phaseIds, legOrdinal, onOpenPlan, onSelectNode],
+      buildLogItems(log, jobRef, { lane, phaseIds, legOrdinal, outstandingRetryTs, onOpenPlan, onSelectNode }),
+    [log, jobRef, lane, phaseIds, legOrdinal, outstandingRetryTs, onOpenPlan, onSelectNode],
   );
 
   // The LIVE window: the in-flight turn's streaming blocks, time-merged with any mid-turn durable row (a
@@ -251,6 +277,7 @@ export function TranscriptView({
       lane,
       phaseIds,
       legOrdinal,
+      outstandingRetryTs,
       onOpenPlan,
       onSelectNode,
     }).map((it) => ({ ...it, ts: itemTs(it.key) }));
@@ -262,6 +289,7 @@ export function TranscriptView({
     lane,
     phaseIds,
     legOrdinal,
+    outstandingRetryTs,
     jobRef,
     onOpenPlan,
     onSelectNode,
@@ -281,7 +309,15 @@ export function TranscriptView({
   // the callback passed to useTailFollow stays stable while still reaching the freshly-built `virtualizer`
   // (which itself depends on the scrollRef useTailFollow returns — the ref breaks that render-order cycle).
   const pinRef = useRef<() => void>(() => {});
-  const { scrollRef, endRef, showJump, jumpToLatest, onScroll } = useTailFollow(
+  const {
+    scrollRef,
+    endRef,
+    showJump,
+    jumpToLatest,
+    onScroll,
+    onPointerOver,
+    onPointerLeave,
+  } = useTailFollow(
     [
       messages.length,
       live,
@@ -336,6 +372,8 @@ export function TranscriptView({
       <div
         ref={scrollRef}
         onScroll={onScroll}
+        onPointerOver={onPointerOver}
+        onPointerLeave={onPointerLeave}
         className="h-full overflow-y-auto px-7 pt-5"
       >
         <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
@@ -378,7 +416,7 @@ export function TranscriptView({
           {trailing.map((it) => (
             <div key={it.key}>{it.node}</div>
           ))}
-          {live || turnActive ? (
+          {(live || turnActive) && liveAllowed ? (
             <LiveIndicator turn={turnActive ? liveTurn : undefined} />
           ) : null}
           {/* Spacer so the last line clears the floating composer (or just breathes on read-only lanes). */}
@@ -496,11 +534,14 @@ function buildLogItems(
     phaseIds?: Set<string>;
     /** For a per-LEG view: show only build rows tagged `meta.legOrdinal === this` (untagged rows = Leg 1). */
     legOrdinal?: number;
+    /** The `ts` of the currently-OUTSTANDING retryable failure card (the only one whose "Resume" button is
+     *  live). Null when the thread has resumed — every failure card then shows a muted "Resumed" instead. */
+    outstandingRetryTs?: string | null;
     onOpenPlan?: () => void;
     onSelectNode?: (node: string) => void;
   } = {},
 ): LogItem[] {
-  const { lane = MAIN_LANE, legOrdinal, onOpenPlan, onSelectNode } = opts;
+  const { lane = MAIN_LANE, legOrdinal, outstandingRetryTs = null, onOpenPlan, onSelectNode } = opts;
   const nodes: LogItem[] = [];
   let pending: Array<{ key: string; tool: ToolItem }> = [];
 
@@ -736,6 +777,11 @@ function buildLogItems(
 
     const push = (node: React.ReactNode) =>
       nodes.push({ key: message.ts, node });
+    // Interactive cards (buttons/inputs the operator clicks) are wrapped in `data-tailpause` so hovering
+    // ANYWHERE on the card — not just its controls — suspends tail-follow (see useTailFollow), keeping the
+    // target still under the cursor while tokens stream in.
+    const pushCard = (node: React.ReactNode) =>
+      push(<div data-tailpause>{node}</div>);
     switch (c.kind) {
       case "user":
         push(
@@ -757,40 +803,51 @@ function buildLogItems(
         );
         break;
       case "approval":
-        push(
+        pushCard(
           <ApprovalCardView
             key={message.ts}
             card={c.card}
             jobRef={jobRef}
             onOpenPlan={onOpenPlan}
+            onSelectNode={onSelectNode}
           />,
         );
         break;
       case "verdict":
-        push(<VerdictCardView key={message.ts} card={c.card} />);
+        pushCard(<VerdictCardView key={message.ts} card={c.card} />);
         break;
       case "question":
-        push(
+        pushCard(
           <QuestionCardView key={message.ts} card={c.card} jobRef={jobRef} />,
         );
         break;
       case "secret":
-        push(<SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "mcp_proposal":
-        push(<McpProposalCard key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <McpProposalCard key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "skill_proposal":
-        push(<SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "ticket":
-        push(<TicketCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <TicketCardView key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "file":
-        push(<FileCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        pushCard(
+          <FileCardView key={message.ts} card={c.card} jobRef={jobRef} />,
+        );
         break;
       case "review_comments":
-        push(
+        pushCard(
           <ReviewCommentsCardView
             key={message.ts}
             card={c.card}
@@ -799,7 +856,7 @@ function buildLogItems(
         );
         break;
       case "attachments":
-        push(
+        pushCard(
           <AttachmentsCardView
             key={message.ts}
             card={c.card}
@@ -836,6 +893,7 @@ function buildLogItems(
             message={message}
             jobRef={jobRef}
             lane={lane}
+            isOutstanding={message.ts === outstandingRetryTs}
           />,
         );
         break;
@@ -850,7 +908,13 @@ function buildLogItems(
         break;
       case "claude":
       default:
-        push(<ClaudeBubble key={message.ts} message={message} />);
+        push(
+          <ClaudeBubble
+            key={message.ts}
+            message={message}
+            onSelectNode={onSelectNode}
+          />,
+        );
         break;
     }
   }
@@ -870,6 +934,18 @@ function useRealtimeIdle(jobId: string | null): boolean {
   const { data: threads } = useAllJobs();
   if (!jobId) return false;
   return threads?.find((t) => t.id === jobId)?.needsYou ?? false;
+}
+
+/**
+ * Live "an unresolved turn-failure box is outstanding" bit for one job, from the same server-owned realtime
+ * inbox row (`halted`, kept live by `useAllJobsRealtime`) — the durable signal a failed turn's "Resume" card
+ * keys off. Returns `undefined` when the row isn't cached yet, so callers keep showing Resume until realtime
+ * confirms the thread has actually resumed (never hide a genuinely-needed button on a cold cache).
+ */
+function useThreadHalted(jobId: string | null): boolean | undefined {
+  const { data: threads } = useAllJobs();
+  if (!jobId) return undefined;
+  return threads?.find((t) => t.id === jobId)?.halted;
 }
 
 /** The parsed identity of a transcript lane — the ONE place a lane string is decomposed, shared by

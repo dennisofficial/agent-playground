@@ -9,9 +9,11 @@ import type {
   WireJobStatus,
   WireJobKind,
   WireJobHalt,
+  WireJobActivity,
   JobStatus,
   JobKind,
   InboxPr,
+  CiStatus,
 } from "./types";
 
 /**
@@ -33,6 +35,8 @@ export interface RawInboxThread {
   kind?: string | null;
   /** Raw backend thread status ('open' | 'planning' | … | 'cancelled'). */
   status: string;
+  /** Orthogonal backend activity axis; the server folds this into `needsYou`. */
+  activity: WireJobActivity;
   /** Server-derived: the thread is awaiting the operator (AI idle, not terminal). */
   needsYou: boolean;
   /** An unresolved turn-failure box is outstanding — the sidebar renders the failed-style ✕ glyph
@@ -41,8 +45,14 @@ export interface RawInboxThread {
   createdAt: string;
   /** The observed PR (null until one exists) — drives the sidebar PR-status glyph. */
   pr?: InboxPr | null;
+  /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — the backend list projection emits it as
+   *  `ciStatus`. null = no checks reported. */
+  ciStatus?: CiStatus | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt?: WireJobHalt | null;
+  /** True only while a "Ship it" is being finalized (PR opening). The job re-uses the `running` status
+   *  during shipping, so this keeps the card in "Ready to Ship" instead of "Building". */
+  shipping?: boolean;
   org: { id: string; slug?: string; name?: string };
   repo: { id: string; name?: string };
 }
@@ -53,6 +63,8 @@ export interface InboxThread {
   kind: JobKind;
   /** UI status (mapped from the backend status) — drives the status pie. */
   status: JobStatus;
+  /** Backend activity axis, retained so realtime and REST cache rows match the wire contract. */
+  activity: WireJobActivity;
   /** The alert dot: this thread is waiting on you. */
   needsYou: boolean;
   /** A turn-stopping error is outstanding — the sidebar shows the failed ✕ glyph over the status pie. */
@@ -61,8 +73,13 @@ export interface InboxThread {
   /** The observed PR (null until one exists) — when present the sidebar shows a PR-status glyph
    *  instead of the build `status` pie. */
   pr: InboxPr | null;
+  /** Aggregate CI outcome for the PR head — drives the sidebar CI dot. null = no checks reported. */
+  ci: CiStatus | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt: WireJobHalt | null;
+  /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship"
+   *  (with the `running` working spinner) instead of routing it to "Building". */
+  shipping: boolean;
   org: { id: string; slug: string; name: string };
   repo: { id: string; name: string };
 }
@@ -89,11 +106,14 @@ export function normalize(r: RawInboxThread): InboxThread {
     title: r.title?.trim() || "Untitled thread",
     kind: deriveInboxKind(r),
     status: uiStatus(r.status, r.origin),
+    activity: r.activity ?? "idle",
     needsYou: r.needsYou,
     halted: r.halted ?? false,
     createdAt: r.createdAt,
     pr: r.pr ?? null,
+    ci: r.ciStatus ?? null,
     halt: r.halt ?? null,
+    shipping: r.shipping ?? false,
     org: {
       id: r.org.id,
       slug: r.org.slug ?? r.org.id,
