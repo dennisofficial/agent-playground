@@ -31,9 +31,10 @@ const EFFORT_LABELS: Record<string, string> = {
   medium: "Medium",
   high: "High",
   xhigh: "xHigh",
+  max: "Max",
 };
 
-/** A friendly display label for a Codex reasoning-effort value (`xhigh` → `xHigh`). Null when unset. */
+/** A friendly display label for a reasoning-effort value (`xhigh` → `xHigh`). Null when unset. */
 export function formatEffort(effort?: string): string | null {
   if (!effort) return null;
   return EFFORT_LABELS[effort.toLowerCase()] ?? effort;

@@ -499,7 +499,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({
       status: 'no_job',
       mainTasks: [],
-      mainDefaultFooter: { engine: 'claude', model: 'opus' },
+      mainDefaultFooter: { engine: 'claude', model: 'opus', effort: 'high' },
     });
   });
 

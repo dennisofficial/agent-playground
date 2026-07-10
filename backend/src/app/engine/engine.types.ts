@@ -193,11 +193,11 @@ export interface EngineUsage {
    */
   engine?: SessionEngine;
   /**
-   * The reasoning effort the run used, when one was passed (Codex-only input — see
-   * {@link RunEngineArgs.modelReasoningEffort}; undefined for Claude, which has no effort knob).
-   * Display-only: threads through to the composer footer as the "· xHigh" suffix.
+   * The reasoning effort the run used, when one was passed — see {@link RunEngineArgs.modelReasoningEffort}.
+   * Stamped engine-agnostically (Codex and Claude both). Display-only: threads through to the composer
+   * footer as the "· xHigh" suffix.
    */
-  reasoningEffort?: CodexReasoningEffort;
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -412,6 +412,10 @@ export type CodexReasoningEffort =
   | 'high'
   | 'xhigh';
 
+/** Engine-agnostic reasoning effort. Superset of Codex's (adds 'max') and Claude's (adds 'minimal')
+ *  value spaces; mapped to each engine's own type at the SDK boundary. */
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 /**
  * A user-defined MCP server, fully RESOLVED host-side (secret header/env values already inlined) and
  * ready to serialize onto the turn spec. `McpResolver.resolveForTurn` produces these from the
@@ -575,11 +579,12 @@ export interface RunEngineArgs {
   /** Override the model for this run. Falls back to the engine's env/default when unset. */
   model?: string;
   /**
-   * Codex-only: the reasoning effort for this run (maps to the SDK's `ThreadOptions.modelReasoningEffort`).
-   * Unset → the account/CLI default. The plan-review turn pins `'xhigh'` so the reviewer reasons hard.
-   * (A ChatGPT-account token REJECTS an explicit `model`, but ACCEPTS this knob — verified by spike.)
+   * Reasoning effort for this run. Codex → `ThreadOptions.modelReasoningEffort`; Claude → the Agent SDK
+   * `Options.effort`. Unset → the account/CLI default. The plan-review turn pins `'xhigh'` so the
+   * reviewer reasons hard. (A ChatGPT-account token REJECTS an explicit `model`, but ACCEPTS this knob —
+   * verified by spike.)
    */
-  modelReasoningEffort?: CodexReasoningEffort;
+  modelReasoningEffort?: ReasoningEffort;
   /** Called for each progress event as the run streams. */
   onEvent?: (e: EngineEvent) => void;
   /**

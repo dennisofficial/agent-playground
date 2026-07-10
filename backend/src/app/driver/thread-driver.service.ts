@@ -3236,6 +3236,9 @@ export class ThreadDriver implements JobDispatcher {
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
+          ...(threadKindSpec('builder').reasoningEffort
+            ? { modelReasoningEffort: threadKindSpec('builder').reasoningEffort }
+            : {}),
           gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
           richStream: true,
           toolBridge,
