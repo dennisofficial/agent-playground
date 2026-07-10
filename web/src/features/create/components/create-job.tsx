@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Check, Paperclip, Plug, Upload } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
+import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { BranchPicker, Dropdown } from "@/components/branch-picker";
 import { useOrgs } from "@/lib/api/me";
 import { useOrgRepos, useCreateThread } from "@/lib/api/job-queries";
@@ -461,32 +462,6 @@ function NoRepos({ orgId, onDone }: { orgId: string; onDone?: () => void }) {
         Open Repos settings
       </Link>
     </div>
-  );
-}
-
-/**
- * The ⌘↵ / Ctrl↵ affordance shown inside the Create thread button — it mirrors the keyboard shortcut on
- * the First message field. Renders nothing until mounted so the server HTML and first client render match
- * (platform is only knowable in the browser); the modifier symbol then resolves per platform.
- */
-function ShortcutHint() {
-  const [isMac, setIsMac] = useState<boolean | null>(null);
-  useEffect(() => {
-    const p =
-      typeof navigator !== "undefined"
-        ? navigator.platform || navigator.userAgent
-        : "";
-    setIsMac(/mac|iphone|ipad|ipod/i.test(p));
-  }, []);
-  if (isMac === null) return null;
-  return (
-    <kbd
-      aria-hidden="true"
-      className="inline-flex items-center gap-0.5 rounded border border-white/30 px-1.5 py-0.5 font-mono text-[10px] font-medium leading-none text-white/85"
-    >
-      {isMac ? "⌘" : "Ctrl"}
-      <span>↵</span>
-    </kbd>
   );
 }
 
