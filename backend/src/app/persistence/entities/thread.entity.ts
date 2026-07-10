@@ -209,8 +209,14 @@ export interface ThreadTerminalRecord {
   deviations?: string[];
   /** Honest known gaps / things to know — routed to the brain + next-thread orientation. */
   gaps?: string[];
-  /** Set when status='blocked' (Phase 3 `block_thread`, or the ADR-0005 live-verification judge downgrade). */
-  blocked?: { reason: 'question' | 'needs_env' | 'decision' | 'unverified'; detail: string };
+  /** Set when status='blocked' (Phase 3 `block_thread`, or the ADR-0005 live-verification judge downgrade).
+   *  `judge_unavailable` is distinct from `unverified`: the work may well be verified, but the judge itself
+   *  was UNREACHABLE (transient Anthropic outage / key rate-or-credit limit) — a done thread must HOLD and
+   *  retry when the service recovers, NOT burn its autonomous fix budget and rest as `budget_exhausted`. */
+  blocked?: {
+    reason: 'question' | 'needs_env' | 'decision' | 'unverified' | 'judge_unavailable';
+    detail: string;
+  };
   /** Set when status='failed' — the structured failure the driver relays. */
   failure?: {
     kind: 'build' | 'verification';

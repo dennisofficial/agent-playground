@@ -82,6 +82,7 @@ import {
   type LiveVerificationVerdict,
 } from '../driver/live-verification-judge';
 import {
+  clampEvidenceOutput,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
   renderTerminalRecordSummary,
@@ -2344,7 +2345,7 @@ export class AgentSessionManager
                   kind: String(o['kind'] ?? '').trim(),
                   command: String(o['command'] ?? '').trim(),
                   exitCode: Number.isFinite(Number(o['exitCode'])) ? Number(o['exitCode']) : -1,
-                  outputTail: String(o['outputTail'] ?? '').slice(0, 2000),
+                  outputTail: clampEvidenceOutput(String(o['outputTail'] ?? '')),
                 };
               })
               .filter((v) => v.command)
@@ -2354,7 +2355,7 @@ export class AgentSessionManager
                   kind: 'reported',
                   command: '(see outputTail)',
                   exitCode: 0,
-                  outputTail: (args['verification'] as string).trim().slice(0, 2000),
+                  outputTail: clampEvidenceOutput((args['verification'] as string).trim()),
                 },
               ]
             : [];
@@ -3129,14 +3130,32 @@ export class AgentSessionManager
           .catch((err) => this.logger.debug(`recordDirectBuildVerification failed: ${err}`));
         if (effective.runtimeSurfaceTouched && !effective.liveVerificationAdequate) {
           let detail = [effective.reason, effective.missingChecks].filter(Boolean).join(' — ');
-          // Distinguish "no key configured" from a generic judge failure so the operator isn't left guessing
-          // (mirrors the driver gate). Only when the judge was actually consulted (runtime diff) but returned
-          // nothing.
+          // The judge was CONSULTED but returned nothing → UNAVAILABLE, not a real "inadequate" verdict.
+          // Distinguish infra-unavailability from genuinely-inadequate evidence so the brain retries the ship
+          // (rather than being told to go re-exercise work that may already be fine). A missing key is a real
+          // config gap the operator must fix.
+          let judgeUnavailable = false;
           if (!nonRuntime && !verdict) {
             const hasKey = await this.creds.anthropicKey(stimulus.orgId).catch(() => undefined);
             if (!hasKey) {
               detail = `no Anthropic API key configured for the live-verification judge — configure one. (${detail})`;
+            } else {
+              judgeUnavailable = true;
             }
+          }
+          if (judgeUnavailable) {
+            await this.store.appendSystemEvent(
+              jobId,
+              `Live-verification judge temporarily unavailable during direct-build ship — ${detail}`,
+            );
+            return {
+              ok: false,
+              jobId,
+              reason:
+                `The live-verification judge is temporarily unavailable (transient infra: Anthropic outage or ` +
+                `API-key rate/credit limit) — this is NOT a problem with your evidence. Wait a moment and call ` +
+                `finalize_build again; it should clear once the service recovers.`,
+            };
           }
           await this.store.appendSystemEvent(
             jobId,
@@ -3147,8 +3166,10 @@ export class AgentSessionManager
             jobId,
             reason:
               `Live validation inadequate — ${detail}. Actually exercise the changed runtime surface ` +
-              `(curl the endpoint / drive the UI / run the CLI), re-report_verification with the captured ` +
-              `evidence, then finalize_build again.`,
+              `(curl the endpoint / drive the UI / run the CLI) — or, if the change is internal plumbing ` +
+              `never echoed in an HTTP/UI/CLI surface, boot the process and capture a log line proving the ` +
+              `changed value was passed at runtime. Then re-report_verification with the captured evidence, ` +
+              `then finalize_build again.`,
           };
         }
 
@@ -5523,8 +5544,10 @@ export class AgentSessionManager
       'run `mcp__atlas-lsp-ts__diagnostics` on the files you changed and the repo\'s own typecheck, and fix ' +
       'anything they find. Then — if your change touched a runtime surface (an HTTP endpoint/route, a UI ' +
       'page/component, a CLI entry point, or a background job) — ACTUALLY EXERCISE IT LIVE: boot the process ' +
-      'and curl the endpoint / drive the UI / run the CLI for real. Typecheck, build, lint, and the test ' +
-      'suite are NOT live verification on their own. Report what you ran with ' +
+      'and curl the endpoint / drive the UI / run the CLI for real. If the change is internal plumbing whose ' +
+      'effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), instead boot ' +
+      'the process and capture a log line proving the changed value was passed at runtime. Typecheck, build, ' +
+      'lint, and the test suite are NOT live verification on their own. Report what you ran with ' +
       '`report_verification({ passed: true, verification: [{ kind, command, exitCode, outputTail }, …] })` — ' +
       'capture the real command, its exit code, and a tail of its output. `finalize_build` now runs a ' +
       'live-verification judge over that evidence and REFUSES to ship a runtime change you only typechecked. ' +
@@ -6308,10 +6331,23 @@ function eventDeliveryStimulus(input: {
  * design decision on the operator's behalf. `needs_env` → verify the premise; `question`/`decision` →
  * retrieve-or-escalate; anything else (incomplete/failed, no self-reported reason) → the generic fix-or-escalate.
  */
-export function haltTriageGuidance(reason?: 'question' | 'needs_env' | 'decision' | 'unverified'): string[] {
+export function haltTriageGuidance(
+  reason?: 'question' | 'needs_env' | 'decision' | 'unverified' | 'judge_unavailable',
+): string[] {
   const budgetCaveat =
     `  You get a BOUNDED number of \`retry_thread\` attempts; only re-drive when you actually hold the answer` +
     ` and intend to resume — if the budget is exhausted, escalate to the operator instead of guessing.`;
+  if (reason === 'judge_unavailable') {
+    return [
+      `• This is a TRANSIENT infrastructure block, NOT a work defect: the live-verification judge was`,
+      `  unreachable (Anthropic outage or the org's API key hit its rate/credit limit). The thread's work may`,
+      `  well be complete and correct — do NOT redo or re-exercise anything.`,
+      `• Simply \`retry_thread\` the SAME thread to re-assert completion with the SAME evidence. If the judge is`,
+      `  back, it passes; if it's still down, say so plainly and hold (this block does NOT consume the fix`,
+      `  budget). Only escalate to the operator if it stays down long enough to matter (they may need to top up`,
+      `  the Anthropic key's credit/limit).`,
+    ];
+  }
   if (reason === 'needs_env') {
     return [
       `• FIRST verify the block is real: check the granted secrets / mounts / services — did the builder`,

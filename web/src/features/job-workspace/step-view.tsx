@@ -480,6 +480,8 @@ function SubagentView({
       <div
         ref={tail.scrollRef}
         onScroll={tail.onScroll}
+        onPointerOver={tail.onPointerOver}
+        onPointerLeave={tail.onPointerLeave}
         className="h-full overflow-y-auto px-5 py-4"
       >
         <div className="mx-auto flex max-w-[820px] flex-col gap-3">
