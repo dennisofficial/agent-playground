@@ -68,6 +68,11 @@ export const VIEW_PLAN_ACTION_ID = "atlas_approval:view_plan";
  *  plan stage), clicked while the job is `awaiting_ship_review`. POSTs to the SAME `/approve` endpoint with
  *  a `value` of just `{ jobId }` (no decision record — nothing to re-rule, just resume the build). */
 export const SHIP_ACTION_ID = "atlas_approval:ship";
+/** The ship-review gate's manual "Back to building" retract — sends `awaiting_ship_review → planning`
+ *  without discarding completed work (mirrors the Atlas `withdraw_ship` tool). POSTs to the SAME
+ *  `/approve` endpoint with the ship card's `{ jobId }` value. Must match the backend string in
+ *  `approval-blocks.ts`. */
+export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
