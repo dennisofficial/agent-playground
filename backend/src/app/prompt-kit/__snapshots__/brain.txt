@@ -101,7 +101,8 @@ You ALSO have these AMBIENT capability tools — usable ANY turn, whenever the w
   - mcp__workspace-profile__withdraw_file_request — retract a still-open request_file card BY requestId (wrong path / no longer needed); post a corrected request_file if you still need the file
   - mcp__workspace-profile__derive_secret        — store a value YOU computed from an already-granted credential (no operator wait; e.g. a printed webhook secret)
   - mcp__workspace-profile__write_workspace_config — amend the repo's DB-backed workspace config (mounts) — a live write for every future job on this repo, no PR
-  - mcp__workspace-profile__write_setup_script   — save the repo's cold-boot setup script ({ script }) — runs on EVERY cold sandbox bring-up for every future job on this repo (no PR); must be idempotent
+  - mcp__workspace-profile__write_setup_script   — save the repo's cold-boot setup script ({ script }) — runs on EVERY cold sandbox bring-up for every future job on this repo (no PR); must be idempotent. It REPLACES the whole script — read_setup_script FIRST to see the current body
+  - mcp__workspace-profile__read_setup_script    — read the repo's CURRENT cold-boot setup script (raw body) so you can edit it safely before write_setup_script (which overwrites the whole thing)
   - mcp__atlas-host-bridge__reset_sandbox        — recreate your container from scratch to prove the setup cold-boots (recreates on your NEXT turn — call it, then STOP). Add { hard:true } for a full from-scratch reset (fresh worktree + container, session kept) — two-call confirm; refuses on a dirty/unpushed tree
 
 LSP TOOLS (position-based): to rename a symbol, find its usages, or jump to its definition, prefer the `atlas-lsp-ts` tools (`rename_symbol`/`references`/`definition`/`hover`/`diagnostics`) over grep-and-rewrite — they are type-accurate. All take a POSITION you already have from a Read/grep: `filePath` + the 1-indexed `line` and `column` of the symbol (plus `newName` for `rename_symbol`); `diagnostics` takes just a `filePath`. `rename_symbol` APPLIES the edit itself and returns only a changed-files summary — do NOT re-read or re-write the affected files afterward. `references` reliably returns every real usage (not text matches). The tools are scoped to the target file's package, so a rename/references may not reach a sibling package that imports the symbol, and rename never touches string/comment occurrences — after a cross-package rename, spot-check with `references` or a Grep, and use a codemod (`ast-grep`) when strings must change too.
@@ -516,7 +517,7 @@ that turns a bare checkout into a runnable, correctly-configured workspace. It i
   1. Secret files   — request_secret / request_file (or derive_secret for a self-computed value)
   2. Mounts         — write_workspace_config({ mounts }) — durable dirs a tool writes outside your HOME
   3. Cache folders  — write_workspace_config (a shared-rw mount); most caches already persist under HOME
-  4. Setup script   — write_setup_script — the idempotent bring-up commands a cold sandbox needs
+  4. Setup script   — read_setup_script to see the current body, then write_setup_script (replaces the whole thing) — the idempotent bring-up commands a cold sandbox needs
   5. MCP servers    — propose_mcp_servers (owner-approved; scope:"repo" default or scope:"org" for every repo in the org)
   6. Skills         — propose_skill_install (reuse a maintained skill) · propose_skill (author a repo-idiom one); scope:"repo" default or scope:"org" for every repo in the org
   7. House style    — propose_convention_profile (owner-approved)

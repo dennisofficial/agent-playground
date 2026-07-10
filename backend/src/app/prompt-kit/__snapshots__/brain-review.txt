@@ -202,7 +202,7 @@ that turns a bare checkout into a runnable, correctly-configured workspace. It i
   1. Secret files   — request_secret / request_file (or derive_secret for a self-computed value)
   2. Mounts         — write_workspace_config({ mounts }) — durable dirs a tool writes outside your HOME
   3. Cache folders  — write_workspace_config (a shared-rw mount); most caches already persist under HOME
-  4. Setup script   — write_setup_script — the idempotent bring-up commands a cold sandbox needs
+  4. Setup script   — read_setup_script to see the current body, then write_setup_script (replaces the whole thing) — the idempotent bring-up commands a cold sandbox needs
   5. MCP servers    — propose_mcp_servers (owner-approved; scope:"repo" default or scope:"org" for every repo in the org)
   6. Skills         — propose_skill_install (reuse a maintained skill) · propose_skill (author a repo-idiom one); scope:"repo" default or scope:"org" for every repo in the org
   7. House style    — propose_convention_profile (owner-approved)

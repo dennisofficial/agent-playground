@@ -3855,6 +3855,7 @@ export class AgentSessionManager
       withdraw_file_request: this.buildWithdrawFileRequestTool(stimulus),
       write_workspace_config: this.buildWriteWorkspaceConfigTool(stimulus),
       write_setup_script: this.buildWriteSetupScriptTool(stimulus),
+      read_setup_script: this.buildReadSetupScriptTool(stimulus),
       derive_secret: this.buildDeriveSecretTool(stimulus),
       reset_sandbox: this.buildResetSandboxTool(stimulus),
       // Skills + MCP servers are Workspace Profile dimensions like mounts/setup — maintainable INCREMENTALLY
@@ -4323,6 +4324,25 @@ export class AgentSessionManager
         return { ok: true, saved: !!script };
       } catch (err) {
         this.logger.warn(`write_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /**
+   * `read_setup_script()` — return the repo's CURRENT cold-boot setup script (the raw body, not just its
+   * length like the profile snapshot). Read-before-edit for `write_setup_script`, which REPLACES the whole
+   * script: read it here, edit the body, then write the full new script back. Pure read — no mutation, no
+   * system event. org/repo come from the closure (never tool args) — tenant safety. Reuses the same store
+   * (`WorkspaceConfigStore.getSetupScript`) that resolves the script on cold attach.
+   */
+  private buildReadSetupScriptTool(stimulus: ChatStimulus): ToolImpl {
+    return async () => {
+      try {
+        const script = await this.configStore.getSetupScript(stimulus.orgId, stimulus.repoId);
+        return { ok: true, present: script !== null, script };
+      } catch (err) {
+        this.logger.warn(`read_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
