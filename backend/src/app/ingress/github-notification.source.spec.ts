@@ -6,7 +6,7 @@ import {
   GithubNotificationSource,
   verifyGithubSignature,
 } from './github-notification.source';
-import type { RawNotification } from '../domain';
+import type { CiSyncDelta, RawNotification } from '../domain';
 
 const SECRET = 'gh-webhook-secret';
 
@@ -22,7 +22,11 @@ const ROUTE: ProjectRoute = {
   orgId: 'T1',
   repoId: 'web',
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  repo: { org_id: 'T1', repo_id: 'web', git_url: 'https://github.com/acme/web.git' } as any,
+  repo: {
+    org_id: 'T1',
+    repo_id: 'web',
+    git_url: 'https://github.com/acme/web.git',
+  } as any,
 };
 
 function fakeRouting(route: ProjectRoute | null): ProjectRoutingService {
@@ -36,7 +40,10 @@ function sign(body: string, secret = SECRET): string {
   return `sha256=${createHmac('sha256', secret).update(Buffer.from(body)).digest('hex')}`;
 }
 
-function raw(body: unknown, headers: Record<string, string | undefined>): RawNotification {
+function raw(
+  body: unknown,
+  headers: Record<string, string | undefined>,
+): RawNotification {
   const json = JSON.stringify(body);
   return { rawBody: Buffer.from(json), headers, body };
 }
@@ -44,49 +51,76 @@ function raw(body: unknown, headers: Record<string, string | undefined>): RawNot
 describe('verifyGithubSignature', () => {
   it('accepts a correct sha256 HMAC of the raw bytes', () => {
     const body = JSON.stringify({ a: 1 });
-    expect(verifyGithubSignature(Buffer.from(body), sign(body), SECRET)).toBe(true);
+    expect(verifyGithubSignature(Buffer.from(body), sign(body), SECRET)).toBe(
+      true,
+    );
   });
 
   it('rejects a tampered body', () => {
     const body = JSON.stringify({ a: 1 });
     const sig = sign(body);
-    expect(verifyGithubSignature(Buffer.from(body + 'x'), sig, SECRET)).toBe(false);
+    expect(verifyGithubSignature(Buffer.from(body + 'x'), sig, SECRET)).toBe(
+      false,
+    );
   });
 
   it('rejects a signature made with the wrong secret', () => {
     const body = JSON.stringify({ a: 1 });
-    expect(verifyGithubSignature(Buffer.from(body), sign(body, 'wrong'), SECRET)).toBe(false);
+    expect(
+      verifyGithubSignature(Buffer.from(body), sign(body, 'wrong'), SECRET),
+    ).toBe(false);
   });
 
   it('rejects a malformed signature (length mismatch, no throw)', () => {
     const body = JSON.stringify({ a: 1 });
-    expect(verifyGithubSignature(Buffer.from(body), 'sha256=short', SECRET)).toBe(false);
+    expect(
+      verifyGithubSignature(Buffer.from(body), 'sha256=short', SECRET),
+    ).toBe(false);
   });
 });
 
 describe('GithubNotificationSource.handle', () => {
   const failedWorkflow = {
     repository: { full_name: 'Acme/Web' },
-    workflow_run: { id: 99, name: 'CI', status: 'completed', conclusion: 'failure', html_url: 'http://x' },
+    workflow_run: {
+      id: 99,
+      name: 'CI',
+      status: 'completed',
+      conclusion: 'failure',
+      html_url: 'http://x',
+    },
   };
 
   it('rejects when no webhook secret is configured (unverifiable)', async () => {
-    const src = new GithubNotificationSource(fakeEnv({ GITHUB_WEBHOOK_SECRET: undefined }), fakeRouting(ROUTE));
+    const src = new GithubNotificationSource(
+      fakeEnv({ GITHUB_WEBHOOK_SECRET: undefined }),
+      fakeRouting(ROUTE),
+    );
     const json = JSON.stringify(failedWorkflow);
-    const res = await src.handle(raw(failedWorkflow, { 'x-hub-signature-256': sign(json), 'x-github-event': 'workflow_run' }));
+    const res = await src.handle(
+      raw(failedWorkflow, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'workflow_run',
+      }),
+    );
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'unverifiable' });
   });
 
   it('rejects a missing signature header (unverifiable)', async () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
-    const res = await src.handle(raw(failedWorkflow, { 'x-github-event': 'workflow_run' }));
+    const res = await src.handle(
+      raw(failedWorkflow, { 'x-github-event': 'workflow_run' }),
+    );
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'unverifiable' });
   });
 
   it('rejects a bad signature (bad-signature)', async () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
     const res = await src.handle(
-      raw(failedWorkflow, { 'x-hub-signature-256': 'sha256=deadbeef', 'x-github-event': 'workflow_run' }),
+      raw(failedWorkflow, {
+        'x-hub-signature-256': 'sha256=deadbeef',
+        'x-github-event': 'workflow_run',
+      }),
     );
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'bad-signature' });
   });
@@ -95,7 +129,12 @@ describe('GithubNotificationSource.handle', () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
     const ping = { repository: { full_name: 'Acme/Web' }, zen: 'go' };
     const json = JSON.stringify(ping);
-    const res = await src.handle(raw(ping, { 'x-hub-signature-256': sign(json), 'x-github-event': 'ping' }));
+    const res = await src.handle(
+      raw(ping, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'ping',
+      }),
+    );
     expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
   });
 
@@ -122,7 +161,7 @@ describe('GithubNotificationSource.handle', () => {
     expect(res.event.body).toContain('failure');
   });
 
-  it('collapses one commit\'s CI fan-out (workflow_run + check_suite + check_run) onto a single ci:<sha> key', async () => {
+  it("collapses one commit's CI fan-out (workflow_run + check_suite + check_run) onto a single ci:<sha> key", async () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
     const SHA = 'abc123def456';
     const events: Array<[string, unknown]> = [
@@ -130,27 +169,52 @@ describe('GithubNotificationSource.handle', () => {
         'workflow_run',
         {
           repository: { full_name: 'Acme/Web' },
-          workflow_run: { id: 99, name: 'CI', status: 'completed', conclusion: 'failure', head_branch: 'main', head_sha: SHA },
+          workflow_run: {
+            id: 99,
+            name: 'CI',
+            status: 'completed',
+            conclusion: 'failure',
+            head_branch: 'main',
+            head_sha: SHA,
+          },
         },
       ],
       [
         'check_suite',
         {
           repository: { full_name: 'Acme/Web' },
-          check_suite: { id: 5, status: 'completed', conclusion: 'failure', head_branch: 'main', head_sha: SHA },
+          check_suite: {
+            id: 5,
+            status: 'completed',
+            conclusion: 'failure',
+            head_branch: 'main',
+            head_sha: SHA,
+          },
         },
       ],
       [
         'check_run',
         {
           repository: { full_name: 'Acme/Web' },
-          check_run: { id: 7, name: 'Typecheck', status: 'completed', conclusion: 'failure', head_sha: SHA, check_suite: { head_branch: 'main' } },
+          check_run: {
+            id: 7,
+            name: 'Typecheck',
+            status: 'completed',
+            conclusion: 'failure',
+            head_sha: SHA,
+            check_suite: { head_branch: 'main' },
+          },
         },
       ],
     ];
     for (const [eventType, body] of events) {
       const json = JSON.stringify(body);
-      const res = await src.handle(raw(body, { 'x-hub-signature-256': sign(json), 'x-github-event': eventType }));
+      const res = await src.handle(
+        raw(body, {
+          'x-hub-signature-256': sign(json),
+          'x-github-event': eventType,
+        }),
+      );
       expect(res.outcome).toBe('accepted');
       if (res.outcome !== 'accepted') throw new Error('expected accepted');
       // All three collapse to the SAME key so the intake seeds/attaches ONE job, not one per event type.
@@ -162,10 +226,20 @@ describe('GithubNotificationSource.handle', () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
     const body = {
       repository: { full_name: 'Acme/Web' },
-      check_suite: { id: 42, status: 'completed', conclusion: 'failure', head_branch: 'main' },
+      check_suite: {
+        id: 42,
+        status: 'completed',
+        conclusion: 'failure',
+        head_branch: 'main',
+      },
     };
     const json = JSON.stringify(body);
-    const res = await src.handle(raw(body, { 'x-hub-signature-256': sign(json), 'x-github-event': 'check_suite' }));
+    const res = await src.handle(
+      raw(body, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'check_suite',
+      }),
+    );
     expect(res.outcome).toBe('accepted');
     if (res.outcome !== 'accepted') throw new Error('expected accepted');
     expect(res.event.dedupeKey).toBe('check_suite:42');
@@ -175,7 +249,10 @@ describe('GithubNotificationSource.handle', () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(null));
     const json = JSON.stringify(failedWorkflow);
     const res = await src.handle(
-      raw(failedWorkflow, { 'x-hub-signature-256': sign(json), 'x-github-event': 'workflow_run' }),
+      raw(failedWorkflow, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'workflow_run',
+      }),
     );
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'unroutable' });
   });
@@ -184,18 +261,35 @@ describe('GithubNotificationSource.handle', () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
     const ok = {
       repository: { full_name: 'Acme/Web' },
-      workflow_run: { id: 99, name: 'CI', status: 'completed', conclusion: 'success' },
+      workflow_run: {
+        id: 99,
+        name: 'CI',
+        status: 'completed',
+        conclusion: 'success',
+      },
     };
     const json = JSON.stringify(ok);
-    const res = await src.handle(raw(ok, { 'x-hub-signature-256': sign(json), 'x-github-event': 'workflow_run' }));
+    const res = await src.handle(
+      raw(ok, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'workflow_run',
+      }),
+    );
     expect(res).toMatchObject({ outcome: 'ignored' });
   });
 
   it('rejects a payload missing repository.full_name (malformed)', async () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
-    const bad = { workflow_run: { id: 1, status: 'completed', conclusion: 'failure' } };
+    const bad = {
+      workflow_run: { id: 1, status: 'completed', conclusion: 'failure' },
+    };
     const json = JSON.stringify(bad);
-    const res = await src.handle(raw(bad, { 'x-hub-signature-256': sign(json), 'x-github-event': 'workflow_run' }));
+    const res = await src.handle(
+      raw(bad, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'workflow_run',
+      }),
+    );
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'malformed' });
   });
 
@@ -213,9 +307,17 @@ describe('GithubNotificationSource.handle', () => {
       },
     };
     const json = JSON.stringify(payload);
-    const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'workflow_run' }));
+    const res = await src.handle(
+      raw(payload, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'workflow_run',
+      }),
+    );
     if (res.outcome !== 'accepted') throw new Error('expected accepted');
-    expect(res.event.correlation).toEqual({ branch: 'feat/a1b2c3d4', prNumber: 12 });
+    expect(res.event.correlation).toEqual({
+      branch: 'feat/a1b2c3d4',
+      prNumber: 12,
+    });
   });
 
   it('routes a pull_request_review CHANGES_REQUESTED → accepted (critical) with PR correlation', async () => {
@@ -224,13 +326,29 @@ describe('GithubNotificationSource.handle', () => {
       action: 'submitted',
       repository: { full_name: 'Acme/Web' },
       pull_request: { number: 5, head: { ref: 'feat/a1b2c3d4' } },
-      review: { id: 900, state: 'changes_requested', body: 'fix the null check', user: { login: 'dennis' } },
+      review: {
+        id: 900,
+        state: 'changes_requested',
+        body: 'fix the null check',
+        user: { login: 'dennis' },
+      },
     };
     const json = JSON.stringify(payload);
-    const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request_review' }));
+    const res = await src.handle(
+      raw(payload, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'pull_request_review',
+      }),
+    );
     if (res.outcome !== 'accepted') throw new Error('expected accepted');
-    expect(res.event).toMatchObject({ severity: 'critical', dedupeKey: 'pull_request_review:900' });
-    expect(res.event.correlation).toEqual({ branch: 'feat/a1b2c3d4', prNumber: 5 });
+    expect(res.event).toMatchObject({
+      severity: 'critical',
+      dedupeKey: 'pull_request_review:900',
+    });
+    expect(res.event.correlation).toEqual({
+      branch: 'feat/a1b2c3d4',
+      prNumber: 5,
+    });
     expect(res.event.body).toContain('fix the null check');
   });
 
@@ -243,7 +361,12 @@ describe('GithubNotificationSource.handle', () => {
       comment: { id: 111, body: 'can you rebase?', user: { login: 'dennis' } },
     };
     const json = JSON.stringify(payload);
-    const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'issue_comment' }));
+    const res = await src.handle(
+      raw(payload, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'issue_comment',
+      }),
+    );
     if (res.outcome !== 'accepted') throw new Error('expected accepted');
     expect(res.event.correlation).toEqual({ prNumber: 8 });
   });
@@ -257,7 +380,12 @@ describe('GithubNotificationSource.handle', () => {
       comment: { id: 111, body: 'hi', user: { login: 'dennis' } },
     };
     const json = JSON.stringify(payload);
-    const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'issue_comment' }));
+    const res = await src.handle(
+      raw(payload, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'issue_comment',
+      }),
+    );
     expect(res).toMatchObject({ outcome: 'ignored' });
   });
 
@@ -266,10 +394,20 @@ describe('GithubNotificationSource.handle', () => {
     const payload = {
       action: 'opened',
       repository: { full_name: 'Acme/Web' },
-      pull_request: { number: 5, html_url: 'http://pr/5', merged: false, head: { ref: 'feat/x' } },
+      pull_request: {
+        number: 5,
+        html_url: 'http://pr/5',
+        merged: false,
+        head: { ref: 'feat/x' },
+      },
     };
     const json = JSON.stringify(payload);
-    const res = await src.handle(raw(payload, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }));
+    const res = await src.handle(
+      raw(payload, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'pull_request',
+      }),
+    );
     expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
   });
 });
@@ -278,14 +416,25 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
   const openedPr = {
     action: 'opened',
     repository: { full_name: 'Acme/Web' },
-    pull_request: { number: 5, html_url: 'http://pr/5', merged: false, head: { ref: 'feat/x' } },
+    pull_request: {
+      number: 5,
+      html_url: 'http://pr/5',
+      merged: false,
+      head: { ref: 'feat/x' },
+    },
   };
 
   it('rejects when no webhook secret is configured (unverifiable)', async () => {
-    const src = new GithubNotificationSource(fakeEnv({ GITHUB_WEBHOOK_SECRET: undefined }), fakeRouting(ROUTE));
+    const src = new GithubNotificationSource(
+      fakeEnv({ GITHUB_WEBHOOK_SECRET: undefined }),
+      fakeRouting(ROUTE),
+    );
     const json = JSON.stringify(openedPr);
     const res = await src.handlePrWebhook(
-      raw(openedPr, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }),
+      raw(openedPr, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'pull_request',
+      }),
     );
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'unverifiable' });
   });
@@ -293,7 +442,10 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
   it('rejects a bad signature (bad-signature)', async () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
     const res = await src.handlePrWebhook(
-      raw(openedPr, { 'x-hub-signature-256': 'sha256=deadbeef', 'x-github-event': 'pull_request' }),
+      raw(openedPr, {
+        'x-hub-signature-256': 'sha256=deadbeef',
+        'x-github-event': 'pull_request',
+      }),
     );
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'bad-signature' });
   });
@@ -302,7 +454,10 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(null));
     const json = JSON.stringify(openedPr);
     const res = await src.handlePrWebhook(
-      raw(openedPr, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }),
+      raw(openedPr, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'pull_request',
+      }),
     );
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'unroutable' });
   });
@@ -311,7 +466,10 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
     const json = JSON.stringify(openedPr);
     const res = await src.handlePrWebhook(
-      raw(openedPr, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }),
+      raw(openedPr, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'pull_request',
+      }),
     );
     expect(res).toMatchObject({
       outcome: 'pr-sync',
@@ -331,11 +489,19 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
     const workflow = {
       repository: { full_name: 'Acme/Web' },
-      workflow_run: { id: 99, name: 'CI', status: 'completed', conclusion: 'failure' },
+      workflow_run: {
+        id: 99,
+        name: 'CI',
+        status: 'completed',
+        conclusion: 'failure',
+      },
     };
     const json = JSON.stringify(workflow);
     const res = await src.handlePrWebhook(
-      raw(workflow, { 'x-hub-signature-256': sign(json), 'x-github-event': 'workflow_run' }),
+      raw(workflow, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'workflow_run',
+      }),
     );
     expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
   });
@@ -345,11 +511,19 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
     const synced = {
       action: 'synchronize',
       repository: { full_name: 'Acme/Web' },
-      pull_request: { number: 5, html_url: 'http://pr/5', merged: false, head: { ref: 'feat/x' } },
+      pull_request: {
+        number: 5,
+        html_url: 'http://pr/5',
+        merged: false,
+        head: { ref: 'feat/x' },
+      },
     };
     const json = JSON.stringify(synced);
     const res = await src.handlePrWebhook(
-      raw(synced, { 'x-hub-signature-256': sign(json), 'x-github-event': 'pull_request' }),
+      raw(synced, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'pull_request',
+      }),
     );
     expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
   });
@@ -388,5 +562,106 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
       raw(push, { 'x-hub-signature-256': sign(json), 'x-github-event': 'push' }),
     );
     expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
+  });
+});
+
+describe('GithubNotificationSource.handleWorkEvent', () => {
+  it('on a check_run payload returns a non-null CI delta AND the same triage as handle() on the same payload', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      repository: { full_name: 'Acme/Web' },
+      check_run: {
+        id: 7,
+        name: 'Typecheck',
+        status: 'completed',
+        conclusion: 'failure',
+        html_url: 'http://x',
+        check_suite: { head_branch: 'feat/a1b2c3d4' },
+        pull_requests: [{ number: 12 }],
+      },
+    };
+    const headers = {
+      'x-hub-signature-256': sign(JSON.stringify(payload)),
+      'x-github-event': 'check_run',
+      'x-github-delivery': 'd-1',
+    };
+
+    const { triage, ci } = await src.handleWorkEvent(raw(payload, headers));
+    const directTriage = await src.handle(raw(payload, headers));
+
+    expect(triage).toEqual(directTriage);
+    expect(ci).toEqual<CiSyncDelta>({
+      orgId: 'T1',
+      repoId: 'web',
+      prNumber: 12,
+      branch: 'feat/a1b2c3d4',
+    });
+  });
+
+  it('falls back to check_run.pull_requests[0].head.ref when the suite branch is absent', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      repository: { full_name: 'Acme/Web' },
+      check_run: {
+        id: 8,
+        name: 'Typecheck',
+        status: 'completed',
+        conclusion: 'failure',
+        html_url: 'http://x',
+        pull_requests: [{ number: 13, head: { ref: 'feat/from-pr-head' } }],
+      },
+    };
+    const headers = {
+      'x-hub-signature-256': sign(JSON.stringify(payload)),
+      'x-github-event': 'check_run',
+      'x-github-delivery': 'd-2',
+    };
+
+    const { triage, ci } = await src.handleWorkEvent(raw(payload, headers));
+
+    expect(ci).toEqual<CiSyncDelta>({
+      orgId: 'T1',
+      repoId: 'web',
+      prNumber: 13,
+      branch: 'feat/from-pr-head',
+    });
+    expect(triage).toMatchObject({
+      outcome: 'accepted',
+      event: { correlation: { branch: 'feat/from-pr-head', prNumber: 13 } },
+    });
+  });
+
+  it('returns ci: null for a pull_request payload (not a CI event type)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      action: 'opened',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: {
+        number: 5,
+        html_url: 'http://pr/5',
+        merged: false,
+        head: { ref: 'feat/x' },
+      },
+    };
+    const headers = {
+      'x-hub-signature-256': sign(JSON.stringify(payload)),
+      'x-github-event': 'pull_request',
+    };
+
+    const { ci } = await src.handleWorkEvent(raw(payload, headers));
+    expect(ci).toBeNull();
+  });
+
+  it('returns ci: null for a push payload (not a supported CI event type)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = { repository: { full_name: 'Acme/Web' } };
+    const headers = {
+      'x-hub-signature-256': sign(JSON.stringify(payload)),
+      'x-github-event': 'push',
+    };
+
+    const { ci, triage } = await src.handleWorkEvent(raw(payload, headers));
+    expect(ci).toBeNull();
+    expect(triage).toMatchObject({ outcome: 'ignored' });
   });
 });
