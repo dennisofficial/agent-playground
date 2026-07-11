@@ -2,7 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { atlasAgentHomeBase } from '../engine/engine-home';
@@ -19,6 +19,7 @@ import {
   CONTAINER_MCP_HUB_CONFIG,
   CONTAINER_MCP_HUB_DIR,
   CONTAINER_PLAYGROUND,
+  GITHUB_TOKEN_FILE,
   CONTAINER_PNPM_STORE,
   CONTAINER_SKILLS_MANAGED,
   CONTAINER_SKILLS_MANAGED_GIT,
@@ -877,6 +878,22 @@ export class SandboxManager implements SandboxProvider {
     } catch (err) {
       this.logger.debug(`kickMcpHubRefresh(${input.jobId.slice(0, 8)}) skipped: ${String(err)}`);
     }
+  }
+
+  /**
+   * Write the current GitHub App installation token to the host side of the job's `/.atlas` bind (the file
+   * the in-sandbox git `credential.helper` reads). Atomic (temp + rename) so a concurrent `cat` on the push
+   * critical path never sees a half-written token. 0600: it is a live credential. See
+   * {@link SandboxProvider.writeGithubTokenFile}.
+   */
+  async writeGithubTokenFile(jobId: string, token: string): Promise<void> {
+    const name = this.containerName('', '', '', jobId);
+    const hostHome = join(this.agentHomeRootHost(), 'sandboxes', name);
+    mkdirSync(hostHome, { recursive: true });
+    const dest = join(hostHome, basename(GITHUB_TOKEN_FILE));
+    const tmp = `${dest}.tmp`;
+    writeFileSync(tmp, token, { mode: 0o600 });
+    renameSync(tmp, dest);
   }
 
   /**

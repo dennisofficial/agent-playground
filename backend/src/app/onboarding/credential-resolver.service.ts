@@ -35,6 +35,12 @@ export class CredentialResolver {
     return (await this.store.read(orgId))?.openaiApiKey;
   }
 
+  /** The org's GitHub auth mode ('pat' default). Drives whether in-sandbox git uses the file-backed credential helper (app) or a static extraheader (pat). */
+  async githubAuthMode(orgId?: string): Promise<'pat' | 'app'> {
+    if (!orgId) return 'pat';
+    return (await this.store.read(orgId))?.githubAuthMode ?? 'pat';
+  }
+
   /** GitHub token for clone/push/PR: an installation token for app-mode orgs, else the org PAT, else undefined. NEVER throws — a mint blip yields undefined (same as an absent PAT). */
   async githubToken(orgId?: string): Promise<string | undefined> {
     if (!orgId) return undefined;

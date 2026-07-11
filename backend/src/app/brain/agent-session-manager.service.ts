@@ -408,11 +408,15 @@ export class AgentSessionManager
         this.gitTargetByJob.set(jobId, target);
       }
       const token = await this.creds.githubToken(target.orgId);
+      // Optional-call: test fakes/older CredentialResolver stand-ins may predate this method — default
+      // 'pat' (today's behavior) rather than throwing mid-turn.
+      const mode = (await this.creds.githubAuthMode?.(target.orgId)) ?? 'pat';
       const identity =
         (await this.creds.githubCommitIdentity(target.orgId)) ??
         (await this.identities.resolve(token));
       return {
         gitUrl: target.gitUrl,
+        mode,
         ...(token ? { token } : {}),
         ...(identity ? { identity } : {}),
       };

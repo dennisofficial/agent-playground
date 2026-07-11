@@ -270,6 +270,12 @@ export interface GitAuth {
   gitUrl: string;
   token?: string;
   identity?: SandboxGitIdentity;
+  /**
+   * The org's GitHub auth mode. `'app'` → the in-sandbox git reads its token from a host-refreshed file via
+   * a credential helper (mid-turn refresh); `'pat'` (default when absent) → today's static `http.extraheader`.
+   * Set by the per-turn gitAuth resolvers (ThreadDriver / AgentSessionManager).
+   */
+  mode?: 'pat' | 'app';
 }
 
 /**

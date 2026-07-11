@@ -270,11 +270,15 @@ export class ThreadDriver implements JobDispatcher {
     gitUrl: string,
   ): Promise<GitAuth> {
     const token = await this.creds.githubToken(orgId);
+    // Optional-call: test fakes/older CredentialResolver stand-ins may predate this method — default 'pat'
+    // (today's behavior) rather than throwing mid-drive.
+    const mode = (await this.creds.githubAuthMode?.(orgId)) ?? 'pat';
     const identity =
       (await this.creds.githubCommitIdentity(orgId)) ??
       (await this.identities.resolve(token));
     return {
       gitUrl,
+      mode,
       ...(token ? { token } : {}),
       ...(identity ? { identity } : {}),
     };

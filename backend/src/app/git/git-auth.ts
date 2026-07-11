@@ -42,6 +42,29 @@ export function gitAuthEnv(
   };
 }
 
+/**
+ * App-mode in-sandbox git auth: credentials come from a FILE the host refreshes mid-turn, NOT a baked-in
+ * header. Sets a URL-SCOPED git `credential.helper` — `credential.https://github.com.helper` (UNQUOTED url
+ * subsection: git splits `section.<subsection>.key` on the first and last dot, so the middle is the url).
+ * VERIFIED BY SPIKE: git invokes this helper ONLY for https://github.com URLs — for any other host (e.g. a
+ * `git fetch` from evil.com) the helper is NOT called, so the installation token can NEVER leak to a
+ * non-GitHub remote. (An UNSCOPED `credential.helper` DID leak the token to evil.com in the spike — hence
+ * the url scoping.) The `!`-prefixed shell helper `cat`s the token file on every `get`, so git/push/fetch
+ * always reads the current token regardless of turn length.
+ */
+export function gitCredHelperEnv(
+  gitUrl: string,
+  tokenFilePath: string,
+): Record<string, string> {
+  if (!isHttpsGithub(gitUrl)) return {};
+  const helper = `!f() { test "$1" = get && { echo username=x-access-token; echo "password=$(cat ${tokenFilePath})"; }; }; f`;
+  return {
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'credential.https://github.com.helper',
+    GIT_CONFIG_VALUE_0: helper,
+  };
+}
+
 /** Owner/repo from an HTTPS GitHub URL (`.git` suffix tolerated). Throws on anything else. */
 export function parseGithubRepo(gitUrl: string): { owner: string; repo: string } {
   const m = gitUrl.match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);

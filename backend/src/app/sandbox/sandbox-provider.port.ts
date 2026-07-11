@@ -207,4 +207,14 @@ export interface SandboxProvider {
 
   /** The jobIds of every currently-RUNNING managed thread sandbox — the set the reconciler sweeps. */
   listLiveThreadJobIds(): Promise<string[]>;
+
+  /**
+   * Write the current GitHub App installation token to the host side of a job's `/.atlas` bind mount (the
+   * file a git `credential.helper` reads in-sandbox). Host-side `writeFileSync` — no exec, no running
+   * container required (the file persists on the durable bind). Called at turn spawn (seed fresh) and by the
+   * driver's leader-gated refresh sweep (~10 min) so a long build turn's git stays authenticated as the
+   * installation token rolls. App-mode orgs only. Optional on the port so test fakes needn't implement it;
+   * `SandboxManager` (the only real binding) always does.
+   */
+  writeGithubTokenFile?(jobId: string, token: string): Promise<void>;
 }
