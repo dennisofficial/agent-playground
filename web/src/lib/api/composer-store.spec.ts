@@ -116,4 +116,129 @@ describe("composerStore", () => {
     const raw = storage.getItem(KEY_PREFIX + ref.jobId);
     expect(JSON.parse(raw as string).comments).toEqual([comment]);
   });
+
+  describe("offline-send outbox", () => {
+    it("enqueue then getOutbox returns the item; isolated per jobId", () => {
+      const a = refFor("job-outbox-a");
+      const b = refFor("job-outbox-b");
+      composerStore.enqueue(a, {
+        id: "q1",
+        createdAt: 1,
+        text: "hello",
+        comments: [],
+        attachments: [],
+      });
+      expect(composerStore.getOutbox(a.jobId)).toEqual([
+        { id: "q1", createdAt: 1, text: "hello", comments: [], attachments: [] },
+      ]);
+      // Job B was never enqueued into — its outbox stays empty.
+      expect(composerStore.getOutbox(b.jobId)).toEqual([]);
+    });
+
+    it("allQueued() returns every Job's items sorted by createdAt (global FIFO)", () => {
+      const a = refFor("job-fifo-a");
+      const b = refFor("job-fifo-b");
+      composerStore.enqueue(a, {
+        id: "later",
+        createdAt: 1000,
+        text: "from A",
+        comments: [],
+        attachments: [],
+      });
+      composerStore.enqueue(b, {
+        id: "earlier",
+        createdAt: 500,
+        text: "from B",
+        comments: [],
+        attachments: [],
+      });
+      const all = composerStore
+        .allQueued()
+        .filter((q) => q.ref.jobId === a.jobId || q.ref.jobId === b.jobId);
+      expect(all.map((q) => q.msg.id)).toEqual(["earlier", "later"]);
+    });
+
+    it("removeQueued drops the item and persists the removal immediately", () => {
+      const ref = refFor("job-remove");
+      composerStore.enqueue(ref, {
+        id: "q1",
+        createdAt: 1,
+        text: "keep me queued briefly",
+        comments: [],
+        attachments: [],
+      });
+      vi.advanceTimersByTime(300);
+      expect(storage.getItem(KEY_PREFIX + ref.jobId)).not.toBeNull();
+
+      composerStore.removeQueued(ref.jobId, "q1");
+      expect(composerStore.getOutbox(ref.jobId)).toEqual([]);
+      // Nothing left in the draft (no text/comments/outbox) — the persisted blob is removed.
+      expect(storage.getItem(KEY_PREFIX + ref.jobId)).toBeNull();
+    });
+
+    it("persists a text-kind queued message's serializable metadata (no attachments)", () => {
+      const ref = refFor("job-persist-outbox");
+      composerStore.enqueue(ref, {
+        id: "q1",
+        createdAt: 42,
+        text: "queued while offline",
+        comments: [],
+        attachments: [{ file: new File(["x"], "x.png"), url: "blob:x", kind: "image" }],
+      });
+      vi.advanceTimersByTime(300);
+      const raw = storage.getItem(KEY_PREFIX + ref.jobId);
+      expect(raw).not.toBeNull();
+      const persisted = JSON.parse(raw as string);
+      expect(persisted.outbox).toEqual([
+        { id: "q1", createdAt: 42, text: "queued while offline", comments: [] },
+      ]);
+      // The in-memory attachment never reaches the persisted blob.
+      expect(persisted.outbox[0].attachments).toBeUndefined();
+    });
+
+    it("drops an attachments-only queued item on hydrate; keeps a text survivor", () => {
+      const ref = refFor("job-hydrate-outbox");
+      storage.setItem(
+        KEY_PREFIX + ref.jobId,
+        JSON.stringify({
+          ref,
+          text: "",
+          comments: [],
+          outbox: [
+            { id: "attachments-only", createdAt: 1, text: "", comments: [] },
+            { id: "text-survivor", createdAt: 2, text: "keep me", comments: [] },
+          ],
+        }),
+      );
+
+      composerStore.ensure(ref);
+      const outbox = composerStore.getOutbox(ref.jobId);
+      expect(outbox.map((q) => q.id)).toEqual(["text-survivor"]);
+      expect(outbox[0]).toMatchObject({ text: "keep me", attachments: [] });
+    });
+
+    it("clearDraft preserves the outbox (text clears, queued item stays)", () => {
+      const ref = refFor("job-clear-preserves-outbox");
+      composerStore.setText(ref, "draft text");
+      composerStore.enqueue(ref, {
+        id: "q1",
+        createdAt: 1,
+        text: "queued msg",
+        comments: [],
+        attachments: [],
+      });
+
+      composerStore.clearDraft(ref.jobId);
+      expect(composerStore.getDraft(ref.jobId).text).toBe("");
+      expect(composerStore.getOutbox(ref.jobId)).toEqual([
+        { id: "q1", createdAt: 1, text: "queued msg", comments: [], attachments: [] },
+      ]);
+
+      const raw = storage.getItem(KEY_PREFIX + ref.jobId);
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw as string).outbox).toEqual([
+        { id: "q1", createdAt: 1, text: "queued msg", comments: [] },
+      ]);
+    });
+  });
 });

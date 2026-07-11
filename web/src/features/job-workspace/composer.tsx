@@ -8,7 +8,8 @@ import {
   useSendReviewComments,
   useStop,
 } from "@/lib/api/job-queries";
-import type { JobRef } from "@/lib/api/job-api";
+import { ThreadApiError, type JobRef } from "@/lib/api/job-api";
+import type { PendingAttachment } from "@/lib/api/job-queries";
 import { useConnectivity } from "@/lib/api/connectivity";
 import { composerStore, useComposerDraft } from "@/lib/api/composer-store";
 import type { AttachmentsApi } from "./use-attachments";
@@ -18,7 +19,8 @@ import { useAllJobs } from "@/lib/api/inbox";
 import { ContextMeter } from "./bubbles";
 import { UsageRing } from "./usage-ring";
 import { CommentTray } from "./comment-tray";
-import { useReviewComments } from "./review-comments";
+import { QueuedTray } from "./queued-tray";
+import { useReviewComments, type ReviewComment } from "./review-comments";
 import { formatEffort, formatModelLabel } from "@/lib/format";
 
 /** The lane's live footer data — the model/effort/engine that ran + its context occupancy. */
@@ -154,15 +156,58 @@ export function Composer({
   function send() {
     if (readOnly) return;
     const trimmed = text.trim();
-    if (comments.length > 0) {
-      sendReviewComments.mutate({
-        items: comments.map((c) => ({
-          file: c.file.label,
-          quote: c.quote,
-          note: c.note || undefined,
-        })),
-        message: trimmed || undefined,
+
+    // Offline: don't attempt the POST at all — move the message into the per-Job outbox and clear the
+    // composer so the operator can keep composing. The <OutboxFlusher> drains it FIFO on reconnect.
+    const offline = connectivity !== "online";
+    if (offline) {
+      if (comments.length === 0 && attachments.length === 0 && !trimmed) return;
+      composerStore.enqueue(jobRef, {
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        text: trimmed,
+        comments,
+        attachments,
       });
+      // Drop the chips/tray WITHOUT revoking blob URLs — the queued chip still previews them (see
+      // use-attachments' clear()). Only the draft TEXT is cleared here, not the whole draft, so
+      // clearDraft's outbox-preserving re-persist isn't needed on this path.
+      clearComments();
+      clearAttachments?.();
+      composerStore.setText(jobRef, "");
+      return;
+    }
+
+    // Mid-flight fallback: an ONLINE send's mutation can still hit a network drop between the status
+    // check above and the POST landing. A `ThreadApiError` means the server actually answered (a real
+    // 4xx/5xx) — that's not a connectivity issue, so leave it to the mutation's own error handling.
+    const reEnqueueOnNetworkError = (
+      e: Error,
+      fields: { text: string; comments: ReviewComment[]; attachments: PendingAttachment[] },
+    ) => {
+      if (e instanceof ThreadApiError) return;
+      composerStore.enqueue(jobRef, {
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        ...fields,
+      });
+    };
+
+    if (comments.length > 0) {
+      sendReviewComments.mutate(
+        {
+          items: comments.map((c) => ({
+            file: c.file.label,
+            quote: c.quote,
+            note: c.note || undefined,
+          })),
+          message: trimmed || undefined,
+        },
+        {
+          onError: (e) =>
+            reEnqueueOnNetworkError(e, { text: trimmed, comments, attachments: [] }),
+        },
+      );
       clearComments();
       composerStore.clearDraft(jobRef.jobId);
       return;
@@ -170,13 +215,22 @@ export function Composer({
     if (attachments.length > 0) {
       // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
       // URLs; they're freed when the tab closes. clearDraft also drops attachments without revoking.
-      sayWithAttachments.mutate({ text: trimmed, attachments });
+      sayWithAttachments.mutate(
+        { text: trimmed, attachments },
+        {
+          onError: (e) =>
+            reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments }),
+        },
+      );
       clearAttachments?.();
       composerStore.clearDraft(jobRef.jobId);
       return;
     }
     if (!trimmed) return;
-    say.mutate(trimmed);
+    say.mutate(trimmed, {
+      onError: (e) =>
+        reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments: [] }),
+    });
     composerStore.clearDraft(jobRef.jobId);
   }
 
@@ -203,7 +257,12 @@ export function Composer({
       }}
     >
       <div className="pointer-events-auto mx-auto max-w-[880px]">
-        {readOnly || isSubagent ? null : <CommentTray />}
+        {readOnly || isSubagent ? null : (
+          <>
+            <QueuedTray jobRef={jobRef} />
+            <CommentTray />
+          </>
+        )}
         <div
           className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
           style={{

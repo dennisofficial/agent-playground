@@ -27,6 +27,8 @@ import type { ReviewComment } from "@/features/job-workspace/review-comments";
  *  queued message survives reload. `attachments` are in-memory only (Job-switch, not reload). */
 export interface QueuedMessage {
   id: string;
+  /** Wall-clock enqueue time — orders `allQueued()` FIFO across every Job, not just within one. */
+  createdAt: number;
   text: string;
   comments: ReviewComment[];
   /** In-memory ONLY — never persisted (File + blob URL are non-serializable), same rule as draft attachments. */
@@ -72,7 +74,7 @@ interface PersistedDraft {
   ref: JobRef;
   text: string;
   comments: ReviewComment[];
-  outbox: Array<Pick<QueuedMessage, "id" | "text" | "comments">>;
+  outbox: Array<Pick<QueuedMessage, "id" | "text" | "comments" | "createdAt">>;
 }
 
 function hasWindow(): boolean {
@@ -112,7 +114,15 @@ class ComposerStore {
       text: persisted?.text ?? "",
       attachments: [],
       comments: persisted?.comments ?? [],
-      outbox: (persisted?.outbox ?? []).map((q) => ({ ...q, attachments: [] })),
+      // An attachments-only queued item (no text, no comments) hydrates with nothing to send — its Files
+      // can't be restored, so drop it rather than leave a dead entry the flusher would silently discard.
+      outbox: (persisted?.outbox ?? [])
+        .map((q) => ({
+          ...q,
+          createdAt: q.createdAt ?? Date.now(),
+          attachments: [],
+        }))
+        .filter((q) => q.text || q.comments.length > 0),
     };
     this.entries.set(ref.jobId, { state, listeners: new Set() });
   }
@@ -179,6 +189,43 @@ class ComposerStore {
     const prev = this.getDraft(ref.jobId).outbox;
     this.replace(ref, { outbox: updater(prev) });
     this.schedulePersist(ref.jobId);
+  }
+
+  /** Append a queued offline-send to a Job's outbox — called by the Composer's offline `send()` branch and
+   *  by its mid-flight network-error fallback. */
+  enqueue(ref: JobRef, msg: QueuedMessage): void {
+    this.setOutbox(ref, (prev) => [...prev, msg]);
+  }
+
+  /** Drop one queued item once the flusher has confirmed it sent. Persists immediately (not debounced) so
+   *  a reload right after a flush can't resurrect an item that already left the outbox. */
+  removeQueued(jobId: string, id: string): void {
+    const entry = this.entries.get(jobId);
+    if (!entry) return;
+    entry.state = {
+      ...entry.state,
+      outbox: entry.state.outbox.filter((q) => q.id !== id),
+    };
+    this.notify(jobId);
+    this.persistNow(jobId, entry.state);
+  }
+
+  getOutbox(jobId: string): QueuedMessage[] {
+    return this.getDraft(jobId).outbox;
+  }
+
+  /**
+   * Every queued message across every Job — including outboxes restored from sessionStorage by
+   * `restorePersistedOutboxes()` for Jobs the operator hasn't reopened this session — sorted by
+   * `createdAt` so a reconnect drains in the order the operator actually sent them, not per-Job order.
+   * This is what `<OutboxFlusher>` iterates.
+   */
+  allQueued(): { ref: JobRef; msg: QueuedMessage }[] {
+    const all: { ref: JobRef; msg: QueuedMessage }[] = [];
+    for (const entry of this.entries.values()) {
+      for (const msg of entry.state.outbox) all.push({ ref: entry.state.ref, msg });
+    }
+    return all.sort((a, b) => a.msg.createdAt - b.msg.createdAt);
   }
 
   /**
@@ -250,6 +297,7 @@ class ComposerStore {
           id: q.id,
           text: q.text,
           comments: q.comments,
+          createdAt: q.createdAt,
         })),
       };
       window.sessionStorage.setItem(
@@ -340,4 +388,19 @@ export function useComposerComments(ref: JobRef): ReviewComment[] {
     [ref.jobId],
   );
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.comments);
+}
+
+/** Slice-aware subscription — a Job's offline-send outbox only, so `<QueuedTray>` re-renders on enqueue/
+ *  removeQueued without subscribing to text/attachments/comments changes. Same pattern as `useComposerComments`. */
+export function useOutbox(ref: JobRef): QueuedMessage[] {
+  composerStore.ensure(ref);
+  const subscribe = useCallback(
+    (cb: () => void) => composerStore.subscribe(ref.jobId, cb),
+    [ref.jobId],
+  );
+  const getSnapshot = useCallback(
+    () => composerStore.getDraft(ref.jobId).outbox,
+    [ref.jobId],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.outbox);
 }
