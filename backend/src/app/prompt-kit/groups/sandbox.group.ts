@@ -12,6 +12,7 @@ import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
 import {
   CLOUD_SANDBOX_NOTE,
   PLAYGROUND_NOTE,
+  PUBLIC_EXPOSURE_NOTE,
   SANDBOX_FILESYSTEM_MAP_NOTE,
   SOLE_AUTHOR_NOTE,
 } from '../fragments';
@@ -151,31 +152,65 @@ export class SandboxGroup {
    *  build-brain concern — a review job never boots its own branch, so it gates `isBuildBrain`. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1262, condition: isBuildBrain })
   publicExposure(): string {
+    return PUBLIC_EXPOSURE_NOTE;
+  }
+
+  /** Onboarding's LIVE-SERVICE ACCESSIBILITY step: reuse the exposure ordering (PUBLIC_EXPOSURE_NOTE), then
+   *  teach the browser-probe → env-first-remediate → persist procedure that makes a connected repo's stack
+   *  reachable + hydrated through the preview proxy on the FIRST live test. Onboarding-only (isOnboarding);
+   *  ordered right after the bring-up Loop (2020) + dev-logins (2040) so it reads as the next step. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2045, condition: isOnboarding })
+  onboardingAccessibility(): string {
     return [
-      'PUBLIC PREVIEW URLS: a supervised service started with a port is automatically exposed on the public',
-      'internet so the operator can test your branch live. Start it as `atlas-svc run --name <svc> --port <n>',
-      '-- <cmd>` and it is reachable at `https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN`. Those two vars',
-      'are in your env ONLY when previews are enabled — if either is unset, exposure is off, so skip this whole',
-      'section and do not promise the operator a URL.',
-      'The URL is DETERMINISTIC: you know it BEFORE you start anything, which is load-bearing because a frontend',
-      'bakes its API base URL at build/start time and a backend bakes its cookie domain + CORS allow-list at',
-      'boot. So the ordering is not optional:',
-      '  1. Compute each service URL from `$ATLAS_PREVIEW_ID` + `$ATLAS_PREVIEW_DOMAIN` (e.g. web =',
-      '     `https://$ATLAS_PREVIEW_ID-web.$ATLAS_PREVIEW_DOMAIN`, api = `https://$ATLAS_PREVIEW_ID-api.$ATLAS_PREVIEW_DOMAIN`).',
-      "  2. Write them into the apps' config FIRST: the frontend's API base URL env → the backend service's URL;",
-      "     the backend's cookie domain + allowed CORS origin → the frontend service's URL. Both are subdomains",
-      '     of the same registrable domain, so a `Secure; SameSite=Lax` cookie is sent cross-subdomain; CORS must',
-      '     allow-list the EXACT frontend origin with credentials enabled.',
-      '  3. THEN start each service with `atlas-svc run --name <svc> --port <n> -- <cmd>`.',
-      'CRITICAL — BIND TO 0.0.0.0, NOT localhost: the proxy reaches your service from OUTSIDE its container, so a',
-      'server listening on `127.0.0.1` shows as "running" but the public URL 502s. Start every exposed dev server',
-      'on `0.0.0.0:<port>` — Next `next dev -H 0.0.0.0 -p <n>`, Vite `vite --host 0.0.0.0 --port <n>`, Nest/Express',
-      "`app.listen(<n>, '0.0.0.0')`, or set `HOST=0.0.0.0`.",
-      'After starting, `curl https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN` and confirm a real response,',
-      'not a 502, before telling the operator it is up.',
-      'Use `--no-expose` for an internal-only service you do not want a public URL for. Naming: the `<svc>` name',
-      'becomes the subdomain label, so keep names short and DNS-safe: lowercase letters/digits/hyphens only,',
-      'start/end alphanumeric, max 52 chars (`web`, `api`, `admin-ui`).',
+      PUBLIC_EXPOSURE_NOTE,
+      '',
+      'LIVE-SERVICE ACCESSIBILITY — make every user-facing surface BROWSER-accessible through the preview',
+      'proxy and PROVE it, so the operator\'s first live test works without a round of manual debugging. This',
+      'applies to any repo with a USER-FACING SURFACE: a web/frontend app a human loads in a browser (rarely a',
+      'human-hit API). Backing services (workers, DBs, queues) are validated only as far as a user-facing',
+      'surface needs them — do NOT expose them unless the operator asks.',
+      '  - MARK SURFACES AT THE GROUNDING GATE: when you present the fleet inventory (loop step 0), flag which',
+      '    entries are user-facing and will be exposed + browser-probed, so the operator can prune the set',
+      '    before the expensive bring-up.',
+      '  - ORDER IS NOT OPTIONAL (reuse the PUBLIC PREVIEW URLS ordering above): compute the deterministic',
+      '    preview URLs FIRST, write the env-first config BEFORE starting — the frontend\'s API base URL → the',
+      '    api preview origin; the backend\'s CORS allow-origin → the web preview origin (credentials enabled);',
+      '    bind `0.0.0.0` — and PERSIST each env value as you set it (secret files / setup script) so it',
+      '    survives the next cold boot.',
+      '  - PROBE AS A BROWSER, NOT A PORT: after `atlas-svc run --port`, run `atlas-probe <publicUrl> --json`',
+      '    (add `--api-origin <apiPreviewUrl>` for a frontend) and read its verdict — a 200 or "it is listening"',
+      '    is NOT accessibility. Re-probe after EVERY fix.',
+      '  - PROVE THE AUTH HANDSHAKE WITH A REAL LOGIN: the probe does not log in for you. Use the repo\'s real',
+      '    dev-login flow (see DEV LOGINS) with your own Playwright drive to authenticate, save a Playwright',
+      '    `storageState` JSON, then `atlas-probe <authedUrl> --storage-state <file> --json` to confirm an',
+      '    authenticated page hydrates AND its authed API calls succeed — the end-to-end proof of the cookie +',
+      '    CORS + api-base handshake. The probe also reports the observed Set-Cookie attributes',
+      '    (Secure/SameSite/Domain) so you can judge cookie config.',
+      '  - BLOCKER → REMEDIATION (env-first — prefer env-driven config persisted to the profile; open a PR only',
+      '    for the MINIMAL repo code change needed to READ that env; report anything you cannot safely auto-fix):',
+      '      • `bind_ip` → the server is on 127.0.0.1 (502); bind `0.0.0.0`.',
+      '      • `port` → wrong/absent listen port; fix the `--port`/listen port.',
+      '      • `dev_origin` → the framework\'s dev cross-origin block (403 on `/_next/*`/HMR); set its',
+      '        allowed-origins from `$ATLAS_PREVIEW_DOMAIN` (Next `allowedDevOrigins`, Vite',
+      '        `server.allowedHosts`/`hmr`), env-driven — minimal PR only if the repo must read that env.',
+      '      • `cors` → set the CORS allow-origin env to the web preview origin (credentials enabled).',
+      '      • `api_base_url` → set the client\'s API base-URL env to the api preview origin.',
+      '      • `cookie` → ensure the auth cookie is `Secure` and its Domain is NOT pinned to localhost/a bare',
+      '        host. The app\'s existing `SameSite=Lax` already works cross-subdomain because all preview',
+      '        services share one registrable domain — do NOT reach for `SameSite=None`/per-host cookie-domain',
+      '        machinery; that case cannot arise behind the preview proxy. A genuine hardcode (e.g.',
+      '        `secure:false`) rides the same env-first minimal-PR path; a true cross-site need is REPORTED to',
+      '        the operator, not built.',
+      '      • `env` → `request_secret` / `request_file` for the missing or undecryptable env file/var.',
+      '      • `blank` → the page reached but did not hydrate/render; usually a downstream symptom, so read the',
+      '        console errors + failed requests in the verdict and fix the real cause (often `cors` /',
+      '        `api_base_url` / `dev_origin`), then re-probe.',
+      '  - DNS IS REPORT-ONLY: an unresolvable/NXDOMAIN preview host is deployment-side wildcard DNS',
+      '    (`*.$ATLAS_PREVIEW_DOMAIN`), not fixable from the sandbox — report it clearly as an infra gap and',
+      '    move on.',
+      '  - PERSIST + PROVE DURABLE: everything resolved goes into the setup script / secret files; the existing',
+      '    RESET / PROVE-IT-COLD-BOOTS step then re-verifies accessibility on the fresh box before',
+      '    finish_onboarding.',
     ].join('\n');
   }
 
