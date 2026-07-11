@@ -105,6 +105,7 @@ export function KindBadge({
  *   reviewing(plan_review)          → faint dashed base + a solid arc scanning around it
  *   working  (running)              → spinning arc          · the autonomous "build is churning" spinner
  *   waiting  (awaiting_approval)    → ring + center dot      · bullseye = your move
+ *   parked   (blocked)              → ring + a single center bar · a gate, not your move
  *   paused                          → ring + pause bars
  *   failed                          → ring + ✕
  *   done                            → filled disc + ✓
@@ -117,7 +118,14 @@ export function KindBadge({
  */
 const STATUS_SHAPE: Record<
   JobStatus,
-  "forming" | "reviewing" | "working" | "waiting" | "paused" | "failed" | "done"
+  | "forming"
+  | "reviewing"
+  | "working"
+  | "waiting"
+  | "parked"
+  | "paused"
+  | "failed"
+  | "done"
 > = {
   planning: "forming",
   triaging: "forming",
@@ -128,6 +136,9 @@ const STATUS_SHAPE: Record<
   awaiting_ship_review: "waiting",
   // Ship review retracted — the built work is being amended; another "your move" gate, same shape.
   amending: "waiting",
+  // Parked on a blocker job's PR — system-owned (NOT a "your move" gate, unlike the bullseye shapes
+  // above), so it gets its own single-bar "gate" glyph rather than the two-bar pause icon.
+  blocked: "parked",
   done: "done",
   // A genuine operator-chosen terminal state (plan denied) — same muted static ring as deleting.
   cancelled: "paused",
@@ -226,6 +237,15 @@ export function StatusPie({
       <>
         {ring(color)}
         <circle cx={10} cy={10} r={2.7} fill={color} />
+      </>
+    );
+  } else if (shape === "parked") {
+    // A single horizontal bar through a solid ring — a gate, distinct from both the bullseye
+    // ("waiting" on you) and the two-bar pause ("paused"/terminal) shapes.
+    kids = (
+      <>
+        {ring(color)}
+        <rect x={6} y={9.3} width={8} height={1.4} rx={0.6} fill={color} />
       </>
     );
   } else if (shape === "paused") {

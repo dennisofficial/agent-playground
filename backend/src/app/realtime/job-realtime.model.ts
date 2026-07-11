@@ -4,7 +4,7 @@ import {
   type Row,
 } from '@workspace/pg-realtime';
 import type { JobHalt } from '@workspace/shared';
-import { deriveNeedsYou, JOB_ACTIVITIES, type JobActivity } from '../domain/job';
+import { deriveNeedsYou, JOB_ACTIVITIES, type JobActivity, type JobProvenance } from '../domain/job';
 import type { CiCounts } from '../git';
 
 /**
@@ -59,6 +59,8 @@ export interface ThreadRealtimeRow extends Row {
   shipping: boolean;
   /** Null when healthy; when set, the sidebar renders a red halt overlay from it. */
   halt: JobHalt | null;
+  /** Who spawned this job (immutable snapshot), or null for top-level jobs. */
+  createdBy: JobProvenance | null;
 }
 
 /** Row-level scope: a user may stream only threads belonging to an org they are a member of. */
@@ -117,6 +119,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     // Small timestamp col, always present in the `SELECT *` snapshot / WAL new-row image (never TOASTed).
     shipping: status === 'running' && raw.ship_review_approved_at != null,
     halt: (raw.halt as JobHalt | null) ?? null,
+    createdBy: (raw.created_by as JobProvenance | null) ?? null,
   };
 }
 

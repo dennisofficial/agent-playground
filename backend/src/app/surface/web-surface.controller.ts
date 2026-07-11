@@ -73,6 +73,7 @@ import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
+import { JobDependencyService } from '../job-deps';
 import { CONTAINER_CONTEXT, type ServiceLivenessProbe } from '../sandbox';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
@@ -567,6 +568,8 @@ export class WebSurfaceController {
     // Repo-file endpoints (`/repo/tree`, `/repo/file`) read the job worktree via `git ls-files`. From the
     // (non-@Global) GitModule, imported into WebSurfaceModule for this injection to resolve.
     private readonly git: LocalGitService,
+    // Job-to-job "blocked by" edges — the manual block/unblock endpoints call addDependency/removeDependency.
+    private readonly jobDeps: JobDependencyService,
     // Sandbox-preview exposure — renders each service's public URL + triggers a per-poll Caddy reconcile.
     // From the @Global ExposureModule (inert unless PREVIEW_BASE_DOMAIN is set). @Optional so the
     // controller's direct-construction unit tests (positional args) compile without a trailing argument.
@@ -599,6 +602,8 @@ export class WebSurfaceController {
       }),
       this.repos.find({ where: { org_id: In(orgIds) } }),
     ]);
+    const blockedIds = threads.filter((t) => t.status === 'blocked').map((t) => t.id);
+    const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
     const orgById = new Map(orgs.map((o) => [o.id, o]));
     const repoName = new Map(repos.map((r) => [`${r.org_id}:${r.id}`, r.name]));
     return threads.map((t) => {
@@ -616,6 +621,8 @@ export class WebSurfaceController {
         // `running` status during shipping, so this distinguishes "opening PR" from "building threads" and
         // keeps the card pinned in "Ready to Ship" instead of "Building".
         shipping: t.status === 'running' && t.ship_review_approved_at != null,
+        createdBy: t.created_by ?? null,
+        blockedBy: blockersByJob.get(t.id) ?? [],
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,
@@ -686,6 +693,8 @@ export class WebSurfaceController {
       where: { org_id: org.id, repo_id: repoId },
       order: { created_at: 'DESC' },
     });
+    const blockedIds = rows.filter((t) => t.status === 'blocked').map((t) => t.id);
+    const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
     return rows.map((t) => ({
       id: t.id,
       title: t.title,
@@ -694,6 +703,8 @@ export class WebSurfaceController {
       halt: t.halt ?? null,
       activity: t.activity,
       halted: t.halted,
+      createdBy: t.created_by ?? null,
+      blockedBy: blockersByJob.get(t.id) ?? [],
       needsYou: deriveNeedsYou({
         status: t.status,
         activity: t.activity,
@@ -865,6 +876,11 @@ export class WebSurfaceController {
       );
     }
     const thread = await this.requireThread(jobId, org.id);
+    if (thread.status === 'blocked') {
+      throw new BadRequestException(
+        'This job is blocked on another job; unblock it (or wait for its blocker to merge) before interacting.',
+      );
+    }
     const attach = files?.length
       ? await this.ingestAttachments(org.id, jobId, files)
       : null;
@@ -2396,6 +2412,103 @@ export class WebSurfaceController {
       `web deleting thread ${jobId} (org ${org.id}); claimed=${claimed}`,
     );
     return { ok: true };
+  }
+
+  /** `POST …/jobs/:jobId/dependencies` — manually block this job on another job in the same repo. */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/dependencies')
+  @UseGuards(OrgMembershipGuard)
+  async addJobDependency(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Param('jobId') jobId: string,
+    @Body() body: { dependsOnJobId?: string },
+  ): Promise<{ ok: boolean; blocked: boolean; blockers: unknown[] }> {
+    await this.requireThread(jobId, org.id);
+    const dependsOnJobId = String(body?.dependsOnJobId ?? '').trim();
+    if (!dependsOnJobId) throw new BadRequestException('dependsOnJobId is required');
+    const { blocked } = await this.jobDeps.addDependency({
+      orgId: org.id,
+      repoId,
+      jobId,
+      dependsOnJobId,
+    });
+    const blockers = await this.jobDeps.blockersOf(jobId);
+    this.logger.log(`web blocked job ${jobId} on ${dependsOnJobId} (org ${org.id})`);
+    return { ok: true, blocked, blockers };
+  }
+
+  /** `DELETE …/jobs/:jobId/dependencies/:dependsOnJobId` — manually remove a block edge (and wake the job if it's now unblocked). */
+  @Delete('orgs/:orgId/repos/:repoId/jobs/:jobId/dependencies/:dependsOnJobId')
+  @UseGuards(OrgMembershipGuard)
+  async removeJobDependency(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Param('jobId') jobId: string,
+    @Param('dependsOnJobId') dependsOnJobId: string,
+  ): Promise<{ ok: boolean; blockers: unknown[] }> {
+    await this.requireThread(jobId, org.id);
+    await this.jobDeps.removeDependency({ orgId: org.id, repoId, jobId, dependsOnJobId });
+    const blockers = await this.jobDeps.blockersOf(jobId);
+    this.logger.log(`web unblocked job ${jobId} from ${dependsOnJobId} (org ${org.id})`);
+    return { ok: true, blockers };
+  }
+
+  /** `GET …/jobs/:jobId/created` — the jobs this one spawned (newest first), for the "Created jobs" list. */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/created')
+  @UseGuards(OrgMembershipGuard)
+  async createdJobs(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<unknown[]> {
+    await this.requireThread(jobId, org.id);
+    const rows = await this.jobs.find({
+      where: { org_id: org.id, created_by_job_id: jobId },
+      order: { created_at: 'DESC' },
+    });
+    return rows.map((t) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      kind: t.kind,
+      prState: t.pr_state,
+      needsYou: deriveNeedsYou({
+        status: t.status,
+        activity: t.activity,
+        openQuestion: t.open_question_count > 0,
+        awaitingSecret: t.awaiting_secret_id != null,
+        halted: t.halted || t.halt != null,
+      }),
+      createdAt: t.created_at,
+    }));
+  }
+
+  /** `GET …/jobs/:jobId` — a minimal job-DETAIL DTO. The "Created by" click resolves against this;
+   *  a 404 (hard-deleted target) tells the web to show the deleted-job toast instead of navigating. */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId')
+  @UseGuards(OrgMembershipGuard)
+  async jobDetail(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<unknown> {
+    const t = await this.requireThread(jobId, org.id); // 404s a missing/foreign job
+    return {
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      kind: t.kind,
+      createdBy: t.created_by ?? null,
+      pr: t.pr_state
+        ? { state: t.pr_state, number: t.pr_number, mergeable: t.pr_mergeable, url: t.pr_url }
+        : null,
+      needsYou: deriveNeedsYou({
+        status: t.status,
+        activity: t.activity,
+        openQuestion: t.open_question_count > 0,
+        awaitingSecret: t.awaiting_secret_id != null,
+        halted: t.halted || t.halt != null,
+      }),
+      createdAt: t.created_at,
+    };
   }
 
   // ── scoping helpers (cross-tenant isolation: resolve scoped-to-org or 404) ──────────────────────

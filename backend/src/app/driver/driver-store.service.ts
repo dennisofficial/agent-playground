@@ -15,6 +15,7 @@ import type {
   JobStatus,
   JobHalt,
 } from '../domain';
+import { JobDependencyService } from '../job-deps';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   BuildLegEntity,
@@ -106,6 +107,7 @@ export class DriverStoreService {
     private readonly codexReviews: Repository<CodexReviewEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
+    private readonly jobDeps: JobDependencyService,
   ) {}
 
   // ── operator-input cards (the orchestrate build turn's `request_operator_input`) ─────────────────
@@ -1286,6 +1288,7 @@ export class DriverStoreService {
       where: { id: jobId, org_id: orgId },
     });
     if (!thread) return { status: 'no_job' };
+    const blockedBy = thread.status === 'blocked' ? await this.jobDeps.blockersOf(jobId) : [];
     // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its
     // brain can already be keeping a task list, and the navigator's Main row shows it. Ride the no_job
     // payload so the web isn't blind to it before a plan exists.
@@ -1296,6 +1299,8 @@ export class DriverStoreService {
         // The Main (brain) lane's pre-turn footer default — so a planning job shows "Opus 4.8" before
         // its first brain turn completes (no `turn_meta` to derive from yet).
         mainDefaultFooter: laneDefaultFooter('main'),
+        createdBy: thread.created_by ?? null,
+        blockedBy,
       };
     }
     const allThreads = await this.threads.find({
@@ -1417,6 +1422,8 @@ export class DriverStoreService {
       kind: thread.kind,
       status: thread.status,
       halt: thread.halt ?? null,
+      createdBy: thread.created_by ?? null,
+      blockedBy,
       // Which build path was committed at approval: 'direct' (fast, brain-implemented) | 'plan' (driver) |
       // null (never approved). The navigator reads this to hide the plan-oriented empty-state placeholders
       // (build lanes / plan.md / generated docs) for a direct build, where they never apply.
@@ -1551,6 +1558,7 @@ function toJob(row: JobEntity): Job {
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     shipReviewApprovedAt: row.ship_review_approved_at,
+    createdBy: row.created_by ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

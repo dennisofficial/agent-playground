@@ -386,6 +386,21 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     });
     const row = await loadThreadRow(dataSource, followUpId);
     expect(row).toMatchObject({ status: 'open', origin: 'control', title: 'follow-up', base_branch: 'main' });
+    expect(row?.created_by_job_id).toBeNull();
+    expect(row?.created_by).toBeNull();
+
+    // A follow-up spawned WITH provenance carries the FK + the immutable snapshot.
+    const grandchildId = await store.createFollowUpJob({
+      orgId: TEAM_ID,
+      repoId,
+      title: 'grandchild',
+      baseBranch: 'main',
+      createdByJobId: followUpId,
+      createdByTitle: 'parent',
+    });
+    const grandchildRow = await loadThreadRow(dataSource, grandchildId);
+    expect(grandchildRow?.created_by_job_id).toBe(followUpId);
+    expect(grandchildRow?.created_by).toEqual({ jobId: followUpId, title: 'parent' });
   }, 30_000);
 
   it('CRUDs decisions in the working set by stable id and reads them back via the answered card', async () => {
@@ -1123,9 +1138,25 @@ async function sectionPlans(ds: DataSource, jobId: string): Promise<Array<string
 async function loadThreadRow(
   ds: DataSource,
   jobId: string,
-): Promise<{ status: string; origin: string; title: string | null; base_branch: string | null } | null> {
-  const rows: Array<{ status: string; origin: string; title: string | null; base_branch: string | null }> =
-    await ds.query(`SELECT status, origin, title, base_branch FROM jobs WHERE id = $1`, [jobId]);
+): Promise<{
+  status: string;
+  origin: string;
+  title: string | null;
+  base_branch: string | null;
+  created_by_job_id: string | null;
+  created_by: { jobId: string; title: string | null } | null;
+} | null> {
+  const rows: Array<{
+    status: string;
+    origin: string;
+    title: string | null;
+    base_branch: string | null;
+    created_by_job_id: string | null;
+    created_by: { jobId: string; title: string | null } | null;
+  }> = await ds.query(
+    `SELECT status, origin, title, base_branch, created_by_job_id, created_by FROM jobs WHERE id = $1`,
+    [jobId],
+  );
   return rows[0] ?? null;
 }
 

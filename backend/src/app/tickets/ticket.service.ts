@@ -485,7 +485,13 @@ export class TicketService {
    * concurrent promote that loses the race surfaces as a unique violation we catch and resolve to the
    * winning thread (so promote is safe to call repeatedly).
    */
-  async promote(args: { orgId: string; repoId: string; ticketId: string }): Promise<PromoteResult> {
+  async promote(args: {
+    orgId: string;
+    repoId: string;
+    ticketId: string;
+    createdByJobId?: string | null;
+    createdByTitle?: string | null;
+  }): Promise<PromoteResult> {
     const { orgId, repoId, ticketId } = args;
     const ticket = await this.requireTicket(orgId, repoId, ticketId);
     const seedText = ticket.body ? `${ticket.title}\n\n${ticket.body}` : ticket.title;
@@ -513,6 +519,10 @@ export class TicketService {
           title: threadTitle,
           base_branch: baseBranch,
           ticket_id: ticketId, // the link is written FIRST (in the insert)
+          created_by_job_id: args.createdByJobId ?? null,
+          created_by: args.createdByJobId
+            ? { jobId: args.createdByJobId, title: args.createdByTitle ?? null }
+            : null,
         }),
       );
       jobId = row.id;
