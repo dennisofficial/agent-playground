@@ -220,6 +220,16 @@ export class DriverStoreService {
     );
   }
 
+  /** The org OWNER's user id (organization_members.role='owner') — the approver-attribution fallback when
+   *  a job's auto_approve_by is null (the enabling user was deleted). Null if the org somehow has no owner. */
+  async ownerUserId(orgId: string): Promise<string | null> {
+    const rows = await this.dataSource.query<{ user_id: string }[]>(
+      `SELECT user_id FROM organization_members WHERE org_id = $1 AND role = 'owner' ORDER BY created_at ASC LIMIT 1`,
+      [orgId],
+    );
+    return rows[0]?.user_id ?? null;
+  }
+
   /** Every thread `running` AND not halted — the boot-reconciliation worklist. The `halt IS NULL` filter is
    *  the primary boot guard: a halted-but-`running` job must not be auto-re-driven (only retry/resume can). */
   async runningJobs(): Promise<Job[]> {

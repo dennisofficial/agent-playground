@@ -151,6 +151,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockApprovals = {
     request: vi.fn(),
     cancel: vi.fn(),
+    resolve: vi.fn(),
   } as unknown as DecisionApprovalService;
 
   const mockLifecycle = {
@@ -2088,6 +2089,107 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect.stringContaining('drawing board'),
       expect.anything(),
     );
+  });
+
+  // ── plan-gate auto-resolve (per-job opt-in): a job with autoApprove ON drives the SAME resolution an
+  //    operator's approve click would, the instant the card is posted — no human ever clicks it.
+  describe('(auto-approve) requestApprovalAndAct — per-job auto-approve resolves the plan gate', () => {
+    type ActOnApprovalVerdict = {
+      actOnApprovalVerdict(...args: unknown[]): Promise<void>;
+    };
+
+    const card = {
+      jobId: FAKE_JOB_ID,
+      decisionRecordId: FAKE_RECORD_ID,
+      title: 'rate limiting',
+      summary: 'x',
+      decisions: [],
+      threads: [],
+    } as never;
+
+    it('resolves via the approvals seam with job.autoApproveBy as the approver', async () => {
+      const job = {
+        id: FAKE_JOB_ID,
+        kind: 'feature',
+        title: 'rate limiting',
+        orgId: TEAM_ID,
+        repoId: PROJECT_ID,
+        autoApprove: true,
+        autoApproveBy: 'user-77',
+      };
+      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+      (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+        jobId: FAKE_JOB_ID,
+        verdict: Promise.resolve({ verdict: 'approve', ruledBy: 'user-77' }),
+      });
+      vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
+
+      await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
+
+      expect(mockApprovals.resolve).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        'approve',
+        'user-77',
+        undefined,
+        FAKE_RECORD_ID,
+      );
+    });
+
+    it('falls back to store.ownerUserId when job.autoApproveBy is null', async () => {
+      const job = {
+        id: FAKE_JOB_ID,
+        kind: 'feature',
+        title: 'rate limiting',
+        orgId: TEAM_ID,
+        repoId: PROJECT_ID,
+        autoApprove: true,
+        autoApproveBy: null,
+      };
+      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+      (mockStore as unknown as { ownerUserId: ReturnType<typeof vi.fn> }).ownerUserId = vi
+        .fn()
+        .mockResolvedValue('owner-1');
+      (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+        jobId: FAKE_JOB_ID,
+        verdict: Promise.resolve({ verdict: 'approve', ruledBy: 'owner-1' }),
+      });
+      vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
+
+      await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
+
+      expect((mockStore as unknown as { ownerUserId: ReturnType<typeof vi.fn> }).ownerUserId).toHaveBeenCalledWith(
+        TEAM_ID,
+      );
+      expect(mockApprovals.resolve).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        'approve',
+        'owner-1',
+        undefined,
+        FAKE_RECORD_ID,
+      );
+    });
+
+    it('does NOT auto-resolve when job.autoApprove is off', async () => {
+      const job = {
+        id: FAKE_JOB_ID,
+        kind: 'feature',
+        title: 'rate limiting',
+        orgId: TEAM_ID,
+        repoId: PROJECT_ID,
+        autoApprove: false,
+        autoApproveBy: null,
+      };
+      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+      (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+        jobId: FAKE_JOB_ID,
+        verdict: Promise.resolve({ verdict: 'deny', ruledBy: 'U-OP' }),
+      });
+      vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
+
+      await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
+
+      expect(mockApprovals.resolve).not.toHaveBeenCalled();
+    });
   });
 
   type PrepareRepropose = { prepareRepropose(jobId: string): Promise<{ refuse?: string }> };

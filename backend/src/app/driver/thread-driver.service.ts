@@ -1014,6 +1014,13 @@ export class ThreadDriver implements JobDispatcher {
     await this.store.setActivity(job.id, 'idle').catch(() => undefined);
   }
 
+  private async resolveAutoApprover(job: Job): Promise<string> {
+    if (job.autoApproveBy) return job.autoApproveBy;
+    const owner = await this.store.ownerUserId(job.orgId);
+    if (!owner) throw new Error(`no auto-approve approver for job ${job.id} (no auto_approve_by and no org owner)`);
+    return owner;
+  }
+
   /**
    * Park the job at the ship-review gate: flip `running → awaiting_ship_review` + post the durable "Ship it"
    * card (one txn, single-park-guarded in the store), then a live notice + a passive brain milestone. A
@@ -1048,6 +1055,15 @@ export class ThreadDriver implements JobDispatcher {
       await this.store
         .setDoneWakeOwed(masterReviewId, 'final')
         .catch((e) => this.logger.warn(`could not set final done-wake for job=${job.id}: ${e}`));
+    }
+    // AUTO-APPROVE (per-job opt-in): the Ship card is posted above for audit; now immediately drive the SAME
+    // resolution the operator's "Ship it" click would — resolveShipApprovalDurably flips awaiting_ship_review →
+    // running (the just-parked status makes the store CAS succeed) and re-drives to finalizeBuild. runJob returns
+    // right after this call, so there is no re-entrancy concern.
+    if (job.autoApprove) {
+      const approver = await this.resolveAutoApprover(job);
+      this.logger.log(`job=${job.id} auto-approving ship gate (auto_approve on)`);
+      await this.resolveShipApprovalDurably(job.id, approver);
     }
   }
 

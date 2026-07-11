@@ -3793,6 +3793,75 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
   });
 });
 
+// ── ship-review gate: per-job auto-approve immediately resolves the just-parked gate ────────────────
+
+describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () => {
+  function baseState(job: Job): StoreState {
+    return {
+      job,
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+  }
+
+  it('auto-resolves the ship gate with the job-stamped approver (autoApproveBy set)', async () => {
+    const job = makeJob({
+      shipReviewApprovedAt: null,
+      autoApprove: true,
+      autoApproveBy: 'user-42',
+    });
+    const state = baseState(job);
+    const h = assemble(state, { autoShipApprove: false });
+    const resolveSpy = vi
+      .spyOn(h.driver, 'resolveShipApprovalDurably')
+      .mockResolvedValue(true);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => resolveSpy.mock.calls.length > 0);
+
+    expect(resolveSpy).toHaveBeenCalledWith(job.id, 'user-42');
+  });
+
+  it('falls back to the org owner when autoApproveBy is null', async () => {
+    const job = makeJob({
+      shipReviewApprovedAt: null,
+      autoApprove: true,
+      autoApproveBy: null,
+    });
+    const state = baseState(job);
+    const h = assemble(state, { autoShipApprove: false });
+    (h.store as unknown as { ownerUserId: ReturnType<typeof vi.fn> }).ownerUserId = vi.fn(
+      async (_orgId: string) => 'owner-99',
+    );
+    const resolveSpy = vi
+      .spyOn(h.driver, 'resolveShipApprovalDurably')
+      .mockResolvedValue(true);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => resolveSpy.mock.calls.length > 0);
+
+    expect(resolveSpy).toHaveBeenCalledWith(job.id, 'owner-99');
+  });
+
+  it('does NOT auto-resolve the ship gate when autoApprove is off', async () => {
+    const job = makeJob({ shipReviewApprovedAt: null, autoApprove: false, autoApproveBy: null });
+    const state = baseState(job);
+    const h = assemble(state, { autoShipApprove: false });
+    const resolveSpy = vi
+      .spyOn(h.driver, 'resolveShipApprovalDurably')
+      .mockResolvedValue(true);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+    await flush();
+
+    expect(resolveSpy).not.toHaveBeenCalled();
+  });
+});
+
 // ── 401 auth recovery: pause (not fail) + ping-to-resume the SAME session, durable ─────────────────
 
 describe('ThreadDriver — 401 auth recovery', () => {

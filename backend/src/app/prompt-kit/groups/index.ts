@@ -12,6 +12,7 @@ import { OrientationGroup } from './orientation.group';
 import { ConversationGroup } from './conversation.group';
 import { ContextGroup } from './context.group';
 import { PlanningGroup } from './planning.group';
+import { AutonomyGroup } from './autonomy.group';
 import { TaskListGroup } from './task-list.group';
 import { WorkspaceProfileGroup } from './workspace-profile.group';
 import { SafetyGroup } from './safety.group';
@@ -37,6 +38,7 @@ export const FRAGMENT_GROUPS = [
   ConversationGroup,
   ContextGroup,
   PlanningGroup,
+  AutonomyGroup,
   TaskListGroup,
   WorkspaceProfileGroup,
   SafetyGroup,
@@ -62,6 +64,7 @@ export {
   ConversationGroup,
   ContextGroup,
   PlanningGroup,
+  AutonomyGroup,
   TaskListGroup,
   WorkspaceProfileGroup,
   SafetyGroup,
