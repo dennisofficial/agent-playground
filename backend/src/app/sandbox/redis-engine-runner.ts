@@ -14,7 +14,7 @@ import {
 import { dispatchToolRequest } from '../engine/tool-bridge-host';
 import { SPEC_VERBATIM_KEYS, pickKeys } from '../engine/engine.types';
 import type { HostFrame, ToolBridgeOptions, ToolRequestFrame, TurnSpec } from '../engine/engine.types';
-import { gitAuthEnv } from '../git';
+import { gitAuthEnv, gitCredHelperEnv } from '../git';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
@@ -26,8 +26,10 @@ import {
   CONTAINER_SKILLS_MANAGED_GIT,
   CONTAINER_SKILLS_STORE,
   CONTAINER_WORKTREE,
+  GITHUB_TOKEN_FILE,
 } from './container-paths';
 import { SandboxActivityRegistry } from './sandbox-activity.registry';
+import { SANDBOX_PROVIDER, type SandboxProvider } from './sandbox-provider.port';
 import { BrainTurnAlreadyRunningError, TurnRegistry } from './turn-registry.service';
 import { turnKeys, TOOLS_GROUP } from './redis-turn-keys';
 
@@ -94,6 +96,9 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // turn relies on the caller-supplied `args.auth` exactly as before. In the real (@Global onboarding) app
     // it is always present, so this seam authoritatively resolves per-org auth for EVERY engine turn.
     @Optional() private readonly creds?: CredentialResolver,
+    // Optional for the same reason (direct-instantiation unit tests). Absent → the app-mode token-file seed
+    // at spawn is simply skipped (the leader-gated refresh sweep still converges the file on its next tick).
+    @Optional() @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider?: SandboxProvider,
   ) {}
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
@@ -160,6 +165,19 @@ export class RedisEngineRunner implements EngineRunnerPort {
     //    (registered row + a running engine; boot re-attach never re-kicks). Only when the row exists.
     const onKicked =
       args.turnMeta && args.onTurnRegistered ? () => args.onTurnRegistered!(turnId) : undefined;
+    // App-mode in-sandbox git reads its token from a host-refreshed file (mid-turn refresh). Seed it fresh
+    // at spawn — the exec env is frozen for the turn's lifetime, so the file (not the env) carries rolls.
+    if (
+      target.gitAuth?.mode === 'app' &&
+      target.gitAuth.token &&
+      args.turnMeta?.jobId &&
+      this.sandboxProvider?.writeGithubTokenFile
+    ) {
+      await this.sandboxProvider
+        .writeGithubTokenFile(args.turnMeta.jobId, target.gitAuth.token)
+        .catch((err) => this.logger.warn(`seed github-token file failed: ${err}`));
+    }
+
     try {
       const result = await this.runAttached(
         turnId,
@@ -609,14 +627,28 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // remote from inside the sandbox. The GIT_CONFIG_* extraheader keeps the token out of argv/.git/config
     // (same mechanism as host git + SandboxRefsService); GITHUB_TOKEN/GH_TOKEN let it drive the API/`gh`.
     // GIT_TERMINAL_PROMPT=0 makes a missing/expired token fail fast instead of hanging on a prompt.
-    if (target?.gitAuth?.token) {
-      const { gitUrl, token } = target.gitAuth;
-      Object.assign(e, gitAuthEnv(gitUrl, token));
+    if (target?.gitAuth) {
+      const { gitUrl, token, mode } = target.gitAuth;
+      if (mode === 'app') {
+        // App mode: token rides a host-refreshed FILE via a url-scoped credential helper, not a baked header.
+        Object.assign(e, gitCredHelperEnv(gitUrl, GITHUB_TOKEN_FILE));
+      } else {
+        Object.assign(e, gitAuthEnv(gitUrl, token));
+      }
       if (e.GIT_CONFIG_COUNT) {
-        // Auth was actually injected (https github url) — expose the raw token + fail-fast prompt guard.
+        // Auth config was actually injected (https github url) — fail fast instead of prompting/falling back
+        // to ambient helpers. Only expose GH_TOKEN/GITHUB_TOKEN when a live token exists.
         e.GIT_TERMINAL_PROMPT = '0';
-        e.GITHUB_TOKEN = token;
-        e.GH_TOKEN = token;
+        // NOTE (app mode): GITHUB_TOKEN/GH_TOKEN are baked with the SPAWN-TIME installation token into this
+        // frozen exec env and are NOT refreshed mid-turn. Only `git` survives the ~hourly expiry, via the
+        // host-refreshed credential FILE above; `gh` and any GITHUB_TOKEN-driven API call read this static
+        // value, so they are guaranteed correct only for the token's initial lifetime (normal/short turns).
+        // On a >1h turn app-mode in-sandbox `gh` can hit an expired token while `git` keeps working —
+        // accepted for now (routing `gh` through the refreshed file needs an in-sandbox wrapper; out of scope).
+        if (token) {
+          e.GITHUB_TOKEN = token;
+          e.GH_TOKEN = token;
+        }
       }
       // Attribute the in-sandbox agent's commits to the PAT's own GitHub account (resolved host-side by
       // GitIdentityService) instead of git's ambient default.

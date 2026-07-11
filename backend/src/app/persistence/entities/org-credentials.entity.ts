@@ -40,6 +40,18 @@ export class OrgCredentialsEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   github_pat_enc!: string | null;
 
+  /** The org's Atlas GitHub App installation id — plaintext (not a secret; useless without the platform private key). NULL = App not connected. TypeORM maps bigint→string. */
+  @Column({ type: 'bigint', nullable: true })
+  github_app_installation_id!: string | null;
+
+  /** The installation's GitHub account login (from GET /app/installations/{id}) — display + audit. NULL until connected. */
+  @Column({ type: 'text', nullable: true })
+  github_app_installation_account!: string | null;
+
+  /** Which GitHub credential resolves for this org: 'pat' (default) or 'app'. */
+  @Column({ type: 'text', default: 'pat' })
+  github_auth_mode!: 'pat' | 'app';
+
   /** Claude subscription OAuth token for the SDK harness — ciphertext (the harness runs subscription-only). */
   @Column({ type: 'text', nullable: true })
   claude_oauth_token_enc!: string | null;

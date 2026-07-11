@@ -301,7 +301,11 @@ beforeEach(async () => {
       },
       {
         provide: BrainGateway,
-        useValue: { openPrAtShip: vi.fn(), notifyThreadHalted: vi.fn() },
+        useValue: {
+          wakeForProvisioningFailure: vi.fn().mockResolvedValue(undefined),
+          openPrAtShip: vi.fn(),
+          notifyThreadHalted: vi.fn(),
+        },
       },
       {
         provide: DRIVER_REPO,
@@ -822,7 +826,11 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
         },
         {
           provide: BrainGateway,
-          useValue: { openPrAtShip: vi.fn(), notifyThreadHalted: vi.fn() },
+          useValue: {
+            wakeForProvisioningFailure: vi.fn().mockResolvedValue(undefined),
+            openPrAtShip: vi.fn(),
+            notifyThreadHalted: vi.fn(),
+          },
         },
         {
           provide: DRIVER_REPO,

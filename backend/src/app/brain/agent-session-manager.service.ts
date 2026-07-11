@@ -114,7 +114,7 @@ import {
   MAX_MOUNT_PATH_LEN,
   type MountMode,
 } from '../sandbox/container-paths';
-import { LocalGitService } from '../git';
+import { GitIdentityService, LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { TicketService } from '../tickets';
 import { JobDependencyService } from '../job-deps';
@@ -255,16 +255,20 @@ export class AgentSessionManager
   /** Set by `finalize_build` when a direct-build ship is committed and about to open its PR inline; consumed
    *  by the turn-end latch in `runChatTurn` (records the PR + flips done promptly). */
   private readonly directBuildShipPending = new Map<string, boolean>();
-  /** Per-job resolved git auth (repo url + org PAT) for in-sandbox push/fetch — cached; see resolveBrainGitAuth. */
-  private readonly gitAuthByJob = new Map<string, GitAuth>();
+  /** Per-job STABLE git target (repo url + org id) — the token/identity are re-resolved PER TURN (an app
+   *  installation token expires hourly), so only the stable bits are cached here. See resolveBrainGitAuth. */
+  private readonly gitTargetByJob = new Map<
+    string,
+    { gitUrl: string; orgId: string }
+  >();
   /**
    * SESSION-scoped `Edit`/`Write` grants for skills (`request_skill_edit_access`), keyed by jobId — in-memory
    * on this manager, per `ARCHITECTURE.md`'s halt-and-resume model: the grant is recorded HOST-side when the
    * owner approves, then forwarded on every subsequent brain turn's `RunEngineArgs.grantedSkills` so the
    * in-container `canUseTool` (which has no DB/host-state access of its own) can honor it (see `engine-core.ts`
-   * `makeCanUseTool`'s skill guard). Lives for the process's lifetime / this job's — like `gitAuthByJob`, never
-   * explicitly cleared (a backend restart resets it; re-approval is cheap and the alternative, a durable grant
-   * that survives a job's ENTIRE life, is more surface than a "for this session" grant should have).
+   * `makeCanUseTool`'s skill guard). Lives for the process's lifetime / this job's — like `gitTargetByJob`,
+   * never explicitly cleared (a backend restart resets it; re-approval is cheap and the alternative, a durable
+   * grant that survives a job's ENTIRE life, is more surface than a "for this session" grant should have).
    */
   private readonly skillEditGrantsByJob = new Map<string, Set<string>>();
 
@@ -331,6 +335,9 @@ export class AgentSessionManager
     private readonly configStore: WorkspaceConfigStore,
     // Used by `finish_onboarding` to decide whether there's an actual repo diff worth shipping a PR for.
     private readonly git: LocalGitService,
+    // Per-turn commit-identity fallback for PAT-mode orgs (`GET /user`) — app-mode orgs use the App bot
+    // identity from `creds.githubCommitIdentity` instead. See resolveBrainGitAuth.
+    private readonly identities: GitIdentityService,
     // The fragment-library assembler for the brain's system prompt (ATLAS_MAIN; onboarding is a jobKind).
     private readonly prompts: PromptService,
     // The shared send seam — the brain registers its `main`-lane transport (the durable steer/fresh-turn
@@ -390,28 +397,41 @@ export class AgentSessionManager
   ) {}
 
   /**
-   * Resolve (and cache per job) the repo url + org GitHub PAT so the brain's turns can fetch/push/merge
-   * against the remote from inside the sandbox. Sourced from the RESOLVED repo — never `sandbox`, whose
-   * row-sourced form carries an empty `gitUrl`/no token. Cached because `resolve()` re-checks the clone
-   * and the repo url is stable + the org PAT rarely rotates mid-session. Best-effort: on failure returns
-   * undefined (and does NOT cache), so remote git ops fail closed via `GIT_TERMINAL_PROMPT=0` and a later
-   * turn retries. Only caches when a real token is present (a tokenless resolve isn't worth pinning).
+   * Resolve the git auth the brain's turns use to fetch/push/merge against the remote from inside the
+   * sandbox. The repo url + org id are STABLE for a job, so they're resolved once (via the RESOLVED repo —
+   * never `sandbox`, whose row-sourced form carries an empty `gitUrl`/no token) and cached in
+   * `gitTargetByJob`. The TOKEN (and, for app-mode orgs, the App bot commit identity) is re-resolved on
+   * EVERY call instead: an installation token expires hourly, so pinning it per job would push with a dead
+   * token on a long-running session. Re-resolution is cheap — the credential resolver memoizes the minted
+   * token (a Map hit unless near expiry). Best-effort: on failure returns undefined (and does NOT cache the
+   * target), so remote git ops fail closed via `GIT_TERMINAL_PROMPT=0` and a later turn retries.
    */
   private async resolveBrainGitAuth(
     jobId: string,
   ): Promise<GitAuth | undefined> {
-    const cached = this.gitAuthByJob.get(jobId);
-    if (cached) return cached;
     try {
-      const job = await this.store.loadJob(jobId);
-      const repo = await this.repos.resolve(job);
-      const auth = {
-        gitUrl: repo.projectRepo.gitUrl,
-        token: repo.token,
-        ...(repo.identity ? { identity: repo.identity } : {}),
+      let target = this.gitTargetByJob.get(jobId);
+      if (!target) {
+        const job = await this.store.loadJob(jobId);
+        const repo = await this.repos.resolve(job);
+        const gitUrl = repo.projectRepo.gitUrl;
+        if (!gitUrl) return undefined;
+        target = { gitUrl, orgId: job.orgId };
+        this.gitTargetByJob.set(jobId, target);
+      }
+      const token = await this.creds.githubToken(target.orgId);
+      // Optional-call: test fakes/older CredentialResolver stand-ins may predate this method — default
+      // 'pat' (today's behavior) rather than throwing mid-turn.
+      const mode = (await this.creds.githubAuthMode?.(target.orgId)) ?? 'pat';
+      const identity =
+        (await this.creds.githubCommitIdentity(target.orgId)) ??
+        (await this.identities.resolve(token));
+      return {
+        gitUrl: target.gitUrl,
+        mode,
+        ...(token ? { token } : {}),
+        ...(identity ? { identity } : {}),
       };
-      if (auth.gitUrl && auth.token) this.gitAuthByJob.set(jobId, auth);
-      return auth;
     } catch (err) {
       this.logger.warn(
         `brain git auth resolve failed for job ${jobId} (remote git disabled this turn): ${err}`,

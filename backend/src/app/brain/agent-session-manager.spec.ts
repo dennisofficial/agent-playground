@@ -41,7 +41,7 @@ import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
 import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
-import type { LocalGitService } from '../git';
+import type { GitIdentityService, LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
 
@@ -443,6 +443,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockSecretStore,
       mockConfigStore,
       mockGit,
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities
       { generate: () => 'SYSTEM PROMPT' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       mockJudge, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -2557,6 +2558,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         upsertMount: async () => undefined,
       } as unknown as WorkspaceConfigStore,
       git,
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -3407,6 +3409,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         upsertMount: async () => undefined,
       } as unknown as WorkspaceConfigStore,
       { hasChanges: async () => false, currentBranch: async () => null, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -3562,6 +3565,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       } as unknown as WorkspaceSecretFileStore,
       { listMounts: async () => [], upsertMount: async () => undefined } as unknown as WorkspaceConfigStore,
       { hasChanges: async () => false, currentBranch: async () => null, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -3681,6 +3685,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, // mcp (McpResolver, 22)
       election, // election (23)
       inert, inert, inert, inert, // turnRecovery, secretStore, configStore, git (27)
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities (28)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (29, ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
@@ -3885,6 +3890,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert, // mcp (McpResolver, 22)
       election, // election (23)
       inert, inert, inert, inert, // turnRecovery…git (27)
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities (28)
       { generate: () => 'SYSTEM' } as never, // prompts (29, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -4104,6 +4110,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, // mcp (McpResolver, 22)
         election, // election (23)
         inert, inert, inert, inert, // turnRecovery…git (27)
+        { resolve: async () => undefined } as unknown as GitIdentityService, // identities (28)
         { generate: () => 'SYSTEM' } as never, // prompts (29)
         { register: () => undefined } as never, // threadInput (30)
         { judge: async () => undefined } as never, // liveVerificationJudge (31)

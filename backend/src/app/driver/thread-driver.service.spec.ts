@@ -22,6 +22,7 @@ import type { PlanVisibilityService } from '../decision-gate';
 import type { AutoFixStage } from '../autofix';
 import type {
   GithubPrService,
+  GitIdentityService,
   LocalGitService,
   FeatureSandbox,
   ProjectRepo,
@@ -951,6 +952,7 @@ function assemble(
     store,
     repos,
     git,
+    { resolve: async () => undefined } as unknown as GitIdentityService, // identities
     pr,
     turn,
     visibility.visibility,
@@ -978,6 +980,7 @@ function assemble(
       anthropicKey: opts.anthropicKey ?? (async () => undefined),
       openaiKey: async () => undefined,
       githubToken: async () => undefined,
+      githubCommitIdentity: async () => undefined,
       engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
     // OauthUsageService: the session-limit park reads getResetAt; default → no harvested window.

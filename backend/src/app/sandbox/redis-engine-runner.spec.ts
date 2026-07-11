@@ -12,6 +12,7 @@ import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
 import type { TurnRegistry } from './turn-registry.service';
 import type { ContainerEngine, ContainerInfo } from './container-engine.port';
+import type { SandboxProvider } from './sandbox-provider.port';
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
 const fakeActivity = { thread: (_id: string, fn: () => unknown) => fn() } as unknown as SandboxActivityRegistry;
@@ -395,6 +396,70 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(env.env.GIT_AUTHOR_EMAIL).toBeUndefined();
     expect(env.env.GIT_COMMITTER_NAME).toBeUndefined();
     expect(env.env.GIT_COMMITTER_EMAIL).toBeUndefined();
+  });
+
+  it('injects the app-mode file-backed git helper and seeds the token file', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const writeGithubTokenFile = vi.fn(async () => undefined);
+    const runner = new RedisEngineRunner(
+      containers,
+      redis,
+      fakeEnv,
+      fakeActivity,
+      fakeRegistry(),
+      undefined,
+      undefined,
+      { writeGithubTokenFile } as unknown as SandboxProvider,
+    );
+
+    await runner.run({
+      ...baseArgs(() => {}),
+      turnMeta: { jobId: 'job-1', orgId: 'org-1', channel: 'repo-1', lane: 'main', kind: 'step' },
+      target: {
+        containerId: 'c1',
+        worktreeHost: '/wt',
+        gitAuth: { gitUrl: 'https://github.com/o/r.git', token: 'ghs_123', mode: 'app' },
+      },
+    });
+
+    expect(writeGithubTokenFile).toHaveBeenCalledWith('job-1', 'ghs_123');
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.GIT_CONFIG_COUNT).toBe('2');
+    expect(env.env.GIT_CONFIG_KEY_0).toBe('credential.helper');
+    expect(env.env.GIT_CONFIG_VALUE_0).toBe('');
+    expect(env.env.GIT_CONFIG_KEY_1).toBe('credential.https://github.com.helper');
+    expect(env.env.GIT_CONFIG_VALUE_1).toContain("cat '/.atlas/github-token'");
+    expect(env.env.GIT_TERMINAL_PROMPT).toBe('0');
+    expect(env.env.GITHUB_TOKEN).toBe('ghs_123');
+    expect(env.env.GH_TOKEN).toBe('ghs_123');
+  });
+
+  it('blanks credential helpers when a GitHub target has no token', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.run({
+      ...baseArgs(() => {}),
+      target: {
+        containerId: 'c1',
+        worktreeHost: '/wt',
+        gitAuth: { gitUrl: 'https://github.com/o/r.git' },
+      },
+    });
+
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.GIT_CONFIG_COUNT).toBe('1');
+    expect(env.env.GIT_CONFIG_KEY_0).toBe('credential.helper');
+    expect(env.env.GIT_CONFIG_VALUE_0).toBe('');
+    expect(env.env.GIT_TERMINAL_PROMPT).toBe('0');
+    expect(env.env.GITHUB_TOKEN).toBeUndefined();
+    expect(env.env.GH_TOKEN).toBeUndefined();
   });
 
   it('injects author/committer env vars when target.gitAuth carries an identity', async () => {
