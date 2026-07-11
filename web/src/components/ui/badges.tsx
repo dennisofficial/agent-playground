@@ -433,19 +433,23 @@ export function CiHeaderGlyph({
   return (
     <span className="flex shrink-0 items-center gap-0.5">
       <span className="font-mono text-[9.5px] text-faint">·</span>
+      {/* Hit slop: pad the hover target well beyond the 11px icon; the matching negative margin keeps the
+          layout unchanged so only the hoverable area grows, not the visual. The inner span carries the ref
+          so the tooltip still anchors tightly to the icon, not the padded box. */}
       <span
-        ref={ref}
         onMouseEnter={openTip}
         onMouseLeave={() => setAnchor(null)}
-        className="flex items-center"
+        className="-m-2 flex items-center p-2"
       >
-        <Icon
-          size={11}
-          strokeWidth={2}
-          style={{ color }}
-          className={cn("shrink-0", spin && "animate-spin")}
-          aria-label={title}
-        />
+        <span ref={ref} className="flex items-center">
+          <Icon
+            size={11}
+            strokeWidth={2}
+            style={{ color }}
+            className={cn("shrink-0", spin && "animate-spin")}
+            aria-label={title}
+          />
+        </span>
       </span>
       {anchor
         ? createPortal(
