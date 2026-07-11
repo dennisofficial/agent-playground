@@ -59,6 +59,7 @@ function makeController(card: unknown, ctxRoot: string) {
     { vendorDir: m.vendorDir, removeStaging: m.removeStaging, removeSkillDir: m.removeSkillDir } as never, // skillFiles
     { install: m.install } as never, // skillInstaller
     {} as never, // git (LocalGitService)
+    {} as never, // jobDeps (JobDependencyService)
   );
   return { controller, m };
 }
