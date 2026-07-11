@@ -157,6 +157,8 @@ async function checkDevOrigin(pageUrl, html, pushBlocker) {
 const SESSION_COOKIE_NAME = /sess|auth|token|sid|connect\.sid|jwt/i;
 const CORS_SIGNAL = /CORS|Access-Control-Allow-Origin|has been blocked by CORS policy/i;
 const CDN_ALLOWLIST = /\.(googleapis|gstatic|jsdelivr|unpkg|cloudflare|fontshare)\.com$/i;
+const DEV_ORIGIN_SIGNAL =
+  /blocked request|invalid host header|allowedHosts|allowedDevOrigins|host .*not allowed|origin .*not allowed|cross-origin request blocked/i;
 const ERROR_PAGE_TEXT = /application error|this page could not be found/i;
 const ERROR_OVERLAY_SELECTOR = 'nextjs-portal, [data-nextjs-dialog], #webpack-dev-server-client-overlay, vite-error-overlay';
 
@@ -215,7 +217,7 @@ async function checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, 
           const parsed = parseSetCookie(header.value);
           if (parsed) {
             cookiesByName.set(parsed.name, parsed);
-            serverSetCookieNames.add(parsed.name);
+            if (SESSION_COOKIE_NAME.test(parsed.name)) serverSetCookieNames.add(parsed.name);
           }
         }
       } catch {
@@ -424,6 +426,13 @@ async function probe(args) {
         return verdict;
       }
       initialHtml = await res.text();
+      if (res.status === 403 && DEV_ORIGIN_SIGNAL.test(initialHtml)) {
+        pushBlocker(
+          'dev_origin',
+          `HTTP 403: ${initialHtml.trim().slice(0, 200)}`,
+          'framework dev cross-origin block — set allowedDevOrigins / server.allowedHosts from the preview domain.',
+        );
+      }
     } catch (err) {
       pushBlocker('port', err.message, 'service not listening / wrong --port — start it on the expected port.');
       return verdict;
