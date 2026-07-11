@@ -130,6 +130,52 @@ export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
   );
 }
 
+/**
+ * A STATIC `.log` file artifact (e.g. `artifacts/e2e/image-build.log`), rendered in the SAME dark terminal
+ * frame with `anser`-parsed ANSI colors as a live {@link ServiceLogView} — but read top-down from a fixed
+ * string, so there's no SSE tail, no tail-follow, and no jump-to-latest. Still windowed with
+ * `@tanstack/react-virtual` because a context file can reach the backend's 2 MB cap (tens of thousands of
+ * lines) — a plain per-line render of that would lock up the browser.
+ */
+export function LogFileView({ content }: { content: string }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const lines = useMemo(() => content.split("\n"), [content]);
+
+  const virtualizer = useVirtualizer({
+    count: lines.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => LINE_HEIGHT_PX,
+    overscan: 20,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+
+  return (
+    <div
+      ref={scrollRef}
+      className="h-full overflow-y-auto px-4 py-3"
+      style={{ background: "var(--term)" }}
+    >
+      <div
+        className="relative w-full font-mono text-[11.5px] leading-relaxed"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
+        {virtualItems.map((vi) => (
+          <div
+            key={vi.key}
+            data-index={vi.index}
+            ref={virtualizer.measureElement}
+            className="absolute left-0 top-0 w-full whitespace-pre-wrap break-words"
+            style={{ transform: `translateY(${vi.start}px)` }}
+          >
+            <AnsiLine line={lines[vi.index]} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** anser returns colors as a bare `"r, g, b"` triple (e.g. `"85, 85, 85"`), not a CSS color — must wrap. */
 function cssColor(triple: string | null): string | undefined {
   return triple ? `rgb(${triple})` : undefined;
