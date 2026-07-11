@@ -15,6 +15,8 @@
  * the banner below.
  */
 
+import { renderHarnessTag } from '../harness/tag-vocabulary';
+
 // ── GLOBAL ──────────────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -162,14 +164,13 @@ export function renderRunningServicesNote(services: RunningServiceInfo[]): strin
     const url = s.url ? ` — ${s.url}` : '';
     return `- ${s.name}${port}${url}`;
   });
-  return [
-    '<running_services>',
+  const body = [
     'These `atlas-svc` services were started by an EARLIER session or Leg on this sandbox and are STILL ' +
       'ONLINE now. REUSE them — do NOT restart or re-`atlas-svc run` a service already listed here; ' +
       '`atlas-svc ps` / `atlas-svc logs <name>` to inspect one, and curl its port/URL to confirm it responds.',
     ...lines,
-    '</running_services>',
   ].join('\n');
+  return renderHarnessTag({ tag: 'running_services', body });
 }
 
 /**

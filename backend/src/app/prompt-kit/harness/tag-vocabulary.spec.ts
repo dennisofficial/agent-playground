@@ -2,10 +2,11 @@ import { describe, it, expect } from 'vitest';
 
 import {
   renderChunk,
+  renderHarnessTag,
   renderTurn,
   stripTags,
   type TurnChunk,
-} from './chunk-vocabulary';
+} from './tag-vocabulary';
 
 describe('chunk-vocabulary', () => {
   describe('renderChunk', () => {
@@ -125,6 +126,36 @@ describe('chunk-vocabulary', () => {
 
     it('leaves non-vocabulary markup untouched', () => {
       expect(stripTags('keep <b>bold</b> and <div>')).toBe('keep <b>bold</b> and <div>');
+    });
+  });
+
+  describe('renderHarnessTag / HARNESS_TAGS', () => {
+    it('renders a block-form tag wrapping a multi-line body', () => {
+      expect(
+        renderHarnessTag({ tag: 'session_rotated', body: ['line1', 'line2'].join('\n') }),
+      ).toBe('<session_rotated>\nline1\nline2\n</session_rotated>');
+    });
+
+    it('renders a self-closing tag with attrs (no body)', () => {
+      expect(
+        renderHarnessTag({
+          tag: 'review',
+          attrs: [
+            ['pr', 42],
+            ['repo', 'acme/widgets'],
+          ],
+        }),
+      ).toBe('<review pr="42" repo="acme/widgets" />');
+    });
+
+    it('escapes attribute values', () => {
+      expect(renderHarnessTag({ tag: 'review', attrs: [['note', 'A"<>&B']] })).toBe(
+        '<review note="A&quot;&lt;&gt;&amp;B" />',
+      );
+    });
+
+    it('stripTags now strips a folded harness tag too', () => {
+      expect(stripTags('a<running_services>b</running_services>c')).toBe('abc');
     });
   });
 });
