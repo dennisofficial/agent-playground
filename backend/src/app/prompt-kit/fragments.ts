@@ -460,11 +460,15 @@ export const EVIDENCE_ARTIFACTS_NOTE =
   'bucket you may write (treat `/context/specs` and `/context/generated` as READ-ONLY grounding, and put all ' +
   "CODE under `/workspace`); everything you drop in `/context/artifacts/` surfaces in the operator's ARTIFACTS " +
   'panel — logs and markdown render as text, screenshots (`.png`) render inline. Capture, per scenario you ' +
-  'validated: the command/test OUTPUT as a `*.log`, a `.png` SCREENSHOT of any UI you drove (Playwright ' +
-  '`page.screenshot`), any report the run produced, and a top-level `RESULTS.md` that INDEXES what you ' +
-  'validated, HOW (the exact commands/flows), the OBSERVED result, and links to each evidence file. Name ' +
-  'files by scenario so the panel reads cleanly (e.g. `server-presence/jest-integration.log`, ' +
-  '`boot.png`). INSPECT WHAT YOU CAPTURED — capturing an artifact is NOT the same as validating: a ' +
+  'validated: the command/test OUTPUT as a `*.log`, a `.png` SCREENSHOT of a REAL running app you drove ' +
+  'in a browser (Playwright `page.screenshot`), any report the run produced, and a top-level `RESULTS.md` ' +
+  'that INDEXES what you validated, HOW (the exact commands/flows), the OBSERVED result, and links to each ' +
+  'evidence file. Name files by scenario so the panel reads cleanly (e.g. ' +
+  '`server-presence/jest-integration.log`, `boot.png`). A screenshot EARNS its place ONLY when it shows ' +
+  'something the HTML cannot — a REAL running app or its live output. NEVER screenshot a static `.html` ' +
+  'file you AUTHORED (a mockup, a spike, a report page): reference the `.html` itself — the ARTIFACTS ' +
+  'panel renders it full-bleed and higher-fidelity than any raster, so a duplicate `.png` is only ' +
+  'heavier, lower-quality, and wasted. INSPECT WHAT YOU CAPTURED — capturing an artifact is NOT the same as validating: a ' +
   'screenshot or log is not proof until you have actually LOOKED at it. Open every screenshot you take ' +
   '(Read it back — images render visually) and read the tail of every log, and confirm it shows the ' +
   'INTENDED state — the real UI/output you were validating, populated, with no error overlay. A screenshot ' +
