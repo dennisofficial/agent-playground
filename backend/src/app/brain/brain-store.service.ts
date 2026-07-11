@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, MoreThan, Not, Repository } from 'typeorm';
 import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../domain';
@@ -15,6 +15,7 @@ import type {
 } from '../surface';
 // Direct leaf import (not the '../surface' barrel): brain-store otherwise only TYPE-imports from surface,
 // and a runtime value import of the whole barrel would add a surface→brain→brain-store→surface cycle.
+import { JobDependencyService } from '../job-deps';
 import { webTicketCard } from '../surface/web-ticket-card';
 import { nextQuestionId } from '../surface/web-question-card';
 import { renderPlan } from '../driver/render-plan';
@@ -64,6 +65,8 @@ const ORDINAL_GAP = 10;
  */
 @Injectable()
 export class BrainStoreService {
+  private readonly logger = new Logger(BrainStoreService.name);
+
   constructor(
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
@@ -82,6 +85,7 @@ export class BrainStoreService {
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly titler: JobTitler,
+    private readonly jobDeps: JobDependencyService,
   ) {}
 
   /**
@@ -1779,6 +1783,9 @@ export class BrainStoreService {
   /** Cancel a thread's build (a denied plan). */
   async cancel(jobId: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { status: 'cancelled' });
+    await this.jobDeps
+      .onBlockerResolved(jobId, 'cancelled')
+      .catch((err) => this.logger.warn(`cancel: wake funnel failed for blocker ${jobId}: ${err}`));
   }
 
   /** The ticket a thread was promoted from / works (`threads.ticket_id`), or null. */

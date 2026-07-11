@@ -496,6 +496,9 @@ export interface PipelineThread {
 /** Immutable snapshot of the job that spawned another job, captured at create time. */
 export type JobProvenance = { jobId: string; title: string | null };
 
+/** A live blocker of a `blocked` job — one row per job it depends on. */
+export type JobBlocker = { jobId: string; title: string | null; prState: string | null; status: string };
+
 export interface PipelineJob {
   /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
   jobId: string;
@@ -506,6 +509,8 @@ export interface PipelineJob {
   /** Who spawned this job (immutable snapshot), or null for a top-level job. Powers the "Created by"
    *  header row. */
   createdBy?: JobProvenance | null;
+  /** The jobs this one is blocked on (live blockers), for the "Blocked by" navigator row. `[]` unless status==='blocked'. */
+  blockedBy?: JobBlocker[];
   /**
    * Which build path was committed at approval: `'direct'` (fast, brain-implemented) | `'plan'` (driver
    * multi-thread) | `null` (never approved — still an open/awaiting-approval proposal that could become

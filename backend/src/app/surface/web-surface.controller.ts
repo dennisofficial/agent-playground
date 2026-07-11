@@ -599,6 +599,8 @@ export class WebSurfaceController {
       }),
       this.repos.find({ where: { org_id: In(orgIds) } }),
     ]);
+    const blockedIds = threads.filter((t) => t.status === 'blocked').map((t) => t.id);
+    const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
     const orgById = new Map(orgs.map((o) => [o.id, o]));
     const repoName = new Map(repos.map((r) => [`${r.org_id}:${r.id}`, r.name]));
     return threads.map((t) => {
@@ -617,6 +619,7 @@ export class WebSurfaceController {
         // keeps the card pinned in "Ready to Ship" instead of "Building".
         shipping: t.status === 'running' && t.ship_review_approved_at != null,
         createdBy: t.created_by ?? null,
+        blockedBy: blockersByJob.get(t.id) ?? [],
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,
@@ -686,6 +689,8 @@ export class WebSurfaceController {
       where: { org_id: org.id, repo_id: repoId },
       order: { created_at: 'DESC' },
     });
+    const blockedIds = rows.filter((t) => t.status === 'blocked').map((t) => t.id);
+    const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
     return rows.map((t) => ({
       id: t.id,
       title: t.title,
@@ -695,6 +700,7 @@ export class WebSurfaceController {
       activity: t.activity,
       halted: t.halted,
       createdBy: t.created_by ?? null,
+      blockedBy: blockersByJob.get(t.id) ?? [],
       needsYou: deriveNeedsYou({
         status: t.status,
         activity: t.activity,

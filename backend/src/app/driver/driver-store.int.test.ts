@@ -28,6 +28,7 @@ import {
   MessageEntity,
 } from '../persistence/entities';
 import { DriverStoreService } from './driver-store.service';
+import { JobDependencyService } from '../job-deps';
 import { webShipReviewCard } from '../surface/web-approval-card';
 
 const ORG_ID = '21111111-1111-4111-8111-111111111111';
@@ -66,7 +67,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         TypeOrmModule.forRoot(dbOpts()),
         TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
       ],
-      providers: [DriverStoreService],
+      providers: [
+        DriverStoreService,
+        { provide: JobDependencyService, useValue: { blockersOf: async () => [] } },
+      ],
     }).compile();
 
     store = mod.get(DriverStoreService);

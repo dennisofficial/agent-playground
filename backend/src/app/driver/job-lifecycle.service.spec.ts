@@ -30,6 +30,7 @@ import { SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { JobLifecycleService } from './job-lifecycle.service';
 import type { TicketService } from '../tickets';
+import type { JobDependencyService } from '../job-deps';
 import type { WorktreeProvisioner } from './worktree-provisioner.service';
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────────
@@ -79,6 +80,7 @@ function makeService(
     { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+    { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
     { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
     { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
@@ -114,6 +116,7 @@ function makeServiceWithMocks(
     { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach } as unknown as WorktreeProvisioner,
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+    { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
     { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
     { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
@@ -159,6 +162,7 @@ function makeServiceForReset(
     { attach: vi.fn(), teardown, teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+    { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
     { failRunningForJob } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
     { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
@@ -412,6 +416,7 @@ describe('JobLifecycleService.applyGithubPrState', () => {
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
@@ -479,6 +484,7 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
@@ -589,6 +595,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
@@ -643,6 +650,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
@@ -676,6 +684,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
@@ -720,6 +729,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
       { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+      { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,

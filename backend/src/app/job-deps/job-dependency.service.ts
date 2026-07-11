@@ -185,6 +185,26 @@ export class JobDependencyService {
     return rows;
   }
 
+  /** Blockers for MANY jobs in one query (avoids N+1 in the list DTOs). Returns dependentJobId → its blockers. */
+  async blockersOfManyBlocked(jobIds: string[]): Promise<Map<string, JobBlockerRow[]>> {
+    const map = new Map<string, JobBlockerRow[]>();
+    if (jobIds.length === 0) return map;
+    const rows: Array<JobBlockerRow & { dependentId: string }> = await this.dataSource.query(
+      `SELECT d.job_id AS "dependentId", j.id AS "jobId", j.title AS title, j.pr_state AS "prState", j.status AS status
+         FROM job_dependencies d
+         JOIN jobs j ON j.id = d.depends_on_job_id
+        WHERE d.job_id = ANY($1)`,
+      [jobIds],
+    );
+    for (const r of rows) {
+      const { dependentId, ...blocker } = r;
+      const list = map.get(dependentId) ?? [];
+      list.push(blocker);
+      map.set(dependentId, list);
+    }
+    return map;
+  }
+
   /** The dependent (blocked) jobs of `blockerJobId` — jobs that depend ON it. */
   async dependentsOf(blockerJobId: string): Promise<DependentJobRow[]> {
     const rows: DependentJobRow[] = await this.dataSource.query(
