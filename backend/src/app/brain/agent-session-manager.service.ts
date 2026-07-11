@@ -5632,10 +5632,29 @@ export class AgentSessionManager
 
     if (resolution.verdict === 'request_changes') {
       await this.store.reopenPlanning(job.id);
-      const note = resolution.note ? ` Noted: ${resolution.note}` : '';
+      // The note is the operator telling the brain WHAT to change — deliver it into the resumed engine
+      // session (a real seeded turn), not just an operator-facing ack. Without this the note only lands in
+      // the `messages` mirror and the brain never sees it. Build from `job.*` (reliable on both the live
+      // and durable-fallback callers) rather than the possibly-stale/empty `stimulus`. No note → nothing
+      // actionable to deliver, so keep the ack and wait for the operator's next turn.
+      if (resolution.note) {
+        await this.handleChatTurn(
+          harnessDeliveryStimulus({
+            jobId: job.id,
+            orgId: job.orgId,
+            repoId: job.repoId,
+            body: renderRequestChangesDelivery(resolution.note),
+            seedRow: {
+              label: 'Operator requested changes — revising the plan.',
+              chunkKey: `seed:request-changes:${decisionRecordId}`,
+            },
+          }),
+        );
+        return;
+      }
       await this.say(
         stimulus,
-        `Got it — back to the drawing board.${note} What should change?`,
+        'Got it — back to the drawing board. What should change?',
       );
       return;
     }
@@ -6767,6 +6786,26 @@ function renderWorkOwedNudge(): string {
     '• Then act on the result: address the BLOCKING findings (apply, or hold firm with reasoning), and when',
     '  the plan is ready call `propose_plan` to send it to the operator for approval.',
     'Do not end this turn without moving the plan forward.',
+  ].join('\n');
+}
+
+/**
+ * The harness framing for a REQUEST-CHANGES note. The operator reviewed a proposed plan/direct-build and
+ * clicked "Request changes" with a note; the job is already back in `planning`. This delivers their note
+ * into the resumed brain session (via `handleChatTurn`) so the engine actually SEES the feedback — the
+ * `messages` table is only an operator-facing mirror, so without this the note would reach the brain only
+ * if the operator re-typed it. The note is the operator's own (trusted) words; it is quoted verbatim so the
+ * brain reads it as their instruction. Wrapped as a `<system_notification>` by `harnessDeliveryStimulus`.
+ */
+function renderRequestChangesDelivery(note: string): string {
+  return [
+    'The operator reviewed your proposed plan and clicked **Request changes**, leaving this note:',
+    '',
+    ...note.split('\n').map((line) => `> ${line}`),
+    '',
+    'The plan is back in planning. Incorporate their feedback: revise the specs and decisions accordingly,',
+    'and if anything is ambiguous ask a focused follow-up before re-proposing. When the plan is ready,',
+    're-run `review_plan` and then `propose_plan` to send the updated version for approval.',
   ].join('\n');
 }
 
