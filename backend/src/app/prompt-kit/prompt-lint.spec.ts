@@ -83,6 +83,7 @@ describe('prompt-lint / every persona declares a role (+ review personas a repor
     { agent: Agent.DEBUG, ctx: {} },
     { agent: Agent.TEST, ctx: {} },
     { agent: Agent.VALIDATE, ctx: {} },
+    { agent: Agent.PROTOTYPE, ctx: {} },
     { agent: Agent.AUTOFIX_FIX, ctx: {} },
     { agent: Agent.MASTER_REVIEW, ctx: {}, contract: REVIEW_SCOPE_NOTE },
     { agent: Agent.REVIEW_AGENT, ctx: {}, contract: REVIEW_SCOPE_NOTE },
