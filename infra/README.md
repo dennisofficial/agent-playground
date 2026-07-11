@@ -271,6 +271,34 @@ base/tool version), remove the image on the box before deploying:
 docker rmi atlas-sandbox:latest && ./infra/deploy.sh sha-<gitsha>
 ```
 
+### Disk / image garbage collection
+
+Docker's image store (`/var/lib/containerd`) accumulates disk three ways: old
+`sha-<gitsha>` deploy images (each deploy pulls ~6.6G of backend + migrator + web),
+orphaned `atlas-sandbox:latest` rebuilds (left as `<none>` ~4.9G each when the sandbox
+build context changes), and their build cache. Left unchecked this fills the root
+filesystem — a real incident (53% of the 878G RAID-1 mirror was ~360G of reclaimable
+images).
+
+`infra/docker-gc.sh` reaps all three **safely**: it removes old deploy tags with
+`docker rmi` *without* `-f`, so the active backend and any rollback image (referenced by
+a container) are skipped, never deleted; dangling-image and build-cache pruning only
+touch untagged, unreferenced content; it never removes containers, networks or volumes.
+
+It runs automatically at the end of every `deploy.sh` (step 8). Because sandbox images
+churn between deploys, also install it as a daily cron so a box that isn't deployed for a
+while still gets reaped:
+
+```bash
+sudo cp infra/docker-gc.sh /srv/atlas/scripts/docker-gc.sh
+sudo chmod +x /srv/atlas/scripts/docker-gc.sh
+# Run as a user in the `docker` group (root works). Keeps the newest 5 deploy tags/repo.
+sudo crontab -l 2>/dev/null | { cat; echo '30 3 * * * /srv/atlas/scripts/docker-gc.sh >> /var/log/atlas-docker-gc.log 2>&1'; } | sudo crontab -
+```
+
+Tune retention with `ATLAS_GC_KEEP` (default 5 newest sha tags per repo). To reclaim on
+demand: `sudo /srv/atlas/scripts/docker-gc.sh`.
+
 ---
 
 ## Backups
