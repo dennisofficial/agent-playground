@@ -12,8 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
 import { makeResolveFileLink } from "./repo-file-links";
-import { PREVIEW_REQUEST_TEXT } from "./preview-request";
-import { useApprove, useRepoTree, useSay } from "@/lib/api/job-queries";
+import { useApprove, useRepoTree, useSpinUpPreview } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import { isSubmitCombo } from "@/lib/keyboard";
 import {
@@ -228,26 +227,36 @@ function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef 
         {card.actions.map((action) => (
           <ShipActionButton key={action.actionId} jobRef={jobRef} action={action} />
         ))}
-        {card.kind === "ship" ? <ShipCardPreviewButton jobRef={jobRef} /> : null}
+        {card.kind === "ship" ? (
+          <ShipCardPreviewButton jobRef={jobRef} card={card} />
+        ) : null}
       </div>
     </div>
   );
 }
 
-/** "Spin up preview" — asks the build brain (via the `say` path) to stand up a demo-ready live preview of
- *  the just-built change. Status/handover come back through chat; the live URL auto-surfaces in PORTS. Only
- *  shown at the ship gate (`kind: 'ship'`), never on an amend card. */
-function ShipCardPreviewButton({ jobRef }: { jobRef: JobRef }) {
-  const say = useSay(jobRef);
+/** "Spin up preview" — asks the build brain (via the dedicated `spin-up-preview` seeder endpoint) to stand
+ *  up a demo-ready live preview of the just-built change. Status/handover come back through chat; the live
+ *  URL auto-surfaces in PORTS. Only shown at the ship gate (`kind: 'ship'`), never on an amend card, and
+ *  hidden once requested (`card.previewRequestedAt`, stamped server-side on first click). */
+function ShipCardPreviewButton({
+  jobRef,
+  card,
+}: {
+  jobRef: JobRef;
+  card: WebApprovalCard;
+}) {
+  const preview = useSpinUpPreview(jobRef);
+  if (card.previewRequestedAt) return null;
   return (
     <Button
       size="sm"
       variant="soft"
-      loading={say.isPending}
+      loading={preview.isPending}
       loadingText="Requesting…"
       icon={<Globe size={13} />}
       onClick={() => {
-        if (!say.isPending) say.mutate(PREVIEW_REQUEST_TEXT);
+        if (!preview.isPending) preview.mutate();
       }}
       style={{
         color: "var(--blue)",
