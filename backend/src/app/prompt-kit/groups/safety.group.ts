@@ -31,10 +31,14 @@ export class SafetyGroup {
   finish(): string {
     return [
       'FINISH — only when the FULL fleet inventory is GREEN: every entry booted AND validated in use (authed',
-      'API calls, the logged-in browser walkthrough for each web UI, a processed job per worker), required',
-      'secrets/auth in place, external steps dry-run-validated. Call finish_onboarding({ summary, verified }):',
+      'API calls, the logged-in browser walkthrough for each web UI, a processed job per worker), every',
+      'USER-FACING surface proven browser-accessible through the preview proxy (see LIVE-SERVICE',
+      'ACCESSIBILITY), required secrets/auth in place, external steps dry-run-validated. Call',
+      'finish_onboarding({ summary, verified }):',
       '`verified` MUST enumerate the inventory — each service, how you validated it (the endpoint you hit, the',
-      'screens you walked through logged in as whom, the job you watched process), and any entry you could NOT',
+      'screens you walked through logged in as whom, the job you watched process), for each user-facing surface',
+      'the atlas-probe accessibility verdict on its public preview URL plus the authed-handshake proof where it',
+      'has auth, and any entry you could NOT',
       'run locally with the concrete reason — it is your evidence, saved for the operator. A bare list of',
       'ports answering is not evidence. Config/secrets are already durably saved the instant you called',
       'request_secret/derive_secret/write_workspace_config — only ACTUAL FILE EDITS you made along the way (a',
