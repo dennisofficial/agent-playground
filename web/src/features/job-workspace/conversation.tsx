@@ -161,7 +161,7 @@ export function TranscriptView({
   // The attachment tray is owned HERE (not inside the composer) so a file dropped anywhere on the pane feeds
   // the same tray the ＋ button and paste do. Drop is live only on the interactive Main composer — read-only
   // lanes and lanes without a composer ignore drags entirely.
-  const attach = useAttachments();
+  const attach = useAttachments(jobRef);
   const acceptsDrop = composer && !readOnly;
   const { isDragging, dropHandlers } = useFileDrop(attach.add, acceptsDrop);
 

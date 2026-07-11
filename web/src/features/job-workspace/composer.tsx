@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { ArrowUp, ChevronDown, Plus, Square } from "lucide-react";
 import {
   useSay,
@@ -10,6 +10,7 @@ import {
 } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import { useConnectivity } from "@/lib/api/connectivity";
+import { composerStore, useComposerDraft } from "@/lib/api/composer-store";
 import type { AttachmentsApi } from "./use-attachments";
 import { AttachmentTray } from "./attachment-tray";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
@@ -85,7 +86,10 @@ export function Composer({
   const sendReviewComments = useSendReviewComments(jobRef);
   const { comments, clearComments } = useReviewComments();
   const connectivity = useConnectivity();
-  const [text, setText] = useState("");
+  // Per-Job draft text — held in the external store (not local state) so it survives Job-switch and reload
+  // instead of bleeding between Jobs. Read-only/subagent lanes force value "" and never call setText.
+  const text = useComposerDraft(jobRef).text;
+  const setText = (t: string) => composerStore.setText(jobRef, t);
   // `attach` is absent in the subagent variant. Default `attachments` to `[]` so the pre-return computations
   // (showStop, button-disabled) stay safe; the fn refs are only invoked from input handlers that don't render.
   const {
@@ -160,20 +164,20 @@ export function Composer({
         message: trimmed || undefined,
       });
       clearComments();
-      setText("");
+      composerStore.clearDraft(jobRef.jobId);
       return;
     }
     if (attachments.length > 0) {
       // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
-      // URLs; they're freed on composer unmount (the hook's createdUrlsRef backstop).
+      // URLs; they're freed when the tab closes. clearDraft also drops attachments without revoking.
       sayWithAttachments.mutate({ text: trimmed, attachments });
       clearAttachments?.();
-      setText("");
+      composerStore.clearDraft(jobRef.jobId);
       return;
     }
     if (!trimmed) return;
     say.mutate(trimmed);
-    setText("");
+    composerStore.clearDraft(jobRef.jobId);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
