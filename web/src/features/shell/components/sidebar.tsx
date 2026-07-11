@@ -351,7 +351,7 @@ function OrgSection({
             onClick={(e) => e.stopPropagation()}
             className={cn(
               iconBtn,
-              "text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/org:opacity-[0.85]",
+              "text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/org:opacity-[0.85] focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
             )}
             title="New job in this org"
             aria-label={`New job in ${org.name}`}
@@ -364,7 +364,7 @@ function OrgSection({
             onClick={(e) => e.stopPropagation()}
             className={cn(
               iconBtn,
-              "text-faint opacity-0 transition-opacity hover:bg-surface-3 hover:text-text group-hover/org:opacity-90",
+              "text-faint opacity-0 transition-opacity hover:bg-surface-3 hover:text-text group-hover/org:opacity-90 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
             )}
             title="Org settings"
             aria-label={`${org.name} settings`}
@@ -544,7 +544,7 @@ function RepoGroup({
           href={ROUTES.newThread({ orgId, repoId: repo.repoId })}
           className={cn(
             iconBtn,
-            "text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/repo:opacity-90",
+            "text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/repo:opacity-90 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
           )}
           title="New job in this repo"
           aria-label={`New job in ${repo.repoName}`}

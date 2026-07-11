@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCredentialUsage, useOrgUsage } from "@/lib/api/orgs";
 import { formatClockTime } from "@/lib/org-display";
 import type { WireOrgUsage } from "@/lib/api/types";
@@ -345,6 +345,11 @@ export function UsageRingView({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // The panel is anchored to the right of a trigger that sits mid-composer, so on a narrow (mobile)
+  // viewport its fixed width overflows past the left screen edge. Measure once open and nudge it back
+  // on-screen with a small horizontal offset; 0 on desktop, where it already fits.
+  const [shiftX, setShiftX] = useState(0);
 
   // Refresh-on-open: opening the panel re-fetches usage on the spot, but at most once per minute (skipped
   // when the data is already newer than that). Read via a ref so this fires only on the open transition,
@@ -371,6 +376,32 @@ export function UsageRingView({
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
+  }, [open]);
+
+  // Keep the panel within the viewport. Read the panel's natural left edge (subtracting any offset
+  // already applied) and, if it clips either side, shift it just enough to sit inside an 8px margin.
+  useLayoutEffect(() => {
+    if (!open) {
+      setShiftX(0);
+      return;
+    }
+    const measure = () => {
+      const el = panelRef.current;
+      if (!el) return;
+      const margin = 8;
+      const rect = el.getBoundingClientRect();
+      const naturalLeft = rect.left - shiftX;
+      const naturalRight = rect.right - shiftX;
+      let next = 0;
+      if (naturalLeft < margin) next = margin - naturalLeft;
+      else if (naturalRight > window.innerWidth - margin) next = window.innerWidth - margin - naturalRight;
+      setShiftX(next);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+    // `shiftX` is intentionally omitted: it's derived here, and re-running on it would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const fixedRows: [string, PanelWindow][] = (
@@ -432,8 +463,13 @@ export function UsageRingView({
       </button>
       {open ? (
         <div
-          className="absolute bottom-full right-0 z-30 mb-2 w-60 rounded-[9px] border p-2.5 shadow-lg"
-          style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}
+          ref={panelRef}
+          className="absolute bottom-full right-0 z-30 mb-2 w-60 max-w-[calc(100vw-1rem)] rounded-[9px] border p-2.5 shadow-lg"
+          style={{
+            borderColor: "var(--border)",
+            background: "var(--surface-2)",
+            transform: shiftX ? `translateX(${shiftX}px)` : undefined,
+          }}
         >
           <PanelHeader accountLabel={data?.accountLabel} plan={data?.plan} />
           {rows.length === 0 ? (

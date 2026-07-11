@@ -138,6 +138,18 @@
   }
 }
 
+/* iOS Safari auto-zooms the viewport whenever a focused form control renders below 16px. On touch
+   devices (coarse pointer), floor input/textarea/select text at 16px so focusing never triggers that
+   zoom. Left UNLAYERED so it beats Tailwind's layered `text-[13px]` utilities without `!important`;
+   desktop (fine pointer) keeps the app's compact sizing. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
 html {
   background: var(--bg);
 }
