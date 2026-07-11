@@ -121,33 +121,33 @@ export function useClaudeCredentials(orgId: string, enabled = true) {
 export interface ClaudeAuthorizeUrl {
   url: string;
   state: string;
-  label: string;
 }
 
 /**
  * Owner-only: step 1 of adding a personal login. Mints a PKCE-backed Claude login URL; the operator opens
- * it, logs in with their subscription, and pastes the returned code. Does not invalidate the list (nothing
- * is stored yet — the credential lands on the follow-up `useAddClaudeCredential` exchange).
+ * it, logs in with their subscription, and pastes the returned code. Takes no body — a personal credential
+ * is named by the account email captured from the token exchange, not by an operator-supplied label. Does
+ * not invalidate the list (nothing is stored yet — the credential lands on the follow-up
+ * `useAddClaudeCredential` exchange).
  */
 export function useCreateClaudeAuthorizeUrl(orgId: string) {
   return useMutation({
-    mutationFn: (body: { label: string }) =>
+    mutationFn: () =>
       webJson<ClaudeAuthorizeUrl>(`/orgs/${orgId}/claude-credentials/authorize-url`, {
         method: "POST",
-        body: JSON.stringify(body),
       }),
   });
 }
 
 /** Body for `POST /claude-credentials` — a personal login (`code`+`state`) OR a setup-token (`setupToken`). */
 export type AddClaudeCredentialBody =
-  | { label: string; code: string; state: string }
+  | { code: string; state: string }
   | { label: string; setupToken: string };
 
 /**
- * Owner-only: create a credential — the personal-login exchange (`{code, state, label}`) or a setup-token
- * (`{setupToken, label}`). The server auto-selects it when it's the org's first. Invalidates the list +
- * the presence/session queries (a first credential flips the onboarding checklist).
+ * Owner-only: create a credential — the personal-login exchange (`{code, state}`, named by account email) or
+ * a setup-token (`{setupToken, label}`). The server auto-selects it when it's the org's first. Invalidates
+ * the list + the presence/session queries (a first credential flips the onboarding checklist).
  */
 export function useAddClaudeCredential(orgId: string) {
   const qc = useQueryClient();
@@ -195,6 +195,31 @@ export function useDeleteClaudeCredential(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
     },
+  });
+}
+
+// ── Codex account (owner-only — the decoded account email of the pasted auth.json) ─────────────────
+// The Codex secret's account email is decoded on-read from the stored auth.json's `id_token` (display-only,
+// no signature check) and is Administer-tier info, so it lives on its own OWNER-gated endpoint rather than
+// the member-visible presence flags. `present` mirrors `hasCodex`; `accountEmail` is omitted for an
+// API-key-only auth.json (no `id_token` to decode).
+
+/** The owner-only `GET /credentials/codex` response — presence + the decoded account email, when present. */
+export interface CodexAccount {
+  present: boolean;
+  accountEmail?: string;
+}
+
+/**
+ * Owner-only: the connected Codex subscription's account email (decoded from the stored auth.json). Pass
+ * `enabled: false` for non-owners to skip a guaranteed 403 — the display is separately gated on ownership.
+ */
+export function useCodexAccount(orgId: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.orgCodexAccount(orgId),
+    queryFn: () => webJson<CodexAccount>(`/orgs/${orgId}/credentials/codex`),
+    enabled: Boolean(orgId) && enabled,
+    staleTime: 15_000,
   });
 }
 
@@ -250,6 +275,8 @@ export function useSaveCredentials(orgId: string) {
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      // A new Codex paste changes the decoded account email — refresh the owner-only Codex query too.
+      void qc.invalidateQueries({ queryKey: qk.orgCodexAccount(orgId) });
       // Credential changes can flip an org `onboarding` → `active`; refresh the session orgs too.
       void qc.invalidateQueries({ queryKey: qk.session() });
     },
