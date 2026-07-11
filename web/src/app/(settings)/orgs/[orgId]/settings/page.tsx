@@ -23,11 +23,16 @@ export default function OrgSettingsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const sectionParam = useSearchParams().get("section");
+  const searchParams = useSearchParams();
+  const sectionParam = searchParams.get("section");
+  // The GitHub App install redirect returns to this page with `?githubApp=…` (no `?section`); land the
+  // owner back on the Credentials tab where the connect card + its success/error note live.
   const initialSection: SettingsSection =
     sectionParam && SECTIONS.has(sectionParam as SettingsSection)
       ? (sectionParam as SettingsSection)
-      : "general";
+      : searchParams.has("githubApp")
+        ? "credentials"
+        : "general";
 
   // Keyed by orgId so switching orgs from the settings breadcrumb remounts onto the new org and re-applies
   // `initialSection` (the preserved `?section`) — internal `section` state resets to the navigated tab.

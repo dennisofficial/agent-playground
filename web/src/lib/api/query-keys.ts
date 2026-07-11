@@ -8,6 +8,9 @@ export const qk = {
   orgMembers: (orgId: string) => ["org-members", orgId] as const,
   /** One org's credential presence flags (`GET /web/orgs/:orgId/credentials`). */
   orgCredentials: (orgId: string) => ["org-credentials", orgId] as const,
+  /** One org's GitHub App connect status (`GET /web/orgs/:orgId/github-app/status`). */
+  orgGithubAppStatus: (orgId: string) =>
+    ["org-github-app-status", orgId] as const,
   /** One org's workspace secret names + grants (`GET /web/orgs/:orgId/workspace-secrets`). */
   orgWorkspaceSecrets: (orgId: string) =>
     ["org-workspace-secrets", orgId] as const,
