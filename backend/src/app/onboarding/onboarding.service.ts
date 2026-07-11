@@ -350,7 +350,7 @@ export class OnboardingService {
   async updateRepo(
     orgId: string,
     repoId: string,
-    patch: { name?: string; defaultBranch?: string },
+    patch: { name?: string; defaultBranch?: string; branchPrefix?: string },
   ): Promise<ConnectedRepo> {
     const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
     if (!repo) throw new NotFoundException('repo not found');
@@ -358,6 +358,10 @@ export class OnboardingService {
     if (patch.name !== undefined && patch.name.trim()) next.name = patch.name.trim();
     if (patch.defaultBranch !== undefined && patch.defaultBranch.trim()) {
       next.default_branch = patch.defaultBranch.trim();
+    }
+    // Empty string clears the override back to the neutral built-in default.
+    if (patch.branchPrefix !== undefined) {
+      next.branch_prefix = patch.branchPrefix.trim() || null;
     }
     if (Object.keys(next).length) await this.repos.update({ id: repo.id }, next);
     const fresh = await this.repos.findOneOrFail({ where: { id: repo.id } });
