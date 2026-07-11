@@ -78,6 +78,13 @@ export class DockerodeContainerEngine implements ContainerEngine {
       {
         t: spec.tag,
         dockerfile: spec.dockerfile ?? 'Dockerfile',
+        // Always remove intermediate build containers, even when a build STEP FAILS
+        // (`rm` alone only cleans up on success). Without forcerm, a failed/interrupted
+        // sandbox-image build leaves orphaned intermediate containers (random names, no
+        // labels) that pin their image layers on the box — the leak docker-gc.sh's stray
+        // reap otherwise has to mop up. See infra/docker-gc.sh step 0.
+        rm: true,
+        forcerm: true,
         ...(spec.buildArgs ? { buildargs: spec.buildArgs } : {}),
       },
     );
