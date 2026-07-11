@@ -64,9 +64,14 @@ export const qk = {
   orgSkills: (orgId: string) => ["org-skills", orgId] as const,
   /** One org's Claude subscription usage snapshot (`GET /web/orgs/:orgId/usage`). */
   orgUsage: (orgId: string) => ["org-usage", orgId] as const,
+  /** One personal credential's own live Claude usage (`GET …/claude-credentials/:id/usage`). */
+  orgCredentialUsage: (orgId: string, credentialId: string) =>
+    ["org-credential-usage", orgId, credentialId] as const,
   /** One org's Claude credentials list (`GET /web/orgs/:orgId/claude-credentials`). */
   orgClaudeCredentials: (orgId: string) =>
     ["org-claude-credentials", orgId] as const,
+  /** One org's decoded Codex account email (owner-only `GET /web/orgs/:orgId/credentials/codex`). */
+  orgCodexAccount: (orgId: string) => ["org-codex-account", orgId] as const,
   /** The host box's live machine stats snapshot (`GET /web/host-stats`). Not org-scoped. */
   hostStats: () => ["host-stats"] as const,
   /** One window's bucketed host-stats history (`GET /web/host-stats/history?hours=`). Not org-scoped. */

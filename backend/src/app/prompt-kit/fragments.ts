@@ -138,6 +138,40 @@ export const COMMIT_AND_PUSH_NOTE =
   'branch. Leave the working tree CLEAN. THEN call `complete_thread`. If you finish without committing, your ' +
   'work is treated as unfinished.';
 
+/** One live `atlas-svc` service, reduced to the primitives a prompt line needs — deliberately NOT the
+ *  driver/exposure `ServiceMarker` type, so this fragment stays a Nest-free leaf (the driver maps its
+ *  domain markers down to this shape). */
+export type RunningServiceInfo = {
+  name: string;
+  /** The advertised listen port, or null for a non-HTTP worker. */
+  port: number | null;
+  /** The public preview URL when the service is exposed + previews are on; otherwise null. */
+  url: string | null;
+};
+
+/**
+ * RUNNING SERVICES — the "what's already online" block folded FRESH into each builder turn-kick (and every
+ * rotated Leg), so a session reuses services an earlier session/Leg left running under `atlas-svc` instead
+ * of restarting them. The driver probes the live supervisor state and maps it to {@link RunningServiceInfo};
+ * this renders the prose. Returns '' for an empty list so the caller can omit the block entirely.
+ */
+export function renderRunningServicesNote(services: RunningServiceInfo[]): string {
+  if (services.length === 0) return '';
+  const lines = services.map((s) => {
+    const port = s.port != null ? ` — port ${s.port}` : '';
+    const url = s.url ? ` — ${s.url}` : '';
+    return `- ${s.name}${port}${url}`;
+  });
+  return [
+    '<running_services>',
+    'These `atlas-svc` services were started by an EARLIER session or Leg on this sandbox and are STILL ' +
+      'ONLINE now. REUSE them — do NOT restart or re-`atlas-svc run` a service already listed here; ' +
+      '`atlas-svc ps` / `atlas-svc logs <name>` to inspect one, and curl its port/URL to confirm it responds.',
+    ...lines,
+    '</running_services>',
+  ].join('\n');
+}
+
 /**
  * GIT SAFETY — the destructive-command prohibition every git-running persona/turn shares. The single home so
  * the in-sandbox open-PR turn (`turns/ship-open-pr.ts`) and the ship-time master-review persona (`ship.group`)
@@ -410,8 +444,8 @@ export const PUBLIC_EXPOSURE_NOTE = [
   'PUBLIC PREVIEW URLS: a supervised service started with a port is automatically exposed on the public',
   'internet so the operator can test your branch live. Start it as `atlas-svc run --name <svc> --port <n>',
   '-- <cmd>` and it is reachable at `https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN`. Those two vars',
-  'are in your env ONLY when previews are enabled — if either is unset, exposure is off, so skip this whole',
-  'section and do not promise the operator a URL.',
+  'are expected in every build-brain sandbox; if either is somehow absent, treat that as Atlas harness infra',
+  'being broken, not as a feature-level preview opt-out.',
   'The URL is DETERMINISTIC: you know it BEFORE you start anything, which is load-bearing because a frontend',
   'bakes its API base URL at build/start time and a backend bakes its cookie domain + CORS allow-list at',
   'boot. So the ordering is not optional:',

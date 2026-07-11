@@ -506,7 +506,7 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
     expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
   });
 
-  it('ignores an unactionable pull_request action (e.g. synchronize)', async () => {
+  it('a synchronize (head push) re-arms the owning PR (pr-rearm)', async () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
     const synced = {
       action: 'synchronize',
@@ -521,6 +521,90 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
     const json = JSON.stringify(synced);
     const res = await src.handlePrWebhook(
       raw(synced, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'pull_request',
+      }),
+    );
+    expect(res).toMatchObject({
+      outcome: 'pr-rearm',
+      orgId: 'T1',
+      repoId: 'web',
+      prNumber: 5,
+      branch: 'feat/x',
+    });
+  });
+
+  it('a ready_for_review action re-arms the owning PR (pr-rearm)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const readied = {
+      action: 'ready_for_review',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: {
+        number: 9,
+        html_url: 'http://pr/9',
+        merged: false,
+        head: { ref: 'feat/y' },
+      },
+    };
+    const json = JSON.stringify(readied);
+    const res = await src.handlePrWebhook(
+      raw(readied, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'pull_request',
+      }),
+    );
+    expect(res).toMatchObject({
+      outcome: 'pr-rearm',
+      orgId: 'T1',
+      repoId: 'web',
+      prNumber: 9,
+      branch: 'feat/y',
+    });
+  });
+
+  it('a converted_to_draft action re-arms the owning PR (pr-rearm)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const drafted = {
+      action: 'converted_to_draft',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: {
+        number: 11,
+        html_url: 'http://pr/11',
+        merged: false,
+        head: { ref: 'feat/z' },
+      },
+    };
+    const json = JSON.stringify(drafted);
+    const res = await src.handlePrWebhook(
+      raw(drafted, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'pull_request',
+      }),
+    );
+    expect(res).toMatchObject({
+      outcome: 'pr-rearm',
+      orgId: 'T1',
+      repoId: 'web',
+      prNumber: 11,
+      branch: 'feat/z',
+    });
+  });
+
+  it('ignores an unactionable pull_request action (e.g. labeled)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const labeled = {
+      action: 'labeled',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: {
+        number: 5,
+        html_url: 'http://pr/5',
+        merged: false,
+        head: { ref: 'feat/x' },
+      },
+    };
+    const json = JSON.stringify(labeled);
+    const res = await src.handlePrWebhook(
+      raw(labeled, {
         'x-hub-signature-256': sign(json),
         'x-github-event': 'pull_request',
       }),
@@ -663,5 +747,69 @@ describe('GithubNotificationSource.handleWorkEvent', () => {
     const { ci, triage } = await src.handleWorkEvent(raw(payload, headers));
     expect(ci).toBeNull();
     expect(triage).toMatchObject({ outcome: 'ignored' });
+  });
+
+  it('a submitted pull_request_review yields a non-null rearm for the owning PR', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      action: 'submitted',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: { number: 5, head: { ref: 'feat/a1b2c3d4' } },
+      review: {
+        id: 900,
+        state: 'approved',
+        body: '',
+        user: { login: 'dennis' },
+      },
+    };
+    const headers = {
+      'x-hub-signature-256': sign(JSON.stringify(payload)),
+      'x-github-event': 'pull_request_review',
+    };
+
+    const { rearm } = await src.handleWorkEvent(raw(payload, headers));
+    expect(rearm).toEqual({
+      orgId: 'T1',
+      repoId: 'web',
+      prNumber: 5,
+      branch: 'feat/a1b2c3d4',
+    });
+  });
+
+  it('a dismissed pull_request_review also yields a non-null rearm', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      action: 'dismissed',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: { number: 6, head: { ref: 'feat/b' } },
+      review: { id: 901, state: 'dismissed', body: '', user: { login: 'dennis' } },
+    };
+    const headers = {
+      'x-hub-signature-256': sign(JSON.stringify(payload)),
+      'x-github-event': 'pull_request_review',
+    };
+
+    const { rearm } = await src.handleWorkEvent(raw(payload, headers));
+    expect(rearm).toEqual({
+      orgId: 'T1',
+      repoId: 'web',
+      prNumber: 6,
+      branch: 'feat/b',
+    });
+  });
+
+  it('returns rearm: null for a non-review work event (e.g. check_run)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      repository: { full_name: 'Acme/Web' },
+      check_run: { id: 7, name: 'Typecheck', status: 'completed', conclusion: 'failure' },
+    };
+    const headers = {
+      'x-hub-signature-256': sign(JSON.stringify(payload)),
+      'x-github-event': 'check_run',
+    };
+
+    const { rearm } = await src.handleWorkEvent(raw(payload, headers));
+    expect(rearm).toBeNull();
   });
 });

@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ClaudeUsageSnapshot, ClaudeUsageWindowKey, StoredUsageWindow } from '@workspace/shared';
+import type { EnvService } from '@core/config/env/env.service';
 import { OauthUsageService } from './oauth-usage.service';
+import type { ClaudeCredentialStore, ClaudeCredentialSummary } from './claude-credential.store';
 import type { CredentialResolver } from './credential-resolver.service';
 import type { TenantCredentialStore } from './tenant-credential.store';
 
@@ -35,12 +37,70 @@ class FakeCredentialStore {
   }
 }
 
+type FakeCredentialRow = { id: string; kind: 'setup_token' | 'personal'; secret: string };
+
+/**
+ * Minimal in-memory stand-in for `ClaudeCredentialStore`'s per-credential read/write-back surface — just
+ * enough for `getForCredential`'s routing + on-demand-refresh write-back to exercise against.
+ */
+class FakeClaudeStore {
+  readonly advanceCalls: Array<{ orgId: string; credentialId: string; secret: string }> = [];
+
+  constructor(private readonly rows: FakeCredentialRow[] = []) {}
+
+  list(_orgId: string): Promise<ClaudeCredentialSummary[]> {
+    return Promise.resolve(
+      this.rows.map((row) => ({
+        id: row.id,
+        label: row.id,
+        kind: row.kind,
+        status: 'active',
+        expiresAt: null,
+        accountEmail: null,
+        isSelected: false,
+      })),
+    );
+  }
+
+  getDecryptedById(_orgId: string, id: string): Promise<FakeCredentialRow | null> {
+    return Promise.resolve(this.rows.find((row) => row.id === id) ?? null);
+  }
+
+  advanceClaudeCredential(orgId: string, credentialId: string, secret: string): Promise<void> {
+    this.advanceCalls.push({ orgId, credentialId, secret });
+    return Promise.resolve();
+  }
+}
+
+/** A `personal` credential's decrypted secret shape: a `{claudeAiOauth:{…}}` JSON blob. */
+function personalSecret(p: { accessToken: string; refreshToken: string; expiresAt: number }): string {
+  return JSON.stringify({ claudeAiOauth: p });
+}
+
+/** A well-formed `/api/oauth/usage` body with just the five-hour window populated. */
+function usageBody(utilization: number, resetsAt: string): unknown {
+  return { five_hour: { utilization, resets_at: resetsAt } };
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(body),
+  } as Response;
+}
+
 /** applyHarvest writes through to the (fake) durable store; get() serves the harvested snapshot without HTTP when it's fresh. */
-function makeService(store: FakeCredentialStore = new FakeCredentialStore()): OauthUsageService {
+function makeService(
+  store: FakeCredentialStore = new FakeCredentialStore(),
+  claudeStore: FakeClaudeStore = new FakeClaudeStore(),
+): OauthUsageService {
   // No credential is needed: a fresh, non-empty harvest short-circuits the HTTP fallback in get().
   return new OauthUsageService(
     {} as unknown as CredentialResolver,
     store as unknown as TenantCredentialStore,
+    claudeStore as unknown as ClaudeCredentialStore,
+    { get: () => undefined } as unknown as EnvService,
   );
 }
 
@@ -146,5 +206,98 @@ describe('OauthUsageService.applyHarvest', () => {
       utilization: 100,
       resetsAt: new Date(resetsAt).toISOString(),
     });
+  });
+});
+
+describe('OauthUsageService.getForCredential', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('degrades a setup_token credential without hitting the network', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const claudeStore = new FakeClaudeStore([
+      { id: 'cred1', kind: 'setup_token', secret: 'sk-ant-oat-raw' },
+    ]);
+    const svc = makeService(new FakeCredentialStore(), claudeStore);
+
+    const usage = await svc.getForCredential('org1', 'cred1');
+
+    expect(usage.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('degrades an unknown credential id without hitting the network', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = makeService(new FakeCredentialStore(), new FakeClaudeStore([]));
+
+    const usage = await svc.getForCredential('org1', 'missing-cred');
+
+    expect(usage.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fetches a personal credential’s OWN live usage via its access token, and never writes back an unexpired token', async () => {
+    const resetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const fetchMock = vi.fn((url: string, init: RequestInit) => {
+      expect(url).toBe('https://api.anthropic.com/api/oauth/usage');
+      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer at-personal');
+      return jsonResponse(200, usageBody(42, resetsAt));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const claudeStore = new FakeClaudeStore([
+      {
+        id: 'cred1',
+        kind: 'personal',
+        secret: personalSecret({
+          accessToken: 'at-personal',
+          refreshToken: 'rt-personal',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        }),
+      },
+    ]);
+    const svc = makeService(new FakeCredentialStore(), claudeStore);
+
+    const usage = await svc.getForCredential('org1', 'cred1');
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(usage.ok).toBe(true);
+    expect(usage.fiveHour).toEqual({ utilization: 42, resetsAt: new Date(resetsAt).toISOString() });
+    expect(claudeStore.advanceCalls).toHaveLength(0);
+  });
+
+  it('never routes the per-credential fetch through the org-level harvested snapshot', async () => {
+    // A stale/absent harvest for the org must not short-circuit or otherwise influence the per-credential
+    // path — it always live-fetches THIS credential's own token.
+    const store = new FakeCredentialStore();
+    await store.mergeClaudeUsageWindow(
+      'org1',
+      'fiveHour',
+      { utilization: 99, resetsAt: new Date().toISOString() },
+      Date.now(),
+    );
+    const resetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => jsonResponse(200, usageBody(7, resetsAt))),
+    );
+    const claudeStore = new FakeClaudeStore([
+      {
+        id: 'cred1',
+        kind: 'personal',
+        secret: personalSecret({
+          accessToken: 'at-personal',
+          refreshToken: 'rt-personal',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        }),
+      },
+    ]);
+    const svc = makeService(store, claudeStore);
+
+    const usage = await svc.getForCredential('org1', 'cred1');
+
+    expect(usage.fiveHour?.utilization).toBe(7);
   });
 });
