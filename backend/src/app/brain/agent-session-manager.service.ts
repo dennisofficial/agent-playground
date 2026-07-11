@@ -6969,6 +6969,8 @@ export function renderDoneDelivery(
           `integrated result (the diff; any lane's transcript via \`atlas-tx\`), then post the operator a crisp`,
           `summary of what shipped and any risks. You may investigate/report/request-secret/retry a lane; you`,
           `may NOT ship — the **Ship it** gate is the operator's.`,
+          `If the change has a demonstrable runtime surface, ALSO offer the operator a live preview of it as part ` +
+            `of your summary (see LIVE PREVIEW AT THE SHIP GATE) — prepare it demo-ready before handing over the URL.`,
           term?.summary ? `master review outcome: ${term.summary}` : null,
           perThreadGaps?.length
             ? [
