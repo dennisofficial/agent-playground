@@ -333,8 +333,13 @@ export function NavigatorPreviewButton({ jobRef }: { jobRef: JobRef }) {
       onClick={() => {
         if (!say.isPending) say.mutate(PREVIEW_REQUEST_TEXT);
       }}
-      className="flex w-full items-center justify-center gap-1.5 rounded-md border text-[10.5px] font-medium text-accent transition hover:bg-surface-2 disabled:opacity-60"
-      style={{ borderColor: "var(--accent-line)", padding: "6px 0" }}
+      className="flex w-full items-center justify-center gap-1.5 rounded-md border text-[10.5px] font-medium transition hover:brightness-95 disabled:opacity-60"
+      style={{
+        color: "var(--blue)",
+        background: "color-mix(in srgb, var(--blue) 12%, transparent)",
+        borderColor: "color-mix(in srgb, var(--blue) 30%, transparent)",
+        padding: "6px 0",
+      }}
     >
       <Globe size={11} /> {say.isPending ? "Requesting…" : "Spin up preview"}
     </button>
@@ -405,7 +410,7 @@ export function PersistentShipBar({
         style={{
           borderRadius: "8px",
           padding: "8px 15px",
-          border: "1px solid var(--green)",
+          border: "1px solid var(--accent)",
         }}
         iconSize={13}
       />
@@ -425,6 +430,7 @@ function VerdictButton({
   idleLabel,
   pendingLabel,
   doneLabel,
+  tone = "green",
   className = "",
   style,
   iconSize,
@@ -438,6 +444,9 @@ function VerdictButton({
   idleLabel: string;
   pendingLabel: string;
   doneLabel: string;
+  /** Fill tone — the shared default is `green`; the ship verdict uses `accent` so "Ship it" matches the
+   *  accent-solid primary on the ship card. */
+  tone?: "green" | "accent";
   className?: string;
   style?: React.CSSProperties;
   iconSize: number;
@@ -449,8 +458,14 @@ function VerdictButton({
       disabled={pending || approved || blocked}
       className={`inline-flex items-center gap-1.5 font-bold text-white transition hover:brightness-95 disabled:cursor-default disabled:opacity-90 ${className}`}
       style={{
-        background: "var(--green)",
-        boxShadow: "0 2px 8px var(--green-soft)",
+        background:
+          tone === "accent"
+            ? "linear-gradient(145deg, var(--accent), var(--accent-2))"
+            : "var(--green)",
+        boxShadow:
+          tone === "accent"
+            ? "0 5px 16px var(--accent-soft)"
+            : "0 2px 8px var(--green-soft)",
         ...style,
       }}
     >
@@ -560,6 +575,7 @@ function ShipButton(
   return (
     <VerdictButton
       {...props}
+      tone="accent"
       idleLabel="Ship it"
       pendingLabel="Shipping…"
       doneLabel="Shipped"

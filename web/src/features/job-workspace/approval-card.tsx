@@ -242,15 +242,18 @@ function ShipCardPreviewButton({ jobRef }: { jobRef: JobRef }) {
   return (
     <Button
       size="sm"
-      variant="ghost"
+      variant="soft"
       loading={say.isPending}
       loadingText="Requesting…"
       icon={<Globe size={13} />}
       onClick={() => {
         if (!say.isPending) say.mutate(PREVIEW_REQUEST_TEXT);
       }}
-      className="text-accent"
-      style={{ borderColor: "var(--accent-line)" }}
+      style={{
+        color: "var(--blue)",
+        background: "color-mix(in srgb, var(--blue) 12%, transparent)",
+        borderColor: "color-mix(in srgb, var(--blue) 30%, transparent)",
+      }}
     >
       Spin up preview
     </Button>
