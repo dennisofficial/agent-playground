@@ -95,8 +95,13 @@ export class ClaudeCredentialStore {
     });
   }
 
-  /** Create a new `personal` (OAuth login) credential row. Does NOT select it — callers call `setSelected`. */
-  async createPersonal(
+  /**
+   * Upsert a `personal` (OAuth login) credential row, keyed on (org, account email): re-logging in with
+   * the SAME Claude account updates that row in place (preserving its id, selection, and created_at)
+   * rather than accumulating a duplicate. No `accountEmail` (or no existing match) inserts a new row.
+   * Does NOT select it — callers call `setSelected`.
+   */
+  async upsertPersonal(
     orgId: string,
     p: {
       label: string;
@@ -109,6 +114,22 @@ export class ClaudeCredentialStore {
     },
   ): Promise<string> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
+    const existing = p.accountEmail
+      ? await this.repo.findOne({ where: { org_id: orgId, kind: 'personal', account_email: p.accountEmail } })
+      : null;
+    if (existing) {
+      existing.access_token_enc = encryptSecret(p.accessToken, key);
+      existing.refresh_token_enc = encryptSecret(p.refreshToken, key);
+      existing.expires_at = new Date(p.expiresAt);
+      existing.scopes = p.scopes ?? null;
+      existing.subscription_type = p.subscriptionType ?? null;
+      existing.label = p.label; // keep the display name in sync with the email
+      existing.status = 'active';
+      existing.last_refreshed_at = new Date();
+      const saved = await this.repo.save(existing);
+      this.logger.log(`updated personal claude credential in place for org=${orgId} id=${saved.id}`);
+      return saved.id; // selection + created_at preserved
+    }
     const row = this.repo.create({
       org_id: orgId,
       label: p.label,

@@ -113,10 +113,10 @@ function oauthBlob(expiresAt: number, accessToken = 'access', refreshToken = 're
 }
 
 describe('ClaudeCredentialStore', () => {
-  it('createPersonal + setSelected + getSelectedDecrypted round-trips through the cipher', async () => {
+  it('upsertPersonal + setSelected + getSelectedDecrypted round-trips through the cipher', async () => {
     const { store, orgs } = makeStore();
     orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
-    const id = await store.createPersonal('T1', {
+    const id = await store.upsertPersonal('T1', {
       label: 'Dennis personal',
       accessToken: 'acc-1',
       refreshToken: 'ref-1',
@@ -138,6 +138,81 @@ describe('ClaudeCredentialStore', () => {
         scopes: ['user:inference', 'user:profile'],
         subscriptionType: 'max',
       },
+    });
+  });
+
+  describe('upsertPersonal (upsert-by-email dedup)', () => {
+    it('a second call with the SAME accountEmail updates the SAME row (id + token fields), no duplicate', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
+      const id1 = await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+        accountEmail: 'd@example.com',
+      });
+      const id2 = await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+        accountEmail: 'd@example.com',
+      });
+      expect(id2).toBe(id1);
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(1);
+
+      await store.setSelected('T1', id1);
+      const sel = await store.getSelectedDecrypted('T1');
+      expect(JSON.parse(sel!.secret).claudeAiOauth).toMatchObject({
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+      });
+    });
+
+    it('a DIFFERENT accountEmail inserts a NEW row', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
+      await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+        accountEmail: 'd@example.com',
+      });
+      await store.upsertPersonal('T1', {
+        label: 'Other personal',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+        accountEmail: 'other@example.com',
+      });
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(2);
+    });
+
+    it('with NO accountEmail, every call inserts (no dedup key)', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
+      await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+      });
+      await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+      });
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(2);
     });
   });
 
@@ -175,7 +250,7 @@ describe('ClaudeCredentialStore', () => {
     it('advances a PERSONAL credential to a blob with a NEWER expiresAt', async () => {
       const { store, orgs } = makeStore();
       orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
-      const id = await store.createPersonal('T1', {
+      const id = await store.upsertPersonal('T1', {
         label: 'p',
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
@@ -197,7 +272,7 @@ describe('ClaudeCredentialStore', () => {
     it('SKIPS a blob with an OLDER or EQUAL expiresAt (never clobbers a newer credential)', async () => {
       const { store, orgs } = makeStore();
       orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
-      const id = await store.createPersonal('T1', {
+      const id = await store.upsertPersonal('T1', {
         label: 'p',
         accessToken: 'current-access',
         refreshToken: 'current-refresh',
