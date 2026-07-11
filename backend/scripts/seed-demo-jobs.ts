@@ -326,7 +326,7 @@ const RICH_MESSAGES: DemoMessage[] = [
     author: 'System',
     author_id: 'system',
     author_bot_id: null,
-    text: 'Back to planning — this plan was sent back for changes. Noted: fade the label sooner.',
+    text: 'Got it — back to the drawing board. Noted: fade the label sooner What should change?',
     kind: 'chat',
     meta: { source: 'system_notice' },
   },

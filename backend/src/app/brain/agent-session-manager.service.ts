@@ -5639,14 +5639,14 @@ export class AgentSessionManager
       const note = resolution.note ? ` Noted: ${resolution.note}` : '';
       await this.saySystemNotice(
         stimulus,
-        `Back to planning — this plan was sent back for changes.${note}`,
+        `Got it — back to the drawing board.${note} What should change?`,
       );
       return;
     }
 
     // deny
     await this.store.cancel(job.id);
-    await this.saySystemNotice(stimulus, 'This plan was declined — dropping the job.');
+    await this.saySystemNotice(stimulus, "Understood — I'll drop this one.");
   }
 
   /**

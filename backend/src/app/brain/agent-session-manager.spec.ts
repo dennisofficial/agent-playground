@@ -1998,16 +1998,16 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(mockStore.reopenPlanning).toHaveBeenCalledWith(FAKE_JOB_ID);
       expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(
         FAKE_JOB_ID,
-        'Back to planning — this plan was sent back for changes. Noted: tighten scope',
+        'Got it — back to the drawing board. Noted: tighten scope What should change?',
       );
       expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
     });
 
-    it('deny → "This plan was declined — dropping the job." (System notice), cancels, not Atlas', async () => {
+    it('deny → "Understood — I\'ll drop this one." (System notice), cancels, not Atlas', async () => {
       setup(['Backend']);
       await manager.resolveApprovalDurably(FAKE_JOB_ID, 'deny', 'U-OP');
       expect(mockStore.cancel).toHaveBeenCalledWith(FAKE_JOB_ID);
-      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(FAKE_JOB_ID, 'This plan was declined — dropping the job.');
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(FAKE_JOB_ID, "Understood — I'll drop this one.");
       expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
     });
   });
