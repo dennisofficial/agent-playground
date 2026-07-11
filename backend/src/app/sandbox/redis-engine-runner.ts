@@ -319,8 +319,11 @@ export class RedisEngineRunner implements EngineRunnerPort {
               return true; // finalize error ⇒ default to claimed: dropping a real transcript is worse than a rare dup
             });
           const won = wasRegistered ? deletedByUs : true;
-          this.lastClaim.set(turnId, won);
+          // Carry the outcome on `result` when there is one; only the error path (no `result`) needs the
+          // Map, and consumeClaim() drains that entry. Stashing a result-carried outcome would leak an
+          // entry per turn forever (the success paths gate on `result.claimed` and never consume it).
           if (result) result.claimed = won;
+          else this.lastClaim.set(turnId, won);
           // Reclaim the turn's Redis streams — the turn is done + its transcript persisted, and the
           // registry row is gone, so a re-attach will never need them again (retention; no MAXLEN needed).
           await this.redis
