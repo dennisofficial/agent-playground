@@ -187,10 +187,13 @@ export class SubagentsGroup {
         'several style VARIANTS, lay them side by side in the one page; otherwise deliver ONE refined direction.',
       'SELF-VERIFY BY LOOKING — a mockup you never rendered is unverified. For anything beyond a trivial ' +
         'one-off, RENDER your HTML with headless Playwright (install on demand: ' +
-        '`npx playwright install --with-deps chromium`), SCREENSHOT it, and actually LOOK at the screenshot ' +
-        '(Read it back — images render visually); where cheap, also capture the real design-system preview or ' +
-        'running app and compare. Fix any drift in theme, accent, typography, spacing, or component shape, and ' +
-        're-read the real token file to confirm your palette matches, before you return.',
+        '`npx playwright install --with-deps chromium`), SCREENSHOT it to `/playground`, and actually LOOK at ' +
+        'the screenshot (Read it back — images render visually); where cheap, also capture the real ' +
+        'design-system preview or running app and compare. This screenshot is a THROWAWAY self-check for your ' +
+        'own eyes — NEVER deliver a `.png` of the mockup you authored: the DELIVERABLE stays the single ' +
+        '`.html`, which the ARTIFACTS panel renders full-bleed at higher fidelity than any raster. Fix any ' +
+        'drift in theme, accent, typography, spacing, or component shape, and re-read the real token file to ' +
+        'confirm your palette matches, before you return.',
       PLAYGROUND_NOTE,
       'OUTPUT CONTRACT: write exactly ONE self-contained static `.html` file (an inline `<style>` block; no ' +
         'build step and no external JS required to view it) to the EXACT `/context/artifacts/<file>` path the ' +
