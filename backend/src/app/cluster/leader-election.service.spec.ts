@@ -109,7 +109,7 @@ describe('LeaderElectionService', () => {
   });
 
   it('is the implicit leader on a *_test database (no real lock taken)', async () => {
-    const svc = new LeaderElectionService(envMock({ POSTGRES_DB: 'agent_playground_test' }));
+    const svc = new LeaderElectionService(envMock({ POSTGRES_DB: 'atlas_test' }));
     await svc.onApplicationBootstrap();
     expect(svc.isLeader()).toBe(true);
     expect(h.clients).toHaveLength(0); // never opened a pg connection

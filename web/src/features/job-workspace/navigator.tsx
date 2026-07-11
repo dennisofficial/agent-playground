@@ -43,7 +43,11 @@ import {
   haltThreadIdx,
 } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
-import { NavigatorApproveButton, NavigatorShipButton } from "./spec-approval";
+import {
+  NavigatorApproveButton,
+  NavigatorPreviewButton,
+  NavigatorShipButton,
+} from "./spec-approval";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
@@ -110,6 +114,7 @@ export function Navigator({
   laneNode,
   detailNode,
   jobRef,
+  canRequestPreview,
   approveValue,
   shipValue,
   onConversation,
@@ -133,6 +138,8 @@ export function Navigator({
   detailNode: string | null;
   /** The open job — for the in-place "Approve plan" callout. */
   jobRef: JobRef;
+  /** True for build-brain jobs once their kind is known; drives the persistent preview request button. */
+  canRequestPreview: boolean;
   /** The approval card's verbatim approve `value`, when the job is awaiting approval (else ''). Drives
    *  the navigator approval callout. */
   approveValue: string;
@@ -325,7 +332,7 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
+                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} /> : null}
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
@@ -342,7 +349,7 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
+                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} /> : null}
                 </div>
               );
             })()
@@ -408,6 +415,13 @@ export function Navigator({
         {st === "awaiting_ship_review" && shipValue ? (
           <div className="mt-2">
             <NavigatorShipButton jobRef={jobRef} value={shipValue} />
+          </div>
+        ) : null}
+        {/* Spin up preview — persistent across the whole build lifecycle (d4). Gated on build KIND
+            (build-brain only), NOT status/branch, so the operator can ask anytime. */}
+        {canRequestPreview ? (
+          <div className="mt-2">
+            <NavigatorPreviewButton jobRef={jobRef} />
           </div>
         ) : null}
       </div>
@@ -591,17 +605,72 @@ function ThreadRows({
   // One renderer for every stage: running/done/failed threads expand to their live task list; pre-approval
   // drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the hero ghost row —
   // EXCEPT a committed direct build, which never grows lanes, so its "approve the plan" ghost is just noise.
-  if (!job || job.threads.length === 0) {
+  // PLAN VERSIONING: prior revisions (browsable history) render below the active lanes; a re-propose/direct
+  // build over already-DONE work can leave the active lanes empty while history persists — show history then.
+  const prior = job?.priorRevisions ?? [];
+  if (!job || (job.threads.length === 0 && prior.length === 0)) {
     return isDirectBuild ? null : <BuildLanesEmpty />;
   }
   return (
-    <PipelineTree
-      job={job}
-      status={status}
-      jobId={jobId}
-      laneNode={laneNode}
-      onSelectNode={onSelectNode}
-    />
+    <>
+      {job.threads.length > 0 ? (
+        <PipelineTree
+          job={job}
+          status={status}
+          jobId={jobId}
+          laneNode={laneNode}
+          onSelectNode={onSelectNode}
+        />
+      ) : null}
+      {prior.map((rev) => (
+        <PriorRevisionSection
+          key={rev.decisionRecordId}
+          job={job}
+          revision={rev}
+          jobId={jobId}
+          laneNode={laneNode}
+          onSelectNode={onSelectNode}
+        />
+      ))}
+    </>
+  );
+}
+
+/**
+ * One PRIOR PLAN REVISION as a collapsed, muted "Previous plan (vN)" section — read-only history from an
+ * earlier plan that was superseded by a re-propose over already-DONE work. Reuses `PipelineTree` with a
+ * synthetic job (the revision's lanes, no active halt); the muted wrapper reads as history while lane clicks
+ * still open each lane's persisted transcript (browsing is the point). Collapsed by default to stay quiet.
+ */
+function PriorRevisionSection({
+  job,
+  revision,
+  jobId,
+  laneNode,
+  onSelectNode,
+}: {
+  job: PipelineJob;
+  revision: NonNullable<PipelineJob["priorRevisions"]>[number];
+  jobId: string;
+  laneNode: string | null;
+  onSelectNode: (node: string) => void;
+}) {
+  const revJob: PipelineJob = { ...job, threads: revision.threads, halt: null };
+  return (
+    <details className="mt-1 opacity-70">
+      <summary className="cursor-pointer list-none px-2 py-1.5 text-[10.5px] font-medium uppercase tracking-wide text-dim">
+        Previous plan (v{revision.revision})
+      </summary>
+      <div className="mt-0.5">
+        <PipelineTree
+          job={revJob}
+          status="done"
+          jobId={jobId}
+          laneNode={laneNode}
+          onSelectNode={onSelectNode}
+        />
+      </div>
+    </details>
   );
 }
 

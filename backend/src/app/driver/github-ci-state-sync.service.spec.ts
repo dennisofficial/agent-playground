@@ -46,6 +46,7 @@ function make(over: {
           repo_id: 'repo-1',
           pr_number: 7,
           ci_status: null,
+          ci_counts: null,
           ...over.job,
         } as JobEntity);
 
@@ -144,20 +145,20 @@ describe('GithubCiStateSync recompute (via schedule)', () => {
     });
     expect(update).toHaveBeenCalledWith(
       { id: 'job-1' },
-      { ci_status: 'success' },
+      { ci_status: 'success', ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 } },
     );
   });
 
-  it('writes ci_status=failure when any completed run failed', async () => {
+  it('writes ci_status=failure with per-category counts (2 failing, 1 skipped, 3 success)', async () => {
     const { sync, update } = make({
       detail: detail(),
-      runs: [run('success'), run('failure')],
+      runs: [run('failure'), run('failure'), run('skipped'), run('success'), run('success'), run('success')],
     });
     sync.schedule(DELTA);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(update).toHaveBeenCalledWith(
       { id: 'job-1' },
-      { ci_status: 'failure' },
+      { ci_status: 'failure', ci_counts: { failing: 2, pending: 0, passed: 3, skipped: 1, total: 6 } },
     );
   });
 
@@ -170,26 +171,32 @@ describe('GithubCiStateSync recompute (via schedule)', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(update).toHaveBeenCalledWith(
       { id: 'job-1' },
-      { ci_status: 'pending' },
+      { ci_status: 'pending', ci_counts: { failing: 0, pending: 1, passed: 1, skipped: 0, total: 2 } },
     );
   });
 
-  it('writes ci_status=null when no checks are reported', async () => {
+  it('CLOBBER GUARD: empty check-runs never overwrite a known ci_status/ci_counts back to null', async () => {
     const { sync, update } = make({
       detail: detail(),
       runs: [],
-      job: { ci_status: 'success' },
+      job: {
+        ci_status: 'failure',
+        ci_counts: { failing: 1, pending: 0, passed: 1, skipped: 0, total: 2 },
+      },
     });
     sync.schedule(DELTA);
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { ci_status: null });
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('does NOT write when the computed ci matches the job already has', async () => {
     const { sync, update } = make({
       detail: detail(),
       runs: [run('success')],
-      job: { ci_status: 'success' },
+      job: {
+        ci_status: 'success',
+        ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 },
+      },
     });
     sync.schedule(DELTA);
     await vi.advanceTimersByTimeAsync(5_000);
@@ -239,7 +246,7 @@ describe('GithubCiStateSync recompute (via schedule)', () => {
     });
     expect(update).toHaveBeenCalledWith(
       { id: 'job-1' },
-      { ci_status: 'success' },
+      { ci_status: 'success', ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 } },
     );
   });
 });

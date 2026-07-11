@@ -55,7 +55,7 @@ import type { RawBodyRequest } from './ingress-http';
 
 const ORG_ID = '31111111-1111-4111-8111-111111111111';
 const SECRET = 'gh-int-secret';
-const OWNED_BRANCH = 'atlas/thread-deadbeef';
+const OWNED_BRANCH = 'feature/deadbeef';
 
 function dbOpts() {
   return {
@@ -267,7 +267,7 @@ describe('GithubStateWebhookController PR-state path', () => {
           repoId: 'repo-1',
           action: 'closed' as const,
           prNumber: 7,
-          headRef: 'atlas/thread-deadbeef',
+          headRef: 'feature/deadbeef',
           url: 'https://github.com/acme/web/pull/7',
           merged: true,
         },
@@ -289,7 +289,7 @@ describe('GithubStateWebhookController PR-state path', () => {
       repoId: 'repo-1',
       action: 'closed',
       prNumber: 7,
-      headRef: 'atlas/thread-deadbeef',
+      headRef: 'feature/deadbeef',
       url: 'https://github.com/acme/web/pull/7',
       merged: true,
     });
