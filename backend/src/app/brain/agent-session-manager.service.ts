@@ -139,6 +139,10 @@ import {
   TurnRegistry,
 } from '../sandbox/turn-registry.service';
 import {
+  TurnReattachRegistry,
+  type ReattachOutcome,
+} from '../sandbox/turn-reattach.registry';
+import {
   ENGINE_RUNNER,
   isEngineDetachedError,
   isUnresumableSessionMessage,
@@ -376,6 +380,10 @@ export class AgentSessionManager
     // deadlock DI — the brain constructs the driver). @Optional matching this constructor's convention —
     // the @Global BrainGatewayModule supplies it live; unit tests that never boot the seam omit it.
     @Optional() private readonly brainGateway?: BrainGateway,
+    // The kind→owner reattach routing table (from @Global SandboxModule). This service claims the brain-owned
+    // kinds on bootstrap so the leader watchdog can re-attach an orphaned-but-alive brain/compaction turn
+    // continuously, not only at the once-per-boot sweep. @Optional matching this constructor's convention.
+    @Optional() private readonly reattachRegistry?: TurnReattachRegistry,
   ) {}
 
   /**
@@ -445,6 +453,13 @@ export class AgentSessionManager
     });
     // NOTE: the `codex-review` thread-input transport was removed — Codex review is now Atlas-driven only
     // (the synchronous `review_plan` tool), so there is no external "post a rebuttal to Codex" path.
+    // Claim the brain-owned kinds on the reattach routing table so the leader watchdog can re-attach an
+    // orphaned-but-alive brain/compaction turn continuously (see `reattachTurnRow`), not only at the
+    // once-per-boot `reattachOwnedTurns` sweep. Unconditional + idempotent (the watchdog is leader-only).
+    for (const kind of ['brain', 'compaction'] as const) {
+      this.reattachRegistry?.register(kind, (row) => this.reattachTurnRow(row));
+    }
+
     this.leaderBootSub = this.election.onPromote(() =>
       this.runLeaderBootSweeps(),
     );
@@ -1510,6 +1525,38 @@ export class AgentSessionManager
     // Block ONLY on ordering-sensitive kinds (compaction → its reseed must land before
     // `reconcileStrandedCompactions` queries); long brain turns keep streaming in the background.
     await Promise.all(blocking);
+  }
+
+  /**
+   * WATCHDOG RE-ATTACH (brain kinds: brain/compaction). The leader watchdog calls this for one
+   * orphaned-but-alive `active_turns` row this service owns — the same recovery as the boot
+   * {@link reattachOwnedTurns} sweep, but for ONE row and triggered continuously (so a turn a restart
+   * orphaned resumes within a watchdog window, without waiting for the next process restart). Idempotent:
+   *   - a kind we don't own → 'deferred';
+   *   - the runner can't reattach, or we're already tailing this turn in-process → we don't double-attach;
+   *   - otherwise dispatch the kind's handler (brain runs fire-and-forget; compaction is short and awaited),
+   *     rebuilding the harness + tool closure and resuming the live engine.
+   * The `reattachOne`/`reattachCompactionOne` handlers self-guard on insufficient registry ctx (they no-op,
+   * leaving the engine live for a later attempt), so we never finalize a live turn here.
+   */
+  async reattachTurnRow(row: ActiveTurnEntity): Promise<ReattachOutcome> {
+    const handler = this.reattachHandlers()[row.kind];
+    if (!handler) return 'deferred';
+    if (!this.engineRunner.reattach) return 'deferred';
+    if (this.engineRunner.isAttached?.(row.turn_id)) {
+      // Already tailing it in THIS process — the live relay is advancing the heartbeat; nothing to do.
+      return 'attached';
+    }
+    if (handler.awaitCompletion) {
+      // Short, ordering-sensitive kinds (compaction): await so the watchdog's heartbeat freshen lands after.
+      await handler.run(row);
+    } else {
+      // Long-running kinds (brain) stream for minutes — fire-and-forget, mirroring the boot sweep.
+      void handler.run(row).catch((err) =>
+        this.logger.warn(`watchdog re-attach turn ${row.turn_id} (${row.kind}) failed: ${err}`),
+      );
+    }
+    return 'attached';
   }
 
   /** Re-attach one in-flight brain turn: rebuild stimulus → tools → harness, resume the engine, persist. */

@@ -28,6 +28,7 @@ import {
   CodexReviewEntity,
 } from '../persistence/entities';
 import { RunnerModule } from '../runner';
+import { TurnReattachRegistry } from '../sandbox/turn-reattach.registry';
 import { StimulusModule } from '../stimulus';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
@@ -163,6 +164,10 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     // without relying on an open console tab. From the @Global ExposureModule; inert when disabled. @Optional
     // so the module's direct-construction unit test compiles without a trailing argument.
     @Optional() private readonly exposure?: ExposureService,
+    // The kind→owner reattach routing table (from @Global SandboxModule). The driver claims the build kinds
+    // so the leader watchdog can re-drive an orphaned-but-alive build turn. @Optional so the module's
+    // direct-construction unit test compiles without a trailing argument.
+    @Optional() private readonly reattachRegistry?: TurnReattachRegistry,
   ) {}
 
   /**
@@ -172,6 +177,16 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
    * predecessor has fully drained) it reconciles, resumes, and starts the reaper.
    */
   async onApplicationBootstrap(): Promise<void> {
+    // Claim the build kinds the drive loop provably re-attaches (`runJob`→`findReattachableTurn` re-tails a
+    // live `step`/`gate` turn at its anchor) on the reattach routing table, so the leader watchdog can re-drive
+    // an orphaned-but-alive build turn (see ThreadDriver.reattachTurnRow). `review`/`autofix` are intentionally
+    // NOT claimed — the drive loop doesn't re-tail those at an anchor, so a re-drive could start a fresh stage
+    // beside the still-live engine; they keep the once-per-boot `resume()` recovery + the watchdog safety-net.
+    // Unconditional + idempotent — the watchdog itself is leader-only, so registration need not be gated.
+    for (const kind of ['step', 'gate'] as const) {
+      this.reattachRegistry?.register(kind, (row) => this.driver.reattachTurnRow(row));
+    }
+
     // Operator resume requests (POST /web/resume) → re-drive the paused job. Subscribed unconditionally,
     // independent of leadership (the agent test surface omits resumeRequests$; Caddy routes /resume only
     // to the leader anyway).

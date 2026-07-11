@@ -60,6 +60,7 @@ import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
+import type { ReattachOutcome } from '../sandbox/turn-reattach.registry';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import type {
   ActiveTurnEntity,
@@ -400,6 +401,40 @@ export class ThreadDriver implements JobDispatcher {
         `resumePaused job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
       );
     });
+  }
+
+  /**
+   * WATCHDOG RE-ATTACH (build kinds: step/gate/review/autofix). The leader watchdog calls this for one
+   * orphaned-but-alive `active_turns` row whose engine is still streaming but whose host relay was severed by
+   * a restart / leader flap. We don't re-tail the row directly — that would only re-persist the transcript and
+   * SKIP the driver's deterministic continuation (verification gate, commit/`commit_sha`, step `done`, branch
+   * backstop). Instead we WAKE THE FULL DRIVE: `drive()`→`runJob` fast-forwards completed work, re-reaches the
+   * interrupted batch, and re-attaches it via the existing `findReattachableTurn` path — exactly what boot
+   * `resume()` does, just triggered continuously instead of once. Idempotent + safe:
+   *   - only a `running`, un-halted job is drivable (`runJob`'s chokepoint) — otherwise 'deferred', so a
+   *     halted/parked/terminal job keeps its existing recovery (`resumePaused`/`retry`) and the watchdog keeps
+   *     the live turn alive rather than finalizing it;
+   *   - the per-job `active` single-flight guard (shared with boot `resume()`) means a re-kick can never
+   *     double-drive a job whose drive is already in flight.
+   */
+  async reattachTurnRow(row: ActiveTurnEntity): Promise<ReattachOutcome> {
+    const job = await this.store.loadJob(row.job_id).catch(() => null);
+    if (!job || job.status !== 'running' || job.halt != null) {
+      // Not drivable: `runJob` would no-op on a non-running / halted job anyway. Leave it for its existing
+      // recovery path; the watchdog keeps the (live) turn alive.
+      return 'deferred';
+    }
+    if (this.active.has(row.job_id)) {
+      // A drive is already in flight for this job (boot resume / a prior wake) — it owns re-reaching and
+      // re-attaching every thread's turn. Report attached so the watchdog just keeps it alive meanwhile.
+      return 'attached';
+    }
+    void this.drive(row.job_id).catch((err) =>
+      this.logger.error(
+        `reattach drive job=${row.job_id} crashed: ${err instanceof Error ? err.stack : err}`,
+      ),
+    );
+    return 'attached';
   }
 
   /**
