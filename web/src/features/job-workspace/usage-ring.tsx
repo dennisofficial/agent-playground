@@ -6,6 +6,8 @@ import { formatClockTime } from "@/lib/org-display";
 import type { WireOrgUsage } from "@/lib/api/types";
 
 type UsageWindow = WireOrgUsage["fiveHour"];
+/** A panel row's window data — the fixed windows plus the per-model ones (whose `resetsAt` may be null). */
+type PanelWindow = { utilization: number; resetsAt: string | null };
 type RingVisualState = "active" | "pending" | "degraded";
 
 const RING_R = 7;
@@ -13,7 +15,10 @@ const RING_CIRC = 2 * Math.PI * RING_R;
 const RING_STROKE = 2.2;
 
 const SESSION_WARNING_THRESHOLD = 0.7;
+/** ≥ this turns the session arc + % label the "critical" red — a warning colour, NOT the maxed-out dot. */
 const SESSION_LIMIT_THRESHOLD = 0.9;
+/** The center dot means "usage limit actually hit" — only at a full 100% window, never merely close to it. */
+const SESSION_MAXED_THRESHOLD = 1;
 const WEEKLY_CAPPED_THRESHOLD = 0.95;
 /** Weekly grey peaks (darkest in light theme, brightest in dark) at the half-week mark, then holds. */
 const WEEKLY_GREY_PEAK_PCT = 0.5;
@@ -21,6 +26,8 @@ const WEEKLY_GREY_MIN_MIX = 15;
 const WEEKLY_GREY_MAX_MIX = 68;
 
 const FRESHNESS_STALE_MS = 10 * 60_000;
+/** Opening the usage card re-fetches at most this often (1/min) — a fresh look without hammering the endpoint. */
+const OPEN_REFRESH_THROTTLE_MS = 60_000;
 const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
@@ -128,13 +135,14 @@ function Ring({
   state,
   sessionPct,
   weeklyPct,
-  atLimit,
+  maxed,
   size,
 }: {
   state: RingVisualState;
   sessionPct: number;
   weeklyPct: number;
-  atLimit: boolean;
+  /** Draw the center dot — true ONLY at a maxed-out (100%) window, not merely near the limit. */
+  maxed: boolean;
   size: number;
 }) {
   if (state === "degraded") {
@@ -163,10 +171,10 @@ function Ring({
     );
   }
 
-  const sessionColor = atLimit ? "var(--red)" : thresholdColor(sessionPct);
-  const sessionDasharray = atLimit
-    ? `${RING_CIRC} ${RING_CIRC}`
-    : `${RING_CIRC * sessionPct} ${RING_CIRC}`;
+  // The arc always reflects the ACTUAL utilization (a near-max window is drawn as it is, not force-filled),
+  // coloured red by the shared thresholds from 90% up. The maxed-out center dot is the only "limit hit" mark.
+  const sessionColor = thresholdColor(sessionPct);
+  const sessionDasharray = `${RING_CIRC * sessionPct} ${RING_CIRC}`;
 
   return (
     <svg width={size} height={size} viewBox="0 0 18 18" className="-rotate-90" aria-hidden>
@@ -190,7 +198,7 @@ function Ring({
         strokeLinecap="round"
         strokeDasharray={sessionDasharray}
       />
-      {atLimit ? <circle cx="9" cy="9" r={1.5} fill="var(--red)" /> : null}
+      {maxed ? <circle cx="9" cy="9" r={1.5} fill="var(--red)" /> : null}
     </svg>
   );
 }
@@ -239,13 +247,13 @@ function WindowRow({
   dimmed,
 }: {
   label: string;
-  window: NonNullable<UsageWindow>;
+  window: PanelWindow;
   dimmed: boolean;
 }) {
   const pct = clampPct(window.utilization / 100);
   const color = thresholdColor(pct);
-  const countdown = formatCountdown(window.resetsAt);
-  const resetHuman = formatResetHuman(window.resetsAt);
+  const countdown = formatCountdown(window.resetsAt ?? undefined);
+  const resetHuman = formatResetHuman(window.resetsAt ?? undefined);
   return (
     <div className={`flex flex-col gap-1 ${dimmed ? "opacity-70" : ""}`}>
       <div className="flex items-center justify-between gap-3">
@@ -274,7 +282,7 @@ function EmptyUsagePanel() {
           className="flex h-8 w-8 items-center justify-center rounded-full border"
           style={{ borderColor: "var(--border)" }}
         >
-          <Ring state="pending" sessionPct={0} weeklyPct={0} atLimit={false} size={16} />
+          <Ring state="pending" sessionPct={0} weeklyPct={0} maxed={false} size={16} />
         </span>
         <div className="text-[11px] font-semibold text-dim">No usage yet</div>
         <div className="max-w-[190px] text-[10px] text-faint">
@@ -317,9 +325,20 @@ function PanelFooter({ fetchedAt }: { fetchedAt: string | undefined }) {
  * must never block or error the composer.
  */
 export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }) {
-  const { data, isLoading } = useOrgUsage(orgId);
+  const { data, isLoading, refetch, dataUpdatedAt } = useOrgUsage(orgId);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Refresh-on-open: opening the panel re-fetches usage on the spot, but at most once per minute (skipped
+  // when the data is already newer than that). Read via a ref so this fires only on the open transition,
+  // not every time the cache updates. The backend also floors its live fetch at 1/min, so this can't spam.
+  const usageMeta = useRef({ refetch, dataUpdatedAt });
+  usageMeta.current = { refetch, dataUpdatedAt };
+  useEffect(() => {
+    if (!open) return;
+    const { refetch: doRefetch, dataUpdatedAt: lastAt } = usageMeta.current;
+    if (Date.now() - lastAt >= OPEN_REFRESH_THROTTLE_MS) void doRefetch();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -337,7 +356,7 @@ export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }
     };
   }, [open]);
 
-  const rows: [string, NonNullable<UsageWindow>][] = (
+  const fixedRows: [string, PanelWindow][] = (
     [
       ["Session · 5h", data?.fiveHour ?? null],
       ["Weekly · all models · 7d", data?.sevenDay ?? null],
@@ -345,6 +364,12 @@ export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }
       ["Sonnet · 7d", data?.sevenDaySonnet ?? null],
     ] as [string, UsageWindow][]
   ).filter((row): row is [string, NonNullable<UsageWindow>] => row[1] !== null);
+  // Per-model weekly caps (e.g. Fable) from the usage API `limits[]`, rendered after the fixed windows.
+  const modelRows: [string, PanelWindow][] = (data?.modelWindows ?? []).map((w) => [
+    `${w.label} · 7d`,
+    { utilization: w.utilization, resetsAt: w.resetsAt },
+  ]);
+  const rows: [string, PanelWindow][] = [...fixedRows, ...modelRows];
 
   const visualState: RingVisualState =
     (isLoading && !data) || data?.ok === false
@@ -355,12 +380,14 @@ export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }
 
   const sessionPct = data?.fiveHour ? clampPct(data.fiveHour.utilization / 100) : 0;
   const weeklyPct = data?.sevenDay ? clampPct(data.sevenDay.utilization / 100) : 0;
-  const atLimit = visualState === "active" && sessionPct >= SESSION_LIMIT_THRESHOLD;
+  // `critical` (≥90%) is the red WARNING colour on the arc + % label; `maxed` (100%) is the limit-hit dot.
+  const critical = visualState === "active" && sessionPct >= SESSION_LIMIT_THRESHOLD;
+  const maxed = visualState === "active" && sessionPct >= SESSION_MAXED_THRESHOLD;
 
   const labelText =
     visualState === "degraded" ? "–" : visualState === "pending" ? "·" : `${Math.round(sessionPct * 100)}%`;
-  const labelClassName = visualState === "active" && !atLimit ? "text-dim" : atLimit ? "" : "text-faint";
-  const labelStyle = atLimit ? { color: "var(--red)" } : undefined;
+  const labelClassName = visualState === "active" && !critical ? "text-dim" : critical ? "" : "text-faint";
+  const labelStyle = critical ? { color: "var(--red)" } : undefined;
 
   const title =
     visualState === "degraded"
@@ -381,7 +408,7 @@ export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <Ring state={visualState} sessionPct={sessionPct} weeklyPct={weeklyPct} atLimit={atLimit} size={size} />
+        <Ring state={visualState} sessionPct={sessionPct} weeklyPct={weeklyPct} maxed={maxed} size={size} />
         <span className={`font-mono text-[10px] tabular-nums ${labelClassName}`} style={labelStyle}>
           {labelText}
         </span>

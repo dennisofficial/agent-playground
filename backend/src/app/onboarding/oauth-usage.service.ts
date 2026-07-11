@@ -1,8 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Injectable, Logger } from '@nestjs/common';
-import type { ClaudeUsageWindowKey, OrgUsage, UsageWindow } from '@workspace/shared';
+import type {
+  ClaudeUsageWindowKey,
+  ModelUsageWindow,
+  OrgUsage,
+  StoredUsageWindow,
+  UsageWindow,
+} from '@workspace/shared';
+import type { EngineAuth } from '../engine/engine.types';
 import { resetEpochToIso } from '../engine/session-limit';
+import { ClaudeCredentialStore } from './claude-credential.store';
 import { CredentialResolver } from './credential-resolver.service';
 import { TenantCredentialStore } from './tenant-credential.store';
 import { UsageEventBus } from './usage-event-bus';
@@ -26,8 +34,12 @@ const EMPTY_WINDOWS: Record<WindowKey, UsageWindow> = {
   sevenDaySonnet: null,
 };
 
-/** How long a harvested snapshot (or a cached HTTP fallback) is trusted before `get()` re-hits the API. */
-const LIVE_FLOOR_MS = 3 * 60 * 1000;
+/**
+ * The live-usage HTTP fetch is cached for this long — the floor between real calls to Anthropic's
+ * rate-limited `/api/oauth/usage`. At most ONE request per minute per org: fresh enough that opening the
+ * usage card reflects a just-happened window reset, still gentle on the endpoint.
+ */
+const LIVE_FLOOR_MS = 60 * 1000;
 
 /** Bound the unofficial HTTP call the same way `McpProbeService` bounds its handshake. */
 const FETCH_TIMEOUT_MS = 10_000;
@@ -62,6 +74,7 @@ export class OauthUsageService {
     private readonly credentials: CredentialResolver,
     private readonly store: TenantCredentialStore,
     private readonly bus: UsageEventBus,
+    private readonly claudeCredentials: ClaudeCredentialStore,
   ) {}
 
   /**
@@ -82,7 +95,7 @@ export class OauthUsageService {
       // when the frame omits `utilization`, and default an unlabeled rejection to the session window (the
       // binding day-to-day one). Non-rejected frames still require a real `utilization` to record.
       const rejected = info.status === 'rejected';
-      const utilization = rejected ? 100 : info.utilization;
+      const utilization = rejected ? 100 : toPercentUtilization(info.utilization);
       if (utilization == null) return;
       const rateLimitType = info.rateLimitType ?? (rejected ? 'five_hour' : undefined);
       if (!rateLimitType) return;
@@ -109,13 +122,15 @@ export class OauthUsageService {
     try {
       const auth = await this.credentials.engineAuth(orgId, 'claude');
       if (!auth) return degradedUsage();
+      const bearer = bearerToken(auth);
+      if (!bearer) return degradedUsage();
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       try {
         const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
           headers: {
-            Authorization: `Bearer ${auth.secret}`,
+            Authorization: `Bearer ${bearer}`,
             'anthropic-beta': 'oauth-2025-04-20',
             'User-Agent': `claude-code/${this.claudeCodeVersion}`,
             'content-type': 'application/json',
@@ -145,11 +160,22 @@ export class OauthUsageService {
    */
   async get(orgId: string): Promise<OrgUsage> {
     const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
-    const harvestWindows = snapshot?.windows ?? {};
+    // Drop any harvested window whose reset instant has already passed: the window has rolled over, so its
+    // stored utilization (e.g. a latched 100% from a session-limit hit) is stale and must NOT keep shadowing
+    // the live snapshot's fresh post-reset value — otherwise a maxed window never visibly "resets to 0".
+    const now = Date.now();
+    const harvestWindows: Partial<Record<ClaudeUsageWindowKey, StoredUsageWindow>> = {};
+    for (const [key, w] of Object.entries(snapshot?.windows ?? {})) {
+      if (w && new Date(w.resetsAt).getTime() > now) harvestWindows[key as ClaudeUsageWindowKey] = w;
+    }
     const harvestIsEmpty = Object.keys(harvestWindows).length === 0;
-    const harvestIsStale = !snapshot || Date.now() - snapshot.fetchedAt >= LIVE_FLOOR_MS;
 
-    const live = harvestIsEmpty || harvestIsStale ? await this.liveSnapshot(orgId) : undefined;
+    // Always consult the live snapshot, which is throttled to one real HTTP call per LIVE_FLOOR_MS by
+    // `liveSnapshot`'s cache — so this is cheap. A harvest only ever carries the ONE window a
+    // `rate_limit_event` reported (almost always the session/fiveHour), so the live snapshot is what fills
+    // the OTHER windows (Weekly/Opus/Sonnet). Gating the live read on "harvest empty or stale" (the old
+    // behavior) meant a single fresh session harvest blanked every other row until it went stale.
+    const live = await this.liveSnapshot(orgId);
 
     // `fetchedAt` is the "last updated" the UI shows — the instant the SERVED data was actually captured,
     // NOT response-assembly time. Harvested windows take precedence, so their capture time (`snapshot.fetchedAt`)
@@ -160,15 +186,17 @@ export class OauthUsageService {
         : new Date().toISOString();
 
     const merged: OrgUsage = {
-      fiveHour: harvestWindows.fiveHour ?? live?.fiveHour ?? null,
-      sevenDay: harvestWindows.sevenDay ?? live?.sevenDay ?? null,
-      sevenDayOpus: harvestWindows.sevenDayOpus ?? live?.sevenDayOpus ?? null,
-      sevenDaySonnet: harvestWindows.sevenDaySonnet ?? live?.sevenDaySonnet ?? null,
+      fiveHour: harvestWindows.fiveHour ?? live.fiveHour ?? null,
+      sevenDay: harvestWindows.sevenDay ?? live.sevenDay ?? null,
+      sevenDayOpus: harvestWindows.sevenDayOpus ?? live.sevenDayOpus ?? null,
+      sevenDaySonnet: harvestWindows.sevenDaySonnet ?? live.sevenDaySonnet ?? null,
+      // Per-model weekly caps (e.g. Fable) are never harvested — they only come from the live snapshot.
+      modelWindows: live.modelWindows ?? [],
       fetchedAt,
-      source: !harvestIsEmpty ? 'harvested' : live?.ok ? 'usage_api' : 'stale',
-      ok: !harvestIsEmpty || !!live?.ok,
+      source: !harvestIsEmpty ? 'harvested' : live.ok ? 'usage_api' : 'stale',
+      ok: !harvestIsEmpty || live.ok,
     };
-    return merged;
+    return this.withAccount(orgId, merged);
   }
 
   /**
@@ -206,32 +234,115 @@ export class OauthUsageService {
   }
 
   /**
-   * Push the current HARVESTED snapshot to browsers after a live quota burn — harvested windows only, no HTTP
-   * fetch (that rides the hot turn path). Best-effort: any failure is swallowed so it never breaks harvesting.
+   * Push a fresh snapshot to browsers after a harvested-window change (a live quota burn during a turn).
+   * Publishes the SAME merged shape the REST endpoint serves — via {@link get}, so the pushed frame carries
+   * the just-harvested window AND the other windows filled from the throttled live snapshot (else a
+   * session-only harvest would blank Weekly/Opus/Sonnet on the client) plus the account header. Best-effort:
+   * any failure is swallowed so it never breaks harvesting.
    */
   private async publishHarvested(orgId: string): Promise<void> {
     try {
-      const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
-      if (!snapshot) return;
-      const windows = snapshot.windows;
-      const usage: OrgUsage = {
-        fiveHour: windows.fiveHour ?? null,
-        sevenDay: windows.sevenDay ?? null,
-        sevenDayOpus: windows.sevenDayOpus ?? null,
-        sevenDaySonnet: windows.sevenDaySonnet ?? null,
-        fetchedAt: new Date(snapshot.fetchedAt).toISOString(),
-        source: 'harvested',
-        ok: true,
-      };
-      this.bus.publish({ orgId, usage });
+      this.bus.publish({ orgId, usage: await this.get(orgId) });
     } catch (err) {
       this.logger.warn(`publishHarvested failed org=${orgId}: ${err}`);
     }
   }
+
+  /**
+   * Stamp the panel-header fields (`accountLabel` = the selected account's email, falling back to its
+   * credential label; `plan` = a display label from its subscription type) onto a usage snapshot. The
+   * single place both the REST `get()` response and the SSE push payload are enriched, so the header never
+   * blanks between an initial fetch and a live push. Best-effort: any lookup failure leaves the header
+   * fields absent (the UI falls back to the neutral title) rather than throwing.
+   */
+  private async withAccount(orgId: string, usage: OrgUsage): Promise<OrgUsage> {
+    try {
+      const display = await this.claudeCredentials.getSelectedDisplay(orgId);
+      if (!display) return usage;
+      return {
+        ...usage,
+        accountLabel: display.accountEmail ?? display.label,
+        plan: planLabel(display.subscriptionType),
+      };
+    } catch (err) {
+      this.logger.warn(`withAccount failed org=${orgId}: ${err}`);
+      return usage;
+    }
+  }
+}
+
+/**
+ * A subscription-type string (e.g. `max`, `pro`) → the header badge label ("Max plan", "Pro plan").
+ * Undefined for a null/blank type (setup-tokens carry none → no badge). A value that already reads like a
+ * plan is titlecased as-is rather than gaining a second "plan".
+ */
+function planLabel(subscriptionType: string | null | undefined): string | undefined {
+  const t = subscriptionType?.trim();
+  if (!t) return undefined;
+  const titled = t.charAt(0).toUpperCase() + t.slice(1);
+  return /plan/i.test(t) ? titled : `${titled} plan`;
+}
+
+/**
+ * Normalize a `rate_limit_event.utilization` to the 0–100 PERCENT scale the rest of the pipeline uses (the
+ * live `/api/oauth/usage` endpoint, the stored snapshot, and the UI all speak 0–100). The SDK's
+ * `rate_limit_event` reports utilization as a 0–1 FRACTION (e.g. `0.9` for a 90%-used window) — stored raw
+ * it renders as `round(0.9)` = 1%, the wrong number, and shadows the correct live value. Convert the
+ * fraction to a percent; a value already `> 1` is treated as an already-percent scale (defensive against
+ * CLI/SDK drift) and passes through. Clamped + rounded to 0–100 to match `parseWindow`. Undefined in → undefined out.
+ */
+export function toPercentUtilization(utilization: number | undefined): number | undefined {
+  if (utilization == null) return undefined;
+  const percent = utilization <= 1 ? utilization * 100 : utilization;
+  return Math.round(Math.min(100, Math.max(0, percent)));
+}
+
+/**
+ * The raw OAuth access token to send as `Authorization: Bearer` to `/api/oauth/usage`. A `personal`
+ * credential's `secret` is the `.credentials.json` blob (`{"claudeAiOauth":{"accessToken":…}}`) the coding
+ * engine consumes, NOT a bare token — the usage endpoint 401s on the whole blob, so unwrap `accessToken`.
+ * A `setup-token` (and the env fallback, where `kind` is absent) is already a raw token. Returns undefined
+ * when a personal blob is malformed / missing the token, so the caller degrades cleanly.
+ */
+export function bearerToken(auth: EngineAuth): string | undefined {
+  if (auth.kind !== 'personal') return auth.secret; // setup-token / env fallback: already a raw token
+  try {
+    const parsed = JSON.parse(auth.secret) as { claudeAiOauth?: { accessToken?: unknown } };
+    const token = parsed.claudeAiOauth?.accessToken;
+    return typeof token === 'string' && token.length > 0 ? token : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function degradedUsage(): OrgUsage {
-  return { ...EMPTY_WINDOWS, fetchedAt: new Date().toISOString(), source: 'stale', ok: false };
+  return { ...EMPTY_WINDOWS, fetchedAt: new Date().toISOString(), source: 'stale', ok: false, modelWindows: [] };
+}
+
+/**
+ * Parse the per-MODEL weekly caps out of the usage body's `limits[]` array — the `weekly_scoped` entries
+ * (e.g. `{ kind:'weekly_scoped', percent, resets_at, scope:{ model:{ display_name:'Fable' } } }`). The flat
+ * top-level `seven_day_*` keys don't carry these. `percent` is already a 0–100 value here (NOT the SDK
+ * fraction). Anything malformed is skipped. Returns [] when there's no usable array.
+ */
+export function parseModelWindows(root: Record<string, unknown>): ModelUsageWindow[] {
+  const limits = root.limits;
+  if (!Array.isArray(limits)) return [];
+  const out: ModelUsageWindow[] = [];
+  for (const raw of limits) {
+    if (!raw || typeof raw !== 'object') continue;
+    const l = raw as { kind?: unknown; percent?: unknown; resets_at?: unknown; scope?: unknown };
+    if (l.kind !== 'weekly_scoped') continue;
+    const label = (l.scope as { model?: { display_name?: unknown } } | undefined)?.model?.display_name;
+    if (typeof label !== 'string' || label.length === 0) continue;
+    if (typeof l.percent !== 'number') continue;
+    out.push({
+      label,
+      utilization: Math.round(Math.min(100, Math.max(0, l.percent))),
+      resetsAt: typeof l.resets_at === 'string' ? l.resets_at : null,
+    });
+  }
+  return out;
 }
 
 /**
@@ -270,10 +381,11 @@ function parseUsageResponse(body: unknown): OrgUsage {
     sevenDayOpus: parseWindow(pick('seven_day_opus')),
     sevenDaySonnet: parseWindow(pick('seven_day_sonnet')),
   };
+  const modelWindows = parseModelWindows(root);
   const ok = Boolean(
     windows.fiveHour ?? windows.sevenDay ?? windows.sevenDayOpus ?? windows.sevenDaySonnet,
   );
-  return { ...windows, fetchedAt: new Date().toISOString(), source: ok ? 'usage_api' : 'stale', ok };
+  return { ...windows, fetchedAt: new Date().toISOString(), source: ok ? 'usage_api' : 'stale', ok, modelWindows };
 }
 
 /**

@@ -90,6 +90,26 @@ export class ClaudeCredentialStore {
     return { id: row.id, kind: row.kind, secret: this.decryptToSecret(row) };
   }
 
+  /**
+   * The SELECTED credential's NON-secret display fields for the usage-panel header — the account email, the
+   * subscription plan, and the human label. NO decryption. Null when nothing is selected or the pointer is
+   * dangling (row deleted since selection).
+   */
+  async getSelectedDisplay(
+    orgId: string,
+  ): Promise<{ accountEmail: string | null; subscriptionType: string | null; label: string } | null> {
+    const org = await this.orgRepo.findOne({ where: { id: orgId } });
+    const selectedId = org?.selected_claude_credential_id;
+    if (!selectedId) return null;
+    const row = await this.repo.findOne({ where: { id: selectedId, org_id: orgId } });
+    if (!row) return null;
+    return {
+      accountEmail: row.account_email,
+      subscriptionType: row.subscription_type,
+      label: row.label,
+    };
+  }
+
   /** Decrypt one row into the injectable secret shape (raw token, or a `claudeAiOauth` JSON blob). */
   private decryptToSecret(row: OrgClaudeCredentialEntity): string {
     const key = this.key();
