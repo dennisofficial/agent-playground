@@ -22,7 +22,7 @@ import {
 } from "@/lib/api/job-queries";
 import { useJobEvents } from "@/lib/api/job-events";
 import { MAIN_LANE } from "@/lib/api/job-stream";
-import { toJobStatus } from "@/lib/api/status";
+import { toJobKind, toJobStatus } from "@/lib/api/status";
 import { orgSwatch } from "@/lib/org-display";
 import { ROUTES } from "@/lib/routes";
 import { pipelineJob, type JobRef } from "@/lib/api/job-api";
@@ -40,6 +40,7 @@ import { Conversation } from "./conversation";
 import { MarkdownActionsProvider } from "./markdown";
 import { PhaseView, EmptyPane, SubagentPane, FilePane } from "./step-view";
 import { PersistentApprovalBar, PersistentShipBar } from "./spec-approval";
+import { canOfferPreview } from "./preview-request";
 import { useSelectedNode } from "./use-selected-node";
 import { ReviewCommentsProvider } from "./review-comments";
 import { SelectionCommentPopover } from "./selection-comment-popover";
@@ -161,7 +162,9 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     if (running) replaceLane(running);
   }, [pipeline, job, jobId, laneNode, replaceLane]);
 
-  const kind: JobKind = inboxThread?.kind ?? "feat";
+  const pipelineKind = job ? toJobKind(job.kind) : null;
+  const kind: JobKind = inboxThread?.kind ?? pipelineKind ?? "feat";
+  const canRequestPreview = canOfferPreview(inboxThread?.kind ?? pipelineKind);
   const status: JobStatus = job
     ? toJobStatus(job.status)
     : kind === "event"
@@ -273,6 +276,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       laneNode={laneNode}
       detailNode={detailNode}
       jobRef={ref}
+      canRequestPreview={canRequestPreview}
       approveValue={awaitingApproval ? approveValue : ""}
       shipValue={awaitingShip ? shipValue : ""}
       directBuild={isDirectApproval}
@@ -366,7 +370,10 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   );
 
   // The persistent approval / ship gate — pins to the base of whichever surface hosts the detail content.
-  const footerBar = awaitingApproval ? (
+  // Shown ONLY on mobile: that's the sole tier where the job sidebar and the navigator's approve/ship
+  // buttons collapse into a drawer, so the footer is the reachable gate. On md+ the navigator's inline
+  // buttons and the conversation's approval card cover it, and the footer was redundant there.
+  const footerBar = !isMobile ? null : awaitingApproval ? (
     <PersistentApprovalBar
       jobRef={ref}
       value={approveValue}

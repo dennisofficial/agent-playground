@@ -497,6 +497,25 @@ const VALIDATE_SUBAGENT: NonNullable<Options['agents']> = {
   },
 };
 
+// PROTOTYPE subagent — planning/design-time mockup author. Like `validate` it writes ONLY into
+// /context/artifacts (a static HTML preview), so it gets Write + Bash (Bash to run the target repo's
+// design-system build and render/screenshot the mockup with on-demand Playwright for a fidelity self-check)
+// but NO Edit/LSP (authors one new file, never edits source) and NO Task (no recursive fan-out). Merged on
+// EXECUTE turns alongside the writers; the brain runs execute-mode, so it can spawn this at planning time.
+const PROTOTYPE_SUBAGENT: NonNullable<Options['agents']> = {
+  prototype: {
+    description:
+      'Design-fidelity PROTOTYPE subagent (Sonnet) — a lightweight in-house claude.ai/design. Delegate a UI ' +
+      'MOCKUP here, NAMING the exact `/context/artifacts/<file>.html` for it to write. It DISCOVERS the app\'s ' +
+      'real design system (tokens, theme, fonts, components) and reproduces it faithfully — no invented ' +
+      'palette — then renders + screenshots the result to self-check before returning a tight summary (the ' +
+      'artifact path + the design sources it grounded in). Prefer it over a generic writer for UI previews.',
+    tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
+    model: 'claude-sonnet-5',
+    prompt: renderAgentPrompt(Agent.PROTOTYPE),
+  },
+};
+
 // The build-facing subagents whose persona must carry the repo's house-style envelope (the FAN_OUT writers
 // + the REVIEW_AGENT) → the `Agent` their prompt is assembled from. The host bakes conventions into the
 // MAIN-agent `systemPrompt` only; these subagent personas are built HERE from static prompts, so this map is
@@ -888,12 +907,13 @@ export class EngineCore {
       // never reads a project-scope `.claude/agents/` (excluded from the allowed sources), and Atlas's own
       // CLAUDE_CONFIG_DIR never has a user-scope `agents/` dir either, so these always win by simple absence.
       // Advisory subagents (read-only, Sonnet) are always available; the WRITER subagents
-      // (implement/implement-deep) and the build-time VALIDATE subagent are added ONLY on EXECUTE turns, so a
-      // plan/brain/review turn can never fan out a file-mutating or evidence-writing subagent. See
-      // SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT.
+      // (implement/implement-deep), the build-time VALIDATE subagent, and the design-fidelity PROTOTYPE
+      // subagent are added ONLY on EXECUTE turns, so a plan/brain/review turn can never fan out a
+      // file-mutating or evidence-writing subagent. See
+      // SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT / PROTOTYPE_SUBAGENT.
       agents: applyConventionsToAgents(
         mode === 'execute'
-          ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT }
+          ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT, ...PROTOTYPE_SUBAGENT }
           : SUBAGENTS,
         args.repoConventions,
       ),

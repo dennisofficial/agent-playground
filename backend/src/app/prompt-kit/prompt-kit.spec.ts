@@ -165,6 +165,14 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(out).toContain('WEB-SEARCH');
   });
 
+  it('the brain UI-preview instruction routes the mockup to the `prototype` subagent, not `implement`', () => {
+    const brain = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    // The brain is told to delegate the mockup build to the dedicated `prototype` subagent...
+    expect(brain).toContain('DELEGATE the prototype build to the dedicated `prototype` subagent');
+    // ...and no longer to hand the UI preview to the generic `implement` writer.
+    expect(brain).not.toContain('DELEGATE the prototype build to the `implement` writer subagent');
+  });
+
   it('CANDOR_NOTE reaches the brain (feature + onboarding) but no worker/subagent persona', () => {
     expect(
       renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' }),
@@ -385,9 +393,13 @@ describe('public preview exposure prompt (auto-expose sequence)', () => {
     }
   });
 
-  it('is absent during onboarding (previews are a build-brain concern)', () => {
+  it('onboarding reuses the exposure ordering inside LIVE-SERVICE ACCESSIBILITY', () => {
     const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' });
-    expect(out).not.toContain('PUBLIC PREVIEW URLS');
+    // onboarding composes its own accessibility fragment (not the build-brain publicExposure block)...
+    expect(out).toContain('LIVE-SERVICE ACCESSIBILITY');
+    // ...which reuses PUBLIC_EXPOSURE_NOTE, so the load-bearing exposure essentials survive assembly.
+    expect(out).toContain('BIND TO 0.0.0.0');
+    expect(out).toContain('$ATLAS_PREVIEW_ID');
   });
 
   it('sandboxRuntime documents the --port flag alongside the run form', () => {
