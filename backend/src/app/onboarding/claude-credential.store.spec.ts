@@ -1,11 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
-import type { DataSource, Repository } from 'typeorm';
-import type { OrganizationEntity, OrgClaudeCredentialEntity } from '../persistence/entities';
+import { QueryFailedError, type DataSource, type Repository } from 'typeorm';
+import type {
+  OrganizationEntity,
+  OrgClaudeCredentialEntity,
+} from '../persistence/entities';
 import { ClaudeCredentialStore } from './claude-credential.store';
 
 const KEY = Buffer.alloc(32, 9).toString('base64');
+
+type FakeClaudeRepo = {
+  save(row: OrgClaudeCredentialEntity): Promise<OrgClaudeCredentialEntity>;
+};
 
 function fakeEnv(map: Record<string, string | undefined>): EnvService {
   return { get: (k: string) => map[k] } as unknown as EnvService;
@@ -27,8 +34,13 @@ function fakeDb(): {
   const rows = new Map<string, OrgClaudeCredentialEntity>();
   const orgs = new Map<string, OrganizationEntity>();
 
-  const matches = (row: OrgClaudeCredentialEntity, where: Record<string, unknown>): boolean =>
-    Object.entries(where).every(([k, v]) => (row as unknown as Record<string, unknown>)[k] === v);
+  const matches = (
+    row: OrgClaudeCredentialEntity,
+    where: Record<string, unknown>,
+  ): boolean =>
+    Object.entries(where).every(
+      ([k, v]) => (row as unknown as Record<string, unknown>)[k] === v,
+    );
 
   const findOne = (opts: { where: Record<string, unknown> }) =>
     [...rows.values()].find((r) => matches(r, opts.where)) ?? null;
@@ -38,7 +50,8 @@ function fakeDb(): {
       .filter((r) => matches(r, opts.where))
       .sort((a, b) => a.created_at.getTime() - b.created_at.getTime());
 
-  const create = (partial: Partial<OrgClaudeCredentialEntity>) => ({ ...partial }) as OrgClaudeCredentialEntity;
+  const create = (partial: Partial<OrgClaudeCredentialEntity>) =>
+    ({ ...partial }) as OrgClaudeCredentialEntity;
 
   const save = (row: OrgClaudeCredentialEntity) => {
     if (!row.id) row.id = randomUUID();
@@ -50,6 +63,7 @@ function fakeDb(): {
   const del = (where: { id: string; org_id: string }) => {
     const row = findOne({ where });
     if (row) rows.delete(row.id);
+    return { affected: row ? 1 : 0, raw: {} };
   };
 
   const repo = {
@@ -66,7 +80,7 @@ function fakeDb(): {
       return save(row);
     },
     async delete(where: { id: string; org_id: string }) {
-      del(where);
+      return del(where);
     },
   } as unknown as Repository<OrgClaudeCredentialEntity>;
 
@@ -74,7 +88,10 @@ function fakeDb(): {
     async findOne(opts: { where: { id: string } }) {
       return orgs.get(opts.where.id) ?? null;
     },
-    async update(criteria: { id: string }, partial: Partial<OrganizationEntity>) {
+    async update(
+      criteria: { id: string },
+      partial: Partial<OrganizationEntity>,
+    ) {
       const org = orgs.get(criteria.id);
       if (org) Object.assign(org, partial);
     },
@@ -101,22 +118,38 @@ function fakeDb(): {
   return { repo, orgRepo, dataSource, orgs };
 }
 
-function makeStore(env: Record<string, string | undefined> = { SECRETS_ENCRYPTION_KEY: KEY }) {
+function makeStore(
+  env: Record<string, string | undefined> = { SECRETS_ENCRYPTION_KEY: KEY },
+) {
   const { repo, orgRepo, dataSource, orgs } = fakeDb();
-  const store = new ClaudeCredentialStore(repo, orgRepo, dataSource, fakeEnv(env));
-  return { store, orgs };
+  const store = new ClaudeCredentialStore(
+    repo,
+    orgRepo,
+    dataSource,
+    fakeEnv(env),
+  );
+  return { store, orgs, repo };
 }
 
 /** A minimal `claudeAiOauth` blob (what `isNewerClaudeCredential` reads via `expiresAt`). */
-function oauthBlob(expiresAt: number, accessToken = 'access', refreshToken = 'refresh'): string {
-  return JSON.stringify({ claudeAiOauth: { accessToken, refreshToken, expiresAt } });
+function oauthBlob(
+  expiresAt: number,
+  accessToken = 'access',
+  refreshToken = 'refresh',
+): string {
+  return JSON.stringify({
+    claudeAiOauth: { accessToken, refreshToken, expiresAt },
+  });
 }
 
 describe('ClaudeCredentialStore', () => {
-  it('createPersonal + setSelected + getSelectedDecrypted round-trips through the cipher', async () => {
+  it('upsertPersonal + setSelected + getSelectedDecrypted round-trips through the cipher', async () => {
     const { store, orgs } = makeStore();
-    orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
-    const id = await store.createPersonal('T1', {
+    orgs.set('T1', {
+      id: 'T1',
+      selected_claude_credential_id: null,
+    } as OrganizationEntity);
+    const id = await store.upsertPersonal('T1', {
       label: 'Dennis personal',
       accessToken: 'acc-1',
       refreshToken: 'ref-1',
@@ -141,10 +174,163 @@ describe('ClaudeCredentialStore', () => {
     });
   });
 
+  describe('upsertPersonal (upsert-by-email dedup)', () => {
+    it('a second call with the SAME accountEmail updates the SAME row (id + token fields), no duplicate', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      const id1 = await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+        accountEmail: 'd@example.com',
+      });
+      const id2 = await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+        accountEmail: 'd@example.com',
+      });
+      expect(id2).toBe(id1);
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(1);
+
+      await store.setSelected('T1', id1);
+      const sel = await store.getSelectedDecrypted('T1');
+      expect(JSON.parse(sel!.secret).claudeAiOauth).toMatchObject({
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+      });
+    });
+
+    it('a DIFFERENT accountEmail inserts a NEW row', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+        accountEmail: 'd@example.com',
+      });
+      await store.upsertPersonal('T1', {
+        label: 'Other personal',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+        accountEmail: 'other@example.com',
+      });
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(2);
+    });
+
+    it('with NO accountEmail, every call inserts (no dedup key)', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+      });
+      await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+      });
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(2);
+    });
+
+    it('treats a blank accountEmail as missing so it stays out of the unique key', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      await store.upsertPersonal('T1', {
+        label: 'Claude subscription',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+        accountEmail: '   ',
+      });
+      await store.upsertPersonal('T1', {
+        label: 'Claude subscription',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+        accountEmail: '   ',
+      });
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(2);
+      expect(rows.map((row) => row.accountEmail)).toEqual([null, null]);
+    });
+
+    it('retries a unique-index insert race by updating the winning row in place', async () => {
+      const { store, orgs, repo } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      const fakeRepo = repo as unknown as FakeClaudeRepo;
+      const originalSave = fakeRepo.save.bind(fakeRepo);
+      const uniqueErr = new QueryFailedError(
+        'insert',
+        [],
+        Object.assign(new Error('duplicate key'), { code: '23505' }),
+      );
+      (uniqueErr as QueryFailedError & { code?: string }).code = '23505';
+      let threwRace = false;
+      fakeRepo.save = async (row: OrgClaudeCredentialEntity) => {
+        if (!threwRace) {
+          threwRace = true;
+          await originalSave(row);
+          throw uniqueErr;
+        }
+        return originalSave(row);
+      };
+
+      const id = await store.upsertPersonal('T1', {
+        label: 'd@example.com',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+        accountEmail: 'd@example.com',
+      });
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(id);
+    });
+  });
+
   it('createSetupToken + setSelected + getSelectedDecrypted round-trips the raw token', async () => {
     const { store, orgs } = makeStore();
-    orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
-    const id = await store.createSetupToken('T1', { label: 'CI setup-token', token: 'sk-setup-1' });
+    orgs.set('T1', {
+      id: 'T1',
+      selected_claude_credential_id: null,
+    } as OrganizationEntity);
+    const id = await store.createSetupToken('T1', {
+      label: 'CI setup-token',
+      token: 'sk-setup-1',
+    });
     await store.setSelected('T1', id);
 
     const sel = await store.getSelectedDecrypted('T1');
@@ -153,35 +339,105 @@ describe('ClaudeCredentialStore', () => {
 
   it('getSelectedDecrypted returns null when nothing is selected', async () => {
     const { store, orgs } = makeStore();
-    orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
+    orgs.set('T1', {
+      id: 'T1',
+      selected_claude_credential_id: null,
+    } as OrganizationEntity);
     expect(await store.getSelectedDecrypted('T1')).toBeNull();
   });
 
   it('list() reports summaries with no secret values, flagging the selected row', async () => {
     const { store, orgs } = makeStore();
-    orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
-    const id1 = await store.createSetupToken('T1', { label: 'one', token: 'sk-1' });
-    const id2 = await store.createSetupToken('T1', { label: 'two', token: 'sk-2' });
+    orgs.set('T1', {
+      id: 'T1',
+      selected_claude_credential_id: null,
+    } as OrganizationEntity);
+    const id1 = await store.createSetupToken('T1', {
+      label: 'one',
+      token: 'sk-1',
+    });
+    const id2 = await store.createSetupToken('T1', {
+      label: 'two',
+      token: 'sk-2',
+    });
     await store.setSelected('T1', id2);
 
     const list = await store.list('T1');
     expect(list).toEqual([
-      { id: id1, label: 'one', kind: 'setup_token', status: 'active', expiresAt: null, accountEmail: null, isSelected: false },
-      { id: id2, label: 'two', kind: 'setup_token', status: 'active', expiresAt: null, accountEmail: null, isSelected: true },
+      {
+        id: id1,
+        label: 'one',
+        kind: 'setup_token',
+        status: 'active',
+        expiresAt: null,
+        accountEmail: null,
+        isSelected: false,
+      },
+      {
+        id: id2,
+        label: 'two',
+        kind: 'setup_token',
+        status: 'active',
+        expiresAt: null,
+        accountEmail: null,
+        isSelected: true,
+      },
     ]);
+  });
+
+  it('setSelected reports whether the selected credential changed', async () => {
+    const { store, orgs } = makeStore();
+    orgs.set('T1', {
+      id: 'T1',
+      selected_claude_credential_id: null,
+    } as OrganizationEntity);
+    const id = await store.createSetupToken('T1', {
+      label: 'one',
+      token: 'sk-1',
+    });
+
+    await expect(store.setSelected('T1', id)).resolves.toBe(true);
+    await expect(store.setSelected('T1', id)).resolves.toBe(false);
+  });
+
+  it('remove reports true only when the deleted credential was selected', async () => {
+    const { store, orgs } = makeStore();
+    orgs.set('T1', {
+      id: 'T1',
+      selected_claude_credential_id: null,
+    } as OrganizationEntity);
+    const selected = await store.createSetupToken('T1', {
+      label: 'selected',
+      token: 'sk-1',
+    });
+    const unselected = await store.createSetupToken('T1', {
+      label: 'other',
+      token: 'sk-2',
+    });
+    await store.setSelected('T1', selected);
+
+    await expect(store.remove('T1', unselected)).resolves.toBe(false);
+    await expect(store.remove('T1', selected)).resolves.toBe(true);
   });
 
   describe('advanceClaudeCredential (atomic monotonic write-back)', () => {
     it('advances a PERSONAL credential to a blob with a NEWER expiresAt', async () => {
       const { store, orgs } = makeStore();
-      orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
-      const id = await store.createPersonal('T1', {
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      const id = await store.upsertPersonal('T1', {
         label: 'p',
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
         expiresAt: 1000,
       });
-      await store.advanceClaudeCredential('T1', id, oauthBlob(2000, 'new-access', 'new-refresh'));
+      await store.advanceClaudeCredential(
+        'T1',
+        id,
+        oauthBlob(2000, 'new-access', 'new-refresh'),
+      );
 
       const sel = await store.getSelectedDecrypted('T1'); // not selected, so read via list/select instead
       expect(sel).toBeNull();
@@ -196,15 +452,26 @@ describe('ClaudeCredentialStore', () => {
 
     it('SKIPS a blob with an OLDER or EQUAL expiresAt (never clobbers a newer credential)', async () => {
       const { store, orgs } = makeStore();
-      orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
-      const id = await store.createPersonal('T1', {
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      const id = await store.upsertPersonal('T1', {
         label: 'p',
         accessToken: 'current-access',
         refreshToken: 'current-refresh',
         expiresAt: 2000,
       });
-      await store.advanceClaudeCredential('T1', id, oauthBlob(1000, 'stale-access', 'stale-refresh'));
-      await store.advanceClaudeCredential('T1', id, oauthBlob(2000, 'sametime-access', 'sametime-refresh'));
+      await store.advanceClaudeCredential(
+        'T1',
+        id,
+        oauthBlob(1000, 'stale-access', 'stale-refresh'),
+      );
+      await store.advanceClaudeCredential(
+        'T1',
+        id,
+        oauthBlob(2000, 'sametime-access', 'sametime-refresh'),
+      );
 
       await store.setSelected('T1', id);
       const after = await store.getSelectedDecrypted('T1');
@@ -217,8 +484,14 @@ describe('ClaudeCredentialStore', () => {
 
     it('no-ops on a SETUP_TOKEN row (only personal credentials are refreshable)', async () => {
       const { store, orgs } = makeStore();
-      orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
-      const id = await store.createSetupToken('T1', { label: 's', token: 'sk-setup' });
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      const id = await store.createSetupToken('T1', {
+        label: 's',
+        token: 'sk-setup',
+      });
       await store.advanceClaudeCredential('T1', id, oauthBlob(9999));
 
       await store.setSelected('T1', id);
@@ -228,15 +501,22 @@ describe('ClaudeCredentialStore', () => {
 
     it('no-ops when the row is missing or credentialId is absent', async () => {
       const { store } = makeStore();
-      await expect(store.advanceClaudeCredential('T1', 'ghost', oauthBlob(1000))).resolves.toBeUndefined();
-      await expect(store.advanceClaudeCredential('T1', undefined, oauthBlob(1000))).resolves.toBeUndefined();
+      await expect(
+        store.advanceClaudeCredential('T1', 'ghost', oauthBlob(1000)),
+      ).resolves.toBeUndefined();
+      await expect(
+        store.advanceClaudeCredential('T1', undefined, oauthBlob(1000)),
+      ).resolves.toBeUndefined();
     });
   });
 
   describe('upsertLegacySetupToken', () => {
     it('creates ONE canonical row and selects it; repeated calls never duplicate', async () => {
       const { store, orgs } = makeStore();
-      orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
 
       await store.upsertLegacySetupToken('T1', 'sk-first');
       const afterFirst = await store.list('T1');
@@ -250,13 +530,34 @@ describe('ClaudeCredentialStore', () => {
       const sel = await store.getSelectedDecrypted('T1');
       expect(sel?.secret).toBe('sk-second');
     });
+
+    it('reports a usage-relevant change only when the selected legacy setup-token changed', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+
+      await expect(
+        store.upsertLegacySetupToken('T1', 'sk-first'),
+      ).resolves.toBe(true);
+      await expect(
+        store.upsertLegacySetupToken('T1', 'sk-first'),
+      ).resolves.toBe(false);
+      await expect(
+        store.upsertLegacySetupToken('T1', 'sk-second'),
+      ).resolves.toBe(true);
+    });
   });
 
   it('refuses to write without an encryption key', async () => {
     const { store, orgs } = makeStore({ SECRETS_ENCRYPTION_KEY: undefined });
-    orgs.set('T1', { id: 'T1', selected_claude_credential_id: null } as OrganizationEntity);
-    await expect(store.createSetupToken('T1', { label: 'x', token: 'y' })).rejects.toThrow(
-      /SECRETS_ENCRYPTION_KEY is not set/,
-    );
+    orgs.set('T1', {
+      id: 'T1',
+      selected_claude_credential_id: null,
+    } as OrganizationEntity);
+    await expect(
+      store.createSetupToken('T1', { label: 'x', token: 'y' }),
+    ).rejects.toThrow(/SECRETS_ENCRYPTION_KEY is not set/);
   });
 });

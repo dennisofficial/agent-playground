@@ -40,7 +40,6 @@ import {
 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
 import { JsonView, allExpanded, darkStyles } from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
 import {
@@ -49,6 +48,7 @@ import {
   WrapButton,
   useCopied,
 } from "./terminal-chrome";
+import { renderTokenLine, useHighlightTokens } from "./tool-calls/highlight";
 
 /**
  * Markdown renderer for assistant prose in the conversation — ported from the "Atlas Conversation View"
@@ -67,8 +67,12 @@ export interface MarkdownActions {
 const MarkdownActionsContext = createContext<MarkdownActions | null>(null);
 export const MarkdownActionsProvider = MarkdownActionsContext.Provider;
 
-function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
+function CodeBlock({ lang, code }: { lang?: string; code: string }) {
   const [wrapped, setWrapped] = useState(false);
+  // Whole-block tokenization — a fence is contiguous, so cross-line context (multi-line strings,
+  // block comments, JSX) is preserved. `null` until the highlighter + language resolve → plain text.
+  const lineTokens = useHighlightTokens(code, lang ?? null, true);
+  const lines = useMemo(() => code.split("\n"), [code]);
   return (
     <div
       className="my-3 overflow-hidden rounded-[9px] border border-border"
@@ -82,7 +86,7 @@ function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
               wrapped={wrapped}
               onToggle={() => setWrapped((w) => !w)}
             />
-            <CopyButton text={nodeText(children).replace(/\n$/, "")} />
+            <CopyButton text={code} />
           </>
         }
       />
@@ -92,7 +96,14 @@ function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
         }`}
         style={{ color: "var(--term-fg)" }}
       >
-        {children}
+        {lineTokens
+          ? lines.map((ln, i) => (
+              <span key={i}>
+                {i > 0 ? "\n" : null}
+                {renderTokenLine(lineTokens[i], ln)}
+              </span>
+            ))
+          : renderTokenLine(null, code)}
       </pre>
     </div>
   );
@@ -100,14 +111,15 @@ function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
 
 // ── JSON tree ──────────────────────────────────────────────────────────────────────────────────────
 // A ```json fence whose content is an object/array renders as an interactive collapsible tree
-// (react-json-view-lite) instead of a flat, often-minified code line. Colors reuse the dark-frame
-// hljs palette from globals.css; the `!` important classes win over the package CSS regardless of
-// stylesheet order. Structure (indentation + expand/collapse icons) comes from spreading darkStyles.
+// (react-json-view-lite) instead of a flat, often-minified code line. Colors mirror the --term token
+// palette (the same hues the Shiki atlas-term theme emits); the `!` important classes win over the
+// package CSS regardless of stylesheet order. Structure (indentation + expand/collapse icons) comes
+// from spreading darkStyles.
 const JSON_VIEW_STYLES = {
   ...darkStyles,
   container: `${darkStyles.container} !bg-transparent`,
-  label: `${darkStyles.label} !text-[#b89cf0]`, // object keys — lavender (.hljs-title)
-  stringValue: `${darkStyles.stringValue} !text-[#6fb3c9]`, // teal (.hljs-string)
+  label: `${darkStyles.label} !text-[#b89cf0]`, // object keys — lavender (function/title)
+  stringValue: `${darkStyles.stringValue} !text-[#6fb3c9]`, // teal (string)
   numberValue: `${darkStyles.numberValue} !text-[#d89a5c]`,
   booleanValue: `${darkStyles.booleanValue} !text-[#e8983f]`, // amber
   nullValue: `${darkStyles.nullValue} !text-[#e8983f]`,
@@ -190,7 +202,7 @@ function loadMermaid() {
   return mermaidReady;
 }
 
-/** Flatten code-block children to plain text (string, number, or rehype-highlight span nodes). */
+/** Flatten code-block children to plain text (string, number, or nested markdown nodes). */
 function nodeText(node: ReactNode): string {
   if (node == null || typeof node === "boolean") return "";
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -590,13 +602,16 @@ function renderCode({
     const parsed = parseJsonContainer(nodeText(children).replace(/\n$/, ""));
     if (parsed) return <JsonBlock value={parsed} />;
   }
-  // rehype-highlight tags fenced block code (and only block code) with `hljs`; fall back to a
-  // newline sniff for the rare un-highlighted block.
-  const isBlock =
-    cls.includes("hljs") ||
-    Boolean(match) ||
-    String(children ?? "").includes("\n");
-  if (isBlock) return <CodeBlock lang={match?.[1]}>{children}</CodeBlock>;
+  // A fence carries a `language-*` class (react-markdown tags it independently of any highlighter);
+  // fall back to a newline sniff for the rare un-highlighted block.
+  const isBlock = Boolean(match) || String(children ?? "").includes("\n");
+  if (isBlock)
+    return (
+      <CodeBlock
+        lang={match?.[1]}
+        code={nodeText(children).replace(/\n$/, "")}
+      />
+    );
   // Inline span: linkify a manifest-verified file path into a pill (spec/plan panes only).
   if (resolveFileLink) {
     const link = resolveFileLink(nodeText(children));
@@ -938,9 +953,6 @@ export const Markdown = memo(function Markdown({
     <div className="text-[14px] leading-[1.62] text-text">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkShortcodeIcons]}
-        rehypePlugins={[
-          [rehypeHighlight, { detect: true, ignoreMissing: true }],
-        ]}
         components={components}
       >
         {children}

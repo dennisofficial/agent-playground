@@ -121,33 +121,33 @@ export function useClaudeCredentials(orgId: string, enabled = true) {
 export interface ClaudeAuthorizeUrl {
   url: string;
   state: string;
-  label: string;
 }
 
 /**
  * Owner-only: step 1 of adding a personal login. Mints a PKCE-backed Claude login URL; the operator opens
- * it, logs in with their subscription, and pastes the returned code. Does not invalidate the list (nothing
- * is stored yet — the credential lands on the follow-up `useAddClaudeCredential` exchange).
+ * it, logs in with their subscription, and pastes the returned code. Takes no body — a personal credential
+ * is named by the account email captured from the token exchange, not by an operator-supplied label. Does
+ * not invalidate the list (nothing is stored yet — the credential lands on the follow-up
+ * `useAddClaudeCredential` exchange).
  */
 export function useCreateClaudeAuthorizeUrl(orgId: string) {
   return useMutation({
-    mutationFn: (body: { label: string }) =>
+    mutationFn: () =>
       webJson<ClaudeAuthorizeUrl>(`/orgs/${orgId}/claude-credentials/authorize-url`, {
         method: "POST",
-        body: JSON.stringify(body),
       }),
   });
 }
 
 /** Body for `POST /claude-credentials` — a personal login (`code`+`state`) OR a setup-token (`setupToken`). */
 export type AddClaudeCredentialBody =
-  | { label: string; code: string; state: string }
+  | { code: string; state: string }
   | { label: string; setupToken: string };
 
 /**
- * Owner-only: create a credential — the personal-login exchange (`{code, state, label}`) or a setup-token
- * (`{setupToken, label}`). The server auto-selects it when it's the org's first. Invalidates the list +
- * the presence/session queries (a first credential flips the onboarding checklist).
+ * Owner-only: create a credential — the personal-login exchange (`{code, state}`, named by account email) or
+ * a setup-token (`{setupToken, label}`). The server auto-selects it when it's the org's first. Invalidates
+ * the list + the presence/session queries (a first credential flips the onboarding checklist).
  */
 export function useAddClaudeCredential(orgId: string) {
   const qc = useQueryClient();
@@ -161,6 +161,7 @@ export function useAddClaudeCredential(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
+      void qc.invalidateQueries({ queryKey: qk.orgUsage(orgId) });
     },
   });
 }
@@ -178,6 +179,8 @@ export function useSelectClaudeCredential(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
+      void qc.invalidateQueries({ queryKey: qk.orgUsage(orgId) });
+      void qc.invalidateQueries({ queryKey: ["org-credential-usage", orgId] });
     },
   });
 }
@@ -194,20 +197,68 @@ export function useDeleteClaudeCredential(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
+      void qc.invalidateQueries({ queryKey: qk.orgUsage(orgId) });
     },
   });
 }
 
+// ── Codex account (owner-only — the decoded account email of the pasted auth.json) ─────────────────
+// The Codex secret's account email is decoded on-read from the stored auth.json's `id_token` (display-only,
+// no signature check) and is Administer-tier info, so it lives on its own OWNER-gated endpoint rather than
+// the member-visible presence flags. `present` mirrors `hasCodex`; `accountEmail` is omitted for an
+// API-key-only auth.json (no `id_token` to decode).
+
+/** The owner-only `GET /credentials/codex` response — presence + the decoded account email, when present. */
+export interface CodexAccount {
+  present: boolean;
+  accountEmail?: string;
+}
+
 /**
- * An org's Claude subscription usage snapshot (the composer's usage ring). The unofficial usage endpoint
- * is aggressively rate-limited, so this polls in minutes, not seconds — never tighten `refetchInterval`.
- * Always returns 200 (never throws on a degraded snapshot); `ok:false` just means "unknown right now".
+ * Owner-only: the connected Codex subscription's account email (decoded from the stored auth.json). Pass
+ * `enabled: false` for non-owners to skip a guaranteed 403 — the display is separately gated on ownership.
+ */
+export function useCodexAccount(orgId: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.orgCodexAccount(orgId),
+    queryFn: () => webJson<CodexAccount>(`/orgs/${orgId}/credentials/codex`),
+    enabled: Boolean(orgId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * An org's Claude subscription usage snapshot (the composer's usage ring). Push-driven: fresh snapshots
+ * arrive over the repo `/events` SSE (`type:'usage'` frame → `setQueryData`), so there's no client poll.
+ * We keep an initial fetch on mount plus TanStack's default focus refetch as a backstop (the SSE bus is
+ * single-process, so cross-instance changes settle on mount/focus/switch); a short `staleTime` lets those
+ * refetch. The unofficial usage endpoint stays aggressively rate-limited and backend-throttled — do NOT
+ * re-add a `refetchInterval`. Always returns 200 (never throws on a degraded snapshot); `ok:false` just
+ * means "unknown right now".
  */
 export function useOrgUsage(orgId: string) {
   return useQuery({
     queryKey: qk.orgUsage(orgId),
     queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/usage`),
     enabled: Boolean(orgId),
+    staleTime: 30_000,
+    // Re-enable focus refetch (the app disables it globally) so the documented
+    // backstop is real: with the poll dropped, this is how a client on an instance
+    // that missed the single-process SSE push recovers a stale ring.
+    refetchOnWindowFocus: true,
+  });
+}
+
+/**
+ * One PERSONAL credential's own Claude subscription usage (the ring on its Settings card). Live-fetched
+ * per-credential (never the org snapshot), server-cached ~3 min; same best-effort/degraded contract as
+ * {@link useOrgUsage} — always 200, `ok:false` just means "unknown right now". Do NOT call for setup tokens.
+ */
+export function useCredentialUsage(orgId: string, credentialId: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.orgCredentialUsage(orgId, credentialId),
+    queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/claude-credentials/${credentialId}/usage`),
+    enabled: Boolean(orgId) && Boolean(credentialId) && enabled,
     staleTime: 180_000,
     refetchInterval: 180_000,
   });
@@ -250,6 +301,8 @@ export function useSaveCredentials(orgId: string) {
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      // A new Codex paste changes the decoded account email — refresh the owner-only Codex query too.
+      void qc.invalidateQueries({ queryKey: qk.orgCodexAccount(orgId) });
       // Credential changes can flip an org `onboarding` → `active`; refresh the session orgs too.
       void qc.invalidateQueries({ queryKey: qk.session() });
     },

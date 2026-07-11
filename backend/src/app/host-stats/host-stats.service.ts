@@ -12,6 +12,10 @@ import type { HostStatsDto } from './host-stats.types';
 const CACHE_MS = 2_000;
 const FIRST_SAMPLE_DELAY_MS = 200;
 
+// atlas.managed=1 is stamped on every Atlas sandbox container (see sandbox-manager.service.ts L_MANAGED).
+// Inlined as a stable string rather than imported, to avoid a module cycle.
+const SANDBOX_LABEL = 'atlas.managed=1';
+
 /** Aggregate idle/total CPU jiffies across every core, for computing a delta-based usage %. */
 type CpuAggregate = {
   idle: number;
@@ -128,7 +132,7 @@ export class HostStatsService {
 
   private async sampleContainers(): Promise<HostStatsDto['containers']> {
     try {
-      const all = await this.engine.list({ all: true });
+      const all = await this.engine.list({ all: true, label: SANDBOX_LABEL });
       return {
         total: all.length,
         running: all.filter((c) => c.state === 'running').length,

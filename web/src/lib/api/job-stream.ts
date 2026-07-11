@@ -52,6 +52,13 @@ export type LiveBlock =
       /** Edit/MultiEdit only: structured patch (real file offsets) for the diff body. */
       structuredPatch?: unknown;
       done: boolean;
+      /**
+       * Set on the ANCHOR tool block of a BACKGROUNDED Task subagent once its run settles (a `bg_task`
+       * completed/failed/stopped frame for this Task id). A backgrounded Task's `done` flips on its immediate
+       * launch-ack `tool_result`, NOT on real completion — so the subagent card reads `bgSettled` (not `done`)
+       * to decide "running". Carried across reconnect via the snapshot block spread.
+       */
+      bgSettled?: boolean;
       parentToolUseId?: string;
       emittedAt: number;
     };
@@ -98,6 +105,8 @@ type StreamPayload = {
   structuredPatch?: unknown;
   /** set only for subagent blocks (the spawning Task id) — peeled into a sub-page by consumers. */
   parentToolUseId?: string;
+  /** present on `kind:'bg_task'` — the backgrounded task's settlement/lifecycle status. */
+  status?: string;
   /** present on `kind:'snapshot'` */
   blocks?: LiveBlock[];
   active?: boolean;
@@ -153,12 +162,16 @@ class ThreadStreamStore {
     const cur = this.map.get(key);
 
     // `turn_start` — the FIRST frame of a turn. Mark the lane active + record the authoritative start time
-    // so the working indicator can flip ON immediately and tick an elapsed timer. Preserve any blocks a
-    // (rare) out-of-order earlier frame already produced; just stamp active + startedAt.
+    // so the working indicator can flip ON immediately and tick an elapsed timer. A `turn_start` is
+    // authoritative-fresh: it always carries the lowest seq of its turn (a same-turn delta can never
+    // precede it) and mid-turn reconnects arrive as `snapshot`, so the only blocks ever present here are
+    // STALE leftovers — a previous turn not yet cleared, or a re-attach's stranded open blocks. Drop them
+    // so a reattach's replay rebuilds the lane cleanly; a genuinely new turn has none to drop. `startedAt`
+    // stays (elapsed continuity).
     if (ev.kind === "turn_start") {
       if (cur && seq <= cur.lastSeq) return;
       this.map.set(key, {
-        blocks: cur?.blocks ?? [],
+        blocks: [],
         active: true,
         lastSeq: seq,
         startedAt: ev.startedAt ?? cur?.startedAt ?? Date.now(),
@@ -284,6 +297,26 @@ class ThreadStreamStore {
               done: true,
             };
             break;
+          }
+        }
+        break;
+      }
+      case "bg_task": {
+        // Settlement of a backgrounded Task subagent — mark its anchor tool block settled so the subagent
+        // card stops showing "running" (the anchor's `done` was only the immediate launch ack). The event's
+        // `parentToolUseId` == the spawning Task id == the anchor block's `toolId`. `started`/`capped` (and
+        // untagged bare-Bash bg tasks) carry no anchor id → no-op.
+        const st = ev.status;
+        if (
+          pid &&
+          (st === "completed" || st === "failed" || st === "stopped")
+        ) {
+          for (let i = blocks.length - 1; i >= 0; i--) {
+            const b = blocks[i];
+            if (b.kind === "tool" && b.toolId === pid) {
+              blocks[i] = { ...b, bgSettled: true };
+              break;
+            }
           }
         }
         break;
@@ -446,6 +479,17 @@ export function applyStreamFrame(
 /** Clear a thread's live turn lane — call AFTER the durable `/messages` refetch lands (post `turn_end`). */
 export function endLiveTurn(jobId: string, lane: string = MAIN_LANE): void {
   store.end(jobId, lane);
+}
+
+/**
+ * Non-React read of a lane's current live turn (mirrors the private `store.get`). For tests/diagnostics
+ * that need to inspect the store without mounting the `useLiveTurn` hook.
+ */
+export function peekLiveTurn(
+  jobId: string,
+  lane: string = MAIN_LANE,
+): LiveTurn | undefined {
+  return store.get(jobId, lane);
 }
 
 /**

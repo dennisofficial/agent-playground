@@ -248,6 +248,17 @@ export class TurnHarnessFactory {
     return taskScopeForLane(lane, jobId);
   }
 
+  /**
+   * Clear any stale live-turn state left on `lane` by a prior attempt that never reached
+   * finish/abort/discard, so a reattach's '0-0' replay repopulates a CLEAN buffer. Silent (no turn_end);
+   * guarded so it only acts when the lane actually has live state (empty boot path stays a no-op).
+   */
+  resetLane(channel: string, jobId: string, lane: string = 'main'): void {
+    if (this.liveTurns.snapshot(channel, jobId, lane)) {
+      this.liveTurns.reset(channel, jobId, lane);
+    }
+  }
+
   create(options: TurnHarnessOptions): TurnHarness {
     const { jobId, orgId, channel } = options;
     const lane = options.lane ?? 'main';

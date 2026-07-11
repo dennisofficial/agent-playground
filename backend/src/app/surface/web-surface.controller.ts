@@ -105,6 +105,7 @@ import {
 } from '../realtime';
 import { TicketEventBus } from '../tickets';
 import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
+import { UsageEventBus } from '../onboarding/usage-event-bus';
 
 const VALID_ACTION_IDS = new Set([
   APPROVE_ACTION_ID,
@@ -534,6 +535,7 @@ export class WebSurfaceController {
     private readonly repos: Repository<RepoEntity>,
     private readonly threadTitle: JobTitleService,
     private readonly ticketEvents: TicketEventBus,
+    private readonly usageBus: UsageEventBus,
     private readonly realtime: RealtimeService,
     private readonly election: LeaderElectionService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
@@ -986,7 +988,10 @@ export class WebSurfaceController {
    */
   @Sse('orgs/:orgId/repos/:repoId/events')
   @UseGuards(OrgMembershipGuard)
-  events(@Param('repoId') repoId: string): Observable<MessageEvent> {
+  events(
+    @Param('orgId') orgId: string,
+    @Param('repoId') repoId: string,
+  ): Observable<MessageEvent> {
     const messages$ = this.surface.outbound$.pipe(
       filter((msg: WebOutboundMessage) => msg.channel === repoId),
       map((msg): MessageEvent => ({ data: { type: 'message', ...msg } })),
@@ -1047,7 +1052,13 @@ export class WebSurfaceController {
         }),
       ),
     );
-    return merge(snapshot$, live$, messages$, meta$, tickets$);
+    // Claude-subscription usage ring updates for this org — a harvested-window change during a turn or an
+    // account switch (see `OauthUsageService.invalidate`).
+    const usage$ = this.usageBus.stream$.pipe(
+      filter((e) => e.orgId === orgId),
+      map((e): MessageEvent => ({ data: { type: 'usage', orgId: e.orgId, usage: e.usage } })),
+    );
+    return merge(snapshot$, live$, messages$, meta$, tickets$, usage$);
   }
 
   /** `POST …/threads/:jobId/approve` — submit a plan verdict. */

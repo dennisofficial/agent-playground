@@ -66,6 +66,111 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
   });
 });
 
+describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEAN lane)', () => {
+  it('reset drops the lane WITHOUT fanning a turn_end (unlike end)', () => {
+    const store = new LiveTurnStore();
+    const frames: LiveStreamFrame[] = [];
+    const sub = store.stream$.subscribe((f) => frames.push(f));
+
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
+    expect(store.snapshot(REPO, THREAD)).not.toBeNull();
+
+    store.reset(REPO, THREAD);
+    sub.unsubscribe();
+
+    // The lane is gone, and — crucially — no turn_end frame was fanned (which would race the client's
+    // async reconcileNow().then(endLiveTurn)). Contrast with `end`, which DOES emit turn_end.
+    expect(store.snapshot(REPO, THREAD)).toBeNull();
+    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end')).toBe(false);
+  });
+
+  it('end DOES fan a turn_end (the contrast that makes reset’s silence meaningful)', () => {
+    const store = new LiveTurnStore();
+    const frames: LiveStreamFrame[] = [];
+    const sub = store.stream$.subscribe((f) => frames.push(f));
+
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
+    store.end(REPO, THREAD);
+    sub.unsubscribe();
+
+    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end')).toBe(true);
+  });
+
+  it('strand → reset → replay rebuilds ONE open text block + a fresh turn_start (baseline strands two)', () => {
+    // BASELINE (no reset): a prior subscription died with an open text block stranded on the lane; the
+    // reattach replays the turn's history from '0-0' (an adaptive-thinking interleave: thinking then text)
+    // ONTO that strand — so the stranded text and the replayed text both sit open at once (two carets).
+    const baseline = new LiveTurnStore();
+    baseline.push(REPO, THREAD, { kind: 'text_delta', text: 'stranded' }); // prior life, never finalized
+    baseline.push(REPO, THREAD, { kind: 'thinking_delta', text: 'plan' }); // replay from '0-0'
+    baseline.push(REPO, THREAD, { kind: 'text_delta', text: 'fresh' });
+    const strandedOpenText = baseline
+      .snapshot(REPO, THREAD)!
+      .blocks.filter((b) => b.kind === 'text' && !b.done);
+    expect(strandedOpenText).toHaveLength(2); // the bug: two open text blocks
+
+    // FIXED (reset before replay): the strand is cleared, so the replay rebuilds exactly what its events
+    // describe — one open text block — and, because the lane is now empty, the first push fans a fresh
+    // turn_start (isNew).
+    const store = new LiveTurnStore();
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'stranded' }); // prior life
+    store.reset(REPO, THREAD);
+
+    const frames: LiveStreamFrame[] = [];
+    const sub = store.stream$.subscribe((f) => frames.push(f));
+    store.push(REPO, THREAD, { kind: 'thinking_delta', text: 'plan' }); // replay from '0-0'
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'fresh' });
+    sub.unsubscribe();
+
+    const openText = store.snapshot(REPO, THREAD)!.blocks.filter((b) => b.kind === 'text' && !b.done);
+    expect(openText).toHaveLength(1);
+    expect(openText[0].text).toBe('fresh');
+    // A fresh turn_start fired after the reset (isNew) so a connected client rebuilds cleanly.
+    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_start')).toBe(true);
+  });
+});
+
+describe('LiveTurnStore — background subagent settlement (bg_task marks the anchor, survives reconnect)', () => {
+  // A backgrounded Task subagent's own `tool_result` is an IMMEDIATE launch ack (done=true), not the real
+  // completion — so `done` alone would show the card "done" while it still streams. The subagent's real
+  // completion arrives later as a `bg_task` settlement carrying the spawning Task id (== the anchor toolId);
+  // the store must stamp `bgSettled` on the anchor and carry it in the cumulative snapshot (raw bg_task
+  // frames are NOT replayed on reconnect).
+  it('a bg_task settlement stamps bgSettled on the matching anchor tool block', () => {
+    const store = new LiveTurnStore();
+    store.push(REPO, THREAD, {
+      kind: 'tool_use',
+      id: 'tu-bg',
+      name: 'Task',
+      input: { subagent_type: 'general-purpose', run_in_background: true },
+    });
+    // The immediate launch ack: the anchor flips done=true but is NOT finished.
+    store.push(REPO, THREAD, { kind: 'tool_result', id: 'tu-bg', result: 'launched', isError: false });
+    // The subagent streams its own work under the anchor's id.
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'working', parentToolUseId: 'tu-bg' });
+
+    let anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
+    expect(anchor).toMatchObject({ done: true });
+    expect(anchor.bgSettled).toBeUndefined(); // still running despite done=true
+
+    // Real completion arrives as a bg_task settlement carrying the spawning Task id.
+    store.push(REPO, THREAD, { kind: 'bg_task', status: 'completed', parentToolUseId: 'tu-bg' });
+
+    anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
+    expect(anchor.bgSettled).toBe(true);
+  });
+
+  it('a bg_task "started" (no settlement) leaves the anchor unsettled', () => {
+    const store = new LiveTurnStore();
+    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu-bg', name: 'Task', input: { run_in_background: true } });
+    store.push(REPO, THREAD, { kind: 'tool_result', id: 'tu-bg', result: 'launched', isError: false });
+    store.push(REPO, THREAD, { kind: 'bg_task', status: 'started', parentToolUseId: 'tu-bg' });
+
+    const anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
+    expect(anchor.bgSettled).toBeUndefined();
+  });
+});
+
 describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge live blocks vs durable rows)', () => {
   it('fans a strictly-increasing emittedAt on each block-creating delta, mirrored inside event.emittedAt', () => {
     const store = new LiveTurnStore();
@@ -163,6 +268,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       {} as never, // repos
       {} as never, // threadTitle
       { stream$: new Subject() } as never, // ticketEvents
+      { stream$: new Subject() } as never, // usageBus
       { available: false } as never, // realtime
       { isLeader: () => true, getState: () => 'leader', isDraining: () => false } as never, // election
       { dispatch: async () => undefined } as never, // dispatcher (JOB_DISPATCHER)
@@ -190,7 +296,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     // The client connects (reconnect) → subscribe to the repo SSE.
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
-      .events(REPO)
+      .events('org-1', REPO)
       .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
 
     // 1) The FIRST thing it receives is a snapshot reflecting everything streamed so far ("Hello").
@@ -231,7 +337,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
 
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
-      .events(REPO)
+      .events('org-1', REPO)
       .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
 
     // 1) The snapshot the controller fans (blocks: s.blocks) carries emittedAt on each block.
@@ -261,7 +367,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     store.end(REPO, THREAD);
 
     const frames: Array<Record<string, unknown>> = [];
-    const sub = controller.events(REPO).subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
+    const sub = controller.events('org-1', REPO).subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
     expect(frames.filter((f) => f.type === 'stream')).toHaveLength(0);
     sub.unsubscribe();
   });

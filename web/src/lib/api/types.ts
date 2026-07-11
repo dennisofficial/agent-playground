@@ -23,16 +23,12 @@ export type { WireJobStatus };
 /** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
 export type { WireJobHalt };
 /**
- * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`, plus OPTIONAL
- * multi-account display fields the backend doesn't populate yet (both undefined until then; the usage
- * panel falls back to a neutral single-account header when absent).
+ * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`. Carries the
+ * OPTIONAL panel-header fields (`accountLabel` = the selected account's email/label, `plan` = its
+ * subscription plan); both are absent when no credential is selected and the panel falls back to a
+ * neutral single-account header.
  */
-export type WireOrgUsage = OrgUsage & {
-  /** Display label for the connected account (e.g. an email) — absent until multi-account ships. */
-  accountLabel?: string;
-  /** Subscription plan label (e.g. "Max plan") — absent until multi-account ships. */
-  plan?: string;
-};
+export type WireOrgUsage = OrgUsage;
 /**
  * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
  * single-sourced in `@workspace/shared`. Carried on the realtime row; the dot itself reads `needsYou`.

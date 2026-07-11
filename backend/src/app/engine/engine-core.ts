@@ -1039,12 +1039,27 @@ export class EngineCore {
             status: 'started',
             detail: message.description,
             taskType: message.task_type,
+            // The spawning Task tool_use id, present for a backgrounded Task subagent — lets the web tie this
+            // to the subagent's card (its child blocks' `parentToolUseId`).
+            ...(message.tool_use_id
+              ? { parentToolUseId: message.tool_use_id }
+              : {}),
           });
         } else if (message.type === 'system' && message.subtype === 'task_notification') {
           // The task settled (completed/failed/stopped). Drop it from the live set; a settlement +
           // auto-continuation is imminent, so restart the hold window (or clear it if none remain).
           if (message.task_id) liveBgTasks.delete(message.task_id);
-          onEvent?.({ kind: 'bg_task', taskId: message.task_id, status: message.status, detail: message.summary });
+          onEvent?.({
+            kind: 'bg_task',
+            taskId: message.task_id,
+            status: message.status,
+            detail: message.summary,
+            // Settlement of a backgrounded Task subagent — carry the spawning Task id so the web marks that
+            // subagent's card settled (its anchor `tool_result` was only the immediate launch ack).
+            ...(message.tool_use_id
+              ? { parentToolUseId: message.tool_use_id }
+              : {}),
+          });
           resetHoldTimer();
         } else if (message.type === 'rate_limit_event') {
           // Harvest the subscription window state ALWAYS (the host updates its per-org usage snapshot from

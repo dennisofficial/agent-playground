@@ -11,6 +11,10 @@ import { OrganizationEntity } from './organization.entity';
  */
 @Entity({ name: 'claude_credentials' })
 @Index(['org_id'])
+@Index('uq_claude_cred_org_email_personal', ['org_id', 'account_email'], {
+  unique: true,
+  where: `kind = 'personal' AND account_email IS NOT NULL`,
+})
 export class OrgClaudeCredentialEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

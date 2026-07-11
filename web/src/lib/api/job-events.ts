@@ -7,6 +7,7 @@ import { qk } from "./query-keys";
 import { subscribeSse } from "./sse-manager";
 import type { InboxThread } from "./inbox";
 import type { JobRef } from "./job-api";
+import type { WireOrgUsage } from "./types";
 import {
   applyStreamFrame,
   endLiveTurn,
@@ -23,6 +24,10 @@ interface SseFrame {
   event?: { kind?: string; name?: string; input?: { file_path?: string } };
   /** `thread_meta` frame: the new thread title (e.g. an auto-generated one). */
   title?: string;
+  /** `usage` frame: the org whose subscription usage snapshot changed. */
+  orgId?: string;
+  /** `usage` frame: the fresh subscription-usage snapshot to push into the ring's query cache. */
+  usage?: WireOrgUsage;
 }
 
 /**
@@ -196,6 +201,14 @@ export function useJobEvents(ref: JobRef): void {
           prev?.map((t) => (t.id === id ? { ...t, title } : t)),
         );
         void qc.invalidateQueries({ queryKey: qk.allJobs() });
+        return;
+      }
+      if (frame?.type === "usage" && frame.usage) {
+        // Subscription-usage push (distinct from the per-turn `stream`/`usage` context-window frame): the
+        // backend recomputed this org's usage snapshot (a harvested-window burn during a turn, or an account
+        // switch). The stream is already server-filtered to this connection's org, so patch the ring's cache
+        // in place — no refetch, no poll.
+        qc.setQueryData(qk.orgUsage(orgId), frame.usage);
         return;
       }
       // `{ type: 'message' }` (or any non-stream frame) — a durable post landed → change-signal refetch.

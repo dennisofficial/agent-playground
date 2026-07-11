@@ -225,7 +225,11 @@ export function indexLiveSubagents(blocks: LiveBlock[]): LiveSubagentIndex {
         parentId: b.toolId,
         type: String(input.subagent_type ?? "agent"),
         background: Boolean(input.run_in_background),
-        running: !b.done,
+        // A backgrounded Task's `done` flips on its immediate launch-ack `tool_result`, NOT on real
+        // completion — so it would read "done" while the subagent is still streaming. For a background run,
+        // track settlement (its `bg_task` completed/failed/stopped, recorded as `bgSettled`) instead. A
+        // FOREGROUND subagent's `done` is its real completion, so it keeps `!done` unchanged.
+        running: Boolean(input.run_in_background) ? !b.bgSettled : !b.done,
         toolCount: childCountById.get(b.toolId) ?? 0,
         summary: String(input.description || firstLine(input.prompt)),
       });

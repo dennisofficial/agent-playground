@@ -177,6 +177,16 @@ export interface SandboxProvider {
   }): Promise<{ ok: boolean; reason?: string }>;
 
   /**
+   * Tear down ALL supervised services (`atlas-svc stop-all`) in a job's live container from host code — the
+   * deterministic counterpart to the in-container agent running it itself. The driver calls this when a
+   * build thread completes so the services that thread booted for testing don't sit resident through the
+   * rest of the build on a shared host. Best-effort: a missing/stopped container or a non-zero exit
+   * resolves to `{ ok:false, reason }`, never throws. Optional on the port so test fakes needn't implement
+   * it; `SandboxManager` (the only real binding) always does.
+   */
+  stopAllServices?(jobId: string): Promise<{ ok: boolean; reason?: string }>;
+
+  /**
    * Push the sandbox's user MCP servers to the persistent per-sandbox MCP HUB: write the resolved UNION
    * (secrets inlined) to the durable `/.atlas` config + `SIGHUP` the hub so it (re)connects once per sandbox
    * instead of once per turn. Called at provision (create / reset / warm re-attach) by `WorktreeProvisioner`.

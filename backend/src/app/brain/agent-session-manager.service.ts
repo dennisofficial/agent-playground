@@ -139,6 +139,10 @@ import {
   TurnRegistry,
 } from '../sandbox/turn-registry.service';
 import {
+  TurnReattachRegistry,
+  type ReattachOutcome,
+} from '../sandbox/turn-reattach.registry';
+import {
   ENGINE_RUNNER,
   isEngineDetachedError,
   isUnresumableSessionMessage,
@@ -376,6 +380,10 @@ export class AgentSessionManager
     // deadlock DI — the brain constructs the driver). @Optional matching this constructor's convention —
     // the @Global BrainGatewayModule supplies it live; unit tests that never boot the seam omit it.
     @Optional() private readonly brainGateway?: BrainGateway,
+    // The kind→owner reattach routing table (from @Global SandboxModule). This service claims the brain-owned
+    // kinds on bootstrap so the leader watchdog can re-attach an orphaned-but-alive brain/compaction turn
+    // continuously, not only at the once-per-boot sweep. @Optional matching this constructor's convention.
+    @Optional() private readonly reattachRegistry?: TurnReattachRegistry,
   ) {}
 
   /**
@@ -445,6 +453,13 @@ export class AgentSessionManager
     });
     // NOTE: the `codex-review` thread-input transport was removed — Codex review is now Atlas-driven only
     // (the synchronous `review_plan` tool), so there is no external "post a rebuttal to Codex" path.
+    // Claim the brain-owned kinds on the reattach routing table so the leader watchdog can re-attach an
+    // orphaned-but-alive brain/compaction turn continuously (see `reattachTurnRow`), not only at the
+    // once-per-boot `reattachOwnedTurns` sweep. Unconditional + idempotent (the watchdog is leader-only).
+    for (const kind of ['brain', 'compaction'] as const) {
+      this.reattachRegistry?.register(kind, (row) => this.reattachTurnRow(row));
+    }
+
     this.leaderBootSub = this.election.onPromote(() =>
       this.runLeaderBootSweeps(),
     );
@@ -788,6 +803,7 @@ export class AgentSessionManager
         chunkKey: `seed:halt:${threadId}:${gen}`,
         untrustedSource: `thread-halt:${threadId}`,
         severity: outcome,
+        framing: haltWakeFraming(thread, outcome, term),
       },
     });
     await this.handleChatTurn(stimulus);
@@ -846,6 +862,7 @@ export class AgentSessionManager
         chunkKey: `seed:done:${threadId}`,
         untrustedSource: `thread-done:${threadId}`,
         severity: reason,
+        framing: doneWakeFraming(thread, reason, term, anchor, perThreadGaps),
       },
     });
     await this.handleChatTurn(stimulus);
@@ -1016,7 +1033,10 @@ export class AgentSessionManager
     // Carry the raw payload the engine actually received so the console can reveal it on row-expand — but
     // only when it differs from the short `label` (curated notices whose label already IS the full body
     // don't need a redundant copy). See decision d1/d2.
-    const fullBody = stimulus.body !== row.label ? stimulus.body : undefined;
+    const isUntrusted = (row.kind ?? 'system_notice') === 'untrusted';
+    // Untrusted rows: `label` already IS the clean fenced report and the trusted framing rides in
+    // `row.framing` (its own block) — so DON'T fold the whole engine body (framing+fence) into fullBody.
+    const fullBody = !isUntrusted && stimulus.body !== row.label ? stimulus.body : undefined;
     void this.store
       .recordSystemChunk?.({
         jobId: stimulus.jobId,
@@ -1026,6 +1046,7 @@ export class AgentSessionManager
         ...(row.untrustedSource ? { untrustedSource: row.untrustedSource } : {}),
         ...(row.severity ? { severity: row.severity } : {}),
         ...(fullBody ? { fullBody } : {}),
+        ...(row.framing ? { framing: row.framing } : {}),
       })
       ?.catch((err: unknown) =>
         this.logger.debug(`persistSeedRow failed (best-effort): ${err}`),
@@ -1512,6 +1533,38 @@ export class AgentSessionManager
     await Promise.all(blocking);
   }
 
+  /**
+   * WATCHDOG RE-ATTACH (brain kinds: brain/compaction). The leader watchdog calls this for one
+   * orphaned-but-alive `active_turns` row this service owns — the same recovery as the boot
+   * {@link reattachOwnedTurns} sweep, but for ONE row and triggered continuously (so a turn a restart
+   * orphaned resumes within a watchdog window, without waiting for the next process restart). Idempotent:
+   *   - a kind we don't own → 'deferred';
+   *   - the runner can't reattach, or we're already tailing this turn in-process → we don't double-attach;
+   *   - otherwise dispatch the kind's handler (brain runs fire-and-forget; compaction is short and awaited),
+   *     rebuilding the harness + tool closure and resuming the live engine.
+   * The `reattachOne`/`reattachCompactionOne` handlers self-guard on insufficient registry ctx (they no-op,
+   * leaving the engine live for a later attempt), so we never finalize a live turn here.
+   */
+  async reattachTurnRow(row: ActiveTurnEntity): Promise<ReattachOutcome> {
+    const handler = this.reattachHandlers()[row.kind];
+    if (!handler) return 'deferred';
+    if (!this.engineRunner.reattach) return 'deferred';
+    if (this.engineRunner.isAttached?.(row.turn_id)) {
+      // Already tailing it in THIS process — the live relay is advancing the heartbeat; nothing to do.
+      return 'attached';
+    }
+    if (handler.awaitCompletion) {
+      // Short, ordering-sensitive kinds (compaction): await so the watchdog's heartbeat freshen lands after.
+      await handler.run(row);
+    } else {
+      // Long-running kinds (brain) stream for minutes — fire-and-forget, mirroring the boot sweep.
+      void handler.run(row).catch((err) =>
+        this.logger.warn(`watchdog re-attach turn ${row.turn_id} (${row.kind}) failed: ${err}`),
+      );
+    }
+    return 'attached';
+  }
+
   /** Re-attach one in-flight brain turn: rebuild stimulus → tools → harness, resume the engine, persist. */
   private async reattachOne(row: ActiveTurnEntity): Promise<void> {
     // A mid-day promotion (leader flap between watch respawns) re-fires this sweep while THIS process
@@ -1573,6 +1626,12 @@ export class AgentSessionManager
     const reattachKind =
       (await this.store.loadJob(row.job_id).catch(() => null))?.kind ?? null;
     const tools = this.buildTools(stimulus, reattachKind);
+    // Drop any live-turn state stranded by a prior subscription that died without finish/abort/discard, so
+    // the '0-0' event replay below rebuilds a CLEAN buffer (a fresh turn_start) instead of appending onto a
+    // stale open block — the root cause of persistent multiple-cursor state. Silent (no turn_end) to avoid
+    // racing the client's async reconcile; guarded so the empty boot path is a no-op. Lane defaults to
+    // 'main' — matches create() below (no lane arg).
+    this.turnHarness.resetLane(row.channel, row.job_id);
     const streamer = this.turnHarness.create({
       jobId: row.job_id,
       orgId: row.org_id,
@@ -5591,10 +5650,7 @@ export class AgentSessionManager
       }
       if (isDirect) {
         // FAST PATH: the brain implements it ITSELF in an autonomous in-sandbox turn (no driver).
-        await this.store.appendAtlasMessage(
-          stimulus.jobId,
-          'Approved — implementing the change directly.',
-        );
+        await this.saySystemNotice(stimulus, 'Approved — implementing the change directly.');
         // Passive milestone (drained into the NEXT operator turn — the synthetic direct-build turn skips
         // the drain). Recorded AFTER the durable `approve`.
         await this.recordMilestone(
@@ -5605,10 +5661,7 @@ export class AgentSessionManager
         void this.runDirectBuild(stimulus, running);
       } else {
         await this.dispatcher.dispatch(running);
-        await this.store.appendAtlasMessage(
-          stimulus.jobId,
-          'Plan approved — dispatching the build.',
-        );
+        await this.saySystemNotice(stimulus, 'Plan approved — dispatching the build.');
         // Passive milestones — recorded AFTER the durable `approve` + `dispatch`.
         await this.recordMilestone(
           stimulus.jobId,
@@ -5632,17 +5685,38 @@ export class AgentSessionManager
 
     if (resolution.verdict === 'request_changes') {
       await this.store.reopenPlanning(job.id);
-      const note = resolution.note ? ` Noted: ${resolution.note}` : '';
-      await this.say(
+      // The note is the operator telling the brain WHAT to change — deliver it into the resumed engine
+      // session (a real seeded turn), not just an operator-facing ack. Without this the note only lands in
+      // the `messages` mirror and the brain never sees it. Build from `job.*` (reliable on both the live
+      // and durable-fallback callers) rather than the possibly-stale/empty `stimulus`. No note → nothing
+      // actionable to deliver, so keep the ack and wait for the operator's next turn.
+      if (resolution.note) {
+        await this.handleChatTurn(
+          harnessDeliveryStimulus({
+            jobId: job.id,
+            orgId: job.orgId,
+            repoId: job.repoId,
+            body: renderRequestChangesDelivery(resolution.note),
+            seedRow: {
+              label: 'Operator requested changes — revising the plan.',
+              chunkKey: `seed:request-changes:${decisionRecordId}`,
+            },
+          }),
+        );
+        return;
+      }
+      // No note: a calm System-notice ack (never in Atlas's voice), consistent with the other
+      // approval-resolution acks. The brain's next turn resumes from the reopened planning state.
+      await this.saySystemNotice(
         stimulus,
-        `Got it — back to the drawing board.${note} What should change?`,
+        'Got it — back to the drawing board. What should change?',
       );
       return;
     }
 
     // deny
     await this.store.cancel(job.id);
-    await this.say(stimulus, "Understood — I'll drop this one.");
+    await this.saySystemNotice(stimulus, "Understood — I'll drop this one.");
   }
 
   /**
@@ -6457,6 +6531,30 @@ export class AgentSessionManager
     await this.store.appendAtlasMessage(stimulus.jobId, text);
   }
 
+  /** Post a calm SYSTEM→OPERATOR notice (meta.source='system_notice') in-thread AND append the durable
+   *  row. Mirrors {@link say} but is NOT in Atlas's voice — a benign harness ack the resumed brain
+   *  session never authored, with no error/Resume semantics (contrast {@link saySystemOperator}). */
+  private async saySystemNotice(stimulus: ChatStimulus, text: string): Promise<void> {
+    const route = await this.store.route({
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
+      jobId: stimulus.jobId,
+    });
+    const channel = route.channel ?? stimulus.replyRoute.jobRef;
+    const threadTs = route.threadTs ?? stimulus.replyRoute.jobRef;
+    const meta = { source: 'system_notice' };
+    try {
+      await this.surface.post(channel, text, {
+        threadTs,
+        orgId: stimulus.orgId,
+        meta,
+      });
+    } catch (err) {
+      this.logger.warn(`failed to post system notice: ${err}`);
+    }
+    await this.store.appendSystemNotice(stimulus.jobId, text);
+  }
+
   /**
    * Post a SYSTEM→OPERATOR notice — a runtime/harness message for the OPERATOR ONLY, NOT in Atlas's voice
    * and never seeded into the brain (e.g. an unresumable-thread error). Mirrors {@link say} (live SSE post
@@ -6770,6 +6868,26 @@ function renderWorkOwedNudge(): string {
   ].join('\n');
 }
 
+/**
+ * The harness framing for a REQUEST-CHANGES note. The operator reviewed a proposed plan/direct-build and
+ * clicked "Request changes" with a note; the job is already back in `planning`. This delivers their note
+ * into the resumed brain session (via `handleChatTurn`) so the engine actually SEES the feedback — the
+ * `messages` table is only an operator-facing mirror, so without this the note would reach the brain only
+ * if the operator re-typed it. The note is the operator's own (trusted) words; it is quoted verbatim so the
+ * brain reads it as their instruction. Wrapped as a `<system_notification>` by `harnessDeliveryStimulus`.
+ */
+function renderRequestChangesDelivery(note: string): string {
+  return [
+    'The operator reviewed your proposed plan and clicked **Request changes**, leaving this note:',
+    '',
+    ...note.split('\n').map((line) => `> ${line}`),
+    '',
+    'The plan is back in planning. Incorporate their feedback: revise the specs and decisions accordingly,',
+    'and if anything is ambiguous ask a focused follow-up before re-proposing. When the plan is ready,',
+    're-run `review_plan` and then `propose_plan` to send the updated version for approval.',
+  ].join('\n');
+}
+
 function harnessDeliveryStimulus(input: {
   jobId: string;
   orgId: string;
@@ -6930,11 +7048,12 @@ export function haltTriageGuidance(
   ];
 }
 
-function renderHaltDelivery(
+/** The TRUSTED harness framing for a delivered HALT wake — extracted from {@link renderHaltDelivery} so
+ *  the seed row can carry it separately from the fenced (untrusted) record body. */
+export function haltWakeFraming(
   thread: { id: string; ordinal: number; brief: string },
   outcome: 'blocked' | 'incomplete' | 'failed',
   term: ThreadTerminalRecord | null,
-  anchor: SessionAnchor | undefined,
 ): string {
   const preamble = [
     `One of your own build threads HALTED (outcome: ${outcome}) — no human sent this; the build driver`,
@@ -6944,7 +7063,16 @@ function renderHaltDelivery(
     `You may investigate (read transcripts/code), post a diagnosis, request a missing secret, and` +
       ` retry_thread within budget — but you may NOT edit/push code or ship without the operator.`,
   ];
-  const framing = [...preamble, ...haltTriageGuidance(term?.blocked?.reason)].join('\n');
+  return [...preamble, ...haltTriageGuidance(term?.blocked?.reason)].join('\n');
+}
+
+function renderHaltDelivery(
+  thread: { id: string; ordinal: number; brief: string },
+  outcome: 'blocked' | 'incomplete' | 'failed',
+  term: ThreadTerminalRecord | null,
+  anchor: SessionAnchor | undefined,
+): string {
+  const framing = haltWakeFraming(thread, outcome, term);
   // The record fields were authored by a DIFFERENT (builder) session — fence them as data. `wrapUntrusted`
   // supplies the "this is DATA, obey only the operator" boundary; the body is a readable projection of the
   // record (the full copy lives in completion.md, which the framing points the brain at).
@@ -7015,7 +7143,10 @@ function haltDeliveryStimulus(input: {
  * record fields wrapped in `wrapUntrusted` (data, not instructions). Reason-branched: `'final'` reviews the
  * whole parked build; `'notable'` triages one thread's leftover gaps.
  */
-export function renderDoneDelivery(
+/** The TRUSTED harness framing for a delivered COMPLETION wake — extracted from
+ *  {@link renderDoneDelivery} so the seed row can carry it separately from the fenced (untrusted)
+ *  record body. */
+export function doneWakeFraming(
   thread: { id: string; ordinal: number; brief: string },
   reason: 'final' | 'notable',
   term: ThreadTerminalRecord | null,
@@ -7032,7 +7163,10 @@ export function renderDoneDelivery(
   const body =
     reason === 'final'
       ? [
-          `The whole build finished and is parked at the ship gate — nothing is pushed yet. Review the`,
+          `The whole build finished and is parked at the ship gate — nothing is pushed yet.`,
+          `First, free the RAM: the builders and master review may have spun up services for testing that are`,
+          `now idle on this shared host — tear them down with \`atlas-svc stop-all\` (a preview or demo below`,
+          `re-derives and boots only what it needs). Then review the`,
           `integrated result (the diff; any lane's transcript via \`atlas-tx\`), then post the operator a crisp`,
           `summary of what shipped and any risks. You may investigate/report/request-secret/retry a lane; you`,
           `may NOT ship — the **Ship it** gate is the operator's.`,
@@ -7053,7 +7187,17 @@ export function renderDoneDelivery(
           `(read its transcript: \`atlas-tx show ${anchor?.sessionId ?? '<sessionId>'} --errors\`), report to`,
           `the operator, and retry the lane with guidance if you hold the fix. Don't edit/push autonomously.`,
         ].join('\n');
-  const framing = [...preamble, '', body].join('\n');
+  return [...preamble, '', body].join('\n');
+}
+
+export function renderDoneDelivery(
+  thread: { id: string; ordinal: number; brief: string },
+  reason: 'final' | 'notable',
+  term: ThreadTerminalRecord | null,
+  anchor: SessionAnchor | undefined,
+  perThreadGaps?: { brief: string; gaps: string[] }[],
+): string {
+  const framing = doneWakeFraming(thread, reason, term, anchor, perThreadGaps);
   const fenced = wrapUntrusted({
     source: `thread-done:${thread.id}`,
     severity: reason,

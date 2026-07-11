@@ -105,3 +105,62 @@ describe('SandboxManager.writeToJobContainerPath (ephemeral delivery)', () => {
     expect(res.reason).toMatch(/exited 1/);
   });
 });
+
+describe('SandboxManager.stopAllServices (per-thread service teardown)', () => {
+  it('runs `atlas-svc stop-all` in the running container and reports ok', async () => {
+    let seenArgv: string[] = [];
+    const engine = makeEngine({
+      inspect: vi.fn(async (name: string) => (name === EXPECTED_NAME ? fakeInfo('running') : null)),
+      exec: vi.fn(async (_id: string, argv: string[]): Promise<ExecResult> => {
+        seenArgv = argv;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }),
+    });
+    const mgr = makeManager(engine);
+
+    const res = await mgr.stopAllServices(JOB_ID);
+
+    expect(res.ok).toBe(true);
+    // Invokes the supervisor by absolute path so it resolves regardless of the exec shell's PATH.
+    expect(seenArgv).toEqual(['/usr/local/bin/atlas-svc', 'stop-all']);
+  });
+
+  it('fails cleanly when the container is not running (no exec attempted)', async () => {
+    const exec = vi.fn();
+    const mgr = makeManager(makeEngine({ inspect: async () => fakeInfo('exited'), exec }));
+
+    const res = await mgr.stopAllServices(JOB_ID);
+
+    expect(res.ok).toBe(false);
+    expect(res.reason).toMatch(/not running/i);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('fails cleanly when there is no container', async () => {
+    const mgr = makeManager(makeEngine({ inspect: async () => null }));
+    const res = await mgr.stopAllServices(JOB_ID);
+    expect(res.ok).toBe(false);
+  });
+
+  it('reports a non-zero exit as a failure (never throws)', async () => {
+    const mgr = makeManager(
+      makeEngine({ exec: async () => ({ exitCode: 3, stdout: '', stderr: 'boom' }) }),
+    );
+    const res = await mgr.stopAllServices(JOB_ID);
+    expect(res.ok).toBe(false);
+    expect(res.reason).toMatch(/exited 3/);
+  });
+
+  it('swallows an exec throw and reports a failure', async () => {
+    const mgr = makeManager(
+      makeEngine({
+        exec: async () => {
+          throw new Error('docker daemon gone');
+        },
+      }),
+    );
+    const res = await mgr.stopAllServices(JOB_ID);
+    expect(res.ok).toBe(false);
+    expect(res.reason).toMatch(/docker daemon gone/);
+  });
+});

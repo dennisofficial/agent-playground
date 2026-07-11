@@ -26,6 +26,7 @@ import { OnboardingController } from './onboarding.controller';
 import { OnboardingService } from './onboarding.service';
 import { RepoController } from './repo.controller';
 import { TenantCredentialStore } from './tenant-credential.store';
+import { UsageEventBus } from './usage-event-bus';
 import { OrgUsageController } from './usage.controller';
 import { WorkspaceSecretFileStore } from './workspace-secret.store';
 import { WorkspaceConfigStore } from './workspace-config.store';
@@ -79,6 +80,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
     AuthRefreshSinkService,
     { provide: AUTH_REFRESH_SINK, useExisting: AuthRefreshSinkService },
     OauthUsageService,
+    UsageEventBus,
   ],
   exports: [
     TenantCredentialStore,
@@ -89,6 +91,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
     OnboardingService,
     AUTH_REFRESH_SINK,
     OauthUsageService,
+    UsageEventBus,
   ],
 })
 export class OnboardingModule {}

@@ -21,6 +21,11 @@ export const OAUTH_CALLBACK_PATH = '/web/mcp/oauth/callback';
 /** How long before a token's stated expiry we proactively refresh (clock skew + a little headroom). */
 const EXPIRY_SKEW_MS = 60_000;
 
+/** Conservative fallback access-token lifetime for providers that issue expiring tokens WITHOUT an
+ *  `expires_in`. Used only when a refresh_token exists, so such tokens still get proactively refreshed
+ *  instead of silently 401ing at runtime; providers that send `expires_in` are unaffected. */
+const DEFAULT_TOKEN_TTL_MS = 55 * 60_000;
+
 /** The verbatim marker written to `validation_error` when a token can no longer be refreshed. */
 export const NEEDS_REAUTH = 'needs re-auth';
 
@@ -36,8 +41,14 @@ interface StatePayload {
 interface AuthSdk {
   auth(
     provider: OAuthClientProvider,
-    options: { serverUrl: string | URL; authorizationCode?: string },
+    options: {
+      serverUrl: string | URL;
+      authorizationCode?: string;
+      resourceMetadataUrl?: URL;
+    },
   ): Promise<'AUTHORIZED' | 'REDIRECT'>;
+  /** Parses `WWW-Authenticate: Bearer …resource_metadata="…"` off a 401 Response (RFC 9728). */
+  extractResourceMetadataUrl(res: Response): URL | undefined;
 }
 
 /**
@@ -73,8 +84,9 @@ export class McpOAuthService {
 
   /**
    * Kick off interactive consent for an `auth_kind='oauth'` server: discovery + DCR + PKCE authorize, returning
-   * the provider's authorize URL for the console to open. Clears any prior tokens (so a "Reconnect" forces a fresh
-   * consent) and stamps a fresh `nonce` into the signed `state` that rides to the provider and back to the callback.
+   * the provider's authorize URL for the console to open. Starts from a CLEAN blob (only a fresh `nonce`) so a
+   * "Reconnect" re-discovers and re-registers instead of reusing a stale client/discovery bound to a possibly
+   * wrong authorization server.
    */
   async beginAuthorization(orgId: string, dbScope: string, name: string): Promise<{ authorizeUrl: string }> {
     const row = await this.store.rawRow(orgId, dbScope, name);
@@ -84,22 +96,64 @@ export class McpOAuthService {
     if (!serverUrl) throw new BadRequestException('oauth server has no url');
     this.assertCallbackBase(); // fail loudly if BACKEND_HOST can't build a valid redirect_uri
 
-    // Fresh consent: keep the DCR client registration + discovery, drop stale tokens/verifier, new nonce.
-    const blob: McpOAuthBlob = {
-      clientInformation: row.oauth_enc ? this.store.readOAuthBlob(row).clientInformation : undefined,
-      discoveryState: row.oauth_enc ? this.store.readOAuthBlob(row).discoveryState : undefined,
-      nonce: randomBytes(16).toString('hex'),
-    };
+    // Fresh consent starts from a CLEAN blob — only a new nonce. We deliberately do NOT carry over the cached
+    // DCR client or discovery state: both are bound to whatever authorization server was resolved last time,
+    // so reusing them strands a server whose AS changed or was mis-resolved (e.g. discovery fell back to the
+    // host-root AS metadata instead of the one the 401's `resource_metadata` names). Re-discovery below is
+    // steered by the probed resource-metadata hint and re-registers the client.
+    const blob: McpOAuthBlob = { nonce: randomBytes(16).toString('hex') };
     await this.store.writeOAuthBlob(orgId, dbScope, name, blob, { validationError: null });
+
+    // RFC 9728: ask the server itself where its protected-resource metadata lives (via the 401
+    // `WWW-Authenticate: …resource_metadata="…"`) and hand that to `auth()`. Without it the SDK falls back to
+    // the host-root `/.well-known/oauth-authorization-server`, which on a shared host can be an unrelated
+    // connector's AS. Best-effort — undefined leaves the SDK's default discovery unchanged.
+    const resourceMetadataUrl = await this.probeResourceMetadataUrl(serverUrl);
 
     const provider = new RowOAuthProvider(this, orgId, dbScope, name, blob, row);
     const { auth } = await this.authSdk();
-    const result = await auth(provider, { serverUrl });
+    const result = await auth(provider, { serverUrl, resourceMetadataUrl });
     if (result !== 'REDIRECT' || !provider.authorizeUrl) {
       throw new BadRequestException(`unexpected oauth begin result: ${result}`);
     }
-    this.logger.log(`oauth begin org=${orgId} scope=${dbScope} name=${name}`);
+    this.logger.log(
+      `oauth begin org=${orgId} scope=${dbScope} name=${name}${resourceMetadataUrl ? ` rmu=${resourceMetadataUrl.href}` : ''}`,
+    );
     return { authorizeUrl: provider.authorizeUrl };
+  }
+
+  /**
+   * Best-effort RFC 9728 probe: hit the MCP server unauthenticated and read the
+   * `WWW-Authenticate: Bearer …resource_metadata="…"` challenge off the 401, so `auth()` discovers the
+   * authorization server the *resource* names rather than falling back to the host root. Returns undefined on
+   * any failure (no challenge, network error) — the caller then uses default discovery, so this can only help,
+   * never break, an existing flow.
+   */
+  private async probeResourceMetadataUrl(serverUrl: string): Promise<URL | undefined> {
+    try {
+      const { extractResourceMetadataUrl } = await this.authSdk();
+      const res = await fetch(serverUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-06-18',
+            capabilities: {},
+            clientInfo: { name: 'atlas', version: '1.0' },
+          },
+        }),
+      });
+      return extractResourceMetadataUrl(res);
+    } catch (err) {
+      this.logger.warn(`oauth resource-metadata probe failed for ${serverUrl}: ${String(err)}`);
+      return undefined;
+    }
   }
 
   /**
@@ -210,9 +264,15 @@ export class McpOAuthService {
   }
 
   private isNearExpiry(blob: McpOAuthBlob): boolean {
+    if (!blob.obtainedAt) return false;
     const expiresIn = blob.tokens?.['expires_in'] as number | undefined;
-    if (!expiresIn || !blob.obtainedAt) return false; // no stated expiry ⇒ treat as long-lived
-    return Date.now() >= blob.obtainedAt + expiresIn * 1000 - EXPIRY_SKEW_MS;
+    if (expiresIn) return Date.now() >= blob.obtainedAt + expiresIn * 1000 - EXPIRY_SKEW_MS;
+    // No stated expiry: only worth pre-emptively refreshing when we actually CAN (a refresh_token exists).
+    // Some providers issue expiring access tokens without an `expires_in`; assume a conservative lifetime so
+    // they still get refreshed instead of silently 401ing at runtime. With no refresh_token there is nothing
+    // to refresh, so treat the token as long-lived.
+    if (!blob.tokens?.['refresh_token']) return false;
+    return Date.now() >= blob.obtainedAt + DEFAULT_TOKEN_TTL_MS - EXPIRY_SKEW_MS;
   }
 
   private async markNeedsReauth(orgId: string, dbScope: string, name: string, blob: McpOAuthBlob): Promise<void> {
@@ -376,8 +436,30 @@ class RowOAuthProvider implements OAuthClientProvider {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       token_endpoint_auth_method: oauth.tokenAuthMethod ?? 'none',
-      scope: oauth.scope,
+      scope: this.withOfflineAccess(oauth.scope),
     };
+  }
+
+  /**
+   * Add the OIDC `offline_access` scope — which many providers require in order to issue a refresh_token —
+   * to the configured scope, but ONLY when the discovered authorization-server or protected-resource
+   * metadata advertises it in `scopes_supported`. Gating on advertisement means we never send a scope the
+   * provider would reject (some use a different offline mechanism entirely), so this can't break consent.
+   * Without a refresh_token an OAuth connection "works once, then 401s with nothing to refresh" — this is
+   * the durability fix. NOTE: the SDK's SEP-835 scope resolution prefers protected-resource
+   * `scopes_supported` over this clientMetadata scope, so this is only the effective request when the
+   * resource advertises no scopes of its own (otherwise it's a harmless no-op / de-duped).
+   */
+  private withOfflineAccess(configured: string | undefined): string | undefined {
+    const disc = this.discoveryState();
+    const advertised = [
+      ...(disc?.authorizationServerMetadata?.scopes_supported ?? []),
+      ...(disc?.resourceMetadata?.scopes_supported ?? []),
+    ];
+    if (!advertised.includes('offline_access')) return configured;
+    const scopes = new Set((configured ?? '').split(/\s+/).filter(Boolean));
+    scopes.add('offline_access');
+    return [...scopes].join(' ');
   }
 
   state(): string {
