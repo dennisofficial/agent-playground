@@ -75,12 +75,15 @@ import {
   CODEX_TASK_LIST_NOTE,
   COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
+  renderRunningServicesNote,
   ROTATION_PREAMBLE,
   ROTATION_RESUME_TAIL,
   ROTATION_SOFT_NUDGE,
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
 } from '../prompt-kit';
+import { ExposureService } from '../exposure/exposure.service';
+import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { isDriverExecutableKind, threadKindSpec, type ThreadRowKind } from '../thread-kind';
 import { BuildShipService } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
@@ -236,6 +239,9 @@ export class ThreadDriver implements JobDispatcher {
     // (the SAME sink the Claude lanes' SDK TaskCreate/TaskUpdate use), so the web renders its checklist
     // identically. Claude builders keep using their native SDK task tools via the transcript harness.
     @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
+    // @Global ExposureModule — inert unless PREVIEW_BASE_DOMAIN is set. @Optional so the driver still
+    // constructs when previews are off; used to render each running service's public preview URL.
+    @Optional() private readonly exposure?: ExposureService,
     // The repo's opt-in house-style profile — injected into every build-facing prompt (WORKER / gate /
     // commit) and forwarded on the run args so the in-container FAN_OUT writer subagents get it too.
     // @Optional so unit tests construct the driver without it (undefined → no house style injected); DI
@@ -2297,7 +2303,11 @@ export class ThreadDriver implements JobDispatcher {
     // instead of restarting the batch. The seed is cleared the instant the fresh session is born (turn-runner
     // clear-on-birth). Mirrors the brain's `pending_compaction_seed` fold in `runChatTurnInner`.
     const legSeed = await this.store.getPendingLegSeed(anchor.id);
-    const task = this.foldLegSeed(legSeed, baseTask);
+    // Live running-services context — builder turns only (a Codex master_review runs no services). Probed
+    // fresh here and at every Leg re-kick below so each turn sees CURRENT state, not a batch-start snapshot.
+    const servicesBlock =
+      thread.kind === 'builder' ? await this.renderLiveServicesBlock(job.id) : '';
+    const task = this.foldTurn(legSeed, baseTask, servicesBlock);
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2412,7 +2422,7 @@ export class ThreadDriver implements JobDispatcher {
           );
           result = null;
           const seed = await this.store.getPendingLegSeed(anchor.id);
-          legTask = this.foldLegSeed(seed, baseTask);
+          legTask = this.foldTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
           rotationState.softReached = false;
@@ -2426,7 +2436,7 @@ export class ThreadDriver implements JobDispatcher {
         // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
         result = null;
         const seed = await this.store.getPendingLegSeed(anchor.id);
-        legTask = this.foldLegSeed(seed, baseTask);
+        legTask = this.foldTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
       }
       report = result!.report;
 
@@ -2998,6 +3008,47 @@ export class ThreadDriver implements JobDispatcher {
    */
   private foldLegSeed(seed: string | null, baseTask: string): string {
     return seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask;
+  }
+
+  /**
+   * Fold a turn-kick's task: append the freshly-probed running-services block to the batch task, THEN apply
+   * the leg-seed fold. Appending to `baseTask` (rather than after the seed fold) keeps `ROTATION_RESUME_TAIL`
+   * in the RECENCY slot for a rotated Leg while still surfacing what's already online. An empty block leaves
+   * the task unchanged.
+   */
+  private foldTurn(seed: string | null, baseTask: string, servicesBlock: string): string {
+    const withServices = servicesBlock ? `${baseTask}\n\n${servicesBlock}` : baseTask;
+    return this.foldLegSeed(seed, withServices);
+  }
+
+  /**
+   * Probe THIS sandbox's live `atlas-svc` services and render the "still online — reuse them" block folded
+   * into each builder turn-kick (and every rotated Leg). Recomputed per kick — never baked into the
+   * once-per-batch base task — so a service an earlier session/Leg left running shows up. Best-effort: any
+   * failure yields '' so a probe hiccup never blocks a kick, and the shared `serviceStatus` generation gate
+   * means a reused pgid from a dead container generation reads `stopped`, not `running`.
+   */
+  private async renderLiveServicesBlock(jobId: string): Promise<string> {
+    try {
+      const dir = this.threadLifecycle.supervisorDirHost(jobId);
+      if (!dir) return '';
+      const markers = readServiceMarkers(dir);
+      if (markers.length === 0) return '';
+      const pgids = markers.map((m) => m.pgid).filter((p): p is number => p != null);
+      const probe = await this.threadLifecycle.probeLiveness(jobId, pgids);
+      const running = markers.filter((m) => serviceStatus(m, probe) === 'running');
+      if (running.length === 0) return '';
+      return renderRunningServicesNote(
+        running.map((m) => ({
+          name: m.name,
+          port: m.port,
+          url: m.port != null && m.expose ? (this.exposure?.urlFor(jobId, m.name) ?? null) : null,
+        })),
+      );
+    } catch (err) {
+      this.logger.debug(`renderLiveServicesBlock(${jobId.slice(0, 8)}) failed: ${err}`);
+      return '';
+    }
   }
 
   /**
