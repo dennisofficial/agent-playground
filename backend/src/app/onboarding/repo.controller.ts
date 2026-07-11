@@ -29,6 +29,8 @@ class ConnectRepoDto {
 class UpdateRepoDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() defaultBranch?: string;
+  /** Per-repo feature-branch prefix. Empty string clears it back to the neutral built-in default. */
+  @IsOptional() @IsString() branchPrefix?: string;
 }
 
 /** A repo as the web app lists it. */
@@ -49,6 +51,8 @@ interface RepoView {
   onboardedAt: string | null;
   /** Non-fatal webhook-registration warning (e.g. the PAT lacks admin:repo_hook), or null when clear. */
   webhookWarning: string | null;
+  /** Per-repo feature-branch prefix override; null → the neutral built-in default (`feature/`). */
+  branchPrefix: string | null;
 }
 
 /**
@@ -111,6 +115,7 @@ export class RepoController {
       onboardingThreadId: r.onboarding_job_id,
       onboardedAt: r.onboarded_at ? r.onboarded_at.toISOString() : null,
       webhookWarning: r.webhook_warning ?? null,
+      branchPrefix: r.branch_prefix ?? null,
     }));
   }
 
@@ -161,6 +166,7 @@ export class RepoController {
     return this.onboarding.updateRepo(org.id, repoId, {
       ...(body.name !== undefined ? { name: body.name } : {}),
       ...(body.defaultBranch !== undefined ? { defaultBranch: body.defaultBranch } : {}),
+      ...(body.branchPrefix !== undefined ? { branchPrefix: body.branchPrefix } : {}),
     });
   }
 

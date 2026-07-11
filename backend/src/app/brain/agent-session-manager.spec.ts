@@ -126,6 +126,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     getPipelineState: vi.fn(),
     getDecisionRecord: vi.fn(),
     retractShip: vi.fn(),
+    openAmendProposal: vi.fn(),
     // ADR 0004 Phase 3 — halt wake + bounded fix
     loadJob: vi.fn(),
     getThread: vi.fn(),
@@ -783,7 +784,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       repoId: PROJECT_ID,
       orgId: TEAM_ID,
     });
-    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'sbx-1' });
+    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'sbx-1',
+      branch: 'feature/abc12345',
+    });
     (mockDriverStore.getDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
       overview: 'Fix off-by-one',
       decisions: [],
@@ -1530,16 +1534,27 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
   });
 
-  it('(e6) withdraw_ship retracts a parked ship-review gate and posts the notice; a non-parked job is a no-op', async () => {
+  it('(e6) withdraw_ship PROPOSES amending (posts a card, does NOT retract); already-open and non-parked are no-ops', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
-    (mockDriverStore.retractShip as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    // Happy path: a fresh proposal is posted → ok, an Atlas "awaiting the operator" note is appended, and
+    // the gate is NOT retracted (only the operator can release it).
+    (mockDriverStore.openAmendProposal as ReturnType<typeof vi.fn>).mockResolvedValue('posted');
     const ok = await tools['withdraw_ship']({ reason: 'more polish' });
-    expect(mockDriverStore.retractShip).toHaveBeenCalledWith(THREAD_ID);
+    expect(mockDriverStore.openAmendProposal).toHaveBeenCalledWith(THREAD_ID, 'more polish');
+    expect(mockDriverStore.retractShip).not.toHaveBeenCalled();
     expect(ok).toMatchObject({ ok: true });
-    expect(mockStore.appendAtlasMessage).toHaveBeenCalledWith(THREAD_ID, expect.stringContaining('more polish'));
+    expect(mockStore.appendAtlasMessage).toHaveBeenCalledWith(THREAD_ID, expect.any(String));
 
-    (mockDriverStore.retractShip as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    // A proposal is already pending → {ok:false}, no duplicate note.
+    (mockDriverStore.openAmendProposal as ReturnType<typeof vi.fn>).mockResolvedValue('already-open');
+    (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockClear();
+    const alreadyOpen = await tools['withdraw_ship']({ reason: 'again' });
+    expect(alreadyOpen).toMatchObject({ ok: false });
+    expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+
+    // Not parked at the ship gate → {ok:false}, no note.
+    (mockDriverStore.openAmendProposal as ReturnType<typeof vi.fn>).mockResolvedValue('not-parked');
     (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockClear();
     const notParked = await tools['withdraw_ship']({});
     expect(notParked).toMatchObject({ ok: false });

@@ -77,6 +77,11 @@ export interface CheckRun {
   detailsUrl: string | null;
 }
 
+/** Per-category CI check counts for a PR head. Sum of the four categories === total. */
+export type CiCounts = { failing: number; pending: number; passed: number; skipped: number; total: number };
+/** The rolled-up CI summary: overall status + counts (both null when no checks reported). */
+export type CiSummary = { status: 'failure' | 'pending' | 'success' | 'skipped' | null; counts: CiCounts | null };
+
 /** A submitted PR review (approve / request-changes / comment). */
 export interface PullReview {
   id: number;

@@ -51,7 +51,7 @@ import { WebSurfaceController } from '../surface/web-surface.controller';
 
 const ORG_ID = '41111111-1111-4111-8111-111111111111';
 const SECRET = 'gh-int-secret';
-const OWNED_BRANCH = 'atlas/thread-ci-proj';
+const OWNED_BRANCH = 'feature/ci-proj';
 
 function dbOpts() {
   return {

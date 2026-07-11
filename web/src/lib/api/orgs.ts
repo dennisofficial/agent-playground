@@ -554,6 +554,8 @@ export interface ConnectedRepo {
   name: string;
   gitUrl: string;
   defaultBranch: string;
+  /** Per-repo feature-branch prefix override; null uses the built-in default. */
+  branchPrefix: string | null;
   accessOk: boolean;
   /** Present on a failed access probe (connect / re-validate); the real GitHub reason. */
   reason?: string;
@@ -619,6 +621,8 @@ export function useReonboardRepo(orgId: string) {
 export interface UpdateRepoBody {
   name?: string;
   defaultBranch?: string;
+  /** Per-repo feature-branch prefix; empty string clears it back to the neutral default. */
+  branchPrefix?: string;
 }
 
 /** Update a repo's display name / base branch (owner only). */

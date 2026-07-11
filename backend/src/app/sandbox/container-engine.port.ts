@@ -211,6 +211,15 @@ export interface ContainerEngine {
   /** List containers, optionally filtered by label(s) (`key` or `key=value`). */
   list(opts?: { label?: string | string[]; all?: boolean }): Promise<ContainerInfo[]>;
 
+  /** Aggregate Docker disk usage (GET /system/df); optional — not part of the sandbox lifecycle. */
+  systemDf?(): Promise<{
+    imagesBytes: number;
+    containersBytes: number;
+    volumesBytes: number;
+    buildCacheBytes: number;
+    totalBytes: number;
+  }>;
+
   /** Inspect one container by id or name; null if it doesn't exist. */
   inspect(idOrName: string): Promise<ContainerInfo | null>;
 

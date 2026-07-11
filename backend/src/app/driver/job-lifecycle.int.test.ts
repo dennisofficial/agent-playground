@@ -34,9 +34,9 @@ import { DataSource, Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvService } from '../../_core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
+import { BrainGateway } from '../brain-gateway';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { LocalGitService } from '../git';
-import { BrainGateway } from '../brain-gateway';
 import { CredentialResolver } from '../onboarding';
 import { TenantCredentialStore } from '../onboarding';
 import { GithubPrService } from '../git';
@@ -299,6 +299,10 @@ beforeEach(async () => {
         useValue: { reconcileOrgAsync: () => undefined },
       },
       {
+        provide: BrainGateway,
+        useValue: { openPrAtShip: vi.fn(), notifyThreadHalted: vi.fn() },
+      },
+      {
         provide: DRIVER_REPO,
         useValue: {
           resolve: async (): Promise<ResolvedRepo> => {
@@ -338,10 +342,7 @@ beforeEach(async () => {
       {
         provide: BrainGateway,
         useValue: {
-          openPrAtShip: async () => {},
-          notifyThreadHalted: async () => {},
-          notifyThreadDone: async () => {},
-          wakeForProvisioningFailure: async () => {},
+          wakeForProvisioningFailure: vi.fn().mockResolvedValue(undefined),
         },
       },
       JobLifecycleService,
@@ -426,7 +427,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     const thread = await jobs.findOneOrFail({ where: { id: result.jobId } });
     expect(thread.base_branch).toBe(FAKE_BASE_BRANCH);
     expect(thread.feature_branch).toBe(
-      `atlas/thread-${result.jobId.slice(0, 8)}`,
+      `feature/${result.jobId.slice(0, 8)}`,
     );
     expect(fakeGit.branches).toContain(thread.feature_branch);
   });
@@ -438,7 +439,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     const warm = await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID);
     expect(warm).not.toBeNull();
     expect(warm!.wasReset).toBe(false);
-    expect(warm!.sandbox.branch).toBe(`atlas/thread-${jobId.slice(0, 8)}`);
+    expect(warm!.sandbox.branch).toBe(`feature/${jobId.slice(0, 8)}`);
 
     provider.warm = false; // simulate a cold re-attach
     const cold = await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID);
@@ -641,7 +642,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     const { jobId } = await create();
     const found = await threadLifecycle.findSandbox(jobId, FAKE_TEAM_ID);
     expect(found).not.toBeNull();
-    expect(found!.branch).toBe(`atlas/thread-${jobId.slice(0, 8)}`);
+    expect(found!.branch).toBe(`feature/${jobId.slice(0, 8)}`);
 
     expect(
       await threadLifecycle.findSandbox(randomUUID(), FAKE_TEAM_ID),
@@ -657,7 +658,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(row!.lifecycle).toBe('attached');
     expect(row!.worktree_path).toBeTruthy();
     const thread = await jobs.findOneOrFail({ where: { id: jobId } });
-    expect(thread.feature_branch).toBe(`atlas/thread-${jobId.slice(0, 8)}`);
+    expect(thread.feature_branch).toBe(`feature/${jobId.slice(0, 8)}`);
   });
 
   it('ensureProvisioned is idempotent — a second call returns the same row, no re-provision', async () => {
@@ -813,6 +814,10 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
           useValue: { reconcileOrgAsync: () => undefined },
         },
         {
+          provide: BrainGateway,
+          useValue: { openPrAtShip: vi.fn(), notifyThreadHalted: vi.fn() },
+        },
+        {
           provide: DRIVER_REPO,
           useValue: {
             resolve: async (): Promise<ResolvedRepo> => {
@@ -846,10 +851,7 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
         {
           provide: BrainGateway,
           useValue: {
-            openPrAtShip: async () => {},
-            notifyThreadHalted: async () => {},
-            notifyThreadDone: async () => {},
-            wakeForProvisioningFailure: async () => {},
+            wakeForProvisioningFailure: vi.fn().mockResolvedValue(undefined),
           },
         },
         TurnRegistry, // the REAL service — this gate's whole point
