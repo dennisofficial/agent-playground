@@ -69,11 +69,13 @@ export class GithubAppController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Body() body: SetGithubAuthModeDto,
   ): Promise<{ ok: true; mode: 'pat' | 'app' }> {
+    const creds = await this.store.read(org.id);
     if (body.mode === 'app') {
-      const creds = await this.store.read(org.id);
       if (!creds?.githubAppInstallationId) {
         throw new BadRequestException('Connect the GitHub App before switching to app mode');
       }
+    } else if (!creds?.githubPat) {
+      throw new BadRequestException('Save a GitHub PAT before switching to PAT mode');
     }
     await this.store.write(org.id, { githubAuthMode: body.mode });
     await this.onboarding.tryActivate(org.id);

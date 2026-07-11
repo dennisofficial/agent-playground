@@ -137,8 +137,20 @@ describe('GithubAppController', () => {
       expect(onboarding.tryActivate).toHaveBeenCalledWith('org-1');
     });
 
-    it('always allows switching back to pat mode', async () => {
+    it('rejects switching to pat mode when no PAT is on the row', async () => {
       const store = fakeStore({ read: null });
+      const controller = new GithubAppController(
+        store,
+        fakeAppTokens(),
+        fakeOnboarding(),
+        fakeStateStore(),
+      );
+      await expect(controller.setMode(ORG, { mode: 'pat' })).rejects.toBeInstanceOf(BadRequestException);
+      expect(store.write).not.toHaveBeenCalled();
+    });
+
+    it('accepts switching back to pat mode when a PAT is present', async () => {
+      const store = fakeStore({ read: { githubPat: 'ghp_x' } });
       const controller = new GithubAppController(
         store,
         fakeAppTokens(),

@@ -575,7 +575,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // remote from inside the sandbox. The GIT_CONFIG_* extraheader keeps the token out of argv/.git/config
     // (same mechanism as host git + SandboxRefsService); GITHUB_TOKEN/GH_TOKEN let it drive the API/`gh`.
     // GIT_TERMINAL_PROMPT=0 makes a missing/expired token fail fast instead of hanging on a prompt.
-    if (target?.gitAuth?.token) {
+    if (target?.gitAuth) {
       const { gitUrl, token, mode } = target.gitAuth;
       if (mode === 'app') {
         // App mode: token rides a host-refreshed FILE via a url-scoped credential helper, not a baked header.
@@ -584,7 +584,8 @@ export class RedisEngineRunner implements EngineRunnerPort {
         Object.assign(e, gitAuthEnv(gitUrl, token));
       }
       if (e.GIT_CONFIG_COUNT) {
-        // Auth was actually injected (https github url) — expose the raw token + fail-fast prompt guard.
+        // Auth config was actually injected (https github url) — fail fast instead of prompting/falling back
+        // to ambient helpers. Only expose GH_TOKEN/GITHUB_TOKEN when a live token exists.
         e.GIT_TERMINAL_PROMPT = '0';
         // NOTE (app mode): GITHUB_TOKEN/GH_TOKEN are baked with the SPAWN-TIME installation token into this
         // frozen exec env and are NOT refreshed mid-turn. Only `git` survives the ~hourly expiry, via the
@@ -592,8 +593,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
         // value, so they are guaranteed correct only for the token's initial lifetime (normal/short turns).
         // On a >1h turn app-mode in-sandbox `gh` can hit an expired token while `git` keeps working —
         // accepted for now (routing `gh` through the refreshed file needs an in-sandbox wrapper; out of scope).
-        e.GITHUB_TOKEN = token;
-        e.GH_TOKEN = token;
+        if (token) {
+          e.GITHUB_TOKEN = token;
+          e.GH_TOKEN = token;
+        }
       }
       // Attribute the in-sandbox agent's commits to the PAT's own GitHub account (resolved host-side by
       // GitIdentityService) instead of git's ambient default.

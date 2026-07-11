@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type Redis from 'ioredis';
 import { GithubAppStateStore } from './github-app-state.store';
 
-/** Map-backed fake standing in for the `ioredis` calls the store makes: `set(k,v,'EX',ttl)` / `get` / `del`. */
+/** Map-backed fake standing in for the `ioredis` calls the store makes: `set(k,v,'EX',ttl)` / atomic eval consume. */
 class FakeRedis {
   private readonly data = new Map<string, string>();
 
@@ -11,12 +11,10 @@ class FakeRedis {
     return Promise.resolve('OK');
   }
 
-  get(key: string): Promise<string | null> {
-    return Promise.resolve(this.data.get(key) ?? null);
-  }
-
-  del(key: string): Promise<number> {
-    return Promise.resolve(this.data.delete(key) ? 1 : 0);
+  eval(_script: string, _keyCount: number, key: string): Promise<string | null> {
+    const value = this.data.get(key) ?? null;
+    this.data.delete(key);
+    return Promise.resolve(value);
   }
 }
 

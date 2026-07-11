@@ -1480,11 +1480,10 @@ interface PipelineLeg {
 }
 
 /**
- * A builder's review children for the `/pipeline` read model. Reflects MATERIALIZED rows only (the
- * `review_lens` × N + `post_review` children the driver's `runReviewChildren` inserts once it computes
- * the type-routed lens selection via `reviewAgentsForThread`) — empty before the review pass materializes
- * them, operator-approved (no independent re-derivation of the selection here; the driver is the single
- * source of truth). Master-review threads have no review children (they ARE the review).
+ * A builder's review children for the `/pipeline` read model. Materialized rows win once the driver's
+ * `runReviewChildren` inserts the diff-routed `review_lens` rows + `post_review` row; before then, expose
+ * only the statically-known `post_review` preview. Master-review threads have no review children (they ARE
+ * the review).
  */
 function pipelineReviewChildren(
   parent: ThreadEntity,

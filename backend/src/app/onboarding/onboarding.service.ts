@@ -455,9 +455,12 @@ export class OnboardingService {
       // is enough (no separate validation gate today).
       openaiKey: presence.hasOpenai,
       engineAuth: presence.engineAuthSet,
-      // Satisfied by EITHER a PAT or a connected GitHub App — the key `githubPat` stays as-is (low-churn)
-      // but the predicate now treats both credentials as full alternatives.
-      githubPat: presence.hasGithub || presence.hasGithubApp,
+      // The key `githubPat` stays as-is (low-churn), but it now means "the ACTIVE GitHub auth mode has a
+      // usable credential": PAT mode requires a PAT; App mode requires a connected installation.
+      githubPat:
+        presence.githubAuthMode === 'app'
+          ? presence.hasGithubApp
+          : presence.hasGithub,
     };
     const missing: OnboardingStep[] = [];
     if (!steps.repoConnected) missing.push('repo');

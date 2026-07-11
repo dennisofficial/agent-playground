@@ -32,9 +32,10 @@ export class GitHubAppTokenService {
   private loadPrivateKey(): string {
     const raw = this.env.get('GITHUB_APP_PRIVATE_KEY');
     if (!raw) throw new Error('GITHUB_APP_PRIVATE_KEY is not configured');
-    return raw.includes('BEGIN')
+    const pem = raw.includes('BEGIN')
       ? raw
       : Buffer.from(raw, 'base64').toString('utf8');
+    return pem.replace(/\\n/g, '\n');
   }
 
   private appJwt(): string {
@@ -57,12 +58,18 @@ export class GitHubAppTokenService {
     return `${signingInput}.${base64url(sig)}`;
   }
 
-  private appHeaders(jwt: string): Record<string, string> {
+  private githubHeaders(): Record<string, string> {
     return {
-      Authorization: `Bearer ${jwt}`,
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
       'User-Agent': 'atlas',
+    };
+  }
+
+  private appHeaders(jwt: string): Record<string, string> {
+    return {
+      ...this.githubHeaders(),
+      Authorization: `Bearer ${jwt}`,
     };
   }
 
@@ -210,7 +217,7 @@ export class GitHubAppTokenService {
     const userRes = await this.fetchImpl(
       `${API}/users/${encodeURIComponent(botLogin)}`,
       {
-        headers: this.appHeaders(this.appJwt()),
+        headers: this.githubHeaders(),
       },
     );
     if (!userRes.ok) {

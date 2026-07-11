@@ -319,6 +319,23 @@ describe('OnboardingService', () => {
       expect(status.missing).toEqual([]);
       expect(await svc.nextStep('T1')).toBeNull();
     });
+
+    it('counts GitHub App access only when app mode is active', async () => {
+      const { svc } = assemble({
+        presence: { hasGithubApp: true, githubAuthMode: 'app' },
+      });
+      const status = await svc.status('T1');
+      expect(status.steps.githubPat).toBe(true);
+    });
+
+    it('does not count a connected GitHub App while PAT mode is active and no PAT is saved', async () => {
+      const { svc } = assemble({
+        presence: { hasGithubApp: true, githubAuthMode: 'pat' },
+      });
+      const status = await svc.status('T1');
+      expect(status.steps.githubPat).toBe(false);
+      expect(status.missing).toContain('github_pat');
+    });
   });
 
   describe('revalidateRepo', () => {

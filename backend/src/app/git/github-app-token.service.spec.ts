@@ -140,6 +140,25 @@ describe('GitHubAppTokenService JWT', () => {
     const { payload } = decodeJwt(bearerJwt(calls[0]));
     expect(payload.iss).toBe('12345');
   });
+
+  it('accepts raw PEM env values whose newlines are escaped', async () => {
+    const inFuture = new Date(Date.now() + 60 * 60_000).toISOString();
+    const { impl, calls } = routedFetch([
+      {
+        match: '/access_tokens',
+        responses: [
+          { status: 201, body: { token: 'ghs_abc', expires_at: inFuture } },
+        ],
+      },
+    ]);
+    const svc = new GitHubAppTokenService(
+      fakeEnv({ GITHUB_APP_PRIVATE_KEY: privateKey.replace(/\n/g, '\\n') }),
+    );
+    svc.fetchImpl = impl;
+    await svc.getInstallationToken('999');
+    const { parts } = decodeJwt(bearerJwt(calls[0]));
+    expect(verifyJwtSignature(parts)).toBe(true);
+  });
 });
 
 describe('GitHubAppTokenService.getInstallationToken', () => {
@@ -316,6 +335,9 @@ describe('GitHubAppTokenService.appBotIdentity', () => {
     expect(calls.some((c) => c.url.includes('/users/atlas-bot%5Bbot%5D'))).toBe(
       true,
     );
+    const userCall = calls.find((c) => c.url.includes('/users/atlas-bot%5Bbot%5D'));
+    expect(userCall).toBeDefined();
+    expect((userCall!.init?.headers as Record<string, string>).Authorization).toBeUndefined();
 
     const callsBefore = calls.length;
     await svc.appBotIdentity();

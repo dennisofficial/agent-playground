@@ -57,11 +57,13 @@ export function gitCredHelperEnv(
   tokenFilePath: string,
 ): Record<string, string> {
   if (!isHttpsGithub(gitUrl)) return {};
-  const helper = `!f() { test "$1" = get && { echo username=x-access-token; echo "password=$(cat ${tokenFilePath})"; }; }; f`;
+  const helper = `!f() { test "$1" = get && { echo username=x-access-token; echo "password=$(cat ${shQuote(tokenFilePath)})"; }; }; f`;
   return {
-    GIT_CONFIG_COUNT: '1',
-    GIT_CONFIG_KEY_0: 'credential.https://github.com.helper',
-    GIT_CONFIG_VALUE_0: helper,
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'credential.helper',
+    GIT_CONFIG_VALUE_0: '',
+    GIT_CONFIG_KEY_1: 'credential.https://github.com.helper',
+    GIT_CONFIG_VALUE_1: helper,
   };
 }
 
@@ -76,4 +78,8 @@ export function parseGithubRepo(gitUrl: string): { owner: string; repo: string }
 export function sameGitUrl(a: string, b: string): boolean {
   const norm = (u: string) => u.replace(/\.git$/, '').replace(/\/+$/, '');
   return norm(a) === norm(b);
+}
+
+function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }

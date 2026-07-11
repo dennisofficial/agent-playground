@@ -5,6 +5,11 @@ import { REDIS_CLIENT } from '../../_lib/redis/redis.tokens';
 
 /** How long a stashed connect nonce survives before the install round-trip is considered abandoned. */
 const STATE_TTL_SECONDS = 600;
+const CONSUME_SCRIPT = `
+local v = redis.call('GET', KEYS[1])
+if v then redis.call('DEL', KEYS[1]) end
+return v
+`;
 
 /** One Redis key per nonce — namespaced so no other Redis use can collide with it. */
 function stateKey(nonce: string): string {
@@ -32,9 +37,7 @@ export class GithubAppStateStore {
 
   /** Read + delete the orgId for `nonce` — single-use. Null when absent/expired/already consumed. */
   async consume(nonce: string): Promise<string | null> {
-    const key = stateKey(nonce);
-    const orgId = await this.redis.get(key);
-    await this.redis.del(key);
-    return orgId;
+    const orgId = await this.redis.eval(CONSUME_SCRIPT, 1, stateKey(nonce));
+    return typeof orgId === 'string' ? orgId : null;
   }
 }

@@ -49,10 +49,12 @@ describe('gitAuthEnv (token never in argv / config)', () => {
 describe('gitCredHelperEnv (file-backed, url-scoped)', () => {
   it('sets a url-scoped credential helper that cats the token file on every git invocation', () => {
     const env = gitCredHelperEnv('https://github.com/acme/app.git', '/.atlas/github-token');
-    expect(env.GIT_CONFIG_COUNT).toBe('1');
-    expect(env.GIT_CONFIG_KEY_0).toBe('credential.https://github.com.helper');
-    expect(env.GIT_CONFIG_VALUE_0).toContain('cat /.atlas/github-token');
-    expect(env.GIT_CONFIG_VALUE_0).toContain('username=x-access-token');
+    expect(env.GIT_CONFIG_COUNT).toBe('2');
+    expect(env.GIT_CONFIG_KEY_0).toBe('credential.helper');
+    expect(env.GIT_CONFIG_VALUE_0).toBe('');
+    expect(env.GIT_CONFIG_KEY_1).toBe('credential.https://github.com.helper');
+    expect(env.GIT_CONFIG_VALUE_1).toContain("cat '/.atlas/github-token'");
+    expect(env.GIT_CONFIG_VALUE_1).toContain('username=x-access-token');
   });
 
   it('returns {} for non-github urls — the helper never scopes to a non-GitHub remote', () => {
