@@ -4,9 +4,9 @@ import { Injectable, Logger } from '@nestjs/common';
  * The typed contract the DRIVER uses to reach the BRAIN. It is implemented by the concrete brain
  * (`AgentSessionManager`), which registers itself via {@link BrainGateway.bind} on bootstrap.
  *
- * All four calls carry plain data and return `Promise<void>`:
+ * All five calls carry plain data and return `Promise<void>`:
  *  - `openPrAtShip` — REQUEST/RESPONSE: awaited to completion (the ship step latches the PR only after it).
- *  - the three wakes — fire-and-forget notifications the driver awaits only to log per-attempt failures;
+ *  - the four wakes — fire-and-forget notifications the driver awaits only to log per-attempt failures;
  *    at-least-once retry is driven by the driver's periodic sweeps (the brain stamps a dedup marker on
  *    the wake turn's success tail, so a failed wake stays owed).
  */
@@ -32,6 +32,12 @@ export interface BrainGatewayHandler {
     reason: 'final' | 'notable',
   ): Promise<void>;
   wakeForProvisioningFailure(jobId: string, orgId: string, repoId: string): Promise<void>;
+  wakeUnblockedJob(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+    input: { seed: string | null; note: string | null },
+  ): Promise<void>;
 }
 
 /**
@@ -96,5 +102,14 @@ export class BrainGateway implements BrainGatewayHandler {
 
   wakeForProvisioningFailure(jobId: string, orgId: string, repoId: string): Promise<void> {
     return this.require().wakeForProvisioningFailure(jobId, orgId, repoId);
+  }
+
+  wakeUnblockedJob(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+    input: { seed: string | null; note: string | null },
+  ): Promise<void> {
+    return this.require().wakeUnblockedJob(jobId, orgId, repoId, input);
   }
 }

@@ -880,6 +880,37 @@ export class AgentSessionManager
   }
 
   /**
+   * WAKE a job whose block just cleared (every blocker reached a terminal state). Born-blocked jobs
+   * (a create_job dependsOn that never started) replay their stored seed as the first turn; a job that
+   * was manually blocked while it already had a session resumes that session with a synthetic wake
+   * stimulus. `note` (d1) names any blocker that did NOT merge so the brain re-checks its assumptions.
+   * Fire-and-forget (the JobUnblockSweep is the retry); concurrency-safe via handleChatTurn/startFollowUpJob.
+   */
+  async wakeUnblockedJob(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+    input: { seed: string | null; note: string | null },
+  ): Promise<void> {
+    if (input.seed != null) {
+      const firstMessage = input.note ? `${input.note}\n\n${input.seed}` : input.seed;
+      await this.startFollowUpJob(jobId, orgId, repoId, firstMessage);
+      return;
+    }
+    const body = input.note
+      ? `${input.note}\n\nAll blocking jobs have now resolved — you are unblocked. Resume the work you had planned.`
+      : 'All blocking jobs have now resolved — you are unblocked. Resume the work you had planned.';
+    const stimulus = harnessDeliveryStimulus({
+      jobId,
+      orgId,
+      repoId,
+      body,
+      seedRow: { label: 'Unblocked — a blocking job resolved.', chunkKey: `seed:unblock:${jobId}` },
+    });
+    await this.handleChatTurn(stimulus);
+  }
+
+  /**
    * WAKE the job brain because the operator APPROVED its "Amend build?" proposal (the `withdraw_ship`
    * tool's card). By this point the operator retract path has already run (`awaiting_ship_review →
    * amending`), so the brain just needs to do the follow-up work it proposed. The brain's session is
