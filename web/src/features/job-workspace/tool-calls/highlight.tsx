@@ -133,6 +133,31 @@ const LANG_LOADERS: Record<string, () => Promise<unknown>> = {
 };
 
 /**
+ * Common markdown fence info strings (```js, ```py, …) that differ from the canonical `LANG_LOADERS`
+ * ids. Normalized to their canonical id so fences resolve without duplicating loader entries. Fence ids
+ * already matching a `LANG_LOADERS` key (js's `javascript`, `tsx`, …) pass through untouched.
+ */
+const LANG_ALIAS: Record<string, string> = {
+  js: "javascript",
+  ts: "typescript",
+  py: "python",
+  yml: "yaml",
+  sh: "bash",
+  shell: "bash",
+  zsh: "bash",
+  md: "markdown",
+  rs: "rust",
+  tf: "terraform",
+  hcl: "terraform",
+  dockerfile: "docker",
+};
+
+/** Resolve a raw language id (file-derived or a markdown fence info string) to a canonical Shiki id. */
+function canonicalLang(lang: string): string {
+  return LANG_ALIAS[lang] ?? lang;
+}
+
+/**
  * The highlighter is a module-level singleton built once in the browser (mirrors the repo's lazy
  * mermaid import). `readyHighlighter` is the sync handle the hook reads in-render once the async build
  * resolves.
@@ -257,35 +282,36 @@ export function useHighlightTokens(
 ): LineTokens | null {
   // Bumped by the effect once an async highlighter/lang load finishes, so the memo re-runs.
   const [ready, setReady] = useState(0);
+  const canonical = lang ? canonicalLang(lang) : null;
 
   const tokens = useMemo<LineTokens | null>(() => {
-    if (!lang || !LANG_LOADERS[lang] || !readyHighlighter) return null;
+    if (!canonical || !LANG_LOADERS[canonical] || !readyHighlighter) return null;
     if (code.length > MAX_HIGHLIGHT_LENGTH) return null;
-    if (!readyHighlighter.getLoadedLanguages().includes(lang)) return null;
+    if (!readyHighlighter.getLoadedLanguages().includes(canonical)) return null;
     try {
       return whole
-        ? tokenizeWhole(readyHighlighter, code, lang)
-        : tokenizeLines(readyHighlighter, code.split("\n"), lang);
+        ? tokenizeWhole(readyHighlighter, code, canonical)
+        : tokenizeLines(readyHighlighter, code.split("\n"), canonical);
     } catch {
       return null;
     }
     // `ready` is a dep so the memo re-runs once the async load completes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code, lang, whole, ready]);
+  }, [code, canonical, whole, ready]);
 
   useEffect(() => {
-    if (tokens || !lang || !LANG_LOADERS[lang]) return; // resolved, or nothing loadable
+    if (tokens || !canonical || !LANG_LOADERS[canonical]) return; // resolved, or nothing loadable
     if (code.length > MAX_HIGHLIGHT_LENGTH) return;
     let cancelled = false;
     (async () => {
       const hi = await getHighlighter();
-      await ensureLang(hi, lang);
+      await ensureLang(hi, canonical);
       if (!cancelled) setReady((v) => v + 1);
     })();
     return () => {
       cancelled = true;
     };
-  }, [tokens, lang, code, whole]);
+  }, [tokens, canonical, code, whole]);
 
   return tokens;
 }
