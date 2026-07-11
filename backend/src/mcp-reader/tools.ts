@@ -11,11 +11,11 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import {
   JobEntity,
   JobSandboxEntity,
-  MessageEntity,
   ThreadEntity,
 } from '../app/persistence/entities';
 import type { ThreadTerminalRecord } from '../app/persistence/entities/thread.entity';
 import { resolveJailed } from './path-jail';
+import { introspectSchema, runReadOnlyQuery } from './query';
 import {
   findSandboxDir,
   grepFiles,
@@ -44,7 +44,7 @@ export interface ToolRoots {
 export interface ToolCtx {
   ds: DataSource;
   roots: ToolRoots;
-  audit: { orgId?: string };
+  audit: { orgId?: string; sql?: string; rowCount?: number };
 }
 
 function requireNonEmptyString(value: unknown, name: string): string {
@@ -81,6 +81,26 @@ function deriveFailureSummary(tr: ThreadTerminalRecord | null): string | null {
     return `failure(${tr.failure.kind}): ${tr.failure.failingStep ?? tr.failure.command ?? ''} exit=${tr.failure.exitCode ?? ''}`;
   }
   return null;
+}
+
+// ── atlas_query / atlas_schema ────────────────────────────────────────────────────────────────────────
+
+async function atlasQuery(
+  ctx: ToolCtx,
+  args: { sql: string; params?: unknown[] },
+): Promise<unknown> {
+  const sql = requireNonEmptyString(args.sql, 'sql');
+  // Stamp the SQL BEFORE running so a guard rejection / timeout / permission error still lands the SQL in
+  // main.ts's failed-query audit line.
+  ctx.audit.sql = sql;
+  const params = Array.isArray(args.params) ? args.params : [];
+  const { rows, rowCount, truncated } = await runReadOnlyQuery(ctx.ds, sql, params);
+  ctx.audit.rowCount = rowCount;
+  return { rowCount, truncated, rows };
+}
+
+async function atlasSchema(ctx: ToolCtx): Promise<unknown> {
+  return introspectSchema(ctx.ds);
 }
 
 // ── atlas_job_overview ────────────────────────────────────────────────────────────────────────────────
@@ -126,95 +146,6 @@ async function jobOverview(
       failureSummary: deriveFailureSummary(t.terminal_record),
     })),
   };
-}
-
-// ── atlas_thread_failure ──────────────────────────────────────────────────────────────────────────────
-
-async function threadFailure(
-  ctx: ToolCtx,
-  args: { jobId: string; threadId?: string },
-): Promise<unknown> {
-  const job = await loadJob(ctx, args.jobId);
-  const repo = ctx.ds.getRepository(ThreadEntity);
-  const threads = args.threadId
-    ? await repo.find({ where: { job_id: job.id, id: args.threadId } })
-    : await repo.find({ where: { job_id: job.id }, order: { ordinal: 'ASC' } });
-  const scoped = args.threadId
-    ? threads
-    : threads.filter((t) => t.terminal_record != null);
-
-  return {
-    threads: scoped.map((t) => ({
-      id: t.id,
-      kind: t.kind,
-      condition: t.condition,
-      status: t.status,
-      terminalRecord: t.terminal_record,
-    })),
-  };
-}
-
-// ── atlas_job_transcript ──────────────────────────────────────────────────────────────────────────────
-
-function mapMessageSource(stored: unknown, isAtlas: boolean): string {
-  if (stored === 'system_operator') return 'system_operator';
-  if (stored === 'system_shared') return 'system_shared';
-  if (stored === 'system_event') return 'system_event';
-  if (stored === 'system_notice') return 'system_notice';
-  if (stored === 'system_reminder') return 'system_reminder';
-  if (stored === 'untrusted') return 'untrusted';
-  return isAtlas ? 'atlas' : 'operator';
-}
-
-interface JobTranscriptArgs {
-  jobId: string;
-  kind?: string | string[];
-  source?: string;
-  tail?: number;
-  since?: string;
-}
-
-async function jobTranscript(
-  ctx: ToolCtx,
-  args: JobTranscriptArgs,
-): Promise<unknown> {
-  const job = await loadJob(ctx, args.jobId);
-  const rows = await ctx.ds
-    .getRepository(MessageEntity)
-    .find({ where: { job_id: job.id }, order: { created_at: 'ASC' } });
-
-  const kinds =
-    args.kind === undefined
-      ? undefined
-      : Array.isArray(args.kind)
-        ? args.kind
-        : [args.kind];
-  const sinceDate = args.since ? new Date(args.since) : undefined;
-
-  let mapped = rows
-    .filter((m) => !kinds || kinds.includes(m.kind))
-    .filter((m) => !sinceDate || m.created_at >= sinceDate)
-    .map((m) => ({
-      id: m.id,
-      ts: m.ts,
-      author: m.author,
-      authorId: m.author_id,
-      isAtlas: m.author_bot_id != null,
-      source: mapMessageSource(
-        (m.meta as { source?: unknown } | null)?.source,
-        m.author_bot_id != null,
-      ),
-      text: m.text,
-      kind: m.kind,
-      card: m.card,
-      meta: m.meta,
-      postedAt: m.created_at,
-    }));
-
-  if (args.source) mapped = mapped.filter((m) => m.source === args.source);
-  if (args.tail && args.tail > 0) mapped = mapped.slice(-args.tail);
-
-  return { messages: mapped };
 }
 
 // ── atlas_session_raw ─────────────────────────────────────────────────────────────────────────────────
@@ -291,42 +222,6 @@ function requireSessionFile(
   const path = resolveSessionFile(sandboxDir, sessionId);
   if (!path) throw new Error(`session '${sessionId}' not found`);
   return { sessionId, path };
-}
-
-// ── atlas_list_jobs ───────────────────────────────────────────────────────────────────────────────────
-
-interface ListJobsArgs {
-  repoId?: string;
-  orgId?: string;
-  status?: string;
-  limit?: number;
-}
-
-async function listJobs(ctx: ToolCtx, args: ListJobsArgs): Promise<unknown> {
-  const where: Partial<Pick<JobEntity, 'repo_id' | 'org_id' | 'status'>> = {};
-  if (args.repoId) where.repo_id = args.repoId;
-  if (args.orgId) where.org_id = args.orgId;
-  if (args.status) where.status = args.status;
-
-  const jobs = await ctx.ds.getRepository(JobEntity).find({
-    where,
-    order: { created_at: 'DESC' },
-    take: args.limit ?? 50,
-  });
-
-  return {
-    jobs: jobs.map((j) => ({
-      id: j.id,
-      orgId: j.org_id,
-      repoId: j.repo_id,
-      status: j.status,
-      title: j.title,
-      prUrl: j.pr_url,
-      ciStatus: j.ci_status,
-      createdAt: j.created_at,
-      updatedAt: j.updated_at,
-    })),
-  };
 }
 
 // ── filesystem tree helper (shared by atlas_context_read / atlas_worktree_tree) ─────────────────────────
@@ -467,43 +362,34 @@ async function worktreeFile(
 
 export const TOOL_DEFS: Tool[] = [
   {
+    name: 'atlas_query',
+    description:
+      'Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results are capped at 1000 rows, run under a 10s statement timeout, and passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sql: { type: 'string', description: 'a single read-only SELECT or WITH query' },
+        params: {
+          type: 'array',
+          description: 'optional positional bind params ($1..$n)',
+        },
+      },
+      required: ['sql'],
+    },
+  },
+  {
+    name: 'atlas_schema',
+    description:
+      'List every public table and its columns (name, data type, nullability) from information_schema — the map for writing atlas_query SQL.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'atlas_job_overview',
     description:
       "A job's core status fields plus its thread list (with a one-line failure summary per thread).",
     inputSchema: {
       type: 'object',
       properties: { jobId: { type: 'string' } },
-      required: ['jobId'],
-    },
-  },
-  {
-    name: 'atlas_thread_failure',
-    description:
-      "A thread's full typed terminal record (verification/failure/blocked detail), or every thread's on the job when threadId is omitted.",
-    inputSchema: {
-      type: 'object',
-      properties: { jobId: { type: 'string' }, threadId: { type: 'string' } },
-      required: ['jobId'],
-    },
-  },
-  {
-    name: 'atlas_job_transcript',
-    description:
-      "A job's operator-facing message transcript, with kind/source/since/tail filters.",
-    inputSchema: {
-      type: 'object',
-      properties: {
-        jobId: { type: 'string' },
-        kind: {
-          anyOf: [
-            { type: 'string' },
-            { type: 'array', items: { type: 'string' } },
-          ],
-        },
-        source: { type: 'string' },
-        tail: { type: 'number' },
-        since: { type: 'string', description: 'ISO-8601 timestamp' },
-      },
       required: ['jobId'],
     },
   },
@@ -533,20 +419,6 @@ export const TOOL_DEFS: Tool[] = [
         },
       },
       required: ['jobId'],
-    },
-  },
-  {
-    name: 'atlas_list_jobs',
-    description:
-      'List jobs across ALL orgs, optionally filtered by repoId/orgId/status.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        repoId: { type: 'string' },
-        orgId: { type: 'string' },
-        status: { type: 'string' },
-        limit: { type: 'number', description: 'default 50' },
-      },
     },
   },
   {
@@ -585,15 +457,13 @@ export type ToolHandler = (
 ) => Promise<unknown>;
 
 export const TOOL_HANDLERS: Record<string, ToolHandler> = {
+  atlas_query: (ctx, args) =>
+    atlasQuery(ctx, args as unknown as { sql: string; params?: unknown[] }),
+  atlas_schema: (ctx) => atlasSchema(ctx),
   atlas_job_overview: (ctx, args) =>
     jobOverview(ctx, args as { jobId: string }),
-  atlas_thread_failure: (ctx, args) =>
-    threadFailure(ctx, args as { jobId: string; threadId?: string }),
-  atlas_job_transcript: (ctx, args) =>
-    jobTranscript(ctx, args as unknown as JobTranscriptArgs),
   atlas_session_raw: (ctx, args) =>
     sessionRaw(ctx, args as unknown as SessionRawArgs),
-  atlas_list_jobs: (ctx, args) => listJobs(ctx, args as ListJobsArgs),
   atlas_context_read: (ctx, args) =>
     contextRead(ctx, args as { jobId: string; path?: string }),
   atlas_worktree_tree: (ctx, args) =>

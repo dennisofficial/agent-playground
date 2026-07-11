@@ -6,6 +6,8 @@ export interface AuditEntry {
   ok: boolean;
   remote?: string;
   error?: string;
+  sql?: string;
+  rows?: number;
 }
 
 /** One JSON line to stdout per tool call and per rejected auth attempt — the entire audit trail (no file,
