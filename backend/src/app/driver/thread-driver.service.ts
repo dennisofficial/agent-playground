@@ -85,6 +85,7 @@ import {
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
 } from '../prompt-kit';
+import { chunkKey } from '../prompt-kit/harness';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { isDriverExecutableKind, threadKindSpec, type ThreadRowKind } from '../thread-kind';
@@ -2822,7 +2823,7 @@ export class ThreadDriver implements JobDispatcher {
           legOrdinal,
           kind: 'system_reminder',
           text: nudgeText,
-          chunkKey: `rot-nudge:${anchor.id}:leg${legOrdinal}:${sig.phase}${sig.reminderIndex}`,
+          chunkKey: chunkKey.rotNudge(anchor.id, legOrdinal, sig.phase, sig.reminderIndex),
           reminderKind: 'context_pressure',
         })
         .catch((err) => this.logger.debug(`rotation nudge row failed (display-only): ${shortReason(err)}`));
@@ -2976,7 +2977,7 @@ export class ThreadDriver implements JobDispatcher {
         legOrdinal: res.fromLeg,
         kind: 'system_notice',
         text: handoff,
-        chunkKey: `rot-handoff:${anchor.id}:leg${res.fromLeg}`,
+        chunkKey: chunkKey.rotHandoff(anchor.id, res.fromLeg),
         reminderKind: 'leg_handoff',
       })
       .catch((err) => this.logger.debug(`rotation handoff row failed (display-only): ${shortReason(err)}`));
@@ -2987,7 +2988,7 @@ export class ThreadDriver implements JobDispatcher {
         legOrdinal: res.toLeg,
         kind: 'system_notice',
         text: seed,
-        chunkKey: `rot-seed:${anchor.id}:leg${res.toLeg}`,
+        chunkKey: chunkKey.rotSeed(anchor.id, res.toLeg),
         reminderKind: 'leg_seed',
       })
       .catch((err) => this.logger.debug(`rotation seed row failed (display-only): ${shortReason(err)}`));

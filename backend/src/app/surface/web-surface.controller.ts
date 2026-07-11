@@ -111,6 +111,25 @@ import {
   renderUploadedFilesXml,
   type AttachmentCardItem,
 } from '../prompt-kit';
+import {
+  answeredQuestionBody,
+  chunkKey,
+  conventionAttached,
+  conventionEdited,
+  fileUploaded,
+  mcpApproved,
+  mcpRemoved,
+  mcpSecretOauthRefused,
+  mcpSecretStored,
+  mcpSecretStoreFailed,
+  retryResumeNudge,
+  secretEphemeralDelivered,
+  secretEphemeralUndelivered,
+  secretStored,
+  skillApproved,
+  skillEditApproved,
+  skillEditGone,
+} from '../prompt-kit/harness';
 import { UsageEventBus } from '../onboarding/usage-event-bus';
 
 const VALID_ACTION_IDS = new Set([
@@ -1160,14 +1179,12 @@ export class WebSurfaceController {
     const thread = await this.requireThread(jobId, org.id);
     // Name the task in the resume nudge — a bare "Please continue." on a cold re-attach can leave the brain
     // disoriented (it re-asks what to continue). The title gives the resumed turn its bearings.
-    const resumeNudge = thread.title
-      ? `Please continue with the current task: "${thread.title}".`
-      : 'Please continue.';
+    const resumeNudge = retryResumeNudge(thread.title ?? undefined);
     this.surface.seedSystemNotification(thread.repo_id, jobId, resumeNudge, {
       orgId: org.id,
       seedRow: {
         label: 'Resuming the turn after a transient engine error.',
-        chunkKey: `seed:retry:${jobId}:${Date.now()}`,
+        chunkKey: chunkKey.retry(jobId, Date.now()),
       },
     });
     // Force-resume of a Main-lane session-limit park: clear the durable auto-resume clock so the leader sweep
@@ -1244,11 +1261,11 @@ export class WebSurfaceController {
     // persisted as a chat bubble (the answer lives on the card). The seed carries `deliveredQuestionId` so
     // its delivery turn stamps exactly THIS card `deliveredAt` on success (at-least-once recovery on boot).
     const question = (payload.question ?? '').trim();
-    const notice = `The operator answered your question ${JSON.stringify(question)}: ${answer}`;
+    const notice = answeredQuestionBody(question, answer);
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
       deliveredQuestionId: body.questionId,
-      seedRow: { label: notice, chunkKey: `seed:qa:${jobId}:${body.questionId}` },
+      seedRow: { label: notice, chunkKey: chunkKey.qa(jobId, body.questionId) },
     });
     return { ok: true, ts };
   }
@@ -1284,7 +1301,7 @@ export class WebSurfaceController {
         orgId: org.id,
         seedRow: {
           label: 'Spin up preview requested',
-          chunkKey: `seed:preview:${jobId}`,
+          chunkKey: chunkKey.preview(jobId),
         },
       },
     );
@@ -1350,10 +1367,13 @@ export class WebSurfaceController {
         // The reader is gone / not reading — this card is dead. Clear the single-slot gate so the brain can
         // re-run the login, and seed a turn telling it to.
         await this.store.clearAwaitingSecret(jobId, body.requestId);
-        const notice = `The one-time value \`${payload.name}\` could not be delivered (${delivered.reason ?? 'the target process is not reading'}). Restart the interactive login and request the code again.`;
+        const notice = secretEphemeralUndelivered(
+          payload.name,
+          delivered.reason ?? 'the target process is not reading',
+        );
         const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
           orgId: org.id,
-          seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:${payload.name}:fail` },
+          seedRow: { label: notice, chunkKey: chunkKey.secret(jobId, payload.name, { fail: true }) },
         });
         return { ok: false, ts };
       }
@@ -1364,10 +1384,10 @@ export class WebSurfaceController {
         provided_at: new Date().toISOString(),
       };
       await this.messages.save(card);
-      const notice = `The operator provided the one-time value \`${payload.name}\` (delivered to the running process, not stored). Verify the login completed and continue.`;
+      const notice = secretEphemeralDelivered(payload.name);
       const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
         orgId: org.id,
-        seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:${payload.name}` },
+        seedRow: { label: notice, chunkKey: chunkKey.secret(jobId, payload.name) },
       });
       return { ok: true, ts };
     }
@@ -1385,10 +1405,10 @@ export class WebSurfaceController {
       const target = await this.mcpStore.rawRow(org.id, thread.repo_id, server).catch(() => null);
       if (target?.auth_kind === 'oauth') {
         await this.store.clearAwaitingSecret(jobId, body.requestId);
-        const notice = `Did not store a secret for MCP server \`${server}\` — it uses OAuth. Its access is granted by the OWNER via the console (MCP settings → Connect), not a secret slot.`;
+        const notice = mcpSecretOauthRefused(server);
         const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
           orgId: org.id,
-          seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:mcp:${server}:${key}:oauth` },
+          seedRow: { label: notice, chunkKey: chunkKey.mcpSecret(jobId, server, key, 'oauth') },
         });
         return { ok: false, ts };
       }
@@ -1404,10 +1424,10 @@ export class WebSurfaceController {
         // The server row is gone (deleted between propose/approve and provide) — clear the gate and tell the
         // brain rather than wedge on a stale card.
         await this.store.clearAwaitingSecret(jobId, body.requestId);
-        const notice = `Could not store the secret \`${key}\` — MCP server \`${server}\` is no longer registered on this repo. Re-propose it if still needed.`;
+        const notice = mcpSecretStoreFailed(key, server);
         const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
           orgId: org.id,
-          seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:mcp:${server}:${key}:fail` },
+          seedRow: { label: notice, chunkKey: chunkKey.mcpSecret(jobId, server, key, 'fail') },
         });
         return { ok: false, ts };
       }
@@ -1422,10 +1442,10 @@ export class WebSurfaceController {
       }
       card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
       await this.messages.save(card);
-      const notice = `The operator provided the secret \`${key}\` for MCP server \`${server}\` (${slot}, stored encrypted). The server is registered but its \`mcp__${server}__*\` tools are NOT loaded into this session yet — once all its secret slots are filled, call reset_sandbox to load it, then invoke one of its tools to verify (see MCP SERVERS).`;
+      const notice = mcpSecretStored(key, server, slot);
       const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
         orgId: org.id,
-        seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:mcp:${server}:${key}` },
+        seedRow: { label: notice, chunkKey: chunkKey.mcpSecret(jobId, server, key) },
       });
       return { ok: true, ts };
     }
@@ -1449,10 +1469,10 @@ export class WebSurfaceController {
     // delivery turn's success tail, so a crash before it re-delivers on boot (at-least-once).
     card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
     await this.messages.save(card);
-    const notice = `The operator provided the secret \`${payload.name}\` (stored encrypted, granted to \`${payload.path}\`). Continue onboarding.`;
+    const notice = secretStored(payload.name, payload.path);
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
-      seedRow: { label: notice, chunkKey: `seed:secret:${jobId}:${payload.name}` },
+      seedRow: { label: notice, chunkKey: chunkKey.secret(jobId, payload.name) },
     });
     return { ok: true, ts };
   }
@@ -1495,12 +1515,10 @@ export class WebSurfaceController {
         removed.push(name);
       }
       await this.store.markMcpProposalApproved(jobId, requestId, removed);
-      const rmNotice = removed.length
-        ? `The operator approved removing MCP server(s) ${removed.map((n) => `\`${n}\``).join(', ')} ${card.scope === 'org' ? 'org-wide' : 'from this repo'}. reset_sandbox to drop them from a fresh session.`
-        : 'The operator approved the MCP removal, but no servers were removed.';
+      const rmNotice = mcpRemoved(removed, card.scope);
       const rmTs = this.surface.seedSystemNotification(thread.repo_id, jobId, rmNotice, {
         orgId: org.id,
-        seedRow: { label: rmNotice, chunkKey: `seed:mcp-remove:${jobId}:${requestId}` },
+        seedRow: { label: rmNotice, chunkKey: chunkKey.mcpRemove(jobId, requestId) },
       });
       return { ok: true, committed: removed, ts: rmTs };
     }
@@ -1538,23 +1556,10 @@ export class WebSurfaceController {
       if (secretSlots.length === 0) readyStatic += 1;
     }
     await this.store.markMcpProposalApproved(jobId, requestId, committed);
-    const notice = committed.length
-      ? `The operator approved the MCP proposal — registered ${committed
-          .map((n) => `\`${n}\``)
-          .join(', ')} ${card.scope === 'org' ? 'org-wide (every repo)' : 'on this repo'}.` +
-        (needSecrets.length
-          ? ` Fill each secret slot now via request_secret (mcp target): ${needSecrets.join('; ')}. After every slot is filled, reset_sandbox to load the server(s), then invoke a tool to verify (see MCP SERVERS).`
-          : '') +
-        (needConnect.length
-          ? ` OAuth server(s) ${needConnect.map((n) => `\`${n}\``).join(', ')} have NO secret to fill — the OWNER must open the console (MCP settings → Connect) to complete consent; you cannot consent yourself and must NOT inject an Authorization/Bearer header. Once the owner connects, reset_sandbox to load it.`
-          : '') +
-        (readyStatic && !needSecrets.length
-          ? ' No secrets needed for the rest — reset_sandbox to load the server(s) into a fresh session, then invoke one of their tools to verify it works (see MCP SERVERS).'
-          : '')
-      : 'The operator approved the MCP proposal, but no servers were committed.';
+    const notice = mcpApproved({ committed, scope: card.scope, needSecrets, needConnect, readyStatic });
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
-      seedRow: { label: notice, chunkKey: `seed:mcp-approve:${jobId}:${requestId}` },
+      seedRow: { label: notice, chunkKey: chunkKey.mcpApprove(jobId, requestId) },
     });
     return { ok: true, committed, ts };
   }
@@ -1583,12 +1588,10 @@ export class WebSurfaceController {
     // exists in the org (throws if the profile was deleted between propose and approve).
     await this.conventions.attach(org.id, thread.repo_id, card.slug);
     await this.store.markConventionProposalApproved(jobId, requestId);
-    const notice =
-      `The operator approved the house-style proposal — attached the "${card.profileName}" profile to this ` +
-      'repo. Future jobs on this repo will build to those conventions.';
+    const notice = conventionAttached(card.profileName);
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
-      seedRow: { label: notice, chunkKey: `seed:conv-approve:${jobId}:${requestId}` },
+      seedRow: { label: notice, chunkKey: chunkKey.convApprove(jobId, requestId) },
     });
     return { ok: true, slug: card.slug, ts };
   }
@@ -1619,12 +1622,10 @@ export class WebSurfaceController {
       detectHint: card.detectHint,
     });
     await this.store.markConventionEditProposalApproved(jobId, requestId);
-    const notice =
-      `The operator approved the house-style ${card.mode === 'create' ? 'creation' : 'change'} — the ` +
-      `"${card.name}" profile is now live. Every repo attached to it builds to the updated conventions.`;
+    const notice = conventionEdited(card.mode, card.name);
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
-      seedRow: { label: notice, chunkKey: `seed:conv-edit-approve:${jobId}:${requestId}` },
+      seedRow: { label: notice, chunkKey: chunkKey.convEditApprove(jobId, requestId) },
     });
     return { ok: true, slug: card.slug, ts };
   }
@@ -1690,14 +1691,10 @@ export class WebSurfaceController {
       });
     }
     await this.store.markSkillProposalApproved(jobId, requestId);
-    const notice =
-      card.mode === 'remove'
-        ? `The operator approved removing the "${card.name}" skill (${card.scope}-scoped) — it is gone from every future build.`
-        : `The operator approved the "${card.name}" skill (${card.scope}-scoped) — it is now live. ` +
-          'It loads on the next fresh session; reset_sandbox to pick it up this job.';
+    const notice = skillApproved(card.mode, card.name, card.scope);
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
-      seedRow: { label: notice, chunkKey: `seed:skill-approve:${jobId}:${requestId}` },
+      seedRow: { label: notice, chunkKey: chunkKey.skillApprove(jobId, requestId) },
     });
     return { ok: true, name: card.name, ts };
   }
@@ -1730,10 +1727,10 @@ export class WebSurfaceController {
       // The skill was deleted/renamed since the request was posted — nothing to grant. Stamp approved
       // (the card is terminal either way) and tell the brain rather than silently wedging the request.
       await this.store.markSkillEditAccessApproved(jobId, requestId);
-      const gone = `The operator approved edit access to "${card.name}", but that skill no longer exists — nothing to edit. Call list_skills to see what's registered.`;
+      const gone = skillEditGone(card.name);
       const goneTs = this.surface.seedSystemNotification(thread.repo_id, jobId, gone, {
         orgId: org.id,
-        seedRow: { label: gone, chunkKey: `seed:skill-edit-approve:${jobId}:${requestId}` },
+        seedRow: { label: gone, chunkKey: chunkKey.skillEditApprove(jobId, requestId) },
       });
       return { ok: true, name: card.name, ts: goneTs };
     }
@@ -1742,15 +1739,10 @@ export class WebSurfaceController {
     const grantName = forkedTo ?? card.name;
     this.brain.grantSkillEditAccess(jobId, grantName);
     await this.store.markSkillEditAccessApproved(jobId, requestId, forkedTo);
-    const notice = forkedTo
-      ? `The operator approved edit access to "${card.name}" — since it's installed from git, it was forked ` +
-        `to a new custom skill "${forkedTo}" (the original stays clean and keeps auto-updating). Edit/Write ` +
-        `files under "${forkedTo}" directly for the rest of this session.`
-      : `The operator approved edit access to "${card.name}" — Edit/Write its files directly for the rest of ` +
-        'this session.';
+    const notice = skillEditApproved(card.name, forkedTo);
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
-      seedRow: { label: notice, chunkKey: `seed:skill-edit-approve:${jobId}:${requestId}` },
+      seedRow: { label: notice, chunkKey: chunkKey.skillEditApprove(jobId, requestId) },
     });
     return { ok: true, name: card.name, ...(forkedTo ? { grantedAs: forkedTo } : {}), ts };
   }
@@ -1863,11 +1855,11 @@ export class WebSurfaceController {
       filename,
     };
     await this.messages.save(card);
-    const notice = `The operator uploaded the file for \`${payload.path}\` (stored encrypted, granted). Continue onboarding.`;
+    const notice = fileUploaded(payload.path);
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
       deliveredFileId: body.requestId,
-      seedRow: { label: notice, chunkKey: `seed:file:${jobId}:${payload.path}` },
+      seedRow: { label: notice, chunkKey: chunkKey.file(jobId, payload.path) },
     });
     return { ok: true, ts };
   }

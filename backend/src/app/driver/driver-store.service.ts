@@ -17,6 +17,7 @@ import type {
 } from '../domain';
 import { JobDependencyService } from '../job-deps';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import {
   BuildLegEntity,
   DecisionRecordEntity,
@@ -655,28 +656,16 @@ export class DriverStoreService {
     chunkKey: string;
     reminderKind?: string;
   }): Promise<void> {
-    const dup = await this.messages
-      .createQueryBuilder('m')
-      .where('m.job_id = :jobId', { jobId: input.jobId })
-      .andWhere('m.meta @> :key::jsonb', { key: JSON.stringify({ chunkKey: input.chunkKey }) })
-      .getCount();
-    if (dup > 0) return;
-    await this.messages.save(
-      this.messages.create({
-        job_id: input.jobId,
-        author: 'System',
-        author_id: 'U-SYSTEM',
-        author_bot_id: null,
+    return writeSystemChunk(
+      this.messages,
+      {
+        jobId: input.jobId,
+        kind: input.kind,
         text: input.text,
-        kind: 'chat',
-        meta: {
-          source: input.kind,
-          phaseId: input.phaseId,
-          legOrdinal: input.legOrdinal,
-          chunkKey: input.chunkKey,
-          ...(input.reminderKind ? { reminderKind: input.reminderKind } : {}),
-        },
-      }),
+        chunkKey: input.chunkKey,
+        reminderKind: input.reminderKind,
+      },
+      { phaseId: input.phaseId, legOrdinal: input.legOrdinal },
     );
   }
 
