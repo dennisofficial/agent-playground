@@ -16,14 +16,18 @@ usage() {
   echo "       atlas-tx path <sessionId>" >&2
   echo "       atlas-tx cat <sessionId>" >&2
   echo "       atlas-tx show <sessionId> [--role assistant|user] [--thinking] [--text] [--tools] [--errors]" >&2
-  echo "                                 [--tail N] [--since <ISO-8601>]" >&2
+  echo "                                 [--subagents] [--tail N] [--since <ISO-8601>]" >&2
   echo "       atlas-tx grep <pattern> [--session <sessionId>] [--lane <type>]" >&2
   echo "" >&2
-  echo "  sessions   list transcripts under \$ATLAS_AGENT_HOME (default /.atlas), newest first" >&2
+  echo "  sessions   list transcripts under \$ATLAS_AGENT_HOME (default /.atlas), newest first;" >&2
+  echo "             the PARENT column shows the session that spawned a subagent transcript" >&2
   echo "  path       print the resolved absolute path of a session's .jsonl" >&2
   echo "  cat        dump the raw JSONL for a session" >&2
   echo "  show       readable one-line-per-record rendering (default: assistant text blocks)" >&2
   echo "             --tail defaults to 80; --since compares ISO-8601 timestamps as strings" >&2
+  echo "             --subagents also renders this session's subagent transcripts (same filters)" >&2
+  echo "             --errors catches only API-level is_error tool results; empty is NOT proof a" >&2
+  echo "             run was clean (add --subagents to also scan subagent transcripts)" >&2
   echo "  grep       ripgrep a pattern across resolved transcript(s); prints lane:session:<line>" >&2
 }
 
@@ -56,6 +60,19 @@ lane_of() { # <path>
   fi
 }
 
+# Parent session id for a subagent transcript, else empty. Subagents live at
+# .../claude/projects/<slug>/<parentSessionId>/subagents/agent-<id>.jsonl — so the parent id is the
+# directory name immediately before /subagents/. Top-level session files return nothing.
+parent_of() { # <path>
+  local path="$1"
+  case "$path" in
+    */subagents/*)
+      local before="${path%/subagents/*}"
+      basename "$before"
+      ;;
+  esac
+}
+
 cmd_sessions() {
   local lane_filter=""
   while [ $# -gt 0 ]; do
@@ -68,15 +85,16 @@ cmd_sessions() {
   local rows="" f
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    local sid lane mtime lines
+    local sid lane parent mtime lines
     sid="$(basename "$f" .jsonl)"
     lane="$(lane_of "$f")"
     if [ -n "$lane_filter" ] && [[ "$lane" != "$lane_filter"* ]]; then
       continue
     fi
+    parent="$(parent_of "$f")"
     mtime="$(stat -c %Y "$f" 2>/dev/null)"
     lines="$(wc -l < "$f" 2>/dev/null)"
-    rows="${rows}${mtime:-0}|${sid}|${lane}|${lines:-0}"$'\n'
+    rows="${rows}${mtime:-0}|${sid}|${lane}|${lines:-0}|${parent}"$'\n'
   done < <(find "$TX_ROOT" -type f -path '*/claude/projects/*.jsonl' 2>/dev/null)
 
   if [ -z "$rows" ]; then
@@ -84,14 +102,14 @@ cmd_sessions() {
     return 0
   fi
 
-  printf '%-24s %-16s %-20s %8s\n' "SESSION" "LANE" "MTIME" "LINES"
+  printf '%-24s %-16s %-20s %8s  %s\n' "SESSION" "LANE" "MTIME" "LINES" "PARENT"
   local sorted
   sorted="$(printf '%s' "$rows" | sort -t'|' -k1,1nr)"
-  local mtime sid lane lines human
-  while IFS='|' read -r mtime sid lane lines; do
+  local mtime sid lane lines parent human
+  while IFS='|' read -r mtime sid lane lines parent; do
     [ -n "$sid" ] || continue
     human="$(date -d "@$mtime" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
-    printf '%-24s %-16s %-20s %8s\n' "$sid" "$lane" "${human:-$mtime}" "$lines"
+    printf '%-24s %-16s %-20s %8s  %s\n' "$sid" "$lane" "${human:-$mtime}" "$lines" "$parent"
   done <<< "$sorted"
 }
 
@@ -121,42 +139,10 @@ cmd_cat() {
   cat "$f"
 }
 
-cmd_show() {
-  local sid="${1:-}"
-  if [ -z "$sid" ]; then usage; return 2; fi
-  shift
-  valid_sid "$sid" || return 2
-
-  local role="" since="" tail_n=80
-  local want_thinking=false want_text=false want_tools=false want_errors=false
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --role) role="${2:-}"; shift 2 ;;
-      --thinking) want_thinking=true; shift ;;
-      --text) want_text=true; shift ;;
-      --tools) want_tools=true; shift ;;
-      --errors) want_errors=true; shift ;;
-      --tail) tail_n="${2:-80}"; shift 2 ;;
-      --since) since="${2:-}"; shift 2 ;;
-      *) echo "atlas-tx show: unknown flag '$1'" >&2; usage; return 2 ;;
-    esac
-  done
-
-  if ! [[ "$tail_n" =~ ^[0-9]+$ ]]; then
-    echo "atlas-tx show: --tail expects a non-negative integer" >&2
-    return 2
-  fi
-
-  if [ "$want_thinking" = false ] && [ "$want_text" = false ] && [ "$want_tools" = false ] && [ "$want_errors" = false ]; then
-    want_text=true
-  fi
-
-  local f
-  f="$(resolve_session "$sid")"
-  if [ -z "$f" ]; then
-    echo "atlas-tx: no transcript found for session '$sid'" >&2
-    return 1
-  fi
+# Render one transcript file with the same filters as `show`. All filter state is passed explicitly so
+# this is reusable for both the main session and each of its subagent transcripts.
+render_transcript() { # <file> <role> <since> <wantThinking> <wantText> <wantTools> <wantErrors> <tail_n>
+  local file="$1" role="$2" since="$3" wantThinking="$4" wantText="$5" wantTools="$6" wantErrors="$7" tail_n="$8"
 
   local prog
   # shellcheck disable=SC2016 # deliberately single-quoted: the $-names below are jq's own --arg/--argjson
@@ -204,11 +190,65 @@ cmd_show() {
   jq -r \
     --arg roleFilter "$role" \
     --arg since "$since" \
-    --argjson wantThinking "$want_thinking" \
-    --argjson wantText "$want_text" \
-    --argjson wantTools "$want_tools" \
-    --argjson wantErrors "$want_errors" \
-    "$prog" "$f" | tail -n "$tail_n"
+    --argjson wantThinking "$wantThinking" \
+    --argjson wantText "$wantText" \
+    --argjson wantTools "$wantTools" \
+    --argjson wantErrors "$wantErrors" \
+    "$prog" "$file" | tail -n "$tail_n"
+}
+
+cmd_show() {
+  local sid="${1:-}"
+  if [ -z "$sid" ]; then usage; return 2; fi
+  shift
+  valid_sid "$sid" || return 2
+
+  local role="" since="" tail_n=80
+  local want_thinking=false want_text=false want_tools=false want_errors=false want_subagents=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --role) role="${2:-}"; shift 2 ;;
+      --thinking) want_thinking=true; shift ;;
+      --text) want_text=true; shift ;;
+      --tools) want_tools=true; shift ;;
+      --errors) want_errors=true; shift ;;
+      --subagents) want_subagents=true; shift ;;
+      --tail) tail_n="${2:-80}"; shift 2 ;;
+      --since) since="${2:-}"; shift 2 ;;
+      *) echo "atlas-tx show: unknown flag '$1'" >&2; usage; return 2 ;;
+    esac
+  done
+
+  if ! [[ "$tail_n" =~ ^[0-9]+$ ]]; then
+    echo "atlas-tx show: --tail expects a non-negative integer" >&2
+    return 2
+  fi
+
+  if [ "$want_thinking" = false ] && [ "$want_text" = false ] && [ "$want_tools" = false ] && [ "$want_errors" = false ]; then
+    want_text=true
+  fi
+
+  local f
+  f="$(resolve_session "$sid")"
+  if [ -z "$f" ]; then
+    echo "atlas-tx: no transcript found for session '$sid'" >&2
+    return 1
+  fi
+
+  render_transcript "$f" "$role" "$since" "$want_thinking" "$want_text" "$want_tools" "$want_errors" "$tail_n"
+
+  if [ "$want_subagents" = true ]; then
+    # Subagents of this session live in a sibling dir named after the session file (minus .jsonl).
+    local subdir="${f%.jsonl}/subagents"
+    if [ -d "$subdir" ]; then
+      local sub
+      while IFS= read -r sub; do
+        [ -n "$sub" ] || continue
+        printf '\n── subagent %s ──\n' "$(basename "$sub" .jsonl)"
+        render_transcript "$sub" "$role" "$since" "$want_thinking" "$want_text" "$want_tools" "$want_errors" "$tail_n"
+      done < <(find "$subdir" -maxdepth 1 -type f -name '*.jsonl' 2>/dev/null | sort)
+    fi
+  fi
 }
 
 cmd_grep() {
