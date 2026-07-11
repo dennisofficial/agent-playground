@@ -72,7 +72,6 @@ import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
   Agent,
-  COMMIT_AND_PUSH_INSTRUCTION,
   renderAgentPrompt,
   renderBatchTask,
   renderGateTask,
