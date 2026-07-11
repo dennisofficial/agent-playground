@@ -311,6 +311,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         onSelectNode={(node) => selectNode(node, { push: true })}
         onOpenNav={onOpenNav}
         onOpenDetail={onOpenDetail}
+        blockedBy={meta.blockedBy}
       />
     ) : (
       <Conversation
@@ -354,6 +355,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
           onConversation={closeDetail}
           onSelectNode={(node) => selectNode(node, { push: true })}
           onBack={onBack}
+          blockedBy={meta.blockedBy}
           tracksComments
         />
       ) : (
