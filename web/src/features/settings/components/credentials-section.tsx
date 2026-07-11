@@ -383,10 +383,14 @@ function GithubAppConnect({
     setNote("");
     // Open the window synchronously within the click handler so popup blockers
     // don't block it after the mutation's network round-trip loses the user gesture.
-    const installWindow = window.open("", "_blank", "noopener,noreferrer");
+    // Note: passing `noopener`/`noreferrer` here makes window.open return null,
+    // which would defeat the synchronous pre-open. Open the blank window without
+    // those features and null out `opener` after navigating instead.
+    const installWindow = window.open("", "_blank");
     try {
       const result = await installUrl.mutateAsync();
       if (installWindow) {
+        installWindow.opener = null;
         installWindow.location.href = result.url;
       } else {
         window.open(result.url, "_blank", "noopener,noreferrer");
