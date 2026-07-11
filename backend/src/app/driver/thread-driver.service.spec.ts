@@ -943,6 +943,9 @@ function assemble(
       await store.markHaltWaked(threadId, gen);
     },
   } as unknown as BrainGateway;
+  // Spy for the per-thread service teardown (`atlas-svc stop-all` via the sandbox provider). The driver
+  // fires it on a clean thread `done`, never on a blocked/halt outcome.
+  const stopAllServices = vi.fn().mockResolvedValue({ ok: true });
   const driver = new ThreadDriver(
     store,
     repos,
@@ -963,6 +966,7 @@ function assemble(
       brainTranscriptProjectsDir: () => null,
       supervisorDirHost: () => null,
       probeLiveness: async () => ({ status: 'unknown' as const }),
+      stopAllServices,
       sandboxContainerName: () => 'atlas-sbx-thread-test',
       bridgeCaddyToSandbox: async () => undefined,
       unbridgeCaddyFromSandbox: async () => undefined,
@@ -1071,6 +1075,7 @@ function assemble(
     electionState,
     judge,
     wakes,
+    stopAllServices,
   };
 }
 
@@ -1108,6 +1113,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // Both threads are done with a handoff; the SECOND thread received the first's handoff.
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
     expect(state.threads[1].handoffIn).toContain('Backend');
+
+    // Each completed thread frees its test services deterministically (`atlas-svc stop-all` via the sandbox
+    // provider) — once per thread, keyed by jobId — so a thread's stack doesn't sit resident all build long.
+    expect(h.stopAllServices).toHaveBeenCalledTimes(2);
+    expect(h.stopAllServices).toHaveBeenCalledWith(state.job.id);
 
     // ONE branch — threads stacked on the same feature branch (the host never pushes; Atlas pushes
     // in-sandbox as part of the ship turn, which ran).
@@ -1736,6 +1746,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       h.posts.some((p) => p.includes('without asserting completion')),
     ).toBe(true); // a durable halt card, never a silent dead-end
     expect(h.store.materializeReviewChildren).not.toHaveBeenCalled(); // review skipped on a halt
+    expect(h.stopAllServices).not.toHaveBeenCalled(); // no service teardown on a halt (only on clean done)
   });
 
   it('writes the halt trail to /context/generated (host-owned), NOT the git worktree (ADR 0004 relocation)', async () => {
@@ -2176,37 +2187,10 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     expect(lensIds.sort()).toEqual(['best_practices', 'consistency', 'holistic'].sort());
   });
 
-  it('bounds in-flight review-lens turns at the configured REVIEW_LENS_CONCURRENCY cap', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'pending', false, 'none', 'general')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const h = assemble(state, { env: { REVIEW_LENS_CONCURRENCY: '2' } });
-    let inFlight = 0;
-    let peak = 0;
-    h.autofix.runReviewLens.mockImplementation(async () => {
-      inFlight++;
-      peak = Math.max(peak, inFlight);
-      await new Promise((r) => setTimeout(r, 5));
-      inFlight--;
-      return [];
-    });
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    // Never exceeds the cap, but DID run more than one at a time (proves it's a real semaphore, not serial).
-    expect(peak).toBeLessThanOrEqual(2);
-    expect(peak).toBeGreaterThan(1);
-  });
-
   it('with cap >= lens count, ALL lenses start concurrently — the fixed-batch-of-3 barrier is gone', async () => {
-    // 'general' composes the five always-on lenses; the default cap (8) comfortably covers all five, so a
-    // real semaphore (vs. the old `concurrency = 3` batch loop) lets every lens acquire at once.
+    // 'general' composes the five always-on lenses; the REVIEW_LENS_CONCURRENCY constant (8) comfortably
+    // covers all five, so a real semaphore (vs. the old `concurrency = 3` batch loop) lets every lens
+    // acquire at once.
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),

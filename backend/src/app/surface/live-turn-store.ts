@@ -29,6 +29,13 @@ export interface LiveTurnBlock {
    * partitions the delta-merge so a subagent's forwarded text never appends onto the brain's open block.
    */
   parentToolUseId?: string;
+  /**
+   * Set on the ANCHOR tool block of a BACKGROUNDED Task subagent when its run settles (its `bg_task`
+   * completed/failed/stopped). A backgrounded Task's own `tool_result` (→ `done`) is an immediate launch
+   * ack, so `done` can't tell the card the subagent finished; this does. Recorded in the cumulative state so
+   * a reconnect snapshot carries it (raw `bg_task` frames are not replayed).
+   */
+  bgSettled?: boolean;
 }
 
 /** The cumulative state of one in-flight turn (a `(jobId, lane)` pair) — the RESUMABLE snapshot. */
@@ -327,6 +334,28 @@ export class LiveTurnStore {
             if (ev['structuredPatch'] !== undefined) b.structuredPatch = ev['structuredPatch'];
             b.done = true;
             return b.emittedAt;
+          }
+        }
+        break;
+      }
+      case 'bg_task': {
+        // Settlement of a backgrounded Task subagent — mark its anchor tool block settled so the card can
+        // stop showing "running" (the anchor's own `done`/launch-ack can't). `parentToolUseId` == the
+        // spawning Task id == the anchor's `toolId`. `started`/`capped` (and untagged bare-Bash bg tasks)
+        // carry no anchor to settle → no-op.
+        const status = ev['status'];
+        if (
+          pid &&
+          (status === 'completed' ||
+            status === 'failed' ||
+            status === 'stopped')
+        ) {
+          for (let i = blocks.length - 1; i >= 0; i--) {
+            const b = blocks[i];
+            if (b.kind === 'tool' && b.toolId === pid) {
+              b.bgSettled = true;
+              return b.emittedAt;
+            }
           }
         }
         break;

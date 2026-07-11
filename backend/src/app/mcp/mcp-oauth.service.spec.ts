@@ -152,3 +152,63 @@ describe('McpOAuthService.refreshForSandbox', () => {
     expect(await svc.refreshForSandbox('org1', 'repo-1')).toEqual({ rotated: false });
   });
 });
+
+describe('McpOAuthService.beginAuthorization', () => {
+  it('probes the 401 resource_metadata hint, passes it to auth(), and drops stale cache', async () => {
+    const { svc, store } = make();
+    await store.write('org1', '*', 'jira', {
+      transport: 'sse',
+      url: 'https://mcp.example.com/sse',
+      authKind: 'oauth',
+    });
+    // Stale cached client + discovery bound to an OLD auth server — a reconnect must NOT reuse them.
+    await store.writeOAuthBlob(
+      'org1',
+      '*',
+      'jira',
+      {
+        clientInformation: { client_id: 'STALE' },
+        discoveryState: { authorizationServerUrl: 'https://old.example.com' },
+        tokens: { access_token: 'old' },
+      },
+      { validationError: 'needs re-auth' },
+    );
+
+    const RMU = 'https://mcp.example.com/.well-known/oauth-protected-resource/x';
+    let seenOpts: { resourceMetadataUrl?: URL } | undefined;
+    (svc as unknown as { authSdkPromise: Promise<unknown> }).authSdkPromise = Promise.resolve({
+      extractResourceMetadataUrl: (res: Response) => {
+        const m = (res.headers.get('WWW-Authenticate') ?? '').match(/resource_metadata="([^"]+)"/);
+        return m ? new URL(m[1]) : undefined;
+      },
+      auth: async (
+        provider: { redirectToAuthorization: (u: URL) => void },
+        opts: { resourceMetadataUrl?: URL },
+      ) => {
+        seenOpts = opts;
+        provider.redirectToAuthorization(new URL('https://auth.example.com/authorize?x=1'));
+        return 'REDIRECT';
+      },
+    });
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(null, {
+        status: 401,
+        headers: { 'WWW-Authenticate': `Bearer resource_metadata="${RMU}"` },
+      })) as typeof fetch;
+    try {
+      const { authorizeUrl } = await svc.beginAuthorization('org1', '*', 'jira');
+      expect(authorizeUrl).toContain('auth.example.com');
+      // The probed resource_metadata hint reached auth() (so discovery follows it, not the host root).
+      expect(seenOpts?.resourceMetadataUrl?.href).toBe(RMU);
+      // Stale client + discovery + tokens were dropped by the clean-blob reset.
+      const blob = store.readOAuthBlob((await store.rawRow('org1', '*', 'jira'))!);
+      expect(blob.clientInformation).toBeUndefined();
+      expect(blob.discoveryState).toBeUndefined();
+      expect(blob.tokens).toBeUndefined();
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});

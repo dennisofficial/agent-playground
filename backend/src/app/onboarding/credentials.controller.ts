@@ -1,11 +1,23 @@
-import { Body, Controller, Get, Put, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Put,
+  UseGuards,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
 import { IsOptional, IsString } from 'class-validator';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { ClaudeCredentialStore } from './claude-credential.store';
+import { OauthUsageService } from './oauth-usage.service';
 import { OnboardingService, type ValidationResult } from './onboarding.service';
-import { TenantCredentialStore, type TenantCredentialPatch } from './tenant-credential.store';
+import {
+  TenantCredentialStore,
+  type TenantCredentialPatch,
+} from './tenant-credential.store';
 
 class SetCredentialsDto {
   @IsOptional() @IsString() anthropicApiKey?: string;
@@ -31,6 +43,7 @@ export class OrgCredentialsController {
     private readonly store: TenantCredentialStore,
     private readonly claudeStore: ClaudeCredentialStore,
     private readonly onboarding: OnboardingService,
+    private readonly usage: OauthUsageService,
   ) {}
 
   @Put()
@@ -45,7 +58,11 @@ export class OrgCredentialsController {
     const patch: TenantCredentialPatch = { ...rest };
     await this.store.write(org.id, patch);
     if (claudeOauthToken !== undefined) {
-      await this.claudeStore.upsertLegacySetupToken(org.id, claudeOauthToken);
+      const changed = await this.claudeStore.upsertLegacySetupToken(
+        org.id,
+        claudeOauthToken,
+      );
+      if (changed) await this.usage.invalidate(org.id);
     }
 
     // Validate the Anthropic key (LangChain chains) when it was (re)set — surfaces a bad key now.
@@ -69,5 +86,14 @@ export class OrgCredentialsController {
     const presence = await this.store.presence(org.id);
     const status = await this.onboarding.status(org.id);
     return { ...presence, llmValidated: status.steps.llmKey };
+  }
+
+  /** Owner-only: the decoded Codex account email, which is Administer-tier info (not on the member-visible `presence` route). */
+  @Get('codex')
+  @UseGuards(OrgOwnerGuard)
+  async codex(@CurrentOrg() org: CurrentOrgCtx): Promise<{ present: boolean; accountEmail?: string }> {
+    const email = await this.store.codexAccountEmail(org.id);
+    const presence = await this.store.presence(org.id);
+    return { present: presence.hasCodex, accountEmail: email };
   }
 }
