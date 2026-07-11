@@ -423,8 +423,15 @@ export class PlanReviewService {
     const row = await this.loadRow(jobId);
     if (!row || (row.status !== 'complete' && row.status !== 'failed')) return null;
     const currentHash = await this.hashSpecs(jobId, orgId);
-    if (row.spec_hash !== currentHash) return null;
-    return { row, specHash: currentHash };
+    if (row.spec_hash === currentHash) return { row, specHash: currentHash };
+    // CEILING ESCAPE VALVE: below the ceiling a hash mismatch correctly forces a re-review (Atlas edited
+    // the specs after the last review). But once the re-review ceiling is exhausted, `review()`
+    // short-circuits and can NEVER re-run — so a later spec edit (even a cosmetic file renumber) would
+    // freeze the mismatch forever and deadlock propose_plan with no self-serve escape. A review
+    // demonstrably RAN (>= ceiling genuine rounds) and findings are advisory anyway, so accept the
+    // terminal review for the current specs instead of blocking approval indefinitely.
+    if (row.resume_count >= this.ceiling) return { row, specHash: currentHash };
+    return null;
   }
 
   /** The single review row for a job (latest if a race ever created more than one). */
