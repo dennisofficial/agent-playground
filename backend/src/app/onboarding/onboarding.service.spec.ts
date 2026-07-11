@@ -358,10 +358,12 @@ describe('OnboardingService', () => {
       const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
 
-      await svc.updateRepo('T1', connected.id, { branchPrefix: 'feat/' });
+      const configured = await svc.updateRepo('T1', connected.id, { branchPrefix: 'feat/' });
+      expect(configured.branchPrefix).toBe('feat/');
       expect(repos.map.get('T1:web')?.branch_prefix).toBe('feat/');
 
-      await svc.updateRepo('T1', connected.id, { branchPrefix: '' });
+      const cleared = await svc.updateRepo('T1', connected.id, { branchPrefix: '' });
+      expect(cleared.branchPrefix).toBeNull();
       expect(repos.map.get('T1:web')?.branch_prefix).toBeNull();
     });
 

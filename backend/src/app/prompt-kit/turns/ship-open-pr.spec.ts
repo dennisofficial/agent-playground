@@ -24,6 +24,23 @@ describe('turns / ship-open-pr', () => {
       expect(task).toContain('EOF');
     });
 
+    it('shell-quotes branch, base, and title values in command examples', () => {
+      const task = shipOpenPrBody({
+        branch: "feat/o'hara;$(touch bad)",
+        defaultBranch: "release/x'y",
+        title: "Fix $PATH's widget",
+      });
+
+      const quotedBranch = "'feat/o'\\''hara;$(touch bad)'";
+      expect(task).toContain(`git log --oneline 'HEAD..origin/release/x'\\''y'`);
+      expect(task).toContain(`git merge 'origin/release/x'\\''y'`);
+      expect(task).toContain(`git push -u origin ${quotedBranch}`);
+      expect(task).toContain(
+        `gh pr create --base 'release/x'\\''y' --head ${quotedBranch} --title 'Fix $PATH'\\''s widget'`,
+      );
+      expect(task).toContain(`gh pr view ${quotedBranch} --json url -q .url`);
+    });
+
     it('suppresses the default Claude attribution (per house style — no Co-Authored-By)', () => {
       const task = shipOpenPrBody(base);
       expect(task).toContain('Co-Authored-By');

@@ -3549,7 +3549,7 @@ export class AgentSessionManager
           message: shipOpenPrBody({
             branch: sandbox.branch,
             defaultBranch: repo.defaultBranch,
-            title: job.title ?? sandbox.branch,
+            title: job.title?.trim() || sandbox.branch,
           }),
         };
       },

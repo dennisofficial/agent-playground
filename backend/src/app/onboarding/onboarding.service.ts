@@ -63,6 +63,8 @@ export interface ConnectedRepo {
   name: string;
   gitUrl: string;
   defaultBranch: string;
+  /** Per-repo feature-branch prefix override; null uses the built-in default. */
+  branchPrefix: string | null;
   accessOk: boolean;
   reason?: string;
 }
@@ -153,6 +155,7 @@ export class OnboardingService {
         name: '',
         gitUrl: repoUrl,
         defaultBranch: args.baseBranch ?? 'main',
+        branchPrefix: null,
         accessOk: false,
         reason: `not an HTTPS GitHub URL: ${repoUrl}`,
       };
@@ -200,6 +203,7 @@ export class OnboardingService {
       name,
       gitUrl: repoUrl,
       defaultBranch: baseBranch,
+      branchPrefix: repo.branch_prefix ?? null,
       accessOk: validation.ok,
       ...(validation.reason ? { reason: validation.reason } : {}),
     };
@@ -338,6 +342,7 @@ export class OnboardingService {
       name: repo.name,
       gitUrl: repo.git_url,
       defaultBranch: repo.default_branch,
+      branchPrefix: repo.branch_prefix ?? null,
       accessOk: validation.ok,
       ...(validation.reason ? { reason: validation.reason } : {}),
     };
@@ -371,6 +376,7 @@ export class OnboardingService {
       name: fresh.name,
       gitUrl: fresh.git_url,
       defaultBranch: fresh.default_branch,
+      branchPrefix: fresh.branch_prefix ?? null,
       accessOk: fresh.access_ok,
     };
   }

@@ -39,6 +39,7 @@ import { LocalGitService } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { TenantCredentialStore } from '../onboarding';
 import { GithubPrService } from '../git';
+import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ActiveTurnEntity,
@@ -296,6 +297,10 @@ beforeEach(async () => {
       {
         provide: SkillUpdaterService,
         useValue: { reconcileOrgAsync: () => undefined },
+      },
+      {
+        provide: BrainGateway,
+        useValue: { openPrAtShip: vi.fn(), notifyThreadHalted: vi.fn() },
       },
       {
         provide: DRIVER_REPO,
@@ -801,6 +806,10 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
         {
           provide: SkillUpdaterService,
           useValue: { reconcileOrgAsync: () => undefined },
+        },
+        {
+          provide: BrainGateway,
+          useValue: { openPrAtShip: vi.fn(), notifyThreadHalted: vi.fn() },
         },
         {
           provide: DRIVER_REPO,

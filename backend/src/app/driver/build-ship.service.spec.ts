@@ -132,6 +132,27 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     });
   });
 
+  it('falls back to the ship branch when the stored job title is blank', async () => {
+    const git = baseGit();
+    const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn(async () => null) } as unknown as GithubPrService;
+    const store = {
+      setPrReady: vi.fn(async () => undefined),
+      setJobStatus: vi.fn(async () => undefined),
+      setCurrentBranch: vi.fn(async () => undefined),
+    } as unknown as DriverStoreService;
+    const { openPrAtShip, brainGateway } = makeBrain();
+
+    const svc = new BuildShipService(git, pr, store, brainGateway);
+    await svc.ship({ job: { ...job, title: '   ' } as unknown as Job, record: null, repo, sandbox });
+
+    expect(openPrAtShip).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: 'feature/abcd',
+        title: 'feature/abcd',
+      }),
+    );
+  });
+
   it('follows the live branch: ships/discovers against the branch HEAD is actually on', async () => {
     // The agent switched branches mid-build; `current_branch` on the job reflects it.
     const liveJob = { ...job, currentBranch: 'atlas/renamed' } as unknown as Job;
