@@ -113,11 +113,18 @@ export class AuthService implements OnApplicationBootstrap {
       this.logger.warn(
         `refresh 401: refresh token failed verification — ${err instanceof Error ? err.message : String(err)}`,
       );
+      // Self-heal a poison cookie: a preview app under a shared parent domain issues
+      // `Domain=.<parent>` cookies signed with a DIFFERENT JWT secret. Those land on the prod API
+      // host and, being domain-scoped, SHADOW prod's host-only cookie — so a fresh login can't
+      // overwrite them and every request 401s here forever. Evict across all scopes so the browser
+      // drops it and the next login sticks. See clearTokensAllScopes.
+      this.clearTokensAllScopes(req, res);
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
     const user = sub ? await this.users.findOne({ where: { id: sub } }) : null;
     if (!user) {
       this.logger.warn(`refresh 401: no user found for sub=${sub ?? '(none)'}`);
+      this.clearTokensAllScopes(req, res);
       throw new UnauthorizedException('Session no longer valid');
     }
 
@@ -129,6 +136,35 @@ export class AuthService implements OnApplicationBootstrap {
     const base = this.cookieBase();
     res.clearCookie(ACCESS_COOKIE, { ...base, path: '/' });
     res.clearCookie(REFRESH_COOKIE, { ...base, path: REFRESH_PATH });
+  }
+
+  /**
+   * Clear the auth cookies across EVERY scope a browser might hold them under: this host's own
+   * (host-only, or `COOKIE_DOMAIN` when set) AND the immediate parent domain
+   * (`api.atlas.dltechnologies.co` → `.atlas.dltechnologies.co`). A sibling preview app under that
+   * parent can leave a domain-scoped cookie that shadows prod's own; a plain `clearTokens` only
+   * matches prod's scope and leaves the poison in place. Best-effort — the parent sweep is skipped
+   * for a bare host / IP / localhost (fewer than 3 labels), where a Domain attribute is meaningless.
+   */
+  private clearTokensAllScopes(req: Request, res: Response): void {
+    const base = this.cookieBase();
+    const domains: Array<string | undefined> = [base.domain];
+    const parent = this.parentDomain(req.hostname);
+    if (parent && parent !== base.domain) domains.push(parent);
+    for (const domain of domains) {
+      const opts = { ...base, ...(domain ? { domain } : { domain: undefined }) };
+      res.clearCookie(ACCESS_COOKIE, { ...opts, path: '/' });
+      res.clearCookie(REFRESH_COOKIE, { ...opts, path: REFRESH_PATH });
+    }
+  }
+
+  /** Immediate parent of a host (`a.b.c.co` → `b.c.co`); null when there is no meaningful parent
+   *  domain to scope a cookie to (bare host, IP, or localhost — fewer than 3 labels). */
+  private parentDomain(host: string | undefined): string | null {
+    if (!host) return null;
+    const labels = host.split('.');
+    if (labels.length < 3) return null;
+    return labels.slice(1).join('.');
   }
 
   private toSession(user: UserEntity): AuthSession {

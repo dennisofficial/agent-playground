@@ -1,7 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, QueryFailedError, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   OrganizationEntity,
@@ -22,6 +22,17 @@ export interface ClaudeCredentialSummary {
 }
 
 const LEGACY_SETUP_TOKEN_LABEL = 'Imported setup-token';
+const PG_UNIQUE_VIOLATION = '23505';
+
+type UpsertPersonalInput = {
+  label: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  scopes?: string;
+  subscriptionType?: string;
+  accountEmail?: string;
+};
 
 /**
  * The ONLY encrypt-on-write / decrypt-on-read path for `claude_credentials` — a LIST of Claude credentials
@@ -110,6 +121,16 @@ export class ClaudeCredentialStore {
     };
   }
 
+  /** Decrypt ONE credential row by id (org-scoped) into the injectable secret shape — the by-id sibling of `getSelectedDecrypted`. Null when the row is absent or belongs to another org. */
+  async getDecryptedById(
+    orgId: string,
+    id: string,
+  ): Promise<{ id: string; kind: 'setup_token' | 'personal'; secret: string } | null> {
+    const row = await this.repo.findOne({ where: { id, org_id: orgId } });
+    if (!row) return null;
+    return { id: row.id, kind: row.kind, secret: this.decryptToSecret(row) };
+  }
+
   /** Decrypt one row into the injectable secret shape (raw token, or a `claudeAiOauth` JSON blob). */
   private decryptToSecret(row: OrgClaudeCredentialEntity): string {
     const key = this.key();
@@ -129,20 +150,32 @@ export class ClaudeCredentialStore {
     });
   }
 
-  /** Create a new `personal` (OAuth login) credential row. Does NOT select it — callers call `setSelected`. */
-  async createPersonal(
-    orgId: string,
-    p: {
-      label: string;
-      accessToken: string;
-      refreshToken: string;
-      expiresAt: number;
-      scopes?: string;
-      subscriptionType?: string;
-      accountEmail?: string;
-    },
-  ): Promise<string> {
+  /**
+   * Upsert a `personal` (OAuth login) credential row, keyed on (org, account email): re-logging in with
+   * the SAME Claude account updates that row in place (preserving its id, selection, and created_at)
+   * rather than accumulating a duplicate. No `accountEmail` (or no existing match) inserts a new row.
+   * Does NOT select it — callers call `setSelected`.
+   */
+  async upsertPersonal(orgId: string, p: UpsertPersonalInput): Promise<string> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
+    const accountEmail = p.accountEmail?.trim() || undefined;
+    const existing = accountEmail
+      ? await this.repo.findOne({
+          where: {
+            org_id: orgId,
+            kind: 'personal',
+            account_email: accountEmail,
+          },
+        })
+      : null;
+    if (existing) {
+      this.assignPersonalFields(existing, p, key, accountEmail);
+      const saved = await this.repo.save(existing);
+      this.logger.log(
+        `updated personal claude credential in place for org=${orgId} id=${saved.id}`,
+      );
+      return saved.id; // selection + created_at preserved
+    }
     const row = this.repo.create({
       org_id: orgId,
       label: p.label,
@@ -152,14 +185,45 @@ export class ClaudeCredentialStore {
       expires_at: new Date(p.expiresAt),
       scopes: p.scopes ?? null,
       subscription_type: p.subscriptionType ?? null,
-      account_email: p.accountEmail ?? null,
+      account_email: accountEmail ?? null,
       status: 'active',
     });
-    const saved = await this.repo.save(row);
-    this.logger.log(
-      `created personal claude credential for org=${orgId} id=${saved.id}`,
-    );
-    return saved.id;
+    try {
+      const saved = await this.repo.save(row);
+      this.logger.log(
+        `created personal claude credential for org=${orgId} id=${saved.id}`,
+      );
+      return saved.id;
+    } catch (err) {
+      if (!accountEmail || !isUniqueViolation(err)) throw err;
+      const raced = await this.repo.findOne({
+        where: { org_id: orgId, kind: 'personal', account_email: accountEmail },
+      });
+      if (!raced) throw err;
+      this.assignPersonalFields(raced, p, key, accountEmail);
+      const saved = await this.repo.save(raced);
+      this.logger.log(
+        `updated personal claude credential after unique race for org=${orgId} id=${saved.id}`,
+      );
+      return saved.id;
+    }
+  }
+
+  private assignPersonalFields(
+    row: OrgClaudeCredentialEntity,
+    p: UpsertPersonalInput,
+    key: Buffer,
+    accountEmail: string | undefined,
+  ): void {
+    row.access_token_enc = encryptSecret(p.accessToken, key);
+    row.refresh_token_enc = encryptSecret(p.refreshToken, key);
+    row.expires_at = new Date(p.expiresAt);
+    row.scopes = p.scopes ?? null;
+    row.subscription_type = p.subscriptionType ?? null;
+    row.account_email = accountEmail ?? null;
+    row.label = p.label; // keep the display name in sync with the email
+    row.status = 'active';
+    row.last_refreshed_at = new Date();
   }
 
   /** Create a new `setup_token` credential row. Does NOT select it — callers call `setSelected`. */
@@ -336,4 +400,13 @@ function parseClaudeOauth(secret: string): ClaudeOauth | null {
   } catch {
     return null;
   }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  if (!(err instanceof QueryFailedError)) return false;
+  const pgCode =
+    (err as QueryFailedError & { code?: unknown }).code ??
+    (err as QueryFailedError & { driverError?: { code?: unknown } }).driverError
+      ?.code;
+  return pgCode === PG_UNIQUE_VIOLATION;
 }

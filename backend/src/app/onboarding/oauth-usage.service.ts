@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import type {
   ClaudeUsageWindowKey,
@@ -8,9 +9,9 @@ import type {
   StoredUsageWindow,
   UsageWindow,
 } from '@workspace/shared';
-import type { EngineAuth } from '../engine/engine.types';
 import { resetEpochToIso } from '../engine/session-limit';
 import { ClaudeCredentialStore } from './claude-credential.store';
+import { DEFAULT_CLAUDE_OAUTH_CONFIG, refresh, type ClaudeOAuthConfig } from './claude-oauth.client';
 import { CredentialResolver } from './credential-resolver.service';
 import { TenantCredentialStore } from './tenant-credential.store';
 import { UsageEventBus } from './usage-event-bus';
@@ -69,12 +70,14 @@ export class OauthUsageService {
   private readonly claudeCodeVersion = resolveClaudeCodeVersion();
 
   private readonly liveCache = new Map<string, LiveCacheEntry>();
+  private readonly credentialLiveCache = new Map<string, LiveCacheEntry>();
 
   constructor(
     private readonly credentials: CredentialResolver,
     private readonly store: TenantCredentialStore,
+    private readonly claudeStore: ClaudeCredentialStore,
     private readonly bus: UsageEventBus,
-    private readonly claudeCredentials: ClaudeCredentialStore,
+    private readonly env: EnvService,
   ) {}
 
   /**
@@ -122,34 +125,49 @@ export class OauthUsageService {
     try {
       const auth = await this.credentials.engineAuth(orgId, 'claude');
       if (!auth) return degradedUsage();
-      const bearer = bearerToken(auth);
-      if (!bearer) return degradedUsage();
-
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-      try {
-        const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
-          headers: {
-            Authorization: `Bearer ${bearer}`,
-            'anthropic-beta': 'oauth-2025-04-20',
-            'User-Agent': `claude-code/${this.claudeCodeVersion}`,
-            'content-type': 'application/json',
-          },
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          this.logger.warn(`usage fetch failed org=${orgId}: HTTP ${res.status}`);
-          return degradedUsage();
-        }
-        const body: unknown = await res.json();
-        return parseUsageResponse(body);
-      } finally {
-        clearTimeout(timeout);
-      }
+      const accessToken = bearerTokenFromSecret(auth.secret, auth.kind);
+      if (!accessToken) return degradedUsage();
+      return this.fetchUsageWithToken(accessToken);
     } catch (err) {
       this.logger.warn(`usage fetch failed org=${orgId}: ${err}`);
       return degradedUsage();
     }
+  }
+
+  /** Issue the actual `/api/oauth/usage` GET with a resolved bearer access token; degrade on any non-200/parse failure. Shared by the org-level (`fetchLive`) and per-credential paths. */
+  private async fetchUsageWithToken(accessToken: string): Promise<OrgUsage> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'anthropic-beta': 'oauth-2025-04-20',
+          'User-Agent': `claude-code/${this.claudeCodeVersion}`,
+          'content-type': 'application/json',
+        },
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        this.logger.warn(`usage fetch failed: HTTP ${res.status}`);
+        return degradedUsage();
+      }
+      const body: unknown = await res.json();
+      return parseUsageResponse(body);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * The per-credential usage `GET /web/orgs/:orgId/claude-credentials/:id/usage` serves. ALWAYS resolves
+   * through THAT credential's own token (never the org-level harvested snapshot, which is keyed to whichever
+   * credential was selected when turns ran). Setup tokens and unknown ids degrade to `ok:false` (d1/d3).
+   */
+  async getForCredential(orgId: string, credentialId: string): Promise<OrgUsage> {
+    const row = (await this.claudeStore.list(orgId)).find((r) => r.id === credentialId);
+    if (!row || row.kind !== 'personal') return degradedUsage();
+    return this.liveCredentialSnapshot(orgId, credentialId);
   }
 
   /**
@@ -257,7 +275,7 @@ export class OauthUsageService {
    */
   private async withAccount(orgId: string, usage: OrgUsage): Promise<OrgUsage> {
     try {
-      const display = await this.claudeCredentials.getSelectedDisplay(orgId);
+      const display = await this.claudeStore.getSelectedDisplay(orgId);
       if (!display) return usage;
       return {
         ...usage,
@@ -268,6 +286,64 @@ export class OauthUsageService {
       this.logger.warn(`withAccount failed org=${orgId}: ${err}`);
       return usage;
     }
+  }
+
+  /** `fetchLiveForCredential`, cached per credential id for {@link LIVE_FLOOR_MS} so repeat settings visits don't re-hit the endpoint. */
+  private async liveCredentialSnapshot(orgId: string, credentialId: string): Promise<OrgUsage> {
+    const cached = this.credentialLiveCache.get(credentialId);
+    if (cached && Date.now() - cached.fetchedAtMs < LIVE_FLOOR_MS) return cached.usage;
+    const usage = await this.fetchLiveForCredential(orgId, credentialId);
+    this.credentialLiveCache.set(credentialId, { usage, fetchedAtMs: Date.now() });
+    return usage;
+  }
+
+  /**
+   * Decrypt a specific credential's token, refresh it on demand when it's expired (persisting the rotated
+   * token via `advanceClaudeCredential`, the same write-back used during turns), then fetch its usage.
+   * Best-effort: any failure degrades to `ok:false` and no write occurs.
+   */
+  private async fetchLiveForCredential(orgId: string, credentialId: string): Promise<OrgUsage> {
+    try {
+      const dec = await this.claudeStore.getDecryptedById(orgId, credentialId);
+      if (!dec || dec.kind !== 'personal') return degradedUsage();
+      const oauth = parseClaudeOauthBlob(dec.secret);
+      if (!oauth) return degradedUsage();
+      let accessToken = oauth.accessToken;
+      if (oauth.expiresAt != null && oauth.expiresAt <= Date.now() + 60_000) {
+        try {
+          const t = await refresh(this.oauthConfig(), { refreshToken: oauth.refreshToken });
+          await this.claudeStore.advanceClaudeCredential(
+            orgId,
+            credentialId,
+            JSON.stringify({
+              claudeAiOauth: {
+                accessToken: t.accessToken,
+                refreshToken: t.refreshToken,
+                expiresAt: t.expiresAt,
+                scopes: t.scopes?.split(' '),
+                subscriptionType: t.subscriptionType,
+              },
+            }),
+          );
+          accessToken = t.accessToken;
+        } catch (err) {
+          this.logger.warn(`cred usage refresh failed ${credentialId}: ${err}`);
+          return degradedUsage();
+        }
+      }
+      return this.fetchUsageWithToken(accessToken);
+    } catch (err) {
+      this.logger.warn(`cred usage fetch failed ${credentialId}: ${err}`);
+      return degradedUsage();
+    }
+  }
+
+  /** OAuth config for the on-demand refresh — refresh only needs `tokenUrl` (constant) + `clientId` (env-overridable), mirroring the controller's `config()`. */
+  private oauthConfig(): ClaudeOAuthConfig {
+    return {
+      ...DEFAULT_CLAUDE_OAUTH_CONFIG,
+      clientId: this.env.get('CLAUDE_OAUTH_CLIENT_ID') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.clientId,
+    };
   }
 }
 
@@ -295,24 +371,6 @@ export function toPercentUtilization(utilization: number | undefined): number | 
   if (utilization == null) return undefined;
   const percent = utilization <= 1 ? utilization * 100 : utilization;
   return Math.round(Math.min(100, Math.max(0, percent)));
-}
-
-/**
- * The raw OAuth access token to send as `Authorization: Bearer` to `/api/oauth/usage`. A `personal`
- * credential's `secret` is the `.credentials.json` blob (`{"claudeAiOauth":{"accessToken":…}}`) the coding
- * engine consumes, NOT a bare token — the usage endpoint 401s on the whole blob, so unwrap `accessToken`.
- * A `setup-token` (and the env fallback, where `kind` is absent) is already a raw token. Returns undefined
- * when a personal blob is malformed / missing the token, so the caller degrades cleanly.
- */
-export function bearerToken(auth: EngineAuth): string | undefined {
-  if (auth.kind !== 'personal') return auth.secret; // setup-token / env fallback: already a raw token
-  try {
-    const parsed = JSON.parse(auth.secret) as { claudeAiOauth?: { accessToken?: unknown } };
-    const token = parsed.claudeAiOauth?.accessToken;
-    return typeof token === 'string' && token.length > 0 ? token : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function degradedUsage(): OrgUsage {
@@ -343,6 +401,43 @@ export function parseModelWindows(root: Record<string, unknown>): ModelUsageWind
     });
   }
   return out;
+}
+
+/**
+ * The value to place after `Bearer ` for a credential's usage call. A `setup-token`'s secret IS the raw
+ * token; a `personal` credential's secret is a `{claudeAiOauth:{accessToken,…}}` JSON blob, so pull the
+ * accessToken out of it. Null when the personal blob is malformed or missing its access token.
+ */
+function bearerTokenFromSecret(secret: string, kind: 'setup-token' | 'personal' | undefined): string | null {
+  if (kind !== 'personal') return secret;
+  try {
+    const t = (JSON.parse(secret) as { claudeAiOauth?: { accessToken?: unknown } }).claudeAiOauth
+      ?.accessToken;
+    return typeof t === 'string' && t.length > 0 ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+type ClaudeOauthBlob = {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt?: number;
+  scopes?: string[];
+  subscriptionType?: string;
+};
+
+/** Guarded parse of a `{claudeAiOauth:{…}}` blob into the fields the refresh path needs; null on malformed input. */
+function parseClaudeOauthBlob(secret: string): ClaudeOauthBlob | null {
+  try {
+    const oauth = (JSON.parse(secret) as { claudeAiOauth?: Partial<ClaudeOauthBlob> }).claudeAiOauth;
+    if (!oauth || typeof oauth.accessToken !== 'string' || typeof oauth.refreshToken !== 'string') {
+      return null;
+    }
+    return oauth as ClaudeOauthBlob;
+  } catch {
+    return null;
+  }
 }
 
 /**

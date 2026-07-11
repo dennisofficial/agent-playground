@@ -1,23 +1,54 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ClaudeUsageSnapshot, ClaudeUsageWindowKey, StoredUsageWindow } from '@workspace/shared';
-import {
-  OauthUsageService,
-  bearerToken,
-  parseModelWindows,
-  toPercentUtilization,
-} from './oauth-usage.service';
-import type { ClaudeCredentialStore } from './claude-credential.store';
+import type { EnvService } from '@core/config/env/env.service';
+import { OauthUsageService, parseModelWindows, toPercentUtilization } from './oauth-usage.service';
+import type { ClaudeCredentialStore, ClaudeCredentialSummary } from './claude-credential.store';
 import type { CredentialResolver } from './credential-resolver.service';
 import type { TenantCredentialStore } from './tenant-credential.store';
 import { UsageEventBus, type UsageChange } from './usage-event-bus';
 
 type SelectedDisplay = { accountEmail: string | null; subscriptionType: string | null; label: string };
 
-/** Stand-in for `ClaudeCredentialStore.getSelectedDisplay` — the selected account's non-secret header fields. */
-class FakeClaudeCredentialStore {
-  constructor(private readonly display: SelectedDisplay | null = null) {}
-  getSelectedDisplay(): Promise<SelectedDisplay | null> {
+type FakeCredentialRow = { id: string; kind: 'setup_token' | 'personal'; secret: string };
+
+/**
+ * Minimal in-memory stand-in for `ClaudeCredentialStore`'s full surface these tests need: the
+ * per-credential read/write-back path (`list`, `getDecryptedById`, `advanceClaudeCredential`) AND the
+ * selected-account display header (`getSelectedDisplay`).
+ */
+class FakeClaudeStore {
+  readonly advanceCalls: Array<{ orgId: string; credentialId: string; secret: string }> = [];
+
+  constructor(
+    private readonly rows: FakeCredentialRow[] = [],
+    private readonly display: SelectedDisplay | null = null,
+  ) {}
+
+  getSelectedDisplay(_orgId: string): Promise<SelectedDisplay | null> {
     return Promise.resolve(this.display);
+  }
+
+  list(_orgId: string): Promise<ClaudeCredentialSummary[]> {
+    return Promise.resolve(
+      this.rows.map((row) => ({
+        id: row.id,
+        label: row.id,
+        kind: row.kind,
+        status: 'active',
+        expiresAt: null,
+        accountEmail: null,
+        isSelected: false,
+      })),
+    );
+  }
+
+  getDecryptedById(_orgId: string, id: string): Promise<FakeCredentialRow | null> {
+    return Promise.resolve(this.rows.find((row) => row.id === id) ?? null);
+  }
+
+  advanceClaudeCredential(orgId: string, credentialId: string, secret: string): Promise<void> {
+    this.advanceCalls.push({ orgId, credentialId, secret });
+    return Promise.resolve();
   }
 }
 
@@ -67,25 +98,50 @@ const NO_ENGINE_AUTH: Pick<CredentialResolver, 'engineAuth'> = {
   engineAuth: () => Promise.resolve(undefined),
 };
 
+/** A `personal` credential's decrypted secret shape: a `{claudeAiOauth:{…}}` JSON blob. */
+function personalSecret(p: { accessToken: string; refreshToken: string; expiresAt: number }): string {
+  return JSON.stringify({ claudeAiOauth: p });
+}
+
+/** A well-formed `/api/oauth/usage` body with just the five-hour window populated. */
+function usageBody(utilization: number, resetsAt: string): unknown {
+  return { five_hour: { utilization, resets_at: resetsAt } };
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(body),
+  } as Response;
+}
+
 /**
  * applyHarvest writes through to the (fake) durable store; get() serves the harvested snapshot without HTTP
- * when it's fresh. Also returns the service's `UsageEventBus` (and a running list of everything it published)
- * so tests can assert on realtime fan-out.
+ * when it's fresh. Also returns the service's `UsageEventBus` (and a running list of everything it
+ * published) and the `FakeClaudeStore` it was built with, so tests can assert on realtime fan-out and
+ * per-credential write-back.
  */
 function makeService(
-  store: FakeCredentialStore = new FakeCredentialStore(),
-  selectedDisplay: SelectedDisplay | null = null,
-): { svc: OauthUsageService; bus: UsageEventBus; published: UsageChange[] } {
+  opts: {
+    store?: FakeCredentialStore;
+    claudeStore?: FakeClaudeStore;
+    selectedDisplay?: SelectedDisplay | null;
+  } = {},
+): { svc: OauthUsageService; bus: UsageEventBus; published: UsageChange[]; claudeStore: FakeClaudeStore } {
+  const store = opts.store ?? new FakeCredentialStore();
+  const claudeStore = opts.claudeStore ?? new FakeClaudeStore([], opts.selectedDisplay ?? null);
   const bus = new UsageEventBus();
   const published: UsageChange[] = [];
   bus.stream$.subscribe((e) => published.push(e));
   const svc = new OauthUsageService(
     NO_ENGINE_AUTH as unknown as CredentialResolver,
     store as unknown as TenantCredentialStore,
+    claudeStore as unknown as ClaudeCredentialStore,
     bus,
-    new FakeClaudeCredentialStore(selectedDisplay) as unknown as ClaudeCredentialStore,
+    { get: () => undefined } as unknown as EnvService,
   );
-  return { svc, bus, published };
+  return { svc, bus, published, claudeStore };
 }
 
 describe('OauthUsageService.applyHarvest', () => {
@@ -171,7 +227,7 @@ describe('OauthUsageService.applyHarvest', () => {
 
   it('durably writes through to the store and is readable by a fresh service instance', async () => {
     const store = new FakeCredentialStore();
-    const { svc } = makeService(store);
+    const { svc } = makeService({ store });
     const resetsAt = Date.now() + 60 * 60 * 1000;
     await svc.applyHarvest('org1', {
       status: 'rejected',
@@ -187,7 +243,7 @@ describe('OauthUsageService.applyHarvest', () => {
 
     // A brand-new service instance backed by the SAME store sees the harvest — proving durability
     // isn't tied to any in-process state on `svc`.
-    const { svc: freshSvc } = makeService(store);
+    const { svc: freshSvc } = makeService({ store });
     const usage = await freshSvc.get('org1');
     expect(usage.sevenDayOpus).toEqual({
       utilization: 100,
@@ -229,7 +285,7 @@ describe('OauthUsageService realtime publish', () => {
 
   it('invalidate() clears the harvested snapshot so get() no longer serves the stale window', async () => {
     const store = new FakeCredentialStore();
-    const { svc } = makeService(store);
+    const { svc } = makeService({ store });
     const resetsAt = Date.now() + 60 * 60 * 1000;
     await svc.applyHarvest('org1', {
       status: 'rejected',
@@ -249,7 +305,7 @@ describe('OauthUsageService realtime publish', () => {
 
   it('invalidate() emits a fresh UsageEventBus frame', async () => {
     const store = new FakeCredentialStore();
-    const { svc, published } = makeService(store);
+    const { svc, published } = makeService({ store });
     await svc.applyHarvest('org1', {
       status: 'rejected',
       rateLimitType: 'five_hour',
@@ -287,7 +343,7 @@ describe('toPercentUtilization (rate_limit_event 0-1 fraction → 0-100 percent)
 describe('OauthUsageService.applyHarvest scale', () => {
   it('records a fractional rate_limit_event utilization as a whole percent (0.9 → 90, not 1)', async () => {
     const store = new FakeCredentialStore();
-    const { svc } = makeService(store);
+    const { svc } = makeService({ store });
     await svc.applyHarvest('org1', {
       status: 'allowed',
       rateLimitType: 'five_hour',
@@ -302,7 +358,7 @@ describe('OauthUsageService.applyHarvest scale', () => {
 describe('OauthUsageService.get harvested-window expiry', () => {
   it('drops a harvested window whose reset has already passed (a latched limit does not stick past reset)', async () => {
     const store = new FakeCredentialStore();
-    const { svc } = makeService(store);
+    const { svc } = makeService({ store });
     await store.mergeClaudeUsageWindow(
       'org1',
       'fiveHour',
@@ -316,7 +372,7 @@ describe('OauthUsageService.get harvested-window expiry', () => {
 
   it('still serves a harvested window whose reset is in the future', async () => {
     const store = new FakeCredentialStore();
-    const { svc } = makeService(store);
+    const { svc } = makeService({ store });
     await store.mergeClaudeUsageWindow(
       'org1',
       'fiveHour',
@@ -374,31 +430,14 @@ describe('parseModelWindows (usage API limits[] → per-model weekly rows)', () 
   });
 });
 
-describe('bearerToken (live-usage fetch auth)', () => {
-  it('unwraps claudeAiOauth.accessToken from a personal credential blob', () => {
-    const secret = JSON.stringify({
-      claudeAiOauth: { accessToken: 'sk-ant-oat-REAL', refreshToken: 'r', expiresAt: 1 },
-    });
-    expect(bearerToken({ secret, kind: 'personal' })).toBe('sk-ant-oat-REAL');
-  });
-
-  it('uses the raw secret for a setup-token (and the env fallback where kind is absent)', () => {
-    expect(bearerToken({ secret: 'sk-ant-oat-RAW', kind: 'setup-token' })).toBe('sk-ant-oat-RAW');
-    expect(bearerToken({ secret: 'sk-ant-oat-ENV' })).toBe('sk-ant-oat-ENV');
-  });
-
-  it('returns undefined for a malformed / tokenless personal blob (caller degrades cleanly)', () => {
-    expect(bearerToken({ secret: 'not json', kind: 'personal' })).toBeUndefined();
-    expect(bearerToken({ secret: JSON.stringify({ claudeAiOauth: {} }), kind: 'personal' })).toBeUndefined();
-  });
-});
-
 describe('OauthUsageService account header', () => {
   it('stamps accountLabel (email) + plan from the selected credential onto get() and the push', async () => {
-    const { svc, published } = makeService(new FakeCredentialStore(), {
-      accountEmail: 'dennis@atlas.dev',
-      subscriptionType: 'max',
-      label: 'Dennis personal',
+    const { svc, published } = makeService({
+      selectedDisplay: {
+        accountEmail: 'dennis@atlas.dev',
+        subscriptionType: 'max',
+        label: 'Dennis personal',
+      },
     });
     await svc.applyHarvest('org1', {
       status: 'rejected',
@@ -416,10 +455,12 @@ describe('OauthUsageService account header', () => {
   });
 
   it('falls back to the credential label and omits the plan for a setup-token (no email / no plan)', async () => {
-    const { svc } = makeService(new FakeCredentialStore(), {
-      accountEmail: null,
-      subscriptionType: null,
-      label: 'Imported setup-token',
+    const { svc } = makeService({
+      selectedDisplay: {
+        accountEmail: null,
+        subscriptionType: null,
+        label: 'Imported setup-token',
+      },
     });
     const usage = await svc.get('org1');
     expect(usage.accountLabel).toBe('Imported setup-token');
@@ -431,5 +472,98 @@ describe('OauthUsageService account header', () => {
     const usage = await svc.get('org1');
     expect(usage.accountLabel).toBeUndefined();
     expect(usage.plan).toBeUndefined();
+  });
+});
+
+describe('OauthUsageService.getForCredential', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('degrades a setup_token credential without hitting the network', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const claudeStore = new FakeClaudeStore([
+      { id: 'cred1', kind: 'setup_token', secret: 'sk-ant-oat-raw' },
+    ]);
+    const { svc } = makeService({ claudeStore });
+
+    const usage = await svc.getForCredential('org1', 'cred1');
+
+    expect(usage.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('degrades an unknown credential id without hitting the network', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { svc } = makeService({ claudeStore: new FakeClaudeStore([]) });
+
+    const usage = await svc.getForCredential('org1', 'missing-cred');
+
+    expect(usage.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fetches a personal credential’s OWN live usage via its access token, and never writes back an unexpired token', async () => {
+    const resetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const fetchMock = vi.fn((url: string, init: RequestInit) => {
+      expect(url).toBe('https://api.anthropic.com/api/oauth/usage');
+      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer at-personal');
+      return jsonResponse(200, usageBody(42, resetsAt));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const claudeStore = new FakeClaudeStore([
+      {
+        id: 'cred1',
+        kind: 'personal',
+        secret: personalSecret({
+          accessToken: 'at-personal',
+          refreshToken: 'rt-personal',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        }),
+      },
+    ]);
+    const { svc } = makeService({ claudeStore });
+
+    const usage = await svc.getForCredential('org1', 'cred1');
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(usage.ok).toBe(true);
+    expect(usage.fiveHour).toEqual({ utilization: 42, resetsAt: new Date(resetsAt).toISOString() });
+    expect(claudeStore.advanceCalls).toHaveLength(0);
+  });
+
+  it('never routes the per-credential fetch through the org-level harvested snapshot', async () => {
+    // A stale/absent harvest for the org must not short-circuit or otherwise influence the per-credential
+    // path — it always live-fetches THIS credential's own token.
+    const store = new FakeCredentialStore();
+    await store.mergeClaudeUsageWindow(
+      'org1',
+      'fiveHour',
+      { utilization: 99, resetsAt: new Date().toISOString() },
+      Date.now(),
+    );
+    const resetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => jsonResponse(200, usageBody(7, resetsAt))),
+    );
+    const claudeStore = new FakeClaudeStore([
+      {
+        id: 'cred1',
+        kind: 'personal',
+        secret: personalSecret({
+          accessToken: 'at-personal',
+          refreshToken: 'rt-personal',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        }),
+      },
+    ]);
+    const { svc } = makeService({ store, claudeStore });
+
+    const usage = await svc.getForCredential('org1', 'cred1');
+
+    expect(usage.fiveHour?.utilization).toBe(7);
   });
 });

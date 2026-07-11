@@ -45,6 +45,9 @@ export type SeedRow =
       /** `<untrusted>` provenance/severity, surfaced on the untrusted pill. */
       untrustedSource?: string;
       severity?: string;
+      /** For an `untrusted` row: the TRUSTED harness framing that rode with the fenced data (the
+       *  autonomous-wake preamble). Rendered as a distinct trusted block, so it never reads as untrusted. */
+      framing?: string;
     };
 
 /** Coarse urgency the notification adapter maps from its gateway's payload. */

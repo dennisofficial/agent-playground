@@ -12,6 +12,7 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import type { OrgUsage } from '@workspace/shared';
 import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
@@ -34,17 +35,14 @@ import { OnboardingService } from './onboarding.service';
 /** A `claude setup-token`'s literal prefix — the only shape accepted for the setup-token creation path. */
 const SETUP_TOKEN_PREFIX = 'sk-ant-oat';
 
-class AuthorizeUrlDto {
-  @IsString() @IsNotEmpty() label!: string;
-}
-
 class CreateCredentialDto {
   /** Present for the `personal` (OAuth login) path, alongside `state`. */
   @IsOptional() @IsString() code?: string;
   @IsOptional() @IsString() state?: string;
   /** Present for the `setup_token` path. */
   @IsOptional() @IsString() setupToken?: string;
-  @IsString() @IsNotEmpty() label!: string;
+  /** Required for `setup_token`; ignored for `personal` (the display name is derived from the account email). */
+  @IsOptional() @IsString() label?: string;
 }
 
 class SelectCredentialDto {
@@ -67,7 +65,7 @@ export class ClaudeCredentialsController {
     private readonly pkce: ClaudeOAuthPkceStore,
     private readonly onboarding: OnboardingService,
     private readonly env: EnvService,
-    private readonly usage: OauthUsageService,
+    private readonly usageService: OauthUsageService,
   ) {}
 
   private config(): ClaudeOAuthConfig {
@@ -85,18 +83,11 @@ export class ClaudeCredentialsController {
   /** Kick off consent: mint + stash a fresh PKCE verifier, return the URL the owner opens. */
   @Post('authorize-url')
   @UseGuards(OrgOwnerGuard)
-  async authorizeUrl(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Body() body: AuthorizeUrlDto,
-  ): Promise<{ url: string; state: string; label: string }> {
+  async authorizeUrl(@CurrentOrg() org: CurrentOrgCtx): Promise<{ url: string; state: string }> {
     const config = this.config();
     const { verifier, challenge, state } = generatePkce();
     await this.pkce.stash(org.id, state, verifier);
-    return {
-      url: buildAuthorizeUrl(config, { challenge, state }),
-      state,
-      label: body.label,
-    };
+    return { url: buildAuthorizeUrl(config, { challenge, state }), state };
   }
 
   /** Create a credential — either a `personal` OAuth login (`code`+`state`) or a `setup_token` (`setupToken`). */
@@ -114,7 +105,7 @@ export class ClaudeCredentialsController {
     let rows = await this.store.list(org.id);
     if (rows.length === 1) {
       const changed = await this.store.setSelected(org.id, id);
-      if (changed) await this.usage.invalidate(org.id);
+      if (changed) await this.usageService.invalidate(org.id);
       rows = await this.store.list(org.id); // re-read so the returned summary's isSelected is accurate
     }
     await this.onboarding.tryActivate(org.id);
@@ -147,8 +138,9 @@ export class ClaudeCredentialsController {
       verifier,
       state: body.state,
     });
-    return this.store.createPersonal(org.id, {
-      label: body.label,
+    const label = tokens.accountEmail?.trim() || 'Claude subscription';
+    return this.store.upsertPersonal(org.id, {
+      label,
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresAt,
@@ -162,6 +154,8 @@ export class ClaudeCredentialsController {
     org: CurrentOrgCtx,
     body: CreateCredentialDto,
   ): Promise<string> {
+    const label = body.label?.trim();
+    if (!label) throw new BadRequestException('label is required for a setup-token');
     const setupToken = body.setupToken;
     if (!setupToken)
       throw new BadRequestException('code or setupToken is required');
@@ -171,7 +165,7 @@ export class ClaudeCredentialsController {
       );
     }
     return this.store.createSetupToken(org.id, {
-      label: body.label,
+      label,
       token: setupToken,
     });
   }
@@ -191,7 +185,7 @@ export class ClaudeCredentialsController {
     @Body() body: SelectCredentialDto,
   ): Promise<{ ok: true }> {
     const changed = await this.store.setSelected(org.id, body.credentialId);
-    if (changed) await this.usage.invalidate(org.id);
+    if (changed) await this.usageService.invalidate(org.id);
     await this.onboarding.tryActivate(org.id);
     return { ok: true };
   }
@@ -203,7 +197,16 @@ export class ClaudeCredentialsController {
     @Param('id') id: string,
   ): Promise<{ ok: true }> {
     const changed = await this.store.remove(org.id, id);
-    if (changed) await this.usage.invalidate(org.id);
+    if (changed) await this.usageService.invalidate(org.id);
     return { ok: true };
+  }
+
+  @Get(':id/usage')
+  @UseGuards(OrgOwnerGuard)
+  async usage(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('id') id: string,
+  ): Promise<OrgUsage> {
+    return this.usageService.getForCredential(org.id, id);
   }
 }

@@ -46,3 +46,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_reader;
 --    re-running this script. NOTE: default privileges attach to the role that CREATES the objects — the
 --    Atlas migrator runs as the owner below, so its future tables inherit this grant.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_reader;
+
+-- 4. Cap any single statement so a runaway diagnostic query can't load prod Postgres (belt; the
+--    atlas_query tool also sets this per-session via SET LOCAL statement_timeout).
+ALTER ROLE mcp_reader SET statement_timeout = '10s';

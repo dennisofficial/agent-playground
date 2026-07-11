@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useOrgUsage } from "@/lib/api/orgs";
+import { useCredentialUsage, useOrgUsage } from "@/lib/api/orgs";
 import { formatClockTime } from "@/lib/org-display";
 import type { WireOrgUsage } from "@/lib/api/types";
 
@@ -274,7 +274,12 @@ function WindowRow({
 }
 
 /** Pending/empty panel body — no window has any data yet (a fresh token, nothing harvested). */
-function EmptyUsagePanel() {
+function EmptyUsagePanel({ variant = "org" }: { variant?: "org" | "credential" }) {
+  const description =
+    variant === "credential"
+      ? "Usage unavailable right now."
+      : "Usage appears after your first agent turn.";
+  const footerText = variant === "credential" ? "No usage data" : "Waiting for first turn";
   return (
     <>
       <div className="flex flex-col items-center gap-1.5 px-1 py-4 text-center">
@@ -285,13 +290,11 @@ function EmptyUsagePanel() {
           <Ring state="pending" sessionPct={0} weeklyPct={0} maxed={false} size={16} />
         </span>
         <div className="text-[11px] font-semibold text-dim">No usage yet</div>
-        <div className="max-w-[190px] text-[10px] text-faint">
-          Usage appears after your first agent turn.
-        </div>
+        <div className="max-w-[190px] text-[10px] text-faint">{description}</div>
       </div>
       <div className="mt-1 flex items-center gap-1.5 border-t pt-1.5" style={{ borderColor: "var(--border)" }}>
         <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--faint)" }} />
-        <span className="font-mono text-[10px] text-faint">Waiting for first turn</span>
+        <span className="font-mono text-[10px] text-faint">{footerText}</span>
       </div>
     </>
   );
@@ -317,15 +320,29 @@ function PanelFooter({ fetchedAt }: { fetchedAt: string | undefined }) {
 }
 
 /**
- * A subscription-usage ring (Claude Code `/usage` style) for the composer footer — the SESSION (5-hour)
- * window as a small SVG arc + %, with the WEEKLY (7-day) window as a second arc sharing the same groove
- * behind it. CLICK it to open a panel listing every window we have data for (session/weekly/Opus/Sonnet,
- * rendered dynamically — absent windows are omitted). The ring always stays visible, with dedicated
- * "pending" (no data yet) and "degraded" (unknown/stale) states — the usage endpoint is best-effort and
- * must never block or error the composer.
+ * A subscription-usage ring (Claude Code `/usage` style) — the SESSION (5-hour) window as a small SVG arc
+ * + %, with the WEEKLY (7-day) window as a second arc sharing the same groove behind it. CLICK it to open
+ * a panel listing every window we have data for (session/weekly/Opus/Sonnet, rendered dynamically — absent
+ * windows are omitted). The ring always stays visible, with dedicated "pending" (no data yet) and
+ * "degraded" (unknown/stale) states — the usage endpoint is best-effort and must never block or error
+ * its host surface (the composer footer, or a Settings credential card).
  */
-export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }) {
-  const { data, isLoading, refetch, dataUpdatedAt } = useOrgUsage(orgId);
+export function UsageRingView({
+  data,
+  isLoading,
+  size = 17,
+  variant = "org",
+  refetch,
+  dataUpdatedAt,
+}: {
+  data: WireOrgUsage | undefined;
+  isLoading: boolean;
+  size?: number;
+  variant?: "org" | "credential";
+  /** Optional on-open refresh: the owning hook's `refetch` + `dataUpdatedAt` (throttled to 1/min). */
+  refetch?: () => void;
+  dataUpdatedAt?: number;
+}) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -337,7 +354,7 @@ export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }
   useEffect(() => {
     if (!open) return;
     const { refetch: doRefetch, dataUpdatedAt: lastAt } = usageMeta.current;
-    if (Date.now() - lastAt >= OPEN_REFRESH_THROTTLE_MS) void doRefetch();
+    if (doRefetch && Date.now() - (lastAt ?? 0) >= OPEN_REFRESH_THROTTLE_MS) doRefetch();
   }, [open]);
 
   useEffect(() => {
@@ -420,7 +437,7 @@ export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }
         >
           <PanelHeader accountLabel={data?.accountLabel} plan={data?.plan} />
           {rows.length === 0 ? (
-            <EmptyUsagePanel />
+            <EmptyUsagePanel variant={variant} />
           ) : (
             <>
               <div className="flex flex-col gap-2.5">
@@ -434,5 +451,42 @@ export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** The composer footer's ring — the org's Claude subscription usage snapshot. */
+export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }) {
+  const { data, isLoading, refetch, dataUpdatedAt } = useOrgUsage(orgId);
+  return (
+    <UsageRingView
+      data={data}
+      isLoading={isLoading}
+      size={size}
+      refetch={refetch}
+      dataUpdatedAt={dataUpdatedAt}
+    />
+  );
+}
+
+/** A Settings credential card's ring — that ONE personal credential's own live usage. */
+export function CredentialUsageRing({
+  orgId,
+  credentialId,
+  size = 17,
+}: {
+  orgId: string;
+  credentialId: string;
+  size?: number;
+}) {
+  const { data, isLoading, refetch, dataUpdatedAt } = useCredentialUsage(orgId, credentialId);
+  return (
+    <UsageRingView
+      data={data}
+      isLoading={isLoading}
+      size={size}
+      variant="credential"
+      refetch={refetch}
+      dataUpdatedAt={dataUpdatedAt}
+    />
   );
 }

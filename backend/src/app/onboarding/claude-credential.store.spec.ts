@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
-import type { DataSource, Repository } from 'typeorm';
+import { QueryFailedError, type DataSource, type Repository } from 'typeorm';
 import type {
   OrganizationEntity,
   OrgClaudeCredentialEntity,
@@ -9,6 +9,10 @@ import type {
 import { ClaudeCredentialStore } from './claude-credential.store';
 
 const KEY = Buffer.alloc(32, 9).toString('base64');
+
+type FakeClaudeRepo = {
+  save(row: OrgClaudeCredentialEntity): Promise<OrgClaudeCredentialEntity>;
+};
 
 function fakeEnv(map: Record<string, string | undefined>): EnvService {
   return { get: (k: string) => map[k] } as unknown as EnvService;
@@ -124,7 +128,7 @@ function makeStore(
     dataSource,
     fakeEnv(env),
   );
-  return { store, orgs };
+  return { store, orgs, repo };
 }
 
 /** A minimal `claudeAiOauth` blob (what `isNewerClaudeCredential` reads via `expiresAt`). */
@@ -139,13 +143,13 @@ function oauthBlob(
 }
 
 describe('ClaudeCredentialStore', () => {
-  it('createPersonal + setSelected + getSelectedDecrypted round-trips through the cipher', async () => {
+  it('upsertPersonal + setSelected + getSelectedDecrypted round-trips through the cipher', async () => {
     const { store, orgs } = makeStore();
     orgs.set('T1', {
       id: 'T1',
       selected_claude_credential_id: null,
     } as OrganizationEntity);
-    const id = await store.createPersonal('T1', {
+    const id = await store.upsertPersonal('T1', {
       label: 'Dennis personal',
       accessToken: 'acc-1',
       refreshToken: 'ref-1',
@@ -167,6 +171,153 @@ describe('ClaudeCredentialStore', () => {
         scopes: ['user:inference', 'user:profile'],
         subscriptionType: 'max',
       },
+    });
+  });
+
+  describe('upsertPersonal (upsert-by-email dedup)', () => {
+    it('a second call with the SAME accountEmail updates the SAME row (id + token fields), no duplicate', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      const id1 = await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+        accountEmail: 'd@example.com',
+      });
+      const id2 = await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+        accountEmail: 'd@example.com',
+      });
+      expect(id2).toBe(id1);
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(1);
+
+      await store.setSelected('T1', id1);
+      const sel = await store.getSelectedDecrypted('T1');
+      expect(JSON.parse(sel!.secret).claudeAiOauth).toMatchObject({
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+      });
+    });
+
+    it('a DIFFERENT accountEmail inserts a NEW row', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+        accountEmail: 'd@example.com',
+      });
+      await store.upsertPersonal('T1', {
+        label: 'Other personal',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+        accountEmail: 'other@example.com',
+      });
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(2);
+    });
+
+    it('with NO accountEmail, every call inserts (no dedup key)', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+      });
+      await store.upsertPersonal('T1', {
+        label: 'Dennis personal',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+      });
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(2);
+    });
+
+    it('treats a blank accountEmail as missing so it stays out of the unique key', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      await store.upsertPersonal('T1', {
+        label: 'Claude subscription',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+        accountEmail: '   ',
+      });
+      await store.upsertPersonal('T1', {
+        label: 'Claude subscription',
+        accessToken: 'acc-2',
+        refreshToken: 'ref-2',
+        expiresAt: 2000,
+        accountEmail: '   ',
+      });
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(2);
+      expect(rows.map((row) => row.accountEmail)).toEqual([null, null]);
+    });
+
+    it('retries a unique-index insert race by updating the winning row in place', async () => {
+      const { store, orgs, repo } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+      const fakeRepo = repo as unknown as FakeClaudeRepo;
+      const originalSave = fakeRepo.save.bind(fakeRepo);
+      const uniqueErr = new QueryFailedError(
+        'insert',
+        [],
+        Object.assign(new Error('duplicate key'), { code: '23505' }),
+      );
+      (uniqueErr as QueryFailedError & { code?: string }).code = '23505';
+      let threwRace = false;
+      fakeRepo.save = async (row: OrgClaudeCredentialEntity) => {
+        if (!threwRace) {
+          threwRace = true;
+          await originalSave(row);
+          throw uniqueErr;
+        }
+        return originalSave(row);
+      };
+
+      const id = await store.upsertPersonal('T1', {
+        label: 'd@example.com',
+        accessToken: 'acc-1',
+        refreshToken: 'ref-1',
+        expiresAt: 1000,
+        accountEmail: 'd@example.com',
+      });
+
+      const rows = await store.list('T1');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(id);
     });
   });
 
@@ -276,7 +427,7 @@ describe('ClaudeCredentialStore', () => {
         id: 'T1',
         selected_claude_credential_id: null,
       } as OrganizationEntity);
-      const id = await store.createPersonal('T1', {
+      const id = await store.upsertPersonal('T1', {
         label: 'p',
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
@@ -305,7 +456,7 @@ describe('ClaudeCredentialStore', () => {
         id: 'T1',
         selected_claude_credential_id: null,
       } as OrganizationEntity);
-      const id = await store.createPersonal('T1', {
+      const id = await store.upsertPersonal('T1', {
         label: 'p',
         accessToken: 'current-access',
         refreshToken: 'current-refresh',

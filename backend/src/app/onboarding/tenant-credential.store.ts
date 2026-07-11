@@ -6,6 +6,7 @@ import { DataSource, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { OrganizationEntity, OrgCredentialsEntity } from '../persistence/entities';
 import { isNewerCodexAuth } from './codex-auth-freshness';
+import { decodeCodexAccountEmail } from './codex-id-token';
 import { decryptSecret, encryptSecret, loadSecretsKey } from './secret-cipher';
 
 /** Decrypted credentials for a (team, scope) — the in-memory shape consumers read. */
@@ -90,6 +91,13 @@ export class TenantCredentialStore {
       engineAuthSet: !!org?.selected_claude_credential_id,
       hasCodex: !!row?.codex_auth_secret_enc,
     };
+  }
+
+  /** Owner-gated display value: the Codex account email decoded on-read from the pasted auth.json (no new column). */
+  async codexAccountEmail(orgId: string, scope = '*'): Promise<string | undefined> {
+    const row = await this.repo.findOne({ where: { org_id: orgId, scope } });
+    if (!row?.codex_auth_secret_enc) return undefined;
+    return decodeCodexAccountEmail(decryptSecret(row.codex_auth_secret_enc, this.key()));
   }
 
   /** Encrypt + persist the provided fields (find-or-create the (team, scope) row). Refuses without a key. */
