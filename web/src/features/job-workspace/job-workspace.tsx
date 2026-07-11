@@ -370,7 +370,10 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   );
 
   // The persistent approval / ship gate — pins to the base of whichever surface hosts the detail content.
-  const footerBar = awaitingApproval ? (
+  // Shown ONLY on mobile: that's the sole tier where the job sidebar and the navigator's approve/ship
+  // buttons collapse into a drawer, so the footer is the reachable gate. On md+ the navigator's inline
+  // buttons and the conversation's approval card cover it, and the footer was redundant there.
+  const footerBar = !isMobile ? null : awaitingApproval ? (
     <PersistentApprovalBar
       jobRef={ref}
       value={approveValue}

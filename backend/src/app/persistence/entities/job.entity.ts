@@ -2,6 +2,7 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } 
 import type { JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
+import type { CiCounts } from '../../git';
 import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
@@ -207,6 +208,14 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   ci_status!: string | null;
+
+  /**
+   * Per-category CI check counts for the PR head (`{ failing, pending, passed, skipped, total }`) —
+   * computed alongside `ci_status` in the same reconciler + webhook-sync recompute. Null exactly when
+   * `ci_status` is null (no check-runs reported for the head SHA).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  ci_counts!: CiCounts | null;
 
   /**
    * Last observed GitHub PR `mergeable_state` (e.g. `clean | dirty | behind | blocked`) — set by the

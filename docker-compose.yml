@@ -3,11 +3,11 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: agent-playground-postgres
+    container_name: atlas-postgres
     environment:
       POSTGRES_USER: agent
       POSTGRES_PASSWORD: agent
-      POSTGRES_DB: agent_playground
+      POSTGRES_DB: atlas
     # Logical replication is required by the in-process realtime engine (pg-realtime → live "needs you"
     # dots). The POSTGRES_USER ('agent') is the image superuser, which already carries the REPLICATION
     # attribute, so no extra role grant is needed.
@@ -33,7 +33,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U agent -d agent_playground']
+      test: ['CMD-SHELL', 'pg_isready -U agent -d atlas']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -41,10 +41,10 @@ services:
   # The host↔daemon communication bus (Redis Streams/pub-sub). Host 6380 (container 6379) so it runs
   # alongside any personal Redis on the default 6379 — mirrors the Postgres 5433 choice. The host harness
   # reaches it at localhost:6380; per-job sandboxes reach it by container-name DNS on the `atlas-bus`
-  # network below (SANDBOX_REDIS_URL=redis://agent-playground-redis:6379, SANDBOX_BUS_NETWORK=atlas-bus).
+  # network below (SANDBOX_REDIS_URL=redis://atlas-redis:6379, SANDBOX_BUS_NETWORK=atlas-bus).
   redis:
     image: redis:7-alpine
-    container_name: agent-playground-redis
+    container_name: atlas-redis
     networks:
       - default
       - atlas-bus

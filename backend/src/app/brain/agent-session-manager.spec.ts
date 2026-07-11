@@ -784,7 +784,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       repoId: PROJECT_ID,
       orgId: TEAM_ID,
     });
-    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'sbx-1' });
+    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'sbx-1',
+      branch: 'feature/abc12345',
+    });
     (mockDriverStore.getDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
       overview: 'Fix off-by-one',
       decisions: [],

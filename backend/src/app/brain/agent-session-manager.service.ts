@@ -45,6 +45,7 @@ import {
   webMcpProposalCard,
   webQuestionCard,
   webSecretInputCard,
+  webShipReviewCard,
   webSkillEditAccessCard,
   webSkillProposalCard,
   wrapSystemNotification,
@@ -76,7 +77,7 @@ import { BuildShipService } from '../driver/build-ship.service';
 import { BrainGateway } from '../brain-gateway';
 import { threadDirName } from '../driver/thread-dir-name';
 import { Agent, PromptService } from '../prompt-kit';
-import { decisionsBlock, shipOpenPrBody } from '../prompt-kit';
+import { shipOpenPrBody } from '../prompt-kit';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -727,7 +728,6 @@ export class AgentSessionManager
     branch: string;
     defaultBranch: string;
     title: string;
-    decisions: ReadonlyArray<{ title: string; decisionClass: string; ruling: string }>;
   }): Promise<void> {
     const stimulus = harnessDeliveryStimulus({
       jobId: input.jobId,
@@ -737,7 +737,6 @@ export class AgentSessionManager
         branch: input.branch,
         defaultBranch: input.defaultBranch,
         title: input.title,
-        decisionsBlock: decisionsBlock(input.decisions),
       }),
       seedRow: {
         label: 'Opening the pull request.',
@@ -883,8 +882,9 @@ export class AgentSessionManager
    * WAKE the job brain because the operator APPROVED its "Amend build?" proposal (the `withdraw_ship`
    * tool's card). By this point the operator retract path has already run (`awaiting_ship_review →
    * amending`), so the brain just needs to do the follow-up work it proposed. The brain's session is
-   * resumed, so it recalls WHAT it proposed — the delivery stays generic. The gate re-arms automatically
-   * once the work reaches `parkForShipReview` again. Concurrency-safe via `handleChatTurn`.
+   * resumed, so it recalls WHAT it proposed — the delivery stays generic. The brain re-arms the gate by
+   * calling `report_verification({ passed: true })` once the amend is verified (re-parks directly at
+   * `awaiting_ship_review`, no rebuild). Concurrency-safe via `handleChatTurn`.
    */
   async wakeForAmendApproved(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
@@ -895,8 +895,9 @@ export class AgentSessionManager
       repoId: job.repoId,
       body: [
         'The operator APPROVED your amend proposal — the ship-review gate is retracted and the job is now',
-        '**amending**. Do the follow-up work you proposed. The ship gate re-arms automatically once the work',
-        'reaches ship-review again; do not re-propose unless something material changed.',
+        '**amending**. Do the follow-up work you proposed, then call `report_verification({ passed: true })`',
+        'with your live evidence — that re-parks the job directly at the ship-review gate (amending →',
+        'ready-to-ship, no rebuild). Do not re-propose unless something material changed.',
       ].join('\n'),
       seedRow: {
         label: 'Amend approved — resuming to make the changes.',
@@ -1993,6 +1994,20 @@ export class AgentSessionManager
       });
     }
 
+    // AMENDING guidance — persistent while the ship gate is retracted for a follow-up fix. BOTH entry paths
+    // land in `amending`: the brain's own `withdraw_ship` proposal (which wakes the brain) AND the operator's
+    // manual "Amend build" click (which does NOT wake the brain at all). A one-time wake can also be compacted
+    // mid-amend. So re-state the return path EVERY turn while amending, so the brain always knows how to get
+    // back to ready-to-ship. Best-effort; null unless the job is `amending`.
+    const amendingPrefix = await this.buildAmendingPrefix(stimulus.jobId);
+    if (amendingPrefix) {
+      reminderChunks.push({
+        kind: 'system_reminder',
+        body: amendingPrefix,
+        attrs: { reminderKind: 'amending' },
+      });
+    }
+
     // Render the envelope: notice/reminder chunks first (renderTurn keeps `<user>` last), then the body.
     // A seed body is already framed XML — append it after the prefixes rather than re-wrapping it.
     const framedPrefix = renderTurn([...noticeChunks, ...reminderChunks]);
@@ -2696,7 +2711,32 @@ export class AgentSessionManager
                 },
               ]
             : [];
-        if (passed) return { ok: true };
+        if (passed) {
+          // AMEND RE-PARK: after an approved `withdraw_ship`, the job sits in `amending` while the brain does
+          // the follow-up work it proposed. A clean verification here re-arms the ship gate DIRECTLY
+          // (`amending → awaiting_ship_review`) and re-posts the "Ship it" card — the amend IS the fix, so
+          // there is no detour back through a `running` build. On any other status this is the normal
+          // direct-build flag-set (finalize_build ships), so leave it untouched.
+          const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+          if (job?.status === 'amending') {
+            const title = job.title ?? 'this build';
+            const summary =
+              'Amend verified. Review the diff, then click **Ship it** to open the PR.';
+            const card = webShipReviewCard({ jobId: job.id, title, summary });
+            const parked = await this.driverStore.parkForShipReview(
+              job.id,
+              card as unknown as Record<string, unknown>,
+              summary,
+            );
+            return {
+              ok: true,
+              message: parked
+                ? 'Amend verified — re-parked at the ship-review gate. The operator can Ship it now.'
+                : 'Amend verified.',
+            };
+          }
+          return { ok: true };
+        }
         const remaining = Array.isArray(args['remaining'])
           ? (args['remaining'] as unknown[]).map((x) => String(x).trim()).filter(Boolean)
           : [];
@@ -3586,8 +3626,7 @@ export class AgentSessionManager
           message: shipOpenPrBody({
             branch: sandbox.branch,
             defaultBranch: repo.defaultBranch,
-            title: job.title ?? 'Atlas build',
-            decisionsBlock: decisionsBlock(rec?.decisions ?? []),
+            title: job.title?.trim() || sandbox.branch,
           }),
         };
       },
@@ -5236,8 +5275,12 @@ export class AgentSessionManager
           ok: false,
           reason:
             'finish_onboarding requires `verified`: describe what you actually booted and how you checked it ' +
-            '(the services you brought up via atlas-svc, the health checks/log lines, any dry-run). If the ' +
-            'stack would not boot, do NOT finish — say what is still blocking instead.',
+            '(the services you brought up via atlas-svc, the health checks/log lines, any dry-run). For a repo ' +
+            'with USER-FACING surfaces, `verified` must ALSO include live preview-accessibility proof — each ' +
+            'public preview URL loaded + hydrated as a browser via atlas-probe, AND (where the surface has ' +
+            'auth) the authed-handshake proof via a real dev-login + `atlas-probe --storage-state`; a local ' +
+            'health check is not enough. If the stack would not boot or a surface is not browser-accessible, ' +
+            'do NOT finish — say what is still blocking instead.',
         };
       }
       const sandbox = await this.lifecycle.findSandbox(
@@ -5313,8 +5356,7 @@ export class AgentSessionManager
           message: shipOpenPrBody({
             branch: sandbox.branch,
             defaultBranch: repo.defaultBranch,
-            title: 'Atlas: onboarding environment setup',
-            decisionsBlock: '',
+            title: 'Environment setup',
           }),
         };
       } catch (err) {
@@ -6082,7 +6124,8 @@ export class AgentSessionManager
       'request any secrets yet. Then present that summary to the operator, note plainly that the full ' +
       'bring-up will take a while and a lot of tokens, and ask for their go-ahead via ask_question before ' +
       'proceeding. STOP and wait for their response. Only after they green-light it: bring up and validate ' +
-      'the fleet, register required secrets via request_secret, record non-secret config with ' +
+      'the fleet, make each user-facing surface browser-accessible through the preview proxy and prove it ' +
+      'with atlas-probe, register required secrets via request_secret, record non-secret config with ' +
       'write_workspace_config, propose any stack-matched MCP servers for the owner to approve via ' +
       'propose_mcp_servers, match the repo against the org house-style profiles (list_convention_profiles → ' +
       'propose_convention_profile with the best-matching slug, or "none" if it follows none), then call ' +
@@ -6307,6 +6350,30 @@ export class AgentSessionManager
       );
     } catch (err) {
       this.logger.debug(`open-questions prefix failed (continuing): ${err}`);
+      return null;
+    }
+  }
+
+  /**
+   * Persistent per-turn reminder while a job sits in `amending` (the ship-review gate retracted for a
+   * follow-up fix). This is the durable teacher of the return path: unlike the one-time amend-approved wake,
+   * it fires EVERY turn while amending, so it covers the manual "Amend build" click (which never wakes the
+   * brain) and survives compaction. Returns null unless the job is `amending`. Best-effort.
+   */
+  private async buildAmendingPrefix(jobId: string): Promise<string | null> {
+    try {
+      const job = await this.store.loadJob(jobId).catch(() => null);
+      if (job?.status !== 'amending') return null;
+      return (
+        'This build is AMENDING — the ship-review gate was retracted so you can make a follow-up fix. ' +
+        'Make the change in the sandbox and verify it (typecheck/build/tests, plus a live run of any ' +
+        'runtime surface you touched). When it is done and verified, call ' +
+        '`report_verification({ passed: true })` with your live evidence — that re-parks the job DIRECTLY ' +
+        'at the ship-review gate (amending → ready-to-ship, no rebuild) and re-posts the "Ship it" card for ' +
+        'the operator. Do not re-propose amending unless something material changed.'
+      );
+    } catch (err) {
+      this.logger.debug(`amending prefix failed (continuing): ${err}`);
       return null;
     }
   }

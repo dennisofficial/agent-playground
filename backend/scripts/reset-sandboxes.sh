@@ -27,9 +27,9 @@ if [ "${WIPE_BUILD_VOLUMES:-0}" = "1" ]; then
 fi
 
 if [ "${RESET_DB:-0}" = "1" ]; then
-  PG_CONTAINER="${PG_CONTAINER:-agent-playground-postgres}"
+  PG_CONTAINER="${PG_CONTAINER:-atlas-postgres}"
   PG_USER="${POSTGRES_USER:-agent}"
-  PG_DB="${POSTGRES_DB:-agent_playground}"
+  PG_DB="${POSTGRES_DB:-atlas}"
   log "dropping + recreating database ${PG_DB} in ${PG_CONTAINER} (harness must be stopped)…"
   docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 \
     -c "DROP DATABASE IF EXISTS ${PG_DB} WITH (FORCE);" \

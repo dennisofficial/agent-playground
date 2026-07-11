@@ -631,9 +631,10 @@ export class WebSurfaceController {
               url: t.pr_url,
             }
           : null,
-        // The observed CI/CD aggregate (`success|failure|pending|null`) — drives the sidebar row's CI
+        // The observed CI/CD aggregate (`success|failure|pending|skipped|null`) — drives the sidebar row's CI
         // dot on first paint / when realtime is disabled (realtime carries it independently).
         ciStatus: t.ci_status,
+        ciCounts: t.ci_counts,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,
