@@ -52,6 +52,10 @@ export class GitStateReconciler {
    * count reconciled. Fail-soft per job (a throwing job still gets re-stamped so it isn't hammered).
    */
   async tick(): Promise<number> {
+    // GitHub is paused (rate-limited) — skip the whole pass without re-stamping anything, so every job
+    // stays DUE and picks straight back up once the pause clears.
+    if (this.pr.isRateLimited()) return 0;
+
     // `(next_poll_at IS NULL OR next_poll_at <= now())` — the DUE predicate, applied to both OR branches.
     const due = Raw((alias) => `(${alias} IS NULL OR ${alias} <= now())`);
     const jobs = await this.jobs.find({
@@ -62,14 +66,17 @@ export class GitStateReconciler {
     });
     let reconciled = 0;
     for (const job of jobs) {
-      // Default to `active` (45s) on an unexpected error so a persistently-failing job backs off to the
-      // settled cadence rather than re-polling every heartbeat.
+      // Default to `active` (the settled backup cadence) on an unexpected error so a persistently-failing
+      // job backs off rather than re-polling every heartbeat.
       let tier: PollTier = 'active';
       try {
         tier = await this.reconcileOne(job);
         reconciled++;
       } catch (err) {
         this.logger.warn(`git-state reconcile failed for job ${job.id}: ${err}`);
+        // Rate-limited mid-pass (e.g. the job tripped it) — leave THIS job DUE rather than re-stamping it,
+        // so it re-polls immediately once the pause clears instead of waiting out the backoff.
+        if (this.pr.isRateLimited()) continue;
       }
       await this.setNextPoll(job.id, tier);
     }
@@ -92,6 +99,35 @@ export class GitStateReconciler {
     const marked = res.affected ?? 0;
     if (marked > 0) {
       this.logger.log(`base-branch push on repo ${repoId} — marked ${marked} open PR(s) due for re-poll`);
+    }
+    return marked;
+  }
+
+  /**
+   * Mark the OWNING job of a single PR (or branch) due-now — the per-PR sibling of {@link markRepoDue}.
+   * Routed from mergeability-affecting webhooks that touch exactly one PR (head push / draft↔ready /
+   * review submitted-or-dismissed) so the reconciler refreshes `pr_mergeable` within one heartbeat instead
+   * of waiting out the slow `active` backup cadence. Targets by `prNumber` when known, else falls back to
+   * `branch` (the PR-open race, where a head push may land before the job's `pr_number` is recorded).
+   * Doesn't force `pr_state='open'` — a branch-only job is a valid re-arm target too, discovery just picks
+   * it back up sooner. Returns the number of jobs marked (0 if neither `prNumber` nor `branch` given).
+   */
+  async markJobDue(orgId: string, repoId: string, opts: { prNumber?: number | null; branch?: string | null }): Promise<number> {
+    const where: Record<string, unknown> = { org_id: orgId, repo_id: repoId };
+    let target: string;
+    if (opts.prNumber != null) {
+      where.pr_number = opts.prNumber;
+      target = `pr #${opts.prNumber}`;
+    } else if (opts.branch) {
+      where.feature_branch = opts.branch;
+      target = `branch ${opts.branch}`;
+    } else {
+      return 0;
+    }
+    const res = await this.jobs.update(where, { next_poll_at: new Date() });
+    const marked = res.affected ?? 0;
+    if (marked > 0) {
+      this.logger.log(`re-armed ${marked} job(s) due for re-poll (${target})`);
     }
     return marked;
   }
@@ -197,14 +233,17 @@ export class GitStateReconciler {
  * The adaptive poll cadence, in ms — how soon a job is re-polled after a reconcile pass (tunable).
  *  - `computing`  — GitHub is still computing `mergeable_state`; poll until it resolves (the base-move
  *    conflict window this whole feature targets).
- *  - `active`     — a settled open PR; CI, a merge, or a fresh conflict can flip it, but not sub-second.
+ *  - `active`     — a settled open PR; a SLOW missed-webhook BACKUP poll only (15 min). Every event that
+ *    can actually flip a settled PR's state (head push, base push, review, ready-for-review, CI) re-arms
+ *    the fast path itself — via {@link markJobDue}/{@link markRepoDue} or the CI webhook sync writing
+ *    `pr_mergeable` directly — so this tier only ever fires for a genuinely dropped webhook.
  *  - `discovering`— a branch still building with no PR yet; nothing's observable until the build lands.
  * `terminal` (merged/closed/gone) has no cadence — the clock is cleared and the job stops polling.
  */
 export type PollTier = 'computing' | 'active' | 'discovering' | 'terminal';
 export const CADENCE_MS: Record<Exclude<PollTier, 'terminal'>, number> = {
   computing: 8_000,
-  active: 45_000,
+  active: 900_000,
   discovering: 180_000,
 };
 

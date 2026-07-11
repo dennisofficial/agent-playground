@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type { CredentialResolver } from '../onboarding';
+import { RateLimitedError } from '../git';
 import type { GithubPrService, CheckRun, PullDetail } from '../git';
 import type { StimulusIntake } from '../stimulus';
 import type { JobEntity, RepoEntity } from '../persistence/entities';
@@ -37,6 +38,7 @@ function make(over: {
     getPullDetail: vi.fn(async () => over.detail),
     listCheckRuns: vi.fn(async () => over.runs ?? []),
     findOpenPullByHead,
+    isRateLimited: vi.fn(() => false),
   } as unknown as GithubPrService;
   const creds = { githubToken: vi.fn(async () => 'tok') } as unknown as CredentialResolver;
   const intake = { intakeEvent } as unknown as StimulusIntake;
@@ -174,6 +176,26 @@ describe('GitStateReconciler.tick', () => {
     await svc.tick();
     expect(nextPollWrite(update)).toEqual({ next_poll_at: new Date(NOW + CADENCE_MS.discovering) });
   });
+
+  it('rate-limited → skips the whole pass, no pr.* calls, no writes, returns 0', async () => {
+    const { svc, update, pr } = make({ detail: detail() });
+    (pr.isRateLimited as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    const reconciled = await svc.tick();
+    expect(reconciled).toBe(0);
+    expect(pr.getPullDetail).not.toHaveBeenCalled();
+    expect(pr.listCheckRuns).not.toHaveBeenCalled();
+    expect(pr.findOpenPullByHead).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('a RateLimitedError mid-pass leaves the tripping job DUE — no next_poll_at re-stamp', async () => {
+    const { svc, update, pr } = make({ detail: detail() });
+    (pr.getPullDetail as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new RateLimitedError('paused'));
+    (pr.isRateLimited as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    const reconciled = await svc.tick();
+    expect(reconciled).toBe(0);
+    expect(nextPollWrite(update)).toBeUndefined();
+  });
 });
 
 describe('GitStateReconciler.markRepoDue', () => {
@@ -193,6 +215,40 @@ describe('GitStateReconciler.markRepoDue', () => {
   it('returns 0 when the repo has no open PRs', async () => {
     const { svc } = make({ detail: detail(), affected: 0 });
     expect(await svc.markRepoDue('T1', 'repo-1')).toBe(0);
+  });
+});
+
+describe('GitStateReconciler.markJobDue', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('by prNumber: targets org_id/repo_id/pr_number and stamps next_poll_at = now', async () => {
+    const { svc, update } = make({ detail: detail(), affected: 1 });
+    const marked = await svc.markJobDue('T1', 'repo-1', { prNumber: 7 });
+    expect(marked).toBe(1);
+    expect(update).toHaveBeenCalledWith(
+      { org_id: 'T1', repo_id: 'repo-1', pr_number: 7 },
+      { next_poll_at: new Date(NOW) },
+    );
+  });
+
+  it('by branch (no prNumber): targets org_id/repo_id/feature_branch', async () => {
+    const { svc, update } = make({ detail: detail(), affected: 1 });
+    const marked = await svc.markJobDue('T1', 'repo-1', { branch: 'feat/a1b2c3d4' });
+    expect(marked).toBe(1);
+    expect(update).toHaveBeenCalledWith(
+      { org_id: 'T1', repo_id: 'repo-1', feature_branch: 'feat/a1b2c3d4' },
+      { next_poll_at: new Date(NOW) },
+    );
+  });
+
+  it('neither prNumber nor branch → returns 0, no update', async () => {
+    const { svc, update } = make({ detail: detail() });
+    expect(await svc.markJobDue('T1', 'repo-1', {})).toBe(0);
+    expect(update).not.toHaveBeenCalled();
   });
 });
 
