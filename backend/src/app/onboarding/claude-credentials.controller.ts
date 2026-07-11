@@ -12,6 +12,7 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import type { OrgUsage } from '@workspace/shared';
 import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
@@ -28,6 +29,7 @@ import {
   ClaudeCredentialStore,
   type ClaudeCredentialSummary,
 } from './claude-credential.store';
+import { OauthUsageService } from './oauth-usage.service';
 import { OnboardingService } from './onboarding.service';
 
 /** A `claude setup-token`'s literal prefix — the only shape accepted for the setup-token creation path. */
@@ -63,6 +65,7 @@ export class ClaudeCredentialsController {
     private readonly pkce: ClaudeOAuthPkceStore,
     private readonly onboarding: OnboardingService,
     private readonly env: EnvService,
+    private readonly usageService: OauthUsageService,
   ) {}
 
   private config(): ClaudeOAuthConfig {
@@ -193,5 +196,14 @@ export class ClaudeCredentialsController {
   ): Promise<{ ok: true }> {
     await this.store.remove(org.id, id);
     return { ok: true };
+  }
+
+  @Get(':id/usage')
+  @UseGuards(OrgOwnerGuard)
+  async usage(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('id') id: string,
+  ): Promise<OrgUsage> {
+    return this.usageService.getForCredential(org.id, id);
   }
 }

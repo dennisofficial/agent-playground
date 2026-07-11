@@ -89,6 +89,16 @@ export class ClaudeCredentialStore {
     return { id: row.id, kind: row.kind, secret: this.decryptToSecret(row) };
   }
 
+  /** Decrypt ONE credential row by id (org-scoped) into the injectable secret shape — the by-id sibling of `getSelectedDecrypted`. Null when the row is absent or belongs to another org. */
+  async getDecryptedById(
+    orgId: string,
+    id: string,
+  ): Promise<{ id: string; kind: 'setup_token' | 'personal'; secret: string } | null> {
+    const row = await this.repo.findOne({ where: { id, org_id: orgId } });
+    if (!row) return null;
+    return { id: row.id, kind: row.kind, secret: this.decryptToSecret(row) };
+  }
+
   /** Decrypt one row into the injectable secret shape (raw token, or a `claudeAiOauth` JSON blob). */
   private decryptToSecret(row: OrgClaudeCredentialEntity): string {
     const key = this.key();

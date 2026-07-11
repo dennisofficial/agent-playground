@@ -178,6 +178,7 @@ export function useSelectClaudeCredential(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
+      void qc.invalidateQueries({ queryKey: ["org-credential-usage", orgId] });
     },
   });
 }
@@ -233,6 +234,21 @@ export function useOrgUsage(orgId: string) {
     queryKey: qk.orgUsage(orgId),
     queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/usage`),
     enabled: Boolean(orgId),
+    staleTime: 180_000,
+    refetchInterval: 180_000,
+  });
+}
+
+/**
+ * One PERSONAL credential's own Claude subscription usage (the ring on its Settings card). Live-fetched
+ * per-credential (never the org snapshot), server-cached ~3 min; same best-effort/degraded contract as
+ * {@link useOrgUsage} — always 200, `ok:false` just means "unknown right now". Do NOT call for setup tokens.
+ */
+export function useCredentialUsage(orgId: string, credentialId: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.orgCredentialUsage(orgId, credentialId),
+    queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/claude-credentials/${credentialId}/usage`),
+    enabled: Boolean(orgId) && Boolean(credentialId) && enabled,
     staleTime: 180_000,
     refetchInterval: 180_000,
   });
