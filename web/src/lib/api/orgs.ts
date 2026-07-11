@@ -161,6 +161,7 @@ export function useAddClaudeCredential(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
+      void qc.invalidateQueries({ queryKey: qk.orgUsage(orgId) });
     },
   });
 }
@@ -178,6 +179,7 @@ export function useSelectClaudeCredential(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
+      void qc.invalidateQueries({ queryKey: qk.orgUsage(orgId) });
     },
   });
 }
@@ -194,22 +196,26 @@ export function useDeleteClaudeCredential(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
+      void qc.invalidateQueries({ queryKey: qk.orgUsage(orgId) });
     },
   });
 }
 
 /**
- * An org's Claude subscription usage snapshot (the composer's usage ring). The unofficial usage endpoint
- * is aggressively rate-limited, so this polls in minutes, not seconds — never tighten `refetchInterval`.
- * Always returns 200 (never throws on a degraded snapshot); `ok:false` just means "unknown right now".
+ * An org's Claude subscription usage snapshot (the composer's usage ring). Push-driven: fresh snapshots
+ * arrive over the repo `/events` SSE (`type:'usage'` frame → `setQueryData`), so there's no client poll.
+ * We keep an initial fetch on mount plus TanStack's default focus refetch as a backstop (the SSE bus is
+ * single-process, so cross-instance changes settle on mount/focus/switch); a short `staleTime` lets those
+ * refetch. The unofficial usage endpoint stays aggressively rate-limited and backend-throttled — do NOT
+ * re-add a `refetchInterval`. Always returns 200 (never throws on a degraded snapshot); `ok:false` just
+ * means "unknown right now".
  */
 export function useOrgUsage(orgId: string) {
   return useQuery({
     queryKey: qk.orgUsage(orgId),
     queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/usage`),
     enabled: Boolean(orgId),
-    staleTime: 180_000,
-    refetchInterval: 180_000,
+    staleTime: 30_000,
   });
 }
 
