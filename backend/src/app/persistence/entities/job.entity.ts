@@ -2,6 +2,7 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } 
 import type { JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
+import type { JobProvenance } from '../../domain/job';
 import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
@@ -97,6 +98,20 @@ export class JobEntity extends TimestampedEntity {
   @ManyToOne(() => TicketEntity, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'ticket_id' })
   ticket?: TicketEntity | null;
+
+  /** The job whose brain spawned this one via create_job (FK → jobs.id, SET NULL). Null for
+   *  operator/system top-level jobs. Powers the "Created jobs" children query. */
+  @Column({ type: 'uuid', nullable: true })
+  created_by_job_id!: string | null;
+
+  @ManyToOne(() => JobEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'created_by_job_id' })
+  createdByJob?: JobEntity | null;
+
+  /** Immutable provenance snapshot captured at spawn, NEVER nulled — so the "Created by" link
+   *  survives the creator being hard-deleted (the FK goes null, this doesn't). */
+  @Column({ type: 'jsonb', nullable: true })
+  created_by!: JobProvenance | null;
 
   // ── build lifecycle (folded in from the former `jobs` table) ───────────────────────────────────────
   /**

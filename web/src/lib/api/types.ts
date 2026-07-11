@@ -493,6 +493,9 @@ export interface PipelineThread {
   defaultFooter?: LaneDefaultFooter;
 }
 
+/** Immutable snapshot of the job that spawned another job, captured at create time. */
+export type JobProvenance = { jobId: string; title: string | null };
+
 export interface PipelineJob {
   /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
   jobId: string;
@@ -500,6 +503,9 @@ export interface PipelineJob {
   kind: WireJobKind;
   status: WireJobStatus;
   halt: WireJobHalt | null;
+  /** Who spawned this job (immutable snapshot), or null for a top-level job. Powers the "Created by"
+   *  header row. */
+  createdBy?: JobProvenance | null;
   /**
    * Which build path was committed at approval: `'direct'` (fast, brain-implemented) | `'plan'` (driver
    * multi-thread) | `null` (never approved — still an open/awaiting-approval proposal that could become

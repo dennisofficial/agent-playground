@@ -613,6 +613,7 @@ export class WebSurfaceController {
         // `running` status during shipping, so this distinguishes "opening PR" from "building threads" and
         // keeps the card pinned in "Ready to Ship" instead of "Building".
         shipping: t.status === 'running' && t.ship_review_approved_at != null,
+        createdBy: t.created_by ?? null,
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,
@@ -690,6 +691,7 @@ export class WebSurfaceController {
       halt: t.halt ?? null,
       activity: t.activity,
       halted: t.halted,
+      createdBy: t.created_by ?? null,
       needsYou: deriveNeedsYou({
         status: t.status,
         activity: t.activity,
@@ -2345,6 +2347,64 @@ export class WebSurfaceController {
       `web deleting thread ${jobId} (org ${org.id}); claimed=${claimed}`,
     );
     return { ok: true };
+  }
+
+  /** `GET …/jobs/:jobId/created` — the jobs this one spawned (newest first), for the "Created jobs" list. */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/created')
+  @UseGuards(OrgMembershipGuard)
+  async createdJobs(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<unknown[]> {
+    await this.requireThread(jobId, org.id);
+    const rows = await this.jobs.find({
+      where: { org_id: org.id, created_by_job_id: jobId },
+      order: { created_at: 'DESC' },
+    });
+    return rows.map((t) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      kind: t.kind,
+      prState: t.pr_state,
+      needsYou: deriveNeedsYou({
+        status: t.status,
+        activity: t.activity,
+        openQuestion: t.open_question_count > 0,
+        awaitingSecret: t.awaiting_secret_id != null,
+        halted: t.halted || t.halt != null,
+      }),
+      createdAt: t.created_at,
+    }));
+  }
+
+  /** `GET …/jobs/:jobId` — a minimal job-DETAIL DTO. The "Created by" click resolves against this;
+   *  a 404 (hard-deleted target) tells the web to show the deleted-job toast instead of navigating. */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId')
+  @UseGuards(OrgMembershipGuard)
+  async jobDetail(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<unknown> {
+    const t = await this.requireThread(jobId, org.id); // 404s a missing/foreign job
+    return {
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      kind: t.kind,
+      createdBy: t.created_by ?? null,
+      pr: t.pr_state
+        ? { state: t.pr_state, number: t.pr_number, mergeable: t.pr_mergeable, url: t.pr_url }
+        : null,
+      needsYou: deriveNeedsYou({
+        status: t.status,
+        activity: t.activity,
+        openQuestion: t.open_question_count > 0,
+        awaitingSecret: t.awaiting_secret_id != null,
+        halted: t.halted || t.halt != null,
+      }),
+      createdAt: t.created_at,
+    };
   }
 
   // ── scoping helpers (cross-tenant isolation: resolve scoped-to-org or 404) ──────────────────────

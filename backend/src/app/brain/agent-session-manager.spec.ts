@@ -3131,7 +3131,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
 
   function makeManager(storeOverrides: Record<string, unknown> = {}) {
     const store = {
-      loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main' }),
+      loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main', title: 'Parent job' }),
       createFollowUpJob: vi.fn().mockResolvedValue('th-followup'),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       getQuestionCard: vi.fn().mockResolvedValue(null),
@@ -3220,6 +3220,8 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       repoId: REPO,
       title: 'Side task',
       baseBranch: 'main', // inherits the parent thread's base
+      createdByJobId: THREAD,
+      createdByTitle: 'Parent job',
     });
     expect(startSpy).toHaveBeenCalledWith('th-followup', ORG, REPO, 'do the side task');
   });

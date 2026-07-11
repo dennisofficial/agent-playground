@@ -28,6 +28,9 @@ export type { JobStatus, JobHalt, JobActivity };
 /** Why a thread exists — a human-started chat, a notification-seeded thread, or an operator control action. */
 export type ThreadOrigin = 'chat' | 'event' | 'control';
 
+/** Immutable provenance snapshot of the job that spawned this one, captured at create time. */
+export type JobProvenance = { jobId: string; title: string | null };
+
 // Phases the job is DEAD in — never a needs-you state (it is going away or already finished).
 const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'deleting']);
 // Phases whose next step is the OPERATOR's: an idle job sitting here is waiting on the human.
@@ -123,6 +126,8 @@ export interface Job {
    *  ship gate reads it to distinguish "just parked" (null → park at `awaiting_ship_review`) from
    *  "approved, proceed" (set → ship). Cleared when a new build is dispatched. See {@link JobStatus}. */
   shipReviewApprovedAt: Date | null;
+  /** Who spawned this job (immutable snapshot), or null for top-level jobs. */
+  createdBy: JobProvenance | null;
   createdAt: Date;
   updatedAt: Date;
 }

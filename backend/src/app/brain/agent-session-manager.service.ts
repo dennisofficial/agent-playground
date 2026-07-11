@@ -3612,6 +3612,8 @@ export class AgentSessionManager
           repoId: stimulus.repoId,
           title,
           baseBranch: current.baseBranch,
+          createdByJobId: stimulus.jobId,
+          createdByTitle: current.title,
         });
 
         // Kick the new thread's brain with its opening intent. Fire-and-forget — the parent's turn doesn't
@@ -3842,10 +3844,13 @@ export class AgentSessionManager
         const ticketId = String(args['ticketId'] ?? '').trim();
         if (!ticketId) return { ok: false, reason: 'ticketId is required' };
         try {
+          const current = await this.store.loadJob(stimulus.jobId);
           const result = await this.tickets.promote({
             orgId: stimulus.orgId,
             repoId: stimulus.repoId,
             ticketId,
+            createdByJobId: stimulus.jobId,
+            createdByTitle: current.title,
           });
           if (result.created && result.seedText) {
             // Kick the new thread's brain in-process (same as create_job). Fire-and-forget.

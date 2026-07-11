@@ -1808,6 +1808,10 @@ export class BrainStoreService {
     ticketId?: string | null;
     /** Born-with kind — e.g. `'onboarding'` for an Atlas-run repo init thread. Default null. */
     kind?: JobKind | null;
+    /** The job whose brain spawned this follow-up (closure-derived, never tool args). */
+    createdByJobId?: string | null;
+    /** The spawning job's current title, snapshotted immutably. */
+    createdByTitle?: string | null;
   }): Promise<string> {
     // Route a provided title through the shared titler so the new thread is born with a short, scannable
     // sidebar label (fail-soft). A null title (no seed text) stays null. An onboarding thread keeps its
@@ -1826,6 +1830,10 @@ export class BrainStoreService {
         base_branch: input.baseBranch,
         ticket_id: input.ticketId ?? null,
         ...(input.kind ? { kind: input.kind } : {}),
+        created_by_job_id: input.createdByJobId ?? null,
+        created_by: input.createdByJobId
+          ? { jobId: input.createdByJobId, title: input.createdByTitle ?? null }
+          : null,
       }),
     );
     return row.id;
@@ -1852,6 +1860,7 @@ function toThread(row: JobEntity): Job {
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     shipReviewApprovedAt: row.ship_review_approved_at,
+    createdBy: row.created_by ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

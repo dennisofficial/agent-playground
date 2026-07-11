@@ -1262,6 +1262,7 @@ export class DriverStoreService {
         // The Main (brain) lane's pre-turn footer default — so a planning job shows "Opus 4.8" before
         // its first brain turn completes (no `turn_meta` to derive from yet).
         mainDefaultFooter: laneDefaultFooter('main'),
+        createdBy: thread.created_by ?? null,
       };
     }
     const allThreads = await this.threads.find({
@@ -1383,6 +1384,7 @@ export class DriverStoreService {
       kind: thread.kind,
       status: thread.status,
       halt: thread.halt ?? null,
+      createdBy: thread.created_by ?? null,
       // Which build path was committed at approval: 'direct' (fast, brain-implemented) | 'plan' (driver) |
       // null (never approved). The navigator reads this to hide the plan-oriented empty-state placeholders
       // (build lanes / plan.md / generated docs) for a direct build, where they never apply.
@@ -1516,6 +1518,7 @@ function toJob(row: JobEntity): Job {
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     shipReviewApprovedAt: row.ship_review_approved_at,
+    createdBy: row.created_by ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
