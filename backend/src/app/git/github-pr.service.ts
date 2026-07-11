@@ -159,7 +159,6 @@ export class GithubPrService {
   private static readonly MAX_ETAG_ENTRIES = 2000;
 
   /** REST rate-limit state (independent of the GraphQL budget below). */
-  private rateLimitRemaining: number | null = null;
   private pausedUntil: number | null = null;
   private consecutivePauses = 0;
 
@@ -246,7 +245,6 @@ export class GithubPrService {
     const status = (res as { status?: number }).status ?? 0;
 
     if (status >= 200 && status < 300 && remaining != null) {
-      this.rateLimitRemaining = remaining;
       this.consecutivePauses = 0;
       this.pausedUntil = null;
       return;
