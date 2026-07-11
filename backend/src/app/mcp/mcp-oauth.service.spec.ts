@@ -94,10 +94,35 @@ describe('McpOAuthService.currentAccessToken', () => {
     expect(await svc.currentAccessToken(row)).toBe('at-valid');
   });
 
-  it('treats a token with no stated expiry as long-lived', async () => {
+  it('treats a token with no stated expiry (and no refresh token) as long-lived', async () => {
     const { svc, store } = make();
     const row = await seedOAuthRow(store, svc, { tokens: { access_token: 'at-forever' } });
     expect(await svc.currentAccessToken(row)).toBe('at-forever');
+  });
+
+  it('does NOT refresh a no-expires_in token still within the conservative default lifetime', async () => {
+    const { svc, store } = make();
+    const row = await seedOAuthRow(store, svc, {
+      tokens: { access_token: 'at-recent', refresh_token: 'rt' },
+      obtainedAt: Date.now() - 60_000, // a minute old — well inside the default TTL
+    });
+    expect(await svc.currentAccessToken(row)).toBe('at-recent');
+  });
+
+  it('refreshes a no-expires_in token past the default lifetime when a refresh_token exists', async () => {
+    const { svc, store } = make();
+    const row = await seedOAuthRow(store, svc, {
+      tokens: { access_token: 'at-stale', refresh_token: 'rt' },
+      obtainedAt: Date.now() - 60 * 60_000, // an hour old — past the conservative default TTL
+    });
+    // Inject a fake SDK auth() that rotates the token instead of hitting the network.
+    (svc as unknown as { authSdkPromise: Promise<unknown> }).authSdkPromise = Promise.resolve({
+      auth: async (provider: { saveTokens: (t: unknown) => Promise<void> }) => {
+        await provider.saveTokens({ access_token: 'at-refreshed', refresh_token: 'rt2' });
+        return 'AUTHORIZED';
+      },
+    });
+    expect(await svc.currentAccessToken(row)).toBe('at-refreshed');
   });
 
   it('returns null (unconnected) when there are no tokens', async () => {

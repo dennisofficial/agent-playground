@@ -155,6 +155,44 @@ export class SandboxGroup {
     return PUBLIC_EXPOSURE_NOTE;
   }
 
+  /** Live preview at the ship gate — OFFER + demo-ready prep + demonstration-strategy guidance. A build-brain
+   *  concern (isBuildBrain); leans on the PUBLIC PREVIEW URLS mechanism above for the exposure ordering. */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1263, condition: isBuildBrain })
+  livePreviewAtShipGate(): string {
+    return [
+      'LIVE PREVIEW AT THE SHIP GATE: when a build reaches the ship gate — and any time the operator taps',
+      '"Spin up preview" or asks — you can stand up the JUST-BUILT change and expose it publicly so the',
+      'operator tests it live. Assume previews are enabled (if $ATLAS_PREVIEW_ID/$ATLAS_PREVIEW_DOMAIN are',
+      'somehow absent that is a harness infra error — do not check for it or apologize).',
+      'OFFER IT PROACTIVELY in your ship-gate summary WHENEVER the change has a demonstrable runtime surface',
+      '(a UI/screen, endpoint, CLI, job, or otherwise visible behavior). Skip the proactive offer only when',
+      "there is nothing meaningful to show (pure internal plumbing/docs/refactors) — but the operator's",
+      '"Spin up preview" button can still ask for one anytime; if there is nothing to preview, say so.',
+      'DEMO-READY IS THE BAR: like an engineer screen-sharing a finished feature ("here\'s my screen,"',
+      'already set up) — never "one sec, let me set up." Do ALL preparation BEFORE you hand over the URL:',
+      '  1. Compute the preview URL(s) from $ATLAS_PREVIEW_ID/$ATLAS_PREVIEW_DOMAIN.',
+      "  2. Write the app's config/ENVs first (API base URL, cookie domain, CORS) — see PUBLIC PREVIEW URLS",
+      '     above for the exact write-env-before-start ordering and the bind-0.0.0.0 rule.',
+      '  3. Stand up the stack (its own `docker compose`), run migrations, and SEED synthetic data so the',
+      '     change is actually visible.',
+      '  4. Where possible, deep-link the handover URL straight to the relevant page/state so a click lands',
+      '     the operator INSIDE the change, not on a cold home/login screen.',
+      '  5. `atlas-svc run --name <svc> --port <n>` to start+expose; `curl` it and confirm a real response',
+      '     (not a 502) BEFORE handing it over. Never hand over a not-yet-ready URL.',
+      'CHOOSE THE DEMONSTRATION STRATEGY per feature (your judgment; you MAY ask the operator): drive the',
+      'REAL end-to-end flow when reaching the real state is cheap; SEED the DB directly when the real state',
+      'is expensive/absurd to reach (e.g. do NOT create five real jobs to show a redesigned badge — seed one',
+      'row); build a temporary isolated DEMO PAGE served as its own `--port` service when even seeding is',
+      'impractical. Partial demonstration is fine when it FAITHFULLY shows the diff.',
+      'HAND OVER IN CHAT: the clickable URL, any test credentials the operator needs (create a throwaway',
+      'login via the app\'s own signup/seed if required), and ONE line on what they\'ll see / where to look.',
+      'The live URL also appears in the operator\'s PORTS panel automatically.',
+      'WHEN DONE (or if declined), free the RAM: `atlas-svc stop-all` (a later turn re-derives what it needs;',
+      'the ship step also tears down). You are not restricted to any particular environment — default to the',
+      "sandbox's own stack; stay truthful about what the preview is showing.",
+    ].join('\n');
+  }
+
   /** Onboarding's LIVE-SERVICE ACCESSIBILITY step: reuse the exposure ordering (PUBLIC_EXPOSURE_NOTE), then
    *  teach the browser-probe → env-first-remediate → persist procedure that makes a connected repo's stack
    *  reachable + hydrated through the preview proxy on the FIRST live test. Onboarding-only (isOnboarding);

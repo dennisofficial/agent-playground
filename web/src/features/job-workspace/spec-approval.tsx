@@ -1,8 +1,9 @@
 "use client";
 
-import { Check, ClipboardCheck, Lock, Undo2 } from "lucide-react";
+import { Check, ClipboardCheck, Globe, Lock, Undo2 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
-import { useApprove } from "@/lib/api/job-queries";
+import { useApprove, useSay } from "@/lib/api/job-queries";
+import { PREVIEW_REQUEST_TEXT } from "./preview-request";
 import type { JobRef } from "@/lib/api/job-api";
 import {
   APPROVE_ACTION_ID,
@@ -321,6 +322,34 @@ export function NavigatorShipButton({
   );
 }
 
+// ── Navigator header preview button ─────────────────────────────────────────────────────────────────
+/** The persistent full-width "Spin up preview" button — pinned in the navigator's sticky header for the
+ *  whole build lifecycle (gated on build kind by the caller). Unlike the ship/approve buttons it posts NO
+ *  verdict: it sends the templated preview request through the `say` path, waking the build brain to prepare
+ *  + expose a demo-ready preview. Status and the demo-ready handover come back in chat; the live URL
+ *  auto-appears in the PORTS panel. */
+export function NavigatorPreviewButton({ jobRef }: { jobRef: JobRef }) {
+  const say = useSay(jobRef);
+  return (
+    <button
+      type="button"
+      disabled={say.isPending}
+      onClick={() => {
+        if (!say.isPending) say.mutate(PREVIEW_REQUEST_TEXT);
+      }}
+      className="flex w-full items-center justify-center gap-1.5 rounded-md border text-[10.5px] font-medium transition hover:brightness-95 disabled:opacity-60"
+      style={{
+        color: "var(--blue)",
+        background: "color-mix(in srgb, var(--blue) 12%, transparent)",
+        borderColor: "color-mix(in srgb, var(--blue) 30%, transparent)",
+        padding: "6px 0",
+      }}
+    >
+      <Globe size={11} /> {say.isPending ? "Requesting…" : "Spin up preview"}
+    </button>
+  );
+}
+
 // ── Component 4 — Persistent Ship Bar ───────────────────────────────────────────────────────────────
 /**
  * The ship-review counterpart of {@link PersistentApprovalBar} — a `flex:none` footer pinned to the
@@ -388,7 +417,7 @@ export function PersistentShipBar({
           style={{
             borderRadius: "8px",
             padding: "8px 15px",
-            border: "1px solid var(--green)",
+            border: "1px solid var(--accent)",
           }}
           iconSize={13}
         />
@@ -409,6 +438,7 @@ function VerdictButton({
   idleLabel,
   pendingLabel,
   doneLabel,
+  tone = "green",
   className = "",
   style,
   iconSize,
@@ -422,6 +452,9 @@ function VerdictButton({
   idleLabel: string;
   pendingLabel: string;
   doneLabel: string;
+  /** Fill tone — the shared default is `green`; the ship verdict uses `accent` so "Ship it" matches the
+   *  accent-solid primary on the ship card. */
+  tone?: "green" | "accent";
   className?: string;
   style?: React.CSSProperties;
   iconSize: number;
@@ -433,8 +466,14 @@ function VerdictButton({
       disabled={pending || approved || blocked}
       className={`inline-flex items-center gap-1.5 font-bold text-white transition hover:brightness-95 disabled:cursor-default disabled:opacity-90 ${className}`}
       style={{
-        background: "var(--green)",
-        boxShadow: "0 2px 8px var(--green-soft)",
+        background:
+          tone === "accent"
+            ? "linear-gradient(145deg, var(--accent), var(--accent-2))"
+            : "var(--green)",
+        boxShadow:
+          tone === "accent"
+            ? "0 5px 16px var(--accent-soft)"
+            : "0 2px 8px var(--green-soft)",
         ...style,
       }}
     >
@@ -544,6 +583,7 @@ function ShipButton(
   return (
     <VerdictButton
       {...props}
+      tone="accent"
       idleLabel="Ship it"
       pendingLabel="Shipping…"
       doneLabel="Shipped"

@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import {
   createServer,
   type IncomingMessage,
@@ -10,7 +10,6 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
-  isInitializeRequest,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -64,8 +63,6 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
 }
 
 class ReaderServer {
-  private readonly sessions = new Map<string, StreamableHTTPServerTransport>();
-
   constructor(
     private readonly ds: DataSource,
     private readonly roots: ToolRoots,
@@ -100,36 +97,21 @@ class ReaderServer {
         return;
       }
     }
-    const sidHeader = req.headers['mcp-session-id'];
-    const sid = Array.isArray(sidHeader) ? sidHeader[0] : sidHeader;
-
+    // STATELESS transport: a fresh MCP server + transport per request, no session map. The reader's
+    // tools are all plain request/response reads (no subscriptions, no server-initiated push), so there
+    // is no session state worth keeping — and keeping it in memory means every container restart (each
+    // prod deploy recreates this container on a new image tag) drops all sessions and strands
+    // already-connected clients with a stale `mcp-session-id` → HTTP 400 "no valid mcp session". Handling
+    // each request independently removes that failure mode entirely; there is nothing to lose on restart.
+    const server = this.buildMcpServer();
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    res.on('close', () => {
+      void transport.close();
+      void server.close();
+    });
     try {
-      const existing = sid ? this.sessions.get(sid) : undefined;
-      if (existing) {
-        await existing.handleRequest(req, res, body);
-        return;
-      }
-      // A new connection MUST open with `initialize` (POST); anything else without a live session → 400.
-      if (req.method !== 'POST' || !isInitializeRequest(body)) {
-        res.writeHead(400, { 'content-type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            error: 'no valid mcp session (send initialize first)',
-          }),
-        );
-        return;
-      }
-      const transport: StreamableHTTPServerTransport =
-        new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (id: string) => {
-            this.sessions.set(id, transport);
-          },
-        });
-      transport.onclose = () => {
-        if (transport.sessionId) this.sessions.delete(transport.sessionId);
-      };
-      const server = this.buildMcpServer();
       await server.connect(transport);
       await transport.handleRequest(req, res, body);
     } catch (err) {

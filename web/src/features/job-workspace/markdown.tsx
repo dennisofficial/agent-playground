@@ -265,6 +265,22 @@ function MermaidFrame({
   );
 }
 
+/**
+ * Approximate rendered body height (px) of a Mermaid diagram from its SOURCE — diagram height grows with
+ * node/edge count, so a diagram's non-empty source-line count is a decent proxy. Used in TWO places that
+ * must agree: the loading placeholder + rendered container reserve this height (so the async SVG render
+ * barely changes the row), and the transcript virtualizer estimates a diagram-bearing row from the same
+ * number (so the row after a diagram is positioned correctly and doesn't briefly overlap it). Clamped so a
+ * tiny diagram doesn't leave a big blank and a huge one doesn't over-reserve.
+ */
+export function mermaidReservePx(source: string): number {
+  const lines = source.split("\n").filter((line) => line.trim().length > 0).length;
+  // ~72px per source line ≈ one rank of a vertical (TD/TB) flowchart, the dominant diagram kind here.
+  // Erring slightly high is safer than low: an over-reserve leaves a brief gap that closes, whereas an
+  // under-reserve lets the row below overlap the diagram until measureElement corrects.
+  return Math.min(Math.max(lines * 72, 200), 760);
+}
+
 function Mermaid({ chart }: { chart: string }) {
   // useId is colon-bearing; mermaid's render id must be a valid DOM/CSS id, so strip non-word chars.
   const renderId = `mmd-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
@@ -353,9 +369,17 @@ function Mermaid({ chart }: { chart: string }) {
     );
   }
   if (!result) {
+    // Reserve the body height while the SVG renders asynchronously. Without this the row mounts (and is
+    // measured by the transcript virtualizer) at the tiny placeholder height, then pops taller when the
+    // diagram resolves — a visible jump. The reservation is derived from the diagram SOURCE (see
+    // mermaidReservePx) and matches the rendered body's min-height below, so the loading→diagram transition
+    // changes height by little or nothing.
     return (
       <MermaidFrame label="mermaid">
-        <div className="flex items-center justify-center px-4 py-6 font-mono text-[10.5px] text-faint">
+        <div
+          className="flex items-center justify-center px-4 py-6 font-mono text-[10.5px] text-faint"
+          style={{ minHeight: mermaidReservePx(chart) }}
+        >
           rendering diagram…
         </div>
       </MermaidFrame>
@@ -375,11 +399,12 @@ function Mermaid({ chart }: { chart: string }) {
         }
       >
         {/* Fit to width, but never upscale past the intrinsic size — so the diagram never breaks the doc
-            layout, and the whole thing is click-to-expand for a readable view. */}
+            layout, and the whole thing is click-to-expand for a readable view. The min-height matches the
+            loading placeholder so the async render doesn't shift the row's height (see mermaidReservePx). */}
         <div
           onClick={() => setZoomed(true)}
-          className="mx-auto cursor-zoom-in p-4 [&>svg]:!h-auto [&>svg]:!w-full"
-          style={{ maxWidth: result.w || undefined }}
+          className="mx-auto flex cursor-zoom-in flex-col justify-center p-4 [&>svg]:!h-auto [&>svg]:!w-full"
+          style={{ maxWidth: result.w || undefined, minHeight: mermaidReservePx(chart) }}
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
           dangerouslySetInnerHTML={{ __html: result.svg }}
         />

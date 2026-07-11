@@ -299,13 +299,22 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(execAgents.validate.tools).toEqual(expect.arrayContaining(['Bash', 'Write']));
     expect(execAgents.validate.tools).not.toContain('Task');
 
-    // Plan + review turns get ONLY the advisory set — no writers or validator can be spawned.
+    // The design-fidelity `prototype` subagent: execute-only, Sonnet, Bash + Write (to author the mockup)
+    // but NO Task (no recursive fan-out) and NO Edit (authors one new file, never edits source).
+    expect(execAgents.prototype).toBeDefined();
+    expect(execAgents.prototype.model).toBe('claude-sonnet-5');
+    expect(execAgents.prototype.tools).toEqual(expect.arrayContaining(['Bash', 'Write']));
+    expect(execAgents.prototype.tools).not.toContain('Task');
+    expect(execAgents.prototype.tools).not.toContain('Edit');
+
+    // Plan + review turns get ONLY the advisory set — no writers, validator, or prototype can be spawned.
     for (const mode of ['plan', 'review'] as const) {
       const agents = await run(mode);
       expect(agents.explore).toBeDefined();
       expect(agents.implement).toBeUndefined();
       expect(agents['implement-deep']).toBeUndefined();
       expect(agents.validate).toBeUndefined();
+      expect(agents.prototype).toBeUndefined();
     }
   });
 
