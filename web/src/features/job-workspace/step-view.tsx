@@ -1356,13 +1356,14 @@ function RepoFileBody({
     .split("\n")
     .map((code, i) => ({ no: i + 1, code }));
   return (
-    <div ref={containerRef} className="h-full overflow-y-auto px-4 py-3">
+    <div ref={containerRef} className="h-full overflow-hidden">
       <CodeListing
         rows={rows}
         lang={lang}
         activeNos={activeNos}
         maxHeight="100%"
         whole
+        flush
       />
     </div>
   );

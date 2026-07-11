@@ -591,6 +591,7 @@ export function CodeListing({
   activeNos,
   maxHeight = CODE_MAX_HEIGHT,
   whole = false,
+  flush = false,
 }: {
   rows: Array<{ no: number | string; code: string }>;
   lang: string | null;
@@ -601,6 +602,8 @@ export function CodeListing({
   maxHeight?: number | string;
   /** Tokenize the rows as one contiguous file (preserves cross-line context) vs each line in isolation. */
   whole?: boolean;
+  /** Full-bleed: drop the rounded frame/border/margin and fill the parent's height (the FilePane full-screen viewer). */
+  flush?: boolean;
 }) {
   // Rows are 1:1 with source lines (each `r.code` is one line, no embedded `\n`), so `lineTokens[i]`
   // aligns to `rows[i]` for both whole-file and per-line tokenization.
@@ -611,15 +614,17 @@ export function CodeListing({
   const gutter = Math.max(30, widest * 7 + 16);
   return (
     <div
-      className="my-[3px] overflow-hidden rounded-[7px]"
+      className={
+        flush ? "h-full overflow-hidden" : "my-[3px] overflow-hidden rounded-[7px]"
+      }
       style={{
         background: "var(--term)",
-        border: "1px solid var(--term-border)",
+        ...(flush ? {} : { border: "1px solid var(--term-border)" }),
         ...(leftAccent ? { borderLeft: "3px solid var(--term-add)" } : {}),
       }}
     >
       <div
-        className="overflow-auto py-2 font-mono text-[11px]"
+        className={`overflow-auto py-2 font-mono text-[11px]${flush ? " h-full" : ""}`}
         style={{ lineHeight: 1.75, maxHeight }}
       >
         {rows.map((r, i) => {

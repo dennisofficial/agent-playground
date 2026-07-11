@@ -13,12 +13,28 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  AlertTriangle,
+  Ban,
   Check,
+  CheckCircle2,
+  ClipboardList,
   Copy,
+  Hand,
+  Hourglass,
+  Info,
+  Lock,
+  type LucideIcon,
   Maximize2,
+  RefreshCw,
+  Rocket,
   RotateCcw,
+  Search,
   Send,
+  Settings,
+  Siren,
+  Wrench,
   X,
+  XCircle,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -261,6 +277,22 @@ function MermaidFrame({
   );
 }
 
+/**
+ * Approximate rendered body height (px) of a Mermaid diagram from its SOURCE — diagram height grows with
+ * node/edge count, so a diagram's non-empty source-line count is a decent proxy. Used in TWO places that
+ * must agree: the loading placeholder + rendered container reserve this height (so the async SVG render
+ * barely changes the row), and the transcript virtualizer estimates a diagram-bearing row from the same
+ * number (so the row after a diagram is positioned correctly and doesn't briefly overlap it). Clamped so a
+ * tiny diagram doesn't leave a big blank and a huge one doesn't over-reserve.
+ */
+export function mermaidReservePx(source: string): number {
+  const lines = source.split("\n").filter((line) => line.trim().length > 0).length;
+  // ~72px per source line ≈ one rank of a vertical (TD/TB) flowchart, the dominant diagram kind here.
+  // Erring slightly high is safer than low: an over-reserve leaves a brief gap that closes, whereas an
+  // under-reserve lets the row below overlap the diagram until measureElement corrects.
+  return Math.min(Math.max(lines * 72, 200), 760);
+}
+
 function Mermaid({ chart }: { chart: string }) {
   // useId is colon-bearing; mermaid's render id must be a valid DOM/CSS id, so strip non-word chars.
   const renderId = `mmd-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
@@ -349,9 +381,17 @@ function Mermaid({ chart }: { chart: string }) {
     );
   }
   if (!result) {
+    // Reserve the body height while the SVG renders asynchronously. Without this the row mounts (and is
+    // measured by the transcript virtualizer) at the tiny placeholder height, then pops taller when the
+    // diagram resolves — a visible jump. The reservation is derived from the diagram SOURCE (see
+    // mermaidReservePx) and matches the rendered body's min-height below, so the loading→diagram transition
+    // changes height by little or nothing.
     return (
       <MermaidFrame label="mermaid">
-        <div className="flex items-center justify-center px-4 py-6 font-mono text-[10.5px] text-faint">
+        <div
+          className="flex items-center justify-center px-4 py-6 font-mono text-[10.5px] text-faint"
+          style={{ minHeight: mermaidReservePx(chart) }}
+        >
           rendering diagram…
         </div>
       </MermaidFrame>
@@ -371,11 +411,12 @@ function Mermaid({ chart }: { chart: string }) {
         }
       >
         {/* Fit to width, but never upscale past the intrinsic size — so the diagram never breaks the doc
-            layout, and the whole thing is click-to-expand for a readable view. */}
+            layout, and the whole thing is click-to-expand for a readable view. The min-height matches the
+            loading placeholder so the async render doesn't shift the row's height (see mermaidReservePx). */}
         <div
           onClick={() => setZoomed(true)}
-          className="mx-auto cursor-zoom-in p-4 [&>svg]:!h-auto [&>svg]:!w-full"
-          style={{ maxWidth: result.w || undefined }}
+          className="mx-auto flex cursor-zoom-in flex-col justify-center p-4 [&>svg]:!h-auto [&>svg]:!w-full"
+          style={{ maxWidth: result.w || undefined, minHeight: mermaidReservePx(chart) }}
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
           dangerouslySetInnerHTML={{ __html: result.svg }}
         />
@@ -591,7 +632,108 @@ function renderCode({
   );
 }
 
+// ── Slack shortcode → inline icon ────────────────────────────────────────────────────────────────
+// Harness/system status messages carry Slack-era emoji shortcodes (`:rocket:`, `:warning:`, …). No
+// surface converts them anymore (Atlas is web-only), so they used to leak through as literal text. We
+// map the known ones to real Lucide icons at render time: a small remark pass splits each `:name:` out
+// of the text stream into a custom `shortcode-icon` node (mdast `data.hName`/`hProperties`), which the
+// COMPONENTS entry below renders as the toned icon. Unknown `:tokens:` are left untouched.
+const SHORTCODE_ICONS: Record<string, { Icon: LucideIcon; tone: string }> = {
+  rocket: { Icon: Rocket, tone: "text-accent" },
+  white_check_mark: { Icon: CheckCircle2, tone: "text-green" },
+  x: { Icon: XCircle, tone: "text-red" },
+  no_entry: { Icon: Ban, tone: "text-red" },
+  warning: { Icon: AlertTriangle, tone: "text-amber" },
+  rotating_light: { Icon: Siren, tone: "text-red" },
+  information_source: { Icon: Info, tone: "text-blue" },
+  lock: { Icon: Lock, tone: "text-red" },
+  mag: { Icon: Search, tone: "text-dim" },
+  hourglass_flowing_sand: { Icon: Hourglass, tone: "text-amber" },
+  raising_hand: { Icon: Hand, tone: "text-amber" },
+  hammer_and_wrench: { Icon: Wrench, tone: "text-dim" },
+  gear: { Icon: Settings, tone: "text-dim" },
+  recycle: { Icon: RefreshCw, tone: "text-dim" },
+  clipboard: { Icon: ClipboardList, tone: "text-dim" },
+};
+
+const SHORTCODE_RE = /:([a-z0-9_+]+):/g;
+
+/** Minimal mdast shape this pass touches — a container with `children`, or a `text` leaf with `value`. */
+interface MdNode {
+  type: string;
+  value?: string;
+  children?: MdNode[];
+  data?: { hName?: string; hProperties?: Record<string, unknown> };
+}
+
+/** Split a text value on known `:shortcode:` tokens into interleaved text + `shortcode-icon` nodes.
+ *  Returns a single unchanged text node when nothing matched. */
+function splitShortcodes(value: string): MdNode[] {
+  const parts: MdNode[] = [];
+  let last = 0;
+  SHORTCODE_RE.lastIndex = 0;
+  for (let m = SHORTCODE_RE.exec(value); m; m = SHORTCODE_RE.exec(value)) {
+    if (!(m[1] in SHORTCODE_ICONS)) continue;
+    if (m.index > last)
+      parts.push({ type: "text", value: value.slice(last, m.index) });
+    parts.push({
+      type: "shortcodeIcon",
+      data: { hName: "shortcode-icon", hProperties: { name: m[1] } },
+    });
+    last = m.index + m[0].length;
+  }
+  if (parts.length === 0) return [{ type: "text", value }];
+  if (last < value.length)
+    parts.push({ type: "text", value: value.slice(last) });
+  return parts;
+}
+
+/** remark plugin: rewrite `:shortcode:` runs inside text nodes into inline icon nodes. Only descends
+ *  into containers (`children`); `code`/`inlineCode` are leaves with no `children`, so fenced/inline
+ *  code is never rewritten. */
+function remarkShortcodeIcons() {
+  const walk = (node: MdNode): void => {
+    if (!node.children) return;
+    const next: MdNode[] = [];
+    for (const child of node.children) {
+      if (
+        child.type === "text" &&
+        typeof child.value === "string" &&
+        child.value.includes(":")
+      ) {
+        next.push(...splitShortcodes(child.value));
+      } else {
+        walk(child);
+        next.push(child);
+      }
+    }
+    node.children = next;
+  };
+  return (tree: MdNode) => walk(tree);
+}
+
+/** Renders a mapped `:shortcode:` as a small, baseline-aligned Lucide icon. Decorative — the message
+ *  text carries the meaning — so it's aria-hidden. Unknown names never reach here (the remark pass only
+ *  emits nodes for names in SHORTCODE_ICONS). */
+function ShortcodeIcon({ name }: { name?: string }) {
+  const entry = name ? SHORTCODE_ICONS[name] : undefined;
+  if (!entry) return null;
+  const { Icon, tone } = entry;
+  return (
+    <Icon
+      size={14}
+      strokeWidth={2}
+      aria-hidden
+      className={`inline-block shrink-0 ${tone}`}
+      style={{ verticalAlign: "-0.18em" }}
+    />
+  );
+}
+
 const COMPONENTS: Components = {
+  // Custom inline element emitted by remarkShortcodeIcons. Its tag name isn't in JSX.IntrinsicElements,
+  // so the entry is attached via a cast (react-markdown maps the hast tag name → this component).
+  ...({ "shortcode-icon": ShortcodeIcon } as unknown as Components),
   h1: ({ children }) => (
     <h1 className="mb-1 mt-1 font-disp text-[21px] font-bold leading-tight tracking-[-0.02em] text-text">
       {children}
@@ -809,7 +951,10 @@ export const Markdown = memo(function Markdown({
   }, [resolveRelativeLink, resolveFileLink]);
   return (
     <div className="text-[14px] leading-[1.62] text-text">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkShortcodeIcons]}
+        components={components}
+      >
         {children}
       </ReactMarkdown>
     </div>

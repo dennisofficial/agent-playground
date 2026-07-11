@@ -105,6 +105,112 @@ describe('TurnWatchdogService.sweep', () => {
   });
 });
 
+describe('TurnWatchdogService reattach trigger', () => {
+  const liveTurn = (over: Partial<ActiveTurnEntity> = {}) =>
+    ({ turn_id: 't-live', job_id: 'job1', kind: 'step', ...over }) as ActiveTurnEntity;
+
+  it('routes a live-but-unattached turn to its kind handler and keeps it alive (never finalizes)', async () => {
+    const registry = {
+      findStale: vi.fn(async () => [liveTurn()]),
+      finalize: vi.fn(async () => undefined),
+      heartbeat: vi.fn(async () => undefined),
+    } as unknown as TurnRegistry & {
+      finalize: ReturnType<typeof vi.fn>;
+      heartbeat: ReturnType<typeof vi.fn>;
+    };
+    const redis = redisWithIdle({ [turnKeys('t-live').events]: 2 }); // engine wrote 2s ago → alive
+    const handler = vi.fn(async () => 'attached' as const);
+    const reattach = { handlerFor: vi.fn(() => handler) } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
+
+    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
+
+    expect(reattach.handlerFor).toHaveBeenCalledWith('step'); // routed by kind
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(registry.heartbeat).toHaveBeenCalledWith('t-live'); // kept alive
+    expect(registry.finalize).not.toHaveBeenCalled(); // a live turn is never finalized
+  });
+
+  it("keeps a 'deferred' turn (job not drivable) alive without finalizing", async () => {
+    const registry = {
+      findStale: vi.fn(async () => [liveTurn({ kind: 'brain' })]),
+      finalize: vi.fn(async () => undefined),
+      heartbeat: vi.fn(async () => undefined),
+    } as unknown as TurnRegistry & {
+      finalize: ReturnType<typeof vi.fn>;
+      heartbeat: ReturnType<typeof vi.fn>;
+    };
+    const redis = redisWithIdle({ [turnKeys('t-live').events]: 1 });
+    const handler = vi.fn(async () => 'deferred' as const);
+    const reattach = { handlerFor: vi.fn(() => handler) } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
+
+    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(registry.heartbeat).toHaveBeenCalledWith('t-live');
+    expect(registry.finalize).not.toHaveBeenCalled();
+  });
+
+  it('a throwing handler never sinks the sweep, and the live turn is still kept alive', async () => {
+    const registry = {
+      findStale: vi.fn(async () => [liveTurn()]),
+      finalize: vi.fn(async () => undefined),
+      heartbeat: vi.fn(async () => undefined),
+    } as unknown as TurnRegistry & {
+      finalize: ReturnType<typeof vi.fn>;
+      heartbeat: ReturnType<typeof vi.fn>;
+    };
+    const redis = redisWithIdle({ [turnKeys('t-live').events]: 1 });
+    const handler = vi.fn(async () => {
+      throw new Error('driver down');
+    });
+    const reattach = { handlerFor: vi.fn(() => handler) } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
+
+    await expect(
+      new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep(),
+    ).resolves.toBeUndefined();
+    expect(registry.heartbeat).toHaveBeenCalledWith('t-live');
+    expect(registry.finalize).not.toHaveBeenCalled();
+  });
+
+  it('an unclaimed kind (no handler) still keeps the live turn alive (safety-net)', async () => {
+    const registry = {
+      findStale: vi.fn(async () => [liveTurn({ kind: 'rotation' })]),
+      finalize: vi.fn(async () => undefined),
+      heartbeat: vi.fn(async () => undefined),
+    } as unknown as TurnRegistry & {
+      finalize: ReturnType<typeof vi.fn>;
+      heartbeat: ReturnType<typeof vi.fn>;
+    };
+    const redis = redisWithIdle({ [turnKeys('t-live').events]: 1 });
+    const reattach = { handlerFor: vi.fn(() => undefined) } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
+
+    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
+
+    expect(reattach.handlerFor).toHaveBeenCalledWith('rotation');
+    expect(registry.heartbeat).toHaveBeenCalledWith('t-live');
+    expect(registry.finalize).not.toHaveBeenCalled();
+  });
+
+  it('still finalizes a genuinely dead turn even when a reattach registry is present', async () => {
+    const registry = {
+      findStale: vi.fn(async () => [liveTurn({ turn_id: 't-dead' })]),
+      finalize: vi.fn(async () => undefined),
+      heartbeat: vi.fn(async () => undefined),
+    } as unknown as TurnRegistry & {
+      finalize: ReturnType<typeof vi.fn>;
+      heartbeat: ReturnType<typeof vi.fn>;
+    };
+    const redis = redisWithIdle({ [turnKeys('t-dead').events]: 600 }); // stream idle 10min → engine dead
+    const handler = vi.fn(async () => 'attached' as const);
+    const reattach = { handlerFor: vi.fn(() => handler) } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
+
+    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
+
+    expect(handler).not.toHaveBeenCalled(); // dead → not a reattach candidate
+    expect(registry.finalize).toHaveBeenCalledWith('t-dead', 'failed');
+  });
+});
+
 describe('TurnWatchdogService boot grace', () => {
   it('touches every running heartbeat BEFORE the first sweep on leader promotion', async () => {
     const order: string[] = [];

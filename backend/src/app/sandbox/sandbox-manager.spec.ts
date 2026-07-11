@@ -257,7 +257,7 @@ describe('SandboxManager.teardownByIdentity', () => {
   const NAME = 'atlas-sbx-thread-abc';
   const sandbox = (): FeatureSandbox => ({
     repoId: 'proj',
-    branch: 'atlas/thread-abc', // ignored for thread-keyed names; proves the name is keyed by jobId
+    branch: 'feature/abc', // ignored for thread-keyed names; proves the name is keyed by jobId
     worktreePath: '/w',
     gitUrl: '',
   });

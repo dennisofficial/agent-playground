@@ -33,17 +33,14 @@ import { OnboardingService } from './onboarding.service';
 /** A `claude setup-token`'s literal prefix — the only shape accepted for the setup-token creation path. */
 const SETUP_TOKEN_PREFIX = 'sk-ant-oat';
 
-class AuthorizeUrlDto {
-  @IsString() @IsNotEmpty() label!: string;
-}
-
 class CreateCredentialDto {
   /** Present for the `personal` (OAuth login) path, alongside `state`. */
   @IsOptional() @IsString() code?: string;
   @IsOptional() @IsString() state?: string;
   /** Present for the `setup_token` path. */
   @IsOptional() @IsString() setupToken?: string;
-  @IsString() @IsNotEmpty() label!: string;
+  /** Required for `setup_token`; ignored for `personal` (the display name is derived from the account email). */
+  @IsOptional() @IsString() label?: string;
 }
 
 class SelectCredentialDto {
@@ -83,18 +80,11 @@ export class ClaudeCredentialsController {
   /** Kick off consent: mint + stash a fresh PKCE verifier, return the URL the owner opens. */
   @Post('authorize-url')
   @UseGuards(OrgOwnerGuard)
-  async authorizeUrl(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Body() body: AuthorizeUrlDto,
-  ): Promise<{ url: string; state: string; label: string }> {
+  async authorizeUrl(@CurrentOrg() org: CurrentOrgCtx): Promise<{ url: string; state: string }> {
     const config = this.config();
     const { verifier, challenge, state } = generatePkce();
     await this.pkce.stash(org.id, state, verifier);
-    return {
-      url: buildAuthorizeUrl(config, { challenge, state }),
-      state,
-      label: body.label,
-    };
+    return { url: buildAuthorizeUrl(config, { challenge, state }), state };
   }
 
   /** Create a credential — either a `personal` OAuth login (`code`+`state`) or a `setup_token` (`setupToken`). */
@@ -144,8 +134,9 @@ export class ClaudeCredentialsController {
       verifier,
       state: body.state,
     });
-    return this.store.createPersonal(org.id, {
-      label: body.label,
+    const label = tokens.accountEmail?.trim() || 'Claude subscription';
+    return this.store.upsertPersonal(org.id, {
+      label,
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresAt,
@@ -159,6 +150,8 @@ export class ClaudeCredentialsController {
     org: CurrentOrgCtx,
     body: CreateCredentialDto,
   ): Promise<string> {
+    const label = body.label?.trim();
+    if (!label) throw new BadRequestException('label is required for a setup-token');
     const setupToken = body.setupToken;
     if (!setupToken)
       throw new BadRequestException('code or setupToken is required');
@@ -168,7 +161,7 @@ export class ClaudeCredentialsController {
       );
     }
     return this.store.createSetupToken(org.id, {
-      label: body.label,
+      label,
       token: setupToken,
     });
   }

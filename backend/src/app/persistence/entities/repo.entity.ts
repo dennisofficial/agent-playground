@@ -43,7 +43,7 @@ export class RepoEntity extends TimestampedEntity {
 
   /**
    * Per-repo branch-naming prefix for the canonical feature branch the host computes and Atlas cuts
-   * (name = `<prefix><job-id-first-8>`, e.g. `feat/a1b2c3d4`). Null → the built-in `atlas/thread-`
+   * (name = `<prefix><job-id-first-8>`, e.g. `feat/a1b2c3d4`). Null → the built-in `feature/`
    * default. Lets a repo enforce its own convention (e.g. `feat/`) without random branch names.
    */
   @Column({ type: 'text', nullable: true })
