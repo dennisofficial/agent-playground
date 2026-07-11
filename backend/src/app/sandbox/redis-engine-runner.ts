@@ -78,6 +78,9 @@ export class RedisEngineRunner implements EngineRunnerPort {
   /** Turn ids THIS process is currently attach-looping (see {@link isAttached}). */
   private readonly attached = new Set<string>();
 
+  /** Transient per-turn finalize outcome, read once by the error path (no `result` to carry it). */
+  private readonly lastClaim = new Map<string, boolean>();
+
   constructor(
     @Inject(CONTAINER_ENGINE) private readonly containers: ContainerEngine,
     @Inject(REDIS_STREAM_PORT) private readonly redis: RedisStreamPort,
@@ -122,6 +125,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     //    `delivered_at` off this registration — so the row MUST be durable: await + rethrow, aborting the
     //    turn on failure (the message stays pending; the delivery pump retries) rather than claiming a
     //    hand-off that can't be re-attached.
+    let registered = false;
     if (args.turnMeta) {
       try {
         await this.registry.register({
@@ -135,6 +139,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
           // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
           ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, jobId: args.turnMeta.jobId },
         });
+        registered = true;
       } catch (err) {
         if (err instanceof BrainTurnAlreadyRunningError) {
           // The single-running-brain-turn guard rejected us: a brain turn is already live for this job. Do
@@ -155,9 +160,25 @@ export class RedisEngineRunner implements EngineRunnerPort {
     //    (registered row + a running engine; boot re-attach never re-kicks). Only when the row exists.
     const onKicked =
       args.turnMeta && args.onTurnRegistered ? () => args.onTurnRegistered!(turnId) : undefined;
-    const result = await this.runAttached(turnId, keys, args, target.containerId, target, onKicked);
-    await this.persistAuthRefresh(args, result);
-    return result;
+    try {
+      const result = await this.runAttached(
+        turnId,
+        keys,
+        args,
+        target.containerId,
+        target,
+        onKicked,
+        registered,
+      );
+      await this.persistAuthRefresh(args, result);
+      return result;
+    } catch (err) {
+      // `run()` callers do not know the generated turn id when the turn throws, so any no-result claim
+      // stored under that id is unreachable. Reattach callers pass the turn id explicitly and still consume
+      // their error-path claim via consumeClaim(turnId).
+      this.lastClaim.delete(turnId);
+      throw err;
+    }
   }
 
   /**
@@ -190,12 +211,31 @@ export class RedisEngineRunner implements EngineRunnerPort {
     args: AttachArgs,
   ): Promise<EngineRunResult> {
     this.logger.log(`re-attaching to in-flight turn ${turnId} (container ${containerId})`);
-    return this.runAttached(turnId, turnKeys(turnId), args, containerId, undefined);
+    return this.runAttached(turnId, turnKeys(turnId), args, containerId, undefined, undefined, true);
   }
 
   /** True while this process has a live attach loop on `turnId` (guards the promotion re-attach sweep). */
   isAttached(turnId: string): boolean {
     return this.attached.has(turnId);
+  }
+
+  /** Read+delete this turn's finalize outcome — for the error path where no `result` carries `claimed`. */
+  consumeClaim(turnId: string): boolean | undefined {
+    const v = this.lastClaim.get(turnId);
+    this.lastClaim.delete(turnId);
+    return v;
+  }
+
+  /** Atomically claim the in-process attach slot for a turn (single synchronous check-and-add ⇒ no TOCTOU). */
+  tryClaimAttach(turnId: string): boolean {
+    if (this.attached.has(turnId)) return false;
+    this.attached.add(turnId);
+    return true;
+  }
+
+  /** Release an attach slot claimed by {@link tryClaimAttach} when the caller bails before attaching. */
+  releaseAttach(turnId: string): void {
+    this.attached.delete(turnId);
   }
 
   /**
@@ -230,10 +270,12 @@ export class RedisEngineRunner implements EngineRunnerPort {
     args: AttachArgs,
     containerId: string,
     kickTarget: NonNullable<RunEngineArgs['target']> | undefined,
-    onKicked?: () => void,
+    onKicked: (() => void) | undefined,
+    wasRegistered: boolean,
   ): Promise<EngineRunResult> {
     return this.activity.thread(containerId, async () => {
       const done = { value: false };
+      let result: EngineRunResult | undefined;
       // Distinguishes "the TURN concluded" (final/error frame, idle-timeout verdict) from "WE lost the
       // tail" (our Redis client died — typically this process's own shutdown during a watch respawn).
       // Only a concluded turn may finalize the registry row + reclaim the streams: they are exactly the
@@ -261,10 +303,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
         const toolsLoop = args.toolBridge
           ? this.consumeTools(turnId, keys, args.toolBridge, done)
           : Promise.resolve();
-        const [result] = await Promise.all([
-          this.tailEvents(turnId, keys, containerId, args, done),
-          toolsLoop,
-        ]);
+        result = (
+          await Promise.all([this.tailEvents(turnId, keys, containerId, args, done), toolsLoop])
+        )[0];
+        result.turnId = turnId;
         return result;
       } catch (err) {
         detached = err instanceof EngineDetachedError;
@@ -277,9 +319,20 @@ export class RedisEngineRunner implements EngineRunnerPort {
             `turn ${turnId}: tail detached mid-turn — leaving registry row + streams for boot re-attach`,
           );
         } else {
-          await this.registry
+          // finalize deletes the row and reports whether THIS caller deleted it. An UNREGISTERED turn has no
+          // row to race on ⇒ it is always the sole finisher ⇒ claimed = true regardless of affected count.
+          const deletedByUs = await this.registry
             .finalize(turnId, 'done')
-            .catch((err) => this.logger.debug(`turn ${turnId}: finalize failed (ignored): ${err}`));
+            .catch((err) => {
+              this.logger.debug(`turn ${turnId}: finalize failed (ignored): ${err}`);
+              return true; // finalize error ⇒ default to claimed: dropping a real transcript is worse than a rare dup
+            });
+          const won = wasRegistered ? deletedByUs : true;
+          // Carry the outcome on `result` when there is one; only the error path (no `result`) needs the
+          // Map, and consumeClaim() drains that entry. Stashing a result-carried outcome would leak an
+          // entry per turn forever (the success paths gate on `result.claimed` and never consume it).
+          if (result) result.claimed = won;
+          else this.lastClaim.set(turnId, won);
           // Reclaim the turn's Redis streams — the turn is done + its transcript persisted, and the
           // registry row is gone, so a re-attach will never need them again (retention; no MAXLEN needed).
           await this.redis

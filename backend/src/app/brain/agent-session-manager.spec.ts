@@ -2481,6 +2481,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const dockerRunner = {
       run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }),
       steer,
+      // The Redis runner's atomic in-process attach claim (single-winner turn-finalize fix): `reattachOne`
+      // claims the slot before any await and releases on bail. Default the claim to won so the reattach
+      // tests exercise the real re-attach body; `consumeClaim` feeds the error-path discard gate.
+      tryClaimAttach: vi.fn(() => true),
+      releaseAttach: vi.fn(),
+      consumeClaim: vi.fn(() => undefined),
     } as unknown as EngineRunnerPort;
     const liveTurns = { push: vi.fn(), end: vi.fn(), snapshot: vi.fn(() => null) } as unknown as LiveTurnStore;
     // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
@@ -3065,6 +3071,26 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(resetLane).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID);
     // Ordering: the reset fires before the '0-0' replay so the replay rebuilds onto an empty lane.
     expect(resetLane.mock.invocationCallOrder[0]).toBeLessThan(reattach.mock.invocationCallOrder[0]);
+  });
+
+  it('reattachOne still runs when the runner lacks Redis-only attach claim helpers', async () => {
+    const { manager, store, dockerRunner } = makeManager({});
+    delete (dockerRunner as { tryClaimAttach?: unknown }).tryClaimAttach;
+    delete (dockerRunner as { releaseAttach?: unknown }).releaseAttach;
+    (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: null });
+    const reattach = vi.fn().mockResolvedValue({ result: 'done', sessionId: 's-re' });
+    (dockerRunner as { reattach?: unknown }).reattach = reattach;
+
+    await (manager as unknown as { reattachOne(row: unknown): Promise<void> }).reattachOne({
+      turn_id: 'turn-re-no-claim-helper',
+      container_id: 'c-re-no-claim-helper',
+      org_id: TEAM_ID,
+      job_id: THREAD_ID,
+      channel: PROJECT_ID,
+      ctx: { repoId: PROJECT_ID, author: { id: 'U-OP', displayName: 'Operator' }, body: 'Keep going' },
+    });
+
+    expect(reattach).toHaveBeenCalledOnce();
   });
 
   it('boot re-attach of a NORMAL turn rebuilds the full build toolset (no onboarding curation)', async () => {

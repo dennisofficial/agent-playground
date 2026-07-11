@@ -773,6 +773,17 @@ export interface EngineRunResult {
    * held-open resume) — the caller parks the lane + schedules an auto-resume at `resetAt`.
    */
   sessionLimit?: SessionLimitHit;
+  /**
+   * False ⇒ another finisher already claimed (deleted) this turn's active_turns row, so the caller MUST
+   * discard (persist nothing). Undefined ⇒ treat as claimed (back-compat for non-redis / test paths).
+   */
+  claimed?: boolean;
+  /**
+   * The engine turn id minted in `RedisEngineRunner.run`/known to `reattach`. Surfaced so the brain harness
+   * can stamp a stable per-block identity key `${turnId}:${ordinal}` for idempotent (re)persist. Undefined on
+   * non-redis / test paths.
+   */
+  turnId?: string;
 }
 
 /**
@@ -819,6 +830,22 @@ export interface EngineRunnerPort {
    * Only the Redis runner implements it.
    */
   stop?(turnId: string): Promise<void>;
+  /**
+   * Atomically claim the in-process attach slot for a turn (single synchronous check-and-add ⇒ no
+   * TOCTOU): true if this caller now owns the slot, false if it was already claimed. Only the Redis
+   * runner implements it.
+   */
+  tryClaimAttach?(turnId: string): boolean;
+  /**
+   * Release an attach slot claimed by {@link tryClaimAttach} when the caller bails before attaching.
+   * Only the Redis runner implements it.
+   */
+  releaseAttach?(turnId: string): void;
+  /**
+   * Read+delete this turn's transient finalize outcome — for the error path where no `result` carries
+   * `claimed`. Undefined when no outcome was recorded. Only the Redis runner implements it.
+   */
+  consumeClaim?(turnId: string): boolean | undefined;
 }
 
 /** DI token for {@link EngineRunnerPort}. */
