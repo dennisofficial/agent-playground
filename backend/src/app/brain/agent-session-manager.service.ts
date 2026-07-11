@@ -1996,6 +1996,20 @@ export class AgentSessionManager
       });
     }
 
+    // AMENDING guidance — persistent while the ship gate is retracted for a follow-up fix. BOTH entry paths
+    // land in `amending`: the brain's own `withdraw_ship` proposal (which wakes the brain) AND the operator's
+    // manual "Amend build" click (which does NOT wake the brain at all). A one-time wake can also be compacted
+    // mid-amend. So re-state the return path EVERY turn while amending, so the brain always knows how to get
+    // back to ready-to-ship. Best-effort; null unless the job is `amending`.
+    const amendingPrefix = await this.buildAmendingPrefix(stimulus.jobId);
+    if (amendingPrefix) {
+      reminderChunks.push({
+        kind: 'system_reminder',
+        body: amendingPrefix,
+        attrs: { reminderKind: 'amending' },
+      });
+    }
+
     // Render the envelope: notice/reminder chunks first (renderTurn keeps `<user>` last), then the body.
     // A seed body is already framed XML — append it after the prefixes rather than re-wrapping it.
     const framedPrefix = renderTurn([...noticeChunks, ...reminderChunks]);
@@ -6335,6 +6349,30 @@ export class AgentSessionManager
       );
     } catch (err) {
       this.logger.debug(`open-questions prefix failed (continuing): ${err}`);
+      return null;
+    }
+  }
+
+  /**
+   * Persistent per-turn reminder while a job sits in `amending` (the ship-review gate retracted for a
+   * follow-up fix). This is the durable teacher of the return path: unlike the one-time amend-approved wake,
+   * it fires EVERY turn while amending, so it covers the manual "Amend build" click (which never wakes the
+   * brain) and survives compaction. Returns null unless the job is `amending`. Best-effort.
+   */
+  private async buildAmendingPrefix(jobId: string): Promise<string | null> {
+    try {
+      const job = await this.store.loadJob(jobId).catch(() => null);
+      if (job?.status !== 'amending') return null;
+      return (
+        'This build is AMENDING — the ship-review gate was retracted so you can make a follow-up fix. ' +
+        'Make the change in the sandbox and verify it (typecheck/build/tests, plus a live run of any ' +
+        'runtime surface you touched). When it is done and verified, call ' +
+        '`report_verification({ passed: true })` with your live evidence — that re-parks the job DIRECTLY ' +
+        'at the ship-review gate (amending → ready-to-ship, no rebuild) and re-posts the "Ship it" card for ' +
+        'the operator. Do not re-propose amending unless something material changed.'
+      );
+    } catch (err) {
+      this.logger.debug(`amending prefix failed (continuing): ${err}`);
       return null;
     }
   }
