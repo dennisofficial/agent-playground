@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { diffLines } from "diff";
 import type { DiffHunk, IconKind, ToolBadge } from "./types";
-import { highlightLine } from "./highlight";
+import {
+  useHighlightTokens,
+  renderTokenLine,
+  type ThemedToken,
+} from "./highlight";
 import { CopyButton, TerminalChromeBar, WrapButton } from "../terminal-chrome";
 
 /** Shared presentational primitives for the tool-call renderers. */
@@ -238,6 +242,7 @@ export function Badge({
 /** A shell prompt line (bash-highlighted) above terminal output — the command as if we'd typed it. */
 function CommandPrompt({ command }: { command: string }) {
   const lines = command.replace(/\n$/, "").split("\n");
+  const lineTokens = useHighlightTokens(lines.join("\n"), "bash", true);
   return (
     <div className="mb-1.5">
       {lines.map((line, i) => (
@@ -248,7 +253,7 @@ function CommandPrompt({ command }: { command: string }) {
           >
             {i === 0 ? "$" : NBSP}
           </span>
-          <CodeText code={line} lang="bash" />
+          <CodeText tokens={lineTokens?.[i]} code={line} />
         </div>
       ))}
     </div>
@@ -417,27 +422,39 @@ function rowsFromHunk(hunk: DiffHunk, keyBase: number): DiffRow[] {
   return rows;
 }
 
-/** A syntax-highlighted code span for the dark frame. `dim` softens context/non-changed lines. */
+/**
+ * A syntax-highlighted code span for the dark frame. Renders one line's Shiki `tokens` (or plain
+ * escaped `code` while the highlighter loads). `dim` softens context/non-changed lines via opacity —
+ * with per-token inline colors a wrapper `color` would only tint the plain fallback, so opacity is how
+ * the softened look is preserved.
+ */
 function CodeText({
+  tokens,
   code,
-  lang,
   dim = false,
 }: {
+  tokens: ThemedToken[] | null | undefined;
   code: string;
-  lang: string | null;
   dim?: boolean;
 }) {
   return (
     <span
-      className="hljs whitespace-pre pr-3"
-      style={{ color: dim ? "var(--term-dim)" : "var(--term-fg)" }}
-      dangerouslySetInnerHTML={{ __html: highlightLine(code, lang) }}
-    />
+      className="whitespace-pre pr-3"
+      style={{ color: "var(--term-fg)", opacity: dim ? 0.72 : 1 }}
+    >
+      {renderTokenLine(tokens, code)}
+    </span>
   );
 }
 
 /** One diff line: old-no gutter · new-no gutter · sign · highlighted code, tinted by row type (dark). */
-function DiffLine({ row, lang }: { row: DiffRow; lang: string | null }) {
+function DiffLine({
+  row,
+  tokens,
+}: {
+  row: DiffRow;
+  tokens: ThemedToken[] | null | undefined;
+}) {
   const isAdd = row.type === "add";
   const isDel = row.type === "del";
   const rowBg = isAdd
@@ -489,7 +506,7 @@ function DiffLine({ row, lang }: { row: DiffRow; lang: string | null }) {
       >
         {isAdd ? "+" : isDel ? "−" : NBSP}
       </span>
-      <CodeText code={row.code} lang={lang} dim={row.type === "context"} />
+      <CodeText tokens={tokens} code={row.code} dim={row.type === "context"} />
     </div>
   );
 }
@@ -527,6 +544,15 @@ export function DiffView({
           );
           return [{ header: `@@ -1,${oldCount} +1,${newCount} @@`, rows }];
         })();
+  // Diff rows are non-contiguous (interleaved add/del across hunks) → tokenize each line in isolation
+  // and index by flat position across all blocks (header rows aren't in `allRows`, so they don't count).
+  const allRows = blocks.flatMap((b) => b.rows);
+  const lineTokens = useHighlightTokens(
+    allRows.map((r) => r.code).join("\n"),
+    lang,
+    false,
+  );
+  let flatIndex = 0;
   return (
     <div
       className="my-[3px] overflow-hidden rounded-[7px]"
@@ -548,7 +574,7 @@ export function DiffView({
               {block.header}
             </div>
             {block.rows.map((r) => (
-              <DiffLine key={r.key} row={r} lang={lang} />
+              <DiffLine key={r.key} row={r} tokens={lineTokens?.[flatIndex++]} />
             ))}
           </div>
         ))}
@@ -564,6 +590,7 @@ export function CodeListing({
   leftAccent = false,
   activeNos,
   maxHeight = CODE_MAX_HEIGHT,
+  whole = false,
   flush = false,
 }: {
   rows: Array<{ no: number | string; code: string }>;
@@ -573,9 +600,15 @@ export function CodeListing({
   activeNos?: ReadonlySet<number>;
   /** Scroll-window cap; pass `"100%"` to fill a taller container (the FilePane). Defaults to CODE_MAX_HEIGHT. */
   maxHeight?: number | string;
+  /** Tokenize the rows as one contiguous file (preserves cross-line context) vs each line in isolation. */
+  whole?: boolean;
   /** Full-bleed: drop the rounded frame/border/margin and fill the parent's height (the FilePane full-screen viewer). */
   flush?: boolean;
 }) {
+  // Rows are 1:1 with source lines (each `r.code` is one line, no embedded `\n`), so `lineTokens[i]`
+  // aligns to `rows[i]` for both whole-file and per-line tokenization.
+  const text = useMemo(() => rows.map((r) => r.code).join("\n"), [rows]);
+  const lineTokens = useHighlightTokens(text, lang, whole);
   // Size the gutter to the widest line number so big-file numbers don't wrap or clip.
   const widest = rows.reduce((m, r) => Math.max(m, String(r.no).length), 0);
   const gutter = Math.max(30, widest * 7 + 16);
@@ -624,7 +657,7 @@ export function CodeListing({
               >
                 {r.no === "" ? NBSP : r.no}
               </span>
-              <CodeText code={r.code} lang={lang} />
+              <CodeText tokens={lineTokens?.[i]} code={r.code} />
             </div>
           );
         })}
@@ -646,7 +679,7 @@ export function WriteFileView({
   lang?: string | null;
 }) {
   const rows = splitLines(content).map((code, i) => ({ no: i + 1, code }));
-  return <CodeListing rows={rows} lang={lang} leftAccent />;
+  return <CodeListing rows={rows} lang={lang} leftAccent whole />;
 }
 
 /**
@@ -667,7 +700,7 @@ export function ReadFileView({
       return { no: line.slice(0, tab), code: line.slice(tab + 1) };
     return { no: "" as const, code: line };
   });
-  return <CodeListing rows={rows} lang={lang} />;
+  return <CodeListing rows={rows} lang={lang} whole />;
 }
 
 /**
