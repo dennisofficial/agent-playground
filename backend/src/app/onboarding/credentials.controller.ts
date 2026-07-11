@@ -3,6 +3,7 @@ import { IsOptional, IsString } from 'class-validator';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
+import { ClaudeCredentialStore } from './claude-credential.store';
 import { OnboardingService, type ValidationResult } from './onboarding.service';
 import { TenantCredentialStore, type TenantCredentialPatch } from './tenant-credential.store';
 
@@ -28,6 +29,7 @@ class SetCredentialsDto {
 export class OrgCredentialsController {
   constructor(
     private readonly store: TenantCredentialStore,
+    private readonly claudeStore: ClaudeCredentialStore,
     private readonly onboarding: OnboardingService,
   ) {}
 
@@ -37,8 +39,14 @@ export class OrgCredentialsController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Body() body: SetCredentialsDto,
   ): Promise<{ ok: boolean; validation: { llmKey?: ValidationResult } }> {
-    const patch: TenantCredentialPatch = { ...body };
+    // `claudeOauthToken` no longer writes the legacy `claude_oauth_token_enc` column — it upserts+selects
+    // a `setup_token` row in `claude_credentials` instead, keeping that table the single source of truth.
+    const { claudeOauthToken, ...rest } = body;
+    const patch: TenantCredentialPatch = { ...rest };
     await this.store.write(org.id, patch);
+    if (claudeOauthToken !== undefined) {
+      await this.claudeStore.upsertLegacySetupToken(org.id, claudeOauthToken);
+    }
 
     // Validate the Anthropic key (LangChain chains) when it was (re)set — surfaces a bad key now.
     let llmKey: ValidationResult | undefined;

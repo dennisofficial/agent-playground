@@ -83,7 +83,6 @@ async function runOverRedis(turnId: string): Promise<void> {
         managedSkillsRoot: process.env.SKILLS_MANAGED_ROOT,
         managedGitSkillsRoot: process.env.SKILLS_MANAGED_GIT_ROOT,
       },
-      { warn: (m) => process.stderr.write(`[engine-core] ${m}\n`) },
     );
 
     // ── Tool bridge over Redis (additive) ──────────────────────────────────────────────────────

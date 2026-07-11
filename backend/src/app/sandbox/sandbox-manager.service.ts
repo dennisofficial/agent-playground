@@ -197,7 +197,7 @@ const L_CFG = 'atlas.cfg';
  * paths so in-container git resolves, plus a host-owned agent-home at {@link CONTAINER_AGENT_HOME} so
  * engine sessions persist across turns/restarts. Turns are then `docker exec`'d in by the
  * `DockerEngineRunner`. Containers are kept alive after a build (so a dev server stays reachable);
- * `teardown` / `reapStopped` reclaim them. Labels are the source of truth for adoption (no new table).
+ * `teardown` reclaims them. Labels are the source of truth for adoption (no new table).
  *
  * Inner dockerd (DinD) comes from `--privileged` + a per-sandbox /var/lib/docker volume (proven in D0);
  * `attach` waits for it to report ready before returning so the first build turn can use it.
@@ -281,6 +281,7 @@ export class SandboxManager implements SandboxProvider {
           this.logger.log(`reusing stopped sandbox ${name} — starting (cold)`);
           await this.engine.start(existing.id);
           await this.attachRedisBus(existing.id); // idempotent — re-ensure the redis bus after a restart
+          await this.attachMcpNetwork(existing.id, sandbox.repoId); // idempotent — re-ensure the atlas-mcp route too
           await this.waitReady(existing.id);
         } else {
           this.logger.log(`reusing running sandbox ${name}`);
@@ -289,8 +290,6 @@ export class SandboxManager implements SandboxProvider {
         return this.applySetupScript(this.augment(sandbox, existing.id, warm), existing.id, warm ? null : input.setupScript);
       }
     }
-
-    await this.softCapCheck();
 
     // Guard the create window: the `-net` (and `-dind`) exist from here until `createContainer` below wires
     // them to a live container. Stamp the stem NOW so a concurrent `reapOrphanedArtifacts` sweep (timer or
@@ -486,6 +485,7 @@ export class SandboxManager implements SandboxProvider {
     });
     await this.engine.start(id);
     await this.attachRedisBus(id);
+    await this.attachMcpNetwork(id, sandbox.repoId);
     await this.waitReady(id);
     // Freshly created → cold: run the repo's setup script (if any) before handing the sandbox back.
     return this.applySetupScript(this.augment(sandbox, id, false), id, input.setupScript);
@@ -502,6 +502,27 @@ export class SandboxManager implements SandboxProvider {
     if (!bus) return;
     await this.engine.ensureNetwork(bus);
     await this.engine.connectNetwork(containerId, bus);
+  }
+
+  /**
+   * Attach the sandbox to the internal MCP-reader network (`SANDBOX_MCP_NETWORK`) — but ONLY for the Atlas
+   * repo itself (repo slug === `ATLAS_REPO_SLUG`). This is the network half of the read-only diagnostics
+   * MCP's repo-scope: only Atlas-repo sandboxes can even route to the reader (the credential half is the
+   * per-repo web MCP registry). The net is `internal: true`, so an attached sandbox reaches ONLY the reader
+   * off it, never the host or internet. Fail-closed: unset network or slug (dev) → no-op. Idempotent.
+   */
+  private async attachMcpNetwork(containerId: string, repoId: string): Promise<void> {
+    const mcpNet = this.env.get('SANDBOX_MCP_NETWORK');
+    if (!mcpNet || !this.isAtlasRepo(repoId)) return;
+    await this.engine.ensureNetwork(mcpNet);
+    await this.engine.connectNetwork(containerId, mcpNet);
+  }
+
+  /** Whether a sandbox's repo is the Atlas repo itself, per the configured `ATLAS_REPO_SLUG`. Not
+   *  hardcoded — the prod slug is set in compose; unset (dev) means no repo is ever treated as Atlas. */
+  private isAtlasRepo(repoId: string): boolean {
+    const atlasSlug = this.env.get('ATLAS_REPO_SLUG');
+    return !!atlasSlug && repoId === atlasSlug;
   }
 
   /** The deterministic container name of a thread's sandbox — the preview reverse-proxy upstream host. */
@@ -566,28 +587,9 @@ export class SandboxManager implements SandboxProvider {
     }
   }
 
-  /** Remove STOPPED managed containers (safe reclaim — never touches a running sandbox a dev server
-   * might be using). TTL-based reaping of running-but-idle sandboxes needs job-state awareness and is
-   * deferred. */
-  async reapStopped(): Promise<number> {
-    const managed = await this.engine.list({ label: `${L_MANAGED}=1`, all: true });
-    let reaped = 0;
-    for (const c of managed) {
-      if (c.state !== 'running') {
-        await this.engine.remove(c.id, { force: true }).catch(() => undefined);
-        await this.cleanupArtifacts(c.name);
-        reaped++;
-      }
-    }
-    if (reaped) this.logger.log(`reaped ${reaped} stopped sandbox(es)`);
-    // Catch-all sweep for artifacts whose container is already gone (crashes / pre-fix leaks).
-    await this.reapOrphanedArtifacts();
-    return reaped;
-  }
-
   /**
    * Reclaim FULLY ORPHANED sandbox artifacts — `atlas-sbx-*-net` networks and `atlas-sbx-*-dind`
-   * volumes whose owning container no longer exists. {@link teardown}/{@link reapStopped} handle the
+   * volumes whose owning container no longer exists. {@link teardown} handles the
    * normal path; this is the catch-all for leaks from crashes, `kill -9`, or pre-fix runs (where
    * teardown dropped the container but not its network/volume). Each artifact's name stem is checked
    * against live container names, so one still attached to a container is never touched. Best-effort —
@@ -1121,17 +1123,6 @@ export class SandboxManager implements SandboxProvider {
       return stdout.trim() || undefined;
     } catch {
       return undefined;
-    }
-  }
-
-  /** Soft cap: warn (and reclaim stopped) if too many sandboxes are live — never blocks the drive. */
-  private async softCapCheck(): Promise<void> {
-    const cap = this.env.get('MAX_CONCURRENT_SANDBOXES');
-    if (!cap) return;
-    const running = (await this.engine.list({ label: `${L_MANAGED}=1`, all: false })).length;
-    if (running >= cap) {
-      this.logger.warn(`live sandboxes (${running}) at/over MAX_CONCURRENT_SANDBOXES (${cap}) — reaping stopped`);
-      await this.reapStopped();
     }
   }
 

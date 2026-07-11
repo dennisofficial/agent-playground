@@ -24,4 +24,12 @@ export class OrganizationEntity extends TimestampedEntity {
   /** Onboarding lifecycle: 'onboarding' until credentials + a validated repo are connected. */
   @Column({ type: 'text', default: 'onboarding' })
   status!: string; // 'onboarding' | 'active' | 'suspended'
+
+  /**
+   * The org's single active Claude credential (FK → `claude_credentials.id`, ON DELETE SET NULL, enforced
+   * in the migration). No `@ManyToOne` relation here on purpose — avoids a circular entity import with
+   * `OrgClaudeCredentialEntity`; the plain column + migration FK is enough.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  selected_claude_credential_id!: string | null;
 }

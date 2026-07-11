@@ -44,7 +44,11 @@ import { TranscriptView } from "./conversation";
 import { Composer, type ComposerFooter } from "./composer";
 import { DetailTopBar, TopBarActions, TopBarButton } from "./detail-top-bar";
 import { ImageViewer } from "./image-viewer";
-import { ServiceLogView, serviceHeaderSubtitle } from "./service-log-view";
+import {
+  LogFileView,
+  ServiceLogView,
+  serviceHeaderSubtitle,
+} from "./service-log-view";
 import { TicketsRaisedPane } from "./tickets-raised-pane";
 import { useCommentableRef } from "./use-text-selection";
 import { useReviewComments } from "./review-comments";
@@ -78,6 +82,9 @@ export function PhaseView({
   selectedNode,
   onConversation,
   onSelectNode,
+  onBack,
+  onOpenNav,
+  onOpenDetail,
   tracksComments = false,
 }: {
   jobRef: JobRef;
@@ -92,6 +99,11 @@ export function PhaseView({
   /** Select another navigator node (URL `?node=`) — lets a rendered spec file's relative links open the
    *  linked file in-app. */
   onSelectNode?: (node: string) => void;
+  /** Drawer-backed detail views use this as the visible back affordance that clears `?node=`. */
+  onBack?: () => void;
+  /** Below xl: top-bar toggles for the Navigator / Detail drawers (undefined = no button, desktop). */
+  onOpenNav?: () => void;
+  onOpenDetail?: () => void;
   /**
    * Only the RIGHT (detail) pane's `PhaseView` instance owns the review-comments `activeTarget` — the LEFT
    * (lane) instance's `selectedNode` is always a transcript lane (a bare thread/step id, or a
@@ -356,7 +368,8 @@ export function PhaseView({
     // The in-flight turn is shared across the thread's Legs (one lane), so only the LIVE Leg's pane may render
     // it — otherwise a rotated Leg re-paints the active Leg's streaming tail + spinner at its own bottom.
     const legIsLive =
-      (legThread.legs ?? []).find((l) => l.ordinal === legRef.ordinal)?.status === "active";
+      (legThread.legs ?? []).find((l) => l.ordinal === legRef.ordinal)
+        ?.status === "active";
     body = (
       <TranscriptView
         jobRef={jobRef}
@@ -408,6 +421,9 @@ export function PhaseView({
         title={title}
         subtitle={subtitle || undefined}
         actions={actions}
+        onBack={onBack}
+        onOpenNav={onOpenNav}
+        onOpenDetail={onOpenDetail}
       />
       {/* Flex column so a `flex-1` body (TranscriptView) gets a bounded height and scrolls internally —
           a plain block wrapper leaves its `h-full` scroll child resolving against auto height (no scroll). */}
@@ -464,7 +480,9 @@ function SubagentView({
   const footer: ComposerFooter = {
     model: ctxModel ?? subagentModel(summary?.type ?? ""),
     context:
-      typeof ctxTokens === "number" && typeof ctxLimit === "number" && ctxLimit > 0
+      typeof ctxTokens === "number" &&
+      typeof ctxLimit === "number" &&
+      ctxLimit > 0
         ? { tokens: ctxTokens, limit: ctxLimit, model: ctxModel }
         : null,
   };
@@ -520,7 +538,11 @@ function SubagentView({
           ) : null}
           <div ref={tail.endRef} />
           {/* Reserve space so the last transcript lines clear the absolute footer bar below. */}
-          <div className="shrink-0" style={{ height: composerHeight }} aria-hidden />
+          <div
+            className="shrink-0"
+            style={{ height: composerHeight }}
+            aria-hidden
+          />
         </div>
       </div>
       {/* Read-only footer bar — the reused Composer in `subagent` variant (no input/send; model + ring). */}
@@ -809,6 +831,11 @@ function FileView({
   if (data?.mime.startsWith("image/")) {
     return <ImageFileBody file={data} />;
   }
+  // `.log` artifacts render full-bleed in the same ANSI terminal frame as live service logs, so escape
+  // codes come through as colors instead of literal `\x1b[..m` garbage in a plain <pre>.
+  if (data && data.name.endsWith(".log")) {
+    return <LogFileView content={data.content} />;
+  }
   // Everything else fills the pane width; only markdown keeps the readable max-width so long prose lines
   // don't sprawl edge-to-edge.
   return (
@@ -974,12 +1001,15 @@ async function imageDataUrlToPngBlob(dataUrl: string): Promise<Blob> {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not get a 2D canvas context for image copy.");
+  if (!ctx)
+    throw new Error("Could not get a 2D canvas context for image copy.");
   ctx.drawImage(img, 0, 0);
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (blob) =>
-        blob ? resolve(blob) : reject(new Error("Canvas produced no PNG blob.")),
+        blob
+          ? resolve(blob)
+          : reject(new Error("Canvas produced no PNG blob.")),
       "image/png",
     ),
   );
@@ -1326,12 +1356,13 @@ function RepoFileBody({
     .split("\n")
     .map((code, i) => ({ no: i + 1, code }));
   return (
-    <div ref={containerRef} className="h-full overflow-y-auto px-4 py-3">
+    <div ref={containerRef} className="h-full overflow-hidden">
       <CodeListing
         rows={rows}
         lang={lang}
         activeNos={activeNos}
         maxHeight="100%"
+        flush
       />
     </div>
   );

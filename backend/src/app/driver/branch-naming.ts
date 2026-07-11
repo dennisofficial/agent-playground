@@ -1,10 +1,10 @@
 import type { RepoEntity } from '../persistence/entities/repo.entity';
 
 /**
- * Built-in fallback prefix when a repo has no {@link RepoEntity.branch_prefix} configured — keeps the
- * historical `atlas/thread-<id8>` naming for repos that never opt into a convention.
+ * Neutral built-in fallback prefix (`feature/<id8>`) when a repo has no {@link RepoEntity.branch_prefix}
+ * configured.
  */
-export const DEFAULT_BRANCH_PREFIX = 'atlas/thread-';
+export const DEFAULT_BRANCH_PREFIX = 'feature/';
 
 /**
  * Compute the CANONICAL feature-branch name for a job: `<prefix><job-id-first-8>`.

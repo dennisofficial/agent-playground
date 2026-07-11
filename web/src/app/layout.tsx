@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Space_Grotesk, Geist, JetBrains_Mono } from "next/font/google";
 import { Providers } from "@/providers";
 import "./globals.css";
@@ -24,6 +24,12 @@ export const metadata: Metadata = {
   title: "Atlas — Operator Console",
   description:
     "Operate Atlas: see all threads, talk to a thread's brain, approve plans, watch builds.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

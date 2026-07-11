@@ -2,29 +2,47 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Network, Ticket } from "lucide-react";
+import { Menu, Network, Search, Ticket } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { ROUTES } from "@/lib/routes";
 import { useCurrentUser } from "@/lib/api/me";
+import { HostStats } from "./host-stats";
 
 /**
  * The app-wide top bar (design "Atlas Tickets Board"). Pure chrome: the ATLAS lockup, the primary
  * Threads | Tickets nav switch, and the operator avatar. It wraps BOTH the threads workspace and the
  * tickets board (mounted in `AppChrome`), so the nav is always available. Daylight-only (no theme toggle).
+ * Below the sidebar breakpoint (<768px) it also carries the hamburger that opens the off-canvas sidebar
+ * drawer and a search shortcut for ⌘K, since neither is reachable without a pointer/keyboard there.
  */
-export function TopBar() {
+export function TopBar({
+  onOpenSidebar,
+  onOpenSearch,
+}: {
+  onOpenSidebar?: () => void;
+  onOpenSearch?: () => void;
+}) {
   const pathname = usePathname();
   const onTickets = pathname.startsWith("/tickets");
   const onThreads = !onTickets; // workspace, dashboard, new — everything else is the threads side
 
   return (
     <header
-      className="flex h-[52px] flex-none items-center gap-3.5 border-b border-border px-4"
+      className="flex h-[52px] flex-none items-center gap-2 border-b border-border px-3 md:gap-3.5 md:px-4"
       style={{
         background: "color-mix(in srgb, var(--panel) 82%, transparent)",
         backdropFilter: "blur(12px)",
       }}
     >
+      <button
+        type="button"
+        onClick={() => onOpenSidebar?.()}
+        className="grid h-9 w-9 flex-none -ml-1 place-items-center rounded-md text-dim transition hover:bg-surface-2 md:hidden"
+        aria-label="Open navigation"
+      >
+        <Menu size={17} />
+      </button>
+
       <Link
         href={ROUTES.workspace()}
         className="flex items-center gap-2.5"
@@ -43,14 +61,17 @@ export function TopBar() {
             style={{ transform: "rotate(45deg)" }}
           />
         </span>
-        <span className="font-disp text-[14px] font-bold tracking-[0.16em] text-text">
+        <span className="hidden font-disp text-[14px] font-bold tracking-[0.16em] text-text sm:inline">
           ATLAS
         </span>
       </Link>
 
-      <span className="h-5 w-px" style={{ background: "var(--border)" }} />
+      <span
+        className="hidden h-5 w-px md:block"
+        style={{ background: "var(--border)" }}
+      />
 
-      <nav className="flex h-full items-stretch gap-[22px]">
+      <nav className="flex h-full items-stretch gap-3.5 md:gap-[22px]">
         <TopNavItem
           href={ROUTES.workspace()}
           active={onThreads}
@@ -66,6 +87,17 @@ export function TopBar() {
       </nav>
 
       <div className="flex-1" />
+
+      <button
+        type="button"
+        onClick={() => onOpenSearch?.()}
+        className="grid h-9 w-9 flex-none place-items-center rounded-md text-dim transition hover:bg-surface-2 md:hidden"
+        aria-label="Search jobs"
+      >
+        <Search size={16} />
+      </button>
+
+      <HostStats />
 
       <Avatar />
     </header>

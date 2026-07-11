@@ -1,6 +1,8 @@
 "use client";
 
 import type React from "react";
+import { ChevronLeft, Menu, PanelRight } from "lucide-react";
+import { cn } from "@/lib/cn";
 
 /**
  * The single top bar shared by the main conversation AND every lane/detail pane (build thread/step, subagent
@@ -12,14 +14,33 @@ export function DetailTopBar({
   title,
   subtitle,
   actions,
+  onBack,
+  onOpenNav,
+  onOpenDetail,
 }: {
   title: string;
   subtitle?: string;
   /** Right-aligned controls. Defaults to the standard {@link TopBarActions} group. */
   actions?: React.ReactNode;
+  /** Closes a drawer-backed detail view, clearing the selected URL node. */
+  onBack?: () => void;
+  /** Below xl: opens the Navigator drawer via a leading `Menu` button (undefined = no button, desktop). */
+  onOpenNav?: () => void;
+  /** Below xl: opens the Detail drawer via a trailing `PanelRight` button (undefined = no button). */
+  onOpenDetail?: () => void;
 }) {
   return (
-    <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-5">
+    <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3 md:px-4">
+      {onBack ? (
+        <LeadingIconButton title="Back" onClick={onBack} leading>
+          <ChevronLeft size={18} />
+        </LeadingIconButton>
+      ) : null}
+      {onOpenNav ? (
+        <LeadingIconButton title="Panels" onClick={onOpenNav} leading={!onBack}>
+          <Menu size={17} />
+        </LeadingIconButton>
+      ) : null}
       <div className="flex min-w-0 flex-1 flex-col justify-center">
         <span className="truncate font-disp text-[13.5px] font-semibold leading-tight text-text">
           {title}
@@ -31,6 +52,11 @@ export function DetailTopBar({
         ) : null}
       </div>
       {actions === undefined ? <TopBarActions /> : actions}
+      {onOpenDetail ? (
+        <TopBarButton title="Detail" onClick={onOpenDetail}>
+          <PanelRight size={15} />
+        </TopBarButton>
+      ) : null}
     </div>
   );
 }
@@ -108,21 +134,61 @@ export function TopBarActions({
   );
 }
 
-export function TopBarButton({
+/**
+ * The leading nav/back control (☰ Panels / ‹ Back), shown only below xl. Deliberately mirrors the app
+ * TopBar's hamburger exactly — h-9 w-9 button, size-17 icon, `-ml-1` when it's the first item — so its
+ * glyph left-aligns pixel-for-pixel with the top bar's hamburger stacked directly above it. (The generic
+ * 29px {@link TopBarButton} is a touch smaller/left of that, which read as a misalignment.)
+ */
+function LeadingIconButton({
   title,
   onClick,
+  leading,
   children,
 }: {
   title: string;
   onClick?: () => void;
+  /** Apply the `-ml-1` nudge — set when this is the first item in the bar (matches the TopBar hamburger). */
+  leading?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       title={title}
+      aria-label={title}
       onClick={onClick}
-      className="flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text"
+      className={cn(
+        "grid h-9 w-9 flex-none place-items-center rounded-md text-dim transition hover:bg-surface-2 hover:text-text",
+        leading && "-ml-1",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function TopBarButton({
+  title,
+  onClick,
+  children,
+  className,
+}: {
+  title: string;
+  onClick?: () => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      className={cn(
+        "flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text",
+        className,
+      )}
     >
       {children}
     </button>

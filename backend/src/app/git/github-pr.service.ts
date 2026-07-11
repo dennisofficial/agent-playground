@@ -9,6 +9,11 @@ import { Injectable } from '@nestjs/common';
 
 const API = 'https://api.github.com';
 
+/** A conditionalGet status that carries a usable body: a 2xx, or a 304 (cached body returned). */
+function isOkStatus(status: number): boolean {
+  return status === 304 || (status >= 200 && status < 300);
+}
+
 /** Events delivered to the WORK-EVENTS front door (`/webhooks/github/events`) → routed to the owning job. */
 export const WORK_EVENTS = [
   'workflow_run',
@@ -72,6 +77,11 @@ export interface CheckRun {
   detailsUrl: string | null;
 }
 
+/** Per-category CI check counts for a PR head. Sum of the four categories === total. */
+export type CiCounts = { failing: number; pending: number; passed: number; skipped: number; total: number };
+/** The rolled-up CI summary: overall status + counts (both null when no checks reported). */
+export type CiSummary = { status: 'failure' | 'pending' | 'success' | 'skipped' | null; counts: CiCounts | null };
+
 /** A submitted PR review (approve / request-changes / comment). */
 export interface PullReview {
   id: number;
@@ -104,9 +114,62 @@ export function parseGithubRepoUrl(
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
+/**
+ * Thrown when a GET is short-circuited because the client is paused on a GitHub rate-limit (primary or
+ * secondary). Distinct from an ordinary permission/HTTP error so callers can leave the job DUE and resume
+ * once the pause clears, rather than treating it as a hard failure.
+ */
+export class RateLimitedError extends Error {
+  constructor(message?: string) {
+    super(message);
+    this.name = 'RateLimitedError';
+  }
+}
+
+/**
+ * Map GraphQL `mergeStateStatus` (`CLEAN|DIRTY|BEHIND|BLOCKED|UNSTABLE|HAS_HOOKS|DRAFT|UNKNOWN`) to the
+ * lowercase REST `mergeable_state` vocabulary the `pr_mergeable` column stores. Anything unrecognised (or
+ * null/undefined) collapses to `'unknown'`.
+ */
+export function mapMergeStateStatus(status: string | null | undefined): string {
+  switch ((status ?? '').toLowerCase()) {
+    case 'clean':
+      return 'clean';
+    case 'dirty':
+      return 'dirty';
+    case 'behind':
+      return 'behind';
+    case 'blocked':
+      return 'blocked';
+    case 'unstable':
+      return 'unstable';
+    case 'has_hooks':
+      return 'has_hooks';
+    case 'draft':
+      return 'draft';
+    default:
+      return 'unknown';
+  }
+}
+
 @Injectable()
 export class GithubPrService {
   fetchImpl: typeof fetch = fetch;
+
+  /** Bounded insertion-order Map used as an LRU of `url → { etag, body }` for conditional GETs. */
+  private readonly etagCache = new Map<
+    string,
+    { etag: string; body: unknown }
+  >();
+  private static readonly MAX_ETAG_ENTRIES = 2000;
+
+  /** REST rate-limit state (independent of the GraphQL budget below). */
+  private pausedUntil: number | null = null;
+  private consecutivePauses = 0;
+
+  /** GraphQL rate-limit state — a SEPARATE budget from REST, so neither pause affects the other. */
+  private graphqlPausedUntil: number | null = null;
+  private graphqlConsecutivePauses = 0;
 
   private headers(token: string): Record<string, string> {
     return {
@@ -118,13 +181,205 @@ export class GithubPrService {
     };
   }
 
+  /** True while the REST client is paused on a rate-limit; poll loops skip until it clears. */
+  isRateLimited(): boolean {
+    return this.pausedUntil != null && this.pausedUntil > Date.now();
+  }
+
+  /** True while the GraphQL client is paused on its own (separate) rate-limit budget. */
+  isGraphqlRateLimited(): boolean {
+    return (
+      this.graphqlPausedUntil != null && this.graphqlPausedUntil > Date.now()
+    );
+  }
+
+  /** Bump a cache entry's recency (insertion-order Map LRU) after a read hit. */
+  private touchLru(url: string): void {
+    const hit = this.etagCache.get(url);
+    if (!hit) return;
+    this.etagCache.delete(url);
+    this.etagCache.set(url, hit);
+  }
+
+  /** Store/refresh an entry, evicting the oldest when past the cap. */
+  private storeLru(url: string, etag: string, body: unknown): void {
+    this.etagCache.delete(url);
+    this.etagCache.set(url, { etag, body });
+    if (this.etagCache.size > GithubPrService.MAX_ETAG_ENTRIES) {
+      const oldest = this.etagCache.keys().next().value;
+      if (oldest !== undefined) this.etagCache.delete(oldest);
+    }
+  }
+
+  /** Read one response header defensively — the spec's fake fetch omits `headers` entirely. */
+  private header(res: unknown, name: string): string | null {
+    const r = res as { headers?: { get?: (n: string) => string | null } };
+    return r.headers?.get?.(name) ?? null;
+  }
+
+  private numericHeader(res: unknown, name: string): number | null {
+    const raw = this.header(res, name);
+    if (raw == null) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  /** Classify a rate-limit hit from a 403/429 response — primary (remaining 0), explicit retry, or message. */
+  private isRateLimitResponse(
+    remaining: number | null,
+    retryAfterMs: number | null,
+    body?: { message?: string },
+  ): boolean {
+    return (
+      remaining === 0 ||
+      retryAfterMs != null ||
+      /secondary rate limit|rate limit|abuse detection/i.test(
+        body?.message ?? '',
+      )
+    );
+  }
+
+  /** Exponential backoff (60s, 120s, … capped ~16min) for the Nth consecutive pause. */
+  private backoffMs(consecutivePauses: number): number {
+    return 60_000 * 2 ** Math.min(consecutivePauses, 4);
+  }
+
+  /**
+   * Read GitHub's rate-limit headers off a REST response and update the REST pause state. A 2xx with a
+   * `remaining` count clears any stale pause; a 403/429 classified as a rate limit sets `pausedUntil`.
+   */
+  private captureRateLimit(res: unknown, body?: { message?: string }): void {
+    const now = Date.now();
+    const remaining = this.numericHeader(res, 'x-ratelimit-remaining');
+    const resetSec = this.numericHeader(res, 'x-ratelimit-reset');
+    const retryAfterSec = this.numericHeader(res, 'retry-after');
+    const resetMs = resetSec != null ? resetSec * 1000 : null;
+    const retryAfterMs = retryAfterSec != null ? retryAfterSec * 1000 : null;
+    const status = (res as { status?: number }).status ?? 0;
+
+    if (remaining === 0) {
+      this.pausedUntil = Math.max(
+        resetMs ?? 0,
+        retryAfterMs != null ? now + retryAfterMs : 0,
+        now + this.backoffMs(this.consecutivePauses++),
+      );
+      return;
+    }
+    if (status >= 200 && status < 300 && remaining != null) {
+      this.consecutivePauses = 0;
+      this.pausedUntil = null;
+      return;
+    }
+    if (status !== 403 && status !== 429) return;
+    if (!this.isRateLimitResponse(remaining, retryAfterMs, body)) return;
+    this.pausedUntil = Math.max(
+      resetMs ?? 0,
+      retryAfterMs != null ? now + retryAfterMs : 0,
+      now + this.backoffMs(this.consecutivePauses++),
+    );
+  }
+
+  /** GraphQL sibling of {@link captureRateLimit} — writes the SEPARATE GraphQL pause state. */
+  private captureGraphqlRateLimit(
+    res: unknown,
+    json?: { errors?: Array<{ message?: string }> },
+  ): void {
+    const now = Date.now();
+    const remaining = this.numericHeader(res, 'x-ratelimit-remaining');
+    const resetSec = this.numericHeader(res, 'x-ratelimit-reset');
+    const retryAfterSec = this.numericHeader(res, 'retry-after');
+    const resetMs = resetSec != null ? resetSec * 1000 : null;
+    const retryAfterMs = retryAfterSec != null ? retryAfterSec * 1000 : null;
+    const status = (res as { status?: number }).status ?? 0;
+    const errorMessage = (json?.errors ?? [])
+      .map((e) => e.message)
+      .filter(Boolean)
+      .join('; ');
+    const errorRateLimited = /rate limit|RATE_LIMITED|abuse detection/i.test(
+      errorMessage,
+    );
+
+    if (remaining === 0) {
+      this.graphqlPausedUntil = Math.max(
+        resetMs ?? 0,
+        retryAfterMs != null ? now + retryAfterMs : 0,
+        now + this.backoffMs(this.graphqlConsecutivePauses++),
+      );
+      return;
+    }
+    if (
+      status >= 200 &&
+      status < 300 &&
+      remaining != null &&
+      !errorRateLimited
+    ) {
+      this.graphqlConsecutivePauses = 0;
+      this.graphqlPausedUntil = null;
+      return;
+    }
+    const httpRateLimited =
+      (status === 403 || status === 429) &&
+      this.isRateLimitResponse(remaining, retryAfterMs, {
+        message: errorMessage,
+      });
+    if (!httpRateLimited && !errorRateLimited) return;
+    this.graphqlPausedUntil = Math.max(
+      resetMs ?? 0,
+      retryAfterMs != null ? now + retryAfterMs : 0,
+      now + this.backoffMs(this.graphqlConsecutivePauses++),
+    );
+  }
+
+  /**
+   * Shared conditional GET for the four poll GETs: sends `If-None-Match` when a body is cached, returns the
+   * cached body FREE on a 304, and threads rate-limit state through {@link captureRateLimit}. Short-circuits
+   * (cache or {@link RateLimitedError}) without a fetch while paused. The caller still interprets `status`
+   * (404, non-OK) and `body` exactly as it interpreted the raw response before.
+   */
+  private async conditionalGet<T>(
+    url: string,
+    token: string,
+  ): Promise<{ status: number; body: T }> {
+    if (this.isRateLimited()) {
+      const hit = this.etagCache.get(url);
+      if (hit) return { status: 304, body: hit.body as T };
+      throw new RateLimitedError(
+        `GitHub rate-limited until ${new Date(this.pausedUntil!).toISOString()}`,
+      );
+    }
+    const cached = this.etagCache.get(url);
+    const headers = {
+      ...this.headers(token),
+      ...(cached ? { 'If-None-Match': cached.etag } : {}),
+    };
+    const res = await this.fetchImpl(url, { headers });
+    if (res.status === 304 && cached) {
+      this.captureRateLimit(res);
+      this.touchLru(url);
+      return { status: 304, body: cached.body as T };
+    }
+    const body = (await res.json().catch(() => ({}))) as T;
+    this.captureRateLimit(res, body as { message?: string });
+    const etag = this.header(res, 'etag');
+    if (res.status >= 200 && res.status < 300 && etag) {
+      this.storeLru(url, etag, body);
+    }
+    return { status: res.status, body };
+  }
+
   /** The GitHub account that owns `token` (GET /user) — for commit attribution. null on any non-OK. */
   async getAuthenticatedUser(
     token: string,
   ): Promise<{ login: string; id: number; name: string | null } | null> {
-    const res = await this.fetchImpl(`${API}/user`, { headers: this.headers(token) });
+    const res = await this.fetchImpl(`${API}/user`, {
+      headers: this.headers(token),
+    });
     if (!res.ok) return null;
-    const u = (await res.json()) as { login: string; id: number; name: string | null };
+    const u = (await res.json()) as {
+      login: string;
+      id: number;
+      name: string | null;
+    };
     return { login: u.login, id: u.id, name: u.name ?? null };
   }
 
@@ -239,13 +494,18 @@ export class GithubPrService {
     token: string,
     { owner, repo, number }: { owner: string; repo: string; number: number },
   ): Promise<void> {
-    const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
-      method: 'PATCH',
-      headers: this.headers(token),
-      body: JSON.stringify({ state: 'closed' }),
-    });
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls/${number}`,
+      {
+        method: 'PATCH',
+        headers: this.headers(token),
+        body: JSON.stringify({ state: 'closed' }),
+      },
+    );
     if (res.ok) return;
-    const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+    const errBody = (await res.json().catch(() => ({}))) as {
+      message?: string;
+    };
     throw new Error(
       `GitHub refused to close PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`,
     );
@@ -288,28 +548,20 @@ export class GithubPrService {
     token: string,
     { owner, repo, number }: { owner: string; repo: string; number: number },
   ): Promise<'open' | 'merged' | 'closed' | 'gone'> {
-    const res = await this.fetchImpl(
-      `${API}/repos/${owner}/${repo}/pulls/${number}`,
-      {
-        headers: this.headers(token),
-      },
-    );
-    if (res.status === 404) return 'gone';
-    if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as {
-        message?: string;
-      };
-      throw new Error(
-        `GitHub couldn't load PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`,
-      );
-    }
-    const pr = (await res.json()) as {
+    const { status, body } = await this.conditionalGet<{
       state: 'open' | 'closed';
       merged?: boolean;
       merged_at?: string | null;
-    };
-    if (pr.merged || pr.merged_at) return 'merged';
-    return pr.state;
+      message?: string;
+    }>(`${API}/repos/${owner}/${repo}/pulls/${number}`, token);
+    if (status === 404) return 'gone';
+    if (!isOkStatus(status)) {
+      throw new Error(
+        `GitHub couldn't load PR #${number} (${status}): ${body.message ?? 'no detail'}`,
+      );
+    }
+    if (body.merged || body.merged_at) return 'merged';
+    return body.state;
   }
 
   /**
@@ -320,15 +572,14 @@ export class GithubPrService {
     token: string,
     { owner, repo, head }: { owner: string; repo: string; head: string },
   ): Promise<{ url: string; number: number } | null> {
-    const res = await this.fetchImpl(
+    const { status, body } = await this.conditionalGet<
+      Array<{ html_url: string; number: number }>
+    >(
       `${API}/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(`${owner}:${head}`)}&state=open`,
-      { headers: this.headers(token) },
+      token,
     );
-    if (!res.ok) return null;
-    const prs = (await res.json()) as Array<{
-      html_url: string;
-      number: number;
-    }>;
+    if (!isOkStatus(status)) return null;
+    const prs = body;
     return prs[0] ? { url: prs[0].html_url, number: prs[0].number } : null;
   }
 
@@ -342,13 +593,17 @@ export class GithubPrService {
     token: string,
     { owner, repo, number }: { owner: string; repo: string; number: number },
   ): Promise<PullDetail> {
-    const res = await this.fetchImpl(
-      `${API}/repos/${owner}/${repo}/pulls/${number}`,
-      {
-        headers: this.headers(token),
-      },
-    );
-    if (res.status === 404) {
+    const { status, body } = await this.conditionalGet<{
+      html_url: string;
+      number: number;
+      state: 'open' | 'closed';
+      merged?: boolean;
+      merged_at?: string | null;
+      mergeable_state?: string | null;
+      head?: { sha?: string; ref?: string };
+      message?: string;
+    }>(`${API}/repos/${owner}/${repo}/pulls/${number}`, token);
+    if (status === 404) {
       return {
         number,
         url: '',
@@ -358,23 +613,12 @@ export class GithubPrService {
         headRef: null,
       };
     }
-    if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as {
-        message?: string;
-      };
+    if (!isOkStatus(status)) {
       throw new Error(
-        `GitHub couldn't load PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`,
+        `GitHub couldn't load PR #${number} (${status}): ${body.message ?? 'no detail'}`,
       );
     }
-    const pr = (await res.json()) as {
-      html_url: string;
-      number: number;
-      state: 'open' | 'closed';
-      merged?: boolean;
-      merged_at?: string | null;
-      mergeable_state?: string | null;
-      head?: { sha?: string; ref?: string };
-    };
+    const pr = body;
     const state = pr.merged || pr.merged_at ? 'merged' : pr.state;
     return {
       number: pr.number,
@@ -395,20 +639,7 @@ export class GithubPrService {
     token: string,
     { owner, repo, ref }: { owner: string; repo: string; ref: string },
   ): Promise<CheckRun[]> {
-    const res = await this.fetchImpl(
-      `${API}/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}/check-runs?per_page=100`,
-      { headers: this.headers(token) },
-    );
-    if (res.status === 404) return [];
-    if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as {
-        message?: string;
-      };
-      throw new Error(
-        `GitHub couldn't list check-runs for ${owner}/${repo}@${ref} (${res.status}): ${errBody.message ?? 'no detail'}`,
-      );
-    }
-    const json = (await res.json()) as {
+    const { status, body } = await this.conditionalGet<{
       check_runs?: Array<{
         id: number;
         name: string;
@@ -417,7 +648,18 @@ export class GithubPrService {
         details_url?: string | null;
         html_url?: string | null;
       }>;
-    };
+      message?: string;
+    }>(
+      `${API}/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}/check-runs?per_page=100`,
+      token,
+    );
+    if (status === 404) return [];
+    if (!isOkStatus(status)) {
+      throw new Error(
+        `GitHub couldn't list check-runs for ${owner}/${repo}@${ref} (${status}): ${body.message ?? 'no detail'}`,
+      );
+    }
+    const json = body;
     return (json.check_runs ?? []).map((c) => ({
       id: c.id,
       name: c.name,
@@ -612,17 +854,28 @@ export class GithubPrService {
    */
   async pruneWebhooksExcept(
     token: string,
-    args: { owner: string; repo: string; urlPrefix: string; keepUrls: string[] },
+    args: {
+      owner: string;
+      repo: string;
+      urlPrefix: string;
+      keepUrls: string[];
+    },
   ): Promise<number> {
     const list = await this.fetchImpl(
       `${API}/repos/${args.owner}/${args.repo}/hooks`,
       { headers: this.headers(token) },
     );
     if (!list.ok) return 0;
-    const hooks = (await list.json()) as Array<{ id: number; config?: { url?: string } }>;
+    const hooks = (await list.json()) as Array<{
+      id: number;
+      config?: { url?: string };
+    }>;
     const keep = new Set(args.keepUrls);
     const stale = hooks.filter(
-      (h) => !!h.config?.url && h.config.url.startsWith(args.urlPrefix) && !keep.has(h.config.url),
+      (h) =>
+        !!h.config?.url &&
+        h.config.url.startsWith(args.urlPrefix) &&
+        !keep.has(h.config.url),
     );
     let deleted = 0;
     for (const h of stale) {
@@ -633,5 +886,116 @@ export class GithubPrService {
       if (res.ok) deleted++;
     }
     return deleted;
+  }
+
+  /**
+   * Batched mergeability for every OPEN PR targeting `base` in ONE GraphQL query (paginated) — the
+   * base-move refresh that replaces a per-PR REST fan-out. Draws on the SEPARATE GraphQL budget
+   * ({@link isGraphqlRateLimited}); throws {@link RateLimitedError} while that budget is paused.
+   */
+  async listOpenPullMergeability(
+    token: string,
+    { owner, repo, base }: { owner: string; repo: string; base: string },
+  ): Promise<
+    Array<{
+      number: number;
+      mergeStateStatus: string;
+      mergeableState: string;
+      headSha: string | null;
+    }>
+  > {
+    if (this.isGraphqlRateLimited()) {
+      throw new RateLimitedError(
+        `GitHub GraphQL rate-limited until ${new Date(this.graphqlPausedUntil!).toISOString()}`,
+      );
+    }
+    const query =
+      'query($owner:String!,$name:String!,$base:String!,$cursor:String){' +
+      'repository(owner:$owner,name:$name){' +
+      'pullRequests(first:100,states:OPEN,baseRefName:$base,after:$cursor){' +
+      'nodes{ number mergeable mergeStateStatus headRefOid }' +
+      'pageInfo{ endCursor hasNextPage }' +
+      '} } }';
+    const MAX_PAGES = 10;
+    const out: Array<{
+      number: number;
+      mergeStateStatus: string;
+      mergeableState: string;
+      headSha: string | null;
+    }> = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const res = await this.fetchImpl(`${API}/graphql`, {
+        method: 'POST',
+        headers: this.headers(token),
+        body: JSON.stringify({
+          query,
+          variables: { owner, name: repo, base, cursor },
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        data?: {
+          repository?: {
+            pullRequests?: {
+              nodes?: Array<{
+                number: number;
+                mergeStateStatus?: string | null;
+                headRefOid?: string | null;
+              }>;
+              pageInfo?: { endCursor?: string | null; hasNextPage?: boolean };
+            };
+          };
+        };
+        errors?: Array<{ message?: string }>;
+      };
+      this.captureGraphqlRateLimit(res, json);
+      const errorMessage = (json.errors ?? [])
+        .map((e) => e.message)
+        .filter(Boolean)
+        .join('; ');
+      const rateLimitError = /rate limit|RATE_LIMITED|abuse detection/i.test(
+        errorMessage,
+      );
+      if (
+        this.isGraphqlRateLimited() &&
+        (res.status === 403 || res.status === 429 || rateLimitError)
+      ) {
+        throw new RateLimitedError(
+          `GitHub GraphQL rate-limited until ${new Date(this.graphqlPausedUntil!).toISOString()}`,
+        );
+      }
+      if (!res.ok || json.errors?.length) {
+        throw new Error(
+          `GitHub refused the mergeability query for ${owner}/${repo} (${res.status}): ${
+            json.errors
+              ?.map((e) => e.message)
+              .filter(Boolean)
+              .join('; ') || 'no detail'
+          }`,
+        );
+      }
+      const connection = json.data?.repository?.pullRequests;
+      for (const node of connection?.nodes ?? []) {
+        out.push({
+          number: node.number,
+          mergeStateStatus: node.mergeStateStatus ?? 'UNKNOWN',
+          mergeableState: mapMergeStateStatus(node.mergeStateStatus),
+          headSha: node.headRefOid ?? null,
+        });
+      }
+      if (
+        !connection?.pageInfo?.hasNextPage ||
+        !connection.pageInfo.endCursor
+      ) {
+        break;
+      }
+      if (this.isGraphqlRateLimited()) {
+        throw new RateLimitedError(
+          `GitHub GraphQL rate-limited until ${new Date(this.graphqlPausedUntil!).toISOString()}`,
+        );
+      }
+      cursor = connection.pageInfo.endCursor;
+    }
+    return out;
   }
 }

@@ -172,7 +172,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     const provenance = args.auth?.refreshBack;
     if (!result.refreshedAuthSecret || !provenance || !this.authRefreshSink) return;
     try {
-      await this.authRefreshSink.persist(provenance.orgId, provenance.engine, result.refreshedAuthSecret);
+      await this.authRefreshSink.persist(provenance, result.refreshedAuthSecret);
     } catch (err) {
       this.logger.warn(`auth-refresh write-back failed (ignored): ${err instanceof Error ? err.message : err}`);
     }
@@ -501,12 +501,13 @@ export class RedisEngineRunner implements EngineRunnerPort {
       turnId,
       cwd: this.toContainerCwd(args.cwd, target),
       writableRoots: [CONTAINER_CONTEXT, CONTAINER_PLAYGROUND, ...(args.writableRoots ?? [])],
-      // Send ONLY the secret into the container — STRIP the host-only `refreshBack` provenance so org ids
-      // never ride Redis into the sandbox. Carry the non-secret `persistAuthRefresh` gate ONLY when set so the
-      // in-container engine reads its refreshed auth.json back solely for org-sourced credentials.
+      // Send the secret + the non-secret `kind` discriminator into the container — STRIP the host-only
+      // `refreshBack` provenance so org ids never ride Redis into the sandbox. Carry the non-secret
+      // `persistAuthRefresh` gate ONLY when set so the in-container engine reads its refreshed auth.json
+      // back solely for org-sourced credentials.
       ...(args.auth
         ? {
-            auth: { secret: args.auth.secret },
+            auth: { secret: args.auth.secret, ...(args.auth.kind ? { kind: args.auth.kind } : {}) },
             ...(args.auth.refreshBack ? { persistAuthRefresh: true } : {}),
           }
         : {}),

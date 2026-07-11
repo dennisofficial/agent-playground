@@ -78,6 +78,126 @@ export function useOrgCredentials(orgId: string) {
   });
 }
 
+// ── Claude credentials (multi-credential manager — the primary coding-engine auth surface) ─────────
+// The org keeps a LIST of Claude credentials; ONE is selected and funds all of the org's turns. Rows are
+// summaries only — token values are never returned. Owner-only server-side (list included; it exposes
+// account emails). Two kinds: `setup_token` (long-lived, never refreshed) and `personal` (OAuth login,
+// short-lived access token auto-refreshed in-container). Adding a personal login is a two-step flow:
+// `POST /authorize-url` mints the login URL, the operator logs in + pastes the returned `code#state`,
+// then `POST /` exchanges it. Adding a setup-token is a single `POST /` with the `sk-ant-oat…` value.
+
+export type ClaudeCredentialKind = "setup_token" | "personal";
+export type ClaudeCredentialStatus = "active" | "needs_reauth" | "error";
+
+/** A Claude credential row — a summary only; secret VALUES are never returned by the API. */
+export interface ClaudeCredential {
+  id: string;
+  label: string;
+  kind: ClaudeCredentialKind;
+  status: ClaudeCredentialStatus | string;
+  /** Personal-login access-token expiry (epoch ms); null for setup-tokens. */
+  expiresAt: number | null;
+  /** Personal-login account email (display only); null for setup-tokens. */
+  accountEmail: string | null;
+  /** Whether this credential is the org's active (selected) one. */
+  isSelected: boolean;
+}
+
+/**
+ * The org's Claude credential list. The endpoint is owner-only server-side (rows expose account emails),
+ * so pass `enabled: false` for non-owners to skip a guaranteed 403 — they get a banner, not the list.
+ */
+export function useClaudeCredentials(orgId: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.orgClaudeCredentials(orgId),
+    queryFn: () =>
+      webJson<ClaudeCredential[]>(`/orgs/${orgId}/claude-credentials`),
+    enabled: Boolean(orgId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+/** The server response for `POST /authorize-url`: the Claude login URL + the PKCE `state` to echo back. */
+export interface ClaudeAuthorizeUrl {
+  url: string;
+  state: string;
+  label: string;
+}
+
+/**
+ * Owner-only: step 1 of adding a personal login. Mints a PKCE-backed Claude login URL; the operator opens
+ * it, logs in with their subscription, and pastes the returned code. Does not invalidate the list (nothing
+ * is stored yet — the credential lands on the follow-up `useAddClaudeCredential` exchange).
+ */
+export function useCreateClaudeAuthorizeUrl(orgId: string) {
+  return useMutation({
+    mutationFn: (body: { label: string }) =>
+      webJson<ClaudeAuthorizeUrl>(`/orgs/${orgId}/claude-credentials/authorize-url`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+  });
+}
+
+/** Body for `POST /claude-credentials` — a personal login (`code`+`state`) OR a setup-token (`setupToken`). */
+export type AddClaudeCredentialBody =
+  | { label: string; code: string; state: string }
+  | { label: string; setupToken: string };
+
+/**
+ * Owner-only: create a credential — the personal-login exchange (`{code, state, label}`) or a setup-token
+ * (`{setupToken, label}`). The server auto-selects it when it's the org's first. Invalidates the list +
+ * the presence/session queries (a first credential flips the onboarding checklist).
+ */
+export function useAddClaudeCredential(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AddClaudeCredentialBody) =>
+      webJson<ClaudeCredential>(`/orgs/${orgId}/claude-credentials`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}
+
+/** Owner-only: set the org's active credential. Invalidates the list + presence/session (selection drives auth). */
+export function useSelectClaudeCredential(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (credentialId: string) =>
+      webJson<{ ok: true }>(`/orgs/${orgId}/claude-credentials/selected`, {
+        method: "PUT",
+        body: JSON.stringify({ credentialId }),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}
+
+/** Owner-only: delete a credential. Deleting the selected one clears the org pointer (FK ON DELETE SET NULL). */
+export function useDeleteClaudeCredential(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (credentialId: string) =>
+      webJson<{ ok: true }>(`/orgs/${orgId}/claude-credentials/${credentialId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}
+
 /**
  * An org's Claude subscription usage snapshot (the composer's usage ring). The unofficial usage endpoint
  * is aggressively rate-limited, so this polls in minutes, not seconds — never tighten `refetchInterval`.
@@ -434,6 +554,8 @@ export interface ConnectedRepo {
   name: string;
   gitUrl: string;
   defaultBranch: string;
+  /** Per-repo feature-branch prefix override; null uses the built-in default. */
+  branchPrefix: string | null;
   accessOk: boolean;
   /** Present on a failed access probe (connect / re-validate); the real GitHub reason. */
   reason?: string;
@@ -499,6 +621,8 @@ export function useReonboardRepo(orgId: string) {
 export interface UpdateRepoBody {
   name?: string;
   defaultBranch?: string;
+  /** Per-repo feature-branch prefix; empty string clears it back to the neutral default. */
+  branchPrefix?: string;
 }
 
 /** Update a repo's display name / base branch (owner only). */

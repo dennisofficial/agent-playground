@@ -283,8 +283,55 @@ body {
 .anim-pop {
   animation: atlas-pop 0.18s ease both;
 }
+@keyframes atlas-slide-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes atlas-slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes atlas-slide-in-bottom {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.anim-drawer-left {
+  animation: atlas-slide-in-left 0.22s ease both;
+}
+.anim-drawer-right {
+  animation: atlas-slide-in-right 0.22s ease both;
+}
+.anim-drawer-bottom {
+  animation: atlas-slide-in-bottom 0.22s ease both;
+}
 .pulse-dot {
   animation: atlas-softpulse 1.4s ease-in-out infinite;
+}
+/* CI-only "running" dot — opacity pulse ONLY (no scale). Scoped to the CI status dot so the shared
+   `pulse-dot`/StatusDot scale-pulse stays untouched. */
+@keyframes atlas-opacitypulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.ci-dot-pulse {
+  animation: atlas-opacitypulse 1.4s ease-in-out infinite;
 }
 .cursor-blink {
   animation: atlas-blink 1s step-end infinite;

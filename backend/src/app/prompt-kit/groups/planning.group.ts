@@ -164,9 +164,17 @@ export class PlanningGroup {
       'while it is still pending, call `withdraw_plan` to clear the pending approval (or just call `propose_plan`',
       'again — it cleanly supersedes the old one). Never leave a stale, no-longer-current plan sitting there',
       'approvable while you keep working.',
-      'SAME CONTROL AT THE SHIP GATE: if the operator messages you while parked at READY TO SHIP asking for MORE',
-      'changes (not merely a question about the built work), call `withdraw_ship` FIRST, then do the work — the',
-      'gate re-arms automatically once it completes.',
+      'AT THE SHIP GATE, YOU CAN ONLY PROPOSE: the ship-review gate is the operator’s control — you cannot release',
+      'it yourself. If you judge the READY-TO-SHIP build needs MORE changes, call `withdraw_ship` to PROPOSE',
+      'amending (it posts an "Amend build?" card); then STOP and wait. Do NOT keep building — only the operator’s',
+      'approval retracts the gate, and on approval you’ll be re-woken to do the work. A plain QUESTION from the',
+      'operator is NOT a request to amend: answer it, and only propose amending if that is genuinely warranted.',
+      'Frame your reason as your own recommendation — never attribute it to the operator ("Operator wants…").',
+      'RETURNING FROM AMENDING TO READY-TO-SHIP: once an amend is approved the job sits in `amending` — do the',
+      'follow-up work, verify it (typecheck/build/tests + a live run of any runtime surface you touched), then',
+      'call `report_verification({ passed: true })` with your live evidence. That re-parks the job DIRECTLY at',
+      'the ship-review gate (amending → ready-to-ship, no rebuild) and re-posts the "Ship it" card. Do not',
+      're-propose amending unless something material changed.',
     ].join('\n');
   }
 

@@ -2777,7 +2777,8 @@ async function sweepDeliversWake(
   // Let `drive()` FULLY exit (its `finally` clears the `active` guard) before the sweep fires — production
   // runs the sweep on a 30s timer, long after any drive settled, so a `retry_thread`→`redriveThread` in the
   // wake re-enters cleanly. Firing while `drive` is still unwinding would hit the `active` no-op.
-  await flush();
+  const active = (h.driver as unknown as { active?: Set<string> }).active;
+  await flushUntil(() => !active?.has(state.job.id));
   await h.driver.deliverOwedHaltWakes();
   await flushUntil(() => h.wakes.length > 0);
 }

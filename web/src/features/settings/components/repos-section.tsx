@@ -694,7 +694,7 @@ function RepoRow({
         };
 
   return (
-    <div className="flex items-start gap-4 px-4 py-[15px]">
+    <div className="flex flex-wrap items-start gap-4 px-4 py-[15px]">
       {/* identity */}
       <div className="min-w-0 flex-1">
         <div className="text-[13px] font-semibold text-text">{repo.name}</div>
@@ -722,7 +722,7 @@ function RepoRow({
       </div>
 
       {/* right: pill + actions */}
-      <div className="flex shrink-0 flex-col items-end gap-2.5">
+      <div className="flex w-full flex-col items-end gap-2.5 sm:w-auto sm:shrink-0">
         <span
           className="flex items-center gap-1.5 rounded-full px-2.5 py-[3px] text-[11px] font-medium"
           style={{
@@ -770,7 +770,7 @@ function RepoRow({
 
         {canManage ? (
           <>
-            <div className="mt-0.5 flex items-center gap-1.5">
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
               {repo.accessOk ? (
                 <button
                   type="button"
@@ -848,6 +848,7 @@ function RepoEditRow({
   const update = useUpdateRepo(orgId);
   const [name, setName] = useState(repo.name);
   const [branch, setBranch] = useState(repo.defaultBranch);
+  const [branchPrefix, setBranchPrefix] = useState(repo.branchPrefix ?? "");
 
   async function save() {
     if (update.isPending) return;
@@ -857,6 +858,8 @@ function RepoEditRow({
         body: {
           name: name.trim() || repo.name,
           defaultBranch: branch.trim() || repo.defaultBranch,
+          // Empty clears the override back to the neutral default.
+          branchPrefix: branchPrefix.trim(),
         },
       });
       onClose();
@@ -891,6 +894,17 @@ function RepoEditRow({
             value={branch}
             onChange={setBranch}
             fallback={repo.defaultBranch}
+          />
+        </div>
+        <div className="w-48">
+          <label className="mb-1.5 block text-[11.5px] font-medium text-dim">
+            Branch prefix
+          </label>
+          <input
+            value={branchPrefix}
+            onChange={(e) => setBranchPrefix(e.target.value)}
+            placeholder="feature/"
+            className="w-full rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none transition focus:border-accent"
           />
         </div>
       </div>

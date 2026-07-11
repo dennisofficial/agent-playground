@@ -13,7 +13,8 @@
  *
  * Integration: real Postgres (the dedicated `*_test` DB), an in-memory fake git (no actual clone) and a
  * fake docker-ish sandbox provider (no Docker). The real `JobLifecycleService` runs `deleteJobDeep`
- * per thread; `OrganizationService` resolves it via `ModuleRef` exactly as in production.
+ * per thread; `OrganizationService` reaches it through the injected `JOB_TEARDOWN` port (bound here to
+ * `JobLifecycleService` via `useExisting`, mirroring the @Global `DriverModule`) exactly as in production.
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -22,6 +23,7 @@ import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EnvService } from '../../_core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
+import { BrainGateway } from '../brain-gateway';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService } from '../git';
 import { CredentialResolver, TenantCredentialStore } from '../onboarding';
@@ -43,7 +45,7 @@ import {
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, WorktreeProvisioner } from '../driver';
+import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, JOB_TEARDOWN, WorktreeProvisioner } from '../driver';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
 import { TicketService } from '../tickets';
 import { OrganizationService } from './organization.service';
@@ -219,7 +221,21 @@ beforeEach(async () => {
       { provide: TicketService, useValue: { revertForDeletedThread: async () => {} } },
       { provide: TurnRegistry, useValue: { failRunningForJob: async () => 0 } },
       { provide: SkillUpdaterService, useValue: { reconcileOrgAsync: () => undefined } },
+      // JobLifecycleService construct-depends on the neutral driver→brain BrainGateway; deleteOrg's
+      // teardown path never fires a brain wake, so an inert stub satisfies DI without being called.
+      {
+        provide: BrainGateway,
+        useValue: {
+          openPrAtShip: async () => {},
+          notifyThreadHalted: async () => {},
+          notifyThreadDone: async () => {},
+          wakeForProvisioningFailure: async () => {},
+        } as unknown as BrainGateway,
+      },
       JobLifecycleService,
+      // OrganizationService injects @Inject(JOB_TEARDOWN); the @Global DriverModule binds the token to
+      // JobLifecycleService via useExisting — mirror that here so DI resolves in this standalone module.
+      { provide: JOB_TEARDOWN, useExisting: JobLifecycleService },
       OrganizationService,
     ],
   }).compile();

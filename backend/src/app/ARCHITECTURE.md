@@ -164,6 +164,16 @@ The tables stay separate; the unification is at four seams:
   the shared `intake` bundle so any build fixes a gap it hits (a missing secret, a new cache, a skill worth
   adding) so the *next* job inherits it. Same area, same tools, different framing.
 
+The onboarding bulk pass also makes each **user-facing surface** live-accessible in a browser through the
+preview proxy — it exposes the surface (`atlas-svc run` + Caddy reconcile a deterministic
+`https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN` route), probes it end-to-end AS A BROWSER with the
+baked `atlas-probe` helper (headless Playwright/chromium; classifies dns / bind_ip / port / dev_origin / cors
+/ api_base_url / cookie / blank blockers), and remediates env-first (persisting the resolved preview origins +
+cookie/CORS config into the setup-script + secret-file dimensions above; a minimal PR only when repo code must
+READ that env). `finish_onboarding`'s green-gate requires that live preview-accessibility evidence, so future
+jobs inherit a browser-reachable stack with no re-derivation. See
+`docs/adr/0007-live-service-accessibility-onboarding.md`.
+
 Skills load in-container via the SDK `plugins: [{type:'local', path}]` option (rendered to a host-owned
 `SKILL.md` dir per turn from `RunEngineArgs.skills`), independent of `settingSources: []` — so full
 filesystem-settings isolation is preserved while exactly the resolved skills are enabled.

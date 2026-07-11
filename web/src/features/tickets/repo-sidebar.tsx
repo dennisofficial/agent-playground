@@ -6,6 +6,9 @@ import { cn } from "@/lib/cn";
 import { ROUTES } from "@/lib/routes";
 import { useCurrentUser } from "@/lib/api/me";
 import { useAllRepos } from "@/lib/api/tickets-queries";
+import { useBreakpoint } from "@/lib/use-breakpoint";
+import { Drawer } from "@/components/ui/drawer";
+import { useLeftNav } from "@/features/shell/left-nav";
 
 const REPO_PALETTE = [
   "var(--accent)",
@@ -28,6 +31,25 @@ function repoColor(id: string): string {
  * Threads | Tickets switch returns to the threads workspace).
  */
 export function RepoSidebar() {
+  const { isMobile } = useBreakpoint();
+  const { open, setOpen } = useLeftNav();
+
+  if (isMobile) {
+    return (
+      <Drawer
+        side="left"
+        open={open}
+        onClose={() => setOpen(false)}
+        label="Repositories"
+      >
+        <RepoSidebarInner inDrawer />
+      </Drawer>
+    );
+  }
+  return <RepoSidebarInner />;
+}
+
+function RepoSidebarInner({ inDrawer }: { inDrawer?: boolean }) {
   const pathname = usePathname();
   // `/tickets/{orgId}/{repoId}` → the selected repo (highlight).
   const activeRepoId = pathname.startsWith("/tickets/")
@@ -39,7 +61,10 @@ export function RepoSidebar() {
 
   return (
     <aside
-      className="flex w-[236px] flex-none flex-col border-r border-border"
+      className={cn(
+        "flex flex-col",
+        inDrawer ? "w-full" : "w-[236px] flex-none border-r border-border",
+      )}
       style={{ background: "var(--surface-2)" }}
     >
       <div className="flex-none px-[15px] pb-2 pt-[15px]">

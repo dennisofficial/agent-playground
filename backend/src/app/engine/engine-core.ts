@@ -4,16 +4,10 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { structuredPatch as diffStructuredPatch } from 'diff';
-import { applyClaudeAuth } from './claude-auth';
 import { detectSessionLimitText, limitFromRateEvent, parseResetAt, type SessionLimitHit } from './session-limit';
 import { atlasEngineHomeDir, engineHomeKeyString, type EngineHomeKey } from './engine-home';
-import {
-  assertValidCodexAuthJson,
-  type CodexExtraMcpServers,
-  type CodexMcpBridge,
-  ensureCodexAuthHome,
-  readCodexAuthHome,
-} from './codex-auth-home';
+import { type CodexExtraMcpServers, type CodexMcpBridge, ensureCodexAuthHome } from './codex-auth-home';
+import { getEngineAuthAdapter } from './engine-auth-adapter';
 
 /** In-container path of the bundled Codex MCP tool-bridge server (baked by the Dockerfile, bind-mounted
  *  live — see `sandbox/image/mcp-bridge-server.ts`). codex spawns it via the config.toml `command`. */
@@ -272,8 +266,7 @@ export function toCodexEffort(e?: ReasoningEffort): CodexReasoningEffort | undef
  * It does exactly four things: plan/review (read-only) vs execute (writes confined to the worktree);
  * thread the run's subscription secret (always subscription — no api_key path); pin an ISOLATED agent home (CLAUDE_CONFIG_DIR/CODEX_HOME,
  * never the personal one); return { result, sessionId?, planText?, usage? }. Env-derived knobs arrive as
- * an {@link EngineCoreConfig} (read from `EnvService` on the host, from `process.env` in the container),
- * and logging goes through a tiny {@link CoreLogger} (Nest Logger on the host, console in the container).
+ * an {@link EngineCoreConfig} (read from `EnvService` on the host, from `process.env` in the container).
  */
 
 /** Env-derived configuration (the values the host reads from EnvService, the container from process.env). */
@@ -314,12 +307,6 @@ const DEFAULT_WORKER_MODEL = 'opus';
 // supported when using Codex with a ChatGPT account"), including `gpt-5-codex` and `gpt-5`. So we do NOT
 // pin a Codex model — we leave it unset and let the Codex SDK use the account's own default model.
 
-/** A minimal logger so the core stays Nest-free. */
-export interface CoreLogger {
-  warn(message: string): void;
-}
-
-const NOOP_LOGGER: CoreLogger = { warn: () => undefined };
 
 /**
  * Whether a resumable Claude session transcript exists under this config dir. The SDK stores it at
@@ -510,6 +497,25 @@ const VALIDATE_SUBAGENT: NonNullable<Options['agents']> = {
   },
 };
 
+// PROTOTYPE subagent — planning/design-time mockup author. Like `validate` it writes ONLY into
+// /context/artifacts (a static HTML preview), so it gets Write + Bash (Bash to run the target repo's
+// design-system build and render/screenshot the mockup with on-demand Playwright for a fidelity self-check)
+// but NO Edit/LSP (authors one new file, never edits source) and NO Task (no recursive fan-out). Merged on
+// EXECUTE turns alongside the writers; the brain runs execute-mode, so it can spawn this at planning time.
+const PROTOTYPE_SUBAGENT: NonNullable<Options['agents']> = {
+  prototype: {
+    description:
+      'Design-fidelity PROTOTYPE subagent (Sonnet) — a lightweight in-house claude.ai/design. Delegate a UI ' +
+      'MOCKUP here, NAMING the exact `/context/artifacts/<file>.html` for it to write. It DISCOVERS the app\'s ' +
+      'real design system (tokens, theme, fonts, components) and reproduces it faithfully — no invented ' +
+      'palette — then renders + screenshots the result to self-check before returning a tight summary (the ' +
+      'artifact path + the design sources it grounded in). Prefer it over a generic writer for UI previews.',
+    tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
+    model: 'claude-sonnet-5',
+    prompt: renderAgentPrompt(Agent.PROTOTYPE),
+  },
+};
+
 // The build-facing subagents whose persona must carry the repo's house-style envelope (the FAN_OUT writers
 // + the REVIEW_AGENT) → the `Agent` their prompt is assembled from. The host bakes conventions into the
 // MAIN-agent `systemPrompt` only; these subagent personas are built HERE from static prompts, so this map is
@@ -588,11 +594,11 @@ export class EngineCore {
   // One Codex client per (auth, sandbox) — each funds its own runs from its own home.
   private readonly codexClients = new Map<string, Codex>();
 
+  // The SDK modules are injected (host + container share this class); env-derived knobs arrive as `cfg`.
   constructor(
     private readonly claudeSdk: typeof import('@anthropic-ai/claude-agent-sdk'),
     private readonly codexSdk: typeof import('@openai/codex-sdk'),
     private readonly cfg: EngineCoreConfig,
-    private readonly logger: CoreLogger = NOOP_LOGGER,
   ) {}
 
   private homeRoot(): string | undefined {
@@ -848,7 +854,13 @@ export class EngineCore {
       ...process.env,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     };
-    applyClaudeAuth(subprocessEnv, auth);
+    getEngineAuthAdapter('claude').materialize({
+      homeRoot: this.homeRoot(),
+      key: sandboxKey,
+      secret: auth.secret,
+      kind: auth.kind,
+      env: subprocessEnv,
+    });
 
     // Capture the CLI subprocess's stderr (the real API/transport error text) into a bounded ring
     // buffer so a non-success result can surface it — the SDK otherwise flattens it into `subtype`.
@@ -895,12 +907,13 @@ export class EngineCore {
       // never reads a project-scope `.claude/agents/` (excluded from the allowed sources), and Atlas's own
       // CLAUDE_CONFIG_DIR never has a user-scope `agents/` dir either, so these always win by simple absence.
       // Advisory subagents (read-only, Sonnet) are always available; the WRITER subagents
-      // (implement/implement-deep) and the build-time VALIDATE subagent are added ONLY on EXECUTE turns, so a
-      // plan/brain/review turn can never fan out a file-mutating or evidence-writing subagent. See
-      // SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT.
+      // (implement/implement-deep), the build-time VALIDATE subagent, and the design-fidelity PROTOTYPE
+      // subagent are added ONLY on EXECUTE turns, so a plan/brain/review turn can never fan out a
+      // file-mutating or evidence-writing subagent. See
+      // SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT / PROTOTYPE_SUBAGENT.
       agents: applyConventionsToAgents(
         mode === 'execute'
-          ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT }
+          ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT, ...PROTOTYPE_SUBAGENT }
           : SUBAGENTS,
         args.repoConventions,
       ),
@@ -1300,12 +1313,26 @@ export class EngineCore {
     const planText = (planMode && capturedPlan) || undefined;
     const summary = planText || result || '(no summary)';
     onEvent?.({ kind: 'result', text: summary });
+
+    // Auth-refresh write-back: a personal credential's `.credentials.json` is rewritten in place when the
+    // SDK self-refreshes it. Read it back and relay it so the host can persist the fresh blob. Gated on
+    // `persistAuthRefresh` — the host only sets it for ORG-sourced auth, so an env-fallback run never
+    // leaks its ambient token here.
+    const refreshedAuthSecret = args.persistAuthRefresh
+      ? getEngineAuthAdapter('claude').readBackRefresh({
+          homeRoot: this.homeRoot(),
+          key: sandboxKey,
+          writtenSecret: auth.secret,
+        })
+      : undefined;
+
     return {
       result: summary,
       sessionId: resolvedSession,
       ...(planText ? { planText } : {}),
       ...(usage ? { usage } : {}),
       ...(sessionLimit ? { sessionLimit } : {}),
+      ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
     };
   }
 
@@ -1524,7 +1551,11 @@ export class EngineCore {
     // blob (else the stored credential is a rotting snapshot). Gated on `persistAuthRefresh` — the host
     // only sets it for ORG-sourced auth, so an env-fallback run never leaks its ambient token here.
     const refreshedAuthSecret = args.persistAuthRefresh
-      ? this.readBackCodexRefresh(sandboxKey, auth.secret)
+      ? getEngineAuthAdapter('codex').readBackRefresh({
+          homeRoot: this.homeRoot(),
+          key: sandboxKey,
+          writtenSecret: auth.secret,
+        })
       : undefined;
 
     return {
@@ -1533,24 +1564,6 @@ export class EngineCore {
       ...(usage ? { usage } : {}),
       ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
     };
-  }
-
-  /**
-   * Read the Codex overlay `auth.json` back after a turn and return it ONLY when it changed from what we
-   * wrote (a real token refresh) AND still parses as a valid auth.json. Best-effort: any failure returns
-   * `undefined` (never fail the turn, never propagate a corrupt overlay). Cheap string compare → no-op on
-   * the common path where Codex didn't refresh.
-   */
-  private readBackCodexRefresh(sandboxKey: EngineHomeKey, writtenSecret: string): string | undefined {
-    try {
-      const after = readCodexAuthHome(this.homeRoot(), sandboxKey);
-      if (!after || after === writtenSecret) return undefined;
-      assertValidCodexAuthJson(JSON.parse(after));
-      return after;
-    } catch (err) {
-      this.logger.warn(`codex auth-refresh readback skipped: ${err instanceof Error ? err.message : err}`);
-      return undefined;
-    }
   }
 }
 
