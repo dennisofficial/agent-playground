@@ -77,14 +77,24 @@ export interface CiSyncDelta {
  * For the GitHub adapter this is emitted only by `handlePrWebhook` (the `/webhooks/github/state` front
  * door), never by `handle` (the `/webhooks/github/events` work-events front door). `repo-push` is a
  * verified push to a repo's DEFAULT branch — the state door marks that repo's open PRs due-now so the
- * reconciler catches a base-move-induced conflict in seconds (GitHub emits no webhook for one).
+ * reconciler catches a base-move-induced conflict in seconds (GitHub emits no webhook for one). `pr-rearm`
+ * is a mergeability-affecting webhook that touches exactly ONE PR (head push, draft↔ready) — the state
+ * door re-arms that PR's fast poll via `GitStateReconciler.markJobDue` rather than fanning out a base-move
+ * REST refresh across every open PR.
  */
 export type IngressResult =
   | { outcome: 'accepted'; event: ParsedEvent }
   | { outcome: 'ignored'; reason: IngressRejectionReason; detail?: string }
   | { outcome: 'rejected'; reason: IngressRejectionReason; detail?: string }
   | { outcome: 'pr-sync'; delta: PrStateDelta }
-  | { outcome: 'repo-push'; orgId: string; repoId: string };
+  | { outcome: 'repo-push'; orgId: string; repoId: string }
+  | {
+      outcome: 'pr-rearm';
+      orgId: string;
+      repoId: string;
+      prNumber?: number | null;
+      branch?: string | null;
+    };
 
 /**
  * The inbound-only port every gateway adapter implements. One method: take a `RawNotification`, do

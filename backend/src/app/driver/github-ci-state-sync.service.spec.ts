@@ -68,6 +68,7 @@ function make(over: {
     findOpenPullByHead,
     getPullDetail,
     listCheckRuns,
+    isRateLimited: vi.fn(() => false),
   } as unknown as GithubPrService;
 
   const update = vi.fn(async () => ({}));
@@ -145,7 +146,11 @@ describe('GithubCiStateSync recompute (via schedule)', () => {
     });
     expect(update).toHaveBeenCalledWith(
       { id: 'job-1' },
-      { ci_status: 'success', ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 } },
+      {
+        ci_status: 'success',
+        ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 },
+        pr_mergeable: 'clean',
+      },
     );
   });
 
@@ -158,7 +163,11 @@ describe('GithubCiStateSync recompute (via schedule)', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(update).toHaveBeenCalledWith(
       { id: 'job-1' },
-      { ci_status: 'failure', ci_counts: { failing: 2, pending: 0, passed: 3, skipped: 1, total: 6 } },
+      {
+        ci_status: 'failure',
+        ci_counts: { failing: 2, pending: 0, passed: 3, skipped: 1, total: 6 },
+        pr_mergeable: 'clean',
+      },
     );
   });
 
@@ -171,7 +180,11 @@ describe('GithubCiStateSync recompute (via schedule)', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(update).toHaveBeenCalledWith(
       { id: 'job-1' },
-      { ci_status: 'pending', ci_counts: { failing: 0, pending: 1, passed: 1, skipped: 0, total: 2 } },
+      {
+        ci_status: 'pending',
+        ci_counts: { failing: 0, pending: 1, passed: 1, skipped: 0, total: 2 },
+        pr_mergeable: 'clean',
+      },
     );
   });
 
@@ -196,6 +209,7 @@ describe('GithubCiStateSync recompute (via schedule)', () => {
       job: {
         ci_status: 'success',
         ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 },
+        pr_mergeable: 'clean',
       },
     });
     sync.schedule(DELTA);
@@ -246,7 +260,42 @@ describe('GithubCiStateSync recompute (via schedule)', () => {
     });
     expect(update).toHaveBeenCalledWith(
       { id: 'job-1' },
-      { ci_status: 'success', ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 } },
+      {
+        ci_status: 'success',
+        ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 },
+        pr_mergeable: 'clean',
+      },
+    );
+  });
+
+  it('no-op (no getPullDetail, no update) when rate-limited', async () => {
+    const { sync, update, pr, getPullDetail } = make({ detail: detail(), runs: [run('success')] });
+    (pr.isRateLimited as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    sync.schedule(DELTA);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(getPullDetail).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('writes both columns when only pr_mergeable changed (ci unchanged)', async () => {
+    const { sync, update } = make({
+      detail: detail({ mergeableState: 'dirty' }),
+      runs: [run('success')],
+      job: {
+        ci_status: 'success',
+        ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 },
+        pr_mergeable: 'clean',
+      },
+    });
+    sync.schedule(DELTA);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(update).toHaveBeenCalledWith(
+      { id: 'job-1' },
+      {
+        ci_status: 'success',
+        ci_counts: { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 },
+        pr_mergeable: 'dirty',
+      },
     );
   });
 });

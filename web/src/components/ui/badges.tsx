@@ -3,8 +3,11 @@
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  AlertTriangle,
+  ArrowDownToLine,
   CheckCircle2,
   CircleDashed,
+  CircleSlash2,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -483,6 +486,82 @@ export function CiHeaderGlyph({
             document.body,
           )
         : null}
+    </span>
+  );
+}
+
+/**
+ * Mergeable-state glyph for a PR head (backend `jobs.pr_mergeable`, GitHub's `mergeable_state`
+ * vocabulary) — surfaces GitHub's computed mergeability beside the CI glyph in the job header.
+ *   clean / has_hooks → green git-merge "Ready to merge"
+ *   dirty             → amber alert     "Merge conflict"
+ *   blocked           → amber slash     "Merge blocked"
+ *   behind            → amber down-arrow "Behind base branch"
+ *   unstable          → amber alert     "Unstable — non-required checks failing"
+ *   draft             → faint slash     "Draft"
+ * `unknown` / null (mergeability still computing, or no PR) → no badge, to keep the resting row quiet.
+ */
+export function mergeableGlyph(mergeable: string | null): {
+  Icon: typeof GitMerge;
+  color: string;
+  title: string;
+} | null {
+  switch (mergeable) {
+    case "clean":
+    case "has_hooks":
+      return { Icon: GitMerge, color: "var(--green)", title: "Ready to merge" };
+    case "dirty":
+      return {
+        Icon: AlertTriangle,
+        color: "var(--amber)",
+        title: "Merge conflict",
+      };
+    case "blocked":
+      return {
+        Icon: CircleSlash2,
+        color: "var(--amber)",
+        title: "Merge blocked",
+      };
+    case "behind":
+      return {
+        Icon: ArrowDownToLine,
+        color: "var(--amber)",
+        title: "Behind base branch",
+      };
+    case "unstable":
+      return {
+        Icon: AlertTriangle,
+        color: "var(--amber)",
+        title: "Unstable — non-required checks failing",
+      };
+    case "draft":
+      return { Icon: CircleSlash2, color: "var(--faint)", title: "Draft" };
+    default:
+      return null;
+  }
+}
+
+/** The mergeable-state glyph shown in the job header beside {@link CiHeaderGlyph} — a `·` separator + the
+ *  {@link mergeableGlyph} icon. Renders nothing while mergeability is unknown/computing (null) so the
+ *  resting PR row stays quiet. */
+export function MergeableHeaderGlyph({
+  mergeable,
+}: {
+  mergeable: string | null;
+}) {
+  const g = mergeableGlyph(mergeable);
+  if (!g) return null;
+  const { Icon, color, title } = g;
+  return (
+    <span className="flex shrink-0 items-center gap-0.5" title={title}>
+      <span className="font-mono text-[9.5px] text-faint">·</span>
+      <Icon
+        size={11}
+        strokeWidth={2}
+        style={{ color }}
+        className="shrink-0"
+        aria-label={title}
+      />
     </span>
   );
 }
