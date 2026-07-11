@@ -81,6 +81,25 @@ export class JobDependencyService {
     return prState === 'merged' || prState === 'closed' || status === 'cancelled';
   }
 
+  /**
+   * Validate a set of prospective `dependsOn` blockers for a NOT-YET-CREATED dependent, so `create_job` can
+   * reject a bad/cross-repo edge BEFORE it persists (and parks) the new job — leaving no orphan behind a
+   * false failure. Mirrors {@link addDependency}'s endpoint check (existence + same org+repo). Self-dep and
+   * cycles are moot for a fresh job (its id isn't knowable to the caller, and nothing depends on it yet).
+   */
+  async assertDependenciesValid(args: {
+    orgId: string;
+    repoId: string;
+    dependsOnJobIds: string[];
+  }): Promise<void> {
+    for (const dependsOnJobId of args.dependsOnJobIds) {
+      const blocker = await this.jobs.findOne({
+        where: { id: dependsOnJobId, org_id: args.orgId, repo_id: args.repoId },
+      });
+      if (!blocker) throw new NotFoundException('job not found in this repo');
+    }
+  }
+
   /** Add an advisory "blocked by" edge: `jobId` depends on `dependsOnJobId`. Parks `jobId` if the blocker
    *  is still live. `seed` (born-blocked only) is the first-turn message to replay once unblocked. */
   async addDependency(args: {
@@ -256,13 +275,20 @@ export class JobDependencyService {
     if (!upd.affected) return; // lost the race — already unblocked.
 
     const note = this.renderDidntLandNote(blockers, blockerJobId, resolution);
-    await this.brainGateway
-      .wakeUnblockedJob(dependent.id, dependent.org_id, dependent.repo_id, {
+    try {
+      await this.brainGateway.wakeUnblockedJob(dependent.id, dependent.org_id, dependent.repo_id, {
         seed: dependent.blocked_seed_message,
         note,
-      })
-      .catch((err) => this.logger.warn(`wakeUnblockedJob failed for job=${dependent.id}: ${err}`));
-    await this.jobs.update({ id: dependent.id }, { blocked_seed_message: null });
+      });
+      // Only drop the seed once the wake is confirmed dispatched — otherwise a sweep-driven retry would
+      // have nothing to replay.
+      await this.jobs.update({ id: dependent.id }, { blocked_seed_message: null });
+    } catch (err) {
+      // The wake dropped — re-park (seed intact) so the JobUnblockSweep re-drives it. Guarded on `open`
+      // so we never clobber a status the just-started wake already advanced past.
+      this.logger.warn(`wakeUnblockedJob failed for job=${dependent.id}; re-parking for sweep: ${err}`);
+      await this.jobs.update({ id: dependent.id, status: 'open' }, { status: 'blocked' });
+    }
   }
 
   /** How a blocker OTHER than the one resolving right now resolved, from its persisted state. Only
@@ -308,11 +334,22 @@ export class JobDependencyService {
 
     const job = await this.jobs.findOne({ where: { id: jobId } });
     if (!job) return true;
-    await this.brainGateway
-      .wakeUnblockedJob(jobId, job.org_id, job.repo_id, { seed: job.blocked_seed_message, note })
-      .catch((err) => this.logger.warn(`wakeUnblockedJob failed for job=${jobId}: ${err}`));
-    await this.jobs.update({ id: jobId }, { blocked_seed_message: null });
-    return true;
+    try {
+      await this.brainGateway.wakeUnblockedJob(jobId, job.org_id, job.repo_id, {
+        seed: job.blocked_seed_message,
+        note,
+      });
+      // Only drop the seed once the wake is confirmed dispatched.
+      await this.jobs.update({ id: jobId }, { blocked_seed_message: null });
+      return true;
+    } catch (err) {
+      // The wake dropped — re-park (seed intact) so the JobUnblockSweep re-drives it, and report
+      // "not unblocked" so the sweep keeps this job eligible. Guarded on `open` to avoid clobbering a
+      // status the just-started wake already advanced past.
+      this.logger.warn(`wakeUnblockedJob failed for job=${jobId}; re-parking for sweep: ${err}`);
+      await this.jobs.update({ id: jobId, status: 'open' }, { status: 'blocked' });
+      return false;
+    }
   }
 
   /**

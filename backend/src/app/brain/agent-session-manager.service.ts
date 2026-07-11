@@ -3638,6 +3638,22 @@ export class AgentSessionManager
           };
         }
 
+        // Validate every dependsOn blocker (existence + same repo) BEFORE creating the job, so a bad or
+        // cross-repo id rejects cleanly with no residue — otherwise an early edge could park a live
+        // 'blocked' job that later wakes/replays even though this create_job reported failure.
+        const dependsOn = strArray(args['dependsOn']) ?? [];
+        if (dependsOn.length > 0) {
+          try {
+            await this.jobDeps.assertDependenciesValid({
+              orgId: stimulus.orgId,
+              repoId: stimulus.repoId,
+              dependsOnJobIds: dependsOn,
+            });
+          } catch (err) {
+            return { ok: false, reason: errText(err) };
+          }
+        }
+
         // Same org + repo as this thread — derived from the closure, never from tool args (no cross-tenant
         // escape). The follow-up inherits this thread's base branch and starts scoping immediately.
         const current = await this.store.loadJob(stimulus.jobId);
@@ -3650,7 +3666,6 @@ export class AgentSessionManager
           createdByTitle: current.title,
         });
 
-        const dependsOn = strArray(args['dependsOn']) ?? [];
         let anyBlocked = false;
         if (dependsOn.length > 0) {
           try {
