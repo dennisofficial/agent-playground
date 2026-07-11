@@ -8,6 +8,7 @@ import { Markdown } from "./markdown";
 import { contextConvoNodeForHref } from "./node-registry";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
 import { SubagentCard, indexLiveSubagents, subagentNode } from "./subagents";
+import { streamingBlockKeys } from "./streaming-caret";
 import { Button } from "@/components/ui/button";
 import { useRetryJob, useRetryTurn } from "@/lib/api/job-queries";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
@@ -259,6 +260,10 @@ export function buildLiveTurnItems(
 
   // Peel subagent activity out of the live turn: hide its child blocks, render the spawning Task as a card.
   const sub = indexLiveSubagents(turn.blocks as LiveBlock[]);
+  // Only the single most-recent open block of each kind carries the streaming caret — a live turn can hold
+  // several open blocks at once (interleaved thinking, a re-attached turn's stranded block), and painting a
+  // caret on each is the "multiple cursors" bug.
+  const streamingKeys = streamingBlockKeys(turn.blocks as LiveBlock[], turn.active);
 
   for (const b of turn.blocks as LiveBlock[]) {
     if (sub.childKeys.has(b.key)) continue;
@@ -311,7 +316,7 @@ export function buildLiveTurnItems(
         node: (
           <StreamTextBubble
             text={b.text}
-            streaming={!b.done && turn.active}
+            streaming={streamingKeys.has(b.key)}
             onSelectNode={onSelectNode}
           />
         ),
@@ -321,7 +326,7 @@ export function buildLiveTurnItems(
       items.push({
         key: b.key,
         node: (
-          <ThinkingBlock text={b.text} streaming={!b.done && turn.active} />
+          <ThinkingBlock text={b.text} streaming={streamingKeys.has(b.key)} />
         ),
         ts: b.emittedAt,
       });

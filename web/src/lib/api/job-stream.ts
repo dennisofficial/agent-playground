@@ -153,12 +153,16 @@ class ThreadStreamStore {
     const cur = this.map.get(key);
 
     // `turn_start` — the FIRST frame of a turn. Mark the lane active + record the authoritative start time
-    // so the working indicator can flip ON immediately and tick an elapsed timer. Preserve any blocks a
-    // (rare) out-of-order earlier frame already produced; just stamp active + startedAt.
+    // so the working indicator can flip ON immediately and tick an elapsed timer. A `turn_start` is
+    // authoritative-fresh: it always carries the lowest seq of its turn (a same-turn delta can never
+    // precede it) and mid-turn reconnects arrive as `snapshot`, so the only blocks ever present here are
+    // STALE leftovers — a previous turn not yet cleared, or a re-attach's stranded open blocks. Drop them
+    // so a reattach's replay rebuilds the lane cleanly; a genuinely new turn has none to drop. `startedAt`
+    // stays (elapsed continuity).
     if (ev.kind === "turn_start") {
       if (cur && seq <= cur.lastSeq) return;
       this.map.set(key, {
-        blocks: cur?.blocks ?? [],
+        blocks: [],
         active: true,
         lastSeq: seq,
         startedAt: ev.startedAt ?? cur?.startedAt ?? Date.now(),
@@ -446,6 +450,17 @@ export function applyStreamFrame(
 /** Clear a thread's live turn lane — call AFTER the durable `/messages` refetch lands (post `turn_end`). */
 export function endLiveTurn(jobId: string, lane: string = MAIN_LANE): void {
   store.end(jobId, lane);
+}
+
+/**
+ * Non-React read of a lane's current live turn (mirrors the private `store.get`). For tests/diagnostics
+ * that need to inspect the store without mounting the `useLiveTurn` hook.
+ */
+export function peekLiveTurn(
+  jobId: string,
+  lane: string = MAIN_LANE,
+): LiveTurn | undefined {
+  return store.get(jobId, lane);
 }
 
 /**
