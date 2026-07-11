@@ -28,6 +28,7 @@ import {
   CiHeaderGlyph,
   Dot,
   KindBadge,
+  MergeableHeaderGlyph,
   StatusPie,
 } from "@/components/ui/badges";
 import { STATUS_META } from "@/lib/api/status";
@@ -326,6 +327,9 @@ export function Navigator({
                     {text}
                   </span>
                   {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
+                  {showCi ? (
+                    <MergeableHeaderGlyph mergeable={job!.prMergeable} />
+                  ) : null}
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
@@ -343,6 +347,9 @@ export function Navigator({
                     {text}
                   </span>
                   {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
+                  {showCi ? (
+                    <MergeableHeaderGlyph mergeable={job!.prMergeable} />
+                  ) : null}
                 </div>
               );
             })()
