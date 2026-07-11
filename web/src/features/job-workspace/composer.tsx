@@ -162,13 +162,27 @@ export function Composer({
     const offline = connectivity !== "online";
     if (offline) {
       if (comments.length === 0 && attachments.length === 0 && !trimmed) return;
+      // The flusher drains each queued item with mutually-exclusive precedence (comments → attachments →
+      // text): a single item carrying BOTH comments and attachments would only send its comments and
+      // silently drop the attachments. So when comments are present, enqueue any attachments as their OWN
+      // outbox message (text rides with the comments) so both are delivered on reconnect.
+      const now = Date.now();
       composerStore.enqueue(jobRef, {
         id: crypto.randomUUID(),
-        createdAt: Date.now(),
+        createdAt: now,
         text: trimmed,
         comments,
-        attachments,
+        attachments: comments.length > 0 ? [] : attachments,
       });
+      if (comments.length > 0 && attachments.length > 0) {
+        composerStore.enqueue(jobRef, {
+          id: crypto.randomUUID(),
+          createdAt: now + 1, // orders after the comments item in the FIFO drain
+          text: "",
+          comments: [],
+          attachments,
+        });
+      }
       // Drop the chips/tray WITHOUT revoking blob URLs — the queued chip still previews them (see
       // use-attachments' clear()). Only the draft TEXT is cleared here, not the whole draft, so
       // clearDraft's outbox-preserving re-persist isn't needed on this path.

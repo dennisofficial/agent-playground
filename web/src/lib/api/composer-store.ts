@@ -98,9 +98,28 @@ class ComposerStore {
     string,
     ReturnType<typeof setTimeout>
   >();
+  /** Global (not jobId-keyed) listeners fired on any outbox change — see `subscribeGlobal`. */
+  private readonly globalListeners = new Set<() => void>();
 
   private notify(jobId: string): void {
     this.entries.get(jobId)?.listeners.forEach((l) => l());
+  }
+
+  /**
+   * Subscribe to ANY outbox change across every Job (not keyed by jobId). `<OutboxFlusher>` uses this to
+   * attempt a drain when the Composer's mid-flight fallback re-enqueues a message while connectivity is
+   * still "online" — a sub-RECONNECTING_AFTER_MS blip that self-heals via `probe()` never flips the
+   * connectivity status, so the flusher's status-transition path never fires for it.
+   */
+  subscribeGlobal(cb: () => void): () => void {
+    this.globalListeners.add(cb);
+    return () => {
+      this.globalListeners.delete(cb);
+    };
+  }
+
+  private notifyGlobal(): void {
+    this.globalListeners.forEach((l) => l());
   }
 
   /** Create + hydrate an entry for `ref.jobId` if absent (idempotent — safe to call on every render).
@@ -189,6 +208,7 @@ class ComposerStore {
     const prev = this.getDraft(ref.jobId).outbox;
     this.replace(ref, { outbox: updater(prev) });
     this.schedulePersist(ref.jobId);
+    this.notifyGlobal();
   }
 
   /** Append a queued offline-send to a Job's outbox — called by the Composer's offline `send()` branch and
