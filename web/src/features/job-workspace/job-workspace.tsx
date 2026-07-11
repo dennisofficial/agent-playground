@@ -244,6 +244,14 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     orgName: inboxThread?.org.name ?? "Organization",
     orgColor: orgSwatch(),
     repoName: inboxThread?.repo.name ?? repoId,
+    // Prefer the full pipeline (fresher, and the only source once threads/builds exist); fall back to the
+    // inbox row for a job still in `no_job` (pre-build `open`/chat) — the most common time to want the
+    // parent link. `job?.createdBy ?? inboxThread?.createdBy` would wrongly fall through to the inbox row
+    // whenever the pipeline's own value is null, so gate on `job` existing at all instead.
+    createdBy: job
+      ? (job.createdBy ?? null)
+      : (inboxThread?.createdBy ?? null),
+    blockedBy: job ? (job.blockedBy ?? []) : (inboxThread?.blockedBy ?? []),
   };
 
   const onConversation = openConversation;
@@ -304,6 +312,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         onSelectNode={(node) => selectNode(node, { push: true })}
         onOpenNav={onOpenNav}
         onOpenDetail={onOpenDetail}
+        blockedBy={meta.blockedBy}
       />
     ) : (
       <Conversation
@@ -347,6 +356,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
           onConversation={closeDetail}
           onSelectNode={(node) => selectNode(node, { push: true })}
           onBack={onBack}
+          blockedBy={meta.blockedBy}
           tracksComments
         />
       ) : (
@@ -516,6 +526,8 @@ function baseCrumbLabel(node: string): string {
   if (node === "plan") return "Plan";
   if (node === "decision") return "Decision record";
   if (node === "tickets") return "Tickets raised";
+  if (node === "created") return "Created jobs";
+  if (node === "blocked-by") return "Blocked by";
   const file = /^(?:spec|gen|artifact):(.+)$/.exec(node);
   if (file) return file[1].split("/").pop() ?? file[1];
   return node;

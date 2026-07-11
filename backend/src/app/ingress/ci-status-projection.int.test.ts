@@ -45,6 +45,7 @@ import {
   GithubPrStateSync,
   GitStateReconciler,
 } from '../driver';
+import { JobDependencyService } from '../job-deps';
 import { GithubNotificationSource } from './github-notification.source';
 import { GithubEventsWebhookController } from './github-webhook.controller';
 import { WebSurfaceController } from '../surface/web-surface.controller';
@@ -95,6 +96,10 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
         GithubNotificationSource,
         GithubCiStateSync,
         DriverStoreService,
+        {
+          provide: JobDependencyService,
+          useValue: { blockersOf: async () => [] },
+        },
         {
           provide: GithubPrStateSync,
           useValue: { dispatch: async () => undefined },
@@ -211,6 +216,7 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
       };
       inst.jobs = jobs;
       inst.repos = repos;
+      inst.jobDeps = { blockersOfManyBlocked: async () => new Map() };
       const rowsBefore = (await WebSurfaceController.prototype.allThreads.call(
         inst,
         { id: 'user-1' } as UserEntity,

@@ -117,6 +117,7 @@ import {
 import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { TicketService } from '../tickets';
+import { JobDependencyService } from '../job-deps';
 import type {
   TicketKind,
   TicketPriority,
@@ -314,6 +315,8 @@ export class AgentSessionManager
     private readonly awareness: PipelineAwarenessStore,
     // The internal board/backlog — captured out-of-scope work + promotion to follow-up threads.
     private readonly tickets: TicketService,
+    // Job-to-job "blocked by" edges + the wake funnel (create_job dependsOn, link_job_dependency, manual UI).
+    private readonly jobDeps: JobDependencyService,
     // Per-org engine subscription secret for the in-sandbox brain turn (the SDK harness).
     private readonly creds: CredentialResolver,
     // User-defined MCP servers resolved onto the brain turn (org/repo tiers, `brain` surface).
@@ -896,6 +899,37 @@ export class AgentSessionManager
   }
 
   /**
+   * WAKE a job whose block just cleared (every blocker reached a terminal state). Born-blocked jobs
+   * (a create_job dependsOn that never started) replay their stored seed as the first turn; a job that
+   * was manually blocked while it already had a session resumes that session with a synthetic wake
+   * stimulus. `note` (d1) names any blocker that did NOT merge so the brain re-checks its assumptions.
+   * Fire-and-forget (the JobUnblockSweep is the retry); concurrency-safe via handleChatTurn/startFollowUpJob.
+   */
+  async wakeUnblockedJob(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+    input: { seed: string | null; note: string | null },
+  ): Promise<void> {
+    if (input.seed != null) {
+      const firstMessage = input.note ? `${input.note}\n\n${input.seed}` : input.seed;
+      await this.startFollowUpJob(jobId, orgId, repoId, firstMessage);
+      return;
+    }
+    const body = input.note
+      ? `${input.note}\n\nAll blocking jobs have now resolved — you are unblocked. Resume the work you had planned.`
+      : 'All blocking jobs have now resolved — you are unblocked. Resume the work you had planned.';
+    const stimulus = harnessDeliveryStimulus({
+      jobId,
+      orgId,
+      repoId,
+      body,
+      seedRow: { label: 'Unblocked — a blocking job resolved.', chunkKey: `seed:unblock:${jobId}` },
+    });
+    await this.handleChatTurn(stimulus);
+  }
+
+  /**
    * WAKE the job brain because the operator APPROVED its "Amend build?" proposal (the `withdraw_ship`
    * tool's card). By this point the operator retract path has already run (`awaiting_ship_review →
    * amending`), so the brain just needs to do the follow-up work it proposed. The brain's session is
@@ -937,6 +971,13 @@ export class AgentSessionManager
     // already rejected with 503 at the surface; this catches internal/boot re-delivery callers so the
     // in-flight set can actually quiesce. A no-op (not a throw) — internal callers are fire-and-forget.
     if (this.election.getState() === 'draining') return;
+
+    // A dependency-blocked job is fully parked: no system wake/re-drive should start its brain until the
+    // dependency service first flips it back to `open`.
+    if (await this.isJobBlocked(stimulus.jobId)) {
+      this.logger.log(`job=${stimulus.jobId} is blocked; dropping system turn until it is unblocked`);
+      return;
+    }
 
     // Render this harness seed as a visible transcript row (the console mirrors the agent's turns — every
     // seed the brain reads must be legible). Runs whether the seed steers into a live turn or spawns a
@@ -1208,6 +1249,13 @@ export class AgentSessionManager
   async pumpThread(jobId: string, orgId: string, repoId: string): Promise<void> {
     if (this.election.getState() === 'draining') return;
 
+    // Leave pending operator chat undelivered while the job is dependency-blocked. The unblock wake flips the
+    // job open and the delivery sweep/poke will then carry the queued messages into the brain.
+    if (await this.isJobBlocked(jobId)) {
+      this.logger.log(`job=${jobId} is blocked; parking pending chat delivery`);
+      return;
+    }
+
     const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
     if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
       const pending = await this.stimulusStore
@@ -1429,6 +1477,13 @@ export class AgentSessionManager
     await this.engineRunner.stop(live.turn_id);
     this.logger.log(`stop requested for brain turn ${live.turn_id} (job ${jobId})`);
     return true;
+  }
+
+  private async isJobBlocked(jobId: string): Promise<boolean> {
+    const loadJob = this.store.loadJob?.bind(this.store);
+    if (!loadJob) return false;
+    const job = await loadJob(jobId).catch(() => null);
+    return job?.status === 'blocked';
   }
 
   /**
@@ -1799,6 +1854,10 @@ export class AgentSessionManager
     // this synthetic wake has nothing to do — drop it rather than run a redundant turn on the warm box.
     if (stimulus.seedResetVerify && !this.pendingResetVerify.has(resetKey)) return;
 
+    // The job may have become blocked after this turn was queued. Do not mark chat delivered here; it should
+    // stay pending and run after the dependency wake reopens the job.
+    if (await this.isJobBlocked(stimulus.jobId)) return;
+
     // A composer message NEVER answers an open `ask_question` card — answers come ONLY through the
     // question-card component (`/answer-question`, which stamps the card directly + includes its own
     // free-text "Other…" field). Anything typed in the composer while a card is showing — or queued
@@ -2089,6 +2148,7 @@ export class AgentSessionManager
     const brainJob = await this.store
       .loadJob(stimulus.jobId)
       .catch(() => null);
+    if (brainJob?.status === 'blocked') return;
 
     // Build the host-side tool dispatch table, scoped to this thread. Curated by kind (onboarding/review
     // get build-free subsets — see buildTools).
@@ -3702,6 +3762,22 @@ export class AgentSessionManager
           };
         }
 
+        // Validate every dependsOn blocker (existence + same repo) BEFORE creating the job, so a bad or
+        // cross-repo id rejects cleanly with no residue — otherwise an early edge could park a live
+        // 'blocked' job that later wakes/replays even though this create_job reported failure.
+        const dependsOn = strArray(args['dependsOn']) ?? [];
+        if (dependsOn.length > 0) {
+          try {
+            await this.jobDeps.assertDependenciesValid({
+              orgId: stimulus.orgId,
+              repoId: stimulus.repoId,
+              dependsOnJobIds: dependsOn,
+            });
+          } catch (err) {
+            return { ok: false, reason: errText(err) };
+          }
+        }
+
         // Same org + repo as this thread — derived from the closure, never from tool args (no cross-tenant
         // escape). The follow-up inherits this thread's base branch and starts scoping immediately.
         const current = await this.store.loadJob(stimulus.jobId);
@@ -3710,7 +3786,39 @@ export class AgentSessionManager
           repoId: stimulus.repoId,
           title,
           baseBranch: current.baseBranch,
+          createdByJobId: stimulus.jobId,
+          createdByTitle: current.title,
         });
+
+        let anyBlocked = false;
+        if (dependsOn.length > 0) {
+          try {
+            for (const dependsOnJobId of dependsOn) {
+              const { blocked } = await this.jobDeps.addDependency({
+                orgId: stimulus.orgId,
+                repoId: stimulus.repoId,
+                jobId: newJobId,
+                dependsOnJobId,
+                seed: firstMessage,
+              });
+              anyBlocked ||= blocked;
+            }
+          } catch (err) {
+            return { ok: false, jobId: newJobId, reason: errText(err) };
+          }
+        }
+
+        if (anyBlocked) {
+          this.logger.log(
+            `thread ${stimulus.jobId} created follow-up ${newJobId}, blocked on ${dependsOn.length} job(s)`,
+          );
+          return {
+            ok: true,
+            jobId: newJobId,
+            blocked: true,
+            message: `Created follow-up "${title}" — blocked on ${dependsOn.length} job(s); it will start when they resolve.`,
+          };
+        }
 
         // Kick the new thread's brain with its opening intent. Fire-and-forget — the parent's turn doesn't
         // block on the child's provisioning (~30s); the intent is recorded so it's visible if the start fails.
@@ -3730,6 +3838,7 @@ export class AgentSessionManager
         return {
           ok: true,
           jobId: newJobId,
+          blocked: false,
           message: `Created follow-up "${title}" and started it.`,
         };
       },
@@ -3936,14 +4045,41 @@ export class AgentSessionManager
         }
       },
 
+      link_job_dependency: async (args) => {
+        const jobId = String(args['jobId'] ?? '').trim();
+        const dependsOnJobId = String(args['dependsOnJobId'] ?? '').trim();
+        if (!jobId || !dependsOnJobId)
+          return { ok: false, reason: 'jobId and dependsOnJobId are required' };
+        try {
+          const { blocked } = await this.jobDeps.addDependency({
+            orgId: stimulus.orgId,
+            repoId: stimulus.repoId,
+            jobId,
+            dependsOnJobId,
+          });
+          return {
+            ok: true,
+            blocked,
+            message: blocked
+              ? 'Linked dependency — the job is now blocked until its blocker resolves.'
+              : 'Linked dependency (blocker already resolved — no live block).',
+          };
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+      },
+
       promote_ticket: async (args) => {
         const ticketId = String(args['ticketId'] ?? '').trim();
         if (!ticketId) return { ok: false, reason: 'ticketId is required' };
         try {
+          const current = await this.store.loadJob(stimulus.jobId);
           const result = await this.tickets.promote({
             orgId: stimulus.orgId,
             repoId: stimulus.repoId,
             ticketId,
+            createdByJobId: stimulus.jobId,
+            createdByTitle: current.title,
           });
           if (result.created && result.seedText) {
             // Kick the new thread's brain in-process (same as create_job). Fire-and-forget.

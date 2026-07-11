@@ -17,6 +17,7 @@ import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
 import type { CodexReviewEntity, JobEntity, ThreadEntity } from '../persistence/entities';
 import type { BlockSink, TurnHarnessFactory } from '../surface';
+import type { JobDependencyService } from '../job-deps';
 
 /** Creds stub: no per-org secret → the engine uses its env fallback (these tests stub the engine). */
 const fakeCreds = {
@@ -417,6 +418,7 @@ function makeBrainStore(opts: { reviewRunning: boolean; jobs: Repository<JobEnti
     reviews,
     stub, // dataSource
     stub, // titler
+    { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
   );
 }
 

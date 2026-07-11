@@ -282,6 +282,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       {} as never, // skillFiles (SkillFileWriter)
       {} as never, // skillInstaller (SkillInstallerService)
       {} as never, // git (LocalGitService)
+      {} as never, // jobDeps (JobDependencyService)
     );
   }
 

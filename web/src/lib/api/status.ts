@@ -39,6 +39,9 @@ export const STATUS_META: Record<JobStatus, StatusMeta> = {
   // Ship review was retracted — the built work is being amended, not re-planned. Same restrained slate
   // dot as every other "needs you" gate (the amber lives on the sidebar GROUP swatch, not the row dot).
   amending: { label: "Amending", color: "var(--slate)", pulse: false },
+  // Parked waiting on a blocker job's PR to merge — the system owns the next step, not the operator, so
+  // it gets the dedicated warning amber (the merge-conflict glyph's hue) rather than the "needs you" slate.
+  blocked: { label: "Blocked", color: "var(--amber)", pulse: false },
   done: { label: "Done", color: "var(--green)", pulse: false },
   triaging: { label: "Triaging", color: "var(--slate)", pulse: true },
   cancelled: { label: "Cancelled", color: "var(--faint)", pulse: false },
@@ -75,6 +78,8 @@ export function toJobStatus(status: WireJobStatus): JobStatus {
       return "awaiting_ship_review";
     case "amending":
       return "amending";
+    case "blocked":
+      return "blocked";
     case "done":
       return "done";
     case "cancelled":

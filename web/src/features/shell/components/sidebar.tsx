@@ -626,6 +626,7 @@ function RepoGroup({
 /** The fixed swatch/label color per {@link JobSection} (matches the sidebar-redesign mockup palette). */
 const SECTION_COLOR: Record<JobSection, string> = {
   planning: "var(--blue)",
+  blocked: "var(--amber)",
   awaiting: "var(--slate)",
   building: "var(--accent)",
   amending: "var(--amber)",

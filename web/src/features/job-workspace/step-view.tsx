@@ -50,6 +50,8 @@ import {
   serviceHeaderSubtitle,
 } from "./service-log-view";
 import { TicketsRaisedPane } from "./tickets-raised-pane";
+import { CreatedJobsPane } from "./created-jobs-pane";
+import { BlockedByPane } from "./blocked-by-pane";
 import { useCommentableRef } from "./use-text-selection";
 import { useReviewComments } from "./review-comments";
 import { makeResolveFileLink } from "./repo-file-links";
@@ -62,6 +64,7 @@ import {
 import {
   APPROVE_ACTION_ID,
   type ContextFileContent,
+  type JobBlocker,
   type PipelineState,
   type WebApprovalCard,
 } from "@/lib/api/types";
@@ -85,6 +88,7 @@ export function PhaseView({
   onBack,
   onOpenNav,
   onOpenDetail,
+  blockedBy,
   tracksComments = false,
 }: {
   jobRef: JobRef;
@@ -104,6 +108,10 @@ export function PhaseView({
   /** Below xl: top-bar toggles for the Navigator / Detail drawers (undefined = no button, desktop). */
   onOpenNav?: () => void;
   onOpenDetail?: () => void;
+  /** The live blockers for this job, computed by `job-workspace.tsx` with the inbox fallback so a job
+   *  still in `no_job` (created blocked pre-plan) shows its blockers instead of an empty pane. Mirrors
+   *  the same list the navigator's "Blocked by" row counts. */
+  blockedBy?: JobBlocker[];
   /**
    * Only the RIGHT (detail) pane's `PhaseView` instance owns the review-comments `activeTarget` — the LEFT
    * (lane) instance's `selectedNode` is always a transcript lane (a bare thread/step id, or a
@@ -216,6 +224,19 @@ export function PhaseView({
     title = "Tickets raised";
     subtitle = "out-of-scope work Atlas captured from this job";
     body = <TicketsRaisedPane jobRef={jobRef} />;
+  } else if (selectedNode === "created") {
+    title = "Created jobs";
+    subtitle = "jobs this job spawned";
+    body = <CreatedJobsPane jobRef={jobRef} />;
+  } else if (selectedNode === "blocked-by") {
+    title = "Blocked by";
+    subtitle = "jobs this one is waiting on";
+    body = (
+      <BlockedByPane
+        jobRef={jobRef}
+        blockedBy={blockedBy ?? job?.blockedBy ?? []}
+      />
+    );
   } else if (selectedNode.startsWith("service:")) {
     const svcId = selectedNode.slice("service:".length);
     const svc =

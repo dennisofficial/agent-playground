@@ -40,6 +40,7 @@ import { LocalGitService } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { TenantCredentialStore } from '../onboarding';
 import { GithubPrService } from '../git';
+import { JobDependencyService } from '../job-deps';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ActiveTurnEntity,
@@ -333,6 +334,12 @@ beforeEach(async () => {
         provide: TicketService,
         useValue: {
           revertForDeletedThread: vi.fn().mockResolvedValue(undefined),
+        },
+      },
+      {
+        provide: JobDependencyService,
+        useValue: {
+          onBlockerResolved: vi.fn().mockResolvedValue(undefined),
         },
       },
       {
@@ -849,12 +856,18 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
           },
         },
         {
+          provide: JobDependencyService,
+          useValue: {
+            onBlockerResolved: vi.fn().mockResolvedValue(undefined),
+          },
+        },
+        TurnRegistry, // the REAL service — this gate's whole point
+        {
           provide: BrainGateway,
           useValue: {
             wakeForProvisioningFailure: vi.fn().mockResolvedValue(undefined),
           },
         },
-        TurnRegistry, // the REAL service — this gate's whole point
         JobLifecycleService,
       ],
     }).compile();

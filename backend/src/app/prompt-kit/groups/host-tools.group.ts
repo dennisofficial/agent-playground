@@ -40,7 +40,8 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__dispatch_build       — (gated) dispatch an already-approved full build`,
       `  - mcp__${BRIDGE_SERVER_NAME}__retry_thread         — re-drive a HALTED build thread you were woken about, passing {threadId, guidance} (your fix note); bounded attempts, then escalate (see HALTED THREADS)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__note_cleared_block   — record that you CLEARED a halt by RETRIEVING an existing answer, passing {threadId, reason, evidence} (the source you cited); call BEFORE retry_thread (see HALTED THREADS)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__create_job           — spin off a NEW job on this same repo (see CREATE_JOB below)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__create_job           — spin off a NEW job on this same repo; optionally born blocked with dependsOn (see CREATE_JOB below)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__link_job_dependency  — explicitly mark one existing same-repo job as blocked by another`,
       `  - mcp__${BRIDGE_SERVER_NAME}__create_ticket        — capture work on this repo's board/backlog for later (see TICKETS below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__list_tickets         — list this repo's tickets (optionally by status)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__update_ticket        — edit a ticket / move it between board columns`,
@@ -80,15 +81,19 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /** create_job — spin off a follow-up thread NOW. */
+  /** create_job — spin off a follow-up thread, optionally born blocked on same-repo blockers. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1060, condition: isBuildBrain })
   createJob(): string {
     return [
-      'CREATE_JOB — when the work splits into a separate unit of its own AND should start NOW, create a',
-      'follow-up thread rather than overloading this one. Args: { title, firstMessage }. `firstMessage` is the',
-      'opening intent the new thread starts on (write it as you would brief a fresh session); the new thread',
-      'starts scoping immediately and independently. Only do this when the operator asked for a follow-up or',
-      'the split is clearly warranted — one tightly-scoped follow-up per call, not a backlog.',
+      'CREATE_JOB — when the work splits into a separate unit of its own, create a follow-up thread rather',
+      'than overloading this one. Args: { title, firstMessage, dependsOn? }. `firstMessage` is the opening',
+      'intent the new thread starts on (write it as you would brief a fresh session). By default the new job',
+      'starts scoping immediately and independently. If it explicitly needs another SAME-REPO job to land',
+      'first, pass dependsOn: jobId or jobId[] and it is born BLOCKED; its brain will not run until every',
+      'blocker resolves. Dependencies are explicit only — never assume an out-of-scope follow-up depends on',
+      'the current job unless that is actually required. Use link_job_dependency to add a blocked-by edge',
+      'between two existing jobs later. Only do this when the operator asked for a follow-up or the split is',
+      'clearly warranted — one tightly-scoped follow-up per call, not a backlog.',
     ].join('\n');
   }
 
@@ -110,7 +115,8 @@ export class HostToolsGroup {
       '    similar:[…] }, NOTHING was created — the board already has close matches. Read them: if one already',
       '    covers this, update_ticket that existing one (or skip); only if it is genuinely new, call',
       '    create_ticket again with the SAME args plus confirm:true to file it.',
-      'create_ticket vs create_job: a TICKET is a note for LATER (no work starts); a JOB starts work NOW.',
+      'create_ticket vs create_job: a TICKET is a note for LATER (no work starts); a JOB starts work NOW',
+      'unless you explicitly pass create_job.dependsOn, in which case it is parked until its blocker resolves.',
       'Default to a ticket when deferring. Use promote_ticket later to turn a ticket into a working thread.',
       'Use list_tickets to check the backlog before proposing new work; update_ticket to re-prioritize or move.',
     ].join('\n');

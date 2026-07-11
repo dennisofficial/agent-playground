@@ -54,6 +54,9 @@ export const qk = {
   /** Tickets raised FROM one job (`?originJobId=`) — the job workspace's "Tickets raised" panel. */
   jobTickets: (orgId: string, repoId: string, jobId: string) =>
     ["job-tickets", orgId, repoId, jobId] as const,
+  /** Jobs spawned FROM one job (`GET …/jobs/:jobId/created`) — the job workspace's "Created jobs" panel. */
+  jobCreated: (orgId: string, repoId: string, jobId: string) =>
+    ["job-created", orgId, repoId, jobId] as const,
   /** One org's reusable house-style profiles (`GET /web/orgs/:orgId/convention-profiles`). */
   orgConventionProfiles: (orgId: string) =>
     ["org-convention-profiles", orgId] as const,

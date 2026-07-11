@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, MoreThan, Not, Repository } from 'typeorm';
 import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../domain';
@@ -15,6 +15,7 @@ import type {
 } from '../surface';
 // Direct leaf import (not the '../surface' barrel): brain-store otherwise only TYPE-imports from surface,
 // and a runtime value import of the whole barrel would add a surface→brain→brain-store→surface cycle.
+import { JobDependencyService } from '../job-deps';
 import { webTicketCard } from '../surface/web-ticket-card';
 import { nextQuestionId } from '../surface/web-question-card';
 import { renderPlan } from '../driver/render-plan';
@@ -64,6 +65,8 @@ const ORDINAL_GAP = 10;
  */
 @Injectable()
 export class BrainStoreService {
+  private readonly logger = new Logger(BrainStoreService.name);
+
   constructor(
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
@@ -82,6 +85,7 @@ export class BrainStoreService {
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly titler: JobTitler,
+    private readonly jobDeps: JobDependencyService,
   ) {}
 
   /**
@@ -1793,6 +1797,9 @@ export class BrainStoreService {
   /** Cancel a thread's build (a denied plan). */
   async cancel(jobId: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { status: 'cancelled' });
+    await this.jobDeps
+      .onBlockerResolved(jobId, 'cancelled')
+      .catch((err) => this.logger.warn(`cancel: wake funnel failed for blocker ${jobId}: ${err}`));
   }
 
   /** The ticket a thread was promoted from / works (`threads.ticket_id`), or null. */
@@ -1822,6 +1829,10 @@ export class BrainStoreService {
     ticketId?: string | null;
     /** Born-with kind — e.g. `'onboarding'` for an Atlas-run repo init thread. Default null. */
     kind?: JobKind | null;
+    /** The job whose brain spawned this follow-up (closure-derived, never tool args). */
+    createdByJobId?: string | null;
+    /** The spawning job's current title, snapshotted immutably. */
+    createdByTitle?: string | null;
   }): Promise<string> {
     // Route a provided title through the shared titler so the new thread is born with a short, scannable
     // sidebar label (fail-soft). A null title (no seed text) stays null. An onboarding thread keeps its
@@ -1840,6 +1851,10 @@ export class BrainStoreService {
         base_branch: input.baseBranch,
         ticket_id: input.ticketId ?? null,
         ...(input.kind ? { kind: input.kind } : {}),
+        created_by_job_id: input.createdByJobId ?? null,
+        created_by: input.createdByJobId
+          ? { jobId: input.createdByJobId, title: input.createdByTitle ?? null }
+          : null,
       }),
     );
     return row.id;
@@ -1866,6 +1881,7 @@ function toThread(row: JobEntity): Job {
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     shipReviewApprovedAt: row.ship_review_approved_at,
+    createdBy: row.created_by ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
