@@ -12,8 +12,8 @@ export type JobSection =
   | "merged";
 
 export const SECTION_ORDER: JobSection[] = [
-  "planning",
   "blocked",
+  "planning",
   "awaiting",
   "building",
   "amending",

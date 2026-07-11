@@ -20,16 +20,14 @@ import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
  * state. Each row resolves the blocker before navigating — a hard-deleted blocker 404s, so we toast instead
  * of routing into a dead job.
  */
-export function BlockedByPane({
-  jobRef,
-  blockedBy,
-}: {
-  jobRef: JobRef;
-  blockedBy: JobBlocker[];
-}) {
+/**
+ * Navigate to a blocker job — shared by the "Blocked by" detail pane and the conversation-pane blocked
+ * overlay. Resolves the blocker first (a hard-deleted blocker 404s, so we toast instead of routing into a
+ * dead job). Returns the click handler + the toast element to render.
+ */
+export function useOpenBlocker(jobRef: JobRef) {
   const router = useRouter();
   const { toast, show } = useEphemeralToast();
-
   const openBlocker = async (blockerJobId: string) => {
     try {
       await resolveJob({ ...jobRef, jobId: blockerJobId });
@@ -48,6 +46,17 @@ export function BlockedByPane({
       }
     }
   };
+  return { openBlocker, toast };
+}
+
+export function BlockedByPane({
+  jobRef,
+  blockedBy,
+}: {
+  jobRef: JobRef;
+  blockedBy: JobBlocker[];
+}) {
+  const { openBlocker, toast } = useOpenBlocker(jobRef);
 
   if (blockedBy.length === 0) {
     return (
@@ -82,7 +91,7 @@ export function BlockedByPane({
   );
 }
 
-function BlockerRow({
+export function BlockerRow({
   blocker,
   onClick,
 }: {

@@ -1,22 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Ban, MoreHorizontal, Pencil, Trash2, Unlock } from "lucide-react";
 import { useAllJobs } from "@/lib/api/inbox";
-import { useAddJobDependency } from "@/lib/api/job-queries";
-import { qk } from "@/lib/api/query-keys";
+import { useAddJobDependency, useUnblockJob } from "@/lib/api/job-queries";
+import { mutationErrorMessage, type JobRef } from "@/lib/api/job-api";
 import {
-  removeJobDependency,
-  ThreadApiError,
-  type JobRef,
-} from "@/lib/api/job-api";
+  groupThreadsBySection,
+  SECTION_LABEL,
+} from "@/lib/api/job-section";
 import type { JobBlocker, JobStatus } from "@/lib/api/types";
 import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
-
-/** A mutation's error, unwrapped to a message worth showing the operator — the backend's own 400 text
- *  (e.g. "can't block a job that is already building or finished…") when we have it, else a flat fallback. */
-function mutationErrorMessage(err: unknown, fallback: string): string {
-  return err instanceof ThreadApiError ? err.message : fallback;
-}
 
 /** Job statuses a manual block is still meaningful for — mirrors the backend guard ("can't block a job
  *  that's already building or finished"). The backend is the source of truth (a stale client check just
@@ -27,20 +19,6 @@ const BLOCKABLE_STATUSES = new Set<JobStatus>([
   "awaiting_approval",
   "blocked",
 ]);
-
-/** Removes every current blocker edge in one go (the kebab "Unblock") — the backend has no batch endpoint,
- *  so this fires one `DELETE …/dependencies/:id` per blocker. */
-function useUnblockJob(jobRef: JobRef, blockedBy: JobBlocker[]) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () =>
-      Promise.all(blockedBy.map((b) => removeJobDependency(jobRef, b.jobId))),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(jobRef) });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
-  });
-}
 
 /** Kebab → "Rename job" + "Unblock" (when blocked) + "Block on another job…" + a two-click "Delete job". */
 export function JobMenu({
@@ -89,18 +67,20 @@ export function JobMenu({
   const unblock = useUnblockJob(jobRef, blockedBy);
   const { toast, show: showToast } = useEphemeralToast();
 
-  // Other jobs on the SAME repo — a job can only block on a sibling in its own repo.
+  // Other jobs on the SAME repo — a job can only block on a sibling in its own repo. Grouped + ordered
+  // into the same sections as the sidebar (Planning → Blocked → Building → Ready to Ship → PR Open …) so
+  // it's easy to find the right blocker; `merged` jobs are skipped (blocking on an already-merged job is
+  // pointless — its terminal state would just clear the block immediately).
   const { data: allJobs = [] } = useAllJobs();
-  const pickableJobs = useMemo(
-    () =>
-      allJobs.filter(
-        (t) =>
-          t.org.id === jobRef.orgId &&
-          t.repo.id === jobRef.repoId &&
-          t.id !== jobRef.jobId,
-      ),
-    [allJobs, jobRef],
-  );
+  const pickableSections = useMemo(() => {
+    const pickable = allJobs.filter(
+      (t) =>
+        t.org.id === jobRef.orgId &&
+        t.repo.id === jobRef.repoId &&
+        t.id !== jobRef.jobId,
+    );
+    return groupThreadsBySection(pickable).filter((g) => g.section !== "merged");
+  }, [allJobs, jobRef]);
 
   return (
     <div className="relative" ref={ref}>
@@ -165,36 +145,43 @@ export function JobMenu({
             Block on another job…
           </button>
           {picking && canBlock ? (
-            <div className="max-h-48 overflow-y-auto border-t border-border py-1">
-              {pickableJobs.length === 0 ? (
+            <div className="max-h-60 overflow-y-auto border-t border-border py-1">
+              {pickableSections.length === 0 ? (
                 <div className="px-3 py-1.5 text-[11px] text-faint">
                   No other jobs on this repo
                 </div>
               ) : (
-                pickableJobs.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    disabled={addDependency.isPending}
-                    onClick={() =>
-                      addDependency.mutate(t.id, {
-                        onSuccess: () => {
-                          setPicking(false);
-                          setOpen(false);
-                        },
-                        onError: (err) =>
-                          showToast(
-                            mutationErrorMessage(
-                              err,
-                              "Couldn't block that job.",
-                            ),
-                          ),
-                      })
-                    }
-                    className="block w-full truncate px-3 py-1.5 text-left text-[11.5px] text-dim transition hover:bg-surface-2 hover:text-text disabled:opacity-50"
-                  >
-                    {t.title}
-                  </button>
+                pickableSections.map(({ section, threads }) => (
+                  <div key={section}>
+                    <div className="px-3 pb-0.5 pt-1.5 text-[9.5px] font-semibold uppercase tracking-wide text-faint">
+                      {SECTION_LABEL[section]}
+                    </div>
+                    {threads.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        disabled={addDependency.isPending}
+                        onClick={() =>
+                          addDependency.mutate(t.id, {
+                            onSuccess: () => {
+                              setPicking(false);
+                              setOpen(false);
+                            },
+                            onError: (err) =>
+                              showToast(
+                                mutationErrorMessage(
+                                  err,
+                                  "Couldn't block that job.",
+                                ),
+                              ),
+                          })
+                        }
+                        className="block w-full truncate px-3 py-1.5 text-left text-[11.5px] text-dim transition hover:bg-surface-2 hover:text-text disabled:opacity-50"
+                      >
+                        {t.title}
+                      </button>
+                    ))}
+                  </div>
                 ))
               )}
             </div>
