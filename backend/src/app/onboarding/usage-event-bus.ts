@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { Observable, Subject } from 'rxjs';
+import { Subject, type Observable } from 'rxjs';
 import type { OrgUsage } from '@workspace/shared';
 
 /** One org's usage snapshot changed — fanned out so the repo /events SSE can push the live usage ring to clients. */
-export interface UsageChange {
+export type UsageChange = {
   orgId: string;
   usage: OrgUsage;
-}
+};
 
 /**
  * Realtime fan-out for Claude-subscription usage changes. `OauthUsageService` publishes on a harvested-window
