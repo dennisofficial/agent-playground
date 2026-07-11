@@ -81,4 +81,15 @@ describe('HostStatsService (integration, real host numbers)', () => {
     expect(list).toHaveBeenCalledTimes(1);
     expect(systemDf).toHaveBeenCalledTimes(1);
   }, 10_000);
+
+  it('scopes the container count to Atlas-managed sandboxes via the label filter', async () => {
+    const list = vi.fn(() => Promise.resolve([]));
+    const service = new HostStatsService(fakeEngine({ list }));
+
+    await service.collect();
+
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ all: true, label: 'atlas.managed=1' }),
+    );
+  }, 10_000);
 });
