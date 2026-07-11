@@ -408,6 +408,9 @@ export function CiHeaderGlyph({
   ci: CiStatus | null;
   counts?: CiCounts | null;
 }) {
+  // No CI reported → render nothing (no glyph, no separator). Keeps "no CI" visually distinct from the
+  // `skipped` dashed-ring, which the faint-vs-muted tint alone read too similarly.
+  if (ci == null) return null;
   const g = ciGlyph(ci);
   const { Icon, color, title, spin } = g;
   const segments = counts ? ciCountSegments(counts) : [];
@@ -457,6 +460,8 @@ export function CiStatusDot({
   ci: CiStatus | null;
   size?: number;
 }) {
+  // No CI reported → no dot (mirrors CiHeaderGlyph; "no CI" shows nothing, not a faint ring).
+  if (ci == null) return null;
   const g = ciGlyph(ci);
   return (
     <span
