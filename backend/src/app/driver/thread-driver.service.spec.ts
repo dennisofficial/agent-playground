@@ -746,6 +746,8 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     prUrl: null,
     prNumber: null,
     shipReviewApprovedAt: null,
+    autoApprove: false,
+    autoApproveBy: null,
     createdBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
