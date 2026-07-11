@@ -5,8 +5,12 @@ import { Boxes, Server } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   useHostStats,
+  useHostStatsHistory,
+  useHostStatsRealtime,
   type HostStats as HostStatsSnapshot,
+  type HostStatsHistoryPoint,
 } from "@/lib/api/host-stats";
+import { MetricChart } from "./host-stats-chart";
 
 const FRESHNESS_STALE_MS = 15_000;
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
@@ -217,44 +221,60 @@ function MiniTrigger({
   );
 }
 
-function StatRow({
+function MetricBlock({
   label,
   value,
-  pct,
   color,
+  history,
+  dataKey,
+  yMax,
+  valueSuffix,
+  stepped,
   caption,
+  axisHint,
 }: {
   label: string;
   value: string;
-  pct: number;
   color: string;
+  history: HostStatsHistoryPoint[];
+  dataKey: "cpuPct" | "memPct" | "diskPct" | "containersRunning";
+  yMax: number | "dataMax+1";
+  valueSuffix?: string;
+  stepped?: boolean;
   caption?: string;
+  axisHint?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-[11px]">
-      <div className="flex items-center justify-between">
-        <span className="flex items-center gap-[7px] text-[11px] text-dim">
-          <span
-            className="h-1.5 w-1.5 rounded-[2px]"
-            style={{ background: color }}
-          />
+    <div className="flex flex-col">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-faint">
           {label}
         </span>
-        <span className="font-mono text-[10px] tabular-nums text-faint">
+        <span
+          className="font-mono text-[15px] font-semibold tabular-nums"
+          style={{ color }}
+        >
           {value}
         </span>
       </div>
-      <div className="h-[3px] w-full overflow-hidden rounded-full bg-border">
-        <div
-          className="h-full rounded-full"
-          style={{
-            width: `${Math.min(100, Math.max(0, pct))}%`,
-            background: color,
-          }}
+      <div className="mt-[7px]">
+        <MetricChart
+          data={history}
+          color={color}
+          dataKey={dataKey}
+          yMax={yMax}
+          valueSuffix={valueSuffix}
+          stepped={stepped}
         />
       </div>
+      {axisHint ? (
+        <div className="mt-1 flex justify-between font-mono text-[8.5px] text-faint">
+          <span>-24h</span>
+          <span>now</span>
+        </div>
+      ) : null}
       {caption ? (
-        <div className="mt-1 text-[10px] text-faint">{caption}</div>
+        <div className="mt-[5px] text-[10px] text-faint">{caption}</div>
       ) : null}
     </div>
   );
@@ -272,50 +292,60 @@ function SecondaryRow({ label, value }: { label: string; value: string }) {
 }
 
 function HostStatsPanel({ data }: { data: HostStatsSnapshot }) {
-  const containerPct =
-    data.containers.total > 0
-      ? (data.containers.running / data.containers.total) * 100
-      : 0;
+  const { data: history } = useHostStatsHistory(24);
+  const points = history?.points ?? [];
   const fresh = isFresh(data.sampledAt);
 
   return (
     <div
       role="dialog"
       aria-label="Host stats"
-      className="absolute right-0 top-[calc(100%+8px)] z-30 w-64 rounded-[9px] border border-border bg-surface-2 p-3.5 shadow-lg"
+      className="absolute right-0 top-[calc(100%+8px)] z-30 w-72 rounded-[9px] border border-border bg-surface-2 p-3.5 shadow-lg"
     >
       <div className="mb-2.5 flex items-center gap-[7px] border-b border-border pb-2.5 text-[11.5px] font-medium text-dim">
         <Server className="h-[13px] w-[13px]" />
         Host — atlas-box
       </div>
 
-      <div className="flex flex-col gap-[11px]">
-        <StatRow
+      <div className="flex flex-col gap-[15px]">
+        <MetricBlock
           label="CPU"
           value={`${Math.round(data.cpu.usagePct)}%`}
-          pct={data.cpu.usagePct}
           color={thresholdColor(data.cpu.usagePct)}
+          history={points}
+          dataKey="cpuPct"
+          yMax={100}
+          valueSuffix="%"
+          axisHint
         />
-        <StatRow
+        <MetricBlock
           label="Memory"
           value={`${Math.round(data.memory.usagePct)}%`}
-          pct={data.memory.usagePct}
           color={thresholdColor(data.memory.usagePct)}
+          history={points}
+          dataKey="memPct"
+          yMax={100}
+          valueSuffix="%"
           caption={`${humanizeBytes(data.memory.usedBytes)} / ${humanizeBytes(data.memory.totalBytes)}`}
         />
-        <StatRow
+        <MetricBlock
           label="Disk"
           value={`${Math.round(data.disk.usagePct)}%`}
-          pct={data.disk.usagePct}
           color={thresholdColor(data.disk.usagePct)}
+          history={points}
+          dataKey="diskPct"
+          yMax={100}
+          valueSuffix="%"
           caption={`${humanizeBytes(data.disk.usedBytes)} / ${humanizeBytes(data.disk.totalBytes)}`}
         />
-        <StatRow
+        <MetricBlock
           label="Containers"
-          value={`${data.containers.running} / ${data.containers.total}`}
-          pct={containerPct}
-          color="var(--green)"
-          caption={`${data.containers.running} running / ${data.containers.total} total`}
+          value={String(data.containers.running)}
+          color="var(--dim)"
+          history={points}
+          dataKey="containersRunning"
+          yMax="dataMax+1"
+          stepped
         />
       </div>
 
@@ -355,6 +385,7 @@ function HostStatsPanel({ data }: { data: HostStatsSnapshot }) {
  * throws, and simply dims/skeletons while the snapshot is loading or unreachable.
  */
 export function HostStats() {
+  useHostStatsRealtime();
   const { data } = useHostStats();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);

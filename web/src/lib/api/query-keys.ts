@@ -69,4 +69,6 @@ export const qk = {
     ["org-claude-credentials", orgId] as const,
   /** The host box's live machine stats snapshot (`GET /web/host-stats`). Not org-scoped. */
   hostStats: () => ["host-stats"] as const,
+  /** One window's bucketed host-stats history (`GET /web/host-stats/history?hours=`). Not org-scoped. */
+  hostStatsHistory: (hours: number) => ["host-stats", "history", hours] as const,
 };
