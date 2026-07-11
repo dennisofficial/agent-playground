@@ -1289,6 +1289,9 @@ export class DriverStoreService {
     });
     if (!thread) return { status: 'no_job' };
     const blockedBy = thread.status === 'blocked' ? await this.jobDeps.blockersOf(jobId) : [];
+    // The pending seed message a born-blocked job will start on when it unblocks (jobs.blocked_seed_message,
+    // cleared on wake). Surfaced only while blocked so the web can preview it in the blocked overlay.
+    const blockedSeedMessage = thread.status === 'blocked' ? (thread.blocked_seed_message ?? null) : null;
     // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its
     // brain can already be keeping a task list, and the navigator's Main row shows it. Ride the no_job
     // payload so the web isn't blind to it before a plan exists.
@@ -1301,6 +1304,7 @@ export class DriverStoreService {
         mainDefaultFooter: laneDefaultFooter('main'),
         createdBy: thread.created_by ?? null,
         blockedBy,
+        blockedSeedMessage,
       };
     }
     const allThreads = await this.threads.find({
@@ -1424,6 +1428,7 @@ export class DriverStoreService {
       halt: thread.halt ?? null,
       createdBy: thread.created_by ?? null,
       blockedBy,
+      blockedSeedMessage,
       // Which build path was committed at approval: 'direct' (fast, brain-implemented) | 'plan' (driver) |
       // null (never approved). The navigator reads this to hide the plan-oriented empty-state placeholders
       // (build lanes / plan.md / generated docs) for a direct build, where they never apply.

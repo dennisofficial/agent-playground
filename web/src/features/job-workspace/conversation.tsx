@@ -68,6 +68,7 @@ export function Conversation({
   live,
   blocked = false,
   blockedBy = [],
+  blockedSeedMessage = null,
   mainDefaultFooter,
   onOpenPlan,
   onSelectNode,
@@ -82,6 +83,8 @@ export function Conversation({
   blocked?: boolean;
   /** The blockers holding this job (drives the overlay's list + "Unblock now"). */
   blockedBy?: JobBlocker[];
+  /** The pending seed message this job will start on when it unblocks — previewed in the blocked overlay. */
+  blockedSeedMessage?: string | null;
   /** The Main (brain) lane's pre-turn footer default ("Opus 4.8") — shown before the first brain turn. */
   mainDefaultFooter?: LaneDefaultFooter;
   onOpenPlan?: () => void;
@@ -95,7 +98,11 @@ export function Conversation({
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <ConversationTopBar onOpenNav={onOpenNav} onOpenDetail={onOpenDetail} />
       {blocked && blockedBy.length > 0 ? (
-        <BlockedOverlay jobRef={jobRef} blockedBy={blockedBy} />
+        <BlockedOverlay
+          jobRef={jobRef}
+          blockedBy={blockedBy}
+          blockedSeedMessage={blockedSeedMessage}
+        />
       ) : null}
       <TranscriptView
         jobRef={jobRef}
