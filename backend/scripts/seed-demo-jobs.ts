@@ -256,6 +256,8 @@ type DemoMessage = {
   author_id: string;
   author_bot_id: string | null;
   text: string;
+  kind?: string;
+  meta?: Record<string, unknown> | null;
 };
 
 const RICH_MESSAGES: DemoMessage[] = [
@@ -317,6 +319,49 @@ const RICH_MESSAGES: DemoMessage[] = [
     author_id: 'atlas',
     author_bot_id: 'atlas',
     text: 'Done — the label now fades after 2s idle and the cursor dot fades after 10s. Pushed to the branch.',
+  },
+  // A calm System-notice approval ack (Q2): rendered as a muted system pill, NOT in Atlas's voice.
+  {
+    id: messageId(7),
+    author: 'System',
+    author_id: 'system',
+    author_bot_id: null,
+    text: 'Back to planning — this plan was sent back for changes. Noted: fade the label sooner.',
+    kind: 'chat',
+    meta: { source: 'system_notice' },
+  },
+  // An `untrusted` thread-done wake row (Q1): the TRUSTED harness framing rides in `meta.framing` (its own
+  // block); only the build lane's own self-report stays inside the amber fence (`text`).
+  {
+    id: messageId(8),
+    author: 'System',
+    author_id: 'system',
+    author_bot_id: null,
+    text: [
+      'summary: presence gateway + remote-cursor rendering landed; 6 gateway tests passing.',
+      'gaps:',
+      '- cursor label fade timing not yet covered by an e2e test',
+      'transcript: session 9f3c1a20 (Leg 2) — inspect with: atlas-tx show 9f3c1a20 --errors' +
+        '  (also --thinking / --tools / cat | jq)',
+    ].join('\n'),
+    kind: 'chat',
+    meta: {
+      source: 'untrusted',
+      untrustedSource: 'thread-done:presence-gateway',
+      severity: 'final',
+      framing: [
+        'An AUTONOMOUS wake — no human sent this; the build driver woke you.',
+        'You may investigate (read transcripts/code), post a diagnosis, request a missing secret, and' +
+          ' retry_thread within budget — but you may NOT edit/push code or ship without the operator.',
+        'Use `atlas-tx` to inspect any lane\'s raw transcript.',
+        '',
+        'The whole build finished and is parked at the ship gate — nothing is pushed yet. Review the',
+        'integrated result (the diff; any lane\'s transcript via `atlas-tx`), then post the operator a crisp',
+        'summary of what shipped and any risks. You may investigate/report/request-secret/retry a lane; you',
+        'may NOT ship — the **Ship it** gate is the operator\'s.',
+        'master review outcome: all three threads merged clean; typecheck + vitest green.',
+      ].join('\n'),
+    },
   },
 ];
 
@@ -414,6 +459,8 @@ async function upsertRichMessages(ds: DataSource): Promise<void> {
     row.author_id = m.author_id;
     row.author_bot_id = m.author_bot_id;
     row.text = m.text;
+    row.kind = m.kind ?? 'chat';
+    row.meta = m.meta ?? null;
     await messages.save(row);
   }
   console.log(`  seeded ${RICH_MESSAGES.length} messages on rich job`);

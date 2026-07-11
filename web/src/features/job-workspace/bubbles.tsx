@@ -558,47 +558,66 @@ export function UntrustedBlock({ message }: { message: JobMessage }) {
   const [open, setOpen] = useState(false);
   const source = message.meta?.untrustedSource as string | undefined;
   const severity = message.meta?.severity as string | undefined;
+  // The TRUSTED harness wake framing that rode with the fenced lane report. When present it renders as
+  // its own neutral block ABOVE the amber fence, so our own instruction never reads as untrusted data.
+  const framing = message.meta?.framing as string | undefined;
   const body = message.text ?? "";
   const fullBody = (message.meta?.fullBody as string | undefined) ?? body;
   const label = source ? `untrusted · ${source}` : "untrusted";
   return (
-    <div
-      className="anim-fadeUp flex flex-col self-stretch rounded-md border"
-      style={{
-        borderColor: "color-mix(in srgb, var(--amber) 34%, transparent)",
-        background: "color-mix(in srgb, var(--amber) 10%, transparent)",
-      }}
-    >
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex items-center gap-2.5 px-3.5 py-1.5 text-left font-mono text-[10px] text-dim"
-      >
-        <span
-          className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: "var(--amber)" }}
-        />
-        <span className="shrink-0 uppercase tracking-wide text-faint">
-          {label}
-        </span>
-        {severity ? (
-          <span className="shrink-0 text-faint">· {severity}</span>
-        ) : null}
-        <span className="min-w-0 flex-1 truncate">{body}</span>
-        <ChevronRight
-          size={11}
-          className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
-        />
-      </button>
-      {open ? (
+    <div className="anim-fadeUp flex flex-col self-stretch gap-1.5">
+      {framing ? (
         <div
-          className="border-t px-3.5 py-2.5 text-[12px]"
-          style={{ borderColor: "var(--hair)" }}
+          className="rounded-md border px-3.5 py-2 text-[12px]"
+          style={{
+            borderColor: "var(--hair)",
+            background: "color-mix(in srgb, var(--surface-2) 70%, transparent)",
+          }}
         >
-          <Markdown>{fullBody}</Markdown>
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-faint">
+            trusted · harness wake
+          </div>
+          <Markdown>{framing}</Markdown>
         </div>
       ) : null}
+      <div
+        className="flex flex-col rounded-md border"
+        style={{
+          borderColor: "color-mix(in srgb, var(--amber) 34%, transparent)",
+          background: "color-mix(in srgb, var(--amber) 10%, transparent)",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="flex items-center gap-2.5 px-3.5 py-1.5 text-left font-mono text-[10px] text-dim"
+        >
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ background: "var(--amber)" }}
+          />
+          <span className="shrink-0 uppercase tracking-wide text-faint">
+            {label}
+          </span>
+          {severity ? (
+            <span className="shrink-0 text-faint">· {severity}</span>
+          ) : null}
+          <span className="min-w-0 flex-1 truncate">{body}</span>
+          <ChevronRight
+            size={11}
+            className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+          />
+        </button>
+        {open ? (
+          <div
+            className="border-t px-3.5 py-2.5 text-[12px]"
+            style={{ borderColor: "var(--hair)" }}
+          >
+            <Markdown>{fullBody}</Markdown>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
