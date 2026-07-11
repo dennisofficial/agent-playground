@@ -100,6 +100,7 @@ export const AGENT_PROMPTS: AgentPromptInfo[] = [
   { id: 'subagent-debug', agent: Agent.DEBUG, note: 'engine debug subagent', ctx: {} },
   { id: 'subagent-test', agent: Agent.TEST, note: 'engine test subagent', ctx: {} },
   { id: 'subagent-validate', agent: Agent.VALIDATE, note: 'engine live-validation + evidence subagent', ctx: {} },
+  { id: 'subagent-prototype', agent: Agent.PROTOTYPE, note: 'engine design-fidelity prototype subagent', ctx: {} },
   { id: 'subagent-writer', agent: Agent.FAN_OUT, note: 'engine implement/implement-deep writer', ctx: {} },
   {
     id: 'subagent-writer-conventions',
