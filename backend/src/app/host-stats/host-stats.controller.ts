@@ -1,6 +1,15 @@
 import { Controller, Get, Query, Sse } from '@nestjs/common';
 import type { MessageEvent } from '@nestjs/common';
-import { EMPTY, catchError, from, interval, map, Observable, startWith, switchMap } from 'rxjs';
+import {
+  EMPTY,
+  catchError,
+  from,
+  interval,
+  map,
+  Observable,
+  startWith,
+  switchMap,
+} from 'rxjs';
 import { HostStatsSampleRepository } from './host-stats-sample.repository';
 import { HostStatsService } from './host-stats.service';
 import type { HostStatsDto, HostStatsHistoryPoint } from './host-stats.types';
@@ -10,6 +19,12 @@ const REALTIME_MS = 3_000;
 
 const clamp = (n: number, lo: number, hi: number) =>
   Math.min(hi, Math.max(lo, n));
+
+function parseHistoryHours(raw: string | undefined): number {
+  if (raw === undefined) return 24;
+  const value = Number(raw);
+  return clamp(Number.isFinite(value) ? value : 24, 1, 48);
+}
 
 /**
  * Login-gated (no `@Public()`, no org guard) live host snapshot for the ops dashboard.
@@ -41,7 +56,7 @@ export class HostStatsController {
   history(
     @Query('hours') hoursRaw?: string,
   ): Promise<{ points: HostStatsHistoryPoint[] }> {
-    const hours = clamp(Number(hoursRaw) || 24, 1, 48);
+    const hours = parseHistoryHours(hoursRaw);
     return this.samples.history(hours).then((points) => ({ points }));
   }
 }
