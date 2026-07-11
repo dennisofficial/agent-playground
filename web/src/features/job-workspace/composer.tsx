@@ -60,6 +60,7 @@ export function Composer({
   onHeightChange,
   footer,
   readOnly = false,
+  blocked = false,
   variant = "composer",
 }: {
   jobRef: JobRef;
@@ -73,6 +74,10 @@ export function Composer({
   footer?: ComposerFooter | null;
   /** Read-only lane (not Main): disable the input + Send, keep the footer live. */
   readOnly?: boolean;
+  /** The job is `blocked` on another job: fully disable the composer (a send would just 400) and swap the
+   *  placeholder — the operator unblocks from the conversation-pane overlay above. Same inert treatment as
+   *  `readOnly`, different copy. */
+  blocked?: boolean;
   /**
    * `"composer"` (default) — the full interactive/read-only composer (input row + footer). `"subagent"` —
    * a FOOTER-ONLY bar for a subagent's read-only detail pane: no input, no Send/attach; the left shows a
@@ -82,6 +87,9 @@ export function Composer({
 }) {
   // Footer-only mode for a subagent's read-only detail pane (no input/attach/send).
   const isSubagent = variant === "subagent";
+  // A blocked job's composer is inert for the same reasons a read-only lane's is: no input, no Send, no
+  // attach/paste — the only difference is the placeholder copy (and that the operator unblocks above).
+  const inert = readOnly || blocked;
   const say = useSay(jobRef);
   const sayWithAttachments = useSayWithAttachments(jobRef);
   const stop = useStop(jobRef);
@@ -112,7 +120,7 @@ export function Composer({
   }
 
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    if (readOnly) return;
+    if (inert) return;
     if (addPastedImages?.(e)) e.preventDefault();
   }
 
@@ -123,7 +131,7 @@ export function Composer({
   const { data: threads } = useAllJobs();
   const realtimeIdle =
     threads?.find((t) => t.id === jobRef.jobId)?.needsYou ?? false;
-  const turnActive = !readOnly && liveActive && !realtimeIdle;
+  const turnActive = !inert && liveActive && !realtimeIdle;
   // Stop replaces Send only when a turn is running AND the composer is empty (no pending text/comments to
   // send). With text present, the button is Send — which now STEERS the running turn server-side. Never on
   // a read-only lane.
@@ -160,7 +168,7 @@ export function Composer({
   }, [onHeightChange]);
 
   function send() {
-    if (readOnly) return;
+    if (inert) return;
     const trimmed = text.trim();
 
     // Offline: don't attempt the POST at all — move the message into the per-Job outbox and clear the
@@ -279,7 +287,7 @@ export function Composer({
       }}
     >
       <div className="pointer-events-auto mx-auto max-w-[880px]">
-        {readOnly || isSubagent ? null : (
+        {inert || isSubagent ? null : (
           <>
             <QueuedTray jobRef={jobRef} />
             <CommentTray />
@@ -293,32 +301,34 @@ export function Composer({
               : "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
           }}
         >
-          {!readOnly && !isSubagent ? (
+          {!inert && !isSubagent ? (
             <AttachmentTray
               attachments={attachments}
               onRemove={removeAttachment ?? (() => {})}
               className="mb-2"
             />
           ) : null}
-          {!readOnly && !isSubagent && attachError ? (
+          {!inert && !isSubagent && attachError ? (
             <div className="mb-2 text-[11px] text-red">{attachError}</div>
           ) : null}
           {isSubagent ? null : (
-          <div className={`flex items-start gap-2.5${readOnly ? " opacity-60" : ""}`}>
+          <div className={`flex items-start gap-2.5${inert ? " opacity-60" : ""}`}>
             <textarea
               ref={textareaRef}
-              value={readOnly ? "" : text}
+              value={inert ? "" : text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
               rows={1}
-              disabled={readOnly}
+              disabled={inert}
               placeholder={
-                readOnly
-                  ? "Read-only — steer Atlas from the Conversation"
-                  : comments.length > 0
-                    ? "Add a message with your comments (optional)…"
-                    : placeholder
+                blocked
+                  ? "This job is blocked — unblock it above to continue"
+                  : readOnly
+                    ? "Read-only — steer Atlas from the Conversation"
+                    : comments.length > 0
+                      ? "Add a message with your comments (optional)…"
+                      : placeholder
               }
               className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint disabled:cursor-default"
             />
@@ -338,7 +348,7 @@ export function Composer({
                 type="button"
                 onClick={send}
                 disabled={
-                  readOnly ||
+                  inert ||
                   (!text.trim() &&
                     comments.length === 0 &&
                     attachments.length === 0) ||
@@ -348,7 +358,13 @@ export function Composer({
                 }
                 className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
                 aria-label="Send"
-                title={readOnly ? "Read-only lane" : undefined}
+                title={
+                  blocked
+                    ? "This job is blocked"
+                    : readOnly
+                      ? "Read-only lane"
+                      : undefined
+                }
               >
                 <ArrowUp size={15} strokeWidth={2.4} />
               </button>
@@ -366,15 +382,15 @@ export function Composer({
               <>
                 {/* Plan pill: static design affordance (not wired). The ＋ beside it IS wired (attach/paste). */}
                 <span
-                  className={`flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text${readOnly ? " opacity-60" : ""}`}
+                  className={`flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text${inert ? " opacity-60" : ""}`}
                 >
                   Plan <ChevronDown size={11} strokeWidth={2.6} />
                 </span>
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={readOnly}
-                  className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim transition hover:bg-surface-2 hover:text-text${readOnly ? " opacity-60" : ""}`}
+                  disabled={inert}
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim transition hover:bg-surface-2 hover:text-text${inert ? " opacity-60" : ""}`}
                   aria-label="Attach files"
                   title="Attach files or images"
                 >

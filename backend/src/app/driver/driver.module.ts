@@ -44,6 +44,7 @@ import { JobLifecycleService } from './job-lifecycle.service';
 import { JOB_TEARDOWN } from './job-teardown.port';
 import { GithubPrStateSync } from './github-pr-state-sync.service';
 import { GithubCiStateSync } from './github-ci-state-sync.service';
+import { GithubTokenRefreshService } from './github-token-refresh.service';
 import { BaseMoveMergeabilitySync } from './base-move-mergeability-sync.service';
 import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
@@ -59,6 +60,7 @@ const POLL_INTERVAL = 'driver:poll';
 const SESSION_RESUME_INTERVAL = 'driver:session-resume';
 const JOB_UNBLOCK_INTERVAL = 'driver:job-unblock';
 const PREVIEW_INTERVAL = 'driver:preview';
+const TOKEN_REFRESH_INTERVAL = 'driver:token-refresh';
 
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
@@ -109,6 +111,7 @@ const PREVIEW_INTERVAL = 'driver:preview';
     JobLifecycleService,
     GithubPrStateSync,
     GithubCiStateSync,
+    GithubTokenRefreshService,
     BaseMoveMergeabilitySync,
     GitStateReconciler,
     SessionResumeSweep,
@@ -150,6 +153,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private sessionResumeInFlight = false; // skip a tick if the prior session-resume sweep is still running
   private jobUnblockInFlight = false; // skip a tick if the prior job-unblock sweep is still running
   private previewInFlight = false; // skip a preview reconcile if the prior tick is still converging Caddy
+  private tokenRefreshInFlight = false; // skip a token-refresh tick if the prior sweep is still running
   private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
   private webhooksBackfilled = false; // per-repo webhook backfill runs ONCE per process on leadership
@@ -169,6 +173,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     // without relying on an open console tab. From the @Global ExposureModule; inert when disabled. @Optional
     // so the module's direct-construction unit test compiles without a trailing argument.
     @Optional() private readonly exposure?: ExposureService,
+    // App-mode in-sandbox git token-file refresh sweep — kept trailing + @Optional (like `exposure` above)
+    // so the module's direct-construction unit test compiles without passing every new dependency.
+    @Optional() private readonly tokenRefresh?: GithubTokenRefreshService,
     // The kind→owner reattach routing table (from @Global SandboxModule). The driver claims the build kinds
     // so the leader watchdog can re-drive an orphaned-but-alive build turn. @Optional so the module's
     // direct-construction unit test compiles without a trailing argument.
@@ -244,6 +251,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       this.startSessionResumeTimer(); // auto-resume lanes parked on a Claude session limit (leader-only)
       this.startJobUnblockTimer(); // backstop: wake blocked jobs whose blockers are all terminal (leader-only)
       this.startPreviewTimer(); // the marker → Caddy-route reconciler (leader-only, exposure-gated)
+      this.startTokenRefreshTimer(); // app-mode in-sandbox git token-file refresh sweep (leader-only)
     });
     this.demoteSub = this.election.onDemote(() => {
       this.stopReapTimer();
@@ -252,6 +260,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       this.stopSessionResumeTimer();
       this.stopJobUnblockTimer();
       this.stopPreviewTimer();
+      this.stopTokenRefreshTimer();
     });
   }
 
@@ -438,6 +447,46 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     }
   }
 
+  /**
+   * The app-mode in-sandbox GitHub token-file refresh sweep (~2 min) — rewrites every ACTIVE app-mode
+   * sandbox's `/.atlas/github-token` file with the current cached installation token, so a build turn
+   * spanning the token's ~hourly expiry keeps pushing/fetching authenticated (see
+   * `GithubTokenRefreshService`). Leader-only (it writes host state shared across processes); `unref` so it
+   * never keeps the process alive; `tokenRefreshInFlight` guards against overlap when a tick runs long.
+   *
+   * Cadence MUST stay strictly under the token service's 5-min pre-expiry refresh window
+   * (`GitHubAppTokenService.getInstallationToken` returns the cached token until it has <5 min left): the
+   * governing margin is that 5-min window, NOT the ~55-min token lifetime. A ≥5-min sweep could write a
+   * still-cached token 6 min before expiry, then next land 5+ min AFTER it expired — leaving the in-sandbox
+   * credential.helper `cat`ing an expired token mid-turn. At 2 min, at least one sweep always lands inside
+   * the 5-min window and writes a freshly-minted token before the old one expires.
+   */
+  private startTokenRefreshTimer(): void {
+    // Absent only in the module's direct-construction unit test (see the `@Optional` constructor note) —
+    // the real app always registers `GithubTokenRefreshService` as a provider.
+    if (!this.tokenRefresh) return;
+    if (this.scheduler.doesExist('interval', TOKEN_REFRESH_INTERVAL)) return;
+    const everyMs = 2 * 60 * 1000; // 2m — strictly under the token service's 5-min pre-expiry refresh window.
+    const iv = setInterval(() => {
+      if (this.tokenRefreshInFlight) return;
+      this.tokenRefreshInFlight = true;
+      void this.tokenRefresh!
+        .tick()
+        .catch((err) => this.logger.warn(`token-refresh tick failed: ${err}`))
+        .finally(() => {
+          this.tokenRefreshInFlight = false;
+        });
+    }, everyMs);
+    iv.unref?.();
+    this.scheduler.addInterval(TOKEN_REFRESH_INTERVAL, iv);
+  }
+
+  private stopTokenRefreshTimer(): void {
+    if (this.scheduler.doesExist('interval', TOKEN_REFRESH_INTERVAL)) {
+      this.scheduler.deleteInterval(TOKEN_REFRESH_INTERVAL);
+    }
+  }
+
   onApplicationShutdown(): void {
     this.resumeSub?.unsubscribe();
     this.promoteSub?.unsubscribe();
@@ -448,5 +497,6 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     this.stopSessionResumeTimer();
     this.stopJobUnblockTimer();
     this.stopPreviewTimer();
+    this.stopTokenRefreshTimer();
   }
 }

@@ -63,6 +63,8 @@ export interface RawInboxThread {
   createdBy?: JobProvenance | null;
   /** The jobs this one is blocked on (live blockers) — same fallback role as `createdBy`. */
   blockedBy?: JobBlocker[];
+  /** The pending seed message a born-blocked job will start on when it unblocks; null unless `blocked`. */
+  blockedSeedMessage?: string | null;
   org: { id: string; slug?: string; name?: string };
   repo: { id: string; name?: string };
 }
@@ -96,6 +98,8 @@ export interface InboxThread {
   createdBy: JobProvenance | null;
   /** The jobs this one is blocked on (live blockers). `[]` unless the job is actually `blocked`. */
   blockedBy: JobBlocker[];
+  /** The pending seed message a born-blocked job will start on when it unblocks; null unless `blocked`. */
+  blockedSeedMessage: string | null;
   org: { id: string; slug: string; name: string };
   repo: { id: string; name: string };
 }
@@ -133,6 +137,7 @@ export function normalize(r: RawInboxThread): InboxThread {
     shipping: r.shipping ?? false,
     createdBy: r.createdBy ?? null,
     blockedBy: r.blockedBy ?? [],
+    blockedSeedMessage: r.blockedSeedMessage ?? null,
     org: {
       id: r.org.id,
       slug: r.org.slug ?? r.org.id,

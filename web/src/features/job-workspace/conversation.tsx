@@ -46,12 +46,13 @@ import {
 } from "./codex-review";
 import { indexAutofixBlocks } from "./review-lane";
 import { Composer, type ComposerFooter } from "./composer";
+import { BlockedOverlay } from "./blocked-overlay";
 import { useAttachments } from "./use-attachments";
 import { useFileDrop } from "./use-file-drop";
 import { DetailTopBar } from "./detail-top-bar";
 import { mermaidReservePx } from "./markdown";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
-import type { LaneDefaultFooter } from "@/lib/api/types";
+import type { JobBlocker, LaneDefaultFooter } from "@/lib/api/types";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
 import { useAllJobs } from "@/lib/api/inbox";
 
@@ -65,6 +66,9 @@ export function Conversation({
   messages,
   isLoading,
   live,
+  blocked = false,
+  blockedBy = [],
+  blockedSeedMessage = null,
   mainDefaultFooter,
   onOpenPlan,
   onSelectNode,
@@ -75,6 +79,12 @@ export function Conversation({
   messages: JobMessage[];
   isLoading: boolean;
   live: boolean;
+  /** The job is `blocked` on another job — disables the composer and pins the blocked overlay at the top. */
+  blocked?: boolean;
+  /** The blockers holding this job (drives the overlay's list + "Unblock now"). */
+  blockedBy?: JobBlocker[];
+  /** The pending seed message this job will start on when it unblocks — previewed in the blocked overlay. */
+  blockedSeedMessage?: string | null;
   /** The Main (brain) lane's pre-turn footer default ("Opus 4.8") — shown before the first brain turn. */
   mainDefaultFooter?: LaneDefaultFooter;
   onOpenPlan?: () => void;
@@ -87,11 +97,19 @@ export function Conversation({
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <ConversationTopBar onOpenNav={onOpenNav} onOpenDetail={onOpenDetail} />
+      {blocked && blockedBy.length > 0 ? (
+        <BlockedOverlay
+          jobRef={jobRef}
+          blockedBy={blockedBy}
+          blockedSeedMessage={blockedSeedMessage}
+        />
+      ) : null}
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
         lane={MAIN_LANE}
         composer
+        blocked={blocked}
         isLoading={isLoading}
         live={live}
         defaultFooter={mainDefaultFooter}
@@ -119,6 +137,7 @@ export function TranscriptView({
   legIsLive,
   composer = false,
   readOnly = false,
+  blocked = false,
   isLoading = false,
   live = false,
   emptyText,
@@ -143,6 +162,8 @@ export function TranscriptView({
   composer?: boolean;
   /** Read-only lane (not Main): the composer's input + Send are disabled, but its footer stays live. */
   readOnly?: boolean;
+  /** The job is `blocked` — fully disable the composer (a send would just 400). */
+  blocked?: boolean;
   isLoading?: boolean;
   live?: boolean;
   /** The empty-state line when the lane has no activity yet. */
@@ -459,6 +480,7 @@ export function TranscriptView({
           onHeightChange={setComposerHeight}
           footer={footer}
           readOnly={readOnly}
+          blocked={blocked}
         />
       ) : null}
       {/* Drag-over affordance — covers the whole pane; `pointer-events-none` so the drop still lands on the
