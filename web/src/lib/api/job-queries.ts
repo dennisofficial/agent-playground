@@ -27,6 +27,7 @@ import {
   retryTurn,
   sayMessage,
   sayMessageWithFiles,
+  spinUpPreview,
   stopJob,
   type AnswerQuestionBody,
   type ProvideSecretBody,
@@ -368,6 +369,20 @@ export function useAnswerQuestion(ref: JobRef) {
     mutationFn: (body: AnswerQuestionBody) => answerQuestion(ref, body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+    },
+  });
+}
+
+/** "Spin up preview" at the ship gate — POSTs the dedicated seeder endpoint (not the generic `say` path),
+ *  which injects the full preview procedure server-side and stamps the ship card `previewRequestedAt`.
+ *  Refreshes the conversation + pipeline so the stamped card or an off-gate no-op hides stale buttons. */
+export function useSpinUpPreview(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => spinUpPreview(ref),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
     },
   });
 }

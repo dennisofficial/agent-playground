@@ -131,6 +131,8 @@ export interface WebApprovalCard {
   threads: string[];
   planUrl?: string;
   actions: WebCardAction[];
+  /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
+  previewRequestedAt?: string;
 }
 
 export interface WebVerdictCard {

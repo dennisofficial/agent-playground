@@ -2259,9 +2259,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(finalBody).toMatch(/may NOT edit\/push code or ship without the operator/);
       expect(finalBody).toMatch(/Ship it/);
       expect(finalBody).toContain('atlas-tx');
-      // final ALSO triggers the ship-gate live-preview offer (see LIVE PREVIEW AT THE SHIP GATE fragment)
-      expect(finalBody).toContain('LIVE PREVIEW AT THE SHIP GATE');
+      // final ALSO triggers the ship-gate live-preview offer (the "Spin up preview" button prep)
       expect(finalBody).toMatch(/offer the operator a live preview/);
+      expect(finalBody).toContain('Spin up preview');
       // final tells the brain to free the RAM the builders/master review left behind (backstop to the
       // deterministic per-thread driver teardown)
       expect(finalBody).toContain('atlas-svc stop-all');
@@ -2270,6 +2270,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(notableBody).toMatch(/may NOT edit\/push code or ship without the operator/);
       expect(notableBody).toContain('atlas-tx show sess-final --errors');
       // notable does NOT carry the preview offer — that is a ship-gate concern only
+      expect(notableBody).not.toMatch(/offer the operator a live preview/);
       expect(notableBody).not.toContain('LIVE PREVIEW AT THE SHIP GATE');
       // notable is a single-lane wake, not the whole-build parking — no fleet teardown instruction
       expect(notableBody).not.toContain('atlas-svc stop-all');

@@ -40,7 +40,6 @@ import { Conversation } from "./conversation";
 import { MarkdownActionsProvider } from "./markdown";
 import { PhaseView, EmptyPane, SubagentPane, FilePane } from "./step-view";
 import { PersistentApprovalBar, PersistentShipBar } from "./spec-approval";
-import { canOfferPreview } from "./preview-request";
 import { useSelectedNode } from "./use-selected-node";
 import { ReviewCommentsProvider } from "./review-comments";
 import { SelectionCommentPopover } from "./selection-comment-popover";
@@ -164,7 +163,6 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   const pipelineKind = job ? toJobKind(job.kind) : null;
   const kind: JobKind = inboxThread?.kind ?? pipelineKind ?? "feat";
-  const canRequestPreview = canOfferPreview(inboxThread?.kind ?? pipelineKind);
   const status: JobStatus = job
     ? toJobStatus(job.status)
     : kind === "event"
@@ -276,7 +274,6 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       laneNode={laneNode}
       detailNode={detailNode}
       jobRef={ref}
-      canRequestPreview={canRequestPreview}
       approveValue={awaitingApproval ? approveValue : ""}
       shipValue={awaitingShip ? shipValue : ""}
       directBuild={isDirectApproval}

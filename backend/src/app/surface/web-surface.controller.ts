@@ -104,6 +104,7 @@ import {
   subscriptionToObservable,
 } from '../realtime';
 import { TicketEventBus } from '../tickets';
+import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
 import { UsageEventBus } from '../onboarding/usage-event-bus';
 
 const VALID_ACTION_IDS = new Set([
@@ -1265,6 +1266,44 @@ export class WebSurfaceController {
       deliveredQuestionId: body.questionId,
       seedRow: { label: notice, chunkKey: `seed:qa:${jobId}:${body.questionId}` },
     });
+    return { ok: true, ts };
+  }
+
+  /**
+   * `POST …/jobs/:jobId/spin-up-preview` — the operator tapped "Spin up preview" on the ship-review card.
+   * Injects the FULL demo-ready preview procedure as a `SYSTEM_SEED_AUTHOR` seed turn (delivered on demand,
+   * NOT standing in the build-brain system prompt) and stamps the ship card "requested" so the button hides.
+   * Gated SERVER-SIDE on `status === 'awaiting_ship_review'` (defense-in-depth against a stale transcript
+   * card) and on the atomic first-click stamp (`markPreviewRequested`) so a double-click seeds exactly once.
+   * Membership-guarded — any org member may request a preview.
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/spin-up-preview')
+  @UseGuards(OrgMembershipGuard)
+  async spinUpPreview(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<{ ok: boolean; ts: string }> {
+    if (!this.election.isLeader()) {
+      throw new ServiceUnavailableException(
+        'Atlas is handing off — retry momentarily.',
+      );
+    }
+    const thread = await this.requireThread(jobId, org.id);
+    if (thread.status !== 'awaiting_ship_review') return { ok: false, ts: '' };
+    const firstRequest = await this.driverStore.markPreviewRequested(jobId);
+    if (!firstRequest) return { ok: true, ts: '' }; // idempotent double-click — already seeded.
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      PREVIEW_PREP_SEED_BODY,
+      {
+        orgId: org.id,
+        seedRow: {
+          label: 'Spin up preview requested',
+          chunkKey: `seed:preview:${jobId}`,
+        },
+      },
+    );
     return { ok: true, ts };
   }
 

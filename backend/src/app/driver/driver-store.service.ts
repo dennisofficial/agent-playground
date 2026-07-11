@@ -400,6 +400,35 @@ export class DriverStoreService {
   }
 
   /**
+   * Stamp the ship card "preview requested" when the operator clicks "Spin up preview" at the ship gate —
+   * ATOMICALLY and IDEMPOTENTLY, mirroring {@link BrainStoreService.markQuestionAnswered}. The conditional
+   * `WHERE … previewRequestedAt IS NULL` makes a concurrent double-click single-winner; the `jobs.status`
+   * subquery keeps the status gate atomic with the stamp instead of trusting a stale controller snapshot.
+   * The `type='approval_card'` + `kind='ship'` guards scope the stamp to an ACTIVE ship card — a retracted
+   * card has been neutralized to a `verdict_card` (see {@link retractShip}), so it can't be stamped. Returns
+   * whether THIS caller stamped it (the winner then seeds the preview procedure).
+   */
+  async markPreviewRequested(jobId: string): Promise<boolean> {
+    const patch = JSON.stringify({ previewRequestedAt: new Date().toISOString() });
+    const res = await this.messages
+      .createQueryBuilder()
+      .update(MessageEntity)
+      .set({ card: () => 'card || :patch::jsonb' })
+      .where('job_id = :jobId', { jobId })
+      .andWhere('ts = :ts', { ts: `ship-review:${jobId}` })
+      .andWhere("kind = 'card'")
+      .andWhere("card ->> 'type' = 'approval_card'")
+      .andWhere("card ->> 'kind' = 'ship'")
+      .andWhere("card ->> 'previewRequestedAt' IS NULL")
+      .andWhere(
+        "EXISTS (SELECT 1 FROM jobs j WHERE j.id = :jobId AND j.status = 'awaiting_ship_review')",
+      )
+      .setParameter('patch', patch)
+      .execute();
+    return (res.affected ?? 0) > 0;
+  }
+
+  /**
    * OPEN the brain's "Amend build?" proposal — posted by the `withdraw_ship` tool. Unlike `retractShip`,
    * this does NOT flip the job status: the gate STAYS parked at `awaiting_ship_review` until the operator
    * approves. It just posts a durable `kind:'amend'` proposal card carrying the brain's `reason`. Returns:

@@ -45,7 +45,6 @@ import {
 import { codexReviewNode } from "./codex-review";
 import {
   NavigatorApproveButton,
-  NavigatorPreviewButton,
   NavigatorShipButton,
 } from "./spec-approval";
 import { pipelineMainTasks } from "@/lib/api/types";
@@ -114,7 +113,6 @@ export function Navigator({
   laneNode,
   detailNode,
   jobRef,
-  canRequestPreview,
   approveValue,
   shipValue,
   onConversation,
@@ -138,8 +136,6 @@ export function Navigator({
   detailNode: string | null;
   /** The open job — for the in-place "Approve plan" callout. */
   jobRef: JobRef;
-  /** True for build-brain jobs once their kind is known; drives the persistent preview request button. */
-  canRequestPreview: boolean;
   /** The approval card's verbatim approve `value`, when the job is awaiting approval (else ''). Drives
    *  the navigator approval callout. */
   approveValue: string;
@@ -419,13 +415,6 @@ export function Navigator({
         {st === "awaiting_ship_review" && shipValue ? (
           <div className="mt-2">
             <NavigatorShipButton jobRef={jobRef} value={shipValue} />
-          </div>
-        ) : null}
-        {/* Spin up preview — persistent across the whole build lifecycle (d4). Gated on build KIND
-            (build-brain only), NOT status/branch, so the operator can ask anytime. */}
-        {canRequestPreview ? (
-          <div className="mt-2">
-            <NavigatorPreviewButton jobRef={jobRef} />
           </div>
         ) : null}
       </div>
