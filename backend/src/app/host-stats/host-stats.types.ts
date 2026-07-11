@@ -15,3 +15,14 @@ export type HostStatsDto = {
   /** ISO */
   sampledAt: string;
 };
+
+/** One downsampled bucket in the 24h history response. */
+export type HostStatsHistoryPoint = {
+  /** ISO bucket start */
+  t: string;
+  cpuPct: number;
+  memPct: number;
+  diskPct: number;
+  containersRunning: number;
+  containersTotal: number;
+};

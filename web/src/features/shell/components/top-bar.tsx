@@ -28,7 +28,7 @@ export function TopBar({
 
   return (
     <header
-      className="flex h-[52px] flex-none items-center gap-2 border-b border-border px-3 md:gap-3.5 md:px-4"
+      className="relative z-30 flex h-[52px] flex-none items-center gap-2 border-b border-border px-3 md:gap-3.5 md:px-4"
       style={{
         background: "color-mix(in srgb, var(--panel) 82%, transparent)",
         backdropFilter: "blur(12px)",
