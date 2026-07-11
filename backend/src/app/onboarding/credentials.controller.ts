@@ -81,6 +81,8 @@ export class OrgCredentialsController {
     hasGithub: boolean;
     engineAuthSet: boolean;
     hasCodex: boolean;
+    hasGithubApp: boolean;
+    githubAuthMode: 'pat' | 'app';
     llmValidated: boolean;
   }> {
     const presence = await this.store.presence(org.id);

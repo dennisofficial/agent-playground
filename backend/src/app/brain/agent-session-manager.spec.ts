@@ -41,7 +41,7 @@ import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
 import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
-import type { LocalGitService } from '../git';
+import type { GitIdentityService, LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
 
@@ -443,6 +443,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockSecretStore,
       mockConfigStore,
       mockGit,
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities
       { generate: () => 'SYSTEM PROMPT' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       mockJudge, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -2481,6 +2482,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const dockerRunner = {
       run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }),
       steer,
+      // The Redis runner's atomic in-process attach claim (single-winner turn-finalize fix): `reattachOne`
+      // claims the slot before any await and releases on bail. Default the claim to won so the reattach
+      // tests exercise the real re-attach body; `consumeClaim` feeds the error-path discard gate.
+      tryClaimAttach: vi.fn(() => true),
+      releaseAttach: vi.fn(),
+      consumeClaim: vi.fn(() => undefined),
     } as unknown as EngineRunnerPort;
     const liveTurns = { push: vi.fn(), end: vi.fn(), snapshot: vi.fn(() => null) } as unknown as LiveTurnStore;
     // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
@@ -2551,6 +2558,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         upsertMount: async () => undefined,
       } as unknown as WorkspaceConfigStore,
       git,
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -3067,6 +3075,26 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(resetLane.mock.invocationCallOrder[0]).toBeLessThan(reattach.mock.invocationCallOrder[0]);
   });
 
+  it('reattachOne still runs when the runner lacks Redis-only attach claim helpers', async () => {
+    const { manager, store, dockerRunner } = makeManager({});
+    delete (dockerRunner as { tryClaimAttach?: unknown }).tryClaimAttach;
+    delete (dockerRunner as { releaseAttach?: unknown }).releaseAttach;
+    (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: null });
+    const reattach = vi.fn().mockResolvedValue({ result: 'done', sessionId: 's-re' });
+    (dockerRunner as { reattach?: unknown }).reattach = reattach;
+
+    await (manager as unknown as { reattachOne(row: unknown): Promise<void> }).reattachOne({
+      turn_id: 'turn-re-no-claim-helper',
+      container_id: 'c-re-no-claim-helper',
+      org_id: TEAM_ID,
+      job_id: THREAD_ID,
+      channel: PROJECT_ID,
+      ctx: { repoId: PROJECT_ID, author: { id: 'U-OP', displayName: 'Operator' }, body: 'Keep going' },
+    });
+
+    expect(reattach).toHaveBeenCalledOnce();
+  });
+
   it('boot re-attach of a NORMAL turn rebuilds the full build toolset (no onboarding curation)', async () => {
     const { manager, store, dockerRunner } = makeManager({});
     (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: null });
@@ -3381,6 +3409,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         upsertMount: async () => undefined,
       } as unknown as WorkspaceConfigStore,
       { hasChanges: async () => false, currentBranch: async () => null, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -3536,6 +3565,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       } as unknown as WorkspaceSecretFileStore,
       { listMounts: async () => [], upsertMount: async () => undefined } as unknown as WorkspaceConfigStore,
       { hasChanges: async () => false, currentBranch: async () => null, worktreeSafeToRecut: async () => true } as unknown as LocalGitService,
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -3655,6 +3685,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, // mcp (McpResolver, 22)
       election, // election (23)
       inert, inert, inert, inert, // turnRecovery, secretStore, configStore, git (27)
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities (28)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (29, ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
@@ -3859,6 +3890,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert, // mcp (McpResolver, 22)
       election, // election (23)
       inert, inert, inert, inert, // turnRecovery…git (27)
+      { resolve: async () => undefined } as unknown as GitIdentityService, // identities (28)
       { generate: () => 'SYSTEM' } as never, // prompts (29, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -4078,6 +4110,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, // mcp (McpResolver, 22)
         election, // election (23)
         inert, inert, inert, inert, // turnRecovery…git (27)
+        { resolve: async () => undefined } as unknown as GitIdentityService, // identities (28)
         { generate: () => 'SYSTEM' } as never, // prompts (29)
         { register: () => undefined } as never, // threadInput (30)
         { judge: async () => undefined } as never, // liveVerificationJudge (31)

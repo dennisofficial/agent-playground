@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   Check,
@@ -22,15 +24,20 @@ import {
   useCodexAccount,
   useCreateClaudeAuthorizeUrl,
   useDeleteClaudeCredential,
+  useDisconnectGithubApp,
+  useGithubAppInstallUrl,
+  useGithubAppStatus,
   useOrgCredentials,
   useSaveCredentials,
   useSelectClaudeCredential,
+  useSetGithubAuthMode,
   type ClaudeCredential,
   type ClaudeCredentialKind,
   type ClaudeCredentialStatus,
   type SaveCredentialsBody,
   type SaveCredentialsResult,
 } from "@/lib/api/orgs";
+import { qk } from "@/lib/api/query-keys";
 
 /**
  * Credentials — the org-wide encrypted secrets every thread uses. The list is presence-only (the API never
@@ -262,7 +269,9 @@ export function CredentialsSection({
         present={presence.hasGithub}
         pill={
           presence.hasGithub
-            ? { label: "saved", tone: "green" }
+            ? presence.githubAuthMode === "app"
+              ? { label: "PAT (inactive)", tone: "dim" }
+              : { label: "saved", tone: "green" }
             : { label: "not set", tone: "faint" }
         }
         modes={[
@@ -318,7 +327,240 @@ export function CredentialsSection({
         ]}
         onSave={onSave}
       />
+
+      <GithubAppConnect
+        orgId={orgId}
+        isOwner={isOwner}
+        hasPat={presence.hasGithub}
+      />
     </>
+  );
+}
+
+// ── GitHub App connect ───────────────────────────────────────────────────────────────────────────
+/** Friendly copy for the `?githubApp=error&reason=…` redirect the install callback lands on. */
+function githubAppErrorMessage(reason: string | null): string {
+  if (reason === "already_connected")
+    return "That installation is already connected to another organization.";
+  if (reason === "verification_failed")
+    return "Couldn’t verify the installation — try connecting again.";
+  return "The connect request expired or was invalid — try again.";
+}
+
+/**
+ * The GitHub App is a separate, optional credential from the PAT above: connecting it swaps the org's
+ * live GitHub auth to an installation token with its own rate-limit pool. Connecting is a redirect flow —
+ * `install-url` mints a one-time GitHub install URL, and GitHub's callback lands back here via
+ * `?githubApp=connected|error`, which this component picks up on mount.
+ */
+function GithubAppConnect({
+  orgId,
+  isOwner,
+  hasPat,
+}: {
+  orgId: string;
+  isOwner: boolean;
+  hasPat: boolean;
+}) {
+  const { data: status, isLoading } = useGithubAppStatus(orgId);
+  const installUrl = useGithubAppInstallUrl(orgId);
+  const setMode = useSetGithubAuthMode(orgId);
+  const disconnect = useDisconnectGithubApp(orgId);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+
+  const qc = useQueryClient();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    const result = searchParams.get("githubApp");
+    if (result === "connected") {
+      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      setNote("GitHub App connected.");
+    } else if (result === "error") {
+      setError(githubAppErrorMessage(searchParams.get("reason")));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function connect() {
+    setError("");
+    setNote("");
+    // Open the window synchronously within the click handler so popup blockers
+    // don't block it after the mutation's network round-trip loses the user gesture.
+    // Note: passing `noopener`/`noreferrer` here makes window.open return null,
+    // which would defeat the synchronous pre-open. Open the blank window without
+    // those features and null out `opener` after navigating instead.
+    const installWindow = window.open("", "_blank");
+    try {
+      const result = await installUrl.mutateAsync();
+      if (installWindow) {
+        installWindow.opener = null;
+        installWindow.location.href = result.url;
+      } else {
+        window.open(result.url, "_blank", "noopener,noreferrer");
+      }
+    } catch (e) {
+      installWindow?.close();
+      setError((e as Error)?.message || "Could not start the GitHub App install.");
+    }
+  }
+
+  async function switchMode(mode: "pat" | "app") {
+    if (!status || status.mode === mode) return;
+    setError("");
+    setNote("");
+    try {
+      await setMode.mutateAsync(mode);
+    } catch (e) {
+      setError((e as Error)?.message || "Could not switch auth mode.");
+    }
+  }
+
+  async function handleDisconnectClick() {
+    if (!confirmDisconnect) {
+      setConfirmDisconnect(true);
+      return;
+    }
+    setConfirmDisconnect(false);
+    setError("");
+    setNote("");
+    try {
+      await disconnect.mutateAsync();
+    } catch (e) {
+      setError((e as Error)?.message || "Could not disconnect the GitHub App.");
+    }
+  }
+
+  const pill =
+    !status || isLoading
+      ? { label: "…", tone: "faint" as const }
+      : !status.configured
+        ? { label: "App unavailable", tone: "faint" as const }
+        : status.connected
+          ? { label: "App: connected", tone: "green" as const }
+          : { label: "not connected", tone: "faint" as const };
+
+  return (
+    <div className="mb-3.5 rounded-lg border border-border bg-surface p-[18px]">
+      <div className="flex items-center gap-3">
+        <span
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg border"
+          style={{
+            background: "var(--surface-3)",
+            borderColor: "var(--border-2)",
+            color: "var(--dim)",
+          }}
+        >
+          <Github size={16} />
+        </span>
+        <div className="flex-1">
+          <div className="text-[13.5px] font-semibold text-text">
+            GitHub App
+          </div>
+          <div className="mt-0.5 text-[11px] text-faint">
+            Its own rate-limit pool — no personal 5k/hr throttling
+          </div>
+        </div>
+        <StatusChip label={pill.label} tone={pill.tone} />
+      </div>
+
+      {!status || isLoading ? null : !status.configured ? (
+        <p className="mt-3.5 text-[11.5px] text-faint">
+          The Atlas GitHub App isn’t configured on this server.
+        </p>
+      ) : !status.connected ? (
+        <div className="mt-3.5">
+          <HelpBlock>
+            <p>
+              App auth routes Atlas’s GitHub traffic through a GitHub App
+              installation token, which has its own rate-limit pool separate
+              from any human’s personal 5,000/hr budget.
+            </p>
+            <p>Connecting stops operators from getting personal-account rate-limited.</p>
+          </HelpBlock>
+          {isOwner ? (
+            <button
+              type="button"
+              onClick={connect}
+              disabled={installUrl.isPending}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[12px] font-semibold text-accent transition hover:bg-accent-soft disabled:opacity-60"
+              style={{ borderColor: "var(--accent-line)" }}
+            >
+              {installUrl.isPending ? "Opening…" : "Connect GitHub App"}
+              <ExternalLink size={12} />
+            </button>
+          ) : (
+            <p className="mt-3 text-[11.5px] text-faint">
+              Ask an owner to connect the GitHub App.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="mt-3.5">
+          <p className="text-[11.5px] text-dim">
+            Connected to{" "}
+            <Code>
+              {status.account ?? `installation #${status.installationId}`}
+            </Code>
+          </p>
+
+          <div className="mt-3 flex items-center gap-3">
+            <div className="flex gap-1 rounded-md border border-border-2 bg-surface-2 p-1">
+              {(
+                [
+                  { id: "pat" as const, label: "PAT", disabled: !hasPat },
+                  {
+                    id: "app" as const,
+                    label: "App",
+                    disabled: !status.connected,
+                  },
+                ]
+              ).map((opt) => {
+                const on = status.mode === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => switchMode(opt.id)}
+                    disabled={!isOwner || opt.disabled || setMode.isPending}
+                    className="rounded-sm px-3 py-1.5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+                    style={{
+                      background: on ? "var(--surface)" : "transparent",
+                      color: on ? "var(--accent)" : "var(--dim)",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {isOwner ? (
+              <button
+                type="button"
+                onClick={handleDisconnectClick}
+                disabled={disconnect.isPending}
+                className="flex h-[30px] shrink-0 items-center justify-center rounded-md border border-border-2 px-2.5 text-[11.5px] font-semibold text-faint transition hover:border-red hover:bg-red-soft hover:text-red disabled:opacity-60"
+              >
+                {confirmDisconnect ? (
+                  <span className="text-red">Confirm?</span>
+                ) : (
+                  "Disconnect"
+                )}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {error ? <p className="mt-3 text-[11.5px] text-red">{error}</p> : null}
+      {note ? (
+        <p className="mt-3 text-[11.5px] text-green">{note}</p>
+      ) : null}
+    </div>
   );
 }
 

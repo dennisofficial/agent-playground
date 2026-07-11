@@ -61,6 +61,14 @@ export interface IEnvConfig {
   CLAUDE_OAUTH_AUTHORIZE_URL?: string;
   CLAUDE_OAUTH_CLIENT_ID?: string;
 
+  // Single-platform Atlas GitHub App identity (process-wide env, NOT per-org — unlike the per-org PAT in
+  // org_credentials). All optional: unset → App auth feature OFF, every org stays on PAT. GITHUB_APP_ID is
+  // the numeric app id (fallback JWT iss); GITHUB_APP_CLIENT_ID is the preferred JWT iss (current GitHub
+  // guidance); GITHUB_APP_PRIVATE_KEY is the RS256 PEM — accept raw PEM OR base64-of-PEM (newline-safe env).
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_CLIENT_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
+
   // Slack/approval boss user id (set in the shared dev config). installed_by wins when set.
   APPROVAL_BOSS_USER_ID?: string;
 
@@ -187,6 +195,11 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Claude subscription OAuth
   CLAUDE_OAUTH_AUTHORIZE_URL: Joi.string().uri().optional(),
   CLAUDE_OAUTH_CLIENT_ID: Joi.string().optional(),
+
+  // Atlas GitHub App identity
+  GITHUB_APP_ID: Joi.string().optional(),
+  GITHUB_APP_CLIENT_ID: Joi.string().optional(),
+  GITHUB_APP_PRIVATE_KEY: Joi.string().optional(),
 
   APPROVAL_BOSS_USER_ID: Joi.string().optional(),
 
