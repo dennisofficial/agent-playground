@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Check,
   ChevronDown,
@@ -24,14 +24,6 @@ import { useOrg, useOrgs, type OrgSummary } from "@/lib/api/me";
 import { orgSwatch, orgInitials, roleLabel } from "@/lib/org-display";
 import { useBreakpoint } from "@/lib/use-breakpoint";
 import { Drawer } from "@/components/ui/drawer";
-import { GeneralSection } from "./general-section";
-import { CredentialsSection } from "./credentials-section";
-import { WorkspaceSecretsSection } from "./workspace-secrets-section";
-import { McpSection } from "./mcp-section";
-import { ConventionProfilesSection } from "./convention-profiles-section";
-import { SkillsSection } from "./skills-section";
-import { MembersSection } from "./members-section";
-import { ReposSection } from "./repos-section";
 
 const NAV: { id: SettingsSection; label: string; icon: typeof SettingsIcon }[] =
   [
@@ -45,18 +37,35 @@ const NAV: { id: SettingsSection; label: string; icon: typeof SettingsIcon }[] =
     { id: "repos", label: "Repos", icon: GitBranch },
   ];
 
-/** The Org & Settings screen — own top bar + a section nav (General / Credentials / Members). */
-export function OrgSettings({
-  orgId,
-  initialSection,
+const NAV_IDS = new Set<SettingsSection>(NAV.map((n) => n.id));
+
+/** The active section is the last path segment (`…/settings/<section>`); the bare path falls back. */
+function sectionFromPath(pathname: string): SettingsSection {
+  const last = pathname.split("/").pop() ?? "";
+  return NAV_IDS.has(last as SettingsSection)
+    ? (last as SettingsSection)
+    : "general";
+}
+
+/**
+ * Settings shell — a shared App Router layout that renders the top bar + section nav ONCE and persists it
+ * across per-section navigation; only the routed `{children}` (the section page) swaps. Resolves the
+ * targeted org by id from the session, and owns the shared loading / not-found states so each leaf page
+ * can assume the org exists.
+ */
+export default function OrgSettingsLayout({
+  children,
+  params,
 }: {
-  orgId: string;
-  initialSection: SettingsSection;
+  children: ReactNode;
+  params: Promise<{ orgId: string }>;
 }) {
+  const { orgId } = use(params);
   const { orgs, isLoading } = useOrgs();
   const org = useOrg(orgId);
   const router = useRouter();
-  const [section, setSection] = useState<SettingsSection>(initialSection);
+  const pathname = usePathname();
+  const section = sectionFromPath(pathname);
   const [navOpen, setNavOpen] = useState(false);
   const { isMobile } = useBreakpoint();
 
@@ -124,17 +133,17 @@ export function OrgSettings({
           >
             <OrgSettingsNav
               inDrawer
+              orgId={orgId}
               org={org}
               section={section}
-              setSection={setSection}
               setNavOpen={setNavOpen}
             />
           </Drawer>
         ) : (
           <OrgSettingsNav
+            orgId={orgId}
             org={org}
             section={section}
-            setSection={setSection}
             setNavOpen={setNavOpen}
           />
         )}
@@ -150,8 +159,7 @@ export function OrgSettings({
                   Organization not found
                 </h2>
                 <p className="mx-auto mt-1.5 max-w-sm text-[13px] text-dim">
-                  This organization doesn’t exist or you don’t have access to
-                  it.
+                  This organization doesn’t exist or you don’t have access to it.
                 </p>
                 <Link
                   href={ROUTES.workspace()}
@@ -160,27 +168,8 @@ export function OrgSettings({
                   ← Back to workspace
                 </Link>
               </div>
-            ) : section === "general" ? (
-              <GeneralSection org={org} />
-            ) : section === "credentials" ? (
-              <CredentialsSection orgId={org.id} role={org.role} />
-            ) : section === "workspace-secrets" ? (
-              <WorkspaceSecretsSection orgId={org.id} role={org.role} />
-            ) : section === "mcp-servers" ? (
-              <McpSection orgId={org.id} role={org.role} />
-            ) : section === "convention-profiles" ? (
-              <ConventionProfilesSection orgId={org.id} role={org.role} />
-            ) : section === "skills" ? (
-              <SkillsSection orgId={org.id} role={org.role} />
-            ) : section === "repos" ? (
-              <ReposSection
-                orgId={org.id}
-                orgName={org.name}
-                role={org.role}
-                onNavigate={setSection}
-              />
             ) : (
-              <MembersSection orgId={org.id} orgName={org.name} />
+              children
             )}
           </div>
         </div>
@@ -192,15 +181,15 @@ export function OrgSettings({
 /** The settings section nav — rendered inline (desktop) or inside the mobile drawer (`inDrawer`). */
 function OrgSettingsNav({
   inDrawer,
+  orgId,
   org,
   section,
-  setSection,
   setNavOpen,
 }: {
   inDrawer?: boolean;
+  orgId: string;
   org: OrgSummary | undefined;
   section: SettingsSection;
-  setSection: (section: SettingsSection) => void;
   setNavOpen: (open: boolean) => void;
 }) {
   return (
@@ -240,13 +229,10 @@ function OrgSettingsNav({
       {NAV.map(({ id, label, icon: Icon }) => {
         const on = section === id;
         return (
-          <button
+          <Link
             key={id}
-            type="button"
-            onClick={() => {
-              setSection(id);
-              setNavOpen(false);
-            }}
+            href={ROUTES.orgSettings(orgId, id)}
+            onClick={() => setNavOpen(false)}
             className={cn(
               "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition",
               on ? "text-accent" : "text-dim hover:bg-surface-2",
@@ -262,7 +248,7 @@ function OrgSettingsNav({
           >
             <Icon size={15} />
             {label}
-          </button>
+          </Link>
         );
       })}
     </nav>
@@ -272,8 +258,7 @@ function OrgSettingsNav({
 /**
  * Breadcrumb org switcher — turns the `OrgName / Settings` crumb into a dropdown so the operator can hop
  * between their orgs' settings without going back to the shell. Selecting an org navigates to that org's
- * settings route preserving the active `?section`; the page is keyed by orgId so it remounts onto the new
- * org (its left-nav header + tab content follow). Lists every org the operator belongs to, current checked.
+ * settings route preserving the active section. Lists every org the operator belongs to, current checked.
  */
 function OrgSwitcher({
   orgs,

@@ -456,6 +456,8 @@ export interface RepoView {
   onboardedAt: string | null;
   /** Non-fatal webhook-registration warning (e.g. token lacks the webhook scope), or null when hooks are healthy. */
   webhookWarning: string | null;
+  /** Per-repo feature-branch prefix override; null → the neutral built-in default (`feature/`). */
+  branchPrefix: string | null;
 }
 
 export function fetchOrgRepos(orgId: string): Promise<RepoView[]> {
