@@ -638,9 +638,12 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
       return;
     }
     setError("");
-    // Open the window synchronously within the click handler so popup blockers
-    // don't block it after the mutation's network round-trip loses the user gesture.
-    const loginWindow = window.open("", "_blank", "noopener,noreferrer");
+    // Open the window synchronously within the click handler so popup blockers don't block it after the
+    // mutation's network round-trip loses the user gesture. It must open WITHOUT the "noopener" feature —
+    // that makes window.open() return null, leaving no handle to navigate and forcing a post-await open()
+    // the popup blocker rejects. We sever the back-reference ourselves via `opener = null` instead.
+    const loginWindow = window.open("about:blank", "_blank");
+    if (loginWindow) loginWindow.opener = null;
     try {
       const result = await createAuthorizeUrl.mutateAsync({
         label: trimmedLabel,

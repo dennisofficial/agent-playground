@@ -5,6 +5,7 @@ import {
 } from '@workspace/pg-realtime';
 import type { JobHalt } from '@workspace/shared';
 import { deriveNeedsYou, JOB_ACTIVITIES, type JobActivity } from '../domain/job';
+import type { CiCounts } from '../git';
 
 /**
  * The authenticated principal handed to the realtime guard — resolved by the SSE endpoint from the
@@ -45,8 +46,10 @@ export interface ThreadRealtimeRow extends Row {
   featureBranch: string | null;
   /** The branch the sandbox HEAD is actually on (sampled) — differs from featureBranch = drift. */
   currentBranch: string | null;
-  /** Observed PR CI status ('success'|'failure'|'pending'|null) — reconciler-owned UI badge. */
+  /** Observed PR CI status ('success'|'failure'|'pending'|'skipped'|null) — reconciler-owned UI badge. */
   ciStatus: string | null;
+  /** Per-category CI counts ({ failing, pending, passed, skipped, total }) — parallel to ciStatus; null when no checks. */
+  ciCounts: CiCounts | null;
   /** Observed GitHub mergeable_state ('clean'|'dirty'|…|null) — 'dirty' drives the conflict badge. */
   prMergeable: string | null;
   /** Observed PR lifecycle ('open'|'merged'|'closed'|null) — drives the sidebar PR-status glyph. */
@@ -108,6 +111,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     featureBranch: (raw.feature_branch as string | null) ?? null,
     currentBranch: (raw.current_branch as string | null) ?? null,
     ciStatus: (raw.ci_status as string | null) ?? null,
+    ciCounts: (raw.ci_counts as CiCounts | null) ?? null,
     prMergeable: (raw.pr_mergeable as string | null) ?? null,
     prState: (raw.pr_state as string | null) ?? null,
     // Small timestamp col, always present in the `SELECT *` snapshot / WAL new-row image (never TOASTed).

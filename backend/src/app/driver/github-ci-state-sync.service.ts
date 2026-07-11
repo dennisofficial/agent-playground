@@ -7,7 +7,7 @@ import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, RepoEntity } from '../persistence/entities';
 import { StimulusStoreService } from '../stimulus';
-import { summarizeChecks } from './git-state-reconciler.service';
+import { sameCounts, summarizeChecks } from './git-state-reconciler.service';
 
 /**
  * The SILENT GitHub CI-status webhook sync — the FAST path that mirrors `GitStateReconciler.reconcileOne`'s
@@ -98,8 +98,11 @@ export class GithubCiStateSync {
       repo: parsed.repo,
       ref: detail.headSha,
     });
-    const ci = summarizeChecks(runs);
-    if (ci !== job.ci_status)
-      await this.jobs.update({ id: job.id }, { ci_status: ci }); // write ONLY on change
+    // Empty = transient/no-checks-yet webhook window; never clobber a known status to null (the poll
+    // backstop still holds the last value). Only a non-empty result updates the CI columns.
+    if (runs.length === 0) return;
+    const sum = summarizeChecks(runs);
+    if (sum.status !== job.ci_status || !sameCounts(sum.counts, job.ci_counts))
+      await this.jobs.update({ id: job.id }, { ci_status: sum.status, ci_counts: sum.counts }); // write ONLY on change
   }
 }

@@ -1,5 +1,5 @@
 {
-  "name": "agent-playground-workspace",
+  "name": "atlas-workspace",
   "version": "1.0.0",
   "private": true,
   "description": "AI Slack-employee workforce — pnpm monorepo (NestJS backend + Next.js admin web + shared + terminal playground).",

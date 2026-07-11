@@ -1540,10 +1540,29 @@ export class BrainStoreService {
       const threads = m.getRepository(ThreadEntity);
       const steps = m.getRepository(StepEntity);
 
-      // threads MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(job_id, ordinal)
-      // collision); `steps.thread_id ON DELETE CASCADE` clears their step rows too. The prior draft
-      // record is marked `superseded` (audit trail, never an approved one).
-      await threads.delete({ job_id: input.jobId });
+      // PLAN VERSIONING — decide whether this re-propose forms a NEW immutable revision or overwrites the
+      // current (never-built) one. The rule: a revision becomes browsable history ONLY if it has at least
+      // one `done` builder. This keeps the whole feature a no-op for the common planning loop (propose →
+      // request_changes → reopen → propose again over never-built threads) and confines versioning to
+      // exactly the "re-propose/direct-build after work already shipped" case.
+      const currentJob = await jobs.findOne({ where: { id: input.jobId } });
+      const priorRecordId = currentJob?.decision_record_id ?? null;
+      const priorHasDone = priorRecordId
+        ? (await threads.count({
+            where: { job_id: input.jobId, decision_record_id: priorRecordId, status: 'done' },
+          })) > 0
+        : false;
+
+      if (!priorHasDone) {
+        // Common case: no completed work to preserve. Behave exactly as before — clear the current
+        // revision's executable threads (their step rows cascade) so new ones re-use ordinals 10/20/30
+        // without a UNIQUE collision. The job-level singletons (`main`/`plan_review`, NULL record) survive.
+        await threads.delete({ job_id: input.jobId, kind: In(['builder', 'master_review']) });
+      }
+      // else (priorHasDone): DELETE NOTHING. The prior revision's threads keep their `decision_record_id`
+      // and become immutable history the moment `jobs.decision_record_id` is repointed at the tail below.
+      // The new revision's threads get the new record id (set below) so they never collide on ordinal.
+
       await records.update(
         { job_id: input.jobId, status: 'draft' },
         { status: 'superseded' },
@@ -1570,6 +1589,9 @@ export class BrainStoreService {
         return threads.create({
           job_id: input.jobId,
           org_id: input.orgId,
+          // The new revision owns these threads (the versioning key). A prior revision's builders keep
+          // THEIR record id as history, so reusing ordinal 10/20/30 here never collides.
+          decision_record_id: record.id,
           ordinal: (i + 1) * ORDINAL_GAP,
           brief,
           // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
@@ -1593,6 +1615,7 @@ export class BrainStoreService {
           threads.create({
             job_id: input.jobId,
             org_id: input.orgId,
+            decision_record_id: record.id,
             ordinal: (input.threadTitles.length + 1) * ORDINAL_GAP,
             brief: 'Master review — whole-diff review & fix',
             type: 'general',
@@ -1609,23 +1632,30 @@ export class BrainStoreService {
       // operator conversation). The driver never executes it (its `main` kind is render-only); it just gives
       // the brain session a place in the thread tree. Appended LAST (after the master review) with ordinal 0
       // so it never disturbs the `savedSections[i]` ↔ `threadTitles[i]` step-locking alignment below
-      // (indices ≥ threadTitles.length have no authored steps). Recreated on each re-propose (the prior draft
-      // threads were deleted above), which is fine — it carries no durable state (its live state is the
-      // AgentSessionManager session + the job's `main_tasks`).
-      featureThreads.push(
-        threads.create({
-          job_id: input.jobId,
-          org_id: input.orgId,
-          ordinal: 0,
-          brief: 'Main',
-          type: 'general',
-          kind: 'main',
-          plan: null,
-          handoff_in: null,
-          handoff_out: null,
-          status: 'pending',
-        }),
-      );
+      // (indices ≥ threadTitles.length have no authored steps). CREATE-IF-ABSENT (revision-agnostic, NULL
+      // record): the delete above no longer removes it, so recreating would collide on the (job, NULL, NULL,
+      // 0) unique index. It carries no durable state (its live state is the AgentSessionManager session +
+      // the job's `main_tasks`), so keeping the one existing row across re-proposes is correct.
+      const existingMain = await threads.findOne({
+        where: { job_id: input.jobId, kind: 'main' },
+      });
+      if (!existingMain) {
+        featureThreads.push(
+          threads.create({
+            job_id: input.jobId,
+            org_id: input.orgId,
+            decision_record_id: null,
+            ordinal: 0,
+            brief: 'Main',
+            type: 'general',
+            kind: 'main',
+            plan: null,
+            handoff_in: null,
+            handoff_out: null,
+            status: 'pending',
+          }),
+        );
+      }
 
       const savedSections = await threads.save(featureThreads);
 
