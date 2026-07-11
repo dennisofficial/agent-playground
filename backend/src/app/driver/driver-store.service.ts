@@ -303,10 +303,15 @@ export class DriverStoreService {
   // ── ship-review gate (the terminal human gate: reviewed diff → operator clicks "Ship it" → PR) ────────
 
   /**
-   * PARK the job at the ship-review gate in one txn: flip `running → awaiting_ship_review`, clear activity
-   * to `idle`, and post the durable "Ship it" card. The status flip is CONDITIONAL on `running`, so it's
-   * the single-park guard — a concurrent drive (or a re-drive) that finds the job already parked affects 0
-   * rows and skips the card, returning false. Returns whether THIS caller parked it.
+   * PARK the job at the ship-review gate in one txn: flip `running | amending → awaiting_ship_review`, clear
+   * activity to `idle`, and post the durable "Ship it" card. The status flip is CONDITIONAL, so it's the
+   * single-park guard — a concurrent drive (or a re-drive) that finds the job already parked affects 0 rows
+   * and skips the card, returning false. Returns whether THIS caller parked it.
+   *
+   * `running` is the normal path (a build drive that finished + passed master review). `amending` is the
+   * AMEND re-park: after an approved `withdraw_ship`, the brain does the follow-up work and re-arms the gate
+   * directly from `amending` (no detour back through a `running` build) — see AgentSessionManager's
+   * `report_verification`.
    */
   async parkForShipReview(
     jobId: string,
@@ -320,7 +325,7 @@ export class DriverStoreService {
         .update(JobEntity)
         .set({ status: 'awaiting_ship_review', activity: 'idle' })
         .where('id = :jobId', { jobId })
-        .andWhere("status = 'running'")
+        .andWhere("status IN ('running', 'amending')")
         .execute();
       if ((res.affected ?? 0) === 0) return false;
       const messages = m.getRepository(MessageEntity);

@@ -45,6 +45,7 @@ import {
   webMcpProposalCard,
   webQuestionCard,
   webSecretInputCard,
+  webShipReviewCard,
   webSkillEditAccessCard,
   webSkillProposalCard,
   wrapSystemNotification,
@@ -883,8 +884,9 @@ export class AgentSessionManager
    * WAKE the job brain because the operator APPROVED its "Amend build?" proposal (the `withdraw_ship`
    * tool's card). By this point the operator retract path has already run (`awaiting_ship_review →
    * amending`), so the brain just needs to do the follow-up work it proposed. The brain's session is
-   * resumed, so it recalls WHAT it proposed — the delivery stays generic. The gate re-arms automatically
-   * once the work reaches `parkForShipReview` again. Concurrency-safe via `handleChatTurn`.
+   * resumed, so it recalls WHAT it proposed — the delivery stays generic. The brain re-arms the gate by
+   * calling `report_verification({ passed: true })` once the amend is verified (re-parks directly at
+   * `awaiting_ship_review`, no rebuild). Concurrency-safe via `handleChatTurn`.
    */
   async wakeForAmendApproved(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
@@ -895,8 +897,9 @@ export class AgentSessionManager
       repoId: job.repoId,
       body: [
         'The operator APPROVED your amend proposal — the ship-review gate is retracted and the job is now',
-        '**amending**. Do the follow-up work you proposed. The ship gate re-arms automatically once the work',
-        'reaches ship-review again; do not re-propose unless something material changed.',
+        '**amending**. Do the follow-up work you proposed, then call `report_verification({ passed: true })`',
+        'with your live evidence — that re-parks the job directly at the ship-review gate (amending →',
+        'ready-to-ship, no rebuild). Do not re-propose unless something material changed.',
       ].join('\n'),
       seedRow: {
         label: 'Amend approved — resuming to make the changes.',
@@ -2696,7 +2699,32 @@ export class AgentSessionManager
                 },
               ]
             : [];
-        if (passed) return { ok: true };
+        if (passed) {
+          // AMEND RE-PARK: after an approved `withdraw_ship`, the job sits in `amending` while the brain does
+          // the follow-up work it proposed. A clean verification here re-arms the ship gate DIRECTLY
+          // (`amending → awaiting_ship_review`) and re-posts the "Ship it" card — the amend IS the fix, so
+          // there is no detour back through a `running` build. On any other status this is the normal
+          // direct-build flag-set (finalize_build ships), so leave it untouched.
+          const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+          if (job?.status === 'amending') {
+            const title = job.title ?? 'this build';
+            const summary =
+              'Amend verified. Review the diff, then click **Ship it** to open the PR.';
+            const card = webShipReviewCard({ jobId: job.id, title, summary });
+            const parked = await this.driverStore.parkForShipReview(
+              job.id,
+              card as unknown as Record<string, unknown>,
+              summary,
+            );
+            return {
+              ok: true,
+              message: parked
+                ? 'Amend verified — re-parked at the ship-review gate. The operator can Ship it now.'
+                : 'Amend verified.',
+            };
+          }
+          return { ok: true };
+        }
         const remaining = Array.isArray(args['remaining'])
           ? (args['remaining'] as unknown[]).map((x) => String(x).trim()).filter(Boolean)
           : [];
