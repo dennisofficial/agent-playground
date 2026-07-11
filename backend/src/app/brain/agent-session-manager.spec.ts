@@ -2481,6 +2481,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const dockerRunner = {
       run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }),
       steer,
+      // The Redis runner's atomic in-process attach claim (single-winner turn-finalize fix): `reattachOne`
+      // claims the slot before any await and releases on bail. Default the claim to won so the reattach
+      // tests exercise the real re-attach body; `consumeClaim` feeds the error-path discard gate.
+      tryClaimAttach: vi.fn(() => true),
+      releaseAttach: vi.fn(),
+      consumeClaim: vi.fn(() => undefined),
     } as unknown as EngineRunnerPort;
     const liveTurns = { push: vi.fn(), end: vi.fn(), snapshot: vi.fn(() => null) } as unknown as LiveTurnStore;
     // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
