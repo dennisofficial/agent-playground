@@ -319,16 +319,3 @@ export function renderTokenLine(
     </span>
   ));
 }
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-/**
- * Temporary plain-text fallback kept so the existing `CodeText` caller in `ui.tsx` keeps compiling and
- * rendering (escaped, uncolored) until Thread 2 swaps it onto `useHighlightTokens`. Removed then.
- */
-export function highlightLine(code: string, _lang: string | null): string {
-  if (!code) return "&nbsp;";
-  return escapeHtml(code);
-}

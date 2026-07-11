@@ -1362,6 +1362,7 @@ function RepoFileBody({
         lang={lang}
         activeNos={activeNos}
         maxHeight="100%"
+        whole
       />
     </div>
   );
