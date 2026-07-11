@@ -3807,7 +3807,7 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
     };
   }
 
-  it('auto-resolves the ship gate with the job-stamped approver (autoApproveBy set)', async () => {
+  it('auto-resolves the ship gate INLINE with the job-stamped approver and ships in the same drive', async () => {
     const job = makeJob({
       shipReviewApprovedAt: null,
       autoApprove: true,
@@ -3815,14 +3815,20 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
     });
     const state = baseState(job);
     const h = assemble(state, { autoShipApprove: false });
-    const resolveSpy = vi
-      .spyOn(h.driver, 'resolveShipApprovalDurably')
-      .mockResolvedValue(true);
+    const approverSpy = vi.spyOn(
+      h.driver as unknown as { resolveAutoApprover: (j: Job) => Promise<string> },
+      'resolveAutoApprover',
+    );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => resolveSpy.mock.calls.length > 0);
+    // The gate auto-resolves and the SAME drive falls through to ship — no re-drive, no manual click.
+    await flushUntil(() => state.job.status === 'done');
 
-    expect(resolveSpy).toHaveBeenCalledWith(job.id, 'user-42');
+    expect(h.store.parkForShipReview).toHaveBeenCalled(); // card posted for audit
+    expect(h.store.approveShip).toHaveBeenCalledWith(job.id); // marker stamped inline
+    expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
+    expect(h.shipSeeds).toHaveLength(1); // PR actually opened in this drive
+    await expect(approverSpy.mock.results[0]!.value).resolves.toBe('user-42');
   });
 
   it('falls back to the org owner when autoApproveBy is null', async () => {
@@ -3833,32 +3839,33 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
     });
     const state = baseState(job);
     const h = assemble(state, { autoShipApprove: false });
-    (h.store as unknown as { ownerUserId: ReturnType<typeof vi.fn> }).ownerUserId = vi.fn(
-      async (_orgId: string) => 'owner-99',
+    const ownerSpy = vi.fn(async (_orgId: string) => 'owner-99');
+    (h.store as unknown as { ownerUserId: ReturnType<typeof vi.fn> }).ownerUserId = ownerSpy;
+    const approverSpy = vi.spyOn(
+      h.driver as unknown as { resolveAutoApprover: (j: Job) => Promise<string> },
+      'resolveAutoApprover',
     );
-    const resolveSpy = vi
-      .spyOn(h.driver, 'resolveShipApprovalDurably')
-      .mockResolvedValue(true);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => resolveSpy.mock.calls.length > 0);
+    await flushUntil(() => state.job.status === 'done');
 
-    expect(resolveSpy).toHaveBeenCalledWith(job.id, 'owner-99');
+    expect(ownerSpy).toHaveBeenCalled();
+    expect(h.shipSeeds).toHaveLength(1);
+    await expect(approverSpy.mock.results[0]!.value).resolves.toBe('owner-99');
   });
 
   it('does NOT auto-resolve the ship gate when autoApprove is off', async () => {
     const job = makeJob({ shipReviewApprovedAt: null, autoApprove: false, autoApproveBy: null });
     const state = baseState(job);
     const h = assemble(state, { autoShipApprove: false });
-    const resolveSpy = vi
-      .spyOn(h.driver, 'resolveShipApprovalDurably')
-      .mockResolvedValue(true);
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'awaiting_ship_review');
     await flush();
 
-    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(h.store.approveShip).not.toHaveBeenCalled();
+    expect(h.shipSeeds).toHaveLength(0);
+    expect(state.job.status).toBe('awaiting_ship_review');
   });
 });
 
