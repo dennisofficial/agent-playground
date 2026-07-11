@@ -1,6 +1,6 @@
 import { Controller, Get, Query, Sse } from '@nestjs/common';
 import type { MessageEvent } from '@nestjs/common';
-import { from, interval, map, Observable, startWith, switchMap } from 'rxjs';
+import { EMPTY, catchError, from, interval, map, Observable, startWith, switchMap } from 'rxjs';
 import { HostStatsSampleRepository } from './host-stats-sample.repository';
 import { HostStatsService } from './host-stats.service';
 import type { HostStatsDto, HostStatsHistoryPoint } from './host-stats.types';
@@ -30,7 +30,9 @@ export class HostStatsController {
   realtime(): Observable<MessageEvent> {
     return interval(REALTIME_MS).pipe(
       startWith(0),
-      switchMap(() => from(this.stats.collect())),
+      // Swallow a transient collect() failure (e.g. statfs() rejecting) so one bad tick
+      // skips instead of erroring the stream and triggering an EventSource reconnect-storm.
+      switchMap(() => from(this.stats.collect()).pipe(catchError(() => EMPTY))),
       map((snap) => ({ data: snap })),
     );
   }
