@@ -332,6 +332,34 @@ describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () =
     expect(await svc.reviewForCurrentSpecs('job-1', 'org-1')).toBeNull();
   });
 
+  it('ESCAPE VALVE: accepts a mismatched spec_hash once the re-review ceiling is exhausted', async () => {
+    // Post-ceiling, review() can never re-run, so a later spec edit (mismatched hash) must NOT deadlock
+    // propose_plan forever. A terminal review that hit the ceiling is accepted despite the mismatch; a
+    // below-ceiling mismatch is still refused (the normal revise → re-review loop).
+    const reviews = fakeReviewRepo([
+      {
+        id: 'r',
+        job_id: 'job-1',
+        org_id: 'org-1',
+        status: 'complete',
+        spec_hash: 'OLDHASH',
+        resume_count: 8, // >= default ceiling (8)
+      },
+    ]);
+    const svc = makeService({ reviews });
+    const gate = await svc.reviewForCurrentSpecs('job-1', 'org-1');
+    expect(gate?.row.id).toBe('r');
+    // currentHash is null (no specs dir) — the escape returns it as-is, not the frozen OLDHASH.
+    expect(gate?.specHash).toBeNull();
+
+    // One round below the ceiling, the same mismatch is still refused.
+    const belowCeiling = fakeReviewRepo([
+      { id: 'r2', job_id: 'job-1', org_id: 'org-1', status: 'complete', spec_hash: 'OLDHASH', resume_count: 7 },
+    ]);
+    const svc2 = makeService({ reviews: belowCeiling });
+    expect(await svc2.reviewForCurrentSpecs('job-1', 'org-1')).toBeNull();
+  });
+
   it('refuses when the only review is still running', async () => {
     const reviews = fakeReviewRepo([
       { id: 'r', job_id: 'job-1', org_id: 'org-1', status: 'running', spec_hash: null },
