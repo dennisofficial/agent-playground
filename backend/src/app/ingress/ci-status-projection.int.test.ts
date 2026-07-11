@@ -43,6 +43,7 @@ import {
   DriverStoreService,
   GithubCiStateSync,
   GithubPrStateSync,
+  GitStateReconciler,
 } from '../driver';
 import { GithubNotificationSource } from './github-notification.source';
 import { GithubEventsWebhookController } from './github-webhook.controller';
@@ -97,6 +98,10 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
         {
           provide: GithubPrStateSync,
           useValue: { dispatch: async () => undefined },
+        },
+        {
+          provide: GitStateReconciler,
+          useValue: { markJobDue: async () => 0 },
         },
         {
           provide: EnvService,
