@@ -7157,7 +7157,10 @@ export function doneWakeFraming(
   const body =
     reason === 'final'
       ? [
-          `The whole build finished and is parked at the ship gate — nothing is pushed yet. Review the`,
+          `The whole build finished and is parked at the ship gate — nothing is pushed yet.`,
+          `First, free the RAM: the builders and master review may have spun up services for testing that are`,
+          `now idle on this shared host — tear them down with \`atlas-svc stop-all\` (a preview or demo below`,
+          `re-derives and boots only what it needs). Then review the`,
           `integrated result (the diff; any lane's transcript via \`atlas-tx\`), then post the operator a crisp`,
           `summary of what shipped and any risks. You may investigate/report/request-secret/retry a lane; you`,
           `may NOT ship — the **Ship it** gate is the operator's.`,

@@ -1412,6 +1412,15 @@ export class ThreadDriver implements JobDispatcher {
         .catch((e) => this.logger.warn(`could not set notable done-wake for thread=${thread.id}: ${e}`));
     }
     await this.post(route, `:white_check_mark: Thread done — *${thread.brief}*`);
+    // Free the RAM: this thread (a builder or the master review — the only kinds `runThread` executes) may
+    // have booted services under the supervisor for testing. Threads run sequentially in one per-job
+    // sandbox and this thread's review-lens/post-review children already finished above, so nothing else is
+    // live here — tear the fleet down so it doesn't sit resident through the rest of the build on a shared
+    // host. Best-effort: a teardown hiccup never affects the build (the next thread / ship re-derives).
+    const stopped = await this.sandboxes.stopAllServices?.(job.id).catch(() => undefined);
+    if (stopped && !stopped.ok) {
+      this.logger.warn(`thread ${thread.ordinal} — service teardown skipped: ${stopped.reason}`);
+    }
     return { outcome: 'done', handoff: handoffOut };
   }
 
