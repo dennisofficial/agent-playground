@@ -94,9 +94,10 @@ export class TenantCredentialStore {
   }
 
   /** Owner-gated display value: the Codex account email decoded on-read from the pasted auth.json (no new column). */
-  async codexAccountEmail(orgId: string, scope = '*'): Promise<string | null> {
-    const creds = await this.read(orgId, scope);
-    return creds?.codexAuthSecret ? (decodeCodexAccountEmail(creds.codexAuthSecret) ?? null) : null;
+  async codexAccountEmail(orgId: string, scope = '*'): Promise<string | undefined> {
+    const row = await this.repo.findOne({ where: { org_id: orgId, scope } });
+    if (!row?.codex_auth_secret_enc) return undefined;
+    return decodeCodexAccountEmail(decryptSecret(row.codex_auth_secret_enc, this.key()));
   }
 
   /** Encrypt + persist the provided fields (find-or-create the (team, scope) row). Refuses without a key. */

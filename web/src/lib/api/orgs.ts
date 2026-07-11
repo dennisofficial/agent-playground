@@ -201,13 +201,13 @@ export function useDeleteClaudeCredential(orgId: string) {
 // ── Codex account (owner-only — the decoded account email of the pasted auth.json) ─────────────────
 // The Codex secret's account email is decoded on-read from the stored auth.json's `id_token` (display-only,
 // no signature check) and is Administer-tier info, so it lives on its own OWNER-gated endpoint rather than
-// the member-visible presence flags. `present` mirrors `hasCodex`; `accountEmail` is null for an
+// the member-visible presence flags. `present` mirrors `hasCodex`; `accountEmail` is omitted for an
 // API-key-only auth.json (no `id_token` to decode).
 
-/** The owner-only `GET /credentials/codex` response — presence + the decoded account email (or null). */
+/** The owner-only `GET /credentials/codex` response — presence + the decoded account email, when present. */
 export interface CodexAccount {
   present: boolean;
-  accountEmail: string | null;
+  accountEmail?: string;
 }
 
 /**
