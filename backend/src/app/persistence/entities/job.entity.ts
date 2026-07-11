@@ -85,6 +85,12 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   base_branch!: string | null;
 
+  /** The create_job firstMessage stored when a never-started job is born blocked (create_job dependsOn);
+   *  replayed on wake, then cleared. Null for a job manually blocked while already running (it resumes its
+   *  existing session on wake, no replay). */
+  @Column({ type: 'text', nullable: true })
+  blocked_seed_message!: string | null;
+
   /**
    * The ticket this thread was promoted from / works (FK → tickets.id); null for a thread not tied to a
    * ticket. A thread works AT MOST one ticket — enforced 1:1 by a partial unique index

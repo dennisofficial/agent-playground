@@ -34,6 +34,7 @@ export type JobProvenance = { jobId: string; title: string | null };
 // Phases the job is DEAD in — never a needs-you state (it is going away or already finished).
 const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'deleting']);
 // Phases whose next step is the OPERATOR's: an idle job sitting here is waiting on the human.
+// ('blocked' is deliberately NOT here — it's system-owned, like plan_review.)
 const OPERATOR_OWNED_STATUSES = new Set([
   'open',
   'planning',

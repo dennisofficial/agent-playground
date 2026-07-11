@@ -118,6 +118,9 @@ const STATUS_SHAPE: Record<
   awaiting_ship_review: "waiting",
   // Ship review retracted — the built work is being amended; another "your move" gate, same shape.
   amending: "waiting",
+  // Parked on a blocker job's PR — system-owned, not a "your move" gate. Placeholder shape until
+  // thread 3 adds the distinct blocked glyph; keeps the exhaustive Record typecheck-clean.
+  blocked: "waiting",
   done: "done",
   // A genuine operator-chosen terminal state (plan denied) — same muted static ring as deleting.
   cancelled: "paused",

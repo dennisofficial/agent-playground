@@ -646,6 +646,7 @@ export type JobStatus =
   | "awaiting_approval"
   | "awaiting_ship_review"
   | "amending"
+  | "blocked"
   | "done"
   | "triaging"
   | "cancelled"
