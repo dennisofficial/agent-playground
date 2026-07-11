@@ -11,23 +11,6 @@
  */
 import { GIT_SAFETY_NOTE } from '../fragments';
 
-/** A single locked decision as rendered into the PR body's host-owned `### Decisions` block. */
-export interface DecisionLine {
-  title: string;
-  decisionClass: string;
-  ruling: string;
-}
-
-/** The host-owned `### Decisions` block for the PR body — rendered from the locked decisions, or '' if none.
- *  The brain pastes this VERBATIM so the locked decisions are never dropped or paraphrased. */
-export function decisionsBlock(decisions: ReadonlyArray<DecisionLine>): string {
-  if (!decisions.length) return '';
-  return [
-    '### Decisions',
-    ...decisions.map((d) => `- **${d.title}** (${d.decisionClass}): ${d.ruling}`),
-  ].join('\n');
-}
-
 export interface ShipOpenPrArgs {
   /** The feature branch that carries the build. */
   branch: string;
@@ -35,8 +18,6 @@ export interface ShipOpenPrArgs {
   defaultBranch: string;
   /** The job title → the PR title (the brain trims it under 70 chars). */
   title: string;
-  /** The pre-rendered host-owned `### Decisions` block to paste verbatim (see `decisionsBlock`); '' when none. */
-  decisionsBlock: string;
 }
 
 /**
@@ -45,10 +26,6 @@ export interface ShipOpenPrArgs {
  */
 export function shipOpenPrBody(args: ShipOpenPrArgs): string {
   const { branch, defaultBranch, title } = args;
-  const decisions = args.decisionsBlock.trim();
-  const decisionsStep = decisions
-    ? `\n     Append this block to the body VERBATIM and unchanged, as its final section:\n\n${decisions}\n`
-    : '';
   return (
     `It is SHIP TIME: the build is complete on branch \`${branch}\`. Publish it as a pull request against ` +
     `\`${defaultBranch}\` using your own authenticated git + \`gh\`. Work through the steps and END WITH ONE ` +
@@ -71,7 +48,6 @@ export function shipOpenPrBody(args: ShipOpenPrArgs): string {
     `       — a checklist of what you PROVED, drawn from the evidence bundle: \`- [x]\` for each thing validated ` +
     `(build/tests green, the artifacts you captured), and \`- [ ]\` for any manual check left for the reviewer. ` +
     `If there is no evidence bundle, list the build/test status you do have.` +
-    decisionsStep +
     `\n     Then open the PR, passing the body through a SINGLE-QUOTED heredoc so backticks/\`$\`/code fences ` +
     `stay literal (no shell expansion):\n` +
     `       gh pr create --base ${defaultBranch} --head ${branch} --title ${JSON.stringify(title)} --body "$(cat <<'EOF'\n` +

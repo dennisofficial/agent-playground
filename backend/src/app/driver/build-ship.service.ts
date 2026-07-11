@@ -77,7 +77,7 @@ export class BuildShipService {
    *  A caller already inside a brain turn (the direct-build `finalize_build` tool) must NOT use this — it
    *  would nest a second brain turn; it runs {@link preShip} then hands `shipOpenPrBody` to the live turn. */
   async ship(input: ShipInput): Promise<ShipOutcome> {
-    const { job, record, repo, sandbox } = input;
+    const { job, repo, sandbox } = input;
     const notify = this.notifier(input.notify);
 
     const pre = await this.preShip(job, repo, sandbox, notify);
@@ -108,12 +108,7 @@ export class BuildShipService {
       repoId: job.repoId,
       branch: shipBranch,
       defaultBranch: repo.defaultBranch,
-      title: job.title ?? 'Atlas build',
-      decisions: (record?.decisions ?? []).map((d) => ({
-        title: d.title,
-        decisionClass: d.decisionClass,
-        ruling: d.ruling,
-      })),
+      title: job.title ?? shipBranch,
     });
 
     const confirmed = await this.latchPr(job, repo, shipSandbox);

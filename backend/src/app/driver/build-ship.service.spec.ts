@@ -15,7 +15,7 @@ import type { ResolvedRepo } from './repo-resolver';
 describe('BuildShipService — brain opens the PR; host gates + latches', () => {
   const sandbox: FeatureSandbox = {
     repoId: 'proj',
-    branch: 'atlas/thread-abcd',
+    branch: 'feature/abcd',
     worktreePath: '/wt/feat',
     gitUrl: '',
   };
@@ -83,14 +83,13 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       sandbox,
     });
 
-    // The brain was seeded with the open-PR turn (branch/base/title/decisions), and the host opened nothing.
+    // The brain was seeded with the open-PR turn (branch/base/title), and the host opened nothing.
     expect(openPrAtShip).toHaveBeenCalledWith(
       expect.objectContaining({
         jobId: 'j1',
-        branch: 'atlas/thread-abcd',
+        branch: 'feature/abcd',
         defaultBranch: 'main',
         title: 'Feature',
-        decisions: [{ title: 'Public', decisionClass: 'scope', ruling: 'endpoints are @Public' }],
       }),
     );
     expect(openPullRequest).not.toHaveBeenCalled();
@@ -121,7 +120,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     expect(findOpenPullByHead).toHaveBeenCalledWith('ptok-xyz', {
       owner: 'acme',
       repo: 'widget',
-      head: 'atlas/thread-abcd',
+      head: 'feature/abcd',
     });
     expect(store.setPrReady).toHaveBeenCalledWith('j1', 'https://github.com/acme/widget/pull/7', 7);
     expect(store.setJobStatus).not.toHaveBeenCalled();

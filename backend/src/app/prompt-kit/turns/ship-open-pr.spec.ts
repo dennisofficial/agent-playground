@@ -1,23 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { decisionsBlock, shipOpenPrBody } from './ship-open-pr';
+import { shipOpenPrBody } from './ship-open-pr';
 
 describe('turns / ship-open-pr', () => {
-  describe('decisionsBlock', () => {
-    it('renders the host-owned Decisions block from locked decisions', () => {
-      const out = decisionsBlock([
-        { title: 'Use pgvector', decisionClass: 'data-model', ruling: 'HNSW index on embeddings' },
-      ]);
-      expect(out).toContain('### Decisions');
-      expect(out).toContain('- **Use pgvector** (data-model): HNSW index on embeddings');
-    });
-
-    it('is empty when there are no decisions', () => {
-      expect(decisionsBlock([])).toBe('');
-    });
-  });
-
   describe('shipOpenPrBody', () => {
-    const base = { branch: 'atlas/feat', defaultBranch: 'main', title: 'A feature', decisionsBlock: '' };
+    const base = { branch: 'atlas/feat', defaultBranch: 'main', title: 'A feature' };
 
     it('carries the CC-style body sections + evidence bundle + git commands into the task body', () => {
       const task = shipOpenPrBody(base);
@@ -61,19 +47,6 @@ describe('turns / ship-open-pr', () => {
 
     it('does NOT ask for a report_pr_opened tool call (host latches by branch discovery)', () => {
       expect(shipOpenPrBody(base)).not.toContain('report_pr_opened');
-    });
-
-    it('pastes the host Decisions block verbatim only when there are decisions', () => {
-      const block = decisionsBlock([
-        { title: 'Ship in-sandbox', decisionClass: 'mechanism', ruling: 'Atlas opens the PR itself' },
-      ]);
-      const withDecisions = shipOpenPrBody({ ...base, decisionsBlock: block });
-      expect(withDecisions).toContain('VERBATIM');
-      expect(withDecisions).toContain(block);
-
-      const without = shipOpenPrBody(base);
-      expect(without).not.toContain('### Decisions');
-      expect(without).not.toContain('VERBATIM');
     });
   });
 });
