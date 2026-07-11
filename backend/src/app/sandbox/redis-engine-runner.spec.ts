@@ -21,7 +21,7 @@ function fakeRegistry() {
   return {
     register: vi.fn(async () => undefined),
     heartbeat: vi.fn(async () => undefined),
-    finalize: vi.fn(async () => undefined),
+    finalize: vi.fn(async () => true),
     getToolReply: vi.fn(async () => null),
     recordToolReply: vi.fn(async () => undefined),
   } as unknown as TurnRegistry & { register: ReturnType<typeof vi.fn>; finalize: ReturnType<typeof vi.fn> };
@@ -89,7 +89,8 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       { kind: 'text', text: 'hello' },
       { kind: 'text', text: 'world' },
     ]);
-    expect(out).toEqual({ result: 'DONE', sessionId: 'sess-1' });
+    expect(out).toMatchObject({ result: 'DONE', sessionId: 'sess-1', claimed: true });
+    expect(out.turnId).toEqual(expect.any(String));
     expect(reg.register).toHaveBeenCalledOnce(); // turnMeta present → registered
     expect(reg.finalize).toHaveBeenCalledWith(expect.any(String), 'done');
   });
@@ -223,6 +224,27 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     await expect(runner.run(baseArgs(() => {}))).rejects.toThrow(/boom in sandbox/);
   });
 
+  it('does not retain an unreachable claim entry when a fresh run throws', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'error', message: 'boom in sandbox' }];
+    const reg = fakeRegistry();
+    const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, reg);
+    let turnId = '';
+    (reg.register as ReturnType<typeof vi.fn>).mockImplementation(async (input: { turnId: string }) => {
+      turnId = input.turnId;
+    });
+
+    await expect(
+      runner.run({
+        ...baseArgs(() => {}),
+        turnMeta: { jobId: 'th1', orgId: 'org1', channel: 'repo1', lane: 'main', kind: 'brain' },
+      }),
+    ).rejects.toThrow(/boom in sandbox/);
+
+    expect(turnId).toEqual(expect.any(String));
+    expect(runner.consumeClaim(turnId)).toBeUndefined();
+  });
+
   it('maps an auth error frame to EngineAuthError', async () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'error', message: '401 invalid', auth: true, sessionId: 's9' }];
@@ -341,7 +363,8 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
     expect(toolCalls).toEqual([{ name: 'submit_plan', args: { foo: 'bar' } }]);
     expect(sawProgress).toBe(true);
-    expect(out).toEqual({ result: 'DONE' });
+    expect(out).toMatchObject({ result: 'DONE', claimed: true });
+    expect(out.turnId).toEqual(expect.any(String));
     expect(events.some((e) => (e as { kind?: string; text?: string }).text === 'tool-ok')).toBe(true);
   });
 
@@ -540,7 +563,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
         await redis.xadd(turnKeys(turnId!).events, { t: 'final', r: { result: 'DONE' } });
         redis.releaseBlockingReads();
 
-        await expect(runPromise).resolves.toEqual({ result: 'DONE' });
+        await expect(runPromise).resolves.toMatchObject({ result: 'DONE', claimed: true, turnId });
       } finally {
         vi.useRealTimers();
       }

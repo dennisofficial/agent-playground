@@ -2,6 +2,7 @@ import type { InboxThread } from "./inbox";
 
 export type JobSection =
   | "planning"
+  | "reviewing"
   | "blocked"
   | "awaiting"
   | "building"
@@ -14,6 +15,7 @@ export type JobSection =
 export const SECTION_ORDER: JobSection[] = [
   "blocked",
   "planning",
+  "reviewing",
   "awaiting",
   "building",
   "amending",
@@ -25,6 +27,7 @@ export const SECTION_ORDER: JobSection[] = [
 
 export const SECTION_LABEL: Record<JobSection, string> = {
   planning: "Planning",
+  reviewing: "Reviewing",
   blocked: "Blocked",
   awaiting: "Awaiting Approval",
   building: "Building",
@@ -39,9 +42,12 @@ export const SECTION_LABEL: Record<JobSection, string> = {
 export function sectionOf(t: InboxThread): JobSection | null {
   switch (t.status) {
     case "planning":
-    case "plan_review":
     case "triaging":
       return "planning";
+    // A hands-off, system-owned phase (Codex reviewing the plan + the review→revise loop): its own
+    // section so it reads as "step away", separate from Planning's you're-in-the-loop grilling.
+    case "plan_review":
+      return "reviewing";
     case "blocked":
       return "blocked";
     case "awaiting_approval":
