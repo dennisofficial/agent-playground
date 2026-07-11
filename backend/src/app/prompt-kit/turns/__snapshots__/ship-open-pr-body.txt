@@ -1,18 +1,18 @@
 It is SHIP TIME: the build is complete on branch `atlas/feat-x`. Publish it as a pull request against `main` using your own authenticated git + `gh`. Work through the steps and END WITH ONE LINE to the operator (the PR url) — this is a build step, not a play-by-play or a conversation.
-  1. RECONCILE THE BASE. Run `git fetch origin`, then check for drift: `git log --oneline HEAD..origin/main` (commits on the base you don't have yet). If there are any, integrate them — `git merge origin/main` (or rebase). If that produces MERGE CONFLICTS, resolve them PROPERLY — understand both sides, never blindly take one — then commit the merge, and re-run the build/tests to confirm the tree still passes after reconciling. (No drift → skip straight to the push.)
-  2. Commit anything uncommitted (`git add -A` sweeps in everything you wrote for this build), then `git push -u origin atlas/feat-x`. Nothing uncommitted is left behind: the host does NOT commit on your behalf, so if you don't commit it, it ships nowhere.
-  3. AUTHOR THE PR BODY yourself, from what you ACTUALLY shipped — run `git diff origin/main...HEAD` for the real change and read `/context/artifacts/RESULTS.md` (your evidence bundle) if it exists. Do NOT restate the plan. Compose a Markdown body with these sections:
+  1. RECONCILE THE BASE. Run `git fetch origin`, then check for drift: `git log --oneline 'HEAD..origin/main'` (commits on the base you don't have yet). If there are any, integrate them — `git merge 'origin/main'` (or rebase). If that produces MERGE CONFLICTS, resolve them PROPERLY — understand both sides, never blindly take one — then commit the merge, and re-run the build/tests to confirm the tree still passes after reconciling. (No drift → skip straight to the push.)
+  2. Commit anything uncommitted (`git add -A` sweeps in everything you wrote for this build), then `git push -u origin 'atlas/feat-x'`. Nothing uncommitted is left behind: the host does NOT commit on your behalf, so if you don't commit it, it ships nowhere.
+  3. AUTHOR THE PR BODY yourself, from what you ACTUALLY shipped — run `git diff 'origin/main'...HEAD` for the real change and read `/context/artifacts/RESULTS.md` (your evidence bundle) if it exists. Do NOT restate the plan. Compose a Markdown body with these sections:
        ## Summary
        — 1–3 bullets on what the diff actually changes (behavior/mechanism), not a restatement of the plan.
        ## Verification
        — a checklist of what you PROVED, drawn from the evidence bundle: `- [x]` for each thing validated (build/tests green, the artifacts you captured), and `- [ ]` for any manual check left for the reviewer. If there is no evidence bundle, list the build/test status you do have.
      Then open the PR, passing the body through a SINGLE-QUOTED heredoc so backticks/`$`/code fences stay literal (no shell expansion):
-       gh pr create --base main --head atlas/feat-x --title "Add the widget" --body "$(cat <<'EOF'
+       gh pr create --base 'main' --head 'atlas/feat-x' --title 'Add the widget' --body "$(cat <<'EOF'
        <your markdown body>
        EOF
        )"
      Keep the TITLE under 70 characters (shorten the given title if needed; put detail in the body). Do NOT add any "Generated with Claude" / "Co-Authored-By" attribution. If a PR for this branch already exists, UPDATE it with `gh pr edit` instead of opening a second one.
-  4. CONFIRM. Reply with ONE short line to the operator containing the PR url (`gh pr view atlas/feat-x --json url -q .url` prints it). The host records the open PR automatically by branch — you do not need to report it any other way.
+  4. CONFIRM. Reply with ONE short line to the operator containing the PR url (`gh pr view 'atlas/feat-x' --json url -q .url` prints it). The host records the open PR automatically by branch — you do not need to report it any other way.
   5. FREE THE RAM. The build is shipped and the container stays up for review, but any services you started under the supervisor are just holding memory on a shared host now. Tear the whole fleet down with `atlas-svc stop-all` — a later review/demo re-derives and boots only what it needs. Do this silently; do NOT add a line about it to the operator (your PR-url line from step 4 stays the last thing you say).
 
 GIT SAFETY: NEVER run destructive or irreversible git commands (`push --force`, `reset --hard`, history rewrites, etc.) unless explicitly instructed. Never skip hooks (`--no-verify`) and never touch git config. Make NO code changes beyond what a clean conflict resolution requires.

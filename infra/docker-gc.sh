@@ -35,6 +35,24 @@ log() { echo "[docker-gc] $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"; }
 before="$(df -B1 --output=used / | tail -1 | tr -d ' ')"
 log "starting — $(df -h --output=pcent / | tail -1 | tr -d ' ') used on /, keeping newest $KEEP tags/repo"
 
+# ── 0. Reap stray non-Atlas build-leftover containers (never-running only) ──────────
+# Building atlas-sandbox:latest with the legacy builder leaves orphaned intermediate
+# containers (random names like `busy_ptolemy`, no atlas/compose labels) that PIN their
+# image layers — so the dangling prune below can't reclaim those layers until they're
+# gone. Reap ONLY containers that are (a) not running (created/exited) AND (b) not ours:
+# name has no `atlas` prefix AND no compose-project label. Every running container, every
+# atlas-* container (incl. the exited blue/green standby), and every compose service is
+# therefore left untouched.
+mapfile -t strays < <(
+    docker ps -a --filter 'status=created' --filter 'status=exited' \
+        --format '{{.ID}}\t{{.Names}}\t{{.Label "com.docker.compose.project"}}' 2>/dev/null \
+        | awk -F'\t' '$2 !~ /^atlas/ && $3 == "" {print $1"\t"$2}'
+)
+for line in "${strays[@]}"; do
+    id="${line%%$'\t'*}"; name="${line#*$'\t'}"
+    if docker rm "$id" >/dev/null 2>&1; then log "reaped stray container $name"; fi
+done
+
 # ── 1. Trim old sha-* deploy image tags, keeping the newest $KEEP per repo ──────────
 # Sort by the image's RFC3339 Created time (lexical sort == chronological) so "newest"
 # is unambiguous regardless of the git sha. `docker rmi <ref>` (no -f) untags; the

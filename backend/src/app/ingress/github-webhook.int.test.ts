@@ -46,6 +46,7 @@ import { JobTitler } from '../titling';
 import { GithubPrStateSync } from '../driver/github-pr-state-sync.service';
 import { GithubCiStateSync } from '../driver/github-ci-state-sync.service';
 import { GitStateReconciler } from '../driver/git-state-reconciler.service';
+import type { BaseMoveMergeabilitySync } from '../driver/base-move-mergeability-sync.service';
 import { GithubNotificationSource } from './github-notification.source';
 import {
   GithubEventsWebhookController,
@@ -55,7 +56,7 @@ import type { RawBodyRequest } from './ingress-http';
 
 const ORG_ID = '31111111-1111-4111-8111-111111111111';
 const SECRET = 'gh-int-secret';
-const OWNED_BRANCH = 'atlas/thread-deadbeef';
+const OWNED_BRANCH = 'feature/deadbeef';
 
 function dbOpts() {
   return {
@@ -137,6 +138,10 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
         {
           provide: GithubCiStateSync,
           useValue: { schedule: () => undefined },
+        },
+        {
+          provide: GitStateReconciler,
+          useValue: { markJobDue: async () => 0 },
         },
         {
           provide: EnvService,
@@ -267,7 +272,7 @@ describe('GithubStateWebhookController PR-state path', () => {
           repoId: 'repo-1',
           action: 'closed' as const,
           prNumber: 7,
-          headRef: 'atlas/thread-deadbeef',
+          headRef: 'feature/deadbeef',
           url: 'https://github.com/acme/web/pull/7',
           merged: true,
         },
@@ -278,8 +283,17 @@ describe('GithubStateWebhookController PR-state path', () => {
     } as unknown as GithubPrStateSync;
     const reconciler = {
       markRepoDue: vi.fn(async () => 0),
+      markJobDue: vi.fn(async () => 0),
     } as unknown as GitStateReconciler;
-    const controller = new GithubStateWebhookController(adapter, prSync, reconciler);
+    const baseMove = {
+      schedule: vi.fn(),
+    } as unknown as BaseMoveMergeabilitySync;
+    const controller = new GithubStateWebhookController(
+      adapter,
+      prSync,
+      reconciler,
+      baseMove,
+    );
 
     const res = await controller.receive({ body: {}, headers: {} });
 
@@ -289,28 +303,84 @@ describe('GithubStateWebhookController PR-state path', () => {
       repoId: 'repo-1',
       action: 'closed',
       prNumber: 7,
-      headRef: 'atlas/thread-deadbeef',
+      headRef: 'feature/deadbeef',
       url: 'https://github.com/acme/web/pull/7',
       merged: true,
     });
     expect(reconciler.markRepoDue).not.toHaveBeenCalled();
+    expect(baseMove.schedule).not.toHaveBeenCalled();
   });
 
-  it('dispatches a default-branch push (repo-push) to GitStateReconciler.markRepoDue, never prSync', async () => {
+  it('dispatches a default-branch push (repo-push) to BaseMoveMergeabilitySync.schedule, never prSync/markRepoDue', async () => {
     const adapter = {
       source: 'github',
-      handlePrWebhook: async () => ({ outcome: 'repo-push' as const, orgId: ORG_ID, repoId: 'repo-1' }),
+      handlePrWebhook: async () => ({
+        outcome: 'repo-push' as const,
+        orgId: ORG_ID,
+        repoId: 'repo-1',
+      }),
     } as unknown as GithubNotificationSource;
-    const prSync = { dispatch: vi.fn(async () => undefined) } as unknown as GithubPrStateSync;
+    const prSync = {
+      dispatch: vi.fn(async () => undefined),
+    } as unknown as GithubPrStateSync;
     const reconciler = {
       markRepoDue: vi.fn(async () => 2),
+      markJobDue: vi.fn(async () => 0),
     } as unknown as GitStateReconciler;
-    const controller = new GithubStateWebhookController(adapter, prSync, reconciler);
+    const baseMove = {
+      schedule: vi.fn(),
+    } as unknown as BaseMoveMergeabilitySync;
+    const controller = new GithubStateWebhookController(
+      adapter,
+      prSync,
+      reconciler,
+      baseMove,
+    );
 
     const res = await controller.receive({ body: {}, headers: {} });
 
-    expect(res).toEqual({ status: 'accepted', marked: 2 });
-    expect(reconciler.markRepoDue).toHaveBeenCalledWith(ORG_ID, 'repo-1');
+    expect(res).toEqual({ status: 'accepted' });
+    expect(baseMove.schedule).toHaveBeenCalledWith(ORG_ID, 'repo-1');
+    expect(reconciler.markRepoDue).not.toHaveBeenCalled();
+    expect(prSync.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('dispatches a pr-rearm to GitStateReconciler.markJobDue, never prSync/baseMove', async () => {
+    const adapter = {
+      source: 'github',
+      handlePrWebhook: async () => ({
+        outcome: 'pr-rearm' as const,
+        orgId: ORG_ID,
+        repoId: 'repo-1',
+        prNumber: 5,
+        branch: 'feat/x',
+      }),
+    } as unknown as GithubNotificationSource;
+    const prSync = {
+      dispatch: vi.fn(async () => undefined),
+    } as unknown as GithubPrStateSync;
+    const reconciler = {
+      markRepoDue: vi.fn(async () => 0),
+      markJobDue: vi.fn(async () => 1),
+    } as unknown as GitStateReconciler;
+    const baseMove = {
+      schedule: vi.fn(),
+    } as unknown as BaseMoveMergeabilitySync;
+    const controller = new GithubStateWebhookController(
+      adapter,
+      prSync,
+      reconciler,
+      baseMove,
+    );
+
+    const res = await controller.receive({ body: {}, headers: {} });
+
+    expect(res).toEqual({ status: 'accepted' });
+    expect(reconciler.markJobDue).toHaveBeenCalledWith(ORG_ID, 'repo-1', {
+      prNumber: 5,
+      branch: 'feat/x',
+    });
+    expect(baseMove.schedule).not.toHaveBeenCalled();
     expect(prSync.dispatch).not.toHaveBeenCalled();
   });
 });

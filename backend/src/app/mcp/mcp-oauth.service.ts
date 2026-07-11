@@ -21,6 +21,11 @@ export const OAUTH_CALLBACK_PATH = '/web/mcp/oauth/callback';
 /** How long before a token's stated expiry we proactively refresh (clock skew + a little headroom). */
 const EXPIRY_SKEW_MS = 60_000;
 
+/** Conservative fallback access-token lifetime for providers that issue expiring tokens WITHOUT an
+ *  `expires_in`. Used only when a refresh_token exists, so such tokens still get proactively refreshed
+ *  instead of silently 401ing at runtime; providers that send `expires_in` are unaffected. */
+const DEFAULT_TOKEN_TTL_MS = 55 * 60_000;
+
 /** The verbatim marker written to `validation_error` when a token can no longer be refreshed. */
 export const NEEDS_REAUTH = 'needs re-auth';
 
@@ -210,9 +215,15 @@ export class McpOAuthService {
   }
 
   private isNearExpiry(blob: McpOAuthBlob): boolean {
+    if (!blob.obtainedAt) return false;
     const expiresIn = blob.tokens?.['expires_in'] as number | undefined;
-    if (!expiresIn || !blob.obtainedAt) return false; // no stated expiry ⇒ treat as long-lived
-    return Date.now() >= blob.obtainedAt + expiresIn * 1000 - EXPIRY_SKEW_MS;
+    if (expiresIn) return Date.now() >= blob.obtainedAt + expiresIn * 1000 - EXPIRY_SKEW_MS;
+    // No stated expiry: only worth pre-emptively refreshing when we actually CAN (a refresh_token exists).
+    // Some providers issue expiring access tokens without an `expires_in`; assume a conservative lifetime so
+    // they still get refreshed instead of silently 401ing at runtime. With no refresh_token there is nothing
+    // to refresh, so treat the token as long-lived.
+    if (!blob.tokens?.['refresh_token']) return false;
+    return Date.now() >= blob.obtainedAt + DEFAULT_TOKEN_TTL_MS - EXPIRY_SKEW_MS;
   }
 
   private async markNeedsReauth(orgId: string, dbScope: string, name: string, blob: McpOAuthBlob): Promise<void> {
@@ -376,8 +387,30 @@ class RowOAuthProvider implements OAuthClientProvider {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       token_endpoint_auth_method: oauth.tokenAuthMethod ?? 'none',
-      scope: oauth.scope,
+      scope: this.withOfflineAccess(oauth.scope),
     };
+  }
+
+  /**
+   * Add the OIDC `offline_access` scope — which many providers require in order to issue a refresh_token —
+   * to the configured scope, but ONLY when the discovered authorization-server or protected-resource
+   * metadata advertises it in `scopes_supported`. Gating on advertisement means we never send a scope the
+   * provider would reject (some use a different offline mechanism entirely), so this can't break consent.
+   * Without a refresh_token an OAuth connection "works once, then 401s with nothing to refresh" — this is
+   * the durability fix. NOTE: the SDK's SEP-835 scope resolution prefers protected-resource
+   * `scopes_supported` over this clientMetadata scope, so this is only the effective request when the
+   * resource advertises no scopes of its own (otherwise it's a harmless no-op / de-duped).
+   */
+  private withOfflineAccess(configured: string | undefined): string | undefined {
+    const disc = this.discoveryState();
+    const advertised = [
+      ...(disc?.authorizationServerMetadata?.scopes_supported ?? []),
+      ...(disc?.resourceMetadata?.scopes_supported ?? []),
+    ];
+    if (!advertised.includes('offline_access')) return configured;
+    const scopes = new Set((configured ?? '').split(/\s+/).filter(Boolean));
+    scopes.add('offline_access');
+    return [...scopes].join(' ');
   }
 
   state(): string {

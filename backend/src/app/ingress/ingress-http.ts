@@ -13,7 +13,12 @@ import type {
   RawNotification,
 } from '../domain';
 import type { IntakeOutcome, StimulusIntake } from '../stimulus';
-import type { GithubCiStateSync, GithubPrStateSync, GitStateReconciler } from '../driver';
+import type {
+  BaseMoveMergeabilitySync,
+  GithubCiStateSync,
+  GithubPrStateSync,
+  GitStateReconciler,
+} from '../driver';
 import type { GithubNotificationSource } from './github-notification.source';
 
 /** Express request shape the ingress controllers read (rawBody enabled on the Nest app). */
@@ -112,28 +117,39 @@ export async function mapTriageToHttp(
 
 /**
  * `/webhooks/github/events` front door — triage same as `runIngress`, PLUS scheduling the silent
- * CI-status sync from the SAME verified/routed payload (`GithubNotificationSource.handleWorkEvent`
- * parses both in one pass so they can never disagree). The CI schedule is fire-and-forget/debounced —
- * it never blocks the 202 response or the triage path.
+ * CI-status sync AND re-arming the reconciler for a mergeability-affecting review, both from the SAME
+ * verified/routed payload (`GithubNotificationSource.handleWorkEvent` parses all three in one pass so
+ * they can never disagree). The CI schedule is fire-and-forget/debounced; the re-arm is a cheap single
+ * `UPDATE` so it's awaited directly. Neither blocks the 202 response or the triage path meaningfully.
  */
 export async function runWorkEvent(
   logger: Logger,
   adapter: GithubNotificationSource,
   intake: StimulusIntake,
   ciSync: GithubCiStateSync,
+  reconciler: GitStateReconciler,
   req: RawBodyRequest,
 ): Promise<Record<string, unknown>> {
-  const { triage, ci } = await adapter.handleWorkEvent(toRawNotification(req));
+  const { triage, ci, rearm } = await adapter.handleWorkEvent(toRawNotification(req));
   if (ci) ciSync.schedule(ci); // fire-and-forget, debounced — never blocks the 202 or the triage path
+  if (rearm) {
+    await reconciler.markJobDue(rearm.orgId, rearm.repoId, {
+      prNumber: rearm.prNumber ?? undefined,
+      branch: rearm.branch ?? undefined,
+    });
+  }
   return mapTriageToHttp(logger, adapter, intake, triage);
 }
 
 /**
  * Run the GitHub adapter's PR-state front door (`/webhooks/github/state`): verify + route, then dispatch
- * by outcome — a `pull_request` event's `PrStateDelta` goes straight to the silent `GithubPrStateSync`,
- * and a `repo-push` (a push to the repo's default branch) marks the repo's open PRs due-now via
- * `GitStateReconciler.markRepoDue` so the fast heartbeat catches a base-move conflict in seconds. This
- * path never touches `StimulusIntake`.
+ * by outcome — a `pull_request` event's `PrStateDelta` goes straight to the silent `GithubPrStateSync`;
+ * a `repo-push` (a push to the repo's default branch) schedules the debounced, BATCHED GraphQL
+ * mergeability refresh (`BaseMoveMergeabilitySync.schedule`) instead of a per-PR REST fan-out, so a
+ * sequential merge of N PRs coalesces into ONE query per repo; a `pr-rearm` (a mergeability-affecting
+ * webhook that touches exactly one PR — head push / draft↔ready) marks that PR's job due-now via
+ * `GitStateReconciler.markJobDue` so the fast heartbeat picks it up within one cycle. This path never
+ * touches `StimulusIntake`.
  */
 export async function runPrWebhook(
   logger: Logger,
@@ -141,6 +157,7 @@ export async function runPrWebhook(
   req: RawBodyRequest,
   prSync: GithubPrStateSync,
   reconciler: GitStateReconciler,
+  baseMove: BaseMoveMergeabilitySync,
 ): Promise<Record<string, unknown>> {
   const result: IngressResult = await adapter.handlePrWebhook(toRawNotification(req));
 
@@ -157,8 +174,15 @@ export async function runPrWebhook(
     return { status: 'accepted' };
   }
   if (result.outcome === 'repo-push') {
-    const marked = await reconciler.markRepoDue(result.orgId, result.repoId);
-    return { status: 'accepted', marked };
+    baseMove.schedule(result.orgId, result.repoId);
+    return { status: 'accepted' };
+  }
+  if (result.outcome === 'pr-rearm') {
+    await reconciler.markJobDue(result.orgId, result.repoId, {
+      prNumber: result.prNumber ?? undefined,
+      branch: result.branch ?? undefined,
+    });
+    return { status: 'accepted' };
   }
 
   return { status: 'ignored', reason: 'unsupported' };
