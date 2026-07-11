@@ -1,3 +1,7 @@
+"use client";
+
+import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   CheckCircle2,
   CircleDashed,
@@ -408,45 +412,73 @@ export function CiHeaderGlyph({
   ci: CiStatus | null;
   counts?: CiCounts | null;
 }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   // No CI reported → render nothing (no glyph, no separator). Keeps "no CI" visually distinct from the
   // `skipped` dashed-ring, which the faint-vs-muted tint alone read too similarly.
   if (ci == null) return null;
-  const g = ciGlyph(ci);
-  const { Icon, color, title, spin } = g;
+  const { Icon, color, title, spin } = ciGlyph(ci);
   const segments = counts ? ciCountSegments(counts) : [];
+
+  // Render the hover tooltip in a portal at document.body (position: fixed) so it can't be clipped by the
+  // sidebar/navigator panes' `overflow` — a plain absolutely-positioned child was getting cut off at the
+  // pane edge. Clamp the center to the viewport so it never runs off-screen either.
+  const openTip = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const cx = Math.min(Math.max(r.left + r.width / 2, 100), window.innerWidth - 100);
+    setAnchor({ x: cx, y: r.top });
+  };
+
   return (
-    <span className="group relative flex shrink-0 items-center gap-0.5">
+    <span className="flex shrink-0 items-center gap-0.5">
       <span className="font-mono text-[9.5px] text-faint">·</span>
-      <Icon
-        size={11}
-        strokeWidth={2}
-        style={{ color }}
-        className={cn("shrink-0", spin && "animate-spin")}
-        aria-label={title}
-      />
       <span
-        role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-[var(--text)] px-1.5 py-1 text-[10px] font-medium text-[var(--panel)] opacity-0 shadow-md transition-opacity duration-100 group-hover:opacity-100"
+        ref={ref}
+        onMouseEnter={openTip}
+        onMouseLeave={() => setAnchor(null)}
+        className="flex items-center"
       >
-        {segments.length > 0 ? (
-          <span className="flex items-center gap-1.5">
-            {segments.map((seg, i) => (
-              <span key={seg.label} className="flex items-center gap-1">
-                {i > 0 ? (
-                  <span className="text-[var(--faint)]">·</span>
-                ) : null}
-                <span
-                  className="inline-block h-1.5 w-1.5 rounded-full"
-                  style={{ background: seg.color }}
-                />
-                {seg.label}
-              </span>
-            ))}
-          </span>
-        ) : (
-          title
-        )}
+        <Icon
+          size={11}
+          strokeWidth={2}
+          style={{ color }}
+          className={cn("shrink-0", spin && "animate-spin")}
+          aria-label={title}
+        />
       </span>
+      {anchor
+        ? createPortal(
+            <span
+              role="tooltip"
+              style={{
+                position: "fixed",
+                left: Math.round(anchor.x),
+                top: Math.round(anchor.y - 6),
+                transform: "translate(-50%, -100%)",
+              }}
+              className="pointer-events-none z-50 whitespace-nowrap rounded-md bg-[var(--text)] px-1.5 py-1 text-[10px] font-medium text-[var(--panel)] shadow-md"
+            >
+              {segments.length > 0 ? (
+                <span className="flex items-center gap-1.5">
+                  {segments.map((seg, i) => (
+                    <span key={seg.label} className="flex items-center gap-1">
+                      {i > 0 ? <span className="text-[var(--faint)]">·</span> : null}
+                      <span
+                        className="inline-block h-1.5 w-1.5 rounded-full"
+                        style={{ background: seg.color }}
+                      />
+                      {seg.label}
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                title
+              )}
+            </span>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }
