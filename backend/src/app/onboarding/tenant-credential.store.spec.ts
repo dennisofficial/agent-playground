@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
 import type { DataSource, Repository } from 'typeorm';
-import type { OrgCredentialsEntity } from '../persistence/entities';
+import type { OrganizationEntity, OrgCredentialsEntity } from '../persistence/entities';
 import { TenantCredentialStore } from './tenant-credential.store';
 
 const KEY = Buffer.alloc(32, 9).toString('base64');
@@ -14,10 +14,16 @@ function fakeEnv(map: Record<string, string | undefined>): EnvService {
  * One in-memory `rows` store shared by BOTH a fake Repository (used by `read`/`write`/`presence`) and a
  * fake DataSource whose `transaction` runs the callback with a fake EntityManager (used by
  * `advanceCodexAuthSecret`). The pessimistic lock is a no-op here — this covers the guard LOGIC; true
- * lock atomicity is a Postgres guarantee exercised in real runs.
+ * lock atomicity is a Postgres guarantee exercised in real runs. `orgs` backs `dataSource.getRepository
+ * (OrganizationEntity)`, which `presence()` reads for the selected-claude-credential pointer.
  */
-function fakeDb(): { repo: Repository<OrgCredentialsEntity>; dataSource: DataSource } {
+function fakeDb(): {
+  repo: Repository<OrgCredentialsEntity>;
+  dataSource: DataSource;
+  orgs: Map<string, OrganizationEntity>;
+} {
   const rows = new Map<string, OrgCredentialsEntity>();
+  const orgs = new Map<string, OrganizationEntity>();
   const k = (t: string, s: string): string => `${t} ${s}`;
   const findOne = ({ where }: { where: { org_id: string; scope: string } }) =>
     rows.get(k(where.org_id, where.scope)) ?? null;
@@ -48,12 +54,25 @@ function fakeDb(): { repo: Repository<OrgCredentialsEntity>; dataSource: DataSou
     async transaction(fn: (m: typeof manager) => Promise<unknown>) {
       return fn(manager);
     },
+    getRepository() {
+      return {
+        async findOne({ where }: { where: { id: string } }) {
+          return orgs.get(where.id) ?? null;
+        },
+      };
+    },
   } as unknown as DataSource;
-  return { repo, dataSource };
+  return { repo, dataSource, orgs };
 }
 
-function makeStore(env: Record<string, string | undefined> = { SECRETS_ENCRYPTION_KEY: KEY }) {
-  const { repo, dataSource } = fakeDb();
+function makeStore(
+  env: Record<string, string | undefined> = { SECRETS_ENCRYPTION_KEY: KEY },
+  orgSeed?: Record<string, string | null>,
+) {
+  const { repo, dataSource, orgs } = fakeDb();
+  for (const [orgId, selectedId] of Object.entries(orgSeed ?? {})) {
+    orgs.set(orgId, { id: orgId, selected_claude_credential_id: selectedId } as OrganizationEntity);
+  }
   return new TenantCredentialStore(repo, dataSource, fakeEnv(env));
 }
 
@@ -113,12 +132,15 @@ describe('TenantCredentialStore', () => {
     });
   });
 
-  it('engineAuthSet requires a Claude subscription token (the harness runs subscription-only)', async () => {
-    const store = makeStore();
-    await store.write('T1', { anthropicApiKey: 'a1' });
+  it('engineAuthSet reflects a SELECTED claude credential, not the legacy column', async () => {
+    const store = makeStore(undefined, { T1: null });
+    await store.write('T1', { anthropicApiKey: 'a1', claudeOauthToken: 'oauth' });
+    // The legacy column is set but no `claude_credentials` row is selected — still unsatisfied.
     expect((await store.presence('T1')).engineAuthSet).toBe(false);
-    await store.write('T1', { claudeOauthToken: 'oauth' });
-    expect((await store.presence('T1')).engineAuthSet).toBe(true);
+
+    const selected = makeStore(undefined, { T1: 'cred-1' });
+    await selected.write('T1', { anthropicApiKey: 'a1' });
+    expect((await selected.presence('T1')).engineAuthSet).toBe(true);
   });
 
   it('refuses to write without an encryption key', async () => {

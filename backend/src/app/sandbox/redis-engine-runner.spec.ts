@@ -131,6 +131,30 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       expect(spec.persistAuthRefresh).toBe(true);
     });
 
+    it('buildSpec preserves the non-secret Claude personal kind while still stripping refreshBack', async () => {
+      const redis = new InMemoryRedisStream();
+      const xadd = vi.spyOn(redis, 'xadd');
+      const frames = [{ t: 'final', r: { result: 'DONE', sessionId: 's' } }];
+      const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, fakeRegistry());
+
+      await runner.run({
+        ...baseArgs(() => undefined),
+        engine: 'claude',
+        auth: {
+          secret: 'oauth-json',
+          kind: 'personal',
+          refreshBack: { orgId: 'org1', engine: 'claude', credentialId: 'cred-1' },
+        },
+      });
+
+      const spec = xadd.mock.calls.find(([k]) => String(k).endsWith(':spec'))![1] as {
+        auth: { secret: string; kind?: string; refreshBack?: unknown };
+        persistAuthRefresh?: boolean;
+      };
+      expect(spec.auth).toEqual({ secret: 'oauth-json', kind: 'personal' });
+      expect(spec.persistAuthRefresh).toBe(true);
+    });
+
     it('omits persistAuthRefresh for env-fallback auth (no refreshBack provenance)', async () => {
       const redis = new InMemoryRedisStream();
       const xadd = vi.spyOn(redis, 'xadd');
@@ -155,7 +179,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
       await runner.run(authArgs(() => undefined));
 
-      expect(sink.persist).toHaveBeenCalledWith('org1', 'codex', 'fresh-blob');
+      expect(sink.persist).toHaveBeenCalledWith({ orgId: 'org1', engine: 'codex' }, 'fresh-blob');
     });
 
     it('does NOT fire the sink when the result has no refreshed secret', async () => {

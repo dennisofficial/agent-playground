@@ -163,7 +163,7 @@ export function OrgSettings({
             ) : section === "general" ? (
               <GeneralSection org={org} />
             ) : section === "credentials" ? (
-              <CredentialsSection orgId={org.id} />
+              <CredentialsSection orgId={org.id} role={org.role} />
             ) : section === "workspace-secrets" ? (
               <WorkspaceSecretsSection orgId={org.id} role={org.role} />
             ) : section === "mcp-servers" ? (

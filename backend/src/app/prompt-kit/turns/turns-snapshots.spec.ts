@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decisionsBlock, shipOpenPrBody } from './ship-open-pr';
+import { shipOpenPrBody } from './ship-open-pr';
 import {
   HANDOFF_SCHEMA,
   RECORD_LEG_HANDOFF_DESCRIPTION,
@@ -21,23 +21,8 @@ describe('turns / golden snapshots', () => {
       branch: 'atlas/feat-x',
       defaultBranch: 'main',
       title: 'Add the widget',
-      decisionsBlock: '',
     });
     await expect(out).toMatchFileSnapshot('./__snapshots__/ship-open-pr-body.txt');
-  });
-
-  it('shipOpenPrBody — with a non-empty decisions block', async () => {
-    const block = decisionsBlock([
-      { title: 'Use pgvector', decisionClass: 'data_model', ruling: 'HNSW index on embeddings' },
-      { title: 'Ship in-sandbox', decisionClass: 'mechanism', ruling: 'Atlas opens the PR itself' },
-    ]);
-    const out = shipOpenPrBody({
-      branch: 'atlas/feat-x',
-      defaultBranch: 'main',
-      title: 'Add the widget',
-      decisionsBlock: block,
-    });
-    await expect(out).toMatchFileSnapshot('./__snapshots__/ship-open-pr-body-with-decisions.txt');
   });
 
   it('ROTATION_PREAMBLE', async () => {

@@ -42,6 +42,8 @@ import { CurrentUser, Public } from '@workspace/auth/server';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
+  AMEND_APPROVE_ACTION_ID,
+  AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
@@ -113,6 +115,10 @@ const VALID_ACTION_IDS = new Set([
   // The ship-review gate's "Back to building" button — the sibling retract of SHIP_ACTION_ID, routed to
   // the driver's ship-retract instead of a plan verdict (see WebSurfaceModule).
   RETRACT_SHIP_ACTION_ID,
+  // The brain's "Amend build?" proposal buttons — Approve runs the operator retract + wakes the brain;
+  // Dismiss just neutralizes the card. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule).
+  AMEND_APPROVE_ACTION_ID,
+  AMEND_DISMISS_ACTION_ID,
 ]);
 /** Author fields for an operator-authored web message — the REAL signed-in user (display name falls back
  *  to email), so the brain's `<user name=…>` attribution names the actual person, not a generic "Operator".
@@ -625,9 +631,10 @@ export class WebSurfaceController {
               url: t.pr_url,
             }
           : null,
-        // The observed CI/CD aggregate (`success|failure|pending|null`) — drives the sidebar row's CI
+        // The observed CI/CD aggregate (`success|failure|pending|skipped|null`) — drives the sidebar row's CI
         // dot on first paint / when realtime is disabled (realtime carries it independently).
         ciStatus: t.ci_status,
+        ciCounts: t.ci_counts,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,
@@ -1070,7 +1077,12 @@ export class WebSurfaceController {
     }
     // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
     const thread = await this.requireThread(meta.jobId, org.id);
-    if (actionId !== SHIP_ACTION_ID && actionId !== RETRACT_SHIP_ACTION_ID) {
+    if (
+      actionId !== SHIP_ACTION_ID &&
+      actionId !== RETRACT_SHIP_ACTION_ID &&
+      actionId !== AMEND_APPROVE_ACTION_ID &&
+      actionId !== AMEND_DISMISS_ACTION_ID
+    ) {
       const mismatch =
         thread.status !== 'awaiting_approval' ||
         !meta.decisionRecordId ||

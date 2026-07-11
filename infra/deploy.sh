@@ -203,7 +203,7 @@ fi
 check_address_pool
 log "Pulling images for tag $TAG ..."
 ATLAS_IMAGE_TAG="$TAG" DC pull \
-    "backend-${STANDBY}" web
+    "backend-${STANDBY}" web mcp-reader
 
 # ── 2. Run migrator (one-shot, on the atlas network) ────────────────────────────
 # Ensure Postgres + Redis (and thus the `atlas` network) exist before the migrator joins it — on a
@@ -239,6 +239,13 @@ export ATLAS_IMAGE_TAG="$TAG"
 log "Ensuring web + caddy are up (tag: ${TAG}) ..."
 DC up -d web caddy
 
+# ── 2.6. Ensure the read-only diagnostics MCP reader is up ──────────────────────
+# A single stateless, read-only instance — NOT part of the blue/green backend dance and NOT
+# health-gated (no leader election, no public route). Recreated on tag change; postgres (its
+# depends_on) was already ensured up in step 2. Internal-only — no port is published.
+log "Ensuring mcp-reader is up (tag: ${TAG}) ..."
+DC up -d mcp-reader
+
 # ── 3. Start standby ────────────────────────────────────────────────────────────
 log "Starting backend-${STANDBY} (tag: ${TAG}) ..."
 
@@ -271,3 +278,16 @@ record_state "$STANDBY" "$TAG"
 
 log "=== Deploy complete. Active: backend-${STANDBY} (${TAG}) ==="
 log "Previous backend-${ACTIVE} is stopped. It will be the standby for the next deploy."
+
+# ── 8. Garbage-collect old images (best-effort) ──────────────────────────────────
+# Every deploy pulls a fresh ~6.6G of sha-tagged images; without this they accumulate
+# indefinitely under /var/lib/containerd. docker-gc.sh trims old deploy tags (keeping
+# the newest few for rollback — the just-deployed + previous colours are always in use
+# and are skipped) and prunes dangling sandbox-image rebuilds + stale build cache. It
+# NEVER touches a running container's image, so it can't affect this live deploy. A
+# failure here must not fail an otherwise-successful deploy, hence `|| true`.
+if [[ -x "$SRC_DIR/docker-gc.sh" ]]; then
+    cp "$SRC_DIR/docker-gc.sh" "$SRV/docker-gc.sh" 2>/dev/null || true
+    log "Running post-deploy image GC ..."
+    "$SRC_DIR/docker-gc.sh" || log "WARN: image GC reported an error (non-fatal)"
+fi

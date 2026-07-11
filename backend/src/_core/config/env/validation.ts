@@ -56,6 +56,11 @@ export interface IEnvConfig {
   // default (containerized turns are unavailable until Redis appears).
   REDIS_URL?: string;
 
+  // Claude subscription OAuth. Both have code defaults (DEFAULT_CLAUDE_OAUTH_CONFIG) matching the real
+  // claude.ai/platform.claude.com endpoints — only set to point at a different OAuth deployment.
+  CLAUDE_OAUTH_AUTHORIZE_URL?: string;
+  CLAUDE_OAUTH_CLIENT_ID?: string;
+
   // Slack/approval boss user id (set in the shared dev config). installed_by wins when set.
   APPROVAL_BOSS_USER_ID?: string;
 
@@ -81,8 +86,13 @@ export interface IEnvConfig {
   WORKSPACE_DOCKER_STORAGE_DRIVER?: string;
   // SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (falls back to REDIS_URL).
   // SANDBOX_BUS_NETWORK: the internal Docker network each sandbox joins (`atlas-bus` in prod; unset in dev).
+  // SANDBOX_MCP_NETWORK: the internal net the read-only diagnostics MCP reader lives on; a sandbox is
+  //   attached ONLY when its repo slug === ATLAS_REPO_SLUG (`atlas-mcp` in prod; unset in dev = no-op).
+  // ATLAS_REPO_SLUG: repos.slug of the Atlas repo itself; gates the MCP-network attach (fail-closed).
   SANDBOX_REDIS_URL?: string;
   SANDBOX_BUS_NETWORK?: string;
+  SANDBOX_MCP_NETWORK?: string;
+  ATLAS_REPO_SLUG?: string;
 
   // Secrets. SECRETS_ENCRYPTION_KEY (32-byte hex/base64) encrypts every `org_credentials` row at rest —
   // REQUIRED now that all credentials live there. JWT_* sign the web-console session cookies — REQUIRED
@@ -177,6 +187,10 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Redis (host↔sandbox engine bus)
   REDIS_URL: Joi.string().uri().optional(),
 
+  // Claude subscription OAuth
+  CLAUDE_OAUTH_AUTHORIZE_URL: Joi.string().uri().optional(),
+  CLAUDE_OAUTH_CLIENT_ID: Joi.string().optional(),
+
   APPROVAL_BOSS_USER_ID: Joi.string().optional(),
 
   // Path roots (differ dev↔prod; code defaults)
@@ -194,6 +208,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
+  SANDBOX_MCP_NETWORK: Joi.string().optional(),
+  ATLAS_REPO_SLUG: Joi.string().optional(),
 
   // Secrets
   SECRETS_ENCRYPTION_KEY: Joi.string().required(),

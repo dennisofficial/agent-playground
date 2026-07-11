@@ -28,6 +28,7 @@
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-hook-form": "^7.66.0",
+    "react-json-view-lite": "^2.5.0",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.11.2",
     "react-zoom-pan-pinch": "^4.0.3",

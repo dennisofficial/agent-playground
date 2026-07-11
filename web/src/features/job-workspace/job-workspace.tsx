@@ -168,12 +168,17 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       ? "triaging"
       : "planning";
 
-  // The LAST plan-approval card in the log (kind `plan`/`direct`/undefined — never the ship-review card,
-  // which is a distinct gate with its own finder below). Also feeds the "plan" detail-pane doc viewer.
+  // The LAST plan-approval card in the log (kind `plan`/`direct`/undefined — never the ship-review card
+  // or the brain's `amend` proposal, which are distinct gates with their own inline rendering). A POSITIVE
+  // match so a new gate kind can't accidentally drive the plan navigator. Also feeds the "plan" doc viewer.
   const approvalCard = useMemo<WebApprovalCard | null>(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const card = messages[i].card;
-      if (card?.type === "approval_card" && card.kind !== "ship") return card;
+      if (
+        card?.type === "approval_card" &&
+        (card.kind === "plan" || card.kind === "direct" || card.kind == null)
+      )
+        return card;
     }
     return null;
   }, [messages]);
@@ -361,7 +366,10 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   );
 
   // The persistent approval / ship gate — pins to the base of whichever surface hosts the detail content.
-  const footerBar = awaitingApproval ? (
+  // Shown ONLY on mobile: that's the sole tier where the job sidebar and the navigator's approve/ship
+  // buttons collapse into a drawer, so the footer is the reachable gate. On md+ the navigator's inline
+  // buttons and the conversation's approval card cover it, and the footer was redundant there.
+  const footerBar = !isMobile ? null : awaitingApproval ? (
     <PersistentApprovalBar
       jobRef={ref}
       value={approveValue}

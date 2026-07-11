@@ -15,6 +15,8 @@ import { useApprove, useRepoTree } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import { isSubmitCombo } from "@/lib/keyboard";
 import {
+  AMEND_APPROVE_ACTION_ID,
+  AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
@@ -48,10 +50,11 @@ export function ApprovalCardView({
   onOpenPlan?: () => void;
   onSelectNode?: (node: string) => void;
 }) {
-  // The ship-review gate reuses this same `approval_card` payload (discriminated by `kind: 'ship'`) but
-  // is a much smaller card — a title/summary + ship-gate buttons, rendered generically off
-  // `card.actions` (never a hardcoded action id, so the card doesn't drift from whatever the backend sends).
-  if (card.kind === "ship") {
+  // The ship-review gate and the brain's "Amend build?" proposal reuse this same `approval_card` payload
+  // (discriminated by `kind: 'ship' | 'amend'`) but are a much smaller card — a title/summary + gate
+  // buttons, rendered generically off `card.actions` (never a hardcoded action id, so the card doesn't
+  // drift from whatever the backend sends).
+  if (card.kind === "ship" || card.kind === "amend") {
     return <ShipCardView card={card} jobRef={jobRef} />;
   }
   return (
@@ -209,7 +212,7 @@ function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef 
             className="h-1.5 w-1.5 rounded-full"
             style={{ background: "var(--purple)" }}
           />
-          awaiting ship
+          {card.kind === "amend" ? "awaiting your call" : "awaiting ship"}
         </span>
       </div>
 
@@ -245,7 +248,13 @@ function ShipActionButton({
         ? "ghost"
         : "primary";
   const loadingText =
-    action.actionId === RETRACT_SHIP_ACTION_ID ? "Retracting…" : "Shipping…";
+    action.actionId === AMEND_APPROVE_ACTION_ID
+      ? "Amending…"
+      : action.actionId === AMEND_DISMISS_ACTION_ID
+        ? "Dismissing…"
+        : action.actionId === RETRACT_SHIP_ACTION_ID
+          ? "Retracting…"
+          : "Shipping…";
   return (
     <div className="flex flex-col gap-2">
       <Button

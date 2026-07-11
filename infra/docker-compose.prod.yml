@@ -2,6 +2,7 @@
 #
 # Prerequisites:
 #   - /srv/atlas/secrets/atlas.env  (mode 600, see infra/.env.prod.example)
+#   - /srv/atlas/secrets/mcp-reader.env  (mode 600, see infra/.env.mcp-reader.example)
 #   - /srv/atlas/pgdata/            (Postgres data directory)
 #   - /srv/atlas/data/{repos,agent-home,refs,skills,golden,engine}/
 #   - /srv/atlas/caddy/{data,config}/
@@ -37,6 +38,14 @@ x-backend-common: &backend-common
     SANDBOX_REDIS_URL: "redis://redis:6379"
     # The network the sandbox manager attaches each sandbox to so it can reach Redis (and ONLY Redis).
     SANDBOX_BUS_NETWORK: atlas-bus
+    # The internal network the read-only diagnostics MCP reader lives on. The sandbox manager attaches a
+    # sandbox to it ONLY when the sandbox's repo slug matches ATLAS_REPO_SLUG — so ONLY Atlas-repo jobs can
+    # even route to the reader (the network half of the repo-scope; the credential half is the web MCP
+    # registry). `internal: true`, so a sandbox on it reaches ONLY the reader, never the host/internet.
+    SANDBOX_MCP_NETWORK: atlas-mcp
+    # The repos.slug of the Atlas repo itself. Gates the MCP-network attach above (fail-closed: unset → no
+    # sandbox is ever attached). MUST match the slug the Atlas repo was connected under in the web UI.
+    ATLAS_REPO_SLUG: atlas
     # Docker socket for sandbox management (same path on host and in container)
     DOCKER_SOCKET_PATH: /var/run/docker.sock
     # Sandbox base image (built on the box at first boot by SandboxImageBuilder)
@@ -186,6 +195,45 @@ services:
       start_period: 30s
       retries: 3
 
+  # ── MCP reader (standalone, READ-ONLY prod-diagnostics MCP server) ──────────────
+  # Its own minimal container (decision d7): the single controlled crossing point between the isolated
+  # sandbox network and the trusted data plane. It reads Postgres over `atlas` with a SELECT-only role
+  # (d1 — no write path) and raw JSONL / worktree / context files via two READ-ONLY bind mounts. It is
+  # reachable ONLY from containers on `atlas` or the internal `atlas-mcp` net — and the sandbox manager
+  # attaches ONLY Atlas-repo sandboxes to `atlas-mcp` — so no other sandbox can even route to it.
+  # NON-NEGOTIABLE (d2/d6): NO `ports:` — never published on the host's public interface. Audit → stdout.
+  mcp-reader:
+    image: ghcr.io/dennisofficial/atlas-mcp-reader:${ATLAS_IMAGE_TAG:-latest}
+    init: true
+    env_file:
+      # Its OWN scoped secret file (mode 600) — ONLY MCP_READER_* values, NOT the backend's atlas.env.
+      # The reader is the single crossing point that ingests untrusted, prompt-injectable data, so it must
+      # never hold the full-privilege POSTGRES_PASSWORD / JWT_* / SECRETS_ENCRYPTION_KEY / GitHub tokens —
+      # otherwise a compromised reader could connect to Postgres as the read/write role and bypass the
+      # SELECT-only `mcp_reader` role entirely. Holds MCP_READER_API_KEY + MCP_READER_PG_USER/PASSWORD/DB.
+      - /srv/atlas/secrets/mcp-reader.env
+    environment:
+      MCP_READER_PORT: "4100"
+      # Postgres over the internal `atlas` network (service DNS `postgres`), SELECT-only role.
+      MCP_READER_PG_HOST: postgres
+      MCP_READER_PG_PORT: "5432"
+      MCP_READER_PG_SSL: disable
+      # Same-path roots as the backend so the absolute host paths stored in the DB resolve identically.
+      AGENT_HOME_ROOT: /srv/atlas/data/agent-home
+      REPOS_ROOT: /srv/atlas/data/repos
+    volumes:
+      # Two READ-ONLY mounts: agent-home (raw JSONL + job /context), repos (worktrees at their state).
+      - /srv/atlas/data/agent-home:/srv/atlas/data/agent-home:ro
+      - /srv/atlas/data/repos:/srv/atlas/data/repos:ro
+    networks:
+      - atlas       # reach Postgres
+      - atlas-mcp   # the only net Atlas-repo sandboxes can reach it on
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # NO ports: — internal only. NO docker.sock, NO write mount, NO Caddy route.
+    restart: unless-stopped
+
   # ── Caddy (reverse proxy + auto-TLS) ───────────────────────────────────────────
   caddy:
     # Custom image = stock caddy:2 + the caddy-dns/cloudflare module (infra/caddy.Dockerfile),
@@ -234,5 +282,12 @@ networks:
   # each per-thread container to it (see SANDBOX_BUS_NETWORK). Created here so redis can join it on boot.
   atlas-bus:
     name: atlas-bus
+    driver: bridge
+    internal: true
+  # The sandbox↔MCP-reader net: `internal: true` (no gateway/internet egress), reachable only by the
+  # containers attached to it — the mcp-reader (joined here at boot) and Atlas-repo sandboxes (attached at
+  # runtime by the sandbox manager, gated on ATLAS_REPO_SLUG). No non-Atlas sandbox is ever on it.
+  atlas-mcp:
+    name: atlas-mcp
     driver: bridge
     internal: true

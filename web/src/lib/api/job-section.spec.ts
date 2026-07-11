@@ -15,6 +15,7 @@ function makeThread(overrides: Partial<InboxThread> = {}): InboxThread {
     createdAt: "2026-01-01T00:00:00.000Z",
     pr: null,
     ci: null,
+    ciCounts: null,
     halt: null,
     shipping: false,
     org: { id: "org1", slug: "org1", name: "Org One" },

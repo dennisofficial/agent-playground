@@ -6,6 +6,7 @@ import { Menu, Network, Search, Ticket } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { ROUTES } from "@/lib/routes";
 import { useCurrentUser } from "@/lib/api/me";
+import { HostStats } from "./host-stats";
 
 /**
  * The app-wide top bar (design "Atlas Tickets Board"). Pure chrome: the ATLAS lockup, the primary
@@ -95,6 +96,8 @@ export function TopBar({
       >
         <Search size={16} />
       </button>
+
+      <HostStats />
 
       <Avatar />
     </header>
