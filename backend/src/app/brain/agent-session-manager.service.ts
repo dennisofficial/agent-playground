@@ -1626,6 +1626,12 @@ export class AgentSessionManager
     const reattachKind =
       (await this.store.loadJob(row.job_id).catch(() => null))?.kind ?? null;
     const tools = this.buildTools(stimulus, reattachKind);
+    // Drop any live-turn state stranded by a prior subscription that died without finish/abort/discard, so
+    // the '0-0' event replay below rebuilds a CLEAN buffer (a fresh turn_start) instead of appending onto a
+    // stale open block — the root cause of persistent multiple-cursor state. Silent (no turn_end) to avoid
+    // racing the client's async reconcile; guarded so the empty boot path is a no-op. Lane defaults to
+    // 'main' — matches create() below (no lane arg).
+    this.turnHarness.resetLane(row.channel, row.job_id);
     const streamer = this.turnHarness.create({
       jobId: row.job_id,
       orgId: row.org_id,

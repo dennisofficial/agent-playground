@@ -2552,7 +2552,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
     );
-    return { manager, store, lifecycle, git, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
+    return { manager, store, lifecycle, git, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness, turnHarness };
   }
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
@@ -3038,6 +3038,29 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(names).toContain('finish_onboarding');
     expect(names).toContain('write_workspace_config');
     expect(names).not.toContain('propose_plan');
+  });
+
+  it('reattachOne resets the live-turn lane (channel, jobId) BEFORE the harness/replay', async () => {
+    // Clearing the stranded lane before the '0-0' replay is what rebuilds a clean buffer (no persistent
+    // multiple-cursor state). It must run before create/reattach so the replay repopulates from empty.
+    const { manager, store, dockerRunner, turnHarness } = makeManager({});
+    (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: null });
+    const reattach = vi.fn().mockResolvedValue({ result: 'done', sessionId: 's-re' });
+    (dockerRunner as { reattach?: unknown }).reattach = reattach;
+    const resetLane = vi.spyOn(turnHarness, 'resetLane');
+
+    await (manager as unknown as { reattachOne(row: unknown): Promise<void> }).reattachOne({
+      turn_id: 'turn-re-reset',
+      container_id: 'c-re-reset',
+      org_id: TEAM_ID,
+      job_id: THREAD_ID,
+      channel: PROJECT_ID,
+      ctx: { repoId: PROJECT_ID, author: { id: 'U-OP', displayName: 'Operator' }, body: 'Keep going' },
+    });
+
+    expect(resetLane).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID);
+    // Ordering: the reset fires before the '0-0' replay so the replay rebuilds onto an empty lane.
+    expect(resetLane.mock.invocationCallOrder[0]).toBeLessThan(reattach.mock.invocationCallOrder[0]);
   });
 
   it('boot re-attach of a NORMAL turn rebuilds the full build toolset (no onboarding curation)', async () => {

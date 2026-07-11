@@ -60,6 +60,28 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(live.snapshot('R', 'T', 'phase:s1')).toBeNull();
   });
 
+  it('resetLane silently clears a live lane (no turn_end) and is a guarded no-op on an empty lane', () => {
+    const { live, factory } = setup();
+    const frames: Array<{ event: { kind?: string } }> = [];
+    const sub = live.stream$.subscribe((f) => frames.push(f as never));
+
+    // Empty lane → guarded no-op (the empty boot path): nothing dropped, nothing fanned.
+    factory.resetLane('R', 'T');
+    expect(live.snapshot('R', 'T', 'main')).toBeNull();
+    expect(frames).toHaveLength(0);
+
+    // Open a lane, then resetLane clears it WITHOUT fanning a turn_end (silent — avoids racing the client
+    // reconcile before a reattach's '0-0' replay).
+    live.push('R', 'T', { kind: 'text_delta', text: 'Hi' });
+    expect(live.snapshot('R', 'T', 'main')).not.toBeNull();
+    const before = frames.length;
+    factory.resetLane('R', 'T');
+    sub.unsubscribe();
+
+    expect(live.snapshot('R', 'T', 'main')).toBeNull();
+    expect(frames.slice(before)).toHaveLength(0); // no frame at all, in particular no turn_end
+  });
+
   it('usage: a subagent-tagged occupancy stamps its anchor Task block; a main-agent one does not', async () => {
     const { persisted, factory } = setup();
     const h = factory.create({ jobId: 'T', channel: 'R', lane: 'main' });
