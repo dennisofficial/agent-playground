@@ -216,6 +216,10 @@ export function useOrgUsage(orgId: string) {
     queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/usage`),
     enabled: Boolean(orgId),
     staleTime: 30_000,
+    // Re-enable focus refetch (the app disables it globally) so the documented
+    // backstop is real: with the poll dropped, this is how a client on an instance
+    // that missed the single-process SSE push recovers a stale ring.
+    refetchOnWindowFocus: true,
   });
 }
 
