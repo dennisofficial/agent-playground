@@ -17,6 +17,7 @@ export class GitHubAppTokenService {
 
   private cache = new Map<string, { token: string; expiresAtMs: number }>();
   private botIdentity?: { name: string; email: string };
+  private slug?: string;
 
   constructor(private readonly env: EnvService) {}
 
@@ -182,9 +183,9 @@ export class GitHubAppTokenService {
     };
   }
 
-  /** The App's own bot commit identity (name/email) — an installation token isn't a user, so App-mode commits attribute to the bot. Memoized (static per app). */
-  async appBotIdentity(): Promise<{ name: string; email: string }> {
-    if (this.botIdentity) return this.botIdentity;
+  /** The Atlas App's URL slug (from `GET /app`) — used to build the org's install URL. Memoized (static per app). */
+  async appSlug(): Promise<string> {
+    if (this.slug) return this.slug;
     const appRes = await this.fetchImpl(`${API}/app`, {
       headers: this.appHeaders(this.appJwt()),
     });
@@ -197,6 +198,14 @@ export class GitHubAppTokenService {
       );
     }
     const { slug } = (await appRes.json()) as { slug: string };
+    this.slug = slug;
+    return slug;
+  }
+
+  /** The App's own bot commit identity (name/email) — an installation token isn't a user, so App-mode commits attribute to the bot. Memoized (static per app). */
+  async appBotIdentity(): Promise<{ name: string; email: string }> {
+    if (this.botIdentity) return this.botIdentity;
+    const slug = await this.appSlug();
     const botLogin = `${slug}[bot]`;
     const userRes = await this.fetchImpl(
       `${API}/users/${encodeURIComponent(botLogin)}`,

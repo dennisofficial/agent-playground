@@ -163,6 +163,8 @@ function fakeStore(presence: Partial<CredentialPresence> = {}): TenantCredential
         hasGithub: false,
         engineAuthSet: false,
         hasCodex: false,
+        hasGithubApp: false,
+        githubAuthMode: 'pat' as const,
         ...presence,
       };
     },

@@ -284,7 +284,7 @@ export class OnboardingService {
       )
     ) {
       throw new BadRequestException(
-        'Finish org setup (Anthropic key, OpenAI key, engine auth, GitHub PAT) before onboarding a repo.',
+        'Finish org setup (Anthropic key, OpenAI key, engine auth, GitHub access (PAT or App)) before onboarding a repo.',
       );
     }
 
@@ -455,7 +455,9 @@ export class OnboardingService {
       // is enough (no separate validation gate today).
       openaiKey: presence.hasOpenai,
       engineAuth: presence.engineAuthSet,
-      githubPat: presence.hasGithub,
+      // Satisfied by EITHER a PAT or a connected GitHub App — the key `githubPat` stays as-is (low-churn)
+      // but the predicate now treats both credentials as full alternatives.
+      githubPat: presence.hasGithub || presence.hasGithubApp,
     };
     const missing: OnboardingStep[] = [];
     if (!steps.repoConnected) missing.push('repo');
@@ -482,7 +484,12 @@ export class OnboardingService {
     if (!token) return { ok: false, reason: 'no GitHub token set' };
     const info = await this.pr.getRepo(token, parsed.owner, parsed.repo).catch(() => null);
     if (!info) {
-      return { ok: false, reason: `repo unreachable or token lacks access: ${parsed.owner}/${parsed.repo}` };
+      const presence = await this.store.presence(orgId);
+      const reason =
+        presence.githubAuthMode === 'app'
+          ? `Atlas's GitHub App can't access ${parsed.owner}/${parsed.repo} — add this repo under the App installation's repository access`
+          : `repo unreachable or token lacks access: ${parsed.owner}/${parsed.repo}`;
+      return { ok: false, reason };
     }
     return { ok: true };
   }

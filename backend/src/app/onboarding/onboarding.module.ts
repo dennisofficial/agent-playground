@@ -21,6 +21,8 @@ import { ClaudeCredentialStore } from './claude-credential.store';
 import { ClaudeOAuthPkceStore } from './claude-oauth-pkce.store';
 import { CredentialResolver } from './credential-resolver.service';
 import { OrgCredentialsController } from './credentials.controller';
+import { GithubAppCallbackController, GithubAppController } from './github-app.controller';
+import { GithubAppStateStore } from './github-app-state.store';
 import { OauthUsageService } from './oauth-usage.service';
 import { OnboardingController } from './onboarding.controller';
 import { OnboardingService } from './onboarding.service';
@@ -67,11 +69,14 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
     RepoController,
     OnboardingController,
     OrgUsageController,
+    GithubAppController,
+    GithubAppCallbackController,
   ],
   providers: [
     TenantCredentialStore,
     ClaudeCredentialStore,
     ClaudeOAuthPkceStore,
+    GithubAppStateStore,
     WorkspaceSecretFileStore,
     WorkspaceConfigStore,
     CredentialResolver,
