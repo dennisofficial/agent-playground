@@ -17,6 +17,8 @@ function makeThread(overrides: Partial<InboxThread> = {}): InboxThread {
     ci: null,
     halt: null,
     shipping: false,
+    createdBy: null,
+    blockedBy: [],
     org: { id: "org1", slug: "org1", name: "Org One" },
     repo: { id: "repo1", name: "repo-one" },
     ...overrides,

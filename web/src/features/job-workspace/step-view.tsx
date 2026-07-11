@@ -46,6 +46,8 @@ import { DetailTopBar, TopBarActions, TopBarButton } from "./detail-top-bar";
 import { ImageViewer } from "./image-viewer";
 import { ServiceLogView, serviceHeaderSubtitle } from "./service-log-view";
 import { TicketsRaisedPane } from "./tickets-raised-pane";
+import { CreatedJobsPane } from "./created-jobs-pane";
+import { BlockedByPane } from "./blocked-by-pane";
 import { useCommentableRef } from "./use-text-selection";
 import { useReviewComments } from "./review-comments";
 import { makeResolveFileLink } from "./repo-file-links";
@@ -212,6 +214,14 @@ export function PhaseView({
     title = "Tickets raised";
     subtitle = "out-of-scope work Atlas captured from this job";
     body = <TicketsRaisedPane jobRef={jobRef} />;
+  } else if (selectedNode === "created") {
+    title = "Created jobs";
+    subtitle = "jobs this job spawned";
+    body = <CreatedJobsPane jobRef={jobRef} />;
+  } else if (selectedNode === "blocked-by") {
+    title = "Blocked by";
+    subtitle = "jobs this one is waiting on";
+    body = <BlockedByPane jobRef={jobRef} blockedBy={job?.blockedBy ?? []} />;
   } else if (selectedNode.startsWith("service:")) {
     const svcId = selectedNode.slice("service:".length);
     const svc =

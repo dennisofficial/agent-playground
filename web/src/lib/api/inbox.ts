@@ -12,6 +12,8 @@ import type {
   WireJobActivity,
   JobStatus,
   JobKind,
+  JobBlocker,
+  JobProvenance,
   InboxPr,
   CiStatus,
 } from "./types";
@@ -53,6 +55,11 @@ export interface RawInboxThread {
   /** True only while a "Ship it" is being finalized (PR opening). The job re-uses the `running` status
    *  during shipping, so this keeps the card in "Ready to Ship" instead of "Building". */
   shipping?: boolean;
+  /** Who spawned this job (immutable snapshot), or null for a top-level job — the fallback source for the
+   *  navigator's "Created by" row before the full pipeline resolves (a fresh `open` job has `no_job`). */
+  createdBy?: JobProvenance | null;
+  /** The jobs this one is blocked on (live blockers) — same fallback role as `createdBy`. */
+  blockedBy?: JobBlocker[];
   org: { id: string; slug?: string; name?: string };
   repo: { id: string; name?: string };
 }
@@ -80,6 +87,10 @@ export interface InboxThread {
   /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship"
    *  (with the `running` working spinner) instead of routing it to "Building". */
   shipping: boolean;
+  /** Who spawned this job (immutable snapshot), or null for a top-level job. */
+  createdBy: JobProvenance | null;
+  /** The jobs this one is blocked on (live blockers). `[]` unless the job is actually `blocked`. */
+  blockedBy: JobBlocker[];
   org: { id: string; slug: string; name: string };
   repo: { id: string; name: string };
 }
@@ -114,6 +125,8 @@ export function normalize(r: RawInboxThread): InboxThread {
     ci: r.ciStatus ?? null,
     halt: r.halt ?? null,
     shipping: r.shipping ?? false,
+    createdBy: r.createdBy ?? null,
+    blockedBy: r.blockedBy ?? [],
     org: {
       id: r.org.id,
       slug: r.org.slug ?? r.org.id,

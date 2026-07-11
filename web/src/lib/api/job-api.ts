@@ -5,6 +5,9 @@ import { fetchWithRefresh } from "./refresh";
 import type {
   ApprovalActionId,
   ContextFileContent,
+  InboxPr,
+  JobBlocker,
+  JobProvenance,
   PipelineJob,
   PipelineState,
   JobContext,
@@ -427,6 +430,73 @@ export function renameJob(
     method: "PATCH",
     body: JSON.stringify({ title }),
   });
+}
+
+// ── Job relationships (created-by / created jobs / manual block & unblock) ─────────────────────────
+/** A child job spawned FROM this one (`GET …/jobs/:jobId/created`) — the "Created jobs" navigator row +
+ *  detail pane. */
+export interface CreatedJobRow {
+  id: string;
+  title: string | null;
+  status: string;
+  kind: string;
+  prState: string | null;
+  needsYou: boolean;
+  createdAt: string;
+}
+
+export function fetchCreatedJobs(ref: JobRef): Promise<CreatedJobRow[]> {
+  return webJson<CreatedJobRow[]>(threadPath(ref, "/created"));
+}
+
+/** The single-job detail read — used to resolve a `createdBy`/blocker link before navigating to it. A
+ *  hard-deleted job 404s (`ThreadApiError.status === 404`), letting the caller toast instead of routing
+ *  into a dead thread. */
+export interface JobDetail {
+  id: string;
+  title: string | null;
+  status: string;
+  kind: string;
+  createdBy: JobProvenance | null;
+  pr: InboxPr | null;
+  needsYou: boolean;
+  createdAt: string;
+}
+
+export function resolveJob(ref: JobRef): Promise<JobDetail> {
+  return webJson<JobDetail>(threadPath(ref));
+}
+
+/** The manual-block response — every job's live blockers, including the one just added. */
+export interface JobDependencyResult {
+  ok: boolean;
+  blocked: boolean;
+  blockers: JobBlocker[];
+}
+
+/** Manually block this job on another (the kebab "Block on another job…"). 400s on a disallowed status
+ *  (the job is already building or finished) — the client mirrors the same guard to keep the action
+ *  disabled ahead of time, but the backend is the source of truth. */
+export function addJobDependency(
+  ref: JobRef,
+  dependsOnJobId: string,
+): Promise<JobDependencyResult> {
+  return webJson(threadPath(ref, "/dependencies"), {
+    method: "POST",
+    body: JSON.stringify({ dependsOnJobId }),
+  });
+}
+
+/** Remove one dependency edge — the kebab "Unblock" clears every current blocker this way (one call per
+ *  blocker). */
+export function removeJobDependency(
+  ref: JobRef,
+  dependsOnJobId: string,
+): Promise<{ ok: boolean; blockers: JobBlocker[] }> {
+  return webJson(
+    threadPath(ref, `/dependencies/${encodeURIComponent(dependsOnJobId)}`),
+    { method: "DELETE" },
+  );
 }
 
 // ── Delete ─────────────────────────────────────────────────────────────────────────────────────

@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowUpRight,
   ChevronRight,
+  CornerUpLeft,
   FileText,
   Folder,
   GitBranch,
+  GitFork,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -33,9 +36,14 @@ import {
 import { STATUS_META } from "@/lib/api/status";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import { pipelineJob } from "@/lib/api/job-api";
-import { useRetryJob, useServices } from "@/lib/api/job-queries";
+import { pipelineJob, resolveJob, ThreadApiError } from "@/lib/api/job-api";
+import {
+  useJobCreatedJobs,
+  useRetryJob,
+  useServices,
+} from "@/lib/api/job-queries";
 import { useJobTickets } from "@/lib/api/tickets-queries";
+import { threadHref } from "@/lib/routes";
 import {
   Divider,
   PipelineTree,
@@ -49,6 +57,8 @@ import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
 import type {
   ContextFile,
+  JobBlocker,
+  JobProvenance,
   PipelineJob,
   PipelineState,
   JobContext,
@@ -61,6 +71,7 @@ import type { JobRef } from "@/lib/api/job-api";
 import { PlanReviewRow } from "@/features/job-workspace/plan-review-row";
 import { JobMenu } from "@/features/job-workspace/job-menu";
 import { FolderRow } from "@/features/job-workspace/folder-row";
+import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
 
 /**
  * PR-row glyph for the navigator header — mirrors the sidebar's `prGlyph` (GitHub color convention) so the
@@ -89,6 +100,12 @@ export interface JobMeta {
   orgColor: string;
   repoName: string;
   tracker?: string;
+  /** The job that spawned this one (immutable snapshot), or null for a top-level job — powers the
+   *  "Created by" header row. */
+  createdBy?: JobProvenance | null;
+  /** This job's live blockers — powers the "Blocked by" header row + detail pane. `[]` unless the job is
+   *  actually `blocked` (or was and hasn't refreshed yet). */
+  blockedBy?: JobBlocker[];
 }
 
 /**
@@ -187,6 +204,9 @@ export function Navigator({
   // Tickets Atlas raised FROM this job — the header "Tickets raised" entry appears only once there's ≥1.
   const { data: raisedTickets = [] } = useJobTickets(jobRef);
 
+  // Jobs Atlas spawned FROM this job — the header "Created jobs" entry appears only once there's ≥1.
+  const { data: createdJobs = [] } = useJobCreatedJobs(jobRef);
+
   // Supervised services drive BOTH the SERVICES and PORTS regions — fetched once here and passed down so
   // the two regions share a single poll (PORTS is a filtered view of the same services).
   const { data: servicesData, isLoading: servicesLoading } =
@@ -194,6 +214,30 @@ export function Navigator({
   const services = servicesData?.services ?? [];
 
   const st = meta.status;
+  const router = useRouter();
+  const { toast, show: showToast } = useEphemeralToast();
+
+  // Resolve-then-navigate — a "Created by" / "Blocked by" link points at a job that could have been hard-
+  // deleted since the snapshot was taken, so we confirm it still exists before routing there; a 404 toasts
+  // instead of opening a dead workspace.
+  const openJob = async (targetJobId: string) => {
+    try {
+      await resolveJob({ ...jobRef, jobId: targetJobId });
+      router.push(
+        threadHref({
+          orgId: jobRef.orgId,
+          repoId: jobRef.repoId,
+          jobId: targetJobId,
+        }),
+      );
+    } catch (err) {
+      if (err instanceof ThreadApiError && err.status === 404) {
+        showToast("This job was deleted.");
+      } else {
+        console.error("Failed to resolve job", err);
+      }
+    }
+  };
 
   return (
     <div
@@ -225,6 +269,9 @@ export function Navigator({
               deleting={deleting}
               hasOpenPr={hasOpenPr}
               deleteReady={deleteReady}
+              jobRef={jobRef}
+              status={st}
+              blockedBy={meta.blockedBy ?? []}
             />
           ) : null}
         </div>
@@ -263,6 +310,20 @@ export function Navigator({
             {meta.repoName}
           </span>
         </div>
+        {/* Created by — the job that spawned this one (immutable snapshot). Resolve-then-navigate: a
+            deleted parent 404s and toasts instead of opening a dead workspace. */}
+        {meta.createdBy ? (
+          <button
+            type="button"
+            onClick={() => openJob(meta.createdBy!.jobId)}
+            className="-mx-4 mt-1.5 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2"
+          >
+            <CornerUpLeft size={13} className="w-3.5 shrink-0 text-accent" />
+            <span className="flex-1 truncate text-[11px] font-semibold text-dim">
+              Created by {meta.createdBy.title || "a job"}
+            </span>
+          </button>
+        ) : null}
         {branch ? (
           <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1">
             <GitBranch
@@ -394,6 +455,50 @@ export function Navigator({
             </span>
           </button>
         ) : null}
+        {/* Created jobs — appears only once this job has spawned ≥1 follow-up job; opens the standing
+            "Created jobs" list in the detail pane. */}
+        {createdJobs.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => onSelectNode("created")}
+            className={cn(
+              "-mx-4 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2",
+              detailNode === "created" && "nav-selected-blue",
+            )}
+          >
+            <GitFork size={13} className="w-3.5 shrink-0 text-accent" />
+            <span className="flex-1 text-[11px] font-semibold text-dim">
+              Created jobs
+            </span>
+            <span className="font-mono text-[9px] text-faint">
+              {createdJobs.length}
+            </span>
+          </button>
+        ) : null}
+        {/* Blocked by — a REAL gate (the brain doesn't run while it's up), not the tickets board's advisory
+            dependencies; appears whenever the job is parked or still carries live blockers. */}
+        {st === "blocked" || (meta.blockedBy?.length ?? 0) > 0 ? (
+          <button
+            type="button"
+            onClick={() => onSelectNode("blocked-by")}
+            className={cn(
+              "-mx-4 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2",
+              detailNode === "blocked-by" && "nav-selected-blue",
+            )}
+          >
+            <Lock
+              size={13}
+              className="w-3.5 shrink-0"
+              style={{ color: "var(--amber)" }}
+            />
+            <span className="flex-1 text-[11px] font-semibold text-dim">
+              Blocked by
+            </span>
+            <span className="font-mono text-[9px] text-faint">
+              {meta.blockedBy?.length ?? 0}
+            </span>
+          </button>
+        ) : null}
         {/* Approve — pinned as the last header item while the plan is awaiting approval. */}
         {st === "awaiting_approval" && approveValue ? (
           <div className="mt-2">
@@ -477,6 +582,7 @@ export function Navigator({
             the SERVICES poll (same `useServices` query) rather than fetching a second time. */}
         <PortsRegion services={services} />
       </div>
+      <EphemeralToast message={toast} />
     </div>
   );
 }

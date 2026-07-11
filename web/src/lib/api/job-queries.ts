@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { qk } from "./query-keys";
 import {
+  addJobDependency,
   answerQuestion,
   provideSecret,
   provideFile,
@@ -13,6 +14,7 @@ import {
   createJobWithFiles,
   deleteThread,
   fetchContextFile,
+  fetchCreatedJobs,
   fetchMessages,
   fetchOrgRepos,
   fetchRepoBranches,
@@ -22,6 +24,7 @@ import {
   fetchServices,
   fetchThreadContext,
   postReviewComments,
+  removeJobDependency,
   renameJob,
   retryJob,
   retryTurn,
@@ -135,6 +138,16 @@ export function useRepoBranches(orgId: string, repoId: string) {
     queryFn: () => fetchRepoBranches(orgId, repoId),
     enabled: Boolean(orgId && repoId),
     staleTime: 30_000,
+  });
+}
+
+/** Jobs Atlas spawned FROM this one — the job workspace's "Created jobs" panel. */
+export function useJobCreatedJobs(ref: JobRef) {
+  return useQuery({
+    queryKey: qk.jobCreated(ref.orgId, ref.repoId, ref.jobId),
+    queryFn: () => fetchCreatedJobs(ref),
+    enabled: hasRef(ref),
+    staleTime: 10_000,
   });
 }
 
@@ -356,6 +369,32 @@ export function useRetryTurn(ref: JobRef) {
     mutationFn: () => retryTurn(ref),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+    },
+  });
+}
+
+/** Manually block this job on another (the kebab "Block on another job…"). Refreshes the pipeline (the
+ *  status flips to `blocked` + the "Blocked by" row appears) and the inbox. */
+export function useAddJobDependency(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dependsOnJobId: string) => addJobDependency(ref, dependsOnJobId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
+/** Remove one blocker edge (the kebab "Unblock" calls this once per current blocker). Refreshes the
+ *  pipeline + inbox so a fully-cleared job flips back off `blocked`. */
+export function useRemoveJobDependency(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dependsOnJobId: string) => removeJobDependency(ref, dependsOnJobId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
   });
 }
