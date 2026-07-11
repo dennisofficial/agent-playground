@@ -11,8 +11,9 @@ import { env } from "@/lib/env";
  * that dies while the operator sits in the workspace would otherwise show nothing until the next auth
  * round-trip. This vanilla singleton lets the non-React in-app paths — `fetchWithRefresh` (`./refresh`)
  * and the `/web/events` EventSource (`./events`) — report liveness, and surfaces it to React via
- * `useSyncExternalStore`. <ConnectivityGate> renders the lightweight banner (transient) or reuses the
- * full <ServerUnreachable> screen (sustained); recovery is store-owned (see `probe`).
+ * `useSyncExternalStore`. <ConnectivityGate> renders the lightweight banner (transient) or the
+ * persistent red <OfflineIndicator> pill (sustained) — never taking over the screen; recovery is
+ * store-owned (see `probe`).
  *
  * Three-state machine, time-debounced so a one-off blip never flickers the UI:
  *   online ──(failure persists ≥ RECONNECTING_AFTER_MS)──▶ reconnecting ──(≥ OFFLINE_AFTER_MS)──▶ offline
@@ -22,7 +23,7 @@ export type ConnectivityStatus = "online" | "reconnecting" | "offline";
 
 /** ms a failure must persist before we surface the "Reconnecting…" banner (debounces transient blips). */
 const RECONNECTING_AFTER_MS = 1500;
-/** ms a failure must persist before we escalate to the full ServerUnreachable takeover. */
+/** ms a failure must persist before we escalate to the persistent red offline indicator. */
 const OFFLINE_AFTER_MS = 8000;
 /** Recovery-probe backoff. The first tick (600 ms) lands before the banner so a false alarm self-heals silently. */
 const PROBE_BACKOFF_MS = [600, 1500, 3000, 5000, 8000];

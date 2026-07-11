@@ -9,6 +9,7 @@ import {
   useStop,
 } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
+import { useConnectivity } from "@/lib/api/connectivity";
 import type { AttachmentsApi } from "./use-attachments";
 import { AttachmentTray } from "./attachment-tray";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
@@ -83,6 +84,7 @@ export function Composer({
   const stop = useStop(jobRef);
   const sendReviewComments = useSendReviewComments(jobRef);
   const { comments, clearComments } = useReviewComments();
+  const connectivity = useConnectivity();
   const [text, setText] = useState("");
   // `attach` is absent in the subagent variant. Default `attachments` to `[]` so the pre-return computations
   // (showStop, button-disabled) stay safe; the fn refs are only invoked from input handlers that don't render.
@@ -183,6 +185,10 @@ export function Composer({
 
   const modelLabel = formatModelLabel(footer?.model, footer?.engine);
   const effortLabel = formatEffort(footer?.effort);
+  // Sustained mid-session outage: glow the Composer red so the operator sees the box is still theirs
+  // (the message is preserved) while the connectivity store keeps reconnecting. Display-only — typing
+  // and Send stay enabled (offline SEND behavior is handled separately).
+  const showOffline = connectivity === "offline" && !readOnly && !isSubagent;
 
   return (
     <div
@@ -197,8 +203,9 @@ export function Composer({
         <div
           className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
           style={{
-            boxShadow:
-              "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
+            boxShadow: showOffline
+              ? "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06), 0 0 0 1.5px var(--red-line), 0 0 18px color-mix(in srgb, var(--red) 22%, transparent)"
+              : "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
           }}
         >
           {!readOnly && !isSubagent ? (
@@ -298,6 +305,11 @@ export function Composer({
                 />
               </>
             )}
+            {showOffline ? (
+              <span className="font-mono text-[11px]" style={{ color: "var(--red)" }}>
+                reconnecting…
+              </span>
+            ) : null}
             <div className="flex-1" />
             {!isSubagent && jobRef.orgId ? <UsageRing orgId={jobRef.orgId} /> : null}
             {/* Live: the model · effort the lane's latest turn ran on (threads `turn_meta.usage`). */}
