@@ -6,9 +6,9 @@
  * call sites use `renderAgentPrompt` directly, and `generate` delegates to it, so there is ONE assembly path.
  */
 import { Injectable, type OnModuleInit } from '@nestjs/common';
-import { Agent } from './agent';
-import type { PromptCtx } from './prompt-ctx';
-import { primeFragments, renderAgentPrompt } from './assemble';
+import { Agent } from './system/agent';
+import type { PromptCtx } from './system/prompt-ctx';
+import { primeFragments, renderAgentPrompt } from './system/assemble';
 
 @Injectable()
 export class PromptService implements OnModuleInit {

@@ -8,7 +8,7 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
-import { DECISION_CLASS_IDS } from '../../domain';
+import { DECISION_CLASS_IDS } from '../../../domain';
 
 @FragmentGroup()
 export class ConversationGroup {

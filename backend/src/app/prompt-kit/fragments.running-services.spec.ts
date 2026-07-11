@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderRunningServicesNote, type RunningServiceInfo } from './fragments';
+import { renderRunningServicesNote, type RunningServiceInfo } from './system/fragments';
 
 /**
  * Unit coverage for the RUNNING SERVICES block folded into builder turn-kicks. Asserted inline (not a

@@ -5,7 +5,7 @@
  * `Agent.ATLAS_MAIN`. A fragment that belongs only to the normal brain gates `notOnboarding`; an
  * onboarding-only fragment gates `isOnboarding`; a fragment shared by both omits the gate.
  */
-import type { JobKind } from '../domain';
+import type { JobKind } from '../../domain';
 import type { PromptCtx } from './prompt-ctx';
 
 /**

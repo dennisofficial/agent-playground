@@ -9,7 +9,7 @@
  *
  * A `null`/unknown kind yields the empty string, so a prompt without a kind simply omits this block.
  */
-import type { JobKind } from '../domain';
+import type { JobKind } from '../../domain';
 
 // Each block ORIENTS the agent to the kind of job — it does NOT re-summarize the workflow the body
 // already owns (that only bloats the composed prompt). `onboarding` is '' because an onboarding job

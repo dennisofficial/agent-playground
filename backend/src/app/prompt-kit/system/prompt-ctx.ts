@@ -5,7 +5,7 @@
  * the build thread's type, and user/org-specific settings. A fragment's `condition(ctx)` reads this to decide
  * whether it belongs in THIS assembly (e.g. onboarding-only fragments gate `c => c.jobKind === 'onboarding'`).
  */
-import type { JobKind } from '../domain';
+import type { JobKind } from '../../domain';
 
 export interface PromptCtx {
   /** The job's kind (feature | bugfix | onboarding | event). Drives the onboarding vs normal-brain split. */

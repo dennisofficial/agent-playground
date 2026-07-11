@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Agent } from './agent';
-import { renderAgentPrompt } from './assemble';
+import { Agent } from './system/agent';
+import { renderAgentPrompt } from './system/assemble';
 
 /**
  * The repo house-style envelope (`conventions.group`) — the repo-scoped sibling of the operator group. It

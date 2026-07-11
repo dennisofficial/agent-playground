@@ -9,7 +9,7 @@
  * learns the PR by BRANCH DISCOVERY after the turn (`findOpenPullByHead` → `setPrReady`, backstopped by the
  * git-state reconciler), so there is NO `report_pr_opened` tool to call — the brain just opens the PR.
  */
-import { GIT_SAFETY_NOTE } from '../fragments';
+import { GIT_SAFETY_NOTE } from '../system/fragments';
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;

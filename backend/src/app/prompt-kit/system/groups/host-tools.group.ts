@@ -8,8 +8,8 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, isReview, notOnboarding } from '../conditions';
-import { BRIDGE_SERVER_NAME } from '../../sandbox/image/bridge-options';
-import { WORKSPACE_PROFILE_BRIDGE_NAME } from '../../sandbox/image/workspace-profile-bridge-options';
+import { BRIDGE_SERVER_NAME } from '../../../sandbox/image/bridge-options';
+import { WORKSPACE_PROFILE_BRIDGE_NAME } from '../../../sandbox/image/workspace-profile-bridge-options';
 import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 
 @FragmentGroup()

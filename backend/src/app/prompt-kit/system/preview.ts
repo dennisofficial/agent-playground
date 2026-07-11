@@ -6,7 +6,7 @@
  * `registry.ts` — there is only one assembly path now.)
  */
 import { Agent } from './agent';
-import type { JobKind } from '../domain';
+import type { JobKind } from '../../domain';
 import type { PromptCtx } from './prompt-ctx';
 import { renderAgentPrompt } from './assemble';
 

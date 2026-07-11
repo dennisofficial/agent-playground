@@ -14,8 +14,8 @@ import { getEngineAuthAdapter } from './engine-auth-adapter';
 const CONTAINER_MCP_BRIDGE_PATH = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
 // Import from the DIRECT (Nest-free) assembly path, not the prompt-kit barrel — this module bundles into the
 // in-container engine, and the barrel re-exports the NestJS PromptService/PromptKitModule.
-import { renderAgentPrompt } from '../prompt-kit/assemble';
-import { Agent } from '../prompt-kit/agent';
+import { renderAgentPrompt } from '../prompt-kit/system/assemble';
+import { Agent } from '../prompt-kit/system/agent';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
 import { context7Enabled, qualifyContext7ToolNames } from './context7-tools';
 import {
