@@ -70,6 +70,8 @@ export const qk = {
   /** One org's Claude credentials list (`GET /web/orgs/:orgId/claude-credentials`). */
   orgClaudeCredentials: (orgId: string) =>
     ["org-claude-credentials", orgId] as const,
+  /** One org's decoded Codex account email (owner-only `GET /web/orgs/:orgId/credentials/codex`). */
+  orgCodexAccount: (orgId: string) => ["org-codex-account", orgId] as const,
   /** The host box's live machine stats snapshot (`GET /web/host-stats`). Not org-scoped. */
   hostStats: () => ["host-stats"] as const,
 };

@@ -154,7 +154,14 @@ class ReaderServer {
     const ctx: ToolCtx = { ds: this.ds, roots: this.roots, audit: {} };
     try {
       const result = await handler(ctx, args ?? {});
-      audit({ tool: name, jobId, orgId: ctx.audit.orgId, ok: true });
+      audit({
+        tool: name,
+        jobId,
+        orgId: ctx.audit.orgId,
+        ok: true,
+        sql: ctx.audit.sql ? String(redactSecrets(ctx.audit.sql)) : undefined,
+        rows: ctx.audit.rowCount,
+      });
       return {
         content: [
           {
@@ -165,7 +172,15 @@ class ReaderServer {
       };
     } catch (err) {
       const error = String(redactSecrets(String(err)));
-      audit({ tool: name, jobId, orgId: ctx.audit.orgId, ok: false, error });
+      audit({
+        tool: name,
+        jobId,
+        orgId: ctx.audit.orgId,
+        ok: false,
+        error,
+        sql: ctx.audit.sql ? String(redactSecrets(ctx.audit.sql)) : undefined,
+        rows: ctx.audit.rowCount,
+      });
       return { content: [{ type: 'text', text: error }], isError: true };
     }
   }

@@ -117,6 +117,36 @@ describe('AuthService', () => {
       users.findOne.mockResolvedValue(null);
       await expect(service.refresh(req, res as unknown as Response)).rejects.toBeInstanceOf(UnauthorizedException);
     });
+
+    it('self-heals a poison cookie: a failed verify clears BOTH host-only and parent-domain scopes', async () => {
+      // A sibling preview app under the shared parent set a `.atlas.dltechnologies.co` cookie signed
+      // with a different secret; prod can't verify it and must evict it across scopes so login sticks.
+      const req = {
+        cookies: { refresh_token: 'poison' },
+        hostname: 'api.atlas.dltechnologies.co',
+      } as unknown as Request;
+      jwt.verifyRefreshToken.mockRejectedValue(new Error('signature verification failed'));
+      await expect(service.refresh(req, res as unknown as Response)).rejects.toBeInstanceOf(UnauthorizedException);
+
+      // Cleared both cookie names under host-only (no domain) AND the parent domain.
+      const cleared = res.clearCookie.mock.calls.map((c) => ({ name: c[0], domain: c[1]?.domain }));
+      expect(cleared).toEqual(
+        expect.arrayContaining([
+          { name: 'access_token', domain: undefined },
+          { name: 'refresh_token', domain: undefined },
+          { name: 'access_token', domain: 'atlas.dltechnologies.co' },
+          { name: 'refresh_token', domain: 'atlas.dltechnologies.co' },
+        ]),
+      );
+    });
+
+    it('only clears host-only scope when the host has no meaningful parent (dev/localhost)', async () => {
+      const req = { cookies: { refresh_token: 'x' }, hostname: 'localhost' } as unknown as Request;
+      jwt.verifyRefreshToken.mockRejectedValue(new Error('bad'));
+      await expect(service.refresh(req, res as unknown as Response)).rejects.toBeInstanceOf(UnauthorizedException);
+      const domains = res.clearCookie.mock.calls.map((c) => c[1]?.domain);
+      expect(domains.every((d) => d === undefined)).toBe(true);
+    });
   });
 
   describe('onApplicationBootstrap (seed admin)', () => {

@@ -2176,37 +2176,10 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     expect(lensIds.sort()).toEqual(['best_practices', 'consistency', 'holistic'].sort());
   });
 
-  it('bounds in-flight review-lens turns at the configured REVIEW_LENS_CONCURRENCY cap', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'pending', false, 'none', 'general')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const h = assemble(state, { env: { REVIEW_LENS_CONCURRENCY: '2' } });
-    let inFlight = 0;
-    let peak = 0;
-    h.autofix.runReviewLens.mockImplementation(async () => {
-      inFlight++;
-      peak = Math.max(peak, inFlight);
-      await new Promise((r) => setTimeout(r, 5));
-      inFlight--;
-      return [];
-    });
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    // Never exceeds the cap, but DID run more than one at a time (proves it's a real semaphore, not serial).
-    expect(peak).toBeLessThanOrEqual(2);
-    expect(peak).toBeGreaterThan(1);
-  });
-
   it('with cap >= lens count, ALL lenses start concurrently — the fixed-batch-of-3 barrier is gone', async () => {
-    // 'general' composes the five always-on lenses; the default cap (8) comfortably covers all five, so a
-    // real semaphore (vs. the old `concurrency = 3` batch loop) lets every lens acquire at once.
+    // 'general' composes the five always-on lenses; the REVIEW_LENS_CONCURRENCY constant (8) comfortably
+    // covers all five, so a real semaphore (vs. the old `concurrency = 3` batch loop) lets every lens
+    // acquire at once.
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -4197,5 +4170,77 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     expect(rot.rotations()).toBe(0);
     expect(h.store.completeLegRotation).not.toHaveBeenCalled();
     expect(state.job.status).toBe('done');
+  });
+});
+
+describe('ThreadDriver.reattachTurnRow — watchdog-triggered build reattach', () => {
+  type Row = Parameters<ThreadDriver['reattachTurnRow']>[0];
+  const stepRow = (jobId: string): Row =>
+    ({ turn_id: 't-step', job_id: jobId, kind: 'step' }) as unknown as Row;
+
+  it("DEFERS a non-running job (runJob's chokepoint) without driving", async () => {
+    const state: StoreState = {
+      job: makeJob({ status: 'done' }),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+
+    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe('deferred');
+    // No drive was kicked — a non-drivable job keeps its existing recovery path.
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
+  });
+
+  it('DEFERS a halted job (the halt invariant) without driving', async () => {
+    const state: StoreState = {
+      job: makeJob({ halt: { kind: 'blocked_credentials', reason: '401', at: new Date().toISOString() } }),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+
+    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe('deferred');
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
+  });
+
+  it('short-circuits to attached when a drive is already in flight (the shared `active` guard, no double-drive)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+    // Simulate a drive already running for this job (boot resume / a prior wake).
+    (h.driver as unknown as { active: Set<string> }).active.add(state.job.id);
+
+    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe('attached');
+    // The active guard means the watchdog wake did NOT kick a second drive.
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
+  });
+
+  it('a running, un-halted job is driven to reattach (returns attached and the build progresses)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+
+    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe('attached');
+    // The wake kicked a real drive: it fast-forwards/executes and walks the build to done.
+    await flushUntil(() => state.job.status === 'done');
+    expect(h.calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(0);
   });
 });

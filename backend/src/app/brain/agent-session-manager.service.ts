@@ -139,6 +139,10 @@ import {
   TurnRegistry,
 } from '../sandbox/turn-registry.service';
 import {
+  TurnReattachRegistry,
+  type ReattachOutcome,
+} from '../sandbox/turn-reattach.registry';
+import {
   ENGINE_RUNNER,
   isEngineDetachedError,
   isUnresumableSessionMessage,
@@ -376,6 +380,10 @@ export class AgentSessionManager
     // deadlock DI — the brain constructs the driver). @Optional matching this constructor's convention —
     // the @Global BrainGatewayModule supplies it live; unit tests that never boot the seam omit it.
     @Optional() private readonly brainGateway?: BrainGateway,
+    // The kind→owner reattach routing table (from @Global SandboxModule). This service claims the brain-owned
+    // kinds on bootstrap so the leader watchdog can re-attach an orphaned-but-alive brain/compaction turn
+    // continuously, not only at the once-per-boot sweep. @Optional matching this constructor's convention.
+    @Optional() private readonly reattachRegistry?: TurnReattachRegistry,
   ) {}
 
   /**
@@ -445,6 +453,13 @@ export class AgentSessionManager
     });
     // NOTE: the `codex-review` thread-input transport was removed — Codex review is now Atlas-driven only
     // (the synchronous `review_plan` tool), so there is no external "post a rebuttal to Codex" path.
+    // Claim the brain-owned kinds on the reattach routing table so the leader watchdog can re-attach an
+    // orphaned-but-alive brain/compaction turn continuously (see `reattachTurnRow`), not only at the
+    // once-per-boot `reattachOwnedTurns` sweep. Unconditional + idempotent (the watchdog is leader-only).
+    for (const kind of ['brain', 'compaction'] as const) {
+      this.reattachRegistry?.register(kind, (row) => this.reattachTurnRow(row));
+    }
+
     this.leaderBootSub = this.election.onPromote(() =>
       this.runLeaderBootSweeps(),
     );
@@ -1510,6 +1525,38 @@ export class AgentSessionManager
     // Block ONLY on ordering-sensitive kinds (compaction → its reseed must land before
     // `reconcileStrandedCompactions` queries); long brain turns keep streaming in the background.
     await Promise.all(blocking);
+  }
+
+  /**
+   * WATCHDOG RE-ATTACH (brain kinds: brain/compaction). The leader watchdog calls this for one
+   * orphaned-but-alive `active_turns` row this service owns — the same recovery as the boot
+   * {@link reattachOwnedTurns} sweep, but for ONE row and triggered continuously (so a turn a restart
+   * orphaned resumes within a watchdog window, without waiting for the next process restart). Idempotent:
+   *   - a kind we don't own → 'deferred';
+   *   - the runner can't reattach, or we're already tailing this turn in-process → we don't double-attach;
+   *   - otherwise dispatch the kind's handler (brain runs fire-and-forget; compaction is short and awaited),
+   *     rebuilding the harness + tool closure and resuming the live engine.
+   * The `reattachOne`/`reattachCompactionOne` handlers self-guard on insufficient registry ctx (they no-op,
+   * leaving the engine live for a later attempt), so we never finalize a live turn here.
+   */
+  async reattachTurnRow(row: ActiveTurnEntity): Promise<ReattachOutcome> {
+    const handler = this.reattachHandlers()[row.kind];
+    if (!handler) return 'deferred';
+    if (!this.engineRunner.reattach) return 'deferred';
+    if (this.engineRunner.isAttached?.(row.turn_id)) {
+      // Already tailing it in THIS process — the live relay is advancing the heartbeat; nothing to do.
+      return 'attached';
+    }
+    if (handler.awaitCompletion) {
+      // Short, ordering-sensitive kinds (compaction): await so the watchdog's heartbeat freshen lands after.
+      await handler.run(row);
+    } else {
+      // Long-running kinds (brain) stream for minutes — fire-and-forget, mirroring the boot sweep.
+      void handler.run(row).catch((err) =>
+        this.logger.warn(`watchdog re-attach turn ${row.turn_id} (${row.kind}) failed: ${err}`),
+      );
+    }
+    return 'attached';
   }
 
   /** Re-attach one in-flight brain turn: rebuild stimulus → tools → harness, resume the engine, persist. */
@@ -5632,10 +5679,29 @@ export class AgentSessionManager
 
     if (resolution.verdict === 'request_changes') {
       await this.store.reopenPlanning(job.id);
-      const note = resolution.note ? ` Noted: ${resolution.note}` : '';
+      // The note is the operator telling the brain WHAT to change — deliver it into the resumed engine
+      // session (a real seeded turn), not just an operator-facing ack. Without this the note only lands in
+      // the `messages` mirror and the brain never sees it. Build from `job.*` (reliable on both the live
+      // and durable-fallback callers) rather than the possibly-stale/empty `stimulus`. No note → nothing
+      // actionable to deliver, so keep the ack and wait for the operator's next turn.
+      if (resolution.note) {
+        await this.handleChatTurn(
+          harnessDeliveryStimulus({
+            jobId: job.id,
+            orgId: job.orgId,
+            repoId: job.repoId,
+            body: renderRequestChangesDelivery(resolution.note),
+            seedRow: {
+              label: 'Operator requested changes — revising the plan.',
+              chunkKey: `seed:request-changes:${decisionRecordId}`,
+            },
+          }),
+        );
+        return;
+      }
       await this.say(
         stimulus,
-        `Got it — back to the drawing board.${note} What should change?`,
+        'Got it — back to the drawing board. What should change?',
       );
       return;
     }
@@ -6767,6 +6833,26 @@ function renderWorkOwedNudge(): string {
     '• Then act on the result: address the BLOCKING findings (apply, or hold firm with reasoning), and when',
     '  the plan is ready call `propose_plan` to send it to the operator for approval.',
     'Do not end this turn without moving the plan forward.',
+  ].join('\n');
+}
+
+/**
+ * The harness framing for a REQUEST-CHANGES note. The operator reviewed a proposed plan/direct-build and
+ * clicked "Request changes" with a note; the job is already back in `planning`. This delivers their note
+ * into the resumed brain session (via `handleChatTurn`) so the engine actually SEES the feedback — the
+ * `messages` table is only an operator-facing mirror, so without this the note would reach the brain only
+ * if the operator re-typed it. The note is the operator's own (trusted) words; it is quoted verbatim so the
+ * brain reads it as their instruction. Wrapped as a `<system_notification>` by `harnessDeliveryStimulus`.
+ */
+function renderRequestChangesDelivery(note: string): string {
+  return [
+    'The operator reviewed your proposed plan and clicked **Request changes**, leaving this note:',
+    '',
+    ...note.split('\n').map((line) => `> ${line}`),
+    '',
+    'The plan is back in planning. Incorporate their feedback: revise the specs and decisions accordingly,',
+    'and if anything is ambiguous ask a focused follow-up before re-proposing. When the plan is ready,',
+    're-run `review_plan` and then `propose_plan` to send the updated version for approval.',
   ].join('\n');
 }
 
