@@ -65,6 +65,20 @@ describe("composerStore", () => {
     expect(JSON.parse(raw as string)).toMatchObject({ text: "persist me" });
   });
 
+  it("flushDraft writes immediately inside the debounce window", () => {
+    const ref = refFor("job-flush");
+    composerStore.setText(ref, "save before switch");
+    expect(storage.getItem(KEY_PREFIX + ref.jobId)).toBeNull();
+
+    composerStore.flushDraft(ref.jobId);
+
+    const raw = storage.getItem(KEY_PREFIX + ref.jobId);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw as string)).toMatchObject({
+      text: "save before switch",
+    });
+  });
+
   it("clearDraft removes the persisted entry and empties the draft", () => {
     const ref = refFor("job-clear");
     composerStore.setText(ref, "to be cleared");

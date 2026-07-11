@@ -142,6 +142,12 @@ export function Composer({
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
+  // The tree does not remount on Job switch, so flush the outgoing Job's debounced sessionStorage write
+  // immediately. The store's pagehide listener covers reloads that happen inside the debounce window.
+  useLayoutEffect(() => {
+    return () => composerStore.flushDraft(jobRef.jobId);
+  }, [jobRef.jobId]);
+
   // Measure the overlay so the transcript spacer threads it as the box grows/shrinks.
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -193,13 +199,15 @@ export function Composer({
     }
 
     // Mid-flight fallback: an ONLINE send's mutation can still hit a network drop between the status
-    // check above and the POST landing. A `ThreadApiError` means the server actually answered (a real
-    // 4xx/5xx) — that's not a connectivity issue, so leave it to the mutation's own error handling.
+    // check above and the POST landing. Most `ThreadApiError`s mean the server actually answered (a real
+    // 4xx/5xx), so leave them to the mutation's own error handling. The backend's leader-handoff 503 is
+    // explicitly transient ("retry momentarily"), so preserve it in the outbox instead of losing the cleared
+    // composer draft.
     const reEnqueueOnNetworkError = (
       e: Error,
       fields: { text: string; comments: ReviewComment[]; attachments: PendingAttachment[] },
     ) => {
-      if (e instanceof ThreadApiError) return;
+      if (e instanceof ThreadApiError && e.status !== 503) return;
       composerStore.enqueue(jobRef, {
         id: crypto.randomUUID(),
         createdAt: Date.now(),

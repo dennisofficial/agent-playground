@@ -101,6 +101,12 @@ class ComposerStore {
   /** Global (not jobId-keyed) listeners fired on any outbox change — see `subscribeGlobal`. */
   private readonly globalListeners = new Set<() => void>();
 
+  constructor() {
+    if (hasWindow() && typeof window.addEventListener === "function") {
+      window.addEventListener("pagehide", () => this.flushAll());
+    }
+  }
+
   private notify(jobId: string): void {
     this.entries.get(jobId)?.listeners.forEach((l) => l());
   }
@@ -286,6 +292,21 @@ class ComposerStore {
         this.persistNow(jobId, this.entries.get(jobId)?.state ?? null);
       }, PERSIST_DEBOUNCE_MS),
     );
+  }
+
+  /** Synchronously persist one Job's current draft/outbox, cancelling any pending debounced write. */
+  flushDraft(jobId: string): void {
+    if (!jobId) return;
+    this.persistNow(jobId, this.entries.get(jobId)?.state ?? null);
+  }
+
+  /** Synchronously persist every touched Job. Used on `pagehide` so a recent keystroke survives reload. */
+  flushAll(): void {
+    const jobIds = new Set([
+      ...this.entries.keys(),
+      ...this.persistTimers.keys(),
+    ]);
+    for (const jobId of jobIds) this.flushDraft(jobId);
   }
 
   /** Write (or remove) a Job's persisted blob immediately, cancelling any pending debounced write. When

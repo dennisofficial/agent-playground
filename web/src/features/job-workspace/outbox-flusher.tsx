@@ -36,10 +36,15 @@ export function OutboxFlusher(): null {
   const qc = useQueryClient();
   const prevStatus = useRef<ConnectivityStatus | null>(null);
   const isFlushing = useRef(false);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flush = useCallback(async () => {
     if (connectivity.getSnapshot() !== "online") return;
     if (isFlushing.current) return;
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    }
     isFlushing.current = true;
     try {
       for (const { ref, msg } of composerStore.allQueued()) {
@@ -71,11 +76,18 @@ export function OutboxFlusher(): null {
           composerStore.removeQueued(ref.jobId, msg.id);
           void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
         } catch (e) {
-          // A `ThreadApiError` means the server actually ANSWERED (real 4xx/5xx) — a permanent rejection,
-          // not a connectivity drop. Dropping it keeps a single poisoned item from wedging the head of the
-          // global FIFO and blocking every other Job's queue forever (the Composer's re-enqueue helper
-          // excludes ThreadApiError for the same reason). Only a genuine network error halts the drain.
+          // Most `ThreadApiError`s mean the server actually ANSWERED (real 4xx/5xx) — a permanent rejection,
+          // not a connectivity drop. The exception is the backend's leader-handoff 503 ("retry momentarily"):
+          // keep that item queued and retry shortly, otherwise a restart can make the UI drop an offline send
+          // just before the new leader is ready. Only a genuine network error halts the drain without a timer.
           if (e instanceof ThreadApiError) {
+            if (e.status === 503) {
+              retryTimer.current = setTimeout(() => {
+                retryTimer.current = null;
+                void flush();
+              }, 1500);
+              break;
+            }
             composerStore.removeQueued(ref.jobId, msg.id);
             continue;
           }
@@ -102,6 +114,13 @@ export function OutboxFlusher(): null {
         if (connectivity.getSnapshot() === "online") void flush();
       }),
     [flush],
+  );
+
+  useEffect(
+    () => () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+    },
+    [],
   );
 
   return null;
