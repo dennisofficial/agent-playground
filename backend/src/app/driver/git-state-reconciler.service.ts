@@ -4,7 +4,7 @@ import { IsNull, Not, Raw, Repository } from 'typeorm';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, RepoEntity } from '../persistence/entities';
-import { GithubPrService, parseGithubRepoUrl, type CheckRun } from '../git';
+import { GithubPrService, parseGithubRepoUrl, type CheckRun, type CiCounts, type CiSummary } from '../git';
 import { StimulusIntake } from '../stimulus';
 
 /**
@@ -155,19 +155,28 @@ export class GitStateReconciler {
 
     // CI status column (UI badge). Routing of CI FAILURES rides the webhook (check_run) so it isn't
     // double-delivered; here we only summarise the head-SHA check-runs into the column.
-    let ci = job.ci_status;
+    let sum: CiSummary = { status: job.ci_status as CiSummary['status'], counts: job.ci_counts };
     if (detail.headSha) {
       const runs = await this.pr.listCheckRuns(token, {
         owner: parsed.owner,
         repo: parsed.repo,
         ref: detail.headSha,
       });
-      ci = summarizeChecks(runs);
+      // Empty = a transient/no-checks-yet window for this head SHA (a hiccup, a just-pushed SHA whose
+      // runs GitHub hasn't attached yet, a rerun mid-recreate). Treat it as "no fresh data — keep the
+      // last known status", NEVER a clobber of a known failure/success back to null. Tradeoff: a head
+      // that legitimately drops to zero checks keeps its prior badge until a non-empty result arrives —
+      // an acceptable, rare cost to eliminate the false "No CI" flicker that is the reported bug.
+      if (runs.length > 0) sum = summarizeChecks(runs);
     }
 
     // Persist observed columns only when they changed — avoid needless WAL/realtime deltas.
-    if (ci !== job.ci_status || detail.mergeableState !== job.pr_mergeable) {
-      await this.jobs.update({ id: job.id }, { ci_status: ci, pr_mergeable: detail.mergeableState });
+    const ciChanged = sum.status !== job.ci_status || !sameCounts(sum.counts, job.ci_counts);
+    if (ciChanged || detail.mergeableState !== job.pr_mergeable) {
+      await this.jobs.update(
+        { id: job.id },
+        { ci_status: sum.status, ci_counts: sum.counts, pr_mergeable: detail.mergeableState },
+      );
     }
 
     // MERGE CONFLICT — `dirty` = the PR no longer merges cleanly into its base. Route to the owning
@@ -208,13 +217,31 @@ export const CADENCE_MS: Record<Exclude<PollTier, 'terminal'>, number> = {
   discovering: 180_000,
 };
 
-/** Roll a PR head's check-runs into a single UI status. null = no checks reported. */
-export function summarizeChecks(runs: CheckRun[]): string | null {
-  if (runs.length === 0) return null;
-  const FAILED = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'stale']);
-  if (runs.some((r) => r.status === 'completed' && r.conclusion != null && FAILED.has(r.conclusion))) {
-    return 'failure';
+const FAILED = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'stale']);
+
+/** Roll a PR head's check-runs into an overall status + per-category counts. Precedence: any FAILED
+ *  conclusion → failure; else any run not completed → pending; else ≥1 success → success; else skipped.
+ *  Skipped/neutral conclusions NEVER count as (or hide) a failure. No runs → { status:null, counts:null }. */
+export function summarizeChecks(runs: CheckRun[]): CiSummary {
+  if (runs.length === 0) return { status: null, counts: null };
+  const counts: CiCounts = { failing: 0, pending: 0, passed: 0, skipped: 0, total: runs.length };
+  for (const r of runs) {
+    if (r.status !== 'completed') counts.pending++;
+    else if (r.conclusion != null && FAILED.has(r.conclusion)) counts.failing++;
+    else if (r.conclusion === 'success') counts.passed++;
+    else counts.skipped++; // skipped | neutral | any other non-failing terminal conclusion
   }
-  if (runs.every((r) => r.status === 'completed')) return 'success';
-  return 'pending';
+  const status =
+    counts.failing > 0 ? 'failure'
+    : counts.pending > 0 ? 'pending'
+    : counts.passed > 0 ? 'success'
+    : 'skipped';
+  return { status, counts };
+}
+
+/** Structural equality for two CiCounts (or nulls) — used to gate on-change writes. */
+export function sameCounts(a: CiCounts | null, b: CiCounts | null): boolean {
+  if (a == null || b == null) return a === b;
+  return a.failing === b.failing && a.pending === b.pending && a.passed === b.passed
+      && a.skipped === b.skipped && a.total === b.total;
 }
