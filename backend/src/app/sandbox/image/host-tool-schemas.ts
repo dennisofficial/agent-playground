@@ -411,7 +411,9 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   ask_question: 'Ask the operator a question, optionally with pickable options and a decision class.',
   withdraw_question: 'Withdraw a pending question you no longer need answered.',
   withdraw_plan: 'Withdraw the current proposed plan.',
-  withdraw_ship: 'Withdraw the current ship-review (move the job to `amending`).',
+  withdraw_ship:
+    'PROPOSE amending the current ship-review build — posts an "Amend build?" card for the operator. Does NOT ' +
+    'retract the gate; only the operator can, by approving. Do not keep building while it is pending.',
   set_job_kind: 'Set this job kind (feature, bugfix, or review).',
   create_decision: 'Record a new decision for this job.',
   update_decision: 'Update an existing decision by id.',
@@ -459,7 +461,11 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'for a server that needs interactive login — the owner completes it via the console Connect.',
   propose_mcp_removal: 'Propose removing an MCP server from this org or repo.',
   propose_convention_profile: 'Propose a new convention (house-style) profile for this repo.',
-  finish_onboarding: 'Finish workspace onboarding with a summary and the verification you performed.',
+  finish_onboarding:
+    'Finish workspace onboarding with a summary and the verification you performed. For a repo with ' +
+    'user-facing surfaces, `verified` must include live preview-accessibility evidence — each public preview ' +
+    'URL loaded + hydrated as a browser via atlas-probe, plus the authed-handshake proof where a surface has ' +
+    'auth — not just a local health check.',
 };
 
 /**

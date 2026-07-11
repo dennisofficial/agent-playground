@@ -400,6 +400,39 @@ export const PLAYGROUND_NOTE =
   'installs — write to the durable `/playground` dir OUTSIDE the worktree, never into /workspace (which ' +
   'pollutes the diff/PR) or /tmp (wiped on restart). Nothing in /playground is ever committed.';
 
+/**
+ * PUBLIC PREVIEW URLS — how a ported service becomes a public preview URL and the deterministic-URL /
+ * write-env-first / bind-0.0.0.0 ordering that must precede a live test. The single source of truth for the
+ * exposure procedure: the build brain shows it directly (`SandboxGroup.publicExposure`), and onboarding
+ * reuses it verbatim as the head of its LIVE-SERVICE ACCESSIBILITY guidance so both teach the SAME ordering.
+ */
+export const PUBLIC_EXPOSURE_NOTE = [
+  'PUBLIC PREVIEW URLS: a supervised service started with a port is automatically exposed on the public',
+  'internet so the operator can test your branch live. Start it as `atlas-svc run --name <svc> --port <n>',
+  '-- <cmd>` and it is reachable at `https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN`. Those two vars',
+  'are in your env ONLY when previews are enabled — if either is unset, exposure is off, so skip this whole',
+  'section and do not promise the operator a URL.',
+  'The URL is DETERMINISTIC: you know it BEFORE you start anything, which is load-bearing because a frontend',
+  'bakes its API base URL at build/start time and a backend bakes its cookie domain + CORS allow-list at',
+  'boot. So the ordering is not optional:',
+  '  1. Compute each service URL from `$ATLAS_PREVIEW_ID` + `$ATLAS_PREVIEW_DOMAIN` (e.g. web =',
+  '     `https://$ATLAS_PREVIEW_ID-web.$ATLAS_PREVIEW_DOMAIN`, api = `https://$ATLAS_PREVIEW_ID-api.$ATLAS_PREVIEW_DOMAIN`).',
+  "  2. Write them into the apps' config FIRST: the frontend's API base URL env → the backend service's URL;",
+  "     the backend's cookie domain + allowed CORS origin → the frontend service's URL. Both are subdomains",
+  '     of the same registrable domain, so a `Secure; SameSite=Lax` cookie is sent cross-subdomain; CORS must',
+  '     allow-list the EXACT frontend origin with credentials enabled.',
+  '  3. THEN start each service with `atlas-svc run --name <svc> --port <n> -- <cmd>`.',
+  'CRITICAL — BIND TO 0.0.0.0, NOT localhost: the proxy reaches your service from OUTSIDE its container, so a',
+  'server listening on `127.0.0.1` shows as "running" but the public URL 502s. Start every exposed dev server',
+  'on `0.0.0.0:<port>` — Next `next dev -H 0.0.0.0 -p <n>`, Vite `vite --host 0.0.0.0 --port <n>`, Nest/Express',
+  "`app.listen(<n>, '0.0.0.0')`, or set `HOST=0.0.0.0`.",
+  'After starting, `curl https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN` and confirm a real response,',
+  'not a 502, before telling the operator it is up.',
+  'Use `--no-expose` for an internal-only service you do not want a public URL for. Naming: the `<svc>` name',
+  'becomes the subdomain label, so keep names short and DNS-safe: lowercase letters/digits/hyphens only,',
+  'start/end alphanumeric, max 52 chars (`web`, `api`, `admin-ui`).',
+].join('\n');
+
 // ── BEHAVIORAL (the three asks) ─────────────────────────────────────────────────────────────────────
 // Spliced in by the brain's `behavioral.group` tail and by the worker group.
 

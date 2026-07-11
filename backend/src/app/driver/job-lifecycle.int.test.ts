@@ -34,6 +34,7 @@ import { DataSource, Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvService } from '../../_core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
+import { BrainGateway } from '../brain-gateway';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { LocalGitService } from '../git';
 import { CredentialResolver } from '../onboarding';
@@ -338,6 +339,12 @@ beforeEach(async () => {
       {
         provide: TurnRegistry,
         useValue: { failRunningForJob: vi.fn().mockResolvedValue(0) },
+      },
+      {
+        provide: BrainGateway,
+        useValue: {
+          wakeForProvisioningFailure: vi.fn().mockResolvedValue(undefined),
+        },
       },
       JobLifecycleService,
     ],
@@ -840,6 +847,12 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
           provide: TicketService,
           useValue: {
             revertForDeletedThread: vi.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: BrainGateway,
+          useValue: {
+            wakeForProvisioningFailure: vi.fn().mockResolvedValue(undefined),
           },
         },
         TurnRegistry, // the REAL service — this gate's whole point

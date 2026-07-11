@@ -45,6 +45,7 @@ import {
   webMcpProposalCard,
   webQuestionCard,
   webSecretInputCard,
+  webShipReviewCard,
   webSkillEditAccessCard,
   webSkillProposalCard,
   wrapSystemNotification,
@@ -872,6 +873,35 @@ export class AgentSessionManager
       seedRow: {
         label: 'Repo setup script failed on cold bring-up — checking the environment.',
         chunkKey: `seed:setup-fail:${jobId}`,
+      },
+    });
+    await this.handleChatTurn(stimulus);
+  }
+
+  /**
+   * WAKE the job brain because the operator APPROVED its "Amend build?" proposal (the `withdraw_ship`
+   * tool's card). By this point the operator retract path has already run (`awaiting_ship_review →
+   * amending`), so the brain just needs to do the follow-up work it proposed. The brain's session is
+   * resumed, so it recalls WHAT it proposed — the delivery stays generic. The brain re-arms the gate by
+   * calling `report_verification({ passed: true })` once the amend is verified (re-parks directly at
+   * `awaiting_ship_review`, no rebuild). Concurrency-safe via `handleChatTurn`.
+   */
+  async wakeForAmendApproved(jobId: string): Promise<void> {
+    const job = await this.store.loadJob(jobId).catch(() => null);
+    if (!job) return;
+    const stimulus = harnessDeliveryStimulus({
+      jobId,
+      orgId: job.orgId,
+      repoId: job.repoId,
+      body: [
+        'The operator APPROVED your amend proposal — the ship-review gate is retracted and the job is now',
+        '**amending**. Do the follow-up work you proposed, then call `report_verification({ passed: true })`',
+        'with your live evidence — that re-parks the job directly at the ship-review gate (amending →',
+        'ready-to-ship, no rebuild). Do not re-propose unless something material changed.',
+      ].join('\n'),
+      seedRow: {
+        label: 'Amend approved — resuming to make the changes.',
+        chunkKey: `seed:amend-approved:${jobId}`,
       },
     });
     await this.handleChatTurn(stimulus);
@@ -1964,6 +1994,20 @@ export class AgentSessionManager
       });
     }
 
+    // AMENDING guidance — persistent while the ship gate is retracted for a follow-up fix. BOTH entry paths
+    // land in `amending`: the brain's own `withdraw_ship` proposal (which wakes the brain) AND the operator's
+    // manual "Amend build" click (which does NOT wake the brain at all). A one-time wake can also be compacted
+    // mid-amend. So re-state the return path EVERY turn while amending, so the brain always knows how to get
+    // back to ready-to-ship. Best-effort; null unless the job is `amending`.
+    const amendingPrefix = await this.buildAmendingPrefix(stimulus.jobId);
+    if (amendingPrefix) {
+      reminderChunks.push({
+        kind: 'system_reminder',
+        body: amendingPrefix,
+        attrs: { reminderKind: 'amending' },
+      });
+    }
+
     // Render the envelope: notice/reminder chunks first (renderTurn keeps `<user>` last), then the body.
     // A seed body is already framed XML — append it after the prefixes rather than re-wrapping it.
     const framedPrefix = renderTurn([...noticeChunks, ...reminderChunks]);
@@ -2667,7 +2711,32 @@ export class AgentSessionManager
                 },
               ]
             : [];
-        if (passed) return { ok: true };
+        if (passed) {
+          // AMEND RE-PARK: after an approved `withdraw_ship`, the job sits in `amending` while the brain does
+          // the follow-up work it proposed. A clean verification here re-arms the ship gate DIRECTLY
+          // (`amending → awaiting_ship_review`) and re-posts the "Ship it" card — the amend IS the fix, so
+          // there is no detour back through a `running` build. On any other status this is the normal
+          // direct-build flag-set (finalize_build ships), so leave it untouched.
+          const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+          if (job?.status === 'amending') {
+            const title = job.title ?? 'this build';
+            const summary =
+              'Amend verified. Review the diff, then click **Ship it** to open the PR.';
+            const card = webShipReviewCard({ jobId: job.id, title, summary });
+            const parked = await this.driverStore.parkForShipReview(
+              job.id,
+              card as unknown as Record<string, unknown>,
+              summary,
+            );
+            return {
+              ok: true,
+              message: parked
+                ? 'Amend verified — re-parked at the ship-review gate. The operator can Ship it now.'
+                : 'Amend verified.',
+            };
+          }
+          return { ok: true };
+        }
         const remaining = Array.isArray(args['remaining'])
           ? (args['remaining'] as unknown[]).map((x) => String(x).trim()).filter(Boolean)
           : [];
@@ -2820,29 +2889,37 @@ export class AgentSessionManager
         };
       },
 
-      // Retract the ship-review gate (READY TO SHIP) to `amending` — the tool sibling of the manual
-      // "Amend build" click. Calls the SAME `DriverStoreService.retractShip` CAS transition + card
-      // neutralization the click uses (already injected here as `driverStore` — no ThreadDriver import
-      // needed), so there is one authoritative retract regardless of who triggers it.
+      // PROPOSE amending the ship-review build (READY TO SHIP). This does NOT retract the gate — the ship
+      // gate is a human control, so only the operator can release it. The tool posts an "Amend build?"
+      // proposal card carrying the brain's `reason`; the gate stays parked until the operator approves it
+      // (which runs the operator retract path AND wakes the brain via `wakeForAmendApproved`). The brain
+      // MUST stop and wait after proposing — do not keep building.
       withdraw_ship: async (args) => {
         const reason = String(args['reason'] ?? '').trim();
-        const acted = await this.driverStore.retractShip(stimulus.jobId);
-        if (!acted) {
+        const outcome = await this.driverStore.openAmendProposal(stimulus.jobId, reason);
+        if (outcome === 'not-parked') {
           return {
             ok: false,
             message:
-              'The job is not currently parked at the ship-review gate — nothing to retract.',
+              'The job is not currently parked at the ship-review gate — nothing to propose amending.',
+          };
+        }
+        if (outcome === 'already-open') {
+          return {
+            ok: false,
+            message:
+              'An amend proposal is already awaiting the operator’s decision. Wait for it — do NOT keep building.',
           };
         }
         await this.store.appendAtlasMessage(
           stimulus.jobId,
-          `↩︎ Ship-review retracted — amending the build${reason ? `: ${reason}` : ''}.`,
+          'Proposed amending the build — awaiting the operator’s decision…',
         );
         return {
           ok: true,
           message:
-            'Ship-review retracted — the job is now **amending**. Do the follow-up work; the ship gate ' +
-            're-arms automatically once it completes.',
+            'Amend proposal posted. It is PENDING the operator’s approval — do NOT keep building. The ship ' +
+            'gate stays up until they approve; if approved you’ll be woken to do the follow-up work.',
         };
       },
 
@@ -5198,8 +5275,12 @@ export class AgentSessionManager
           ok: false,
           reason:
             'finish_onboarding requires `verified`: describe what you actually booted and how you checked it ' +
-            '(the services you brought up via atlas-svc, the health checks/log lines, any dry-run). If the ' +
-            'stack would not boot, do NOT finish — say what is still blocking instead.',
+            '(the services you brought up via atlas-svc, the health checks/log lines, any dry-run). For a repo ' +
+            'with USER-FACING surfaces, `verified` must ALSO include live preview-accessibility proof — each ' +
+            'public preview URL loaded + hydrated as a browser via atlas-probe, AND (where the surface has ' +
+            'auth) the authed-handshake proof via a real dev-login + `atlas-probe --storage-state`; a local ' +
+            'health check is not enough. If the stack would not boot or a surface is not browser-accessible, ' +
+            'do NOT finish — say what is still blocking instead.',
         };
       }
       const sandbox = await this.lifecycle.findSandbox(
@@ -6043,7 +6124,8 @@ export class AgentSessionManager
       'request any secrets yet. Then present that summary to the operator, note plainly that the full ' +
       'bring-up will take a while and a lot of tokens, and ask for their go-ahead via ask_question before ' +
       'proceeding. STOP and wait for their response. Only after they green-light it: bring up and validate ' +
-      'the fleet, register required secrets via request_secret, record non-secret config with ' +
+      'the fleet, make each user-facing surface browser-accessible through the preview proxy and prove it ' +
+      'with atlas-probe, register required secrets via request_secret, record non-secret config with ' +
       'write_workspace_config, propose any stack-matched MCP servers for the owner to approve via ' +
       'propose_mcp_servers, match the repo against the org house-style profiles (list_convention_profiles → ' +
       'propose_convention_profile with the best-matching slug, or "none" if it follows none), then call ' +
@@ -6268,6 +6350,30 @@ export class AgentSessionManager
       );
     } catch (err) {
       this.logger.debug(`open-questions prefix failed (continuing): ${err}`);
+      return null;
+    }
+  }
+
+  /**
+   * Persistent per-turn reminder while a job sits in `amending` (the ship-review gate retracted for a
+   * follow-up fix). This is the durable teacher of the return path: unlike the one-time amend-approved wake,
+   * it fires EVERY turn while amending, so it covers the manual "Amend build" click (which never wakes the
+   * brain) and survives compaction. Returns null unless the job is `amending`. Best-effort.
+   */
+  private async buildAmendingPrefix(jobId: string): Promise<string | null> {
+    try {
+      const job = await this.store.loadJob(jobId).catch(() => null);
+      if (job?.status !== 'amending') return null;
+      return (
+        'This build is AMENDING — the ship-review gate was retracted so you can make a follow-up fix. ' +
+        'Make the change in the sandbox and verify it (typecheck/build/tests, plus a live run of any ' +
+        'runtime surface you touched). When it is done and verified, call ' +
+        '`report_verification({ passed: true })` with your live evidence — that re-parks the job DIRECTLY ' +
+        'at the ship-review gate (amending → ready-to-ship, no rebuild) and re-posts the "Ship it" card for ' +
+        'the operator. Do not re-propose amending unless something material changed.'
+      );
+    } catch (err) {
+      this.logger.debug(`amending prefix failed (continuing): ${err}`);
       return null;
     }
   }

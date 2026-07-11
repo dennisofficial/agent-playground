@@ -85,13 +85,20 @@ export const SHIP_ACTION_ID = "atlas_approval:ship";
  *  `/approve` endpoint with the ship card's `{ jobId }` value. Must match the backend string in
  *  `approval-blocks.ts`. */
 export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
+/** The brain's "Amend build?" PROPOSAL buttons (the `withdraw_ship` tool's card). Unlike the plain
+ *  ship-card retract, the gate stays parked until the operator approves: `Approve amend` runs the operator
+ *  retract AND wakes the brain; `Dismiss` just clears the card. Must match `approval-blocks.ts`. */
+export const AMEND_APPROVE_ACTION_ID = "atlas_approval:amend_approve";
+export const AMEND_DISMISS_ACTION_ID = "atlas_approval:amend_dismiss";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
   | typeof REQUEST_CHANGES_ACTION_ID
   | typeof DENY_ACTION_ID
   | typeof SHIP_ACTION_ID
-  | typeof RETRACT_SHIP_ACTION_ID;
+  | typeof RETRACT_SHIP_ACTION_ID
+  | typeof AMEND_APPROVE_ACTION_ID
+  | typeof AMEND_DISMISS_ACTION_ID;
 
 export interface ApprovalDecision {
   decisionClass: string;
@@ -118,9 +125,10 @@ export interface WebApprovalCard {
   /**
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
    * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
-   * `threads`/`decisions` empty).
+   * `threads`/`decisions` empty). `amend` — the brain's "Amend build?" proposal at the ship gate
+   * (`Approve amend` + `Dismiss`); the gate stays parked until approved.
    */
-  kind?: "plan" | "direct" | "ship";
+  kind?: "plan" | "direct" | "ship" | "amend";
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -522,6 +530,9 @@ export interface PipelineJob {
   /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — same four-state taxonomy as the sidebar
    *  dot; null = no checks reported. Only meaningful once a PR exists (prNumber != null). */
   ciStatus: CiStatus | null;
+  /** Per-category CI check counts (`jobs.ci_counts`) — drives the header glyph's hover tooltip. Parallel
+   *  to `ciStatus`; null when no checks reported. */
+  ciCounts?: CiCounts | null;
   /** The feature branch all threads stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   /** The OBSERVED live branch the agent's HEAD is on; differs from featureBranch ⇒ drift (badge). Null
@@ -529,6 +540,18 @@ export interface PipelineJob {
   currentBranch: string | null;
   baseBranch: string | null;
   threads: PipelineThread[];
+  /**
+   * Prior PLAN REVISIONS' build lanes as read-only, browsable history — present only once a re-propose over
+   * already-DONE work has forged a new revision (the common single-revision job sends `[]`/absent). Each
+   * entry is a superseded revision with its own executable lanes; `revision` is 1-based by age (oldest = v1).
+   * The navigator renders each as a collapsed "Previous plan (vN)" section below the active lanes.
+   */
+  priorRevisions?: {
+    decisionRecordId: string;
+    revision: number;
+    status: string;
+    threads: PipelineThread[];
+  }[];
 }
 
 /**
@@ -632,8 +655,19 @@ export type JobKind = "feat" | "fix" | "event" | "onboard" | "review";
 /** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
 export type PrState = "open" | "merged" | "closed";
 
-/** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI"). */
-export type CiStatus = "success" | "failure" | "pending"; // null handled at the field level
+/** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI").
+ *  `skipped` = checks ran but all were skipped/neutral (never a failure). */
+export type CiStatus = "success" | "failure" | "pending" | "skipped"; // null handled at the field level
+
+/** Per-category CI check counts for the PR head — backend `jobs.ci_counts`. Parallel to {@link CiStatus};
+ *  null exactly when the status is null (no checks reported). The four category counts sum to `total`. */
+export type CiCounts = {
+  failing: number;
+  pending: number;
+  passed: number;
+  skipped: number;
+  total: number;
+};
 
 /** The observed PR on a job — drives the sidebar's PR-status glyph (see `PrStatusIcon`). `mergeable` is
  *  GitHub's `mergeable_state` ('dirty' = merge conflict); `url` links to the PR. */
