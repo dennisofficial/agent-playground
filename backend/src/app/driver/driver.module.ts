@@ -42,6 +42,7 @@ import { JobLifecycleService } from './job-lifecycle.service';
 import { JOB_TEARDOWN } from './job-teardown.port';
 import { GithubPrStateSync } from './github-pr-state-sync.service';
 import { GithubCiStateSync } from './github-ci-state-sync.service';
+import { BaseMoveMergeabilitySync } from './base-move-mergeability-sync.service';
 import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
@@ -105,6 +106,7 @@ const PREVIEW_INTERVAL = 'driver:preview';
     JobLifecycleService,
     GithubPrStateSync,
     GithubCiStateSync,
+    BaseMoveMergeabilitySync,
     GitStateReconciler,
     SessionResumeSweep,
     WorktreeHydrator,
@@ -123,8 +125,11 @@ const PREVIEW_INTERVAL = 'driver:preview';
     JOB_TEARDOWN,
     GithubPrStateSync,
     GithubCiStateSync,
-    // Exported so the @Global surface + the ingress state-webhook controller can reach `markRepoDue`
-    // (a base-branch push marks the repo's open PRs due-now for the fast heartbeat).
+    // Exported so the ingress state-webhook controller can reach `schedule` (batches a base-branch push
+    // into the debounced GraphQL mergeability refresh instead of the per-PR REST fan-out).
+    BaseMoveMergeabilitySync,
+    // Exported so the @Global surface + the ingress state-webhook controller can reach `markRepoDue`/
+    // `markJobDue` (per-PR re-arms for mergeability-affecting webhooks).
     GitStateReconciler,
     WorktreeProvisioner,
     DriverStoreService,

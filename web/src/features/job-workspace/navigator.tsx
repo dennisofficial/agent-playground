@@ -28,6 +28,7 @@ import {
   CiHeaderGlyph,
   Dot,
   KindBadge,
+  MergeableHeaderGlyph,
   StatusPie,
 } from "@/components/ui/badges";
 import { STATUS_META } from "@/lib/api/status";
@@ -43,7 +44,11 @@ import {
   haltThreadIdx,
 } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
-import { NavigatorApproveButton, NavigatorShipButton } from "./spec-approval";
+import {
+  NavigatorApproveButton,
+  NavigatorPreviewButton,
+  NavigatorShipButton,
+} from "./spec-approval";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
@@ -110,6 +115,7 @@ export function Navigator({
   laneNode,
   detailNode,
   jobRef,
+  canRequestPreview,
   approveValue,
   shipValue,
   onConversation,
@@ -133,6 +139,8 @@ export function Navigator({
   detailNode: string | null;
   /** The open job — for the in-place "Approve plan" callout. */
   jobRef: JobRef;
+  /** True for build-brain jobs once their kind is known; drives the persistent preview request button. */
+  canRequestPreview: boolean;
   /** The approval card's verbatim approve `value`, when the job is awaiting approval (else ''). Drives
    *  the navigator approval callout. */
   approveValue: string;
@@ -325,7 +333,12 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
+                  {showCi ? (
+                    <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} />
+                  ) : null}
+                  {showCi ? (
+                    <MergeableHeaderGlyph mergeable={job!.prMergeable} />
+                  ) : null}
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
@@ -342,7 +355,12 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
+                  {showCi ? (
+                    <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} />
+                  ) : null}
+                  {showCi ? (
+                    <MergeableHeaderGlyph mergeable={job!.prMergeable} />
+                  ) : null}
                 </div>
               );
             })()
@@ -408,6 +426,13 @@ export function Navigator({
         {st === "awaiting_ship_review" && shipValue ? (
           <div className="mt-2">
             <NavigatorShipButton jobRef={jobRef} value={shipValue} />
+          </div>
+        ) : null}
+        {/* Spin up preview — persistent across the whole build lifecycle (d4). Gated on build KIND
+            (build-brain only), NOT status/branch, so the operator can ask anytime. */}
+        {canRequestPreview ? (
+          <div className="mt-2">
+            <NavigatorPreviewButton jobRef={jobRef} />
           </div>
         ) : null}
       </div>

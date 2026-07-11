@@ -300,6 +300,44 @@ export class DockerodeContainerEngine implements ContainerEngine {
     }));
   }
 
+  async systemDf(): Promise<{
+    imagesBytes: number;
+    containersBytes: number;
+    volumesBytes: number;
+    buildCacheBytes: number;
+    totalBytes: number;
+  }> {
+    // `@types/dockerode` doesn't type `df()` — declare the payload shape locally and cast. Verified
+    // against a live daemon (API 1.55): sizes live in different per-type fields (images `Size` /
+    // `LayersSize` dedup total, containers `SizeRw` writable layer, volumes `UsageData.Size`, build
+    // cache `Size`); every field is defensively `?? 0` since none are guaranteed present.
+    const df = (await this.docker.df()) as {
+      LayersSize?: number;
+      Images?: { Size?: number }[];
+      Containers?: { SizeRw?: number }[];
+      Volumes?: { UsageData?: { Size?: number } }[];
+      BuildCache?: { Size?: number }[];
+    };
+    const sum = (ns: (number | undefined)[]): number =>
+      ns.reduce<number>((a, n) => a + (n ?? 0), 0);
+    const imagesBytes =
+      df.LayersSize && df.LayersSize > 0
+        ? df.LayersSize
+        : sum((df.Images ?? []).map((i) => i.Size));
+    const containersBytes = sum((df.Containers ?? []).map((c) => c.SizeRw));
+    const volumesBytes = sum((df.Volumes ?? []).map((v) => v.UsageData?.Size));
+    const buildCacheBytes = sum((df.BuildCache ?? []).map((b) => b.Size));
+    const totalBytes =
+      imagesBytes + containersBytes + volumesBytes + buildCacheBytes;
+    return {
+      imagesBytes,
+      containersBytes,
+      volumesBytes,
+      buildCacheBytes,
+      totalBytes,
+    };
+  }
+
   async listNetworks(): Promise<NetworkInfo[]> {
     const raw = await this.docker.listNetworks();
     return raw.map((n) => ({ id: n.Id, name: n.Name }));
