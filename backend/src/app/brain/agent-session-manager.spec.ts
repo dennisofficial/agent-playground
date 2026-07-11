@@ -69,6 +69,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     persistPlan: vi.fn(),
     route: vi.fn(),
     appendAtlasMessage: vi.fn(),
+    appendSystemNotice: vi.fn().mockResolvedValue(undefined),
     appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
     hasRecentSystemOperatorNotice: vi.fn().mockResolvedValue(false),
     approve: vi.fn(),
@@ -388,6 +389,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       threadTs: 'ts-r3gate-001',
     });
     (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.appendSystemNotice as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     // Approval request returns a handle whose verdict never resolves (we don't await approval here).
     const neverResolves = new Promise(() => undefined);
@@ -1958,6 +1960,62 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, 'rec-CLICKED', 'U-OP', 'plan');
   });
 
+  // ── Q2 (decision d1): the four approval-resolution acks render as calm System notices, never in
+  //    Atlas's voice. Driven through the durable path, which funnels into the single actOnApprovalVerdict.
+  describe('(d8) approval acks emit System notices, not appendAtlasMessage', () => {
+    const awaitingJob = {
+      id: FAKE_JOB_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
+      status: 'awaiting_approval',
+      decisionRecordId: FAKE_RECORD_ID,
+      kind: 'feature',
+      title: 'rate limiting',
+    };
+    const setup = (threadTitles: string[]) => {
+      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+      (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingJob);
+      (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({ threadTitles });
+      (mockStore.approve as ReturnType<typeof vi.fn>).mockResolvedValue({ ...awaitingJob, status: 'running' });
+      vi.spyOn(manager as unknown as { enqueueCompaction(s: unknown): Promise<void> }, 'enqueueCompaction').mockResolvedValue(undefined);
+      vi.spyOn(manager as unknown as { runDirectBuild(s: unknown, j: unknown): Promise<void> }, 'runDirectBuild').mockResolvedValue(undefined);
+    };
+
+    it('plan-approve → "Plan approved — dispatching the build." (System notice, not Atlas)', async () => {
+      setup(['Backend']); // non-empty ⇒ full plan ⇒ dispatch (not direct)
+      await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(FAKE_JOB_ID, 'Plan approved — dispatching the build.');
+      expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+    });
+
+    it('direct-approve → "Approved — implementing the change directly." (System notice, not Atlas)', async () => {
+      setup([]); // empty threadTitles ⇒ direct build
+      await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(FAKE_JOB_ID, 'Approved — implementing the change directly.');
+      expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+    });
+
+    it('request_changes (no note) → System notice ack, reopens planning, not Atlas', async () => {
+      setup(['Backend']);
+      // A note now goes to the brain via handleChatTurn (see (d5b)); the no-note path keeps the ack.
+      await manager.resolveApprovalDurably(FAKE_JOB_ID, 'request_changes', 'U-OP');
+      expect(mockStore.reopenPlanning).toHaveBeenCalledWith(FAKE_JOB_ID);
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        'Got it — back to the drawing board. What should change?',
+      );
+      expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+    });
+
+    it('deny → "Understood — I\'ll drop this one." (System notice), cancels, not Atlas', async () => {
+      setup(['Backend']);
+      await manager.resolveApprovalDurably(FAKE_JOB_ID, 'deny', 'U-OP');
+      expect(mockStore.cancel).toHaveBeenCalledWith(FAKE_JOB_ID);
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(FAKE_JOB_ID, "Understood — I'll drop this one.");
+      expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+    });
+  });
+
   it('(d5b) request_changes WITH a note delivers the note into the brain via handleChatTurn (not just an operator-facing ack)', async () => {
     const job = { id: FAKE_JOB_ID, kind: 'feature', title: 'rate limiting', orgId: TEAM_ID, repoId: PROJECT_ID };
     (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
@@ -2121,6 +2179,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(stim.body).toContain('retry_thread'); // the fix instruction
       expect(stim.body).toContain('JSON vs plain text'); // the record detail…
       expect(stim.body).toContain('<untrusted'); // …fenced as data (the <untrusted> tag)
+      // The seed row's trusted framing is carried SEPARATELY from the fenced record (`label`) — the
+      // untrusted pill's `fullBody` must never absorb the whole framed+fenced engine body.
+      const seedRow = stim.seedRow as Extract<ChatStimulus['seedRow'], object>;
+      expect(seedRow.kind).toBe('untrusted');
+      expect(seedRow.framing).toBeTruthy();
+      expect(seedRow.framing).toContain('retry_thread');
+      expect(seedRow.label).not.toContain(seedRow.framing as string);
       spy.mockRestore();
     });
 
@@ -2250,6 +2315,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(stim.body).toContain('<untrusted');
       expect(stim.body).toContain('rate limiting not load-tested');
       expect(stim.body).toMatch(/may NOT edit\/push code or ship without the operator/);
+      // The seed row's trusted framing rides separately from the fenced (untrusted) record `label`.
+      const seedRow = stim.seedRow as Extract<ChatStimulus['seedRow'], object>;
+      expect(seedRow.kind).toBe('untrusted');
+      expect(seedRow.framing).toBeTruthy();
+      expect(seedRow.framing).toMatch(/may NOT edit\/push code or ship without the operator/);
+      expect(seedRow.label).not.toContain(seedRow.framing as string);
       spy.mockRestore();
     });
 
@@ -2354,6 +2425,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      appendSystemNotice: vi.fn().mockResolvedValue(undefined),
       appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
       hasRecentSystemOperatorNotice: vi.fn().mockResolvedValue(false),
       appendSystemEvent: vi.fn().mockResolvedValue(undefined),
@@ -3214,6 +3286,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main' }),
       createFollowUpJob: vi.fn().mockResolvedValue('th-followup'),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      appendSystemNotice: vi.fn().mockResolvedValue(undefined),
       getQuestionCard: vi.fn().mockResolvedValue(null),
       openQuestionCards: vi.fn().mockResolvedValue([]),
       markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
