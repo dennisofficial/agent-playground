@@ -12,7 +12,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
 import { makeResolveFileLink } from "./repo-file-links";
-import { useApprove, useRepoTree, useSpinUpPreview } from "@/lib/api/job-queries";
+import { shouldShowSpinUpPreview } from "./spin-up-preview-visibility";
+import {
+  useApprove,
+  usePipeline,
+  useRepoTree,
+  useSpinUpPreview,
+} from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import { isSubmitCombo } from "@/lib/keyboard";
 import {
@@ -237,8 +243,10 @@ function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef 
 
 /** "Spin up preview" — asks the build brain (via the dedicated `spin-up-preview` seeder endpoint) to stand
  *  up a demo-ready live preview of the just-built change. Status/handover come back through chat; the live
- *  URL auto-surfaces in PORTS. Only shown at the ship gate (`kind: 'ship'`), never on an amend card, and
- *  hidden once requested (`card.previewRequestedAt`, stamped server-side on first click). */
+ *  URL auto-surfaces in PORTS. Offered ONLY while the job is live at the ship gate
+ *  (`status === 'awaiting_ship_review'`, so it never shows on a shipped/historical transcript whose ship
+ *  card still renders) and hidden once requested (`card.previewRequestedAt`, stamped server-side on first
+ *  click). */
 function ShipCardPreviewButton({
   jobRef,
   card,
@@ -246,8 +254,11 @@ function ShipCardPreviewButton({
   jobRef: JobRef;
   card: WebApprovalCard;
 }) {
+  const pipeline = usePipeline(jobRef);
   const preview = useSpinUpPreview(jobRef);
-  if (card.previewRequestedAt) return null;
+  if (!shouldShowSpinUpPreview(pipeline.data?.status, card.previewRequestedAt)) {
+    return null;
+  }
   return (
     <Button
       size="sm"
