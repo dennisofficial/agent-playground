@@ -5,10 +5,10 @@ import { slugify } from '@workspace/shared';
  * `010-fix-driver-store-columns`) instead of the raw uuid, since this is a worktree artifact a human or the
  * brain may browse. Gap-numbered ordinals keep threads sorted in read order.
  *
- * Kept in its own dependency-free file (no NestJS imports) so both the driver (`thread-driver.service.ts`)
- * and the brain (`agent-session-manager.service.ts`) can import it directly without pulling in each other's
- * full service graph — `driver.module.ts` already imports `../brain` for `JOB_DISPATCHER`, so a brain-side
- * import of the heavy `thread-driver.service.ts` file creates a real module load-order cycle.
+ * Lives in the zero-dep prompt-kit hub (its only dependency is `slugify`) so the seed catalog can render it
+ * WITHOUT the hub taking an upward value dependency on the driver area. The driver
+ * (`thread-driver.service.ts`) and brain import it from here, keeping the edge pointing the correct way
+ * (services → hub) and avoiding the load-order cycle a heavy cross-service import would create.
  */
 export function threadDirName(thread: { ordinal: number; brief: string }): string {
   return `${String(thread.ordinal).padStart(3, '0')}-${slugify(thread.brief)}`;

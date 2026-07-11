@@ -5,7 +5,7 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { threadDirName } from './thread-dir-name';
+import { threadDirName } from '../prompt-kit/harness/thread-dir-name';
 import { PlanVisibilityService } from '../decision-gate';
 import { BrainGateway } from '../brain-gateway';
 import {

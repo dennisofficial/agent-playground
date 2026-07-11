@@ -1,6 +1,6 @@
 import type { EventStimulus } from '../../domain/stimulus';
 import type { SessionAnchor, ThreadTerminalRecord } from '../../persistence/entities/thread.entity';
-import { threadDirName } from '../../driver/thread-dir-name';
+import { threadDirName } from './thread-dir-name';
 import { agentMessage, type AgentMessage } from '../message';
 import { renderChunk } from './tag-vocabulary';
 

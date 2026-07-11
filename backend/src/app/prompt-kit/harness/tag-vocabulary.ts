@@ -48,9 +48,16 @@ const KIND_ORDER: Record<ChunkKind, number> = {
 /** Human/external kinds whose body is untrusted for tag-forgery purposes (a payload can't "break out"). */
 const STRIP_KINDS: ReadonlySet<ChunkKind> = new Set<ChunkKind>(['user', 'untrusted']);
 
-/** Any well-formed open/close tag of THIS vocabulary — used to neutralize forged boundaries. */
+/**
+ * Any well-formed open/close tag of THIS vocabulary — used to neutralize forged boundaries.
+ *
+ * The first-turn seed tags (`review`, `uploaded-files`, `file`) are DELIBERATELY excluded: the web surface
+ * PREPENDS those host-authored blocks into the operator's own message body (see `web-surface.controller.ts`
+ * createThread), which is delivered as a `<user>` chunk and tag-stripped here — stripping them would erase
+ * the review target / uploaded-file manifest the brain needs on that turn.
+ */
 const VOCAB_TAG_RE =
-  /<\/?(?:system_notice|system_reminder|user|untrusted|context_pressure|session_rotated|resume_here|review|uploaded-files|file|running_services)\b[^>]*>/gi;
+  /<\/?(?:system_notice|system_reminder|user|untrusted|context_pressure|session_rotated|resume_here|running_services)\b[^>]*>/gi;
 
 /**
  * Remove any literal vocabulary tag from a body so an untrusted payload (or a human literally typing
