@@ -4375,7 +4375,7 @@ export class AgentSessionManager
           ok: false,
           reason: 'description is required (why the file is needed)',
         };
-      const requestId = `f-${randomUUID()}`;
+      const requestId = await this.store.nextFileRequestId(stimulus.jobId);
       const card = webFileRequestCard({
         jobId: stimulus.jobId,
         requestId,

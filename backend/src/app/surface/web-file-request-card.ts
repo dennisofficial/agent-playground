@@ -52,6 +52,20 @@ export interface WebFileRequestCard {
   withdrawnReason?: string;
 }
 
+/**
+ * Allocate the next stable file-request id: `f<max+1>` over the existing `f<n>` ids (`f1` when none),
+ * mirroring `nextQuestionId`'s `q<n>` scheme. Max-based so an id is NEVER reused after a withdrawal — a
+ * withdrawn id must not resurface and re-point a stale reference. Ignores ids that aren't `f<n>` (e.g. the
+ * legacy `f-<uuid>` cards), so the numbering stays a clean `f1, f2, …` sequence.
+ */
+export function nextFileRequestId(existingIds: readonly string[]): string {
+  const max = existingIds.reduce((m, id) => {
+    const match = /^f(\d+)$/.exec(id);
+    return match ? Math.max(m, Number(match[1])) : m;
+  }, 0);
+  return `f${max + 1}`;
+}
+
 /** Build a `WebFileRequestCard` from the brain's `request_file` args. */
 export function webFileRequestCard(input: {
   jobId: string;
