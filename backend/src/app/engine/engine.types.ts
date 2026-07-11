@@ -778,6 +778,12 @@ export interface EngineRunResult {
    * discard (persist nothing). Undefined ⇒ treat as claimed (back-compat for non-redis / test paths).
    */
   claimed?: boolean;
+  /**
+   * The engine turn id minted in `RedisEngineRunner.run`/known to `reattach`. Surfaced so the brain harness
+   * can stamp a stable per-block identity key `${turnId}:${ordinal}` for idempotent (re)persist. Undefined on
+   * non-redis / test paths.
+   */
+  turnId?: string;
 }
 
 /**

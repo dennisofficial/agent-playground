@@ -1697,6 +1697,7 @@ export class AgentSessionManager
         jobId: row.job_id,
         orgId: row.org_id,
         channel: row.channel,
+        turnId: row.turn_id,
         // Tag a reattached completion-wake turn's blocks with its generation, exactly like a fresh run — else
         // the reattach's persisted summary is UNTAGGED, escapes `supersedeDoneWakeMessages`, and a later sweep
         // leaves it as a duplicate alongside the sweep's own re-run.
@@ -2428,6 +2429,7 @@ export class AgentSessionManager
     let result;
     try {
       result = await runner.run(runArgs);
+      if (result.turnId) streamer.bindTurnId(result.turnId);
     } catch (err) {
       if (err instanceof BrainTurnAlreadyRunningError) {
         // Lost the check→register race: a concurrent/reattached brain turn is already live for this job, so

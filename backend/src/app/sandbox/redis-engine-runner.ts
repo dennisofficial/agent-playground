@@ -298,6 +298,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
         result = (
           await Promise.all([this.tailEvents(turnId, keys, containerId, args, done), toolsLoop])
         )[0];
+        result.turnId = turnId;
         return result;
       } catch (err) {
         detached = err instanceof EngineDetachedError;

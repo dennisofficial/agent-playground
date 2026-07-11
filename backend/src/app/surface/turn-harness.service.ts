@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { type QueryDeepPartialEntity, Repository } from 'typeorm';
 import { type EngineEvent, type EngineUsage, resolveContextLimit } from '../engine';
 import { foldTaskEvent } from '../driver/task-fold';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -17,7 +17,13 @@ import { OauthUsageService } from '../onboarding/oauth-usage.service';
 export interface BlockSink {
   appendBlock(
     jobId: string,
-    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
+    block: {
+      kind: string;
+      text?: string;
+      meta?: Record<string, unknown> | null;
+      createdAt?: Date;
+      idemKey?: string;
+    },
   ): Promise<void>;
   /**
    * Insert-once by a durable idempotency key: append the block ONLY if no `agent_prompt` row for this
@@ -49,20 +55,36 @@ export class MessageBlockSink implements BlockSink {
 
   async appendBlock(
     jobId: string,
-    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
+    block: {
+      kind: string;
+      text?: string;
+      meta?: Record<string, unknown> | null;
+      createdAt?: Date;
+      idemKey?: string;
+    },
   ): Promise<void> {
-    await this.messages.save(
-      this.messages.create({
-        job_id: jobId,
-        author: 'Atlas',
-        author_id: 'atlas',
-        author_bot_id: 'atlas',
-        text: block.text ?? '',
-        kind: block.kind,
-        meta: block.meta ?? null,
-        ...(block.createdAt ? { created_at: block.createdAt } : {}),
-      }),
-    );
+    const row = {
+      job_id: jobId,
+      author: 'Atlas',
+      author_id: 'atlas',
+      author_bot_id: 'atlas',
+      text: block.text ?? '',
+      kind: block.kind,
+      meta: block.meta ?? null,
+      ...(block.createdAt ? { created_at: block.createdAt } : {}),
+    };
+    if (block.idemKey) {
+      // ON CONFLICT DO NOTHING on the partial unique index `ux_messages_idem_key`: a repeat write of the same
+      // `${turn_id}:${ordinal}` (two racing finishers, a redelivery) is a no-op instead of a duplicate row.
+      await this.messages
+        .createQueryBuilder()
+        .insert()
+        .values({ ...row, idem_key: block.idemKey } as QueryDeepPartialEntity<MessageEntity>)
+        .orIgnore()
+        .execute();
+    } else {
+      await this.messages.save(this.messages.create(row));
+    }
   }
 
   async appendBlockOnce(
@@ -197,6 +219,9 @@ export interface TurnHarness {
   /** End the live lane and persist NOTHING — for a benign abort that will be RE-DELIVERED in full, so the
    *  truncated partial never becomes a durable half-message. */
   discard(): Promise<void>;
+  /** Bind the engine turn id AFTER creation (the fresh-run path learns it from `runner.run`'s result). Stamps
+   *  each persisted block a stable `${turnId}:${ordinal}` idempotency key. No-op if already set at create time. */
+  bindTurnId(turnId: string): void;
 }
 
 export interface TurnHarnessOptions {
@@ -215,6 +240,10 @@ export interface TurnHarnessOptions {
    * `id`/`parentToolUseId`/`result`.
    */
   metaTag?: Record<string, unknown>;
+  /** The engine turn id, for the create-time path (reattach). Stamps each brain block a stable identity key
+   *  `${turnId}:${ordinal}` so a repeat (re)persist upserts instead of duplicating. Absent ⇒ blocks keep
+   *  `idem_key = NULL` (build/plan-review lanes, legacy). */
+  turnId?: string;
 }
 
 /**
@@ -263,6 +292,7 @@ export class TurnHarnessFactory {
     const { jobId, orgId, channel } = options;
     const lane = options.lane ?? 'main';
     const metaTag = options.metaTag;
+    let persistTurnId = options.turnId;
 
     type DurableBlock = {
       kind: string;
@@ -292,13 +322,16 @@ export class TurnHarnessFactory {
     let closed = false;
 
     const persistAll = async (): Promise<void> => {
-      for (const b of blocks) {
+      for (let i = 0; i < blocks.length; i++) {
+        const b = blocks[i];
+        const idemKey = persistTurnId ? `${persistTurnId}:${i}` : undefined;
         await this.sink
           .appendBlock(jobId, {
             kind: b.kind,
             createdAt: b.emittedAt,
             ...(b.text != null ? { text: b.text } : {}),
             ...(b.meta ? { meta: b.meta } : {}),
+            ...(idemKey ? { idemKey } : {}),
           })
           .catch((err) => this.logger.warn(`appendBlock failed for thread=${jobId} lane=${lane}: ${err}`));
       }
@@ -508,6 +541,10 @@ export class TurnHarnessFactory {
         // this turn in full (a benign stream abort on an at-least-once wake), so a flushed partial would
         // become a durable truncated half-message alongside the complete re-run.
         this.liveTurns.end(channel, jobId, lane);
+      },
+
+      bindTurnId: (turnId: string) => {
+        persistTurnId = turnId;
       },
     };
   }
