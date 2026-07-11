@@ -87,7 +87,7 @@ function CodeBlock({ lang, code }: { lang?: string; code: string }) {
                 {renderTokenLine(lineTokens[i], ln)}
               </span>
             ))
-          : code}
+          : renderTokenLine(null, code)}
       </pre>
     </div>
   );

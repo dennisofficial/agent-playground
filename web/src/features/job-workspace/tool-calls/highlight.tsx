@@ -14,6 +14,8 @@
 import {
   createHighlighterCore,
   type HighlighterCore,
+  type LanguageRegistration,
+  type ThemeRegistration,
   type ThemedToken,
 } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
@@ -101,15 +103,16 @@ const atlasTerm = {
       settings: { foreground: TERM.lavender },
     },
   ],
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-} as any;
+} satisfies ThemeRegistration;
+
+type LanguageModule = { default: LanguageRegistration[] };
 
 /**
  * Lazy per-language loaders, one per id `langFromPath` can return. Each import is a distinct dynamic
  * import so the bundler code-splits every grammar; a language is loaded on first use. Every value that
  * `EXT_LANG` maps to MUST be a key here.
  */
-const LANG_LOADERS: Record<string, () => Promise<unknown>> = {
+const LANG_LOADERS: Record<string, () => Promise<LanguageModule>> = {
   typescript: () => import("@shikijs/langs/typescript"),
   tsx: () => import("@shikijs/langs/tsx"),
   javascript: () => import("@shikijs/langs/javascript"),
@@ -126,6 +129,7 @@ const LANG_LOADERS: Record<string, () => Promise<unknown>> = {
   go: () => import("@shikijs/langs/go"),
   rust: () => import("@shikijs/langs/rust"),
   docker: () => import("@shikijs/langs/docker"),
+  diff: () => import("@shikijs/langs/diff"),
   toml: () => import("@shikijs/langs/toml"),
   terraform: () => import("@shikijs/langs/terraform"),
   ini: () => import("@shikijs/langs/ini"),
@@ -138,23 +142,30 @@ const LANG_LOADERS: Record<string, () => Promise<unknown>> = {
  * already matching a `LANG_LOADERS` key (js's `javascript`, `tsx`, …) pass through untouched.
  */
 const LANG_ALIAS: Record<string, string> = {
+  cjs: "javascript",
+  dockerfile: "docker",
   js: "javascript",
+  json5: "json",
+  jsonc: "json",
+  mjs: "javascript",
   ts: "typescript",
   py: "python",
+  shell: "bash",
+  shellscript: "bash",
   yml: "yaml",
   sh: "bash",
-  shell: "bash",
   zsh: "bash",
   md: "markdown",
   rs: "rust",
   tf: "terraform",
+  tfvars: "terraform",
   hcl: "terraform",
-  dockerfile: "docker",
 };
 
 /** Resolve a raw language id (file-derived or a markdown fence info string) to a canonical Shiki id. */
 function canonicalLang(lang: string): string {
-  return LANG_ALIAS[lang] ?? lang;
+  const normalized = lang.trim().toLowerCase();
+  return LANG_ALIAS[normalized] ?? normalized;
 }
 
 /**
@@ -164,6 +175,7 @@ function canonicalLang(lang: string): string {
  */
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 let readyHighlighter: HighlighterCore | null = null;
+let highlighterFailed = false;
 
 function getHighlighter(): Promise<HighlighterCore> {
   if (!highlighterPromise) {
@@ -171,26 +183,35 @@ function getHighlighter(): Promise<HighlighterCore> {
       themes: [atlasTerm],
       langs: [],
       engine: createJavaScriptRegexEngine({ forgiving: true }),
-    }).then((hi) => (readyHighlighter = hi));
+    })
+      .then((hi) => (readyHighlighter = hi))
+      .catch((err: unknown) => {
+        highlighterFailed = true;
+        throw err;
+      });
   }
   return highlighterPromise;
 }
 
 const langPromises = new Map<string, Promise<void>>();
+const failedLangs = new Set<string>();
 
 /** Ensure `lang`'s grammar is loaded into `hi`; returns false for an unknown (non-curated) id. */
 async function ensureLang(hi: HighlighterCore, lang: string): Promise<boolean> {
-  if (!LANG_LOADERS[lang]) return false;
+  const loader = LANG_LOADERS[lang];
+  if (!loader || failedLangs.has(lang)) return false;
   if (hi.getLoadedLanguages().includes(lang)) return true;
   if (!langPromises.has(lang)) {
-    langPromises.set(
-      lang,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      hi.loadLanguage(LANG_LOADERS[lang]() as any).then(() => {}),
-    );
+    langPromises.set(lang, hi.loadLanguage(loader).then(() => {}));
   }
-  await langPromises.get(lang);
-  return true;
+  try {
+    await langPromises.get(lang);
+    return true;
+  } catch {
+    failedLangs.add(lang);
+    langPromises.delete(lang);
+    return false;
+  }
 }
 
 /** Whole-file tokenization — one pass, cross-line context preserved. Caller guarantees hi + lang ready. */
@@ -245,6 +266,8 @@ const EXT_LANG: Record<string, string> = {
   yml: "yaml",
   yaml: "yaml",
   sql: "sql",
+  diff: "diff",
+  patch: "diff",
   go: "go",
   rs: "rust",
   toml: "toml",
@@ -300,13 +323,25 @@ export function useHighlightTokens(
   }, [code, canonical, whole, ready]);
 
   useEffect(() => {
-    if (tokens || !canonical || !LANG_LOADERS[canonical]) return; // resolved, or nothing loadable
+    if (
+      tokens ||
+      !canonical ||
+      !LANG_LOADERS[canonical] ||
+      failedLangs.has(canonical) ||
+      highlighterFailed
+    )
+      return; // resolved, failed, or nothing loadable
     if (code.length > MAX_HIGHLIGHT_LENGTH) return;
     let cancelled = false;
     (async () => {
-      const hi = await getHighlighter();
-      await ensureLang(hi, canonical);
-      if (!cancelled) setReady((v) => v + 1);
+      try {
+        const hi = await getHighlighter();
+        const loaded = await ensureLang(hi, canonical);
+        if (!cancelled && loaded) setReady((v) => v + 1);
+      } catch {
+        highlighterFailed = true;
+        if (!cancelled) setReady((v) => v + 1);
+      }
     })();
     return () => {
       cancelled = true;
