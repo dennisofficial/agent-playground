@@ -231,14 +231,18 @@ RUN npm install -g "typescript@${TYPESCRIPT_VERSION}" "typescript-language-serve
 # run resolve a browser INSTANTLY on a cold box — the per-onboarding `npx playwright install --with-deps`
 # stopgap (ticket #19) is retired by this layer. Installed into a dedicated lib dir (same pattern as the
 # engine runtime at /usr/local/lib/atlas) rather than the Node global, so atlas-probe resolves it via
-# createRequire with no global NODE_PATH leaking into repo builds. PLAYWRIGHT_BROWSERS_PATH is a system
-# dir set BEFORE the install so the browser lands there and every uid (root + host-exec user) resolves the
-# same binary. Pinned to the current Playwright release line (1.61.x). --with-deps apt-installs the OS libs
-# (libglib/libcairo/libcups/libgbm/fonts) the slim base omits. The final smoke test actually LAUNCHES
-# headless chromium (not just resolves the module) so a missing shared lib fails the build, not a turn.
+# createRequire with no global NODE_PATH leaking into repo builds. PLAYWRIGHT_BROWSERS_PATH points the
+# browser at a system dir so root + the host-exec user resolve the same binary — but it is set ONLY inside
+# this build RUN (not a persistent ENV): a baked ENV would leak into a connected repo's OWN Playwright,
+# forcing it to resolve browsers from this root-owned dir and breaking its `playwright install` with
+# EACCES. atlas-probe re-sets this env at runtime (see its header) before it requires playwright, so repo
+# builds keep the default user-writable cache (~/.cache/ms-playwright). Pinned to the current Playwright
+# release line (1.61.x). --with-deps apt-installs the OS libs (libglib/libcairo/libcups/libgbm/fonts) the
+# slim base omits. The final smoke test actually LAUNCHES headless chromium (not just resolves the module)
+# so a missing shared lib fails the build, not a turn.
 ARG PLAYWRIGHT_VERSION=1.61.1
-ENV PLAYWRIGHT_BROWSERS_PATH=/usr/lib/playwright
-RUN mkdir -p /usr/local/lib/atlas-probe \
+RUN export PLAYWRIGHT_BROWSERS_PATH=/usr/lib/playwright \
+  && mkdir -p /usr/local/lib/atlas-probe \
   && cd /usr/local/lib/atlas-probe \
   && printf '{"name":"atlas-probe-runtime","private":true}\n' > package.json \
   && npm install "playwright@${PLAYWRIGHT_VERSION}" \

@@ -16,6 +16,12 @@ const { createRequire } = require('node:module');
 // resolution. ATLAS_PROBE_LIB overrides the dir for local testing; a plain require is the last-resort
 // fallback for a dev checkout that installed playwright in cwd.
 const PROBE_LIB = process.env.ATLAS_PROBE_LIB || '/usr/local/lib/atlas-probe';
+// The baked chromium lives in a system dir (see Dockerfile). That path is NOT a persistent image ENV —
+// baking it would hijack a connected repo's OWN Playwright — so atlas-probe points its own process at the
+// baked browsers dir here, before requiring playwright, leaving repo builds on the default user cache.
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.ATLAS_PROBE_BROWSERS_PATH || '/usr/lib/playwright';
+}
 let playwright;
 try {
   playwright = createRequire(PROBE_LIB + '/probe.js')('playwright');
@@ -188,7 +194,7 @@ async function checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, 
       }
     });
 
-    page.on('response', (response) => {
+    page.on('response', async (response) => {
       try {
         let responseOrigin = null;
         try {
@@ -202,7 +208,9 @@ async function checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, 
           resourceType: response.request().resourceType(),
           origin: responseOrigin,
         });
-        for (const header of response.headersArray()) {
+        // headersArray() is async in Playwright — await it, else it returns a Promise (not iterable)
+        // and the throw is swallowed here, silently killing server-set-cookie detection.
+        for (const header of await response.headersArray()) {
           if (header.name.toLowerCase() !== 'set-cookie') continue;
           const parsed = parseSetCookie(header.value);
           if (parsed) {
