@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { extractOrientation, renderBatchTask } from './thread-driver.service';
+import { extractOrientation } from './thread-driver.service';
+import { renderBatchTask } from '../prompt-kit';
 import type { DriverThread } from './driver-store.service';
 import type { DecisionRecord, Step } from '../domain';
 

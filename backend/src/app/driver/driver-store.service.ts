@@ -42,7 +42,7 @@ import {
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import { webAmendProposalCard, webVerdictCard } from '../surface/web-approval-card';
-import type { PlannedStep } from './render-plan';
+import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;

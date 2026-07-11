@@ -2,7 +2,7 @@
  * prompt-kit / groups / ship — the ship-time Codex master review persona (`MASTER_REVIEW`). The persona is
  * decomposed one-concern-per-fragment (role+scope, full-sandbox access, sole-author, verify-the-whole, git,
  * task list, cloud-sandbox) rather than one fused body. The in-sandbox open-PR turn is NOT a ship-time agent
- * — it is a self-contained `turns/` message (`prompt-kit/turns/ship-open-pr.ts`).
+ * — it is a self-contained `messages/` message (`prompt-kit/messages/ship-open-pr.ts`).
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';

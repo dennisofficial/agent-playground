@@ -85,7 +85,7 @@ import {
   renderPipelineStateSummary,
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
-import type { PlannedStep } from '../driver/render-plan';
+import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import { coerceThreadType, type ThreadType } from '../thread-kind/thread-types';
 import {
   LIVE_VERIFICATION_JUDGE,

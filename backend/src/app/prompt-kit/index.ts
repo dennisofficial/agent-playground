@@ -22,7 +22,6 @@ export * from './message';
 export * from './prompt.service';
 export * from './prompt-kit.module';
 
-// ── The SECOND category: self-contained, host-initiated one-shot turns (NOT assembled, NOT `Agent`s). ──
-export * from './turns/turn';
-export * from './turns/ship-open-pr';
-export * from './turns/build-handoff';
+// ── The SECOND category: user-message / task-body templates, plus self-contained, host-initiated one-shot
+// turns (NOT assembled, NOT `Agent`s) — both now live under `messages/`. ──
+export * from './messages';

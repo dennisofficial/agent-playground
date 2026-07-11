@@ -1,22 +1,17 @@
 /**
- * The review LENSES for the auto-fix fan-out + the prompt builders for both the (read-only) review
- * passes and the (execute) fix turn. Lenses are DATA — the fan-out width is just the selected list's
- * length, so adding a pass = adding a lens, not new control flow. Each review pass is a vanilla
- * `EngineRunner` review-mode turn that must return findings as a single fenced JSON block; the fix
- * turn is one execute-mode turn fed the deduped findings, confined to the worktree.
+ * The review LENSES for the auto-fix fan-out — selection, parsing, and dedupe of the findings each pass
+ * returns. Lenses are DATA — the fan-out width is just the selected list's length, so adding a pass =
+ * adding a lens, not new control flow. Each review pass is a vanilla `EngineRunner` review-mode turn that
+ * must return findings as a single fenced JSON block; the fix turn is one execute-mode turn fed the
+ * deduped findings, confined to the worktree. The prompt TEXT for those two turns
+ * (`buildReviewPrompt`/`buildFixPrompt`) lives in `prompt-kit/messages/autofix-lenses.ts`.
  *
- * Zero imports from `harness/**` / the v1 surface — pure strings + this subfolder's types.
+ * Zero imports from `harness/**` / the v1 surface — pure data/parsing + this subfolder's types.
  */
-import { fence } from '../prompt-fence';
 // Direct path (not the `../thread-kind` barrel, which re-exports `registry.ts` — that file imports
 // FROM here, so going through the barrel would cycle). `thread-types.ts` itself imports nothing.
 import type { ThreadType } from '../thread-kind/thread-types';
-import type {
-  AutoFixContext,
-  FindingSeverity,
-  ReviewFinding,
-  ReviewLens,
-} from './autofix.types';
+import type { FindingSeverity, ReviewFinding, ReviewLens } from './autofix.types';
 
 /**
  * The five ALWAYS-ON lenses: four narrow diff-scoped lenses plus one always-on HOLISTIC lens. The four
@@ -157,108 +152,6 @@ const SEVERITY_RANK: Record<FindingSeverity, number> = { low: 0, medium: 1, high
 /** Is `sev` at least `min`? Drives the fix-turn gate. */
 export function meetsSeverity(sev: FindingSeverity, min: FindingSeverity): boolean {
   return SEVERITY_RANK[sev] >= SEVERITY_RANK[min];
-}
-
-/** The JSON shape every review pass returns — identical across scopes, so parse + dedupe are untouched. */
-const REVIEW_OUTPUT_FORMAT = `Return your findings as a SINGLE fenced JSON code block and nothing else after it:
-
-\`\`\`json
-{ "findings": [ { "severity": "low|medium|high", "file": "path/relative/to/repo or null", "title": "one line", "detail": "what is wrong + the concrete fix" } ] }
-\`\`\``;
-
-/**
- * The ship-blocker bar + honest-severity rubric — shared by EVERY scope. This is the anti-nitpicking
- * lever: the post-review fix pass only acts on findings >= medium, so an honest severity here directly
- * shrinks what the fix pass churns on (no threshold change needed).
- */
-const SHIP_BLOCKER_BAR = `Bar for reporting — report ONLY what a senior engineer would raise in a PR review that BLOCKS approval:
-- Do NOT report style preferences, restate what a linter/formatter already handles, or nitpick a pattern the surrounding code already accepts.
-- An empty report is the correct, expected outcome for a clean change — return { "findings": [] } and never pad it to look thorough.
-
-Assign severity honestly — do NOT inflate:
-- high = breaks production, loses data, or is a real bug.
-- medium = a real defect or a maintainability problem worth fixing before merge.
-- low = minor.
-- When unsure an issue truly matters, use low or omit it.`;
-
-/** The scope clause — how far the pass may look. The narrow lenses stay diff-only; holistic may read out. */
-const SCOPE_CLAUSE: Record<NonNullable<ReviewLens['scope']>, string> = {
-  diff: 'ONLY report issues introduced by (or directly within) the change set below — never pre-existing issues outside it.',
-  holistic:
-    'Judge the change as a WHOLE against its stated intent. You MAY read beyond the diff — into the files it touches and the existing code that calls them — to judge integration and completeness. But only FLAG problems THIS change introduced or left incomplete; never report pre-existing debt outside the change\'s responsibility.',
-  framework:
-    'Report ONLY violations of the injected framework best-practices, and only within the change set below — never pre-existing issues outside it, and never a general style opinion the injected guidance does not state.',
-};
-
-/** The output contract appended to a review pass, tuned to the lens's scope (shared bar + format). */
-function reviewOutputContract(scope: NonNullable<ReviewLens['scope']>): string {
-  return `
-Scope of what you may report:
-- ${SCOPE_CLAUSE[scope]}
-
-${SHIP_BLOCKER_BAR}
-
-${REVIEW_OUTPUT_FORMAT}
-
-Rules:
-- Keep each finding scoped to a concrete, safe fix. No speculative rewrites.
-- "file" must be repo-relative (or null for a cross-cutting note).`;
-}
-
-/** Render the force-injected framework skill bodies as fenced, per-skill labelled blocks for the
- *  `scope:'framework'` lens. Empty (returns '') when nothing was injected — defensive: the driver only
- *  appends the lens when ≥1 skill matched, but a lens must never render a dangling empty contract. */
-function frameworkInjection(ctx: AutoFixContext): string {
-  const bodies = ctx.frameworkBodies ?? [];
-  if (bodies.length === 0) return '';
-  const blocks = bodies.map((b) => fence(`framework best-practices: ${b.name}`, b.body)).join('\n\n');
-  return `\nFramework best-practices to enforce for THIS pass (authoritative — sourced from the repo's opted-in review skills):\n\n${blocks}\n`;
-}
-
-/** Build one read-only review pass's prompt for a given lens + context. */
-export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): string {
-  const files = ctx.changedFiles?.length
-    ? `\nChanged files:\n${ctx.changedFiles.map((f) => `- ${f}`).join('\n')}\n`
-    : '';
-  const diffBlock = ctx.diff
-    ? `\nDiff under review:\n\n\`\`\`diff\n${ctx.diff}\n\`\`\`\n`
-    : '\n(No diff was supplied — inspect the worktree git state to review the change set.)\n';
-  const scope = lens.scope ?? 'diff';
-  const frameworkBlock = scope === 'framework' ? frameworkInjection(ctx) : '';
-  return [
-    `You are a focused code reviewer. LENS: ${lens.label}.`,
-    `\nFocus of THIS pass: ${lens.focus}`,
-    `\nWhat the change was meant to do (intent):\n${fence('intent', ctx.intent)}`,
-    frameworkBlock,
-    files,
-    diffBlock,
-    'This is a READ-ONLY review turn — do not modify any files. You may read files for context.',
-    reviewOutputContract(scope),
-  ].join('\n');
-}
-
-/** Build the single execute-mode FIX turn's prompt from the deduped, severity-filtered findings. */
-export function buildFixPrompt(findings: ReviewFinding[], ctx: AutoFixContext): string {
-  const list = findings
-    .map(
-      (f, i) =>
-        `${i + 1}. [${f.severity}] ${f.file ?? '(cross-cutting)'} — ${f.title}\n   ${f.detail}`,
-    )
-    .join('\n');
-  return [
-    'You are applying a curated set of review fixes to the current worktree. Make the SMALLEST',
-    'changes that resolve each finding below. Do NOT do unrelated refactors, do NOT touch files',
-    'outside this worktree, and do NOT change behavior beyond what the finding calls for. If a finding',
-    'is wrong or unsafe to apply, SKIP it and note why — never invent work.',
-    `\nWhat the change was meant to do (intent):\n${fence('intent', ctx.intent)}`,
-    `\nFindings to address:\n${fence('findings', list)}`,
-    '\nCOMMIT YOUR WORK (required — the host does NOT commit for you): if you changed any files, run',
-    '`git add -A` (respect `.gitignore`; if build or cache junk appears in `git status`, add it to',
-    '`.gitignore` instead of committing it), commit with a clear message, and `git push` your branch.',
-    'Leave the working tree CLEAN. If you fixed nothing, leave the tree untouched (no commit).',
-    '\nWhen done, end with a short summary of exactly which findings you fixed and which you skipped',
-    '(and why).',
-  ].join('\n');
 }
 
 /**

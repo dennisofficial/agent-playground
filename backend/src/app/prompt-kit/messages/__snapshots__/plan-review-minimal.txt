@@ -1,0 +1,21 @@
+<intent>
+What the operator is trying to achieve. Judge the plan against THIS — not your own idea of the feature.
+
+GOAL: (see overview)
+
+OVERVIEW (Atlas's framing of the work):
+A bugfix with no separate goal string.
+</intent>
+
+<authored_plan>
+The structured plan Atlas authored. The `/context/specs/` files are authoritative — read them; this is
+just the index to orient your reading.
+
+LOCKED DECISIONS:
+  (none)
+
+THREADS (high-level briefs):
+  (none)
+</authored_plan>
+
+Now judge per <what_to_judge> + <output_contract>. Read the specs and the referenced code first.

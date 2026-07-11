@@ -18,8 +18,8 @@ import type {
 import { JobDependencyService } from '../job-deps';
 import { webTicketCard } from '../surface/web-ticket-card';
 import { nextQuestionId } from '../surface/web-question-card';
-import { renderPlan } from '../driver/render-plan';
-import type { PlannedStep } from '../driver/render-plan';
+import { renderPlan } from '../prompt-kit/messages/render-plan';
+import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { coerceThreadType } from '../thread-kind';
 import {

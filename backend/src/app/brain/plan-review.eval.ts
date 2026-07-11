@@ -1,7 +1,7 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import { AIMessage, HumanMessage, SystemMessage, type BaseMessageLike } from '@langchain/core/messages';
 import { defineModule, scorer } from '@workspace/ai-testing';
-import { Agent, renderAgentPrompt } from '../prompt-kit';
+import { Agent, renderAgentPrompt, renderReviewIntent } from '../prompt-kit';
 import { parsePlanFindings, type ReviewFinding } from './plan-review.service';
 
 /**
@@ -48,14 +48,7 @@ function renderTask(input: {
   context: string;
 }): string {
   return [
-    '<intent>',
-    'What the operator is trying to achieve. Judge the plan against THIS — not your own idea of the feature.',
-    '',
-    `GOAL: ${input.goal}`,
-    '',
-    "OVERVIEW (Atlas's framing of the work):",
-    input.overview,
-    '</intent>',
+    renderReviewIntent({ goal: input.goal, overview: input.overview }),
     '',
     '<authored_plan>',
     'The plan Atlas authored, to grade.',

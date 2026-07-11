@@ -5,17 +5,10 @@ import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { LocalGitService } from '../git';
 import { TurnHarnessFactory, type TurnHarness } from '../surface/turn-harness.service';
 import { laneFor } from '../surface/thread-registry';
-import { Agent, renderAgentPrompt } from '../prompt-kit';
+import { Agent, buildFixPrompt, buildReviewPrompt, renderAgentPrompt } from '../prompt-kit';
 import { ConventionProfileResolver } from '../conventions';
 import { threadKindSpec } from '../thread-kind';
-import {
-  buildFixPrompt,
-  buildReviewPrompt,
-  DEFAULT_LENSES,
-  dedupeFindings,
-  meetsSeverity,
-  parseFindings,
-} from './autofix-lenses';
+import { DEFAULT_LENSES, dedupeFindings, meetsSeverity, parseFindings } from './autofix-lenses';
 import type {
   AutoFixCommit,
   AutoFixContext,

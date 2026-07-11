@@ -74,7 +74,7 @@ import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
 import { JobDependencyService } from '../job-deps';
-import { CONTAINER_CONTEXT, type ServiceLivenessProbe } from '../sandbox';
+import type { ServiceLivenessProbe } from '../sandbox';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
@@ -105,7 +105,12 @@ import {
   subscriptionToObservable,
 } from '../realtime';
 import { TicketEventBus } from '../tickets';
-import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
+import {
+  PREVIEW_PREP_SEED_BODY,
+  renderReviewSeedXml,
+  renderUploadedFilesXml,
+  type AttachmentCardItem,
+} from '../prompt-kit';
 import { UsageEventBus } from '../onboarding/usage-event-bus';
 
 const VALID_ACTION_IDS = new Set([
@@ -302,14 +307,6 @@ function coerceOperatorKind(raw: string | undefined): JobKind | null {
   return null;
 }
 
-/** The `<review>` block prepended to the first-turn body for a `kind: 'review'` job (brain orientation). */
-function renderReviewSeedXml(prNumber: number, repoSlug: string): string {
-  return (
-    `<review pr="${prNumber}" repo="${xmlEscapeAttr(repoSlug)}" ` +
-    `note="Review this EXISTING pull request. Fetch it with \`gh pr view ${prNumber}\` / \`gh pr diff ${prNumber}\`, ` +
-    `review the diff, and post findings grouped by severity. Do not build or open a PR of your own." />`
-  );
-}
 interface SayDto {
   text: string;
 }
@@ -371,29 +368,11 @@ const ATTACHMENT_EXTS = new Set([
   '.html', '.htm', '.css', '.js', '.ts', '.tsx', '.pdf', // code + pdf
 ]);
 
-/** One persisted composer attachment (rides `messages.card`; the web renders a chip/thumbnail from it). */
-interface AttachmentCardItem {
-  /** The operator's (sanitized) filename, for display. */
-  name: string;
-  /** Bucket-relative path under `/context` (`uploads/<safeName>`) — the raw-file endpoint re-roots it. */
-  path: string;
-  kind: 'image' | 'file';
-  size: number;
-}
 /** The multipart file shape multer hands us (subset we use — avoids depending on global Express.Multer types). */
 interface UploadedAttachment {
   originalname: string;
   buffer: Buffer;
   size: number;
-}
-
-/** Escape a string for safe inclusion in an XML attribute value (filenames are operator-controlled). */
-function xmlEscapeAttr(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 /**
@@ -408,17 +387,6 @@ function safeUploadName(original: string): string {
       .replace(/^\.+/, '')
       .slice(0, 100) || 'file';
   return `${randomBytes(4).toString('hex')}-${base}`;
-}
-
-/** The `<uploaded-files>` block prepended to an operator message that carried attachments (brain body). */
-function renderUploadedFilesXml(items: AttachmentCardItem[]): string {
-  const rows = items
-    .map(
-      (it) =>
-        `  <file name="${xmlEscapeAttr(it.name)}" kind="${it.kind}" path="${CONTAINER_CONTEXT}/${it.path}" size="${it.size}" />`,
-    )
-    .join('\n');
-  return `<uploaded-files note="The operator attached the file(s) below. Read any you need with your Read tool — images render visually.">\n${rows}\n</uploaded-files>`;
 }
 
 /**

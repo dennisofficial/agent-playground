@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_LENSES,
-  buildFixPrompt,
-  buildReviewPrompt,
   dedupeFindings,
   meetsSeverity,
   parseFindings,
   reviewAgentsForThread,
 } from './autofix-lenses';
+import { buildFixPrompt, buildReviewPrompt } from '../prompt-kit';
 import type { AutoFixContext, ReviewFinding } from './autofix.types';
 
 const ctx: AutoFixContext = {
