@@ -63,9 +63,7 @@ import type {
   McpAuthKind,
   McpOAuthTokenAuthMethod,
   McpSurface,
-  SessionAnchor,
   StoredMcpOAuthConfig,
-  ThreadTerminalRecord,
 } from '../persistence/entities';
 import {
   ProvisioningNotReadyError,
