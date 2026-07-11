@@ -402,9 +402,10 @@ export class DriverStoreService {
   /**
    * Stamp the ship card "preview requested" when the operator clicks "Spin up preview" at the ship gate —
    * ATOMICALLY and IDEMPOTENTLY, mirroring {@link BrainStoreService.markQuestionAnswered}. The conditional
-   * `WHERE … previewRequestedAt IS NULL` makes a concurrent double-click single-winner. The
-   * `type='approval_card'` + `kind='ship'` guards scope the stamp to an ACTIVE ship card — a retracted card
-   * has been neutralized to a `verdict_card` (see {@link retractShip}), so it can't be stamped. Returns
+   * `WHERE … previewRequestedAt IS NULL` makes a concurrent double-click single-winner; the `jobs.status`
+   * subquery keeps the status gate atomic with the stamp instead of trusting a stale controller snapshot.
+   * The `type='approval_card'` + `kind='ship'` guards scope the stamp to an ACTIVE ship card — a retracted
+   * card has been neutralized to a `verdict_card` (see {@link retractShip}), so it can't be stamped. Returns
    * whether THIS caller stamped it (the winner then seeds the preview procedure).
    */
   async markPreviewRequested(jobId: string): Promise<boolean> {
@@ -419,6 +420,9 @@ export class DriverStoreService {
       .andWhere("card ->> 'type' = 'approval_card'")
       .andWhere("card ->> 'kind' = 'ship'")
       .andWhere("card ->> 'previewRequestedAt' IS NULL")
+      .andWhere(
+        "EXISTS (SELECT 1 FROM jobs j WHERE j.id = :jobId AND j.status = 'awaiting_ship_review')",
+      )
       .setParameter('patch', patch)
       .execute();
     return (res.affected ?? 0) > 0;

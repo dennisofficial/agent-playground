@@ -1059,4 +1059,16 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     });
     expect((cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBeUndefined();
   });
+
+  it('markPreviewRequested does NOT stamp when the job has left the ship gate', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+    await jobs.update({ id: jobId }, { status: 'running' });
+
+    expect(await store.markPreviewRequested(jobId)).toBe(false);
+    const cardRow = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    expect((cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBeUndefined();
+  });
 });
