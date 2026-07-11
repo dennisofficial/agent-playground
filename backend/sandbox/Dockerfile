@@ -227,6 +227,26 @@ ARG TS_LANGUAGE_SERVER_VERSION=5.3.0
 RUN npm install -g "typescript@${TYPESCRIPT_VERSION}" "typescript-language-server@${TS_LANGUAGE_SERVER_VERSION}" \
   && typescript-language-server --version >/dev/null
 
+# Playwright + chromium (browser binary + its OS shared libs) baked so atlas-probe and every UI-validation
+# run resolve a browser INSTANTLY on a cold box — the per-onboarding `npx playwright install --with-deps`
+# stopgap (ticket #19) is retired by this layer. Installed into a dedicated lib dir (same pattern as the
+# engine runtime at /usr/local/lib/atlas) rather than the Node global, so atlas-probe resolves it via
+# createRequire with no global NODE_PATH leaking into repo builds. PLAYWRIGHT_BROWSERS_PATH is a system
+# dir set BEFORE the install so the browser lands there and every uid (root + host-exec user) resolves the
+# same binary. Pinned to the current Playwright release line (1.61.x). --with-deps apt-installs the OS libs
+# (libglib/libcairo/libcups/libgbm/fonts) the slim base omits. The final smoke test actually LAUNCHES
+# headless chromium (not just resolves the module) so a missing shared lib fails the build, not a turn.
+ARG PLAYWRIGHT_VERSION=1.61.1
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/lib/playwright
+RUN mkdir -p /usr/local/lib/atlas-probe \
+  && cd /usr/local/lib/atlas-probe \
+  && printf '{"name":"atlas-probe-runtime","private":true}\n' > package.json \
+  && npm install "playwright@${PLAYWRIGHT_VERSION}" \
+  && ./node_modules/.bin/playwright install --with-deps chromium \
+  && ./node_modules/.bin/playwright --version >/dev/null \
+  && node -e "const{chromium}=require('/usr/local/lib/atlas-probe/node_modules/playwright');chromium.launch({headless:true,args:['--no-sandbox']}).then(b=>b.close()).then(()=>console.log('chromium launch OK')).catch(e=>{console.error(e);process.exit(1)})" \
+  && rm -rf /var/lib/apt/lists/*
+
 # atlas-lsp-server — our direct LSP-client MCP server (spawned via node by the engine for `atlas-lsp-ts`).
 # It speaks MCP to the SDK and LSP to typescript-language-server, re-rooting the server at the nearest
 # tsconfig.json of each tool call's target file. Replaced mcp-language-server (whose name-based
@@ -278,6 +298,13 @@ RUN chmod +x /usr/local/bin/atlas-svc
 # halt/completion wake — drives via Bash to read a build/brain lane's raw JSONL under /.atlas. Read-only.
 COPY atlas-tx /usr/local/bin/atlas-tx
 RUN chmod +x /usr/local/bin/atlas-tx
+
+# atlas-probe: the browser-grade accessibility probe the agent drives via Bash — loads a preview URL in
+# baked headless chromium and returns a structured verdict + blocker classification (dns/bind_ip/port/
+# dev_origin/cors/api_base_url/cookie/blank). Resolves the baked playwright above via createRequire.
+COPY atlas-probe /usr/local/bin/atlas-probe
+RUN chmod +x /usr/local/bin/atlas-probe \
+  && node --check /usr/local/bin/atlas-probe
 
 # Shared cross-thread fnm store (one host dir bound here by SandboxManager — see CONTAINER_FNM_STORE) +
 # activate fnm in every non-interactive agent bash via BASH_ENV. Set LAST so the build's own RUN steps

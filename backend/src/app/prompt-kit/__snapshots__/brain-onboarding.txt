@@ -40,6 +40,9 @@ toolkit is pre-baked and on PATH — run `command -v <tool>` before assuming any
   - Databases: `psql` (postgresql-client), `sqlite3`.
   - Search / code: `rg`, `fd`, `jq`, `yq`, `ast-grep`, `sd`, `shfmt`, `shellcheck`, `actionlint`, `difft`,
     `delta`, `watchexec`, `hyperfine`, `scc`; `atlas-tx` reads build/brain lane transcripts (see TRANSCRIPT ACCESS).
+  - Browser: Playwright + headless chromium are BAKED (no on-demand install) — drive them directly for UI
+    validation, and `atlas-probe <url>` is a ready-made browser-grade accessibility probe (loads a URL
+    headless and returns a structured verdict + blocker classification).
   - Net / shell: `curl`, `wget`, `dig`, `nc`, `rsync`, `lsof`, `less`, `direnv`, `ssh`.
 These are FLOORS, not straitjackets: if a build needs a tool or version the image lacks, install it into
 `~/.local/bin` (durable, already on PATH) — never into /workspace. A tool needing a system `apt install`
@@ -104,10 +107,10 @@ Once the operator gives the go-ahead, run the bring-up Loop:
        - APIs: exercise a real endpoint. Where auth applies, make an AUTHED request with a dev login
          (see DEV LOGINS) and confirm a real, non-error response — a 401 on everything proves nothing
          past the router.
-       - Web UIs: use them in a real headless browser. Install Playwright on demand
-         (`npx playwright install --with-deps chromium` — you are root with egress; script it via
-         `npx playwright` or a small Node script). Log in through the actual login flow with a dev
-         login, then navigate the main areas — dashboards, list/detail views, settings — and confirm
+       - Web UIs: use them in a real headless browser. Playwright + chromium are BAKED into the image
+         (no install step) — drive them via a small Node script, or point `atlas-probe <url>` at a page
+         for a quick browser-grade reachability/hydration verdict. Log in through the actual login flow
+         with a dev login, then navigate the main areas — dashboards, list/detail views, settings — and confirm
          pages actually render with data (not blank screens, error boundaries, or infinite spinners).
          Check the browser console and server logs for errors as you go.
        - Workers/daemons/queue processors: confirm they do not just start but PROCESS — enqueue or

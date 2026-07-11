@@ -1,0 +1,493 @@
+#!/usr/bin/env node
+// atlas-probe — a browser-grade reachability/hydration probe baked into the Atlas sandbox image.
+// It answers "does this preview URL actually load in a browser" the way a human tester would: DNS,
+// then a raw HTTP fetch, then a dev-cross-origin asset check, then a real headless Chromium load —
+// each layer cheap-to-expensive, each layer's findings folded into one verdict with concrete remediation
+// hints. It runs OUTSIDE any repo (in the agent's cwd), so `playwright` must resolve from the sandbox
+// image's global node_modules (NODE_PATH) rather than a project dependency — hence the defensive
+// require below instead of assuming a local install.
+'use strict';
+
+const dns = require('node:dns');
+const { createRequire } = require('node:module');
+
+// playwright is baked into a dedicated image dir (mirrors /usr/local/lib/atlas) and resolved from there,
+// so no global NODE_PATH is needed — a global NODE_PATH would leak into every repo build's module
+// resolution. ATLAS_PROBE_LIB overrides the dir for local testing; a plain require is the last-resort
+// fallback for a dev checkout that installed playwright in cwd.
+const PROBE_LIB = process.env.ATLAS_PROBE_LIB || '/usr/local/lib/atlas-probe';
+let playwright;
+try {
+  playwright = createRequire(PROBE_LIB + '/probe.js')('playwright');
+} catch {
+  try {
+    playwright = require('playwright');
+  } catch (err) {
+    process.stderr.write(
+      `atlas-probe: could not load "playwright" (${err.message}).\n` +
+        `Expected a baked install under ${PROBE_LIB}/node_modules — check the sandbox image setup.\n`,
+    );
+    process.exit(2);
+  }
+}
+
+function usage() {
+  return [
+    'usage: atlas-probe <url> [--storage-state <file>] [--api-origin <url>] [--json] [--timeout <ms>]',
+    '',
+    '  <url>              page to load (required)',
+    '  --storage-state    Playwright storageState JSON file for an authed session',
+    "  --api-origin       expected origin for the app's own API calls",
+    '  --json             print the full verdict object as JSON instead of a summary',
+    '  --timeout <ms>     navigation/settle timeout in milliseconds (default 30000)',
+  ].join('\n');
+}
+
+function parseArgs(argv) {
+  const args = { url: null, storageState: null, apiOrigin: null, json: false, timeout: 30000, help: false };
+  const positionals = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    switch (arg) {
+      case '--help':
+      case '-h':
+        args.help = true;
+        break;
+      case '--json':
+        args.json = true;
+        break;
+      case '--storage-state':
+        args.storageState = argv[++i] ?? null;
+        break;
+      case '--api-origin':
+        args.apiOrigin = argv[++i] ?? null;
+        break;
+      case '--timeout':
+        args.timeout = Number(argv[++i]);
+        break;
+      default:
+        positionals.push(arg);
+    }
+  }
+  args.url = positionals[0] ?? null;
+  return args;
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Node's fetch Headers may fold multiple Set-Cookie values into one string; getSetCookie() (Node 22)
+// keeps them separate. A naive comma-split breaks on Expires dates, so only fall back to it when
+// getSetCookie() is unavailable, and split on a comma that is followed by a fresh "name=" pair.
+function getSetCookieStrings(headers) {
+  if (typeof headers.getSetCookie === 'function') {
+    return headers.getSetCookie();
+  }
+  const raw = headers.get('set-cookie');
+  if (!raw) return [];
+  return raw.split(/,(?=\s*[^;=\s]+=)/).map((s) => s.trim());
+}
+
+function parseSetCookie(raw) {
+  if (!raw) return null;
+  const parts = raw
+    .split(';')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  const eqIndex = parts[0].indexOf('=');
+  const name = eqIndex === -1 ? parts[0] : parts[0].slice(0, eqIndex);
+  if (!name) return null;
+  const cookie = { name: name.trim(), secure: false, sameSite: null, domain: null, httpOnly: false };
+  for (const part of parts.slice(1)) {
+    const eq = part.indexOf('=');
+    const attrName = (eq === -1 ? part : part.slice(0, eq)).trim().toLowerCase();
+    const attrValue = eq === -1 ? null : part.slice(eq + 1).trim();
+    if (attrName === 'secure') cookie.secure = true;
+    else if (attrName === 'httponly') cookie.httpOnly = true;
+    else if (attrName === 'samesite') cookie.sameSite = attrValue;
+    else if (attrName === 'domain') cookie.domain = attrValue;
+  }
+  return cookie;
+}
+
+function findAssetUrl(html) {
+  const patterns = [
+    /(["'])(\/_next\/static\/[^"'>\s]+)\1/,
+    /<script[^>]+src=(["'])([^"'>\s]+)\1/i,
+    /<link[^>]+href=(["'])([^"'>\s]+\.css[^"'>\s]*)\1/i,
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match) return match[2];
+  }
+  return null;
+}
+
+// Best-effort: fetch one page asset with an explicit Origin header to catch dev-server cross-origin
+// blocks (Next.js allowedDevOrigins, Vite server.allowedHosts) before ever spinning up a browser.
+async function checkDevOrigin(pageUrl, html, pushBlocker) {
+  if (!html) return;
+  const assetPath = findAssetUrl(html);
+  if (!assetPath) return;
+  const assetUrl = new URL(assetPath, pageUrl).toString();
+  const res = await fetchWithTimeout(assetUrl, { headers: { Origin: pageUrl.origin } }, 10000);
+  if (res.status === 403) {
+    pushBlocker(
+      'dev_origin',
+      `${assetUrl} -> HTTP 403`,
+      'framework dev cross-origin block — set allowedDevOrigins / server.allowedHosts from the preview domain.',
+    );
+  }
+}
+
+const SESSION_COOKIE_NAME = /sess|auth|token|sid|connect\.sid|jwt/i;
+const CORS_SIGNAL = /CORS|Access-Control-Allow-Origin|has been blocked by CORS policy/i;
+const CDN_ALLOWLIST = /\.(googleapis|gstatic|jsdelivr|unpkg|cloudflare|fontshare)\.com$/i;
+const ERROR_PAGE_TEXT = /application error|this page could not be found/i;
+const ERROR_OVERLAY_SELECTOR = 'nextjs-portal, [data-nextjs-dialog], #webpack-dev-server-client-overlay, vite-error-overlay';
+
+async function checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, remaining) {
+  let browser = null;
+  let context = null;
+  const responses = [];
+  const offendingApiOrigins = new Set();
+  const serverSetCookieNames = new Set();
+
+  try {
+    // --no-sandbox: chromium refuses to start its setuid sandbox when the probe runs as root in the
+    // container, and this only ever loads the operator's own preview URL, not untrusted content.
+    browser = await playwright.chromium.launch({ headless: true, args: ['--no-sandbox'] });
+    context = await browser.newContext(args.storageState ? { storageState: args.storageState } : {});
+    const page = await context.newPage();
+
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') verdict.consoleErrors.push(msg.text());
+    });
+
+    page.on('requestfailed', (request) => {
+      const failure = request.failure();
+      verdict.failedRequests.push(`${request.url()} — ${failure ? failure.errorText : 'unknown error'}`);
+      try {
+        const resourceType = request.resourceType();
+        if (resourceType !== 'fetch' && resourceType !== 'xhr') return;
+        const failedUrl = new URL(request.url());
+        const isLocalApi = failedUrl.hostname === 'localhost' || failedUrl.hostname === '127.0.0.1';
+        if (isLocalApi && failedUrl.origin !== pageUrl.origin) {
+          offendingApiOrigins.add(failedUrl.origin);
+        }
+      } catch {
+        // malformed request URL — nothing useful to classify
+      }
+    });
+
+    page.on('response', (response) => {
+      try {
+        let responseOrigin = null;
+        try {
+          responseOrigin = new URL(response.url()).origin;
+        } catch {
+          // non-absolute/opaque response url — leave origin null
+        }
+        responses.push({
+          url: response.url(),
+          status: response.status(),
+          resourceType: response.request().resourceType(),
+          origin: responseOrigin,
+        });
+        for (const header of response.headersArray()) {
+          if (header.name.toLowerCase() !== 'set-cookie') continue;
+          const parsed = parseSetCookie(header.value);
+          if (parsed) {
+            cookiesByName.set(parsed.name, parsed);
+            serverSetCookieNames.add(parsed.name);
+          }
+        }
+      } catch {
+        // a torn-down response mid-navigation shouldn't crash the probe
+      }
+    });
+
+    try {
+      // Math.max(1, ...) keeps the budget honest: never reset to the full timeout, and never pass 0
+      // (which Playwright treats as "no timeout" / wait forever).
+      await page.goto(args.url, { waitUntil: 'load', timeout: Math.max(1, remaining()) });
+    } catch (err) {
+      verdict.failedRequests.push(`navigation error: ${err.message}`);
+    }
+
+    const settleMs = Math.min(1500, remaining());
+    if (settleMs > 0) await page.waitForTimeout(settleMs);
+
+    verdict.title = await page.title().catch(() => null);
+
+    const pageState = await page
+      .evaluate((overlaySelector) => {
+        const body = document.body;
+        return {
+          bodyText: body ? body.innerText : '',
+          hasErrorOverlay: !!document.querySelector(overlaySelector),
+        };
+      }, ERROR_OVERLAY_SELECTOR)
+      .catch(() => ({ bodyText: '', hasErrorOverlay: false }));
+
+    const trimmedText = pageState.bodyText.trim();
+    const isBlank = trimmedText.length < 20 || pageState.hasErrorOverlay || ERROR_PAGE_TEXT.test(trimmedText);
+    verdict.hydrated = !isBlank;
+    if (isBlank) {
+      pushBlocker(
+        'blank',
+        trimmedText.slice(0, 200) || '(empty body)',
+        'page did not hydrate/render — check console errors and the framework build.',
+      );
+    }
+
+    const consoleAndFailedText = [...verdict.consoleErrors, ...verdict.failedRequests].join('\n');
+    const corsMatch = consoleAndFailedText.match(CORS_SIGNAL);
+    if (corsMatch) {
+      pushBlocker(
+        'cors',
+        corsMatch[0],
+        'API rejects the web origin — set the CORS allow-origin env to the web preview origin, credentials enabled.',
+      );
+    }
+
+    let apiOrigin = null;
+    if (args.apiOrigin) {
+      try {
+        apiOrigin = new URL(args.apiOrigin).origin;
+      } catch {
+        verdict.failedRequests.push(`invalid --api-origin: ${args.apiOrigin}`);
+      }
+    }
+    for (const response of responses) {
+      if (response.resourceType !== 'fetch' && response.resourceType !== 'xhr') continue;
+      let responseUrl;
+      try {
+        responseUrl = new URL(response.url);
+      } catch {
+        continue;
+      }
+      if (responseUrl.origin === pageUrl.origin) {
+        continue;
+      }
+      const isLocalApi = responseUrl.hostname === 'localhost' || responseUrl.hostname === '127.0.0.1';
+      if (isLocalApi) {
+        offendingApiOrigins.add(responseUrl.origin);
+      } else if (apiOrigin && responseUrl.origin !== apiOrigin && !CDN_ALLOWLIST.test(responseUrl.hostname)) {
+        offendingApiOrigins.add(responseUrl.origin);
+      }
+    }
+    if (offendingApiOrigins.size > 0) {
+      pushBlocker(
+        'api_base_url',
+        [...offendingApiOrigins].join(', '),
+        'client API base URL points at the wrong origin — set it to the api preview origin.',
+      );
+    }
+
+    const isHttps = pageUrl.protocol === 'https:';
+    const browserCookies = await context.cookies().catch(() => []);
+    for (const cookie of browserCookies) {
+      cookiesByName.set(cookie.name, {
+        name: cookie.name,
+        secure: cookie.secure,
+        sameSite: cookie.sameSite ?? null,
+        domain: cookie.domain,
+        httpOnly: cookie.httpOnly,
+      });
+      if (!SESSION_COOKIE_NAME.test(cookie.name)) continue;
+      // A cookie scoped to the host being loaded is correctly scoped, not "pinned to the wrong place".
+      // The blocker is for a cookie pinned to localhost/a bare host while the app is served from the
+      // preview domain — then the browser won't send it. So only flag when the domain differs from the
+      // page's own host.
+      const bareDomain = cookie.domain.replace(/^\./, '');
+      const isForeignHost = bareDomain !== pageUrl.hostname;
+      const isLocalDomain =
+        isForeignHost && (bareDomain === 'localhost' || bareDomain === '127.0.0.1' || !bareDomain.includes('.'));
+      if (isHttps && !cookie.secure) {
+        pushBlocker(
+          'cookie',
+          `${cookie.name} missing Secure over https`,
+          'auth cookie must be Secure and not domain-pinned to localhost (SameSite=Lax already works cross-subdomain).',
+        );
+      }
+      if (isLocalDomain) {
+        pushBlocker(
+          'cookie',
+          `${cookie.name} domain=${cookie.domain}`,
+          'auth cookie must be Secure and not domain-pinned to localhost (SameSite=Lax already works cross-subdomain).',
+        );
+      }
+    }
+    const storedCookieNames = new Set(browserCookies.map((c) => c.name));
+    for (const name of serverSetCookieNames) {
+      if (!storedCookieNames.has(name)) {
+        pushBlocker(
+          'cookie',
+          `${name} set by server but rejected by the browser`,
+          'auth cookie must be Secure and not domain-pinned to localhost (SameSite=Lax already works cross-subdomain).',
+        );
+      }
+    }
+
+    if (args.storageState) {
+      // Only the app's OWN requests (its page/api origin) count as an auth failure — an unrelated 401/403
+      // from a third-party sub-resource (tracking pixel, auth-walled CDN asset) is not the app's session.
+      const authApiRejected = responses.some(
+        (r) =>
+          (r.status === 401 || r.status === 403) &&
+          (r.origin === pageUrl.origin || (apiOrigin && r.origin === apiOrigin)),
+      );
+      const authRejected = isBlank || authApiRejected;
+      if (authRejected) {
+        pushBlocker(
+          'cookie',
+          'authed session did not render, or an authed API call returned 401/403',
+          'auth cookie must be Secure and not domain-pinned to localhost (SameSite=Lax already works cross-subdomain).',
+        );
+      }
+    }
+  } catch (err) {
+    verdict.failedRequests.push(`browser error: ${err.message}`);
+  } finally {
+    if (context) await context.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+async function probe(args) {
+  const startTime = Date.now();
+  const verdict = {
+    ok: false,
+    url: args.url,
+    httpStatus: null,
+    hydrated: false,
+    title: null,
+    authed: !!args.storageState,
+    blockers: [],
+    cookies: [],
+    consoleErrors: [],
+    failedRequests: [],
+  };
+  const cookiesByName = new Map();
+  const pushBlocker = (klass, evidence, hint) => {
+    verdict.blockers.push({ class: klass, evidence: String(evidence), hint });
+  };
+  const remaining = () => Math.max(0, args.timeout - (Date.now() - startTime));
+
+  try {
+    let pageUrl;
+    try {
+      pageUrl = new URL(args.url);
+    } catch (err) {
+      pushBlocker('dns', `invalid URL: ${err.message}`, 'the given URL could not be parsed — check the value passed to atlas-probe.');
+      return verdict;
+    }
+
+    try {
+      await dns.promises.lookup(pageUrl.hostname);
+    } catch (err) {
+      pushBlocker(
+        'dns',
+        err.code || err.message,
+        'wildcard preview DNS `*.<domain>` not configured — deployment infra; report to operator (not sandbox-fixable).',
+      );
+      return verdict;
+    }
+
+    let initialHtml = null;
+    try {
+      const res = await fetchWithTimeout(args.url, { redirect: 'follow' }, remaining());
+      verdict.httpStatus = res.status;
+      for (const raw of getSetCookieStrings(res.headers)) {
+        const parsed = parseSetCookie(raw);
+        if (parsed) cookiesByName.set(parsed.name, parsed);
+      }
+      if (res.status === 502 || res.status === 503) {
+        pushBlocker('bind_ip', `HTTP ${res.status}`, 'listening on 127.0.0.1 — bind 0.0.0.0 so the preview proxy can reach it.');
+        return verdict;
+      }
+      initialHtml = await res.text();
+    } catch (err) {
+      pushBlocker('port', err.message, 'service not listening / wrong --port — start it on the expected port.');
+      return verdict;
+    }
+
+    try {
+      await checkDevOrigin(pageUrl, initialHtml, pushBlocker);
+    } catch {
+      // best-effort layer — never fatal to the overall probe
+    }
+
+    await checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, remaining);
+
+    // A final non-2xx/3xx status is never "accessible", even if the error page itself renders real text
+    // (a custom 500/404 hydrates fine but is not a working surface). 502/503 already short-circuited above.
+    const statusOk = verdict.httpStatus !== null && verdict.httpStatus >= 200 && verdict.httpStatus < 400;
+    verdict.ok = statusOk && verdict.hydrated && verdict.blockers.length === 0;
+    return verdict;
+  } finally {
+    verdict.cookies = [...cookiesByName.values()];
+  }
+}
+
+function printSummary(verdict) {
+  const status = verdict.httpStatus ?? 'n/a';
+  if (verdict.ok) {
+    console.log(`ok: true — ${verdict.url} hydrated (HTTP ${status})`);
+    if (verdict.title) console.log(`title: ${verdict.title}`);
+    return;
+  }
+  console.log(`ok: false — ${verdict.url} (HTTP ${status})`);
+  if (verdict.title) console.log(`title: ${verdict.title}`);
+  if (verdict.blockers.length === 0) {
+    console.log('no blockers recorded, but the page did not verify as ok (see consoleErrors/failedRequests with --json)');
+  }
+  for (const blocker of verdict.blockers) {
+    console.log(`✗ ${blocker.class}: ${blocker.hint}`);
+  }
+}
+
+async function run() {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.help || !args.url) {
+    process.stderr.write(usage() + '\n');
+    process.exit(2);
+  }
+  if (!Number.isFinite(args.timeout) || args.timeout <= 0) args.timeout = 30000;
+
+  let verdict;
+  try {
+    verdict = await probe(args);
+  } catch (err) {
+    verdict = {
+      ok: false,
+      url: args.url,
+      httpStatus: null,
+      hydrated: false,
+      title: null,
+      authed: !!args.storageState,
+      blockers: [],
+      cookies: [],
+      consoleErrors: [],
+      failedRequests: [`PROBE_ERROR: ${err.message}`],
+    };
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify(verdict, null, 2));
+  } else {
+    printSummary(verdict);
+  }
+  process.exit(verdict.ok ? 0 : 1);
+}
+
+run();

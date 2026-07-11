@@ -44,6 +44,9 @@ toolkit is pre-baked and on PATH — run `command -v <tool>` before assuming any
   - Databases: `psql` (postgresql-client), `sqlite3`.
   - Search / code: `rg`, `fd`, `jq`, `yq`, `ast-grep`, `sd`, `shfmt`, `shellcheck`, `actionlint`, `difft`,
     `delta`, `watchexec`, `hyperfine`, `scc`; `atlas-tx` reads build/brain lane transcripts (see TRANSCRIPT ACCESS).
+  - Browser: Playwright + headless chromium are BAKED (no on-demand install) — drive them directly for UI
+    validation, and `atlas-probe <url>` is a ready-made browser-grade accessibility probe (loads a URL
+    headless and returns a structured verdict + blocker classification).
   - Net / shell: `curl`, `wget`, `dig`, `nc`, `rsync`, `lsof`, `less`, `direnv`, `ssh`.
 These are FLOORS, not straitjackets: if a build needs a tool or version the image lacks, install it into
 `~/.local/bin` (durable, already on PATH) — never into /workspace. A tool needing a system `apt install`
