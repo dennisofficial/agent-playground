@@ -393,9 +393,13 @@ describe('public preview exposure prompt (auto-expose sequence)', () => {
     }
   });
 
-  it('is absent during onboarding (previews are a build-brain concern)', () => {
+  it('onboarding reuses the exposure ordering inside LIVE-SERVICE ACCESSIBILITY', () => {
     const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' });
-    expect(out).not.toContain('PUBLIC PREVIEW URLS');
+    // onboarding composes its own accessibility fragment (not the build-brain publicExposure block)...
+    expect(out).toContain('LIVE-SERVICE ACCESSIBILITY');
+    // ...which reuses PUBLIC_EXPOSURE_NOTE, so the load-bearing exposure essentials survive assembly.
+    expect(out).toContain('BIND TO 0.0.0.0');
+    expect(out).toContain('$ATLAS_PREVIEW_ID');
   });
 
   it('sandboxRuntime documents the --port flag alongside the run form', () => {

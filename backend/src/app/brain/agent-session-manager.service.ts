@@ -77,7 +77,7 @@ import { BuildShipService } from '../driver/build-ship.service';
 import { BrainGateway } from '../brain-gateway';
 import { threadDirName } from '../driver/thread-dir-name';
 import { Agent, PromptService } from '../prompt-kit';
-import { decisionsBlock, shipOpenPrBody } from '../prompt-kit';
+import { shipOpenPrBody } from '../prompt-kit';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -728,7 +728,6 @@ export class AgentSessionManager
     branch: string;
     defaultBranch: string;
     title: string;
-    decisions: ReadonlyArray<{ title: string; decisionClass: string; ruling: string }>;
   }): Promise<void> {
     const stimulus = harnessDeliveryStimulus({
       jobId: input.jobId,
@@ -738,7 +737,6 @@ export class AgentSessionManager
         branch: input.branch,
         defaultBranch: input.defaultBranch,
         title: input.title,
-        decisionsBlock: decisionsBlock(input.decisions),
       }),
       seedRow: {
         label: 'Opening the pull request.',
@@ -3628,8 +3626,7 @@ export class AgentSessionManager
           message: shipOpenPrBody({
             branch: sandbox.branch,
             defaultBranch: repo.defaultBranch,
-            title: job.title ?? 'Atlas build',
-            decisionsBlock: decisionsBlock(rec?.decisions ?? []),
+            title: job.title?.trim() || sandbox.branch,
           }),
         };
       },
@@ -5278,8 +5275,12 @@ export class AgentSessionManager
           ok: false,
           reason:
             'finish_onboarding requires `verified`: describe what you actually booted and how you checked it ' +
-            '(the services you brought up via atlas-svc, the health checks/log lines, any dry-run). If the ' +
-            'stack would not boot, do NOT finish — say what is still blocking instead.',
+            '(the services you brought up via atlas-svc, the health checks/log lines, any dry-run). For a repo ' +
+            'with USER-FACING surfaces, `verified` must ALSO include live preview-accessibility proof — each ' +
+            'public preview URL loaded + hydrated as a browser via atlas-probe, AND (where the surface has ' +
+            'auth) the authed-handshake proof via a real dev-login + `atlas-probe --storage-state`; a local ' +
+            'health check is not enough. If the stack would not boot or a surface is not browser-accessible, ' +
+            'do NOT finish — say what is still blocking instead.',
         };
       }
       const sandbox = await this.lifecycle.findSandbox(
@@ -5355,8 +5356,7 @@ export class AgentSessionManager
           message: shipOpenPrBody({
             branch: sandbox.branch,
             defaultBranch: repo.defaultBranch,
-            title: 'Atlas: onboarding environment setup',
-            decisionsBlock: '',
+            title: 'Environment setup',
           }),
         };
       } catch (err) {
@@ -6124,7 +6124,8 @@ export class AgentSessionManager
       'request any secrets yet. Then present that summary to the operator, note plainly that the full ' +
       'bring-up will take a while and a lot of tokens, and ask for their go-ahead via ask_question before ' +
       'proceeding. STOP and wait for their response. Only after they green-light it: bring up and validate ' +
-      'the fleet, register required secrets via request_secret, record non-secret config with ' +
+      'the fleet, make each user-facing surface browser-accessible through the preview proxy and prove it ' +
+      'with atlas-probe, register required secrets via request_secret, record non-secret config with ' +
       'write_workspace_config, propose any stack-matched MCP servers for the owner to approve via ' +
       'propose_mcp_servers, match the repo against the org house-style profiles (list_convention_profiles → ' +
       'propose_convention_profile with the best-matching slug, or "none" if it follows none), then call ' +

@@ -50,8 +50,11 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
     expect(onboarding).toContain('onboarding a newly-connected repository');
     expect(onboarding).toContain('FLEET INVENTORY');
     expect(onboarding).toContain('FINISH — only when the FULL fleet inventory is GREEN');
+    // the live-accessibility procedure is onboarding-only (build brains carry PUBLIC PREVIEW URLS instead)
+    expect(onboarding).toContain('LIVE-SERVICE ACCESSIBILITY');
     expect(feature).not.toContain('onboarding a newly-connected repository');
     expect(feature).not.toContain('FLEET INVENTORY');
+    expect(feature).not.toContain('LIVE-SERVICE ACCESSIBILITY');
 
     // the behavioral tail is shared (no jobKind condition)
     for (const out of [feature, onboarding]) expect(out).toContain('SPIKE BEFORE YOU COMMIT');
