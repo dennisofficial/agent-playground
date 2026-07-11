@@ -8,6 +8,7 @@ import { BrainModule } from './brain';
 import { BrainGatewayModule } from './brain-gateway';
 import { DecisionGateModule } from './decision-gate';
 import { DriverModule, LiveVerificationModule } from './driver';
+import { HostStatsModule } from './host-stats';
 import { IngressModule } from './ingress';
 import { RunnerModule } from './runner';
 import { SandboxModule } from './sandbox';
@@ -71,6 +72,7 @@ import { ThreadKindModule } from './thread-kind';
     TicketsModule,
     JobDependencyModule,
     SandboxModule,
+    HostStatsModule,
     CaddyModule,
     ExposureModule,
     RealtimeModule,

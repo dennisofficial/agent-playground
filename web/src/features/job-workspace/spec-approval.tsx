@@ -216,60 +216,64 @@ export function PersistentApprovalBar({
   const retract = useRetractPlan(jobRef, value);
   return (
     <div
-      className="flex shrink-0 items-center gap-[11px] border-t"
+      className="flex shrink-0 flex-col gap-[11px] border-t sm:flex-row sm:items-center"
       style={{
         borderColor: "var(--accent-line)",
         background: "var(--accent-soft)",
         padding: "10px 16px",
       }}
     >
-      <div
-        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg border"
-        style={{
-          background: "var(--panel)",
-          borderColor: "var(--accent-line)",
-        }}
-      >
-        <Lock size={14} strokeWidth={2} style={{ color: "var(--accent)" }} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-[11.5px] font-bold text-text">
-          {error
-            ? "Couldn’t approve — try again"
-            : approved
-              ? "Plan approved"
-              : "Plan awaiting your approval"}
+      <div className="flex min-w-0 flex-1 items-center gap-[11px]">
+        <div
+          className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg border"
+          style={{
+            background: "var(--panel)",
+            borderColor: "var(--accent-line)",
+          }}
+        >
+          <Lock size={14} strokeWidth={2} style={{ color: "var(--accent)" }} />
         </div>
-        <div className="mt-px text-[10px] text-dim">
-          {specCount} spec{specCount === 1 ? "" : "s"} · {stepCount} step
-          {stepCount === 1 ? "" : "s"} · approve from anywhere in this pane
+        <div className="min-w-0 flex-1">
+          <div className="text-[11.5px] font-bold text-text">
+            {error
+              ? "Couldn’t approve — try again"
+              : approved
+                ? "Plan approved"
+                : "Plan awaiting your approval"}
+          </div>
+          <div className="mt-px text-[10px] text-dim">
+            {specCount} spec{specCount === 1 ? "" : "s"} · {stepCount} step
+            {stepCount === 1 ? "" : "s"} · approve from anywhere in this pane
+          </div>
         </div>
       </div>
-      <RetractButton
-        onClick={retract.submit}
-        pending={retract.pending}
-        done={retract.approved}
-        blocked={pending || approved}
-        idleLabel="Back to planning"
-        doneLabel="Back to planning"
-        className="text-[11.5px]"
-        style={{ borderRadius: "8px", padding: "8px 14px" }}
-        iconSize={13}
-      />
-      <ApproveButton
-        onClick={submit}
-        pending={pending}
-        approved={approved}
-        blocked={retract.pending || retract.approved}
-        directBuild={directBuild}
-        className="text-[11.5px]"
-        style={{
-          borderRadius: "8px",
-          padding: "8px 15px",
-          border: "1px solid var(--green)",
-        }}
-        iconSize={13}
-      />
+      <div className="flex gap-[11px]">
+        <RetractButton
+          onClick={retract.submit}
+          pending={retract.pending}
+          done={retract.approved}
+          blocked={pending || approved}
+          idleLabel="Back to planning"
+          doneLabel="Back to planning"
+          className="flex-1 justify-center text-[11.5px] sm:flex-none"
+          style={{ borderRadius: "8px", padding: "8px 14px" }}
+          iconSize={13}
+        />
+        <ApproveButton
+          onClick={submit}
+          pending={pending}
+          approved={approved}
+          blocked={retract.pending || retract.approved}
+          directBuild={directBuild}
+          className="flex-1 justify-center text-[11.5px] sm:flex-none"
+          style={{
+            borderRadius: "8px",
+            padding: "8px 15px",
+            border: "1px solid var(--green)",
+          }}
+          iconSize={13}
+        />
+      </div>
     </div>
   );
 }
@@ -333,58 +337,62 @@ export function PersistentShipBar({
   const retract = useRetractShip(jobRef, value);
   return (
     <div
-      className="flex shrink-0 items-center gap-[11px] border-t"
+      className="flex shrink-0 flex-col gap-[11px] border-t sm:flex-row sm:items-center"
       style={{
         borderColor: "var(--accent-line)",
         background: "var(--accent-soft)",
         padding: "10px 16px",
       }}
     >
-      <div
-        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg border"
-        style={{
-          background: "var(--panel)",
-          borderColor: "var(--accent-line)",
-        }}
-      >
-        <Lock size={14} strokeWidth={2} style={{ color: "var(--accent)" }} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-[11.5px] font-bold text-text">
-          {error
-            ? "Couldn’t ship — try again"
-            : approved
-              ? "Shipped"
-              : "Build reviewed — ready to ship"}
+      <div className="flex min-w-0 flex-1 items-center gap-[11px]">
+        <div
+          className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg border"
+          style={{
+            background: "var(--panel)",
+            borderColor: "var(--accent-line)",
+          }}
+        >
+          <Lock size={14} strokeWidth={2} style={{ color: "var(--accent)" }} />
         </div>
-        <div className="mt-px text-[10px] text-dim">
-          Master review passed. Review the diff, then ship when you’re happy.
+        <div className="min-w-0 flex-1">
+          <div className="text-[11.5px] font-bold text-text">
+            {error
+              ? "Couldn’t ship — try again"
+              : approved
+                ? "Shipped"
+                : "Build reviewed — ready to ship"}
+          </div>
+          <div className="mt-px text-[10px] text-dim">
+            Master review passed. Review the diff, then ship when you’re happy.
+          </div>
         </div>
       </div>
-      <RetractButton
-        onClick={retract.submit}
-        pending={retract.pending}
-        done={retract.approved}
-        blocked={pending || approved}
-        idleLabel="Amend build"
-        doneLabel="Amend build"
-        className="text-[11.5px]"
-        style={{ borderRadius: "8px", padding: "8px 14px" }}
-        iconSize={13}
-      />
-      <ShipButton
-        onClick={submit}
-        pending={pending}
-        approved={approved}
-        blocked={retract.pending || retract.approved}
-        className="text-[11.5px]"
-        style={{
-          borderRadius: "8px",
-          padding: "8px 15px",
-          border: "1px solid var(--green)",
-        }}
-        iconSize={13}
-      />
+      <div className="flex gap-[11px]">
+        <RetractButton
+          onClick={retract.submit}
+          pending={retract.pending}
+          done={retract.approved}
+          blocked={pending || approved}
+          idleLabel="Amend build"
+          doneLabel="Amend build"
+          className="flex-1 justify-center text-[11.5px] sm:flex-none"
+          style={{ borderRadius: "8px", padding: "8px 14px" }}
+          iconSize={13}
+        />
+        <ShipButton
+          onClick={submit}
+          pending={pending}
+          approved={approved}
+          blocked={retract.pending || retract.approved}
+          className="flex-1 justify-center text-[11.5px] sm:flex-none"
+          style={{
+            borderRadius: "8px",
+            padding: "8px 15px",
+            border: "1px solid var(--accent)",
+          }}
+          iconSize={13}
+        />
+      </div>
     </div>
   );
 }
@@ -401,6 +409,7 @@ function VerdictButton({
   idleLabel,
   pendingLabel,
   doneLabel,
+  tone = "green",
   className = "",
   style,
   iconSize,
@@ -414,6 +423,9 @@ function VerdictButton({
   idleLabel: string;
   pendingLabel: string;
   doneLabel: string;
+  /** Fill tone — the shared default is `green`; the ship verdict uses `accent` so "Ship it" matches the
+   *  accent-solid primary on the ship card. */
+  tone?: "green" | "accent";
   className?: string;
   style?: React.CSSProperties;
   iconSize: number;
@@ -425,8 +437,14 @@ function VerdictButton({
       disabled={pending || approved || blocked}
       className={`inline-flex items-center gap-1.5 font-bold text-white transition hover:brightness-95 disabled:cursor-default disabled:opacity-90 ${className}`}
       style={{
-        background: "var(--green)",
-        boxShadow: "0 2px 8px var(--green-soft)",
+        background:
+          tone === "accent"
+            ? "linear-gradient(145deg, var(--accent), var(--accent-2))"
+            : "var(--green)",
+        boxShadow:
+          tone === "accent"
+            ? "0 5px 16px var(--accent-soft)"
+            : "0 2px 8px var(--green-soft)",
         ...style,
       }}
     >
@@ -536,6 +554,7 @@ function ShipButton(
   return (
     <VerdictButton
       {...props}
+      tone="accent"
       idleLabel="Ship it"
       pendingLabel="Shipping…"
       doneLabel="Shipped"

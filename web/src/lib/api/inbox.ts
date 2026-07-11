@@ -16,6 +16,7 @@ import type {
   JobProvenance,
   InboxPr,
   CiStatus,
+  CiCounts,
 } from "./types";
 
 /**
@@ -50,6 +51,8 @@ export interface RawInboxThread {
   /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — the backend list projection emits it as
    *  `ciStatus`. null = no checks reported. */
   ciStatus?: CiStatus | null;
+  /** Per-category CI check counts (`jobs.ci_counts`) — emitted alongside `ciStatus`; null when no checks. */
+  ciCounts?: CiCounts | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt?: WireJobHalt | null;
   /** True only while a "Ship it" is being finalized (PR opening). The job re-uses the `running` status
@@ -82,6 +85,8 @@ export interface InboxThread {
   pr: InboxPr | null;
   /** Aggregate CI outcome for the PR head — drives the sidebar CI dot. null = no checks reported. */
   ci: CiStatus | null;
+  /** Per-category CI check counts — parallel to `ci`; null when no checks reported. */
+  ciCounts: CiCounts | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt: WireJobHalt | null;
   /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship"
@@ -123,6 +128,7 @@ export function normalize(r: RawInboxThread): InboxThread {
     createdAt: r.createdAt,
     pr: r.pr ?? null,
     ci: r.ciStatus ?? null,
+    ciCounts: r.ciCounts ?? null,
     halt: r.halt ?? null,
     shipping: r.shipping ?? false,
     createdBy: r.createdBy ?? null,

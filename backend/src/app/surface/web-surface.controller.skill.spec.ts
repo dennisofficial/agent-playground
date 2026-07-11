@@ -46,6 +46,7 @@ function makeController(card: unknown, ctxRoot: string) {
     {} as never, // repos
     {} as never, // threadTitle
     {} as never, // ticketEvents
+    {} as never, // usageBus
     { available: false } as never, // realtime
     {} as never, // election
     {} as never, // dispatcher

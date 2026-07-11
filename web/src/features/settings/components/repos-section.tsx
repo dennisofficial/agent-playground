@@ -848,6 +848,7 @@ function RepoEditRow({
   const update = useUpdateRepo(orgId);
   const [name, setName] = useState(repo.name);
   const [branch, setBranch] = useState(repo.defaultBranch);
+  const [branchPrefix, setBranchPrefix] = useState(repo.branchPrefix ?? "");
 
   async function save() {
     if (update.isPending) return;
@@ -857,6 +858,8 @@ function RepoEditRow({
         body: {
           name: name.trim() || repo.name,
           defaultBranch: branch.trim() || repo.defaultBranch,
+          // Empty clears the override back to the neutral default.
+          branchPrefix: branchPrefix.trim(),
         },
       });
       onClose();
@@ -891,6 +894,17 @@ function RepoEditRow({
             value={branch}
             onChange={setBranch}
             fallback={repo.defaultBranch}
+          />
+        </div>
+        <div className="w-48">
+          <label className="mb-1.5 block text-[11.5px] font-medium text-dim">
+            Branch prefix
+          </label>
+          <input
+            value={branchPrefix}
+            onChange={(e) => setBranchPrefix(e.target.value)}
+            placeholder="feature/"
+            className="w-full rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none transition focus:border-accent"
           />
         </div>
       </div>

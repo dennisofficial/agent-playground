@@ -281,6 +281,7 @@ export class SandboxManager implements SandboxProvider {
           this.logger.log(`reusing stopped sandbox ${name} — starting (cold)`);
           await this.engine.start(existing.id);
           await this.attachRedisBus(existing.id); // idempotent — re-ensure the redis bus after a restart
+          await this.attachMcpNetwork(existing.id, sandbox.repoId); // idempotent — re-ensure the atlas-mcp route too
           await this.waitReady(existing.id);
         } else {
           this.logger.log(`reusing running sandbox ${name}`);
@@ -484,6 +485,7 @@ export class SandboxManager implements SandboxProvider {
     });
     await this.engine.start(id);
     await this.attachRedisBus(id);
+    await this.attachMcpNetwork(id, sandbox.repoId);
     await this.waitReady(id);
     // Freshly created → cold: run the repo's setup script (if any) before handing the sandbox back.
     return this.applySetupScript(this.augment(sandbox, id, false), id, input.setupScript);
@@ -500,6 +502,27 @@ export class SandboxManager implements SandboxProvider {
     if (!bus) return;
     await this.engine.ensureNetwork(bus);
     await this.engine.connectNetwork(containerId, bus);
+  }
+
+  /**
+   * Attach the sandbox to the internal MCP-reader network (`SANDBOX_MCP_NETWORK`) — but ONLY for the Atlas
+   * repo itself (repo slug === `ATLAS_REPO_SLUG`). This is the network half of the read-only diagnostics
+   * MCP's repo-scope: only Atlas-repo sandboxes can even route to the reader (the credential half is the
+   * per-repo web MCP registry). The net is `internal: true`, so an attached sandbox reaches ONLY the reader
+   * off it, never the host or internet. Fail-closed: unset network or slug (dev) → no-op. Idempotent.
+   */
+  private async attachMcpNetwork(containerId: string, repoId: string): Promise<void> {
+    const mcpNet = this.env.get('SANDBOX_MCP_NETWORK');
+    if (!mcpNet || !this.isAtlasRepo(repoId)) return;
+    await this.engine.ensureNetwork(mcpNet);
+    await this.engine.connectNetwork(containerId, mcpNet);
+  }
+
+  /** Whether a sandbox's repo is the Atlas repo itself, per the configured `ATLAS_REPO_SLUG`. Not
+   *  hardcoded — the prod slug is set in compose; unset (dev) means no repo is ever treated as Atlas. */
+  private isAtlasRepo(repoId: string): boolean {
+    const atlasSlug = this.env.get('ATLAS_REPO_SLUG');
+    return !!atlasSlug && repoId === atlasSlug;
   }
 
   /** The deterministic container name of a thread's sandbox — the preview reverse-proxy upstream host. */
@@ -919,6 +942,31 @@ export class SandboxManager implements SandboxProvider {
       };
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Tear down ALL supervised services in a job's live container by running `atlas-svc stop-all` over
+   * `docker exec`, as the agent's exec-uid so it can signal the process groups the agent started (the
+   * supervisor state lives at the fixed in-container `/.atlas/supervisor`, so this reaches exactly those
+   * services). Best-effort — a missing/stopped container or a non-zero exit is returned as `{ ok:false }`,
+   * never thrown; the driver logs it and moves on. See {@link SandboxProvider.stopAllServices}.
+   */
+  async stopAllServices(jobId: string): Promise<{ ok: boolean; reason?: string }> {
+    const name = this.containerName('', '', '', jobId);
+    const info = await this.engine.inspect(name);
+    if (!info || info.state !== 'running') {
+      return { ok: false, reason: 'the sandbox container is not running' };
+    }
+    try {
+      const out = await this.engine.exec(info.id, ['/usr/local/bin/atlas-svc', 'stop-all'], {
+        ...(hostExecUser() ? { user: hostExecUser() } : {}),
+      });
+      return out.exitCode === 0
+        ? { ok: true }
+        : { ok: false, reason: `atlas-svc stop-all exited ${out.exitCode}` };
+    } catch (err) {
+      return { ok: false, reason: `atlas-svc stop-all failed: ${String(err)}` };
     }
   }
 

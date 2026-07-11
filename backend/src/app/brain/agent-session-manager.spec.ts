@@ -70,6 +70,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     persistPlan: vi.fn(),
     route: vi.fn(),
     appendAtlasMessage: vi.fn(),
+    appendSystemNotice: vi.fn().mockResolvedValue(undefined),
     appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
     hasRecentSystemOperatorNotice: vi.fn().mockResolvedValue(false),
     approve: vi.fn(),
@@ -389,6 +390,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       threadTs: 'ts-r3gate-001',
     });
     (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.appendSystemNotice as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     // Approval request returns a handle whose verdict never resolves (we don't await approval here).
     const neverResolves = new Promise(() => undefined);
@@ -786,7 +788,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       repoId: PROJECT_ID,
       orgId: TEAM_ID,
     });
-    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'sbx-1' });
+    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'sbx-1',
+      branch: 'feature/abc12345',
+    });
     (mockDriverStore.getDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
       overview: 'Fix off-by-one',
       decisions: [],
@@ -1957,6 +1962,134 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, 'rec-CLICKED', 'U-OP', 'plan');
   });
 
+  // ── Q2 (decision d1): the four approval-resolution acks render as calm System notices, never in
+  //    Atlas's voice. Driven through the durable path, which funnels into the single actOnApprovalVerdict.
+  describe('(d8) approval acks emit System notices, not appendAtlasMessage', () => {
+    const awaitingJob = {
+      id: FAKE_JOB_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
+      status: 'awaiting_approval',
+      decisionRecordId: FAKE_RECORD_ID,
+      kind: 'feature',
+      title: 'rate limiting',
+    };
+    const setup = (threadTitles: string[]) => {
+      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+      (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingJob);
+      (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({ threadTitles });
+      (mockStore.approve as ReturnType<typeof vi.fn>).mockResolvedValue({ ...awaitingJob, status: 'running' });
+      vi.spyOn(manager as unknown as { enqueueCompaction(s: unknown): Promise<void> }, 'enqueueCompaction').mockResolvedValue(undefined);
+      vi.spyOn(manager as unknown as { runDirectBuild(s: unknown, j: unknown): Promise<void> }, 'runDirectBuild').mockResolvedValue(undefined);
+    };
+
+    it('plan-approve → "Plan approved — dispatching the build." (System notice, not Atlas)', async () => {
+      setup(['Backend']); // non-empty ⇒ full plan ⇒ dispatch (not direct)
+      await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(FAKE_JOB_ID, 'Plan approved — dispatching the build.');
+      expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+    });
+
+    it('direct-approve → "Approved — implementing the change directly." (System notice, not Atlas)', async () => {
+      setup([]); // empty threadTitles ⇒ direct build
+      await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(FAKE_JOB_ID, 'Approved — implementing the change directly.');
+      expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+    });
+
+    it('request_changes (no note) → System notice ack, reopens planning, not Atlas', async () => {
+      setup(['Backend']);
+      // A note now goes to the brain via handleChatTurn (see (d5b)); the no-note path keeps the ack.
+      await manager.resolveApprovalDurably(FAKE_JOB_ID, 'request_changes', 'U-OP');
+      expect(mockStore.reopenPlanning).toHaveBeenCalledWith(FAKE_JOB_ID);
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        'Got it — back to the drawing board. What should change?',
+      );
+      expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+    });
+
+    it('deny → "Understood — I\'ll drop this one." (System notice), cancels, not Atlas', async () => {
+      setup(['Backend']);
+      await manager.resolveApprovalDurably(FAKE_JOB_ID, 'deny', 'U-OP');
+      expect(mockStore.cancel).toHaveBeenCalledWith(FAKE_JOB_ID);
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(FAKE_JOB_ID, "Understood — I'll drop this one.");
+      expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  it('(d5b) request_changes WITH a note delivers the note into the brain via handleChatTurn (not just an operator-facing ack)', async () => {
+    const job = { id: FAKE_JOB_ID, kind: 'feature', title: 'rate limiting', orgId: TEAM_ID, repoId: PROJECT_ID };
+    (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+    (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+      jobId: FAKE_JOB_ID,
+      verdict: Promise.resolve({
+        verdict: 'request_changes',
+        ruledBy: 'U-OP',
+        note: 'Use Redis for the counter, not an in-memory map.',
+      }),
+    });
+    const turn = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+
+    await manager.requestApprovalAndAct(
+      fakeStimulus,
+      job as never,
+      FAKE_RECORD_ID,
+      {
+        jobId: FAKE_JOB_ID,
+        decisionRecordId: FAKE_RECORD_ID,
+        title: 'rate limiting',
+        summary: 'x',
+        decisions: [],
+        threads: [],
+      } as never,
+    );
+
+    expect(mockStore.reopenPlanning).toHaveBeenCalledWith(FAKE_JOB_ID);
+    expect(turn).toHaveBeenCalledOnce();
+    const seed = turn.mock.calls[0][0] as ChatStimulus;
+    expect(seed.jobId).toBe(FAKE_JOB_ID);
+    expect(seed.body).toContain('Use Redis for the counter, not an in-memory map.');
+    // The note case runs an engine turn instead of the canned "what should change?" ack.
+    expect(mockSurface.post as ReturnType<typeof vi.fn>).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('drawing board'),
+      expect.anything(),
+    );
+  });
+
+  it('(d5c) request_changes WITHOUT a note keeps the operator ack and runs no engine turn', async () => {
+    const job = { id: FAKE_JOB_ID, kind: 'feature', title: 'rate limiting', orgId: TEAM_ID, repoId: PROJECT_ID };
+    (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+    (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+      jobId: FAKE_JOB_ID,
+      verdict: Promise.resolve({ verdict: 'request_changes', ruledBy: 'U-OP' }),
+    });
+    const turn = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+
+    await manager.requestApprovalAndAct(
+      fakeStimulus,
+      job as never,
+      FAKE_RECORD_ID,
+      {
+        jobId: FAKE_JOB_ID,
+        decisionRecordId: FAKE_RECORD_ID,
+        title: 'rate limiting',
+        summary: 'x',
+        decisions: [],
+        threads: [],
+      } as never,
+    );
+
+    expect(mockStore.reopenPlanning).toHaveBeenCalledWith(FAKE_JOB_ID);
+    expect(turn).not.toHaveBeenCalled();
+    expect(mockSurface.post as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      'C',
+      expect.stringContaining('drawing board'),
+      expect.anything(),
+    );
+  });
+
   type PrepareRepropose = { prepareRepropose(jobId: string): Promise<{ refuse?: string }> };
 
   it('(d6) prepareRepropose refuses a job already past the approval gate, without touching withdrawPlan', async () => {
@@ -2048,6 +2181,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(stim.body).toContain('retry_thread'); // the fix instruction
       expect(stim.body).toContain('JSON vs plain text'); // the record detail…
       expect(stim.body).toContain('<untrusted'); // …fenced as data (the <untrusted> tag)
+      // The seed row's trusted framing is carried SEPARATELY from the fenced record (`label`) — the
+      // untrusted pill's `fullBody` must never absorb the whole framed+fenced engine body.
+      const seedRow = stim.seedRow as Extract<ChatStimulus['seedRow'], object>;
+      expect(seedRow.kind).toBe('untrusted');
+      expect(seedRow.framing).toBeTruthy();
+      expect(seedRow.framing).toContain('retry_thread');
+      expect(seedRow.label).not.toContain(seedRow.framing as string);
       spy.mockRestore();
     });
 
@@ -2121,10 +2261,21 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(finalBody).toMatch(/may NOT edit\/push code or ship without the operator/);
       expect(finalBody).toMatch(/Ship it/);
       expect(finalBody).toContain('atlas-tx');
+      // final ALSO triggers the ship-gate live-preview offer (the "Spin up preview" button prep)
+      expect(finalBody).toMatch(/offer the operator a live preview/);
+      expect(finalBody).toContain('Spin up preview');
+      // final tells the brain to free the RAM the builders/master review left behind (backstop to the
+      // deterministic per-thread driver teardown)
+      expect(finalBody).toContain('atlas-svc stop-all');
 
       const notableBody = renderDoneDelivery(thread, 'notable', term, anchor);
       expect(notableBody).toMatch(/may NOT edit\/push code or ship without the operator/);
       expect(notableBody).toContain('atlas-tx show sess-final --errors');
+      // notable does NOT carry the preview offer — that is a ship-gate concern only
+      expect(notableBody).not.toMatch(/offer the operator a live preview/);
+      expect(notableBody).not.toContain('LIVE PREVIEW AT THE SHIP GATE');
+      // notable is a single-lane wake, not the whole-build parking — no fleet teardown instruction
+      expect(notableBody).not.toContain('atlas-svc stop-all');
     });
 
     it('renderDoneDelivery (final) surfaces the master-review summary + per-thread gaps', () => {
@@ -2172,6 +2323,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(stim.body).toContain('<untrusted');
       expect(stim.body).toContain('rate limiting not load-tested');
       expect(stim.body).toMatch(/may NOT edit\/push code or ship without the operator/);
+      // The seed row's trusted framing rides separately from the fenced (untrusted) record `label`.
+      const seedRow = stim.seedRow as Extract<ChatStimulus['seedRow'], object>;
+      expect(seedRow.kind).toBe('untrusted');
+      expect(seedRow.framing).toBeTruthy();
+      expect(seedRow.framing).toMatch(/may NOT edit\/push code or ship without the operator/);
+      expect(seedRow.label).not.toContain(seedRow.framing as string);
       spy.mockRestore();
     });
 
@@ -2276,6 +2433,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      appendSystemNotice: vi.fn().mockResolvedValue(undefined),
       appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
       hasRecentSystemOperatorNotice: vi.fn().mockResolvedValue(false),
       appendSystemEvent: vi.fn().mockResolvedValue(undefined),
@@ -2398,7 +2556,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
     );
-    return { manager, store, lifecycle, git, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
+    return { manager, store, lifecycle, git, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness, turnHarness };
   }
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
@@ -2886,6 +3044,29 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(names).not.toContain('propose_plan');
   });
 
+  it('reattachOne resets the live-turn lane (channel, jobId) BEFORE the harness/replay', async () => {
+    // Clearing the stranded lane before the '0-0' replay is what rebuilds a clean buffer (no persistent
+    // multiple-cursor state). It must run before create/reattach so the replay repopulates from empty.
+    const { manager, store, dockerRunner, turnHarness } = makeManager({});
+    (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: null });
+    const reattach = vi.fn().mockResolvedValue({ result: 'done', sessionId: 's-re' });
+    (dockerRunner as { reattach?: unknown }).reattach = reattach;
+    const resetLane = vi.spyOn(turnHarness, 'resetLane');
+
+    await (manager as unknown as { reattachOne(row: unknown): Promise<void> }).reattachOne({
+      turn_id: 'turn-re-reset',
+      container_id: 'c-re-reset',
+      org_id: TEAM_ID,
+      job_id: THREAD_ID,
+      channel: PROJECT_ID,
+      ctx: { repoId: PROJECT_ID, author: { id: 'U-OP', displayName: 'Operator' }, body: 'Keep going' },
+    });
+
+    expect(resetLane).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID);
+    // Ordering: the reset fires before the '0-0' replay so the replay rebuilds onto an empty lane.
+    expect(resetLane.mock.invocationCallOrder[0]).toBeLessThan(reattach.mock.invocationCallOrder[0]);
+  });
+
   it('boot re-attach of a NORMAL turn rebuilds the full build toolset (no onboarding curation)', async () => {
     const { manager, store, dockerRunner } = makeManager({});
     (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: null });
@@ -3137,6 +3318,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main', title: 'Parent job' }),
       createFollowUpJob: vi.fn().mockResolvedValue('th-followup'),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      appendSystemNotice: vi.fn().mockResolvedValue(undefined),
       getQuestionCard: vi.fn().mockResolvedValue(null),
       openQuestionCards: vi.fn().mockResolvedValue([]),
       markQuestionDelivered: vi.fn().mockResolvedValue(undefined),

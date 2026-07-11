@@ -4,7 +4,7 @@ import { IsNull, Not, Raw, Repository } from 'typeorm';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, RepoEntity } from '../persistence/entities';
-import { GithubPrService, parseGithubRepoUrl, type CheckRun } from '../git';
+import { GithubPrService, parseGithubRepoUrl, type CheckRun, type CiCounts, type CiSummary } from '../git';
 import { StimulusIntake } from '../stimulus';
 
 /**
@@ -52,24 +52,37 @@ export class GitStateReconciler {
    * count reconciled. Fail-soft per job (a throwing job still gets re-stamped so it isn't hammered).
    */
   async tick(): Promise<number> {
+    // GitHub is paused (rate-limited) — skip the whole pass without re-stamping anything, so every job
+    // stays DUE and picks straight back up once the pause clears.
+    if (this.pr.isRateLimited()) return 0;
+
     // `(next_poll_at IS NULL OR next_poll_at <= now())` — the DUE predicate, applied to both OR branches.
     const due = Raw((alias) => `(${alias} IS NULL OR ${alias} <= now())`);
     const jobs = await this.jobs.find({
       where: [
         { pr_number: Not(IsNull()), next_poll_at: due },
-        { feature_branch: Not(IsNull()), pr_number: IsNull(), next_poll_at: due },
+        {
+          feature_branch: Not(IsNull()),
+          pr_number: IsNull(),
+          next_poll_at: due,
+        },
       ],
     });
     let reconciled = 0;
     for (const job of jobs) {
-      // Default to `active` (45s) on an unexpected error so a persistently-failing job backs off to the
-      // settled cadence rather than re-polling every heartbeat.
+      // Default to `active` (the settled backup cadence) on an unexpected error so a persistently-failing
+      // job backs off rather than re-polling every heartbeat.
       let tier: PollTier = 'active';
       try {
         tier = await this.reconcileOne(job);
         reconciled++;
       } catch (err) {
-        this.logger.warn(`git-state reconcile failed for job ${job.id}: ${err}`);
+        this.logger.warn(
+          `git-state reconcile failed for job ${job.id}: ${err}`,
+        );
+        // Rate-limited mid-pass (e.g. the job tripped it) — leave THIS job DUE rather than re-stamping it,
+        // so it re-polls immediately once the pause clears instead of waiting out the backoff.
+        if (this.pr.isRateLimited()) continue;
       }
       await this.setNextPoll(job.id, tier);
     }
@@ -91,14 +104,61 @@ export class GitStateReconciler {
     );
     const marked = res.affected ?? 0;
     if (marked > 0) {
-      this.logger.log(`base-branch push on repo ${repoId} — marked ${marked} open PR(s) due for re-poll`);
+      this.logger.log(
+        `base-branch push on repo ${repoId} — marked ${marked} open PR(s) due for re-poll`,
+      );
+    }
+    return marked;
+  }
+
+  /**
+   * Mark the OWNING job of a single PR (or branch) due-now — the per-PR sibling of {@link markRepoDue}.
+   * Routed from mergeability-affecting webhooks that touch exactly one PR (head push / draft↔ready /
+   * review submitted-or-dismissed) so the reconciler refreshes `pr_mergeable` within one heartbeat instead
+   * of waiting out the slow `active` backup cadence. Targets by `prNumber` when known, else falls back to
+   * `branch` when a PR-number update marks nothing (the PR-open race, where a head push may land before
+   * the job's `pr_number` is recorded). Doesn't force `pr_state='open'` — a branch-only job is a valid
+   * re-arm target too, discovery just picks it back up sooner. Returns the number of jobs marked (0 if
+   * neither `prNumber` nor `branch` given).
+   */
+  async markJobDue(
+    orgId: string,
+    repoId: string,
+    opts: { prNumber?: number | null; branch?: string | null },
+  ): Promise<number> {
+    const stamp = { next_poll_at: new Date() };
+    const baseWhere = { org_id: orgId, repo_id: repoId };
+    let target: string | null = null;
+    let marked = 0;
+    if (opts.prNumber != null) {
+      target = `pr #${opts.prNumber}`;
+      const res = await this.jobs.update(
+        { ...baseWhere, pr_number: opts.prNumber },
+        stamp,
+      );
+      marked = res.affected ?? 0;
+    }
+    if (marked === 0 && opts.branch) {
+      target = `branch ${opts.branch}`;
+      const res = await this.jobs.update(
+        { ...baseWhere, feature_branch: opts.branch },
+        stamp,
+      );
+      marked = res.affected ?? 0;
+    }
+    if (!target) {
+      return 0;
+    }
+    if (marked > 0) {
+      this.logger.log(`re-armed ${marked} job(s) due for re-poll (${target})`);
     }
     return marked;
   }
 
   /** Re-stamp a job's durable poll clock: `terminal` clears it (stop polling), else now + adaptive cadence. */
   private async setNextPoll(jobId: string, tier: PollTier): Promise<void> {
-    const next = tier === 'terminal' ? null : new Date(Date.now() + CADENCE_MS[tier]);
+    const next =
+      tier === 'terminal' ? null : new Date(Date.now() + CADENCE_MS[tier]);
     await this.jobs.update({ id: jobId }, { next_poll_at: next });
   }
 
@@ -128,10 +188,17 @@ export class GitStateReconciler {
       // learns of it here, on discovery, so this is where the flip belongs.
       await this.jobs.update(
         { id: job.id },
-        { pr_url: found.url, pr_number: found.number, status: 'done', pr_state: 'open' },
+        {
+          pr_url: found.url,
+          pr_number: found.number,
+          status: 'done',
+          pr_state: 'open',
+        },
       );
       job.pr_state = 'open';
-      this.logger.log(`discovered PR #${found.number} for job ${job.id} on ${job.feature_branch}`);
+      this.logger.log(
+        `discovered PR #${found.number} for job ${job.id} on ${job.feature_branch}`,
+      );
       prNumber = found.number;
     }
 
@@ -155,19 +222,28 @@ export class GitStateReconciler {
 
     // CI status column (UI badge). Routing of CI FAILURES rides the webhook (check_run) so it isn't
     // double-delivered; here we only summarise the head-SHA check-runs into the column.
-    let ci = job.ci_status;
+    let sum: CiSummary = { status: job.ci_status as CiSummary['status'], counts: job.ci_counts };
     if (detail.headSha) {
       const runs = await this.pr.listCheckRuns(token, {
         owner: parsed.owner,
         repo: parsed.repo,
         ref: detail.headSha,
       });
-      ci = summarizeChecks(runs);
+      // Empty = a transient/no-checks-yet window for this head SHA (a hiccup, a just-pushed SHA whose
+      // runs GitHub hasn't attached yet, a rerun mid-recreate). Treat it as "no fresh data — keep the
+      // last known status", NEVER a clobber of a known failure/success back to null. Tradeoff: a head
+      // that legitimately drops to zero checks keeps its prior badge until a non-empty result arrives —
+      // an acceptable, rare cost to eliminate the false "No CI" flicker that is the reported bug.
+      if (runs.length > 0) sum = summarizeChecks(runs);
     }
 
     // Persist observed columns only when they changed — avoid needless WAL/realtime deltas.
-    if (ci !== job.ci_status || detail.mergeableState !== job.pr_mergeable) {
-      await this.jobs.update({ id: job.id }, { ci_status: ci, pr_mergeable: detail.mergeableState });
+    const ciChanged = sum.status !== job.ci_status || !sameCounts(sum.counts, job.ci_counts);
+    if (ciChanged || detail.mergeableState !== job.pr_mergeable) {
+      await this.jobs.update(
+        { id: job.id },
+        { ci_status: sum.status, ci_counts: sum.counts, pr_mergeable: detail.mergeableState },
+      );
     }
 
     // MERGE CONFLICT — `dirty` = the PR no longer merges cleanly into its base. Route to the owning
@@ -187,9 +263,12 @@ export class GitStateReconciler {
       });
     }
 
-    // `null` mergeable_state = GitHub is still computing it — poll fast (`computing`) until it resolves to
-    // clean/dirty. A settled open PR polls at the relaxed `active` cadence (CI / merge / conflict flips).
-    return detail.mergeableState === null ? 'computing' : 'active';
+    // `null` / `unknown` mergeable_state = GitHub is still computing it — poll fast (`computing`) until it
+    // resolves to clean/dirty. A settled open PR polls at the relaxed `active` cadence.
+    return detail.mergeableState == null ||
+      detail.mergeableState.toLowerCase() === 'unknown'
+      ? 'computing'
+      : 'active';
   }
 }
 
@@ -197,24 +276,45 @@ export class GitStateReconciler {
  * The adaptive poll cadence, in ms — how soon a job is re-polled after a reconcile pass (tunable).
  *  - `computing`  — GitHub is still computing `mergeable_state`; poll until it resolves (the base-move
  *    conflict window this whole feature targets).
- *  - `active`     — a settled open PR; CI, a merge, or a fresh conflict can flip it, but not sub-second.
+ *  - `active`     — a settled open PR; a SLOW missed-webhook BACKUP poll only (15 min). Every event that
+ *    can actually flip a settled PR's state (head push, base push, review, ready-for-review, CI) re-arms
+ *    the fast path itself — via {@link markJobDue}/{@link markRepoDue} or the CI webhook sync writing
+ *    `pr_mergeable` directly — so this tier only ever fires for a genuinely dropped webhook.
  *  - `discovering`— a branch still building with no PR yet; nothing's observable until the build lands.
  * `terminal` (merged/closed/gone) has no cadence — the clock is cleared and the job stops polling.
  */
 export type PollTier = 'computing' | 'active' | 'discovering' | 'terminal';
 export const CADENCE_MS: Record<Exclude<PollTier, 'terminal'>, number> = {
   computing: 8_000,
-  active: 45_000,
+  active: 900_000,
   discovering: 180_000,
 };
 
-/** Roll a PR head's check-runs into a single UI status. null = no checks reported. */
-export function summarizeChecks(runs: CheckRun[]): string | null {
-  if (runs.length === 0) return null;
-  const FAILED = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'stale']);
-  if (runs.some((r) => r.status === 'completed' && r.conclusion != null && FAILED.has(r.conclusion))) {
-    return 'failure';
+const FAILED = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'stale']);
+
+/** Roll a PR head's check-runs into an overall status + per-category counts. Precedence: any FAILED
+ *  conclusion → failure; else any run not completed → pending; else ≥1 success → success; else skipped.
+ *  Skipped/neutral conclusions NEVER count as (or hide) a failure. No runs → { status:null, counts:null }. */
+export function summarizeChecks(runs: CheckRun[]): CiSummary {
+  if (runs.length === 0) return { status: null, counts: null };
+  const counts: CiCounts = { failing: 0, pending: 0, passed: 0, skipped: 0, total: runs.length };
+  for (const r of runs) {
+    if (r.status !== 'completed') counts.pending++;
+    else if (r.conclusion != null && FAILED.has(r.conclusion)) counts.failing++;
+    else if (r.conclusion === 'success') counts.passed++;
+    else counts.skipped++; // skipped | neutral | any other non-failing terminal conclusion
   }
-  if (runs.every((r) => r.status === 'completed')) return 'success';
-  return 'pending';
+  const status =
+    counts.failing > 0 ? 'failure'
+    : counts.pending > 0 ? 'pending'
+    : counts.passed > 0 ? 'success'
+    : 'skipped';
+  return { status, counts };
+}
+
+/** Structural equality for two CiCounts (or nulls) — used to gate on-change writes. */
+export function sameCounts(a: CiCounts | null, b: CiCounts | null): boolean {
+  if (a == null || b == null) return a === b;
+  return a.failing === b.failing && a.pending === b.pending && a.passed === b.passed
+      && a.skipped === b.skipped && a.total === b.total;
 }

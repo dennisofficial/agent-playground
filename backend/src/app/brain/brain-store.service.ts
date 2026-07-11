@@ -149,6 +149,16 @@ export class BrainStoreService {
     );
   }
 
+  /** Append a calm SYSTEM→OPERATOR notice (meta.source='system_notice'). Benign harness status the
+   *  operator sees but Atlas never authored and never sees (its session is resumed separately). Unlike
+   *  appendSystemOperatorMessage this carries NO error semantics (no halt, no Resume). */
+  async appendSystemNotice(jobId: string, text: string): Promise<void> {
+    await this.messages.save(this.messages.create({
+      job_id: jobId, author: 'System', author_id: 'system', author_bot_id: null,
+      text, kind: 'chat', meta: { source: 'system_notice' },
+    }));
+  }
+
   /**
    * Has an IDENTICAL system→operator notice already landed on this thread within `withinMs`? Guards against
    * a PERSISTENT engine failure (a spend / session / rate limit) stacking byte-identical red error boxes:
@@ -272,6 +282,9 @@ export class BrainStoreService {
      * operator can inspect the actual context injected into Atlas. Omit when `text` already IS the full body.
      */
     fullBody?: string;
+    /** The TRUSTED harness framing that rode with this chunk (e.g. the wake preamble), carried
+     *  separately from `text` so the web can render it as its own trusted block. */
+    framing?: string;
     createdAt?: Date;
   }): Promise<void> {
     const dup = await this.messages
@@ -299,6 +312,7 @@ export class BrainStoreService {
             : {}),
           ...(input.severity ? { severity: input.severity } : {}),
           ...(input.fullBody ? { fullBody: input.fullBody } : {}),
+          ...(input.framing ? { framing: input.framing } : {}),
         },
         ...(input.createdAt ? { created_at: input.createdAt } : {}),
       }),

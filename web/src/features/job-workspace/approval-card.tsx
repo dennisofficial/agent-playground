@@ -7,11 +7,18 @@ import {
   ArrowRight,
   CheckCircle2,
   ClipboardCheck,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
 import { makeResolveFileLink } from "./repo-file-links";
-import { useApprove, useRepoTree } from "@/lib/api/job-queries";
+import { shouldShowSpinUpPreview } from "./spin-up-preview-visibility";
+import {
+  useApprove,
+  usePipeline,
+  useRepoTree,
+  useSpinUpPreview,
+} from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import { isSubmitCombo } from "@/lib/keyboard";
 import {
@@ -226,8 +233,50 @@ function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef 
         {card.actions.map((action) => (
           <ShipActionButton key={action.actionId} jobRef={jobRef} action={action} />
         ))}
+        {card.kind === "ship" ? (
+          <ShipCardPreviewButton jobRef={jobRef} card={card} />
+        ) : null}
       </div>
     </div>
+  );
+}
+
+/** "Spin up preview" — asks the build brain (via the dedicated `spin-up-preview` seeder endpoint) to stand
+ *  up a demo-ready live preview of the just-built change. Status/handover come back through chat; the live
+ *  URL auto-surfaces in PORTS. Offered ONLY while the job is live at the ship gate
+ *  (`status === 'awaiting_ship_review'`, so it never shows on a shipped/historical transcript whose ship
+ *  card still renders) and hidden once requested (`card.previewRequestedAt`, stamped server-side on first
+ *  click). */
+function ShipCardPreviewButton({
+  jobRef,
+  card,
+}: {
+  jobRef: JobRef;
+  card: WebApprovalCard;
+}) {
+  const pipeline = usePipeline(jobRef);
+  const preview = useSpinUpPreview(jobRef);
+  if (!shouldShowSpinUpPreview(pipeline.data?.status, card.previewRequestedAt)) {
+    return null;
+  }
+  return (
+    <Button
+      size="sm"
+      variant="soft"
+      loading={preview.isPending}
+      loadingText="Requesting…"
+      icon={<Globe size={13} />}
+      onClick={() => {
+        if (!preview.isPending) preview.mutate();
+      }}
+      style={{
+        color: "var(--blue)",
+        background: "color-mix(in srgb, var(--blue) 12%, transparent)",
+        borderColor: "color-mix(in srgb, var(--blue) 30%, transparent)",
+      }}
+    >
+      Spin up preview
+    </Button>
   );
 }
 

@@ -86,8 +86,13 @@ export interface IEnvConfig {
   WORKSPACE_DOCKER_STORAGE_DRIVER?: string;
   // SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (falls back to REDIS_URL).
   // SANDBOX_BUS_NETWORK: the internal Docker network each sandbox joins (`atlas-bus` in prod; unset in dev).
+  // SANDBOX_MCP_NETWORK: the internal net the read-only diagnostics MCP reader lives on; a sandbox is
+  //   attached ONLY when its repo slug === ATLAS_REPO_SLUG (`atlas-mcp` in prod; unset in dev = no-op).
+  // ATLAS_REPO_SLUG: repos.slug of the Atlas repo itself; gates the MCP-network attach (fail-closed).
   SANDBOX_REDIS_URL?: string;
   SANDBOX_BUS_NETWORK?: string;
+  SANDBOX_MCP_NETWORK?: string;
+  ATLAS_REPO_SLUG?: string;
 
   // Secrets. SECRETS_ENCRYPTION_KEY (32-byte hex/base64) encrypts every `org_credentials` row at rest —
   // REQUIRED now that all credentials live there. JWT_* sign the web-console session cookies — REQUIRED
@@ -138,13 +143,10 @@ export interface IEnvConfig {
   //  - DRIVER_TRANSIENT_RETRY_MS: base backoff between transient drive retries (default 2000).
   //  - TURN_STALE_MS: heartbeat-quiet window before the watchdog fails a turn (default 90000).
   //  - TURN_STREAM_REAP_IDLE_MS: untouched window before a turn's orphan streams may be reaped (default 300000).
-  //  - REVIEW_LENS_CONCURRENCY: total in-flight review-lens turns cap for a builder's post-build review
-  //    fan-out (the `async-sema` semaphore `runReviewChildren` bounds ALL lens turns with); default 8.
   PHASE_TIMEOUT_MS?: number;
   DRIVER_TRANSIENT_RETRY_MS?: number;
   TURN_STALE_MS?: number;
   TURN_STREAM_REAP_IDLE_MS?: number;
-  REVIEW_LENS_CONCURRENCY?: number;
 
   // Dev/test tooling (never live in prod). TEST_BRIDGE: 'off' opts a non-prod env out of the `/test/*`
   // bridge (gating is NODE_ENV-driven; hard-off in prod). DISABLE_RESUME: skip the driver's boot
@@ -203,6 +205,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
+  SANDBOX_MCP_NETWORK: Joi.string().optional(),
+  ATLAS_REPO_SLUG: Joi.string().optional(),
 
   // Secrets
   SECRETS_ENCRYPTION_KEY: Joi.string().required(),
@@ -243,7 +247,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   DRIVER_TRANSIENT_RETRY_MS: Joi.number().integer().min(0).optional(),
   TURN_STALE_MS: Joi.number().integer().min(1).optional(),
   TURN_STREAM_REAP_IDLE_MS: Joi.number().integer().min(1).optional(),
-  REVIEW_LENS_CONCURRENCY: Joi.number().integer().min(1).optional(),
 
   // Dev/test tooling (never prod)
   TEST_BRIDGE: Joi.string().valid('on', 'off').optional(),

@@ -44,7 +44,11 @@ import { TranscriptView } from "./conversation";
 import { Composer, type ComposerFooter } from "./composer";
 import { DetailTopBar, TopBarActions, TopBarButton } from "./detail-top-bar";
 import { ImageViewer } from "./image-viewer";
-import { ServiceLogView, serviceHeaderSubtitle } from "./service-log-view";
+import {
+  LogFileView,
+  ServiceLogView,
+  serviceHeaderSubtitle,
+} from "./service-log-view";
 import { TicketsRaisedPane } from "./tickets-raised-pane";
 import { CreatedJobsPane } from "./created-jobs-pane";
 import { BlockedByPane } from "./blocked-by-pane";
@@ -848,6 +852,11 @@ function FileView({
   if (data?.mime.startsWith("image/")) {
     return <ImageFileBody file={data} />;
   }
+  // `.log` artifacts render full-bleed in the same ANSI terminal frame as live service logs, so escape
+  // codes come through as colors instead of literal `\x1b[..m` garbage in a plain <pre>.
+  if (data && data.name.endsWith(".log")) {
+    return <LogFileView content={data.content} />;
+  }
   // Everything else fills the pane width; only markdown keeps the readable max-width so long prose lines
   // don't sprawl edge-to-edge.
   return (
@@ -1368,12 +1377,14 @@ function RepoFileBody({
     .split("\n")
     .map((code, i) => ({ no: i + 1, code }));
   return (
-    <div ref={containerRef} className="h-full overflow-y-auto px-4 py-3">
+    <div ref={containerRef} className="h-full overflow-hidden">
       <CodeListing
         rows={rows}
         lang={lang}
         activeNos={activeNos}
         maxHeight="100%"
+        whole
+        flush
       />
     </div>
   );

@@ -18,7 +18,6 @@ export interface BrainGatewayHandler {
     branch: string;
     defaultBranch: string;
     title: string;
-    decisions: ReadonlyArray<{ title: string; decisionClass: string; ruling: string }>;
   }): Promise<void>;
   notifyThreadHalted(
     jobId: string,

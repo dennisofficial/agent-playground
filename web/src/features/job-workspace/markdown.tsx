@@ -13,18 +13,33 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  AlertTriangle,
+  Ban,
   Check,
+  CheckCircle2,
+  ClipboardList,
   Copy,
+  Hand,
+  Hourglass,
+  Info,
+  Lock,
+  type LucideIcon,
   Maximize2,
+  RefreshCw,
+  Rocket,
   RotateCcw,
+  Search,
   Send,
+  Settings,
+  Siren,
+  Wrench,
   X,
+  XCircle,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
 import { JsonView, allExpanded, darkStyles } from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
 import {
@@ -33,6 +48,7 @@ import {
   WrapButton,
   useCopied,
 } from "./terminal-chrome";
+import { renderTokenLine, useHighlightTokens } from "./tool-calls/highlight";
 
 /**
  * Markdown renderer for assistant prose in the conversation — ported from the "Atlas Conversation View"
@@ -51,8 +67,12 @@ export interface MarkdownActions {
 const MarkdownActionsContext = createContext<MarkdownActions | null>(null);
 export const MarkdownActionsProvider = MarkdownActionsContext.Provider;
 
-function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
+function CodeBlock({ lang, code }: { lang?: string; code: string }) {
   const [wrapped, setWrapped] = useState(false);
+  // Whole-block tokenization — a fence is contiguous, so cross-line context (multi-line strings,
+  // block comments, JSX) is preserved. `null` until the highlighter + language resolve → plain text.
+  const lineTokens = useHighlightTokens(code, lang ?? null, true);
+  const lines = useMemo(() => code.split("\n"), [code]);
   return (
     <div
       className="my-3 overflow-hidden rounded-[9px] border border-border"
@@ -66,7 +86,7 @@ function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
               wrapped={wrapped}
               onToggle={() => setWrapped((w) => !w)}
             />
-            <CopyButton text={nodeText(children).replace(/\n$/, "")} />
+            <CopyButton text={code} />
           </>
         }
       />
@@ -76,7 +96,14 @@ function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
         }`}
         style={{ color: "var(--term-fg)" }}
       >
-        {children}
+        {lineTokens
+          ? lines.map((ln, i) => (
+              <span key={i}>
+                {i > 0 ? "\n" : null}
+                {renderTokenLine(lineTokens[i], ln)}
+              </span>
+            ))
+          : renderTokenLine(null, code)}
       </pre>
     </div>
   );
@@ -84,14 +111,15 @@ function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
 
 // ── JSON tree ──────────────────────────────────────────────────────────────────────────────────────
 // A ```json fence whose content is an object/array renders as an interactive collapsible tree
-// (react-json-view-lite) instead of a flat, often-minified code line. Colors reuse the dark-frame
-// hljs palette from globals.css; the `!` important classes win over the package CSS regardless of
-// stylesheet order. Structure (indentation + expand/collapse icons) comes from spreading darkStyles.
+// (react-json-view-lite) instead of a flat, often-minified code line. Colors mirror the --term token
+// palette (the same hues the Shiki atlas-term theme emits); the `!` important classes win over the
+// package CSS regardless of stylesheet order. Structure (indentation + expand/collapse icons) comes
+// from spreading darkStyles.
 const JSON_VIEW_STYLES = {
   ...darkStyles,
   container: `${darkStyles.container} !bg-transparent`,
-  label: `${darkStyles.label} !text-[#b89cf0]`, // object keys — lavender (.hljs-title)
-  stringValue: `${darkStyles.stringValue} !text-[#6fb3c9]`, // teal (.hljs-string)
+  label: `${darkStyles.label} !text-[#b89cf0]`, // object keys — lavender (function/title)
+  stringValue: `${darkStyles.stringValue} !text-[#6fb3c9]`, // teal (string)
   numberValue: `${darkStyles.numberValue} !text-[#d89a5c]`,
   booleanValue: `${darkStyles.booleanValue} !text-[#e8983f]`, // amber
   nullValue: `${darkStyles.nullValue} !text-[#e8983f]`,
@@ -174,7 +202,7 @@ function loadMermaid() {
   return mermaidReady;
 }
 
-/** Flatten code-block children to plain text (string, number, or rehype-highlight span nodes). */
+/** Flatten code-block children to plain text (string, number, or nested markdown nodes). */
 function nodeText(node: ReactNode): string {
   if (node == null || typeof node === "boolean") return "";
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -247,6 +275,22 @@ function MermaidFrame({
       {children}
     </div>
   );
+}
+
+/**
+ * Approximate rendered body height (px) of a Mermaid diagram from its SOURCE — diagram height grows with
+ * node/edge count, so a diagram's non-empty source-line count is a decent proxy. Used in TWO places that
+ * must agree: the loading placeholder + rendered container reserve this height (so the async SVG render
+ * barely changes the row), and the transcript virtualizer estimates a diagram-bearing row from the same
+ * number (so the row after a diagram is positioned correctly and doesn't briefly overlap it). Clamped so a
+ * tiny diagram doesn't leave a big blank and a huge one doesn't over-reserve.
+ */
+export function mermaidReservePx(source: string): number {
+  const lines = source.split("\n").filter((line) => line.trim().length > 0).length;
+  // ~72px per source line ≈ one rank of a vertical (TD/TB) flowchart, the dominant diagram kind here.
+  // Erring slightly high is safer than low: an over-reserve leaves a brief gap that closes, whereas an
+  // under-reserve lets the row below overlap the diagram until measureElement corrects.
+  return Math.min(Math.max(lines * 72, 200), 760);
 }
 
 function Mermaid({ chart }: { chart: string }) {
@@ -337,9 +381,17 @@ function Mermaid({ chart }: { chart: string }) {
     );
   }
   if (!result) {
+    // Reserve the body height while the SVG renders asynchronously. Without this the row mounts (and is
+    // measured by the transcript virtualizer) at the tiny placeholder height, then pops taller when the
+    // diagram resolves — a visible jump. The reservation is derived from the diagram SOURCE (see
+    // mermaidReservePx) and matches the rendered body's min-height below, so the loading→diagram transition
+    // changes height by little or nothing.
     return (
       <MermaidFrame label="mermaid">
-        <div className="flex items-center justify-center px-4 py-6 font-mono text-[10.5px] text-faint">
+        <div
+          className="flex items-center justify-center px-4 py-6 font-mono text-[10.5px] text-faint"
+          style={{ minHeight: mermaidReservePx(chart) }}
+        >
           rendering diagram…
         </div>
       </MermaidFrame>
@@ -359,11 +411,12 @@ function Mermaid({ chart }: { chart: string }) {
         }
       >
         {/* Fit to width, but never upscale past the intrinsic size — so the diagram never breaks the doc
-            layout, and the whole thing is click-to-expand for a readable view. */}
+            layout, and the whole thing is click-to-expand for a readable view. The min-height matches the
+            loading placeholder so the async render doesn't shift the row's height (see mermaidReservePx). */}
         <div
           onClick={() => setZoomed(true)}
-          className="mx-auto cursor-zoom-in p-4 [&>svg]:!h-auto [&>svg]:!w-full"
-          style={{ maxWidth: result.w || undefined }}
+          className="mx-auto flex cursor-zoom-in flex-col justify-center p-4 [&>svg]:!h-auto [&>svg]:!w-full"
+          style={{ maxWidth: result.w || undefined, minHeight: mermaidReservePx(chart) }}
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
           dangerouslySetInnerHTML={{ __html: result.svg }}
         />
@@ -549,13 +602,16 @@ function renderCode({
     const parsed = parseJsonContainer(nodeText(children).replace(/\n$/, ""));
     if (parsed) return <JsonBlock value={parsed} />;
   }
-  // rehype-highlight tags fenced block code (and only block code) with `hljs`; fall back to a
-  // newline sniff for the rare un-highlighted block.
-  const isBlock =
-    cls.includes("hljs") ||
-    Boolean(match) ||
-    String(children ?? "").includes("\n");
-  if (isBlock) return <CodeBlock lang={match?.[1]}>{children}</CodeBlock>;
+  // A fence carries a `language-*` class (react-markdown tags it independently of any highlighter);
+  // fall back to a newline sniff for the rare un-highlighted block.
+  const isBlock = Boolean(match) || String(children ?? "").includes("\n");
+  if (isBlock)
+    return (
+      <CodeBlock
+        lang={match?.[1]}
+        code={nodeText(children).replace(/\n$/, "")}
+      />
+    );
   // Inline span: linkify a manifest-verified file path into a pill (spec/plan panes only).
   if (resolveFileLink) {
     const link = resolveFileLink(nodeText(children));
@@ -576,7 +632,108 @@ function renderCode({
   );
 }
 
+// ── Slack shortcode → inline icon ────────────────────────────────────────────────────────────────
+// Harness/system status messages carry Slack-era emoji shortcodes (`:rocket:`, `:warning:`, …). No
+// surface converts them anymore (Atlas is web-only), so they used to leak through as literal text. We
+// map the known ones to real Lucide icons at render time: a small remark pass splits each `:name:` out
+// of the text stream into a custom `shortcode-icon` node (mdast `data.hName`/`hProperties`), which the
+// COMPONENTS entry below renders as the toned icon. Unknown `:tokens:` are left untouched.
+const SHORTCODE_ICONS: Record<string, { Icon: LucideIcon; tone: string }> = {
+  rocket: { Icon: Rocket, tone: "text-accent" },
+  white_check_mark: { Icon: CheckCircle2, tone: "text-green" },
+  x: { Icon: XCircle, tone: "text-red" },
+  no_entry: { Icon: Ban, tone: "text-red" },
+  warning: { Icon: AlertTriangle, tone: "text-amber" },
+  rotating_light: { Icon: Siren, tone: "text-red" },
+  information_source: { Icon: Info, tone: "text-blue" },
+  lock: { Icon: Lock, tone: "text-red" },
+  mag: { Icon: Search, tone: "text-dim" },
+  hourglass_flowing_sand: { Icon: Hourglass, tone: "text-amber" },
+  raising_hand: { Icon: Hand, tone: "text-amber" },
+  hammer_and_wrench: { Icon: Wrench, tone: "text-dim" },
+  gear: { Icon: Settings, tone: "text-dim" },
+  recycle: { Icon: RefreshCw, tone: "text-dim" },
+  clipboard: { Icon: ClipboardList, tone: "text-dim" },
+};
+
+const SHORTCODE_RE = /:([a-z0-9_+]+):/g;
+
+/** Minimal mdast shape this pass touches — a container with `children`, or a `text` leaf with `value`. */
+interface MdNode {
+  type: string;
+  value?: string;
+  children?: MdNode[];
+  data?: { hName?: string; hProperties?: Record<string, unknown> };
+}
+
+/** Split a text value on known `:shortcode:` tokens into interleaved text + `shortcode-icon` nodes.
+ *  Returns a single unchanged text node when nothing matched. */
+function splitShortcodes(value: string): MdNode[] {
+  const parts: MdNode[] = [];
+  let last = 0;
+  SHORTCODE_RE.lastIndex = 0;
+  for (let m = SHORTCODE_RE.exec(value); m; m = SHORTCODE_RE.exec(value)) {
+    if (!(m[1] in SHORTCODE_ICONS)) continue;
+    if (m.index > last)
+      parts.push({ type: "text", value: value.slice(last, m.index) });
+    parts.push({
+      type: "shortcodeIcon",
+      data: { hName: "shortcode-icon", hProperties: { name: m[1] } },
+    });
+    last = m.index + m[0].length;
+  }
+  if (parts.length === 0) return [{ type: "text", value }];
+  if (last < value.length)
+    parts.push({ type: "text", value: value.slice(last) });
+  return parts;
+}
+
+/** remark plugin: rewrite `:shortcode:` runs inside text nodes into inline icon nodes. Only descends
+ *  into containers (`children`); `code`/`inlineCode` are leaves with no `children`, so fenced/inline
+ *  code is never rewritten. */
+function remarkShortcodeIcons() {
+  const walk = (node: MdNode): void => {
+    if (!node.children) return;
+    const next: MdNode[] = [];
+    for (const child of node.children) {
+      if (
+        child.type === "text" &&
+        typeof child.value === "string" &&
+        child.value.includes(":")
+      ) {
+        next.push(...splitShortcodes(child.value));
+      } else {
+        walk(child);
+        next.push(child);
+      }
+    }
+    node.children = next;
+  };
+  return (tree: MdNode) => walk(tree);
+}
+
+/** Renders a mapped `:shortcode:` as a small, baseline-aligned Lucide icon. Decorative — the message
+ *  text carries the meaning — so it's aria-hidden. Unknown names never reach here (the remark pass only
+ *  emits nodes for names in SHORTCODE_ICONS). */
+function ShortcodeIcon({ name }: { name?: string }) {
+  const entry = name ? SHORTCODE_ICONS[name] : undefined;
+  if (!entry) return null;
+  const { Icon, tone } = entry;
+  return (
+    <Icon
+      size={14}
+      strokeWidth={2}
+      aria-hidden
+      className={`inline-block shrink-0 ${tone}`}
+      style={{ verticalAlign: "-0.18em" }}
+    />
+  );
+}
+
 const COMPONENTS: Components = {
+  // Custom inline element emitted by remarkShortcodeIcons. Its tag name isn't in JSX.IntrinsicElements,
+  // so the entry is attached via a cast (react-markdown maps the hast tag name → this component).
+  ...({ "shortcode-icon": ShortcodeIcon } as unknown as Components),
   h1: ({ children }) => (
     <h1 className="mb-1 mt-1 font-disp text-[21px] font-bold leading-tight tracking-[-0.02em] text-text">
       {children}
@@ -795,10 +952,7 @@ export const Markdown = memo(function Markdown({
   return (
     <div className="text-[14px] leading-[1.62] text-text">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[
-          [rehypeHighlight, { detect: true, ignoreMissing: true }],
-        ]}
+        remarkPlugins={[remarkGfm, remarkShortcodeIcons]}
         components={components}
       >
         {children}

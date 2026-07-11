@@ -79,3 +79,23 @@ atlas.dltechnologies.co {
     }
     respond "no such preview" 404
 }
+
+# ── Sandbox preview exposures — DEDICATED parent (wildcard) ───────────────────────
+# Previews live under a SEPARATE subtree (`preview.dltechnologies.co`), NOT under
+# `atlas.dltechnologies.co`. A preview app issues session cookies scoped to its parent
+# (`Domain=.<PREVIEW_BASE_DOMAIN>`) so its own `-web`/`-api` subdomains can share a login — but
+# signed with the PREVIEW's JWT secret. When that parent was `atlas.dltechnologies.co` (shared with
+# prod), the browser also sent those cookies to `api.atlas.dltechnologies.co` / `atlas.dltechnologies.co`,
+# where prod couldn't verify them and, being domain-scoped, they shadowed prod's own host-only cookie
+# and wedged the operator out ("signature verification failed" on every request). Isolating previews
+# under `preview.dltechnologies.co` makes their cookies `.preview.dltechnologies.co`-scoped, which the
+# browser NEVER sends to the prod hosts — a hard guarantee that previews can't touch prod sessions.
+# Same mechanics as the block above: ONE DNS-01 wildcard cert, catch-all 404, backend inserts each
+# exact-host preview route ahead of this fallback via the admin API. Requires a `*.preview.dltechnologies.co`
+# DNS record pointing at this box (mirrors the `*.atlas.dltechnologies.co` record).
+*.preview.dltechnologies.co {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    respond "no such preview" 404
+}

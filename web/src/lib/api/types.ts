@@ -23,16 +23,12 @@ export type { WireJobStatus };
 /** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
 export type { WireJobHalt };
 /**
- * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`, plus OPTIONAL
- * multi-account display fields the backend doesn't populate yet (both undefined until then; the usage
- * panel falls back to a neutral single-account header when absent).
+ * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`. Carries the
+ * OPTIONAL panel-header fields (`accountLabel` = the selected account's email/label, `plan` = its
+ * subscription plan); both are absent when no credential is selected and the panel falls back to a
+ * neutral single-account header.
  */
-export type WireOrgUsage = OrgUsage & {
-  /** Display label for the connected account (e.g. an email) — absent until multi-account ships. */
-  accountLabel?: string;
-  /** Subscription plan label (e.g. "Max plan") — absent until multi-account ships. */
-  plan?: string;
-};
+export type WireOrgUsage = OrgUsage;
 /**
  * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
  * single-sourced in `@workspace/shared`. Carried on the realtime row; the dot itself reads `needsYou`.
@@ -135,6 +131,8 @@ export interface WebApprovalCard {
   threads: string[];
   planUrl?: string;
   actions: WebCardAction[];
+  /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
+  previewRequestedAt?: string;
 }
 
 export interface WebVerdictCard {
@@ -541,6 +539,9 @@ export interface PipelineJob {
   /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — same four-state taxonomy as the sidebar
    *  dot; null = no checks reported. Only meaningful once a PR exists (prNumber != null). */
   ciStatus: CiStatus | null;
+  /** Per-category CI check counts (`jobs.ci_counts`) — drives the header glyph's hover tooltip. Parallel
+   *  to `ciStatus`; null when no checks reported. */
+  ciCounts?: CiCounts | null;
   /** The feature branch all threads stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   /** The OBSERVED live branch the agent's HEAD is on; differs from featureBranch ⇒ drift (badge). Null
@@ -664,8 +665,19 @@ export type JobKind = "feat" | "fix" | "event" | "onboard" | "review";
 /** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
 export type PrState = "open" | "merged" | "closed";
 
-/** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI"). */
-export type CiStatus = "success" | "failure" | "pending"; // null handled at the field level
+/** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI").
+ *  `skipped` = checks ran but all were skipped/neutral (never a failure). */
+export type CiStatus = "success" | "failure" | "pending" | "skipped"; // null handled at the field level
+
+/** Per-category CI check counts for the PR head — backend `jobs.ci_counts`. Parallel to {@link CiStatus};
+ *  null exactly when the status is null (no checks reported). The four category counts sum to `total`. */
+export type CiCounts = {
+  failing: number;
+  pending: number;
+  passed: number;
+  skipped: number;
+  total: number;
+};
 
 /** The observed PR on a job — drives the sidebar's PR-status glyph (see `PrStatusIcon`). `mergeable` is
  *  GitHub's `mergeable_state` ('dirty' = merge conflict); `url` links to the PR. */

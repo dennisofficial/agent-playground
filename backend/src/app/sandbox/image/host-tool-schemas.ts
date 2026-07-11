@@ -469,7 +469,11 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'for a server that needs interactive login — the owner completes it via the console Connect.',
   propose_mcp_removal: 'Propose removing an MCP server from this org or repo.',
   propose_convention_profile: 'Propose a new convention (house-style) profile for this repo.',
-  finish_onboarding: 'Finish workspace onboarding with a summary and the verification you performed.',
+  finish_onboarding:
+    'Finish workspace onboarding with a summary and the verification you performed. For a repo with ' +
+    'user-facing surfaces, `verified` must include live preview-accessibility evidence — each public preview ' +
+    'URL loaded + hydrated as a browser via atlas-probe, plus the authed-handshake proof where a surface has ' +
+    'auth — not just a local health check.',
 };
 
 /**

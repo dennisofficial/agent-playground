@@ -51,7 +51,10 @@ import {
   haltThreadIdx,
 } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
-import { NavigatorApproveButton, NavigatorShipButton } from "./spec-approval";
+import {
+  NavigatorApproveButton,
+  NavigatorShipButton,
+} from "./spec-approval";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
@@ -386,7 +389,9 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
+                  {showCi ? (
+                    <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} />
+                  ) : null}
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
@@ -403,7 +408,9 @@ export function Navigator({
                   >
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} /> : null}
+                  {showCi ? (
+                    <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} />
+                  ) : null}
                 </div>
               );
             })()

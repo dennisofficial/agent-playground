@@ -967,6 +967,50 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(running?.status).toBe('running');
     expect(await recordStatus(dataSource, r2.decisionRecordId)).toBe('approved');
   }, 30_000);
+
+  // Q2 (decision d1): appendSystemNotice writes a CALM, System-authored operator-mirror row — the exact
+  // shape `/messages` returns verbatim to the web. NOT Atlas's voice (author_bot_id null) and NO error
+  // semantics. This is the persistence side of the approval-ack re-voicing, exercised against live Postgres.
+  it('appendSystemNotice persists a calm System-authored operator row (meta.source=system_notice, bot_id null)', async () => {
+    const { jobId } = await seedJob(dataSource, TEAM_ID, 'brainstore-sysnotice-it');
+
+    await store.appendSystemNotice(jobId, 'Plan approved — dispatching the build.');
+
+    const row = await loadMessageRow(dataSource, jobId);
+    expect(row).toMatchObject({
+      author: 'System',
+      author_id: 'system',
+      author_bot_id: null, // the marker that the web renders this as a SYSTEM notice, not an Atlas turn
+      text: 'Plan approved — dispatching the build.',
+    });
+    expect(row?.meta?.source).toBe('system_notice');
+    expect(row?.meta?.halted).toBeUndefined(); // no error/Resume semantics (contrast appendSystemOperatorMessage)
+  }, 30_000);
+
+  // Q1 (decision d2): recordSystemChunk carries the TRUSTED framing SEPARATELY on the untrusted row's
+  // meta.framing (its own block for the web) — the amber fence body stays the clean lane self-report, and
+  // the whole framed+fenced engine payload is NOT folded into meta.fullBody. Live-DB proof of the split.
+  it('recordSystemChunk on an untrusted wake row stores meta.framing separately, without leaking the engine body into fullBody', async () => {
+    const { jobId } = await seedJob(dataSource, TEAM_ID, 'brainstore-framing-it');
+
+    await store.recordSystemChunk({
+      jobId,
+      kind: 'untrusted',
+      text: 'summary: build parked at ship gate',
+      chunkKey: `seed:done:framing-it`,
+      untrustedSource: 'thread-done:th-x',
+      severity: 'final',
+      framing: 'An AUTONOMOUS wake — you may NOT ship without the operator.',
+      // deliberately NO fullBody — persistSeedRow now omits it for untrusted rows
+    });
+
+    const row = await loadMessageRow(dataSource, jobId);
+    expect(row?.meta?.source).toBe('untrusted');
+    expect(row?.meta?.untrustedSource).toBe('thread-done:th-x');
+    expect(row?.meta?.framing).toBe('An AUTONOMOUS wake — you may NOT ship without the operator.');
+    expect(row?.meta?.fullBody).toBeUndefined(); // the trusted framing rides in meta.framing, not the amber pill
+    expect(row?.text).toBe('summary: build parked at ship gate'); // amber fence = clean lane self-report only
+  }, 30_000);
 });
 
 async function openCount(ds: DataSource, jobId: string): Promise<number> {
@@ -988,6 +1032,32 @@ async function insertUserMessage(
        VALUES ($1, 'Operator', 'op', $2, 'chat', $3, $3)`,
     [jobId, text, createdAt.toISOString()],
   );
+}
+
+/** The single message row for a freshly-seeded job — the operator-facing mirror `/messages` returns
+ *  verbatim (author fields + the `meta` jsonb). Used to assert System-notice + wake-framing shape. */
+async function loadMessageRow(
+  ds: DataSource,
+  jobId: string,
+): Promise<{
+  author: string;
+  author_id: string;
+  author_bot_id: string | null;
+  text: string;
+  meta: Record<string, unknown> | null;
+} | null> {
+  const rows: Array<{
+    author: string;
+    author_id: string;
+    author_bot_id: string | null;
+    text: string;
+    meta: Record<string, unknown> | null;
+  }> = await ds.query(
+    `SELECT author, author_id, author_bot_id, text, meta FROM messages
+       WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [jobId],
+  );
+  return rows[0] ?? null;
 }
 
 async function messageTexts(ds: DataSource, jobId: string): Promise<string[]> {

@@ -64,6 +64,7 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     {} as never, // repos
     {} as never, // threadTitle
     {} as never, // ticketEvents
+    {} as never, // usageBus
     { available: false } as never, // realtime
     {} as never, // election
     { dispatch: async () => undefined } as never, // dispatcher

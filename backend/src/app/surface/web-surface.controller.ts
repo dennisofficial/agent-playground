@@ -105,6 +105,8 @@ import {
   subscriptionToObservable,
 } from '../realtime';
 import { TicketEventBus } from '../tickets';
+import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
+import { UsageEventBus } from '../onboarding/usage-event-bus';
 
 const VALID_ACTION_IDS = new Set([
   APPROVE_ACTION_ID,
@@ -534,6 +536,7 @@ export class WebSurfaceController {
     private readonly repos: Repository<RepoEntity>,
     private readonly threadTitle: JobTitleService,
     private readonly ticketEvents: TicketEventBus,
+    private readonly usageBus: UsageEventBus,
     private readonly realtime: RealtimeService,
     private readonly election: LeaderElectionService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
@@ -638,9 +641,10 @@ export class WebSurfaceController {
               url: t.pr_url,
             }
           : null,
-        // The observed CI/CD aggregate (`success|failure|pending|null`) — drives the sidebar row's CI
+        // The observed CI/CD aggregate (`success|failure|pending|skipped|null`) — drives the sidebar row's CI
         // dot on first paint / when realtime is disabled (realtime carries it independently).
         ciStatus: t.ci_status,
+        ciCounts: t.ci_counts,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,
@@ -1000,7 +1004,10 @@ export class WebSurfaceController {
    */
   @Sse('orgs/:orgId/repos/:repoId/events')
   @UseGuards(OrgMembershipGuard)
-  events(@Param('repoId') repoId: string): Observable<MessageEvent> {
+  events(
+    @Param('orgId') orgId: string,
+    @Param('repoId') repoId: string,
+  ): Observable<MessageEvent> {
     const messages$ = this.surface.outbound$.pipe(
       filter((msg: WebOutboundMessage) => msg.channel === repoId),
       map((msg): MessageEvent => ({ data: { type: 'message', ...msg } })),
@@ -1061,7 +1068,13 @@ export class WebSurfaceController {
         }),
       ),
     );
-    return merge(snapshot$, live$, messages$, meta$, tickets$);
+    // Claude-subscription usage ring updates for this org — a harvested-window change during a turn or an
+    // account switch (see `OauthUsageService.invalidate`).
+    const usage$ = this.usageBus.stream$.pipe(
+      filter((e) => e.orgId === orgId),
+      map((e): MessageEvent => ({ data: { type: 'usage', orgId: e.orgId, usage: e.usage } })),
+    );
+    return merge(snapshot$, live$, messages$, meta$, tickets$, usage$);
   }
 
   /** `POST …/threads/:jobId/approve` — submit a plan verdict. */
@@ -1269,6 +1282,44 @@ export class WebSurfaceController {
       deliveredQuestionId: body.questionId,
       seedRow: { label: notice, chunkKey: `seed:qa:${jobId}:${body.questionId}` },
     });
+    return { ok: true, ts };
+  }
+
+  /**
+   * `POST …/jobs/:jobId/spin-up-preview` — the operator tapped "Spin up preview" on the ship-review card.
+   * Injects the FULL demo-ready preview procedure as a `SYSTEM_SEED_AUTHOR` seed turn (delivered on demand,
+   * NOT standing in the build-brain system prompt) and stamps the ship card "requested" so the button hides.
+   * Gated SERVER-SIDE on `status === 'awaiting_ship_review'` (defense-in-depth against a stale transcript
+   * card) and on the atomic first-click stamp (`markPreviewRequested`) so a double-click seeds exactly once.
+   * Membership-guarded — any org member may request a preview.
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/spin-up-preview')
+  @UseGuards(OrgMembershipGuard)
+  async spinUpPreview(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<{ ok: boolean; ts: string }> {
+    if (!this.election.isLeader()) {
+      throw new ServiceUnavailableException(
+        'Atlas is handing off — retry momentarily.',
+      );
+    }
+    const thread = await this.requireThread(jobId, org.id);
+    if (thread.status !== 'awaiting_ship_review') return { ok: false, ts: '' };
+    const firstRequest = await this.driverStore.markPreviewRequested(jobId);
+    if (!firstRequest) return { ok: true, ts: '' }; // idempotent double-click — already seeded.
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      PREVIEW_PREP_SEED_BODY,
+      {
+        orgId: org.id,
+        seedRow: {
+          label: 'Spin up preview requested',
+          chunkKey: `seed:preview:${jobId}`,
+        },
+      },
+    );
     return { ok: true, ts };
   }
 

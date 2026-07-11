@@ -305,10 +305,15 @@ export class DriverStoreService {
   // ── ship-review gate (the terminal human gate: reviewed diff → operator clicks "Ship it" → PR) ────────
 
   /**
-   * PARK the job at the ship-review gate in one txn: flip `running → awaiting_ship_review`, clear activity
-   * to `idle`, and post the durable "Ship it" card. The status flip is CONDITIONAL on `running`, so it's
-   * the single-park guard — a concurrent drive (or a re-drive) that finds the job already parked affects 0
-   * rows and skips the card, returning false. Returns whether THIS caller parked it.
+   * PARK the job at the ship-review gate in one txn: flip `running | amending → awaiting_ship_review`, clear
+   * activity to `idle`, and post the durable "Ship it" card. The status flip is CONDITIONAL, so it's the
+   * single-park guard — a concurrent drive (or a re-drive) that finds the job already parked affects 0 rows
+   * and skips the card, returning false. Returns whether THIS caller parked it.
+   *
+   * `running` is the normal path (a build drive that finished + passed master review). `amending` is the
+   * AMEND re-park: after an approved `withdraw_ship`, the brain does the follow-up work and re-arms the gate
+   * directly from `amending` (no detour back through a `running` build) — see AgentSessionManager's
+   * `report_verification`.
    */
   async parkForShipReview(
     jobId: string,
@@ -322,7 +327,7 @@ export class DriverStoreService {
         .update(JobEntity)
         .set({ status: 'awaiting_ship_review', activity: 'idle' })
         .where('id = :jobId', { jobId })
-        .andWhere("status = 'running'")
+        .andWhere("status IN ('running', 'amending')")
         .execute();
       if ((res.affected ?? 0) === 0) return false;
       const messages = m.getRepository(MessageEntity);
@@ -394,6 +399,35 @@ export class DriverStoreService {
       }
       return true;
     });
+  }
+
+  /**
+   * Stamp the ship card "preview requested" when the operator clicks "Spin up preview" at the ship gate —
+   * ATOMICALLY and IDEMPOTENTLY, mirroring {@link BrainStoreService.markQuestionAnswered}. The conditional
+   * `WHERE … previewRequestedAt IS NULL` makes a concurrent double-click single-winner; the `jobs.status`
+   * subquery keeps the status gate atomic with the stamp instead of trusting a stale controller snapshot.
+   * The `type='approval_card'` + `kind='ship'` guards scope the stamp to an ACTIVE ship card — a retracted
+   * card has been neutralized to a `verdict_card` (see {@link retractShip}), so it can't be stamped. Returns
+   * whether THIS caller stamped it (the winner then seeds the preview procedure).
+   */
+  async markPreviewRequested(jobId: string): Promise<boolean> {
+    const patch = JSON.stringify({ previewRequestedAt: new Date().toISOString() });
+    const res = await this.messages
+      .createQueryBuilder()
+      .update(MessageEntity)
+      .set({ card: () => 'card || :patch::jsonb' })
+      .where('job_id = :jobId', { jobId })
+      .andWhere('ts = :ts', { ts: `ship-review:${jobId}` })
+      .andWhere("kind = 'card'")
+      .andWhere("card ->> 'type' = 'approval_card'")
+      .andWhere("card ->> 'kind' = 'ship'")
+      .andWhere("card ->> 'previewRequestedAt' IS NULL")
+      .andWhere(
+        "EXISTS (SELECT 1 FROM jobs j WHERE j.id = :jobId AND j.status = 'awaiting_ship_review')",
+      )
+      .setParameter('patch', patch)
+      .execute();
+    return (res.affected ?? 0) > 0;
   }
 
   /**
@@ -1405,9 +1439,10 @@ export class DriverStoreService {
       // instead of hardcoding "open" (it would otherwise show a stale green "open" after a merge/close).
       prState: thread.pr_state,
       prMergeable: thread.pr_mergeable,
-      // The observed CI/CD aggregate for the PR head (`success|failure|pending|null`) — drives the
+      // The observed CI/CD aggregate for the PR head (`success|failure|pending|skipped|null`) — drives the
       // navigator PR-row CI glyph, kept fresh by the webhook CI-sync + the 30-min reconciler backstop.
       ciStatus: thread.ci_status,
+      ciCounts: thread.ci_counts,
       featureBranch: thread.feature_branch,
       // The OBSERVED live branch (what the agent's HEAD is actually on) — drives the navigator drift badge
       // when it diverges from the host-named featureBranch. Null until first sampled / on detached HEAD.
@@ -1587,11 +1622,10 @@ interface PipelineLeg {
 }
 
 /**
- * A builder's review children for the `/pipeline` read model. Reflects MATERIALIZED rows only (the
- * `review_lens` × N + `post_review` children the driver's `runReviewChildren` inserts once it computes
- * the type-routed lens selection via `reviewAgentsForThread`) — empty before the review pass materializes
- * them, operator-approved (no independent re-derivation of the selection here; the driver is the single
- * source of truth). Master-review threads have no review children (they ARE the review).
+ * A builder's review children for the `/pipeline` read model. Once the driver materializes review rows,
+ * reflects the persisted `review_lens` × N + `post_review` children. Before that, shows only the
+ * statically-known `post_review` preview; diff-dependent lens rows appear after `runReviewChildren`
+ * computes the selected lenses. Master-review threads have no review children (they ARE the review).
  */
 function pipelineReviewChildren(
   parent: ThreadEntity,

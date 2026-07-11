@@ -4,6 +4,7 @@ import { ENGINE_RUNNER, EngineModule } from '../engine';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ActiveTurnEntity, ToolExecutionEntity } from '../persistence/entities';
 import { TurnRegistry } from './turn-registry.service';
+import { TurnReattachRegistry } from './turn-reattach.registry';
 import { TurnWatchdogService } from './turn-watchdog.service';
 import { TurnStreamReaperService } from './turn-stream-reaper.service';
 import { CONTAINER_ENGINE } from './container-engine.port';
@@ -40,6 +41,7 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
     SandboxRefsService,
     SandboxActivityRegistry,
     TurnRegistry,
+    TurnReattachRegistry,
     TurnWatchdogService,
     TurnStreamReaperService,
     RedisEngineRunner,
@@ -54,6 +56,7 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
     SandboxRefsService,
     SandboxActivityRegistry,
     TurnRegistry,
+    TurnReattachRegistry,
     RedisEngineRunner,
   ],
 })

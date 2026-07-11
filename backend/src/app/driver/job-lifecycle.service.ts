@@ -82,7 +82,7 @@ export class ProvisioningNotReadyError extends Error {
  * `thread_sandboxes` row is pure INFRA (worktree path + container + chat session + lifecycle).
  *
  *   1. `createJob` — persist the `threads` row, then provision the sandbox: cut the worktree AND the
- *      thread's feature branch (`atlas/thread-<id>`) at create, attach a thread-keyed container.
+ *      thread's feature branch (`feature/<id>`) at create, attach a thread-keyed container.
  *   2. `ensureContainer` — every turn calls this first: reuse the warm container, or re-attach a cold
  *      one against the durable worktree, returning `wasReset` so a resumed turn knows its runtime is fresh.
  *   3. `reapIdle` — detach idle containers past the TTL (worktree survives).
@@ -843,7 +843,7 @@ export class JobLifecycleService {
       // IS a branch from the start (one branch / one PR per thread). The THREAD owns the feature branch
       // (single source of truth the driver builds on).
       // Host-named canonical branch: honors the repo's optional `branch_prefix` (falling back to the
-      // historical `atlas/thread-` default) so a repo can enforce its own convention (e.g. `feat/`).
+      // neutral `feature/` default) so a repo can enforce its own convention (e.g. `feat/`).
       const featureBranch = computeFeatureBranchName(project, thread.id);
       const baseSandboxInput = (await this.git.hasSubmodules(projectRepo))
         ? await this.git.createBaseClone(projectRepo, thread.id)
