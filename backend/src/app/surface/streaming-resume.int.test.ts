@@ -160,7 +160,7 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     // (2) A client that connects NOW (e.g. after a refresh) replays that snapshot the instant it subscribes.
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
-      .events(repoId)
+      .events(ORG_ID, repoId)
       .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
     const snapshotFrame = frames.find(
       (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'snapshot',

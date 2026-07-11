@@ -3,7 +3,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { OrganizationEntity, OrgClaudeCredentialEntity } from '../persistence/entities';
+import {
+  OrganizationEntity,
+  OrgClaudeCredentialEntity,
+} from '../persistence/entities';
 import { isNewerClaudeCredential } from './claude-credential-freshness';
 import { decryptSecret, encryptSecret, loadSecretsKey } from './secret-cipher';
 
@@ -58,7 +61,10 @@ export class ClaudeCredentialStore {
   /** Every credential row for the org, NO secret values, flagged with which one is selected. */
   async list(orgId: string): Promise<ClaudeCredentialSummary[]> {
     const [rows, org] = await Promise.all([
-      this.repo.find({ where: { org_id: orgId }, order: { created_at: 'ASC' } }),
+      this.repo.find({
+        where: { org_id: orgId },
+        order: { created_at: 'ASC' },
+      }),
       this.orgRepo.findOne({ where: { id: orgId } }),
     ]);
     const selectedId = org?.selected_claude_credential_id ?? null;
@@ -80,13 +86,39 @@ export class ClaudeCredentialStore {
    */
   async getSelectedDecrypted(
     orgId: string,
-  ): Promise<{ id: string; kind: 'setup_token' | 'personal'; secret: string } | null> {
+  ): Promise<{
+    id: string;
+    kind: 'setup_token' | 'personal';
+    secret: string;
+  } | null> {
+    const org = await this.orgRepo.findOne({ where: { id: orgId } });
+    const selectedId = org?.selected_claude_credential_id;
+    if (!selectedId) return null;
+    const row = await this.repo.findOne({
+      where: { id: selectedId, org_id: orgId },
+    });
+    if (!row) return null;
+    return { id: row.id, kind: row.kind, secret: this.decryptToSecret(row) };
+  }
+
+  /**
+   * The SELECTED credential's NON-secret display fields for the usage-panel header — the account email, the
+   * subscription plan, and the human label. NO decryption. Null when nothing is selected or the pointer is
+   * dangling (row deleted since selection).
+   */
+  async getSelectedDisplay(
+    orgId: string,
+  ): Promise<{ accountEmail: string | null; subscriptionType: string | null; label: string } | null> {
     const org = await this.orgRepo.findOne({ where: { id: orgId } });
     const selectedId = org?.selected_claude_credential_id;
     if (!selectedId) return null;
     const row = await this.repo.findOne({ where: { id: selectedId, org_id: orgId } });
     if (!row) return null;
-    return { id: row.id, kind: row.kind, secret: this.decryptToSecret(row) };
+    return {
+      accountEmail: row.account_email,
+      subscriptionType: row.subscription_type,
+      label: row.label,
+    };
   }
 
   /** Decrypt ONE credential row by id (org-scoped) into the injectable secret shape — the by-id sibling of `getSelectedDecrypted`. Null when the row is absent or belongs to another org. */
@@ -104,7 +136,9 @@ export class ClaudeCredentialStore {
     const key = this.key();
     const accessToken = decryptSecret(row.access_token_enc, key);
     if (row.kind === 'setup_token') return accessToken;
-    const refreshToken = row.refresh_token_enc ? decryptSecret(row.refresh_token_enc, key) : undefined;
+    const refreshToken = row.refresh_token_enc
+      ? decryptSecret(row.refresh_token_enc, key)
+      : undefined;
     return JSON.stringify({
       claudeAiOauth: {
         accessToken,
@@ -193,7 +227,10 @@ export class ClaudeCredentialStore {
   }
 
   /** Create a new `setup_token` credential row. Does NOT select it — callers call `setSelected`. */
-  async createSetupToken(orgId: string, p: { label: string; token: string }): Promise<string> {
+  async createSetupToken(
+    orgId: string,
+    p: { label: string; token: string },
+  ): Promise<string> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
     const row = this.repo.create({
       org_id: orgId,
@@ -208,22 +245,37 @@ export class ClaudeCredentialStore {
       status: 'active',
     });
     const saved = await this.repo.save(row);
-    this.logger.log(`created setup-token claude credential for org=${orgId} id=${saved.id}`);
+    this.logger.log(
+      `created setup-token claude credential for org=${orgId} id=${saved.id}`,
+    );
     return saved.id;
   }
 
-  /** Point the org's active credential at `credentialId`. Throws if it doesn't belong to the org. */
-  async setSelected(orgId: string, credentialId: string): Promise<void> {
-    const row = await this.repo.findOne({ where: { id: credentialId, org_id: orgId } });
+  /** Point the org's active credential at `credentialId`. Throws if it doesn't belong to the org. Returns true when the selection changed. */
+  async setSelected(orgId: string, credentialId: string): Promise<boolean> {
+    const [row, org] = await Promise.all([
+      this.repo.findOne({ where: { id: credentialId, org_id: orgId } }),
+      this.orgRepo.findOne({ where: { id: orgId } }),
+    ]);
     if (!row) {
-      throw new Error(`setSelected: no claude credential ${credentialId} for org=${orgId}`);
+      throw new Error(
+        `setSelected: no claude credential ${credentialId} for org=${orgId}`,
+      );
     }
-    await this.orgRepo.update({ id: orgId }, { selected_claude_credential_id: credentialId });
+    const changed = org?.selected_claude_credential_id !== credentialId;
+    await this.orgRepo.update(
+      { id: orgId },
+      { selected_claude_credential_id: credentialId },
+    );
+    return changed;
   }
 
-  /** Delete a credential row. The FK `ON DELETE SET NULL` clears the org's selection automatically. */
-  async remove(orgId: string, id: string): Promise<void> {
-    await this.repo.delete({ id, org_id: orgId });
+  /** Delete a credential row. The FK `ON DELETE SET NULL` clears the org's selection automatically. Returns true when the selected row was deleted. */
+  async remove(orgId: string, id: string): Promise<boolean> {
+    const org = await this.orgRepo.findOne({ where: { id: orgId } });
+    const wasSelected = org?.selected_claude_credential_id === id;
+    const result = await this.repo.delete({ id, org_id: orgId });
+    return wasSelected && (result.affected ?? 0) > 0;
   }
 
   /**
@@ -231,28 +283,50 @@ export class ClaudeCredentialStore {
    * canonical "Imported setup-token" row per org (never accumulating duplicates on repeated legacy PUTs)
    * and selects it, matching the migration's imported label.
    */
-  async upsertLegacySetupToken(orgId: string, token: string): Promise<void> {
+  async upsertLegacySetupToken(orgId: string, token: string): Promise<boolean> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
-    const rowId = await this.dataSource.transaction(async (m) => {
-      const existing = await m.findOne(OrgClaudeCredentialEntity, {
-        where: { org_id: orgId, kind: 'setup_token', label: LEGACY_SETUP_TOKEN_LABEL },
-      });
-      const row =
-        existing ??
-        m.create(OrgClaudeCredentialEntity, {
-          org_id: orgId,
-          label: LEGACY_SETUP_TOKEN_LABEL,
-          kind: 'setup_token',
-          refresh_token_enc: null,
-          expires_at: null,
-          status: 'active',
+    const org = await this.orgRepo.findOne({ where: { id: orgId } });
+    const { rowId, secretChanged } = await this.dataSource.transaction(
+      async (m) => {
+        const existing = await m.findOne(OrgClaudeCredentialEntity, {
+          where: {
+            org_id: orgId,
+            kind: 'setup_token',
+            label: LEGACY_SETUP_TOKEN_LABEL,
+          },
         });
-      row.access_token_enc = encryptSecret(token, key);
-      const saved = await m.save(row);
-      return saved.id;
-    });
-    await this.orgRepo.update({ id: orgId }, { selected_claude_credential_id: rowId });
-    this.logger.log(`upserted legacy setup-token claude credential for org=${orgId} id=${rowId}`);
+        let secretChanged = true;
+        if (existing) {
+          try {
+            secretChanged =
+              decryptSecret(existing.access_token_enc, key) !== token;
+          } catch {
+            secretChanged = true;
+          }
+        }
+        const row =
+          existing ??
+          m.create(OrgClaudeCredentialEntity, {
+            org_id: orgId,
+            label: LEGACY_SETUP_TOKEN_LABEL,
+            kind: 'setup_token',
+            refresh_token_enc: null,
+            expires_at: null,
+            status: 'active',
+          });
+        row.access_token_enc = encryptSecret(token, key);
+        const saved = await m.save(row);
+        return { rowId: saved.id, secretChanged };
+      },
+    );
+    await this.orgRepo.update(
+      { id: orgId },
+      { selected_claude_credential_id: rowId },
+    );
+    this.logger.log(
+      `upserted legacy setup-token claude credential for org=${orgId} id=${rowId}`,
+    );
+    return secretChanged || org?.selected_claude_credential_id !== rowId;
   }
 
   /**
@@ -287,12 +361,15 @@ export class ClaudeCredentialStore {
       row.status = 'active';
       row.last_refreshed_at = new Date();
       if (oauth.scopes !== undefined) row.scopes = oauth.scopes.join(' ');
-      if (oauth.subscriptionType !== undefined) row.subscription_type = oauth.subscriptionType;
+      if (oauth.subscriptionType !== undefined)
+        row.subscription_type = oauth.subscriptionType;
       await m.save(row);
       return true;
     });
     if (wrote) {
-      this.logger.log(`advanced claude credential for org=${orgId} id=${credentialId}`);
+      this.logger.log(
+        `advanced claude credential for org=${orgId} id=${credentialId}`,
+      );
     }
   }
 }
@@ -308,7 +385,9 @@ type ClaudeOauth = {
 /** Parse + shape-validate a `{claudeAiOauth:{…}}` refreshed blob; null on malformed input (never throws). */
 function parseClaudeOauth(secret: string): ClaudeOauth | null {
   try {
-    const oauth = (JSON.parse(secret) as { claudeAiOauth?: Partial<ClaudeOauth> }).claudeAiOauth;
+    const oauth = (
+      JSON.parse(secret) as { claudeAiOauth?: Partial<ClaudeOauth> }
+    ).claudeAiOauth;
     if (
       !oauth ||
       typeof oauth.accessToken !== 'string' ||

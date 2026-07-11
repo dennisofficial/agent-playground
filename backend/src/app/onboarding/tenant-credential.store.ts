@@ -173,23 +173,29 @@ export class TenantCredentialStore {
     window: StoredUsageWindow,
     fetchedAt: number,
     scope = '*',
-  ): Promise<void> {
-    await this.dataSource.transaction(async (m) => {
+  ): Promise<boolean> {
+    return await this.dataSource.transaction(async (m) => {
       const row = await m.findOne(OrgCredentialsEntity, {
         where: { org_id: orgId, scope },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!row) return;
+      if (!row) return false;
       const snapshot: ClaudeUsageSnapshot = row.claude_usage_snapshot ?? { windows: {}, fetchedAt: 0 };
       const existing = snapshot.windows[key];
       if (existing && existing.utilization === window.utilization && existing.resetsAt === window.resetsAt) {
-        return; // unchanged — skip the write
+        return false; // unchanged — skip the write
       }
       snapshot.windows = { ...snapshot.windows, [key]: window };
       snapshot.fetchedAt = fetchedAt;
       row.claude_usage_snapshot = snapshot;
       await m.save(row);
+      return true;
     });
+  }
+
+  /** Drop the org's harvested usage snapshot (set the nullable column null) — used on a Claude account switch so the ring re-reads the new account from scratch. */
+  async clearClaudeUsageSnapshot(orgId: string, scope = '*'): Promise<void> {
+    await this.repo.update({ org_id: orgId, scope }, { claude_usage_snapshot: null });
   }
 
   private decryptRow(row: OrgCredentialsEntity): TenantCredentials {

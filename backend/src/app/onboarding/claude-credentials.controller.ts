@@ -104,7 +104,8 @@ export class ClaudeCredentialsController {
 
     let rows = await this.store.list(org.id);
     if (rows.length === 1) {
-      await this.store.setSelected(org.id, id);
+      const changed = await this.store.setSelected(org.id, id);
+      if (changed) await this.usageService.invalidate(org.id);
       rows = await this.store.list(org.id); // re-read so the returned summary's isSelected is accurate
     }
     await this.onboarding.tryActivate(org.id);
@@ -183,7 +184,8 @@ export class ClaudeCredentialsController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Body() body: SelectCredentialDto,
   ): Promise<{ ok: true }> {
-    await this.store.setSelected(org.id, body.credentialId);
+    const changed = await this.store.setSelected(org.id, body.credentialId);
+    if (changed) await this.usageService.invalidate(org.id);
     await this.onboarding.tryActivate(org.id);
     return { ok: true };
   }
@@ -194,7 +196,8 @@ export class ClaudeCredentialsController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('id') id: string,
   ): Promise<{ ok: true }> {
-    await this.store.remove(org.id, id);
+    const changed = await this.store.remove(org.id, id);
+    if (changed) await this.usageService.invalidate(org.id);
     return { ok: true };
   }
 

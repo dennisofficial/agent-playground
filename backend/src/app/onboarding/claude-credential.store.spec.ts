@@ -63,6 +63,7 @@ function fakeDb(): {
   const del = (where: { id: string; org_id: string }) => {
     const row = findOne({ where });
     if (row) rows.delete(row.id);
+    return { affected: row ? 1 : 0, raw: {} };
   };
 
   const repo = {
@@ -79,7 +80,7 @@ function fakeDb(): {
       return save(row);
     },
     async delete(where: { id: string; org_id: string }) {
-      del(where);
+      return del(where);
     },
   } as unknown as Repository<OrgClaudeCredentialEntity>;
 
@@ -384,6 +385,41 @@ describe('ClaudeCredentialStore', () => {
     ]);
   });
 
+  it('setSelected reports whether the selected credential changed', async () => {
+    const { store, orgs } = makeStore();
+    orgs.set('T1', {
+      id: 'T1',
+      selected_claude_credential_id: null,
+    } as OrganizationEntity);
+    const id = await store.createSetupToken('T1', {
+      label: 'one',
+      token: 'sk-1',
+    });
+
+    await expect(store.setSelected('T1', id)).resolves.toBe(true);
+    await expect(store.setSelected('T1', id)).resolves.toBe(false);
+  });
+
+  it('remove reports true only when the deleted credential was selected', async () => {
+    const { store, orgs } = makeStore();
+    orgs.set('T1', {
+      id: 'T1',
+      selected_claude_credential_id: null,
+    } as OrganizationEntity);
+    const selected = await store.createSetupToken('T1', {
+      label: 'selected',
+      token: 'sk-1',
+    });
+    const unselected = await store.createSetupToken('T1', {
+      label: 'other',
+      token: 'sk-2',
+    });
+    await store.setSelected('T1', selected);
+
+    await expect(store.remove('T1', unselected)).resolves.toBe(false);
+    await expect(store.remove('T1', selected)).resolves.toBe(true);
+  });
+
   describe('advanceClaudeCredential (atomic monotonic write-back)', () => {
     it('advances a PERSONAL credential to a blob with a NEWER expiresAt', async () => {
       const { store, orgs } = makeStore();
@@ -493,6 +529,24 @@ describe('ClaudeCredentialStore', () => {
 
       const sel = await store.getSelectedDecrypted('T1');
       expect(sel?.secret).toBe('sk-second');
+    });
+
+    it('reports a usage-relevant change only when the selected legacy setup-token changed', async () => {
+      const { store, orgs } = makeStore();
+      orgs.set('T1', {
+        id: 'T1',
+        selected_claude_credential_id: null,
+      } as OrganizationEntity);
+
+      await expect(
+        store.upsertLegacySetupToken('T1', 'sk-first'),
+      ).resolves.toBe(true);
+      await expect(
+        store.upsertLegacySetupToken('T1', 'sk-first'),
+      ).resolves.toBe(false);
+      await expect(
+        store.upsertLegacySetupToken('T1', 'sk-second'),
+      ).resolves.toBe(true);
     });
   });
 
