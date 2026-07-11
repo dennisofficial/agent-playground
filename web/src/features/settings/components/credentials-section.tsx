@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
+import { CredentialUsageRing } from "@/features/job-workspace/usage-ring";
 import {
   useAddClaudeCredential,
   useClaudeCredentials,
@@ -382,6 +383,7 @@ function ClaudeCredentialsManager({
           {credentials.map((cred) => (
             <ClaudeCredentialRow
               key={cred.id}
+              orgId={orgId}
               cred={cred}
               isOwner={isOwner}
               onSelect={() => select.mutate(cred.id)}
@@ -412,6 +414,7 @@ function ClaudeCredentialsManager({
 
 /** One credential row: selected radio, label/badge/status, meta line, and (owner-only) delete. */
 function ClaudeCredentialRow({
+  orgId,
   cred,
   isOwner,
   onSelect,
@@ -420,6 +423,7 @@ function ClaudeCredentialRow({
   deletePending,
   deleteError,
 }: {
+  orgId: string;
   cred: ClaudeCredential;
   isOwner: boolean;
   onSelect: () => void;
@@ -499,6 +503,12 @@ function ClaudeCredentialRow({
           <p className="mt-1.5 text-[11px] text-red">{deleteError}</p>
         ) : null}
       </div>
+
+      {cred.kind === "personal" ? (
+        <div className="flex shrink-0 items-center pt-0.5">
+          <CredentialUsageRing orgId={orgId} credentialId={cred.id} />
+        </div>
+      ) : null}
 
       {isOwner ? (
         <button
