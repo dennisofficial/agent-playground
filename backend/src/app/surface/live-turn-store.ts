@@ -154,6 +154,17 @@ export class LiveTurnStore {
     this.turns.get(channel)?.delete(this.key(jobId, lane));
   }
 
+  /**
+   * Silently drop a lane's in-flight buffer WITHOUT fanning a turn_end (unlike `end`). Used before a
+   * reattach's '0-0' replay so the rebuild starts from empty: the next push sees isNew and fans a fresh
+   * turn_start. We must NOT fan turn_end here — it would trigger the client's async reconcile
+   * (reconcileNow().then(endLiveTurn)) and race the replay. Clients drop their stale buffer instead when the
+   * fresh turn_start lands (job-stream turn_start clears blocks — Thread 1b).
+   */
+  reset(channel: string, jobId: string, lane: string = MAIN_LANE): void {
+    this.turns.get(channel)?.delete(this.key(jobId, lane));
+  }
+
   /** The current cumulative snapshot for one turn lane (or null when no turn is in flight). */
   snapshot(channel: string, jobId: string, lane: string = MAIN_LANE): LiveTurnSnapshot | null {
     const state = this.turns.get(channel)?.get(this.key(jobId, lane));

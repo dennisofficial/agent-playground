@@ -66,6 +66,70 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
   });
 });
 
+describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEAN lane)', () => {
+  it('reset drops the lane WITHOUT fanning a turn_end (unlike end)', () => {
+    const store = new LiveTurnStore();
+    const frames: LiveStreamFrame[] = [];
+    const sub = store.stream$.subscribe((f) => frames.push(f));
+
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
+    expect(store.snapshot(REPO, THREAD)).not.toBeNull();
+
+    store.reset(REPO, THREAD);
+    sub.unsubscribe();
+
+    // The lane is gone, and — crucially — no turn_end frame was fanned (which would race the client's
+    // async reconcileNow().then(endLiveTurn)). Contrast with `end`, which DOES emit turn_end.
+    expect(store.snapshot(REPO, THREAD)).toBeNull();
+    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end')).toBe(false);
+  });
+
+  it('end DOES fan a turn_end (the contrast that makes reset’s silence meaningful)', () => {
+    const store = new LiveTurnStore();
+    const frames: LiveStreamFrame[] = [];
+    const sub = store.stream$.subscribe((f) => frames.push(f));
+
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
+    store.end(REPO, THREAD);
+    sub.unsubscribe();
+
+    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end')).toBe(true);
+  });
+
+  it('strand → reset → replay rebuilds ONE open text block + a fresh turn_start (baseline strands two)', () => {
+    // BASELINE (no reset): a prior subscription died with an open text block stranded on the lane; the
+    // reattach replays the turn's history from '0-0' (an adaptive-thinking interleave: thinking then text)
+    // ONTO that strand — so the stranded text and the replayed text both sit open at once (two carets).
+    const baseline = new LiveTurnStore();
+    baseline.push(REPO, THREAD, { kind: 'text_delta', text: 'stranded' }); // prior life, never finalized
+    baseline.push(REPO, THREAD, { kind: 'thinking_delta', text: 'plan' }); // replay from '0-0'
+    baseline.push(REPO, THREAD, { kind: 'text_delta', text: 'fresh' });
+    const strandedOpenText = baseline
+      .snapshot(REPO, THREAD)!
+      .blocks.filter((b) => b.kind === 'text' && !b.done);
+    expect(strandedOpenText).toHaveLength(2); // the bug: two open text blocks
+
+    // FIXED (reset before replay): the strand is cleared, so the replay rebuilds exactly what its events
+    // describe — one open text block — and, because the lane is now empty, the first push fans a fresh
+    // turn_start (isNew).
+    const store = new LiveTurnStore();
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'stranded' }); // prior life
+    store.reset(REPO, THREAD);
+
+    const frames: LiveStreamFrame[] = [];
+    const sub = store.stream$.subscribe((f) => frames.push(f));
+    store.push(REPO, THREAD, { kind: 'thinking_delta', text: 'plan' }); // replay from '0-0'
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'fresh' });
+    sub.unsubscribe();
+
+    const openText = store.snapshot(REPO, THREAD)!.blocks.filter((b) => b.kind === 'text' && !b.done);
+    expect(openText).toHaveLength(1);
+    expect(openText[0].text).toBe('fresh');
+    // A fresh turn_start fired after the reset (isNew) so a connected client rebuilds cleanly.
+    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_start')).toBe(true);
+  });
+});
+
 describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge live blocks vs durable rows)', () => {
   it('fans a strictly-increasing emittedAt on each block-creating delta, mirrored inside event.emittedAt', () => {
     const store = new LiveTurnStore();
