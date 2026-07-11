@@ -18,6 +18,7 @@ import { Spinner } from "@/components/ui/spinner";
 import {
   useAddClaudeCredential,
   useClaudeCredentials,
+  useCodexAccount,
   useCreateClaudeAuthorizeUrl,
   useDeleteClaudeCredential,
   useOrgCredentials,
@@ -56,6 +57,7 @@ export function CredentialsSection({
   const save = useSaveCredentials(orgId);
   const onSave = (body: SaveCredentialsBody) => save.mutateAsync(body);
   const isOwner = role === "owner";
+  const { data: codex } = useCodexAccount(orgId, isOwner);
 
   if (isLoading) {
     return <p className="text-[13px] text-faint">Loading credentials…</p>;
@@ -204,7 +206,11 @@ export function CredentialsSection({
       <CredentialCard
         icon={<Terminal size={15} />}
         title="Codex subscription"
-        sub="Optional second coding engine"
+        sub={
+          isOwner && presence.hasCodex && codex?.accountEmail
+            ? codex.accountEmail
+            : "Optional second coding engine"
+        }
         present={presence.hasCodex}
         pill={
           presence.hasCodex
@@ -624,19 +630,11 @@ function formatClaudeDuration(ms: number): string {
 function AddClaudePersonalCard({ orgId }: { orgId: string }) {
   const createAuthorizeUrl = useCreateClaudeAuthorizeUrl(orgId);
   const addCredential = useAddClaudeCredential(orgId);
-  const [label, setLabel] = useState("");
-  const [pending, setPending] = useState<{ state: string; label: string } | null>(
-    null,
-  );
+  const [pending, setPending] = useState<{ state: string } | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
 
   async function openLogin() {
-    const trimmedLabel = label.trim();
-    if (!trimmedLabel) {
-      setError("Enter a label first.");
-      return;
-    }
     setError("");
     // Open the window synchronously within the click handler so popup blockers don't block it after the
     // mutation's network round-trip loses the user gesture. It must open WITHOUT the "noopener" feature —
@@ -645,15 +643,13 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
     const loginWindow = window.open("about:blank", "_blank");
     if (loginWindow) loginWindow.opener = null;
     try {
-      const result = await createAuthorizeUrl.mutateAsync({
-        label: trimmedLabel,
-      });
+      const result = await createAuthorizeUrl.mutateAsync();
       if (loginWindow) {
         loginWindow.location.href = result.url;
       } else {
         window.open(result.url, "_blank", "noopener,noreferrer");
       }
-      setPending({ state: result.state, label: result.label });
+      setPending({ state: result.state });
     } catch (e) {
       loginWindow?.close();
       setError((e as Error)?.message || "Could not start Claude login.");
@@ -672,11 +668,9 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
       await addCredential.mutateAsync({
         code: trimmedCode,
         state: pending.state,
-        label: pending.label,
       });
       setPending(null);
       setCode("");
-      setLabel("");
     } catch (e) {
       setError((e as Error)?.message || "That code looks expired or invalid.");
     }
@@ -712,19 +706,6 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-dim">
             Log in with Claude
           </p>
-          <div className="mb-2.5">
-            <label className="mb-1.5 block text-[12px] font-medium text-dim">
-              Label
-            </label>
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              disabled={Boolean(pending)}
-              type="text"
-              placeholder="e.g. Dennis — MacBook"
-              className="w-full rounded-md border border-border-2 bg-surface-2 px-3 py-2 text-[12.5px] text-text outline-none placeholder:text-faint disabled:opacity-60"
-            />
-          </div>
           <button
             type="button"
             onClick={openLogin}
