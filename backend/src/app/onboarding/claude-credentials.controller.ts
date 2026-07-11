@@ -28,6 +28,7 @@ import {
   ClaudeCredentialStore,
   type ClaudeCredentialSummary,
 } from './claude-credential.store';
+import { OauthUsageService } from './oauth-usage.service';
 import { OnboardingService } from './onboarding.service';
 
 /** A `claude setup-token`'s literal prefix — the only shape accepted for the setup-token creation path. */
@@ -66,6 +67,7 @@ export class ClaudeCredentialsController {
     private readonly pkce: ClaudeOAuthPkceStore,
     private readonly onboarding: OnboardingService,
     private readonly env: EnvService,
+    private readonly usage: OauthUsageService,
   ) {}
 
   private config(): ClaudeOAuthConfig {
@@ -112,6 +114,7 @@ export class ClaudeCredentialsController {
     let rows = await this.store.list(org.id);
     if (rows.length === 1) {
       await this.store.setSelected(org.id, id);
+      await this.usage.invalidate(org.id);
       rows = await this.store.list(org.id); // re-read so the returned summary's isSelected is accurate
     }
     await this.onboarding.tryActivate(org.id);
@@ -188,6 +191,7 @@ export class ClaudeCredentialsController {
     @Body() body: SelectCredentialDto,
   ): Promise<{ ok: true }> {
     await this.store.setSelected(org.id, body.credentialId);
+    await this.usage.invalidate(org.id);
     await this.onboarding.tryActivate(org.id);
     return { ok: true };
   }
@@ -199,6 +203,7 @@ export class ClaudeCredentialsController {
     @Param('id') id: string,
   ): Promise<{ ok: true }> {
     await this.store.remove(org.id, id);
+    await this.usage.invalidate(org.id);
     return { ok: true };
   }
 }

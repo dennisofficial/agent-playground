@@ -163,6 +163,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       {} as never, // repos
       {} as never, // threadTitle
       { stream$: new Subject() } as never, // ticketEvents
+      { stream$: new Subject() } as never, // usageBus
       { available: false } as never, // realtime
       { isLeader: () => true, getState: () => 'leader', isDraining: () => false } as never, // election
       { dispatch: async () => undefined } as never, // dispatcher (JOB_DISPATCHER)
@@ -190,7 +191,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     // The client connects (reconnect) → subscribe to the repo SSE.
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
-      .events(REPO)
+      .events('org-1', REPO)
       .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
 
     // 1) The FIRST thing it receives is a snapshot reflecting everything streamed so far ("Hello").
@@ -231,7 +232,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
 
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
-      .events(REPO)
+      .events('org-1', REPO)
       .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
 
     // 1) The snapshot the controller fans (blocks: s.blocks) carries emittedAt on each block.
@@ -261,7 +262,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     store.end(REPO, THREAD);
 
     const frames: Array<Record<string, unknown>> = [];
-    const sub = controller.events(REPO).subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
+    const sub = controller.events('org-1', REPO).subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
     expect(frames.filter((f) => f.type === 'stream')).toHaveLength(0);
     sub.unsubscribe();
   });

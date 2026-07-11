@@ -5,6 +5,7 @@ import type { ClaudeUsageWindowKey, OrgUsage, UsageWindow } from '@workspace/sha
 import { resetEpochToIso } from '../engine/session-limit';
 import { CredentialResolver } from './credential-resolver.service';
 import { TenantCredentialStore } from './tenant-credential.store';
+import { UsageEventBus } from './usage-event-bus';
 
 /** The four subscription rate-limit windows the SDK/API report, in `OrgUsage`'s field names. */
 type WindowKey = ClaudeUsageWindowKey;
@@ -60,6 +61,7 @@ export class OauthUsageService {
   constructor(
     private readonly credentials: CredentialResolver,
     private readonly store: TenantCredentialStore,
+    private readonly bus: UsageEventBus,
   ) {}
 
   /**
@@ -86,7 +88,8 @@ export class OauthUsageService {
       if (!rateLimitType) return;
       const key = RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType];
       if (!key) return;
-      await this.store.mergeClaudeUsageWindow(orgId, key, { utilization, resetsAt }, Date.now());
+      const changed = await this.store.mergeClaudeUsageWindow(orgId, key, { utilization, resetsAt }, Date.now());
+      if (changed) void this.publishHarvested(orgId);
     } catch (err) {
       this.logger.warn(`applyHarvest failed org=${orgId}: ${err}`);
     }
@@ -169,6 +172,20 @@ export class OauthUsageService {
   }
 
   /**
+   * Called when the org's SELECTED Claude credential changes (select / delete-selected / first-credential
+   * auto-select). Drops the harvested snapshot AND the in-memory live cache so `get()` re-reads the
+   * newly-selected account from scratch, then pushes a fresh snapshot to connected browsers. Best-effort:
+   * the publish is fire-and-forget so it never blocks or fails the switch.
+   */
+  async invalidate(orgId: string): Promise<void> {
+    this.liveCache.delete(orgId);
+    await this.store.clearClaudeUsageSnapshot(orgId);
+    void this.get(orgId)
+      .then((usage) => this.bus.publish({ orgId, usage }))
+      .catch(() => {});
+  }
+
+  /**
    * The binding window's `resetsAt` for the park logic — prefers `rateLimitType`'s window, else
    * `fiveHour`. Pure snapshot read (no HTTP): the park path needs an answer NOW, not after a 10s probe.
    */
@@ -186,6 +203,30 @@ export class OauthUsageService {
     const usage = await this.fetchLive(orgId);
     this.liveCache.set(orgId, { usage, fetchedAtMs: Date.now() });
     return usage;
+  }
+
+  /**
+   * Push the current HARVESTED snapshot to browsers after a live quota burn — harvested windows only, no HTTP
+   * fetch (that rides the hot turn path). Best-effort: any failure is swallowed so it never breaks harvesting.
+   */
+  private async publishHarvested(orgId: string): Promise<void> {
+    try {
+      const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
+      if (!snapshot) return;
+      const windows = snapshot.windows;
+      const usage: OrgUsage = {
+        fiveHour: windows.fiveHour ?? null,
+        sevenDay: windows.sevenDay ?? null,
+        sevenDayOpus: windows.sevenDayOpus ?? null,
+        sevenDaySonnet: windows.sevenDaySonnet ?? null,
+        fetchedAt: new Date(snapshot.fetchedAt).toISOString(),
+        source: 'harvested',
+        ok: true,
+      };
+      this.bus.publish({ orgId, usage });
+    } catch (err) {
+      this.logger.warn(`publishHarvested failed org=${orgId}: ${err}`);
+    }
   }
 }
 
