@@ -946,6 +946,31 @@ export class SandboxManager implements SandboxProvider {
   }
 
   /**
+   * Tear down ALL supervised services in a job's live container by running `atlas-svc stop-all` over
+   * `docker exec`, as the agent's exec-uid so it can signal the process groups the agent started (the
+   * supervisor state lives at the fixed in-container `/.atlas/supervisor`, so this reaches exactly those
+   * services). Best-effort — a missing/stopped container or a non-zero exit is returned as `{ ok:false }`,
+   * never thrown; the driver logs it and moves on. See {@link SandboxProvider.stopAllServices}.
+   */
+  async stopAllServices(jobId: string): Promise<{ ok: boolean; reason?: string }> {
+    const name = this.containerName('', '', '', jobId);
+    const info = await this.engine.inspect(name);
+    if (!info || info.state !== 'running') {
+      return { ok: false, reason: 'the sandbox container is not running' };
+    }
+    try {
+      const out = await this.engine.exec(info.id, ['/usr/local/bin/atlas-svc', 'stop-all'], {
+        ...(hostExecUser() ? { user: hostExecUser() } : {}),
+      });
+      return out.exitCode === 0
+        ? { ok: true }
+        : { ok: false, reason: `atlas-svc stop-all exited ${out.exitCode}` };
+    } catch (err) {
+      return { ok: false, reason: `atlas-svc stop-all failed: ${String(err)}` };
+    }
+  }
+
+  /**
    * Locate a thread's sandbox home dir on the host — `<agentHomeRoot>/sandboxes/atlas-sbx-…-thread-<id>`.
    * GLOBS the sandboxes root for the `-thread-<…>` suffix that is a PREFIX of `jobId` (tolerates the
    * container-name `part()` cap truncating the tail). Null if nothing is on disk yet (no sandbox ever

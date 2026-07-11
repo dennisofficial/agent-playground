@@ -943,6 +943,9 @@ function assemble(
       await store.markHaltWaked(threadId, gen);
     },
   } as unknown as BrainGateway;
+  // Spy for the per-thread service teardown (`atlas-svc stop-all` via the sandbox provider). The driver
+  // fires it on a clean thread `done`, never on a blocked/halt outcome.
+  const stopAllServices = vi.fn().mockResolvedValue({ ok: true });
   const driver = new ThreadDriver(
     store,
     repos,
@@ -963,6 +966,7 @@ function assemble(
       brainTranscriptProjectsDir: () => null,
       supervisorDirHost: () => null,
       probeLiveness: async () => ({ status: 'unknown' as const }),
+      stopAllServices,
       sandboxContainerName: () => 'atlas-sbx-thread-test',
       bridgeCaddyToSandbox: async () => undefined,
       unbridgeCaddyFromSandbox: async () => undefined,
@@ -1071,6 +1075,7 @@ function assemble(
     electionState,
     judge,
     wakes,
+    stopAllServices,
   };
 }
 
@@ -1108,6 +1113,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // Both threads are done with a handoff; the SECOND thread received the first's handoff.
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
     expect(state.threads[1].handoffIn).toContain('Backend');
+
+    // Each completed thread frees its test services deterministically (`atlas-svc stop-all` via the sandbox
+    // provider) — once per thread, keyed by jobId — so a thread's stack doesn't sit resident all build long.
+    expect(h.stopAllServices).toHaveBeenCalledTimes(2);
+    expect(h.stopAllServices).toHaveBeenCalledWith(state.job.id);
 
     // ONE branch — threads stacked on the same feature branch (the host never pushes; Atlas pushes
     // in-sandbox as part of the ship turn, which ran).
@@ -1736,6 +1746,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       h.posts.some((p) => p.includes('without asserting completion')),
     ).toBe(true); // a durable halt card, never a silent dead-end
     expect(h.store.materializeReviewChildren).not.toHaveBeenCalled(); // review skipped on a halt
+    expect(h.stopAllServices).not.toHaveBeenCalled(); // no service teardown on a halt (only on clean done)
   });
 
   it('writes the halt trail to /context/generated (host-owned), NOT the git worktree (ADR 0004 relocation)', async () => {
