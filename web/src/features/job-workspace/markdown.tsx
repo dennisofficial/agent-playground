@@ -411,12 +411,13 @@ function Mermaid({ chart }: { chart: string }) {
         }
       >
         {/* Fit to width, but never upscale past the intrinsic size — so the diagram never breaks the doc
-            layout, and the whole thing is click-to-expand for a readable view. The min-height matches the
-            loading placeholder so the async render doesn't shift the row's height (see mermaidReservePx). */}
+            layout, and the whole thing is click-to-expand for a readable view. The box hugs the SVG: it's
+            forced to width:100%/height:auto (below), so it already carries its own aspect ratio — no height
+            reserve or vertical centering here, which would leave dead space around wide/short diagrams. */}
         <div
           onClick={() => setZoomed(true)}
-          className="mx-auto flex cursor-zoom-in flex-col justify-center p-4 [&>svg]:!h-auto [&>svg]:!w-full"
-          style={{ maxWidth: result.w || undefined, minHeight: mermaidReservePx(chart) }}
+          className="mx-auto flex cursor-zoom-in flex-col p-4 [&>svg]:!h-auto [&>svg]:!w-full"
+          style={{ maxWidth: result.w || undefined }}
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
           dangerouslySetInnerHTML={{ __html: result.svg }}
         />
