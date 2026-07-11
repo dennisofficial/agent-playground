@@ -43,7 +43,12 @@ import {
   haltThreadIdx,
 } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
-import { NavigatorApproveButton, NavigatorShipButton } from "./spec-approval";
+import {
+  NavigatorApproveButton,
+  NavigatorPreviewButton,
+  NavigatorShipButton,
+} from "./spec-approval";
+import { canOfferPreview } from "./preview-request";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
@@ -408,6 +413,14 @@ export function Navigator({
         {st === "awaiting_ship_review" && shipValue ? (
           <div className="mt-2">
             <NavigatorShipButton jobRef={jobRef} value={shipValue} />
+          </div>
+        ) : null}
+        {/* Spin up preview — persistent across the whole build lifecycle (d4). Gated on build KIND
+            (build-brain only) + a live sandbox branch, NOT status, so it's hidden before there's anything
+            to preview and never on onboarding / external-PR-review jobs. */}
+        {canOfferPreview(meta.kind, job?.featureBranch) ? (
+          <div className="mt-2">
+            <NavigatorPreviewButton jobRef={jobRef} />
           </div>
         ) : null}
       </div>
