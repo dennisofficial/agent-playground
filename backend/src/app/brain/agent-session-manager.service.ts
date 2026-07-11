@@ -954,6 +954,13 @@ export class AgentSessionManager
     // in-flight set can actually quiesce. A no-op (not a throw) — internal callers are fire-and-forget.
     if (this.election.getState() === 'draining') return;
 
+    // A dependency-blocked job is fully parked: no system wake/re-drive should start its brain until the
+    // dependency service first flips it back to `open`.
+    if (await this.isJobBlocked(stimulus.jobId)) {
+      this.logger.log(`job=${stimulus.jobId} is blocked; dropping system turn until it is unblocked`);
+      return;
+    }
+
     // Render this harness seed as a visible transcript row (the console mirrors the agent's turns — every
     // seed the brain reads must be legible). Runs whether the seed steers into a live turn or spawns a
     // fresh one; dedup-protected, so live + boot re-delivery collapse to one row. See {@link persistSeedRow}.
@@ -1220,6 +1227,13 @@ export class AgentSessionManager
   async pumpThread(jobId: string, orgId: string, repoId: string): Promise<void> {
     if (this.election.getState() === 'draining') return;
 
+    // Leave pending operator chat undelivered while the job is dependency-blocked. The unblock wake flips the
+    // job open and the delivery sweep/poke will then carry the queued messages into the brain.
+    if (await this.isJobBlocked(jobId)) {
+      this.logger.log(`job=${jobId} is blocked; parking pending chat delivery`);
+      return;
+    }
+
     const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
     if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
       const pending = await this.stimulusStore
@@ -1441,6 +1455,13 @@ export class AgentSessionManager
     await this.engineRunner.stop(live.turn_id);
     this.logger.log(`stop requested for brain turn ${live.turn_id} (job ${jobId})`);
     return true;
+  }
+
+  private async isJobBlocked(jobId: string): Promise<boolean> {
+    const loadJob = this.store.loadJob?.bind(this.store);
+    if (!loadJob) return false;
+    const job = await loadJob(jobId).catch(() => null);
+    return job?.status === 'blocked';
   }
 
   /**
@@ -1773,6 +1794,10 @@ export class AgentSessionManager
     // this synthetic wake has nothing to do — drop it rather than run a redundant turn on the warm box.
     if (stimulus.seedResetVerify && !this.pendingResetVerify.has(resetKey)) return;
 
+    // The job may have become blocked after this turn was queued. Do not mark chat delivered here; it should
+    // stay pending and run after the dependency wake reopens the job.
+    if (await this.isJobBlocked(stimulus.jobId)) return;
+
     // A composer message NEVER answers an open `ask_question` card — answers come ONLY through the
     // question-card component (`/answer-question`, which stamps the card directly + includes its own
     // free-text "Other…" field). Anything typed in the composer while a card is showing — or queued
@@ -2049,6 +2074,7 @@ export class AgentSessionManager
     const brainJob = await this.store
       .loadJob(stimulus.jobId)
       .catch(() => null);
+    if (brainJob?.status === 'blocked') return;
 
     // Build the host-side tool dispatch table, scoped to this thread. Curated by kind (onboarding/review
     // get build-free subsets — see buildTools).

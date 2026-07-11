@@ -27,15 +27,19 @@ function makeThread(overrides: Partial<InboxThread> = {}): InboxThread {
 
 describe("sectionOf", () => {
   it("maps planning-family statuses to planning", () => {
-    for (const status of ["planning", "plan_review", "triaging"] as JobStatus[]) {
+    for (const status of [
+      "planning",
+      "plan_review",
+      "triaging",
+    ] as JobStatus[]) {
       expect(sectionOf(makeThread({ status }))).toBe("planning");
     }
   });
 
   it("maps awaiting_approval to awaiting and awaiting_ship_review to ready_to_ship", () => {
-    expect(sectionOf(makeThread({ status: "awaiting_approval" as JobStatus }))).toBe(
-      "awaiting",
-    );
+    expect(
+      sectionOf(makeThread({ status: "awaiting_approval" as JobStatus })),
+    ).toBe("awaiting");
     expect(
       sectionOf(makeThread({ status: "awaiting_ship_review" as JobStatus })),
     ).toBe("ready_to_ship");
@@ -47,24 +51,35 @@ describe("sectionOf", () => {
     );
   });
 
+  it("maps blocked to its own blocked section", () => {
+    expect(sectionOf(makeThread({ status: "blocked" as JobStatus }))).toBe(
+      "blocked",
+    );
+  });
+
   it("d1: a running job with pr.state='open' still lands in building, not pr_open", () => {
     const thread = makeThread({
       status: "running",
-      pr: { state: "open", number: 1, mergeable: null, url: "https://example.com/pr/1" },
+      pr: {
+        state: "open",
+        number: 1,
+        mergeable: null,
+        url: "https://example.com/pr/1",
+      },
     });
     expect(sectionOf(thread)).toBe("building");
   });
 
   it("a shipping job (running + shipping) stays in ready_to_ship, not building", () => {
-    expect(
-      sectionOf(makeThread({ status: "running", shipping: true })),
-    ).toBe("ready_to_ship");
+    expect(sectionOf(makeThread({ status: "running", shipping: true }))).toBe(
+      "ready_to_ship",
+    );
   });
 
   it("a normal running job (shipping false) lands in building", () => {
-    expect(
-      sectionOf(makeThread({ status: "running", shipping: false })),
-    ).toBe("building");
+    expect(sectionOf(makeThread({ status: "running", shipping: false }))).toBe(
+      "building",
+    );
   });
 
   it("done with no PR lands in done", () => {
@@ -104,12 +119,22 @@ describe("sectionOf", () => {
 describe("groupThreadsBySection", () => {
   it("omits empty sections and preserves fixed order", () => {
     const threads = [
-      makeThread({ id: "m1", status: "done", pr: { state: "merged", number: null, mergeable: null, url: null } }),
+      makeThread({
+        id: "m1",
+        status: "done",
+        pr: { state: "merged", number: null, mergeable: null, url: null },
+      }),
       makeThread({ id: "p1", status: "planning" }),
+      makeThread({ id: "k1", status: "blocked" }),
       makeThread({ id: "b1", status: "running" }),
     ];
     const groups = groupThreadsBySection(threads);
-    expect(groups.map((g) => g.section)).toEqual(["planning", "building", "merged"]);
+    expect(groups.map((g) => g.section)).toEqual([
+      "planning",
+      "blocked",
+      "building",
+      "merged",
+    ]);
   });
 
   it("drops cancelled/deleting threads entirely", () => {

@@ -439,7 +439,7 @@ export interface CreatedJobRow {
   id: string;
   title: string | null;
   status: string;
-  kind: string;
+  kind: string | null;
   prState: string | null;
   needsYou: boolean;
   createdAt: string;
@@ -456,7 +456,7 @@ export interface JobDetail {
   id: string;
   title: string | null;
   status: string;
-  kind: string;
+  kind: string | null;
   createdBy: JobProvenance | null;
   pr: InboxPr | null;
   needsYou: boolean;

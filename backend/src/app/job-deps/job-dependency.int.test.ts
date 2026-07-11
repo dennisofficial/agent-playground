@@ -182,6 +182,15 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect(wakes).toHaveLength(0); // parked, never started
   });
 
+  it('rejects blocking a job while its brain turn is active', async () => {
+    const blocker = await makeJob({ status: 'running' });
+    const dependent = await makeJob({ activity: 'turn' });
+
+    await expect(
+      service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: blocker.id }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   // ── (c) merge → unblock + clear seed + wake (no note) ─────────────────────────────────────────
   it('(c) onBlockerResolved(merged) unblocks, clears the seed, and wakes with no "didn\'t land" note', async () => {
     const blocker = await makeJob({ status: 'running' });

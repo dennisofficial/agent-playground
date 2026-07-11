@@ -3638,7 +3638,14 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   }
 
   /** A manager wired with only the deps `pumpThread`/`sweepUndeliveredChat` touch; everything else inert. */
-  function makeManager(opts: { pending?: ChatStimulus[]; threads?: Array<{ jobId: string; orgId: string; repoId: string }> } = {}) {
+  function makeManager(opts: {
+    pending?: ChatStimulus[];
+    threads?: Array<{ jobId: string; orgId: string; repoId: string }>;
+    jobStatus?: string;
+  } = {}) {
+    const store = {
+      loadJob: vi.fn().mockResolvedValue({ status: opts.jobStatus ?? 'planning' }),
+    };
     const stimulusStore = {
       eligiblePendingChat: vi.fn().mockResolvedValue(opts.pending ?? []),
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
@@ -3659,7 +3666,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     const election = { getState } as unknown as LeaderElectionService;
     const inert = {} as never;
     const manager = new AgentSessionManager(
-      inert, inert, inert, inert, inert, // store, driverStore, memory, approvals, lifecycle (5)
+      store as never, inert, inert, inert, inert, // store, driverStore, memory, approvals, lifecycle (5)
       engineRunner, // engineRunner (6)
       turnRegistry, // turnRegistry (7)
       inert, inert, inert, // planReview, dispatcher, surface (10)
@@ -3675,7 +3682,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
     );
-    return { manager, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
+    return { manager, store, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
   }
 
   it('a LIVE brain turn: steers every pending message (leases first), never starts a fresh turn', async () => {
@@ -3704,6 +3711,23 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     expect(steer).not.toHaveBeenCalled();
     expect(stimulusStore.leaseChatStimuli).not.toHaveBeenCalled();
+  });
+
+  it('a blocked job parks pending chat without steering, leasing, or starting a fresh turn', async () => {
+    const pending = [pendingRow('s1', 'wait for blocker', new Date('2026-07-02T12:00:00Z'))];
+    const { manager, stimulusStore, runningBrainTurn, steer } = makeManager({
+      pending,
+      jobStatus: 'blocked',
+    });
+    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live' });
+    const runChatTurnSpy = vi.spyOn(manager as never as { runChatTurn: () => void }, 'runChatTurn');
+
+    await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
+
+    expect(stimulusStore.eligiblePendingChat).not.toHaveBeenCalled();
+    expect(stimulusStore.leaseChatStimuli).not.toHaveBeenCalled();
+    expect(steer).not.toHaveBeenCalled();
+    expect(runChatTurnSpy).not.toHaveBeenCalled();
   });
 
   it('NO live turn: coalesces the pending batch into ONE fresh turn and stamps delivery at registration', async () => {

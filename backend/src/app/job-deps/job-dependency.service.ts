@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobDependencyEntity, JobEntity } from '../persistence/entities';
+import { TurnRegistry } from '../sandbox/turn-registry.service';
 
 // A job can be BLOCKED only from a pre-build conversational state; 'blocked' is included so a
 // multi-blocker create_job can add its edges one at a time (the first live blocker parks it; adding
@@ -23,21 +24,21 @@ const HUMAN_RESOLUTION: Record<NonLandedResolution, string> = {
 };
 
 /** A blocker row of a job — the compact projection `blockersOf` returns. */
-export interface JobBlockerRow {
+export type JobBlockerRow = {
   jobId: string;
   title: string | null;
   prState: string | null;
   status: string;
-}
+};
 
 /** A dependent (blocked) job row — the compact projection `dependentsOf` returns. */
-export interface DependentJobRow {
+export type DependentJobRow = {
   id: string;
   org_id: string;
   repo_id: string;
   status: string;
   blocked_seed_message: string | null;
-}
+};
 
 /**
  * JOB DEPENDENCY SERVICE — the single source of truth for job-to-job "blocked by" edges and the wake
@@ -63,6 +64,8 @@ export class JobDependencyService {
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly brainGateway: BrainGateway,
+    @Optional()
+    private readonly turnRegistry?: TurnRegistry,
   ) {}
 
   /**
@@ -126,6 +129,19 @@ export class JobDependencyService {
     if (!BLOCKABLE_STATUSES.has(dependent.status)) {
       throw new BadRequestException(
         `can't block a job that is already building or finished (status: ${dependent.status}); unblock or finish it first`,
+      );
+    }
+
+    if (dependent.activity === 'turn') {
+      throw new BadRequestException(
+        "can't block a job while its brain is currently running; wait for it to stop before blocking it",
+      );
+    }
+
+    const liveTurn = await this.turnRegistry?.runningBrainTurn(jobId).catch(() => null);
+    if (liveTurn?.turn_id) {
+      throw new BadRequestException(
+        "can't block a job while its brain is currently running; wait for it to stop before blocking it",
       );
     }
 

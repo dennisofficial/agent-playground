@@ -186,9 +186,16 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.threads).toHaveLength(1);
     const [sec] = state.threads;
     expect(sec.hasPlan).toBe(true);
-    // Review children are data-driven. Before the review stage materializes child rows, the read model has
-    // no synthetic review lanes; materialized children are covered by the next test.
-    expect(sec.children).toEqual([]);
+    // Before the review stage materializes child rows, the read model still previews the statically-known
+    // post-review fix lane; diff/type-routed review lens rows appear only once materialized.
+    expect(sec.children).toEqual([
+      expect.objectContaining({
+        id: `${thread.id}~post_review`,
+        kind: 'post_review',
+        status: 'pending',
+        lane: `autofix:${thread.id}:fix`,
+      }),
+    ]);
     expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
     expect(sec.steps[0].status).toBe('building');
     expect(sec.steps[1].status).toBe('pending');
@@ -504,6 +511,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       status: 'no_job',
       mainTasks: [],
       mainDefaultFooter: { engine: 'claude', model: 'opus', effort: 'high' },
+      createdBy: null,
+      blockedBy: [],
     });
   });
 
