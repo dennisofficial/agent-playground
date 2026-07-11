@@ -18,6 +18,7 @@ import type {
 import { JobDependencyService } from '../job-deps';
 import { webTicketCard } from '../surface/web-ticket-card';
 import { nextQuestionId } from '../surface/web-question-card';
+import { nextFileRequestId } from '../surface/web-file-request-card';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -891,6 +892,31 @@ export class BrainStoreService {
   // Like ask_question (PER-CARD, no single-slot thread pointer → several file requests may be open at
   // once), but the value is an UPLOAD stored as a file-valued secret + grant (never on the card / in the
   // transcript). No migration: all state lives on the card in the `messages` jsonb.
+
+  /** Load this job's file-request card rows, newest-first — ALL of them (open, provided, or withdrawn). */
+  private async fileRequestCards(jobId: string): Promise<MessageEntity[]> {
+    const rows = await this.messages.find({
+      where: { job_id: jobId, kind: 'card' },
+      order: { created_at: 'DESC' },
+    });
+    return rows.filter(
+      (m) =>
+        (m.card as Record<string, unknown> | null)?.type ===
+        'file_request_card',
+    );
+  }
+
+  /**
+   * Allocate the next stable file-request id for this job — `f1`, `f2`, … — over the existing file-request
+   * card ids (see {@link nextFileRequestId}). Scans ALL file-request card rows (not just open) so numbering
+   * survives a restart and never reuses a withdrawn/provided id. Race-safe in practice: one brain turn runs
+   * at a time and its `request_file` tool calls are awaited in order, so each `openFileRequest` lands before
+   * the next id is allocated.
+   */
+  async nextFileRequestId(jobId: string): Promise<string> {
+    const cards = await this.fileRequestCards(jobId);
+    return nextFileRequestId(cards.map((m) => m.ts ?? ''));
+  }
 
   /** Post a value-free file-request card. No thread pointer + no one-at-a-time gate (multiple may be open). */
   async openFileRequest(
