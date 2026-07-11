@@ -47,6 +47,9 @@ export async function runReadOnlyQuery(
       // releasing without rolling back returns a poisoned connection to the pool. .catch swallows
       // "no transaction in progress".
       await qr.query('ROLLBACK').catch(() => undefined);
+      // A read-only SELECT can still invoke session-level functions (for example advisory locks). Reset
+      // the pooled connection before returning it so one diagnostic query cannot affect the next call.
+      await qr.query('DISCARD ALL').catch(() => undefined);
     }
   } finally {
     await qr.release();
@@ -55,7 +58,12 @@ export async function runReadOnlyQuery(
 
 export async function introspectSchema(
   ds: DataSource,
-): Promise<{ tables: Array<{ table: string; columns: Array<{ name: string; type: string; nullable: boolean }> }> }> {
+): Promise<{
+  tables: Array<{
+    table: string;
+    columns: Array<{ name: string; type: string; nullable: boolean }>;
+  }>;
+}> {
   const rows: Array<{
     table_name: string;
     column_name: string;
@@ -67,13 +75,23 @@ export async function introspectSchema(
       WHERE table_schema = 'public'
       ORDER BY table_name, ordinal_position`,
   );
-  const byTable = new Map<string, Array<{ name: string; type: string; nullable: boolean }>>();
+  const byTable = new Map<
+    string,
+    Array<{ name: string; type: string; nullable: boolean }>
+  >();
   for (const r of rows) {
     const cols = byTable.get(r.table_name) ?? [];
-    cols.push({ name: r.column_name, type: r.data_type, nullable: r.is_nullable === 'YES' });
+    cols.push({
+      name: r.column_name,
+      type: r.data_type,
+      nullable: r.is_nullable === 'YES',
+    });
     byTable.set(r.table_name, cols);
   }
   return {
-    tables: [...byTable.entries()].map(([table, columns]) => ({ table, columns })),
+    tables: [...byTable.entries()].map(([table, columns]) => ({
+      table,
+      columns,
+    })),
   };
 }
