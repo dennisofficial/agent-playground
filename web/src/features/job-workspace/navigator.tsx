@@ -48,7 +48,6 @@ import {
   NavigatorPreviewButton,
   NavigatorShipButton,
 } from "./spec-approval";
-import { canOfferPreview } from "./preview-request";
 import { pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
@@ -115,6 +114,7 @@ export function Navigator({
   laneNode,
   detailNode,
   jobRef,
+  canRequestPreview,
   approveValue,
   shipValue,
   onConversation,
@@ -138,6 +138,8 @@ export function Navigator({
   detailNode: string | null;
   /** The open job — for the in-place "Approve plan" callout. */
   jobRef: JobRef;
+  /** True for build-brain jobs once their kind is known; drives the persistent preview request button. */
+  canRequestPreview: boolean;
   /** The approval card's verbatim approve `value`, when the job is awaiting approval (else ''). Drives
    *  the navigator approval callout. */
   approveValue: string;
@@ -416,9 +418,8 @@ export function Navigator({
           </div>
         ) : null}
         {/* Spin up preview — persistent across the whole build lifecycle (d4). Gated on build KIND
-            (build-brain only) + a live sandbox branch, NOT status, so it's hidden before there's anything
-            to preview and never on onboarding / external-PR-review jobs. */}
-        {canOfferPreview(meta.kind, job?.featureBranch) ? (
+            (build-brain only), NOT status/branch, so the operator can ask anytime. */}
+        {canRequestPreview ? (
           <div className="mt-2">
             <NavigatorPreviewButton jobRef={jobRef} />
           </div>

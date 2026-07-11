@@ -9,20 +9,16 @@ export const PREVIEW_REQUEST_TEXT =
 /** Build-brain job kinds (mirrors the backend `isBuildBrain` predicate): feature + bugfix + event builds.
  *  Onboarding and external-PR-review jobs are excluded — their brain has no preview guidance, so a preview
  *  request would be unguided. */
-function isBuildKind(kind: JobKind): boolean {
+function isBuildKind(kind: JobKind | null | undefined): boolean {
   return kind === "feat" || kind === "fix" || kind === "event";
 }
 
 /**
  * Whether the persistent "Spin up preview" affordance should be offered for a job.
  *
- * Gated on job KIND (build-brain only) AND a live sandbox/branch — NOT status — so the button is available
- * across the whole build lifecycle (d4 "always available") but stays hidden before there is anything to
- * preview. `featureBranch` is null until the sandbox/branch is cut.
+ * Gated only on job KIND (build-brain only) — NOT status or branch — so the operator can ask anytime. If
+ * there is nothing meaningful to preview yet, the build brain answers that conversationally.
  */
-export function canOfferPreview(
-  kind: JobKind,
-  featureBranch: string | null | undefined,
-): boolean {
-  return isBuildKind(kind) && Boolean(featureBranch);
+export function canOfferPreview(kind: JobKind | null | undefined): boolean {
+  return isBuildKind(kind);
 }

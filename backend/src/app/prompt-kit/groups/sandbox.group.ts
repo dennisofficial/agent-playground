@@ -144,16 +144,16 @@ export class SandboxGroup {
   }
 
   /** Auto-expose: how a ported service becomes a public preview URL, and the provision→write-env→start
-   *  ordering the operator must follow (only active when the ATLAS_PREVIEW_* env vars are injected). A
-   *  build-brain concern — a review job never boots its own branch, so it gates `isBuildBrain`. */
+   *  ordering the operator must follow. A build-brain concern — a review job never boots its own branch,
+   *  so it gates `isBuildBrain`. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1262, condition: isBuildBrain })
   publicExposure(): string {
     return [
       'PUBLIC PREVIEW URLS: a supervised service started with a port is automatically exposed on the public',
       'internet so the operator can test your branch live. Start it as `atlas-svc run --name <svc> --port <n>',
       '-- <cmd>` and it is reachable at `https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN`. Those two vars',
-      'are in your env ONLY when previews are enabled — if either is unset, exposure is off, so skip this whole',
-      'section and do not promise the operator a URL.',
+      'are expected in every build-brain sandbox; if either is somehow absent, treat that as Atlas harness infra',
+      'being broken, not as a feature-level preview opt-out.',
       'The URL is DETERMINISTIC: you know it BEFORE you start anything, which is load-bearing because a frontend',
       'bakes its API base URL at build/start time and a backend bakes its cookie domain + CORS allow-list at',
       'boot. So the ordering is not optional:',

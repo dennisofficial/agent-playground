@@ -39,6 +39,7 @@ import { LocalGitService } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { TenantCredentialStore } from '../onboarding';
 import { GithubPrService } from '../git';
+import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ActiveTurnEntity,
@@ -333,6 +334,15 @@ beforeEach(async () => {
       {
         provide: TurnRegistry,
         useValue: { failRunningForJob: vi.fn().mockResolvedValue(0) },
+      },
+      {
+        provide: BrainGateway,
+        useValue: {
+          openPrAtShip: vi.fn().mockResolvedValue(undefined),
+          notifyThreadHalted: vi.fn().mockResolvedValue(undefined),
+          notifyThreadDone: vi.fn().mockResolvedValue(undefined),
+          wakeForProvisioningFailure: vi.fn().mockResolvedValue(undefined),
+        },
       },
       JobLifecycleService,
     ],
@@ -834,6 +844,15 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
           },
         },
         TurnRegistry, // the REAL service — this gate's whole point
+        {
+          provide: BrainGateway,
+          useValue: {
+            openPrAtShip: vi.fn().mockResolvedValue(undefined),
+            notifyThreadHalted: vi.fn().mockResolvedValue(undefined),
+            notifyThreadDone: vi.fn().mockResolvedValue(undefined),
+            wakeForProvisioningFailure: vi.fn().mockResolvedValue(undefined),
+          },
+        },
         JobLifecycleService,
       ],
     }).compile();
@@ -877,7 +896,7 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
   });
 
   afterEach(async () => {
-    await hygieneMod.close();
+    await hygieneMod?.close();
   });
 
   /** A minimal, real `active_turns` row — the shape `TurnRegistry.register` itself would insert. */

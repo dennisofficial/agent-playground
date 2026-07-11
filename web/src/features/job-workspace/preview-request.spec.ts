@@ -2,21 +2,20 @@ import { describe, expect, it } from "vitest";
 import { canOfferPreview, PREVIEW_REQUEST_TEXT } from "./preview-request";
 
 describe("canOfferPreview", () => {
-  it("offers the preview for build-brain kinds once the sandbox branch is cut", () => {
-    expect(canOfferPreview("feat", "atlas/feature-x")).toBe(true);
-    expect(canOfferPreview("fix", "atlas/bug-y")).toBe(true);
-    expect(canOfferPreview("event", "atlas/evt-z")).toBe(true);
+  it("offers the preview for build-brain kinds", () => {
+    expect(canOfferPreview("feat")).toBe(true);
+    expect(canOfferPreview("fix")).toBe(true);
+    expect(canOfferPreview("event")).toBe(true);
   });
 
   it("never offers on non-build brains (onboarding / external-PR review)", () => {
-    expect(canOfferPreview("onboard", "atlas/anything")).toBe(false);
-    expect(canOfferPreview("review", "atlas/anything")).toBe(false);
+    expect(canOfferPreview("onboard")).toBe(false);
+    expect(canOfferPreview("review")).toBe(false);
   });
 
-  it("hides the button until a sandbox/branch exists", () => {
-    expect(canOfferPreview("feat", null)).toBe(false);
-    expect(canOfferPreview("feat", undefined)).toBe(false);
-    expect(canOfferPreview("feat", "")).toBe(false);
+  it("waits until a job kind is known", () => {
+    expect(canOfferPreview(null)).toBe(false);
+    expect(canOfferPreview(undefined)).toBe(false);
   });
 });
 

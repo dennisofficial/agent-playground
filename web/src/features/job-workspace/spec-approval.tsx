@@ -320,10 +320,10 @@ export function NavigatorShipButton({
 
 // ── Navigator header preview button ─────────────────────────────────────────────────────────────────
 /** The persistent full-width "Spin up preview" button — pinned in the navigator's sticky header for the
- *  whole build lifecycle (gated on build kind + a live sandbox branch by the caller). Unlike the ship/approve
- *  buttons it posts NO verdict: it sends the templated preview request through the `say` path, waking the
- *  build brain to prepare + expose a demo-ready preview. Status and the demo-ready handover come back in chat;
- *  the live URL auto-appears in the PORTS panel. */
+ *  whole build lifecycle (gated on build kind by the caller). Unlike the ship/approve buttons it posts NO
+ *  verdict: it sends the templated preview request through the `say` path, waking the build brain to prepare
+ *  + expose a demo-ready preview. Status and the demo-ready handover come back in chat; the live URL
+ *  auto-appears in the PORTS panel. */
 export function NavigatorPreviewButton({ jobRef }: { jobRef: JobRef }) {
   const say = useSay(jobRef);
   return (
