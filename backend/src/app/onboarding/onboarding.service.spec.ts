@@ -373,6 +373,19 @@ describe('OnboardingService', () => {
       expect(repos.map.get('T1:web')?.default_branch).toBe('develop');
     });
 
+    it('persists a branch prefix and clears it back to null on empty string', async () => {
+      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+
+      const configured = await svc.updateRepo('T1', connected.id, { branchPrefix: 'feat/' });
+      expect(configured.branchPrefix).toBe('feat/');
+      expect(repos.map.get('T1:web')?.branch_prefix).toBe('feat/');
+
+      const cleared = await svc.updateRepo('T1', connected.id, { branchPrefix: '' });
+      expect(cleared.branchPrefix).toBeNull();
+      expect(repos.map.get('T1:web')?.branch_prefix).toBeNull();
+    });
+
     it("404s on a repo id from another org (cross-tenant)", async () => {
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });

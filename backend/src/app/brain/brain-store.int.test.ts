@@ -16,6 +16,7 @@ import {
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
 import { JobTitler } from '../titling';
+import { DriverStoreService } from '../driver/driver-store.service';
 import { BrainStoreService } from './brain-store.service';
 
 /**
@@ -34,6 +35,7 @@ const PROJECT_SLUG = 'brainstore-it';
 describe('BrainStoreService re-propose (live Postgres)', () => {
   let app: NestExpressApplication;
   let store: BrainStoreService;
+  let driverStore: DriverStoreService;
   let dataSource: DataSource;
 
   const prevSurface = process.env.SURFACE;
@@ -59,6 +61,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await app.init();
 
     store = app.get(BrainStoreService);
+    driverStore = app.get(DriverStoreService);
     dataSource = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     await purge(dataSource);
   }, 60_000);
@@ -146,6 +149,107 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await recordStatus(dataSource, first.decisionRecordId)).toBe('superseded');
     expect(await recordStatus(dataSource, second.decisionRecordId)).toBe('draft');
     expect(await draftCount(dataSource, jobId)).toBe(1);
+  }, 30_000);
+
+  it('PLAN VERSIONING: a re-propose over a DONE builder preserves the prior revision as history and forges a new one', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'versioning-repo');
+
+    // First proposal — one builder — then simulate it BUILT & committed (status=done).
+    const first = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'v1',
+      kind: 'feature',
+      overview: 'overview v1',
+      decisions: [],
+      threadTitles: ['backend one'],
+    });
+    await dataSource.query(
+      `UPDATE threads SET status = 'done' WHERE decision_record_id = $1 AND kind = 'builder'`,
+      [first.decisionRecordId],
+    );
+
+    // Ship-review retracted → amending (the gate the operator released); re-propose is allowed here.
+    await dataSource.query(`UPDATE jobs SET status = 'amending' WHERE id = $1`, [jobId]);
+
+    // Second proposal with a NEW builder — must NOT delete the done v1 builder.
+    const second = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'v2',
+      kind: 'feature',
+      overview: 'overview v2',
+      decisions: [],
+      threadTitles: ['backend two'],
+    });
+    expect(second.decisionRecordId).not.toBe(first.decisionRecordId);
+
+    // The prior revision's done builder SURVIVES (history), and the new revision's builder exists too.
+    expect(await builderBriefsForRecord(dataSource, first.decisionRecordId)).toEqual(['backend one']);
+    expect(await builderBriefsForRecord(dataSource, second.decisionRecordId)).toEqual(['backend two']);
+    // Exactly ONE main row across both revisions (create-if-absent, not recreated per revision).
+    expect(await mainCount(dataSource, jobId)).toBe(1);
+
+    // getPipelineState: active lanes = the NEW revision; the old one is browsable history in priorRevisions.
+    // (Both `threads` arrays also carry the revision's `master_review` root — filter to builders to compare.)
+    const state = (await driverStore.getPipelineState(jobId, TEAM_ID)) as {
+      threads: Array<{ brief: string; kind: string }>;
+      priorRevisions: Array<{ revision: number; threads: Array<{ brief: string; kind: string }> }>;
+    };
+    const builders = (ts: Array<{ brief: string; kind: string }>) =>
+      ts.filter((t) => t.kind === 'builder').map((t) => t.brief);
+    expect(builders(state.threads)).toEqual(['backend two']);
+    expect(state.priorRevisions).toHaveLength(1);
+    expect(state.priorRevisions[0].revision).toBe(1);
+    expect(builders(state.priorRevisions[0].threads)).toEqual(['backend one']);
+  }, 30_000);
+
+  it('PLAN VERSIONING: a DIRECT build (empty threadTitles) over done work preserves history and creates no builders', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'versioning-direct-repo');
+
+    const first = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'v1',
+      kind: 'feature',
+      overview: 'overview v1',
+      decisions: [],
+      threadTitles: ['backend one'],
+    });
+    await dataSource.query(
+      `UPDATE threads SET status = 'done' WHERE decision_record_id = $1 AND kind = 'builder'`,
+      [first.decisionRecordId],
+    );
+    await dataSource.query(`UPDATE jobs SET status = 'amending' WHERE id = $1`, [jobId]);
+
+    // Direct build: empty threadTitles → no new builders, no master_review.
+    const second = await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'v2 direct',
+      kind: 'feature',
+      overview: 'fold-in',
+      decisions: [],
+      threadTitles: [],
+    });
+    expect(await builderBriefsForRecord(dataSource, first.decisionRecordId)).toEqual(['backend one']);
+    expect(await builderBriefsForRecord(dataSource, second.decisionRecordId)).toEqual([]);
+    expect(await masterReviewCount(dataSource, jobId)).toBe(1); // only v1's master review remains
+
+    const state = (await driverStore.getPipelineState(jobId, TEAM_ID)) as {
+      threads: Array<{ brief: string; kind: string }>;
+      priorRevisions: Array<{ threads: Array<{ brief: string; kind: string }> }>;
+    };
+    // Active revision has no lanes (empty direct build), but the done v1 builder is browsable history.
+    expect(state.threads).toEqual([]);
+    expect(state.priorRevisions).toHaveLength(1);
+    expect(
+      state.priorRevisions[0].threads.filter((t) => t.kind === 'builder').map((t) => t.brief),
+    ).toEqual(['backend one']);
   }, 30_000);
 
   it('openJob anchors the thread into planning without clobbering an existing title when no title is given', async () => {
@@ -282,6 +386,21 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     });
     const row = await loadThreadRow(dataSource, followUpId);
     expect(row).toMatchObject({ status: 'open', origin: 'control', title: 'follow-up', base_branch: 'main' });
+    expect(row?.created_by_job_id).toBeNull();
+    expect(row?.created_by).toBeNull();
+
+    // A follow-up spawned WITH provenance carries the FK + the immutable snapshot.
+    const grandchildId = await store.createFollowUpJob({
+      orgId: TEAM_ID,
+      repoId,
+      title: 'grandchild',
+      baseBranch: 'main',
+      createdByJobId: followUpId,
+      createdByTitle: 'parent',
+    });
+    const grandchildRow = await loadThreadRow(dataSource, grandchildId);
+    expect(grandchildRow?.created_by_job_id).toBe(followUpId);
+    expect(grandchildRow?.created_by).toEqual({ jobId: followUpId, title: 'parent' });
   }, 30_000);
 
   it('CRUDs decisions in the working set by stable id and reads them back via the answered card', async () => {
@@ -848,6 +967,50 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(running?.status).toBe('running');
     expect(await recordStatus(dataSource, r2.decisionRecordId)).toBe('approved');
   }, 30_000);
+
+  // Q2 (decision d1): appendSystemNotice writes a CALM, System-authored operator-mirror row — the exact
+  // shape `/messages` returns verbatim to the web. NOT Atlas's voice (author_bot_id null) and NO error
+  // semantics. This is the persistence side of the approval-ack re-voicing, exercised against live Postgres.
+  it('appendSystemNotice persists a calm System-authored operator row (meta.source=system_notice, bot_id null)', async () => {
+    const { jobId } = await seedJob(dataSource, TEAM_ID, 'brainstore-sysnotice-it');
+
+    await store.appendSystemNotice(jobId, 'Plan approved — dispatching the build.');
+
+    const row = await loadMessageRow(dataSource, jobId);
+    expect(row).toMatchObject({
+      author: 'System',
+      author_id: 'system',
+      author_bot_id: null, // the marker that the web renders this as a SYSTEM notice, not an Atlas turn
+      text: 'Plan approved — dispatching the build.',
+    });
+    expect(row?.meta?.source).toBe('system_notice');
+    expect(row?.meta?.halted).toBeUndefined(); // no error/Resume semantics (contrast appendSystemOperatorMessage)
+  }, 30_000);
+
+  // Q1 (decision d2): recordSystemChunk carries the TRUSTED framing SEPARATELY on the untrusted row's
+  // meta.framing (its own block for the web) — the amber fence body stays the clean lane self-report, and
+  // the whole framed+fenced engine payload is NOT folded into meta.fullBody. Live-DB proof of the split.
+  it('recordSystemChunk on an untrusted wake row stores meta.framing separately, without leaking the engine body into fullBody', async () => {
+    const { jobId } = await seedJob(dataSource, TEAM_ID, 'brainstore-framing-it');
+
+    await store.recordSystemChunk({
+      jobId,
+      kind: 'untrusted',
+      text: 'summary: build parked at ship gate',
+      chunkKey: `seed:done:framing-it`,
+      untrustedSource: 'thread-done:th-x',
+      severity: 'final',
+      framing: 'An AUTONOMOUS wake — you may NOT ship without the operator.',
+      // deliberately NO fullBody — persistSeedRow now omits it for untrusted rows
+    });
+
+    const row = await loadMessageRow(dataSource, jobId);
+    expect(row?.meta?.source).toBe('untrusted');
+    expect(row?.meta?.untrustedSource).toBe('thread-done:th-x');
+    expect(row?.meta?.framing).toBe('An AUTONOMOUS wake — you may NOT ship without the operator.');
+    expect(row?.meta?.fullBody).toBeUndefined(); // the trusted framing rides in meta.framing, not the amber pill
+    expect(row?.text).toBe('summary: build parked at ship gate'); // amber fence = clean lane self-report only
+  }, 30_000);
 });
 
 async function openCount(ds: DataSource, jobId: string): Promise<number> {
@@ -869,6 +1032,32 @@ async function insertUserMessage(
        VALUES ($1, 'Operator', 'op', $2, 'chat', $3, $3)`,
     [jobId, text, createdAt.toISOString()],
   );
+}
+
+/** The single message row for a freshly-seeded job — the operator-facing mirror `/messages` returns
+ *  verbatim (author fields + the `meta` jsonb). Used to assert System-notice + wake-framing shape. */
+async function loadMessageRow(
+  ds: DataSource,
+  jobId: string,
+): Promise<{
+  author: string;
+  author_id: string;
+  author_bot_id: string | null;
+  text: string;
+  meta: Record<string, unknown> | null;
+} | null> {
+  const rows: Array<{
+    author: string;
+    author_id: string;
+    author_bot_id: string | null;
+    text: string;
+    meta: Record<string, unknown> | null;
+  }> = await ds.query(
+    `SELECT author, author_id, author_bot_id, text, meta FROM messages
+       WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [jobId],
+  );
+  return rows[0] ?? null;
 }
 
 async function messageTexts(ds: DataSource, jobId: string): Promise<string[]> {
@@ -907,6 +1096,24 @@ async function masterReviewCount(ds: DataSource, jobId: string): Promise<number>
   return Number(rows[0]?.n ?? '0');
 }
 
+/** Builder briefs scoped to ONE plan revision (decision record) — the versioning read. */
+async function builderBriefsForRecord(ds: DataSource, recordId: string): Promise<string[]> {
+  const rows: Array<{ brief: string }> = await ds.query(
+    `SELECT brief FROM threads WHERE decision_record_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
+    [recordId],
+  );
+  return rows.map((r) => r.brief);
+}
+
+/** The count of `main` rows for a job — must stay 1 across re-proposes (create-if-absent). */
+async function mainCount(ds: DataSource, jobId: string): Promise<number> {
+  const rows: Array<{ n: string }> = await ds.query(
+    `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND kind = 'main'`,
+    [jobId],
+  );
+  return Number(rows[0]?.n ?? '0');
+}
+
 async function phasesFor(
   ds: DataSource,
   jobId: string,
@@ -931,9 +1138,25 @@ async function sectionPlans(ds: DataSource, jobId: string): Promise<Array<string
 async function loadThreadRow(
   ds: DataSource,
   jobId: string,
-): Promise<{ status: string; origin: string; title: string | null; base_branch: string | null } | null> {
-  const rows: Array<{ status: string; origin: string; title: string | null; base_branch: string | null }> =
-    await ds.query(`SELECT status, origin, title, base_branch FROM jobs WHERE id = $1`, [jobId]);
+): Promise<{
+  status: string;
+  origin: string;
+  title: string | null;
+  base_branch: string | null;
+  created_by_job_id: string | null;
+  created_by: { jobId: string; title: string | null } | null;
+} | null> {
+  const rows: Array<{
+    status: string;
+    origin: string;
+    title: string | null;
+    base_branch: string | null;
+    created_by_job_id: string | null;
+    created_by: { jobId: string; title: string | null } | null;
+  }> = await ds.query(
+    `SELECT status, origin, title, base_branch, created_by_job_id, created_by FROM jobs WHERE id = $1`,
+    [jobId],
+  );
   return rows[0] ?? null;
 }
 

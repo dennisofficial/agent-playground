@@ -26,6 +26,9 @@ export type JobStatus =
   // brain-controlled state: OPERATOR-owned when idle (steer Atlas), never auto-driven. Atlas amends
   // in place or dispatches a follow-up (propose_plan/start_direct_build allowed here); on completion the
   // job returns to `running` and the ship gate re-arms. NOT terminal.
+  | 'blocked' // explicitly parked waiting on one or more blocker jobs' PRs to merge; the brain never runs
+  // while blocked. NOT a needs-you state — the system owns the next step (the blocker resolving), like
+  // plan_review. Cleared (→ 'open') by the wake path when every blocker reaches a terminal state.
   | 'done' // one PR opened, all tracks handed off
   | 'cancelled'
   | 'deleting'; // terminal-bound: the operator deleted the job; container + worktree teardown is in

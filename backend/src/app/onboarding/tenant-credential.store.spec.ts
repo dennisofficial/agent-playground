@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
 import type { DataSource, Repository } from 'typeorm';
-import type { OrganizationEntity, OrgCredentialsEntity } from '../persistence/entities';
+import type {
+  OrganizationEntity,
+  OrgCredentialsEntity,
+} from '../persistence/entities';
 import { TenantCredentialStore } from './tenant-credential.store';
 
 const KEY = Buffer.alloc(32, 9).toString('base64');
@@ -43,7 +46,10 @@ function fakeDb(): {
     },
   } as unknown as Repository<OrgCredentialsEntity>;
   const manager = {
-    async findOne(_entity: unknown, opts: { where: { org_id: string; scope: string } }) {
+    async findOne(
+      _entity: unknown,
+      opts: { where: { org_id: string; scope: string } },
+    ) {
       return findOne(opts);
     },
     async save(row: OrgCredentialsEntity) {
@@ -71,14 +77,28 @@ function makeStore(
 ) {
   const { repo, dataSource, orgs } = fakeDb();
   for (const [orgId, selectedId] of Object.entries(orgSeed ?? {})) {
-    orgs.set(orgId, { id: orgId, selected_claude_credential_id: selectedId } as OrganizationEntity);
+    orgs.set(orgId, {
+      id: orgId,
+      selected_claude_credential_id: selectedId,
+    } as OrganizationEntity);
   }
   return new TenantCredentialStore(repo, dataSource, fakeEnv(env));
 }
 
 /** A minimal Codex `auth.json` carrying a top-level `last_refresh` (what the monotonic guard reads). */
 function codexBlob(lastRefresh: string, tag = 'x'): string {
-  return JSON.stringify({ last_refresh: lastRefresh, tokens: { id_token: 'i', access_token: tag } });
+  return JSON.stringify({
+    last_refresh: lastRefresh,
+    tokens: { id_token: 'i', access_token: tag },
+  });
+}
+
+function fakeCodexAuthJson(claims: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString(
+    'base64url',
+  );
+  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  return JSON.stringify({ tokens: { id_token: `${header}.${payload}.sig` } });
 }
 
 describe('TenantCredentialStore', () => {
@@ -136,7 +156,10 @@ describe('TenantCredentialStore', () => {
 
   it('engineAuthSet reflects a SELECTED claude credential, not the legacy column', async () => {
     const store = makeStore(undefined, { T1: null });
-    await store.write('T1', { anthropicApiKey: 'a1', claudeOauthToken: 'oauth' });
+    await store.write('T1', {
+      anthropicApiKey: 'a1',
+      claudeOauthToken: 'oauth',
+    });
     // The legacy column is set but no `claude_credentials` row is selected — still unsatisfied.
     expect((await store.presence('T1')).engineAuthSet).toBe(false);
 
@@ -152,10 +175,35 @@ describe('TenantCredentialStore', () => {
     );
   });
 
+  describe('codexAccountEmail', () => {
+    it('decrypts the stored Codex auth.json and decodes the account email', async () => {
+      const store = makeStore();
+      await store.write('T1', {
+        codexAuthSecret: fakeCodexAuthJson({ email: 'codex@example.com' }),
+      });
+
+      await expect(store.codexAccountEmail('T1')).resolves.toBe(
+        'codex@example.com',
+      );
+    });
+
+    it('returns undefined for API-key-only blobs and missing Codex credentials', async () => {
+      const store = makeStore();
+      await expect(store.codexAccountEmail('missing')).resolves.toBeUndefined();
+
+      await store.write('T1', {
+        codexAuthSecret: JSON.stringify({ apiKey: 'sk-123' }),
+      });
+      await expect(store.codexAccountEmail('T1')).resolves.toBeUndefined();
+    });
+  });
+
   describe('advanceCodexAuthSecret (atomic monotonic write-back)', () => {
     it('advances to a blob with a NEWER last_refresh', async () => {
       const store = makeStore();
-      await store.write('T1', { codexAuthSecret: codexBlob('2026-07-01T00:00:00.000Z') });
+      await store.write('T1', {
+        codexAuthSecret: codexBlob('2026-07-01T00:00:00.000Z'),
+      });
       const next = codexBlob('2026-07-02T00:00:00.000Z', 'newer');
       await store.advanceCodexAuthSecret('T1', next);
       expect((await store.read('T1'))?.codexAuthSecret).toBe(next);
@@ -165,7 +213,10 @@ describe('TenantCredentialStore', () => {
       const store = makeStore();
       const current = codexBlob('2026-07-02T00:00:00.000Z', 'current');
       await store.write('T1', { codexAuthSecret: current });
-      await store.advanceCodexAuthSecret('T1', codexBlob('2026-07-01T00:00:00.000Z', 'stale'));
+      await store.advanceCodexAuthSecret(
+        'T1',
+        codexBlob('2026-07-01T00:00:00.000Z', 'stale'),
+      );
       expect((await store.read('T1'))?.codexAuthSecret).toBe(current);
     });
 
@@ -173,7 +224,10 @@ describe('TenantCredentialStore', () => {
       const store = makeStore();
       const current = codexBlob('2026-07-02T00:00:00.000Z', 'current');
       await store.write('T1', { codexAuthSecret: current });
-      await store.advanceCodexAuthSecret('T1', codexBlob('2026-07-02T00:00:00.000Z', 'sametime-different'));
+      await store.advanceCodexAuthSecret(
+        'T1',
+        codexBlob('2026-07-02T00:00:00.000Z', 'sametime-different'),
+      );
       expect((await store.read('T1'))?.codexAuthSecret).toBe(current);
     });
 
@@ -192,7 +246,10 @@ describe('TenantCredentialStore', () => {
 
     it('no-ops when the org has no credentials row', async () => {
       const store = makeStore();
-      await store.advanceCodexAuthSecret('ghost', codexBlob('2026-07-02T00:00:00.000Z'));
+      await store.advanceCodexAuthSecret(
+        'ghost',
+        codexBlob('2026-07-02T00:00:00.000Z'),
+      );
       expect(await store.read('ghost')).toBeNull();
     });
 

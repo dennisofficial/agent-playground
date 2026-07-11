@@ -2,6 +2,7 @@ import type { InboxThread } from "./inbox";
 
 export type JobSection =
   | "planning"
+  | "blocked"
   | "awaiting"
   | "building"
   | "amending"
@@ -11,6 +12,7 @@ export type JobSection =
   | "merged";
 
 export const SECTION_ORDER: JobSection[] = [
+  "blocked",
   "planning",
   "awaiting",
   "building",
@@ -23,6 +25,7 @@ export const SECTION_ORDER: JobSection[] = [
 
 export const SECTION_LABEL: Record<JobSection, string> = {
   planning: "Planning",
+  blocked: "Blocked",
   awaiting: "Awaiting Approval",
   building: "Building",
   amending: "Amending",
@@ -39,6 +42,8 @@ export function sectionOf(t: InboxThread): JobSection | null {
     case "plan_review":
     case "triaging":
       return "planning";
+    case "blocked":
+      return "blocked";
     case "awaiting_approval":
       return "awaiting";
     case "amending":

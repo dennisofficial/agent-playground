@@ -12,8 +12,11 @@ import type {
   WireJobActivity,
   JobStatus,
   JobKind,
+  JobBlocker,
+  JobProvenance,
   InboxPr,
   CiStatus,
+  CiCounts,
 } from "./types";
 
 /**
@@ -48,11 +51,18 @@ export interface RawInboxThread {
   /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — the backend list projection emits it as
    *  `ciStatus`. null = no checks reported. */
   ciStatus?: CiStatus | null;
+  /** Per-category CI check counts (`jobs.ci_counts`) — emitted alongside `ciStatus`; null when no checks. */
+  ciCounts?: CiCounts | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt?: WireJobHalt | null;
   /** True only while a "Ship it" is being finalized (PR opening). The job re-uses the `running` status
    *  during shipping, so this keeps the card in "Ready to Ship" instead of "Building". */
   shipping?: boolean;
+  /** Who spawned this job (immutable snapshot), or null for a top-level job — the fallback source for the
+   *  navigator's "Created by" row before the full pipeline resolves (a fresh `open` job has `no_job`). */
+  createdBy?: JobProvenance | null;
+  /** The jobs this one is blocked on (live blockers) — same fallback role as `createdBy`. */
+  blockedBy?: JobBlocker[];
   org: { id: string; slug?: string; name?: string };
   repo: { id: string; name?: string };
 }
@@ -75,11 +85,17 @@ export interface InboxThread {
   pr: InboxPr | null;
   /** Aggregate CI outcome for the PR head — drives the sidebar CI dot. null = no checks reported. */
   ci: CiStatus | null;
+  /** Per-category CI check counts — parallel to `ci`; null when no checks reported. */
+  ciCounts: CiCounts | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt: WireJobHalt | null;
   /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship"
    *  (with the `running` working spinner) instead of routing it to "Building". */
   shipping: boolean;
+  /** Who spawned this job (immutable snapshot), or null for a top-level job. */
+  createdBy: JobProvenance | null;
+  /** The jobs this one is blocked on (live blockers). `[]` unless the job is actually `blocked`. */
+  blockedBy: JobBlocker[];
   org: { id: string; slug: string; name: string };
   repo: { id: string; name: string };
 }
@@ -112,8 +128,11 @@ export function normalize(r: RawInboxThread): InboxThread {
     createdAt: r.createdAt,
     pr: r.pr ?? null,
     ci: r.ciStatus ?? null,
+    ciCounts: r.ciCounts ?? null,
     halt: r.halt ?? null,
     shipping: r.shipping ?? false,
+    createdBy: r.createdBy ?? null,
+    blockedBy: r.blockedBy ?? [],
     org: {
       id: r.org.id,
       slug: r.org.slug ?? r.org.id,

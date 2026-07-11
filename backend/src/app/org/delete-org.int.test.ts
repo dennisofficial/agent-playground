@@ -23,6 +23,7 @@ import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EnvService } from '../../_core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
+import { BrainGateway } from '../brain-gateway';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService } from '../git';
 import { CredentialResolver, TenantCredentialStore } from '../onboarding';
@@ -45,9 +46,9 @@ import {
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, JOB_TEARDOWN, WorktreeProvisioner } from '../driver';
-import { BrainGateway } from '../brain-gateway';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
 import { TicketService } from '../tickets';
+import { JobDependencyService } from '../job-deps';
 import { OrganizationService } from './organization.service';
 
 function dbOpts() {
@@ -219,6 +220,7 @@ beforeEach(async () => {
       { provide: DRIVER_REPO, useValue: { resolve: async (): Promise<ResolvedRepo> => { throw new Error('not used'); } } as DriverRepoResolver },
       { provide: WorktreeProvisioner, useValue: { provisionAndAttach: async ({ sandbox }: { sandbox: FeatureSandbox }) => ({ sandbox, hydrationSig: 'sig' }) } },
       { provide: TicketService, useValue: { revertForDeletedThread: async () => {} } },
+      { provide: JobDependencyService, useValue: { onBlockerResolved: async () => {} } },
       { provide: TurnRegistry, useValue: { failRunningForJob: async () => 0 } },
       { provide: SkillUpdaterService, useValue: { reconcileOrgAsync: () => undefined } },
       // JobLifecycleService construct-depends on the neutral driver→brain BrainGateway; deleteOrg's

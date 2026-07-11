@@ -6,6 +6,7 @@ import { Menu, Network, Search, Ticket } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { ROUTES } from "@/lib/routes";
 import { useCurrentUser } from "@/lib/api/me";
+import { HostStats } from "./host-stats";
 
 /**
  * The app-wide top bar (design "Atlas Tickets Board"). Pure chrome: the ATLAS lockup, the primary
@@ -27,7 +28,7 @@ export function TopBar({
 
   return (
     <header
-      className="flex h-[52px] flex-none items-center gap-2 border-b border-border px-3 md:gap-3.5 md:px-4"
+      className="relative z-30 flex h-[52px] flex-none items-center gap-2 border-b border-border px-3 md:gap-3.5 md:px-4"
       style={{
         background: "color-mix(in srgb, var(--panel) 82%, transparent)",
         backdropFilter: "blur(12px)",
@@ -95,6 +96,8 @@ export function TopBar({
       >
         <Search size={16} />
       </button>
+
+      <HostStats />
 
       <Avatar />
     </header>

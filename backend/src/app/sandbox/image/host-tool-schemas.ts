@@ -201,6 +201,7 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   create_job: {
     firstMessage: z.string(),
     title: z.string().optional(),
+    dependsOn: z.union([z.string(), z.array(z.string())]).optional(),
   },
   create_ticket: {
     title: z.string(),
@@ -225,6 +226,10 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   link_ticket_dependency: {
     ticketId: z.string(),
     dependsOnTicketId: z.string(),
+  },
+  link_job_dependency: {
+    jobId: z.string(),
+    dependsOnJobId: z.string(),
   },
   promote_ticket: {
     ticketId: z.string(),
@@ -411,7 +416,9 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   ask_question: 'Ask the operator a question, optionally with pickable options and a decision class.',
   withdraw_question: 'Withdraw a pending question you no longer need answered.',
   withdraw_plan: 'Withdraw the current proposed plan.',
-  withdraw_ship: 'Withdraw the current ship-review (move the job to `amending`).',
+  withdraw_ship:
+    'PROPOSE amending the current ship-review build — posts an "Amend build?" card for the operator. Does NOT ' +
+    'retract the gate; only the operator can, by approving. Do not keep building while it is pending.',
   set_job_kind: 'Set this job kind (feature, bugfix, or review).',
   create_decision: 'Record a new decision for this job.',
   update_decision: 'Update an existing decision by id.',
@@ -421,11 +428,14 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   retry_thread: 'Retry a failed or blocked thread, optionally with fresh guidance.',
   note_cleared_block: 'Record that a thread block is cleared, with the evidence that cleared it.',
   start_direct_build: 'Start a direct build with a summary, change outline, and decisions.',
-  create_job: 'Create a new job seeded with a first message.',
+  create_job:
+    'Create a new job seeded with a first message; optionally dependsOn one or more existing job ids on this repo to be born blocked until they merge.',
   create_ticket: 'Create a ticket with title, status, priority, kind, and optional dependencies.',
   list_tickets: 'List tickets, optionally filtered by status.',
   update_ticket: 'Update a ticket by id (status, priority, kind, title, or body).',
   link_ticket_dependency: 'Link one ticket as depending on another.',
+  link_job_dependency:
+    'Link one job as blocked-by (depending on) another existing job on this repo; parks the now-blocked job until the blocker resolves.',
   promote_ticket: 'Promote a ticket into an active job.',
   propose_convention_profile_change:
     'Propose a change to a convention (house-style) profile, with body and rationale.',
@@ -459,7 +469,11 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'for a server that needs interactive login — the owner completes it via the console Connect.',
   propose_mcp_removal: 'Propose removing an MCP server from this org or repo.',
   propose_convention_profile: 'Propose a new convention (house-style) profile for this repo.',
-  finish_onboarding: 'Finish workspace onboarding with a summary and the verification you performed.',
+  finish_onboarding:
+    'Finish workspace onboarding with a summary and the verification you performed. For a repo with ' +
+    'user-facing surfaces, `verified` must include live preview-accessibility evidence — each public preview ' +
+    'URL loaded + hydrated as a browser via atlas-probe, plus the authed-handshake proof where a surface has ' +
+    'auth — not just a local health check.',
 };
 
 /**

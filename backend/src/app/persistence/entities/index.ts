@@ -27,12 +27,14 @@ export * from './job-sandbox.entity';
 export * from './user.entity';
 export * from './ticket.entity';
 export * from './ticket-dependency.entity';
+export * from './job-dependency.entity';
 export * from './ticket-counter.entity';
 export * from './turn-stats.entity';
 export * from './turn-model-usage.entity';
 export * from './mcp-server.entity';
 export * from './convention-profile.entity';
 export * from './workspace-skill.entity';
+export * from './host-stats-sample.entity';
 
 import { OrganizationEntity } from './organization.entity';
 import { OrganizationMemberEntity } from './organization-member.entity';
@@ -57,12 +59,14 @@ import { JobSandboxEntity } from './job-sandbox.entity';
 import { UserEntity } from './user.entity';
 import { TicketEntity } from './ticket.entity';
 import { TicketDependencyEntity } from './ticket-dependency.entity';
+import { JobDependencyEntity } from './job-dependency.entity';
 import { TicketCounterEntity } from './ticket-counter.entity';
 import { TurnStatsEntity } from './turn-stats.entity';
 import { TurnModelUsageEntity } from './turn-model-usage.entity';
 import { McpServerEntity } from './mcp-server.entity';
 import { ConventionProfileEntity } from './convention-profile.entity';
 import { WorkspaceSkillEntity } from './workspace-skill.entity';
+import { HostStatsSampleEntity } from './host-stats-sample.entity';
 
 /** Every Atlas v2 entity — passed to the Atlas datasource's `entities` (NOT the shared `ENTITIES`). */
 export const ENTITIES = [
@@ -89,10 +93,12 @@ export const ENTITIES = [
   UserEntity,
   TicketEntity,
   TicketDependencyEntity,
+  JobDependencyEntity,
   TicketCounterEntity,
   TurnStatsEntity,
   TurnModelUsageEntity,
   McpServerEntity,
   ConventionProfileEntity,
   WorkspaceSkillEntity,
+  HostStatsSampleEntity,
 ];

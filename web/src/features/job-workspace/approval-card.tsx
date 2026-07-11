@@ -7,14 +7,23 @@ import {
   ArrowRight,
   CheckCircle2,
   ClipboardCheck,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
 import { makeResolveFileLink } from "./repo-file-links";
-import { useApprove, useRepoTree } from "@/lib/api/job-queries";
+import { shouldShowSpinUpPreview } from "./spin-up-preview-visibility";
+import {
+  useApprove,
+  usePipeline,
+  useRepoTree,
+  useSpinUpPreview,
+} from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import { isSubmitCombo } from "@/lib/keyboard";
 import {
+  AMEND_APPROVE_ACTION_ID,
+  AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
@@ -48,10 +57,11 @@ export function ApprovalCardView({
   onOpenPlan?: () => void;
   onSelectNode?: (node: string) => void;
 }) {
-  // The ship-review gate reuses this same `approval_card` payload (discriminated by `kind: 'ship'`) but
-  // is a much smaller card — a title/summary + ship-gate buttons, rendered generically off
-  // `card.actions` (never a hardcoded action id, so the card doesn't drift from whatever the backend sends).
-  if (card.kind === "ship") {
+  // The ship-review gate and the brain's "Amend build?" proposal reuse this same `approval_card` payload
+  // (discriminated by `kind: 'ship' | 'amend'`) but are a much smaller card — a title/summary + gate
+  // buttons, rendered generically off `card.actions` (never a hardcoded action id, so the card doesn't
+  // drift from whatever the backend sends).
+  if (card.kind === "ship" || card.kind === "amend") {
     return <ShipCardView card={card} jobRef={jobRef} />;
   }
   return (
@@ -209,7 +219,7 @@ function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef 
             className="h-1.5 w-1.5 rounded-full"
             style={{ background: "var(--purple)" }}
           />
-          awaiting ship
+          {card.kind === "amend" ? "awaiting your call" : "awaiting ship"}
         </span>
       </div>
 
@@ -223,8 +233,50 @@ function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef 
         {card.actions.map((action) => (
           <ShipActionButton key={action.actionId} jobRef={jobRef} action={action} />
         ))}
+        {card.kind === "ship" ? (
+          <ShipCardPreviewButton jobRef={jobRef} card={card} />
+        ) : null}
       </div>
     </div>
+  );
+}
+
+/** "Spin up preview" — asks the build brain (via the dedicated `spin-up-preview` seeder endpoint) to stand
+ *  up a demo-ready live preview of the just-built change. Status/handover come back through chat; the live
+ *  URL auto-surfaces in PORTS. Offered ONLY while the job is live at the ship gate
+ *  (`status === 'awaiting_ship_review'`, so it never shows on a shipped/historical transcript whose ship
+ *  card still renders) and hidden once requested (`card.previewRequestedAt`, stamped server-side on first
+ *  click). */
+function ShipCardPreviewButton({
+  jobRef,
+  card,
+}: {
+  jobRef: JobRef;
+  card: WebApprovalCard;
+}) {
+  const pipeline = usePipeline(jobRef);
+  const preview = useSpinUpPreview(jobRef);
+  if (!shouldShowSpinUpPreview(pipeline.data?.status, card.previewRequestedAt)) {
+    return null;
+  }
+  return (
+    <Button
+      size="sm"
+      variant="soft"
+      loading={preview.isPending}
+      loadingText="Requesting…"
+      icon={<Globe size={13} />}
+      onClick={() => {
+        if (!preview.isPending) preview.mutate();
+      }}
+      style={{
+        color: "var(--blue)",
+        background: "color-mix(in srgb, var(--blue) 12%, transparent)",
+        borderColor: "color-mix(in srgb, var(--blue) 30%, transparent)",
+      }}
+    >
+      Spin up preview
+    </Button>
   );
 }
 
@@ -245,7 +297,13 @@ function ShipActionButton({
         ? "ghost"
         : "primary";
   const loadingText =
-    action.actionId === RETRACT_SHIP_ACTION_ID ? "Retracting…" : "Shipping…";
+    action.actionId === AMEND_APPROVE_ACTION_ID
+      ? "Amending…"
+      : action.actionId === AMEND_DISMISS_ACTION_ID
+        ? "Dismissing…"
+        : action.actionId === RETRACT_SHIP_ACTION_ID
+          ? "Retracting…"
+          : "Shipping…";
   return (
     <div className="flex flex-col gap-2">
       <Button

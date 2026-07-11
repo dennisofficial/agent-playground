@@ -66,6 +66,7 @@ import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
+import type { ReattachOutcome } from '../sandbox/turn-reattach.registry';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import type {
   ActiveTurnEntity,
@@ -80,12 +81,15 @@ import {
   CODEX_TASK_LIST_NOTE,
   COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
+  renderRunningServicesNote,
   ROTATION_PREAMBLE,
   ROTATION_RESUME_TAIL,
   ROTATION_SOFT_NUDGE,
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
 } from '../prompt-kit';
+import { ExposureService } from '../exposure/exposure.service';
+import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { isDriverExecutableKind, threadKindSpec, type ThreadRowKind } from '../thread-kind';
 import { BuildShipService } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
@@ -186,6 +190,14 @@ function isTransientDriveError(err: unknown): boolean {
   return TRANSIENT_ERROR_RE.test(msg);
 }
 
+/**
+ * Total in-flight review-lens turns run concurrently in a builder's post-build review fan-out — the size of
+ * the `async-sema` semaphore that `runReviewChildren` bounds ALL lens turns with. A fixed configuration
+ * constant, identical in every environment (no thread composition produces more lenses than this, so it
+ * comfortably covers every real fan-out and the semaphore never serialises them).
+ */
+const REVIEW_LENS_CONCURRENCY = 8;
+
 /** Infra-blip signatures a bounded silent retry papers over (see {@link isTransientDriveError}). */
 const TRANSIENT_ERROR_RE =
   /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
@@ -242,6 +254,9 @@ export class ThreadDriver implements JobDispatcher {
     // (the SAME sink the Claude lanes' SDK TaskCreate/TaskUpdate use), so the web renders its checklist
     // identically. Claude builders keep using their native SDK task tools via the transcript harness.
     @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
+    // @Global ExposureModule — inert unless PREVIEW_BASE_DOMAIN is set. @Optional so the driver still
+    // constructs when previews are off; used to render each running service's public preview URL.
+    @Optional() private readonly exposure?: ExposureService,
     // The repo's opt-in house-style profile — injected into every build-facing prompt (WORKER / gate /
     // commit) and forwarded on the run args so the in-container FAN_OUT writer subagents get it too.
     // @Optional so unit tests construct the driver without it (undefined → no house style injected); DI
@@ -314,13 +329,6 @@ export class ThreadDriver implements JobDispatcher {
     const raw = Number(this.env.get('PHASE_TIMEOUT_MS'));
     if (Number.isFinite(raw) && raw > 0) return raw;
     return 60 * 60_000;
-  }
-
-  /** Total in-flight review-lens turns cap (d5). I/O-bound LLM calls; bounds nested fanout too. Default 8. */
-  private get reviewLensConcurrency(): number {
-    const raw = Number(this.env.get('REVIEW_LENS_CONCURRENCY'));
-    if (Number.isFinite(raw) && raw > 0) return raw;
-    return 8;
   }
 
   /** Base backoff between transient-error drive retries (ADR 0004). Grows linearly per attempt. Default 2s;
@@ -426,6 +434,40 @@ export class ThreadDriver implements JobDispatcher {
         `resumePaused job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
       );
     });
+  }
+
+  /**
+   * WATCHDOG RE-ATTACH (build kinds: step/gate/review/autofix). The leader watchdog calls this for one
+   * orphaned-but-alive `active_turns` row whose engine is still streaming but whose host relay was severed by
+   * a restart / leader flap. We don't re-tail the row directly — that would only re-persist the transcript and
+   * SKIP the driver's deterministic continuation (verification gate, commit/`commit_sha`, step `done`, branch
+   * backstop). Instead we WAKE THE FULL DRIVE: `drive()`→`runJob` fast-forwards completed work, re-reaches the
+   * interrupted batch, and re-attaches it via the existing `findReattachableTurn` path — exactly what boot
+   * `resume()` does, just triggered continuously instead of once. Idempotent + safe:
+   *   - only a `running`, un-halted job is drivable (`runJob`'s chokepoint) — otherwise 'deferred', so a
+   *     halted/parked/terminal job keeps its existing recovery (`resumePaused`/`retry`) and the watchdog keeps
+   *     the live turn alive rather than finalizing it;
+   *   - the per-job `active` single-flight guard (shared with boot `resume()`) means a re-kick can never
+   *     double-drive a job whose drive is already in flight.
+   */
+  async reattachTurnRow(row: ActiveTurnEntity): Promise<ReattachOutcome> {
+    const job = await this.store.loadJob(row.job_id).catch(() => null);
+    if (!job || job.status !== 'running' || job.halt != null) {
+      // Not drivable: `runJob` would no-op on a non-running / halted job anyway. Leave it for its existing
+      // recovery path; the watchdog keeps the (live) turn alive.
+      return 'deferred';
+    }
+    if (this.active.has(row.job_id)) {
+      // A drive is already in flight for this job (boot resume / a prior wake) — it owns re-reaching and
+      // re-attaching every thread's turn. Report attached so the watchdog just keeps it alive meanwhile.
+      return 'attached';
+    }
+    void this.drive(row.job_id).catch((err) =>
+      this.logger.error(
+        `reattach drive job=${row.job_id} crashed: ${err instanceof Error ? err.stack : err}`,
+      ),
+    );
+    return 'attached';
   }
 
   /**
@@ -1075,16 +1117,20 @@ export class ThreadDriver implements JobDispatcher {
    * SHIP-REVIEW RETRACT (the Atlas `withdraw_ship` tool OR the manual "Amend build" click). Flip
    * `awaiting_ship_review → amending` (idempotent in the store — acts only while parked, so a stale/double
    * retract is a no-op) and post a durable note. Unlike {@link resolveShipApprovalDurably}, this does NOT
-   * re-drive — the job sits in `amending` for the operator/Atlas to do the follow-up work, and the gate
-   * re-arms automatically once that work reaches `parkForShipReview` again.
+   * re-drive — the job sits in `amending` for the operator/Atlas to do the follow-up work. The brain
+   * re-arms the gate by calling `report_verification({ passed: true })` once the amend is verified, which
+   * re-parks DIRECTLY (`amending → awaiting_ship_review`, no rebuild); `parkForShipReview` accepts `amending`.
+   *
+   * Returns whether it actually acted (the store CAS affected a row) — the amend-proposal Approve path
+   * uses this to wake the brain ONLY when the retract really fired (a stale/double click returns false).
    */
-  async retractShipDurably(jobId: string, ruledBy: string): Promise<void> {
+  async retractShipDurably(jobId: string, ruledBy: string): Promise<boolean> {
     const acted = await this.store.retractShip(jobId);
     if (!acted) {
       this.logger.warn(
         `ship retract for job=${jobId} by ${ruledBy}: not awaiting ship review — no-op`,
       );
-      return;
+      return false;
     }
     this.logger.log(`ship retract for job=${jobId} by ${ruledBy} → amending`);
     await this.blockSink
@@ -1094,6 +1140,7 @@ export class ThreadDriver implements JobDispatcher {
         meta: { source: 'system_operator' },
       })
       .catch(() => undefined);
+    return true;
   }
 
   /**
@@ -1397,6 +1444,15 @@ export class ThreadDriver implements JobDispatcher {
         .catch((e) => this.logger.warn(`could not set notable done-wake for thread=${thread.id}: ${e}`));
     }
     await this.post(route, `:white_check_mark: Thread done — *${thread.brief}*`);
+    // Free the RAM: this thread (a builder or the master review — the only kinds `runThread` executes) may
+    // have booted services under the supervisor for testing. Threads run sequentially in one per-job
+    // sandbox and this thread's review-lens/post-review children already finished above, so nothing else is
+    // live here — tear the fleet down so it doesn't sit resident through the rest of the build on a shared
+    // host. Best-effort: a teardown hiccup never affects the build (the next thread / ship re-derives).
+    const stopped = await this.sandboxes.stopAllServices?.(job.id).catch(() => undefined);
+    if (stopped && !stopped.ok) {
+      this.logger.warn(`thread ${thread.ordinal} — service teardown skipped: ${stopped.reason}`);
+    }
     return { outcome: 'done', handoff: handoffOut };
   }
 
@@ -1551,10 +1607,10 @@ export class ThreadDriver implements JobDispatcher {
       lensIds: lensChildren.map((c) => String((c.config as { lensId?: string }).lensId ?? c.id)),
     });
 
-    // Drive the LENSES concurrently through a semaphore capped at `reviewLensConcurrency` (d5) — each an
+    // Drive the LENSES concurrently through a semaphore capped at `REVIEW_LENS_CONCURRENCY` (d5) — each an
     // independent row (a `done` lens fast-forwards). Unlike a fixed batch loop, the next lens starts the
     // instant a slot frees rather than waiting on a batch barrier.
-    const sema = new Sema(this.reviewLensConcurrency);
+    const sema = new Sema(REVIEW_LENS_CONCURRENCY);
     await Promise.all(
       lensChildren.map(async (c) => {
         await sema.acquire();
@@ -2292,7 +2348,11 @@ export class ThreadDriver implements JobDispatcher {
     // instead of restarting the batch. The seed is cleared the instant the fresh session is born (turn-runner
     // clear-on-birth). Mirrors the brain's `pending_compaction_seed` fold in `runChatTurnInner`.
     const legSeed = await this.store.getPendingLegSeed(anchor.id);
-    const task = this.foldLegSeed(legSeed, baseTask);
+    // Live running-services context — builder turns only (a Codex master_review runs no services). Probed
+    // fresh here and at every Leg re-kick below so each turn sees CURRENT state, not a batch-start snapshot.
+    const servicesBlock =
+      thread.kind === 'builder' ? await this.renderLiveServicesBlock(job.id) : '';
+    const task = this.foldTurn(legSeed, baseTask, servicesBlock);
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2407,7 +2467,7 @@ export class ThreadDriver implements JobDispatcher {
           );
           result = null;
           const seed = await this.store.getPendingLegSeed(anchor.id);
-          legTask = this.foldLegSeed(seed, baseTask);
+          legTask = this.foldTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
           rotationState.softReached = false;
@@ -2421,7 +2481,7 @@ export class ThreadDriver implements JobDispatcher {
         // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
         result = null;
         const seed = await this.store.getPendingLegSeed(anchor.id);
-        legTask = this.foldLegSeed(seed, baseTask);
+        legTask = this.foldTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
       }
       report = result!.report;
 
@@ -2999,6 +3059,47 @@ export class ThreadDriver implements JobDispatcher {
    */
   private foldLegSeed(seed: string | null, baseTask: string): string {
     return seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask;
+  }
+
+  /**
+   * Fold a turn-kick's task: append the freshly-probed running-services block to the batch task, THEN apply
+   * the leg-seed fold. Appending to `baseTask` (rather than after the seed fold) keeps `ROTATION_RESUME_TAIL`
+   * in the RECENCY slot for a rotated Leg while still surfacing what's already online. An empty block leaves
+   * the task unchanged.
+   */
+  private foldTurn(seed: string | null, baseTask: string, servicesBlock: string): string {
+    const withServices = servicesBlock ? `${baseTask}\n\n${servicesBlock}` : baseTask;
+    return this.foldLegSeed(seed, withServices);
+  }
+
+  /**
+   * Probe THIS sandbox's live `atlas-svc` services and render the "still online — reuse them" block folded
+   * into each builder turn-kick (and every rotated Leg). Recomputed per kick — never baked into the
+   * once-per-batch base task — so a service an earlier session/Leg left running shows up. Best-effort: any
+   * failure yields '' so a probe hiccup never blocks a kick, and the shared `serviceStatus` generation gate
+   * means a reused pgid from a dead container generation reads `stopped`, not `running`.
+   */
+  private async renderLiveServicesBlock(jobId: string): Promise<string> {
+    try {
+      const dir = this.threadLifecycle.supervisorDirHost(jobId);
+      if (!dir) return '';
+      const markers = readServiceMarkers(dir);
+      if (markers.length === 0) return '';
+      const pgids = markers.map((m) => m.pgid).filter((p): p is number => p != null);
+      const probe = await this.threadLifecycle.probeLiveness(jobId, pgids);
+      const running = markers.filter((m) => serviceStatus(m, probe) === 'running');
+      if (running.length === 0) return '';
+      return renderRunningServicesNote(
+        running.map((m) => ({
+          name: m.name,
+          port: m.port,
+          url: m.port != null && m.expose ? (this.exposure?.urlFor(jobId, m.name) ?? null) : null,
+        })),
+      );
+    } catch (err) {
+      this.logger.debug(`renderLiveServicesBlock(${jobId.slice(0, 8)}) failed: ${err}`);
+      return '';
+    }
   }
 
   /**

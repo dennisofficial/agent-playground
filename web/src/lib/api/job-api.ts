@@ -5,6 +5,9 @@ import { fetchWithRefresh } from "./refresh";
 import type {
   ApprovalActionId,
   ContextFileContent,
+  InboxPr,
+  JobBlocker,
+  JobProvenance,
   PipelineJob,
   PipelineState,
   JobContext,
@@ -36,6 +39,12 @@ export class ThreadApiError extends Error {
     super(message);
     this.name = "ThreadApiError";
   }
+}
+
+/** A mutation's error, unwrapped to a message worth showing the operator — the backend's own 400 text
+ *  (e.g. "can't block a job that is already building or finished…") when we have it, else a flat fallback. */
+export function mutationErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof ThreadApiError ? err.message : fallback;
 }
 
 async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -278,6 +287,14 @@ export function answerQuestion(
   });
 }
 
+// ── Spin up preview (ship gate) ────────────────────────────────────────────────────────────────────
+/** Ask the build brain to stand up a demo-ready live preview at the ship gate. Injects the full preview
+ *  procedure as a server-side seed turn (not the generic /say path) and stamps the ship card so the button
+ *  hides. Gated server-side on `awaiting_ship_review`; a no-op `ok:false` off-gate. */
+export function spinUpPreview(ref: JobRef): Promise<{ ok: boolean; ts: string }> {
+  return webJson(threadPath(ref, "/spin-up-preview"), { method: "POST" });
+}
+
 // ── Secure secret intake (repo onboarding) ─────────────────────────────────────────────────────────
 export interface ProvideSecretBody {
   /** The secret card's id (its message ts). */
@@ -429,6 +446,73 @@ export function renameJob(
   });
 }
 
+// ── Job relationships (created-by / created jobs / manual block & unblock) ─────────────────────────
+/** A child job spawned FROM this one (`GET …/jobs/:jobId/created`) — the "Created jobs" navigator row +
+ *  detail pane. */
+export interface CreatedJobRow {
+  id: string;
+  title: string | null;
+  status: string;
+  kind: string | null;
+  prState: string | null;
+  needsYou: boolean;
+  createdAt: string;
+}
+
+export function fetchCreatedJobs(ref: JobRef): Promise<CreatedJobRow[]> {
+  return webJson<CreatedJobRow[]>(threadPath(ref, "/created"));
+}
+
+/** The single-job detail read — used to resolve a `createdBy`/blocker link before navigating to it. A
+ *  hard-deleted job 404s (`ThreadApiError.status === 404`), letting the caller toast instead of routing
+ *  into a dead thread. */
+export interface JobDetail {
+  id: string;
+  title: string | null;
+  status: string;
+  kind: string | null;
+  createdBy: JobProvenance | null;
+  pr: InboxPr | null;
+  needsYou: boolean;
+  createdAt: string;
+}
+
+export function resolveJob(ref: JobRef): Promise<JobDetail> {
+  return webJson<JobDetail>(threadPath(ref));
+}
+
+/** The manual-block response — every job's live blockers, including the one just added. */
+export interface JobDependencyResult {
+  ok: boolean;
+  blocked: boolean;
+  blockers: JobBlocker[];
+}
+
+/** Manually block this job on another (the kebab "Block on another job…"). 400s on a disallowed status
+ *  (the job is already building or finished) — the client mirrors the same guard to keep the action
+ *  disabled ahead of time, but the backend is the source of truth. */
+export function addJobDependency(
+  ref: JobRef,
+  dependsOnJobId: string,
+): Promise<JobDependencyResult> {
+  return webJson(threadPath(ref, "/dependencies"), {
+    method: "POST",
+    body: JSON.stringify({ dependsOnJobId }),
+  });
+}
+
+/** Remove one dependency edge — the kebab "Unblock" clears every current blocker this way (one call per
+ *  blocker). */
+export function removeJobDependency(
+  ref: JobRef,
+  dependsOnJobId: string,
+): Promise<{ ok: boolean; blockers: JobBlocker[] }> {
+  return webJson(
+    threadPath(ref, `/dependencies/${encodeURIComponent(dependsOnJobId)}`),
+    { method: "DELETE" },
+  );
+}
+
 // ── Delete ─────────────────────────────────────────────────────────────────────────────────────
 export function deleteThread(
   ref: JobRef,
@@ -456,6 +540,8 @@ export interface RepoView {
   onboardedAt: string | null;
   /** Non-fatal webhook-registration warning (e.g. token lacks the webhook scope), or null when hooks are healthy. */
   webhookWarning: string | null;
+  /** Per-repo feature-branch prefix override; null → the neutral built-in default (`feature/`). */
+  branchPrefix: string | null;
 }
 
 export function fetchOrgRepos(orgId: string): Promise<RepoView[]> {

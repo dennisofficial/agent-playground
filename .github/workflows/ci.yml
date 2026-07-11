@@ -147,6 +147,7 @@ jobs:
           echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
           echo "backend_image=ghcr.io/dennisofficial/atlas-backend" >> "$GITHUB_OUTPUT"
           echo "migrator_image=ghcr.io/dennisofficial/atlas-backend-migrator" >> "$GITHUB_OUTPUT"
+          echo "mcp_reader_image=ghcr.io/dennisofficial/atlas-mcp-reader" >> "$GITHUB_OUTPUT"
           echo "web_image=ghcr.io/dennisofficial/atlas-web" >> "$GITHUB_OUTPUT"
           echo "caddy_image=ghcr.io/dennisofficial/atlas-caddy" >> "$GITHUB_OUTPUT"
 
@@ -196,6 +197,24 @@ jobs:
             type=registry,ref=${{ steps.meta.outputs.backend_image }}:buildcache
           cache-to: type=registry,ref=${{ steps.meta.outputs.migrator_image }}:buildcache,mode=max
 
+      # ── MCP reader image (--target mcp-reader) ─────────────────────────────────
+      # Standalone read-only prod-diagnostics MCP server — a stage of the same backend.Dockerfile, so it
+      # reuses the backend's already-cached layers on top of its own buildcache.
+      - name: Build + push mcp-reader image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/backend.Dockerfile
+          target: mcp-reader
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.mcp_reader_image }}:${{ steps.meta.outputs.sha_tag }}
+            ${{ steps.meta.outputs.mcp_reader_image }}:latest
+          cache-from: |
+            type=registry,ref=${{ steps.meta.outputs.mcp_reader_image }}:buildcache
+            type=registry,ref=${{ steps.meta.outputs.backend_image }}:buildcache
+          cache-to: type=registry,ref=${{ steps.meta.outputs.mcp_reader_image }}:buildcache,mode=max
+
       # ── Web image ─────────────────────────────────────────────────────────────
       - name: Build + push web image
         uses: docker/build-push-action@v6
@@ -230,6 +249,7 @@ jobs:
           echo "### Images published" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend:  \`${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.sha_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Migrator: \`${{ steps.meta.outputs.migrator_image }}:${{ steps.meta.outputs.sha_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- MCP reader: \`${{ steps.meta.outputs.mcp_reader_image }}:${{ steps.meta.outputs.sha_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Web:      \`${{ steps.meta.outputs.web_image }}:${{ steps.meta.outputs.sha_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Caddy:    \`${{ steps.meta.outputs.caddy_image }}:${{ steps.meta.outputs.sha_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Sandbox changed: ${{ steps.sandbox_check.outputs.sandbox_changed }}" >> "$GITHUB_STEP_SUMMARY"

@@ -49,6 +49,7 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // repos
     {} as never, // awareness
     ticketsSvc as TicketService,
+    {} as never, // jobDeps
     { engineAuth: async () => undefined } as never, // creds
     { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
     {
@@ -202,6 +203,12 @@ describe('brain ticket tools — closure scoping', () => {
     const res = (await qualified('promote_ticket', tools)({ ticketId: 't-9', repoId: 'repo-EVIL' })) as { ok: boolean; jobId?: string };
     expect(res.ok).toBe(true);
     expect(res.jobId).toBe('th-new');
-    expect(promote).toHaveBeenCalledWith({ orgId: 'org-REAL', repoId: 'repo-REAL', ticketId: 't-9' });
+    expect(promote).toHaveBeenCalledWith({
+      orgId: 'org-REAL',
+      repoId: 'repo-REAL',
+      ticketId: 't-9',
+      createdByJobId: 'thread-REAL',
+      createdByTitle: undefined,
+    });
   });
 });

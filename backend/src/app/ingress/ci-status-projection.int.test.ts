@@ -43,14 +43,16 @@ import {
   DriverStoreService,
   GithubCiStateSync,
   GithubPrStateSync,
+  GitStateReconciler,
 } from '../driver';
+import { JobDependencyService } from '../job-deps';
 import { GithubNotificationSource } from './github-notification.source';
 import { GithubEventsWebhookController } from './github-webhook.controller';
 import { WebSurfaceController } from '../surface/web-surface.controller';
 
 const ORG_ID = '41111111-1111-4111-8111-111111111111';
 const SECRET = 'gh-int-secret';
-const OWNED_BRANCH = 'atlas/thread-ci-proj';
+const OWNED_BRANCH = 'feature/ci-proj';
 
 function dbOpts() {
   return {
@@ -95,8 +97,16 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
         GithubCiStateSync,
         DriverStoreService,
         {
+          provide: JobDependencyService,
+          useValue: { blockersOf: async () => [] },
+        },
+        {
           provide: GithubPrStateSync,
           useValue: { dispatch: async () => undefined },
+        },
+        {
+          provide: GitStateReconciler,
+          useValue: { markJobDue: async () => 0 },
         },
         {
           provide: EnvService,
@@ -121,7 +131,12 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
         {
           provide: GithubPrService,
           useValue: {
-            getPullDetail: async () => ({ state: 'open', headSha: 'sha1' }),
+            isRateLimited: () => false,
+            getPullDetail: async () => ({
+              state: 'open',
+              headSha: 'sha1',
+              mergeableState: 'clean',
+            }),
             listCheckRuns: async () => [
               { status: 'completed', conclusion: 'success' },
               { status: 'completed', conclusion: 'success' },
@@ -201,6 +216,7 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
       };
       inst.jobs = jobs;
       inst.repos = repos;
+      inst.jobDeps = { blockersOfManyBlocked: async () => new Map() };
       const rowsBefore = (await WebSurfaceController.prototype.allThreads.call(
         inst,
         { id: 'user-1' } as UserEntity,

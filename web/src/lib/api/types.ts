@@ -23,16 +23,12 @@ export type { WireJobStatus };
 /** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
 export type { WireJobHalt };
 /**
- * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`, plus OPTIONAL
- * multi-account display fields the backend doesn't populate yet (both undefined until then; the usage
- * panel falls back to a neutral single-account header when absent).
+ * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`. Carries the
+ * OPTIONAL panel-header fields (`accountLabel` = the selected account's email/label, `plan` = its
+ * subscription plan); both are absent when no credential is selected and the panel falls back to a
+ * neutral single-account header.
  */
-export type WireOrgUsage = OrgUsage & {
-  /** Display label for the connected account (e.g. an email) — absent until multi-account ships. */
-  accountLabel?: string;
-  /** Subscription plan label (e.g. "Max plan") — absent until multi-account ships. */
-  plan?: string;
-};
+export type WireOrgUsage = OrgUsage;
 /**
  * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
  * single-sourced in `@workspace/shared`. Carried on the realtime row; the dot itself reads `needsYou`.
@@ -85,13 +81,20 @@ export const SHIP_ACTION_ID = "atlas_approval:ship";
  *  `/approve` endpoint with the ship card's `{ jobId }` value. Must match the backend string in
  *  `approval-blocks.ts`. */
 export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
+/** The brain's "Amend build?" PROPOSAL buttons (the `withdraw_ship` tool's card). Unlike the plain
+ *  ship-card retract, the gate stays parked until the operator approves: `Approve amend` runs the operator
+ *  retract AND wakes the brain; `Dismiss` just clears the card. Must match `approval-blocks.ts`. */
+export const AMEND_APPROVE_ACTION_ID = "atlas_approval:amend_approve";
+export const AMEND_DISMISS_ACTION_ID = "atlas_approval:amend_dismiss";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
   | typeof REQUEST_CHANGES_ACTION_ID
   | typeof DENY_ACTION_ID
   | typeof SHIP_ACTION_ID
-  | typeof RETRACT_SHIP_ACTION_ID;
+  | typeof RETRACT_SHIP_ACTION_ID
+  | typeof AMEND_APPROVE_ACTION_ID
+  | typeof AMEND_DISMISS_ACTION_ID;
 
 export interface ApprovalDecision {
   decisionClass: string;
@@ -118,15 +121,18 @@ export interface WebApprovalCard {
   /**
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
    * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
-   * `threads`/`decisions` empty).
+   * `threads`/`decisions` empty). `amend` — the brain's "Amend build?" proposal at the ship gate
+   * (`Approve amend` + `Dismiss`); the gate stays parked until approved.
    */
-  kind?: "plan" | "direct" | "ship";
+  kind?: "plan" | "direct" | "ship" | "amend";
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
   threads: string[];
   planUrl?: string;
   actions: WebCardAction[];
+  /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
+  previewRequestedAt?: string;
 }
 
 export interface WebVerdictCard {
@@ -485,6 +491,12 @@ export interface PipelineThread {
   defaultFooter?: LaneDefaultFooter;
 }
 
+/** Immutable snapshot of the job that spawned another job, captured at create time. */
+export type JobProvenance = { jobId: string; title: string | null };
+
+/** A live blocker of a `blocked` job — one row per job it depends on. */
+export type JobBlocker = { jobId: string; title: string | null; prState: string | null; status: string };
+
 export interface PipelineJob {
   /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
   jobId: string;
@@ -492,6 +504,11 @@ export interface PipelineJob {
   kind: WireJobKind;
   status: WireJobStatus;
   halt: WireJobHalt | null;
+  /** Who spawned this job (immutable snapshot), or null for a top-level job. Powers the "Created by"
+   *  header row. */
+  createdBy?: JobProvenance | null;
+  /** The jobs this one is blocked on (live blockers), for the "Blocked by" navigator row. `[]` unless status==='blocked'. */
+  blockedBy?: JobBlocker[];
   /**
    * Which build path was committed at approval: `'direct'` (fast, brain-implemented) | `'plan'` (driver
    * multi-thread) | `null` (never approved — still an open/awaiting-approval proposal that could become
@@ -522,6 +539,9 @@ export interface PipelineJob {
   /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — same four-state taxonomy as the sidebar
    *  dot; null = no checks reported. Only meaningful once a PR exists (prNumber != null). */
   ciStatus: CiStatus | null;
+  /** Per-category CI check counts (`jobs.ci_counts`) — drives the header glyph's hover tooltip. Parallel
+   *  to `ciStatus`; null when no checks reported. */
+  ciCounts?: CiCounts | null;
   /** The feature branch all threads stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   /** The OBSERVED live branch the agent's HEAD is on; differs from featureBranch ⇒ drift (badge). Null
@@ -529,6 +549,18 @@ export interface PipelineJob {
   currentBranch: string | null;
   baseBranch: string | null;
   threads: PipelineThread[];
+  /**
+   * Prior PLAN REVISIONS' build lanes as read-only, browsable history — present only once a re-propose over
+   * already-DONE work has forged a new revision (the common single-revision job sends `[]`/absent). Each
+   * entry is a superseded revision with its own executable lanes; `revision` is 1-based by age (oldest = v1).
+   * The navigator renders each as a collapsed "Previous plan (vN)" section below the active lanes.
+   */
+  priorRevisions?: {
+    decisionRecordId: string;
+    revision: number;
+    status: string;
+    threads: PipelineThread[];
+  }[];
 }
 
 /**
@@ -620,6 +652,7 @@ export type JobStatus =
   | "awaiting_approval"
   | "awaiting_ship_review"
   | "amending"
+  | "blocked"
   | "done"
   | "triaging"
   | "cancelled"
@@ -632,8 +665,19 @@ export type JobKind = "feat" | "fix" | "event" | "onboard" | "review";
 /** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
 export type PrState = "open" | "merged" | "closed";
 
-/** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI"). */
-export type CiStatus = "success" | "failure" | "pending"; // null handled at the field level
+/** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI").
+ *  `skipped` = checks ran but all were skipped/neutral (never a failure). */
+export type CiStatus = "success" | "failure" | "pending" | "skipped"; // null handled at the field level
+
+/** Per-category CI check counts for the PR head — backend `jobs.ci_counts`. Parallel to {@link CiStatus};
+ *  null exactly when the status is null (no checks reported). The four category counts sum to `total`. */
+export type CiCounts = {
+  failing: number;
+  pending: number;
+  passed: number;
+  skipped: number;
+  total: number;
+};
 
 /** The observed PR on a job — drives the sidebar's PR-status glyph (see `PrStatusIcon`). `mergeable` is
  *  GitHub's `mergeable_state` ('dirty' = merge conflict); `url` links to the PR. */

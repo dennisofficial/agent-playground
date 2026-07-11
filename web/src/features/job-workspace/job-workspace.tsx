@@ -22,7 +22,7 @@ import {
 } from "@/lib/api/job-queries";
 import { useJobEvents } from "@/lib/api/job-events";
 import { MAIN_LANE } from "@/lib/api/job-stream";
-import { toJobStatus } from "@/lib/api/status";
+import { toJobKind, toJobStatus } from "@/lib/api/status";
 import { orgSwatch } from "@/lib/org-display";
 import { ROUTES } from "@/lib/routes";
 import { pipelineJob, type JobRef } from "@/lib/api/job-api";
@@ -161,19 +161,25 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     if (running) replaceLane(running);
   }, [pipeline, job, jobId, laneNode, replaceLane]);
 
-  const kind: JobKind = inboxThread?.kind ?? "feat";
+  const pipelineKind = job ? toJobKind(job.kind) : null;
+  const kind: JobKind = inboxThread?.kind ?? pipelineKind ?? "feat";
   const status: JobStatus = job
     ? toJobStatus(job.status)
     : kind === "event"
       ? "triaging"
       : "planning";
 
-  // The LAST plan-approval card in the log (kind `plan`/`direct`/undefined — never the ship-review card,
-  // which is a distinct gate with its own finder below). Also feeds the "plan" detail-pane doc viewer.
+  // The LAST plan-approval card in the log (kind `plan`/`direct`/undefined — never the ship-review card
+  // or the brain's `amend` proposal, which are distinct gates with their own inline rendering). A POSITIVE
+  // match so a new gate kind can't accidentally drive the plan navigator. Also feeds the "plan" doc viewer.
   const approvalCard = useMemo<WebApprovalCard | null>(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const card = messages[i].card;
-      if (card?.type === "approval_card" && card.kind !== "ship") return card;
+      if (
+        card?.type === "approval_card" &&
+        (card.kind === "plan" || card.kind === "direct" || card.kind == null)
+      )
+        return card;
     }
     return null;
   }, [messages]);
@@ -238,6 +244,14 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     orgName: inboxThread?.org.name ?? "Organization",
     orgColor: orgSwatch(),
     repoName: inboxThread?.repo.name ?? repoId,
+    // Prefer the full pipeline (fresher, and the only source once threads/builds exist); fall back to the
+    // inbox row for a job still in `no_job` (pre-build `open`/chat) — the most common time to want the
+    // parent link. `job?.createdBy ?? inboxThread?.createdBy` would wrongly fall through to the inbox row
+    // whenever the pipeline's own value is null, so gate on `job` existing at all instead.
+    createdBy: job
+      ? (job.createdBy ?? null)
+      : (inboxThread?.createdBy ?? null),
+    blockedBy: job ? (job.blockedBy ?? []) : (inboxThread?.blockedBy ?? []),
   };
 
   const onConversation = openConversation;
@@ -298,6 +312,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         onSelectNode={(node) => selectNode(node, { push: true })}
         onOpenNav={onOpenNav}
         onOpenDetail={onOpenDetail}
+        blockedBy={meta.blockedBy}
       />
     ) : (
       <Conversation
@@ -305,6 +320,8 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         messages={messages}
         isLoading={messagesLoading}
         live={status === "running" || status === "plan_review"}
+        blocked={status === "blocked"}
+        blockedBy={meta.blockedBy}
         mainDefaultFooter={pipeline?.mainDefaultFooter}
         onOpenPlan={onOpenPlan}
         onSelectNode={(node) => selectNode(node, { push: true })}
@@ -341,6 +358,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
           onConversation={closeDetail}
           onSelectNode={(node) => selectNode(node, { push: true })}
           onBack={onBack}
+          blockedBy={meta.blockedBy}
           tracksComments
         />
       ) : (
@@ -361,7 +379,10 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   );
 
   // The persistent approval / ship gate — pins to the base of whichever surface hosts the detail content.
-  const footerBar = awaitingApproval ? (
+  // Shown ONLY on mobile: that's the sole tier where the job sidebar and the navigator's approve/ship
+  // buttons collapse into a drawer, so the footer is the reachable gate. On md+ the navigator's inline
+  // buttons and the conversation's approval card cover it, and the footer was redundant there.
+  const footerBar = !isMobile ? null : awaitingApproval ? (
     <PersistentApprovalBar
       jobRef={ref}
       value={approveValue}
@@ -507,6 +528,8 @@ function baseCrumbLabel(node: string): string {
   if (node === "plan") return "Plan";
   if (node === "decision") return "Decision record";
   if (node === "tickets") return "Tickets raised";
+  if (node === "created") return "Created jobs";
+  if (node === "blocked-by") return "Blocked by";
   const file = /^(?:spec|gen|artifact):(.+)$/.exec(node);
   if (file) return file[1].split("/").pop() ?? file[1];
   return node;

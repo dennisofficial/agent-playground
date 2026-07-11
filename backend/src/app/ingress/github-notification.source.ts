@@ -57,17 +57,22 @@ export class GithubNotificationSource implements NotificationSource {
 
   /**
    * The same work-events front door as `handle`, but also correlates the payload into a `CiSyncDelta`
-   * for the silent CI-status sync — non-null ONLY for the three CI event types. The two are computed
-   * from the SAME verified/routed payload so they can never disagree.
+   * for the silent CI-status sync (`ci`, non-null ONLY for the three CI event types) and a re-arm target
+   * for the reconciler (`rearm`, non-null ONLY for a submitted/dismissed `pull_request_review` — a
+   * required-review approval or dismissal can flip a PR's mergeability). All three are computed from the
+   * SAME verified/routed payload so they can never disagree.
    */
-  async handleWorkEvent(
-    raw: RawNotification,
-  ): Promise<{ triage: IngressResult; ci: CiSyncDelta | null }> {
+  async handleWorkEvent(raw: RawNotification): Promise<{
+    triage: IngressResult;
+    ci: CiSyncDelta | null;
+    rearm: RearmTarget | null;
+  }> {
     const g = await this.verifyAndRoute(raw);
-    if ('outcome' in g) return { triage: g, ci: null };
+    if ('outcome' in g) return { triage: g, ci: null, rearm: null };
     const triage = this.buildTriage(g, raw);
     const ci = parseCiDelta(g.eventType, g.route, g.body);
-    return { triage, ci };
+    const rearm = parseRearmDelta(g.eventType, g.route, g.body);
+    return { triage, ci, rearm };
   }
 
   /** Build the work-events triage result from an already verified+routed payload. */
@@ -202,12 +207,36 @@ export class GithubNotificationSource implements NotificationSource {
     return { eventType, body, route };
   }
 
-  /** Parse a `pull_request` webhook into a `PrStateDelta` the silent sync applies, or ignore it. */
+  /**
+   * Parse a `pull_request` webhook into a `PrStateDelta` (open/reopen/close lifecycle sync), a `pr-rearm`
+   * (a mergeability-affecting action on an already-open PR — head push / draft↔ready), or ignore it.
+   */
   private parsePullRequest(
     route: { orgId: string; repoId: string },
     body: GithubWebhookBody,
   ): IngressResult {
     const action = body.action;
+    const pr = body.pull_request;
+    if (
+      action === 'synchronize' ||
+      action === 'ready_for_review' ||
+      action === 'converted_to_draft'
+    ) {
+      if (pr?.number == null) {
+        return {
+          outcome: 'ignored',
+          reason: 'unsupported',
+          detail: 'pull_request missing number',
+        };
+      }
+      return {
+        outcome: 'pr-rearm',
+        orgId: route.orgId,
+        repoId: route.repoId,
+        prNumber: pr.number,
+        branch: pr.head?.ref ?? null,
+      };
+    }
     if (action !== 'opened' && action !== 'reopened' && action !== 'closed') {
       return {
         outcome: 'ignored',
@@ -215,7 +244,6 @@ export class GithubNotificationSource implements NotificationSource {
         detail: `github pull_request ${action ?? '?'} (no action)`,
       };
     }
-    const pr = body.pull_request;
     if (pr?.number == null) {
       return {
         outcome: 'ignored',
@@ -426,6 +454,36 @@ function summarizeGithubEvent(
     };
   }
   return null;
+}
+
+/** A PR to mark due-now on `GitStateReconciler` — a webhook that can flip mergeability for ONE PR. */
+export type RearmTarget = {
+  orgId: string;
+  repoId: string;
+  prNumber: number | null;
+  branch: string | null;
+};
+
+/**
+ * Re-arm target for a submitted/dismissed `pull_request_review` — a required-review approval or dismissal
+ * can flip a PR's `mergeable_state` (`blocked` ↔ `clean`) with no other webhook signalling it. Non-null
+ * ONLY for those two review actions, and only when the review's PR number is present.
+ */
+function parseRearmDelta(
+  eventType: string,
+  route: { orgId: string; repoId: string },
+  body: GithubWebhookBody,
+): RearmTarget | null {
+  if (eventType !== 'pull_request_review') return null;
+  if (body.action !== 'submitted' && body.action !== 'dismissed') return null;
+  const prNumber = body.pull_request?.number;
+  if (prNumber == null) return null;
+  return {
+    orgId: route.orgId,
+    repoId: route.repoId,
+    prNumber,
+    branch: body.pull_request?.head?.ref ?? null,
+  };
 }
 
 /**

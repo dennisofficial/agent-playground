@@ -10,6 +10,8 @@
 
 import type { DecisionApprovalCard, ApprovalDecision } from './approval-blocks';
 import {
+  AMEND_APPROVE_ACTION_ID,
+  AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
@@ -38,15 +40,19 @@ export interface WebApprovalCard {
    * Which gate the card is for:
    * - `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval (Approve/Deny buttons).
    * - `ship` — the ship-review gate (`Ship it` + `Amend build`; `threads`/`decisions` empty).
-   * The web labels the list "Sections" vs "Changes"; a `ship` card renders ship-gate actions.
+   * - `amend` — the brain's "Amend build?" PROPOSAL at the ship gate (`Approve amend` + `Dismiss`); the
+   *   gate stays parked until the operator approves. `threads`/`decisions` empty.
+   * The web labels the list "Sections" vs "Changes"; a `ship`/`amend` card renders its actions generically.
    */
-  kind?: 'plan' | 'direct' | 'ship';
+  kind?: 'plan' | 'direct' | 'ship' | 'amend';
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
   threads: string[];
   planUrl?: string;
   actions: WebCardAction[];
+  /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
+  previewRequestedAt?: string;
 }
 
 /** A web-rendered verdict card — replaces the approval card after a verdict lands. */
@@ -140,6 +146,40 @@ export function webShipReviewCard(input: {
       {
         actionId: RETRACT_SHIP_ACTION_ID,
         label: 'Amend build',
+        style: 'default',
+        value,
+      },
+    ],
+  };
+}
+
+/**
+ * Build the brain's "Amend build?" PROPOSAL card — posted by `withdraw_ship` while the job is parked at
+ * the ship-review gate. Unlike `webShipReviewCard`, this does NOT retract on its own: it asks the operator
+ * to approve amending. `Approve amend` runs the operator retract path + wakes the brain; `Dismiss` leaves
+ * the gate parked. Reuses the `approval_card` payload (generic `actions` renderer), discriminated by
+ * `kind: 'amend'`. Its action values carry only `{ jobId }`.
+ */
+export function webAmendProposalCard(input: { jobId: string; reason: string }): WebApprovalCard {
+  const value = JSON.stringify({ jobId: input.jobId });
+  return {
+    type: 'approval_card',
+    jobId: input.jobId,
+    kind: 'amend',
+    title: 'Amend build?',
+    summary: input.reason,
+    decisions: [],
+    threads: [],
+    actions: [
+      {
+        actionId: AMEND_APPROVE_ACTION_ID,
+        label: 'Approve amend',
+        style: 'primary',
+        value,
+      },
+      {
+        actionId: AMEND_DISMISS_ACTION_ID,
+        label: 'Dismiss',
         style: 'default',
         value,
       },

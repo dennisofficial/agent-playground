@@ -57,6 +57,9 @@ export const qk = {
   /** Tickets raised FROM one job (`?originJobId=`) — the job workspace's "Tickets raised" panel. */
   jobTickets: (orgId: string, repoId: string, jobId: string) =>
     ["job-tickets", orgId, repoId, jobId] as const,
+  /** Jobs spawned FROM one job (`GET …/jobs/:jobId/created`) — the job workspace's "Created jobs" panel. */
+  jobCreated: (orgId: string, repoId: string, jobId: string) =>
+    ["job-created", orgId, repoId, jobId] as const,
   /** One org's reusable house-style profiles (`GET /web/orgs/:orgId/convention-profiles`). */
   orgConventionProfiles: (orgId: string) =>
     ["org-convention-profiles", orgId] as const,
@@ -67,7 +70,16 @@ export const qk = {
   orgSkills: (orgId: string) => ["org-skills", orgId] as const,
   /** One org's Claude subscription usage snapshot (`GET /web/orgs/:orgId/usage`). */
   orgUsage: (orgId: string) => ["org-usage", orgId] as const,
+  /** One personal credential's own live Claude usage (`GET …/claude-credentials/:id/usage`). */
+  orgCredentialUsage: (orgId: string, credentialId: string) =>
+    ["org-credential-usage", orgId, credentialId] as const,
   /** One org's Claude credentials list (`GET /web/orgs/:orgId/claude-credentials`). */
   orgClaudeCredentials: (orgId: string) =>
     ["org-claude-credentials", orgId] as const,
+  /** One org's decoded Codex account email (owner-only `GET /web/orgs/:orgId/credentials/codex`). */
+  orgCodexAccount: (orgId: string) => ["org-codex-account", orgId] as const,
+  /** The host box's live machine stats snapshot (`GET /web/host-stats`). Not org-scoped. */
+  hostStats: () => ["host-stats"] as const,
+  /** One window's bucketed host-stats history (`GET /web/host-stats/history?hours=`). Not org-scoped. */
+  hostStatsHistory: (hours: number) => ["host-stats", "history", hours] as const,
 };

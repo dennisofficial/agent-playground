@@ -182,15 +182,16 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.threads).toHaveLength(1);
     const [sec] = state.threads;
     expect(sec.hasPlan).toBe(true);
-    // Before the review stage materializes child rows, the read model previews only the statically-known
-    // post-review fix child; dynamic review lenses are materialized from the actual diff in the next test.
-    expect(sec.children).toEqual([
-      expect.objectContaining({
-        id: `${thread.id}~post_review`,
-        kind: 'post_review',
-        status: 'pending',
-        lane: `autofix:${thread.id}:fix`,
-      }),
+    // Before the review stage materializes child rows, the read model exposes the registry-declared
+    // post-review child as a pending preview; materialized review-lens rows are covered by the next test.
+    expect(
+      sec.children.map((c) => ({
+        kind: c.kind,
+        status: c.status,
+        lane: c.lane,
+      })),
+    ).toEqual([
+      { kind: 'post_review', status: 'pending', lane: `autofix:${sec.id}:fix` },
     ]);
     expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
     expect(sec.steps[0].status).toBe('building');
@@ -938,6 +939,41 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(row?.status).toBe('amending'); // unchanged by the no-op second call
   });
 
+  it('parkForShipReview re-parks an amending job -> awaiting_ship_review + re-posts the ship card (amend re-arm)', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'amending-job',
+        kind: 'feature',
+        status: 'amending',
+        activity: 'idle',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const card = webShipReviewCard({
+      jobId: job.id,
+      title: 'amending-job',
+      summary: 'Amend verified.',
+    });
+    const parked = await store.parkForShipReview(
+      job.id,
+      card as unknown as Record<string, unknown>,
+      'Amend verified.',
+    );
+    expect(parked).toBe(true);
+
+    const row = await jobs.findOne({ where: { id: job.id } });
+    expect(row?.status).toBe('awaiting_ship_review');
+    expect(row?.activity).toBe('idle');
+
+    const cardRow = await messages.findOne({
+      where: { job_id: job.id, ts: `ship-review:${job.id}`, kind: 'card' },
+    });
+    expect(cardRow).toBeTruthy();
+  });
+
   it('retractShip does not act on a job in a DIFFERENT status', async () => {
     const job = await jobs.save(
       jobs.create({
@@ -973,5 +1009,66 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       expect(row.card).toMatchObject({ type: 'verdict_card' });
       expect((row.card as Record<string, unknown> | null)?.actions).toBeUndefined();
     }
+  });
+
+  // ── markPreviewRequested (the "Spin up preview" ship-card stamp CAS) ──────────────────────────────
+
+  it('markPreviewRequested stamps the active ship card previewRequestedAt (first click wins)', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+
+    const stamped = await store.markPreviewRequested(jobId);
+    expect(stamped).toBe(true);
+
+    const cardRow = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    const card = cardRow?.card as Record<string, unknown> | undefined;
+    expect(card?.type).toBe('approval_card');
+    expect(card?.kind).toBe('ship');
+    expect(typeof card?.previewRequestedAt).toBe('string');
+  });
+
+  it('a second markPreviewRequested is a no-op (idempotent double-click, returns false)', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+
+    expect(await store.markPreviewRequested(jobId)).toBe(true);
+    const cardRow = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    const firstStamp = (cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt;
+
+    expect(await store.markPreviewRequested(jobId)).toBe(false);
+    const cardRow2 = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    // The stamp is unchanged — the losing call did not re-stamp.
+    expect((cardRow2?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBe(firstStamp);
+  });
+
+  it('markPreviewRequested does NOT stamp a retracted (neutralized) ship card', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+    // Retract neutralizes the card to a verdict_card — its type/kind guards must reject the stamp.
+    expect(await store.retractShip(jobId)).toBe(true);
+
+    expect(await store.markPreviewRequested(jobId)).toBe(false);
+    const cardRow = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    expect((cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBeUndefined();
+  });
+
+  it('markPreviewRequested does NOT stamp when the job has left the ship gate', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+    await jobs.update({ id: jobId }, { status: 'running' });
+
+    expect(await store.markPreviewRequested(jobId)).toBe(false);
+    const cardRow = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    expect((cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBeUndefined();
   });
 });

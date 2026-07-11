@@ -2,6 +2,8 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } 
 import type { JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
+import type { JobProvenance } from '../../domain/job';
+import type { CiCounts } from '../../git';
 import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
@@ -84,6 +86,12 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   base_branch!: string | null;
 
+  /** The create_job firstMessage stored when a never-started job is born blocked (create_job dependsOn);
+   *  replayed on wake, then cleared. Null for a job manually blocked while already running (it resumes its
+   *  existing session on wake, no replay). */
+  @Column({ type: 'text', nullable: true })
+  blocked_seed_message!: string | null;
+
   /**
    * The ticket this thread was promoted from / works (FK → tickets.id); null for a thread not tied to a
    * ticket. A thread works AT MOST one ticket — enforced 1:1 by a partial unique index
@@ -97,6 +105,20 @@ export class JobEntity extends TimestampedEntity {
   @ManyToOne(() => TicketEntity, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'ticket_id' })
   ticket?: TicketEntity | null;
+
+  /** The job whose brain spawned this one via create_job (FK → jobs.id, SET NULL). Null for
+   *  operator/system top-level jobs. Powers the "Created jobs" children query. */
+  @Column({ type: 'uuid', nullable: true })
+  created_by_job_id!: string | null;
+
+  @ManyToOne(() => JobEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'created_by_job_id' })
+  createdByJob?: JobEntity | null;
+
+  /** Immutable provenance snapshot captured at spawn, NEVER nulled — so the "Created by" link
+   *  survives the creator being hard-deleted (the FK goes null, this doesn't). */
+  @Column({ type: 'jsonb', nullable: true })
+  created_by!: JobProvenance | null;
 
   // ── build lifecycle (folded in from the former `jobs` table) ───────────────────────────────────────
   /**
@@ -207,6 +229,14 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   ci_status!: string | null;
+
+  /**
+   * Per-category CI check counts for the PR head (`{ failing, pending, passed, skipped, total }`) —
+   * computed alongside `ci_status` in the same reconciler + webhook-sync recompute. Null exactly when
+   * `ci_status` is null (no check-runs reported for the head SHA).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  ci_counts!: CiCounts | null;
 
   /**
    * Last observed GitHub PR `mergeable_state` (e.g. `clean | dirty | behind | blocked`) — set by the

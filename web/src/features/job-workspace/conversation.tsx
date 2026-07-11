@@ -46,11 +46,13 @@ import {
 } from "./codex-review";
 import { indexAutofixBlocks } from "./review-lane";
 import { Composer, type ComposerFooter } from "./composer";
+import { BlockedOverlay } from "./blocked-overlay";
 import { useAttachments } from "./use-attachments";
 import { useFileDrop } from "./use-file-drop";
 import { DetailTopBar } from "./detail-top-bar";
+import { mermaidReservePx } from "./markdown";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
-import type { LaneDefaultFooter } from "@/lib/api/types";
+import type { JobBlocker, LaneDefaultFooter } from "@/lib/api/types";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
 import { useAllJobs } from "@/lib/api/inbox";
 
@@ -64,6 +66,8 @@ export function Conversation({
   messages,
   isLoading,
   live,
+  blocked = false,
+  blockedBy = [],
   mainDefaultFooter,
   onOpenPlan,
   onSelectNode,
@@ -74,6 +78,10 @@ export function Conversation({
   messages: JobMessage[];
   isLoading: boolean;
   live: boolean;
+  /** The job is `blocked` on another job — disables the composer and pins the blocked overlay at the top. */
+  blocked?: boolean;
+  /** The blockers holding this job (drives the overlay's list + "Unblock now"). */
+  blockedBy?: JobBlocker[];
   /** The Main (brain) lane's pre-turn footer default ("Opus 4.8") — shown before the first brain turn. */
   mainDefaultFooter?: LaneDefaultFooter;
   onOpenPlan?: () => void;
@@ -86,11 +94,15 @@ export function Conversation({
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <ConversationTopBar onOpenNav={onOpenNav} onOpenDetail={onOpenDetail} />
+      {blocked && blockedBy.length > 0 ? (
+        <BlockedOverlay jobRef={jobRef} blockedBy={blockedBy} />
+      ) : null}
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
         lane={MAIN_LANE}
         composer
+        blocked={blocked}
         isLoading={isLoading}
         live={live}
         defaultFooter={mainDefaultFooter}
@@ -118,6 +130,7 @@ export function TranscriptView({
   legIsLive,
   composer = false,
   readOnly = false,
+  blocked = false,
   isLoading = false,
   live = false,
   emptyText,
@@ -142,6 +155,8 @@ export function TranscriptView({
   composer?: boolean;
   /** Read-only lane (not Main): the composer's input + Send are disabled, but its footer stays live. */
   readOnly?: boolean;
+  /** The job is `blocked` — fully disable the composer (a send would just 400). */
+  blocked?: boolean;
   isLoading?: boolean;
   live?: boolean;
   /** The empty-state line when the lane has no activity yet. */
@@ -338,7 +353,7 @@ export function TranscriptView({
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 72,
+    estimateSize: (index) => items[index].estimate,
     overscan: 8,
     getItemKey: (index) => items[index].key,
   });
@@ -346,11 +361,20 @@ export function TranscriptView({
   pinRef.current = () => {
     const el = scrollRef.current;
     if (!el) return;
-    // Land near the last durable row using the virtualizer (accounts for estimated off-screen heights)…
+    // Incremental streaming follow (the common case — already near the bottom): a single write to the true
+    // bottom. The trailing live turn / composer spacer render in normal flow AFTER the windowed list, so
+    // `scrollHeight` is exact and no virtualizer scroll-to-index is needed. Doing just this one write (no
+    // second rAF snap) avoids the tail jittering on every streamed token.
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom <= el.clientHeight) {
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
+    // Big "jump to latest" from far up: the tail rows may be windowed out, so drive the virtualizer to
+    // render them first (accounts for estimated off-screen heights)…
     if (items.length > 0)
       virtualizer.scrollToIndex(items.length - 1, { align: "end" });
-    // …then, once layout settles, pin to the true bottom so the trailing live turn / composer spacer are
-    // included (they render in normal flow AFTER the windowed list, so `scrollHeight` is exact).
+    // …then, once layout settles, pin to the true bottom to include the trailing live turn / composer spacer.
     requestAnimationFrame(() => {
       const e = scrollRef.current;
       if (e) e.scrollTop = e.scrollHeight;
@@ -449,6 +473,7 @@ export function TranscriptView({
           onHeightChange={setComposerHeight}
           footer={footer}
           readOnly={readOnly}
+          blocked={blocked}
         />
       ) : null}
       {/* Drag-over affordance — covers the whole pane; `pointer-events-none` so the drop still lands on the
@@ -516,10 +541,112 @@ function messagePostedMs(message: JobMessage): number {
   return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
 }
 
-/** One windowable top-level row of the durable transcript — a stable key plus its rendered node. */
+/** One windowable top-level row of the durable transcript — a stable key, its rendered node, and the
+ *  initial height guess the virtualizer uses before the row is measured. */
 interface LogItem {
   key: string;
   node: React.ReactNode;
+  /** First-guess row height (px) for `estimateSize`. `measureElement` corrects it to the exact height
+   *  once the row mounts; a close guess keeps that correction small so rows don't visibly shift as they
+   *  scroll into view (a flat guess for every row is what made scrolling jump). */
+  estimate: number;
+}
+
+/**
+ * Per-row-kind initial height guesses (px), keyed by {@link classifyMessage}'s `kind`. These are rough
+ * medians, not exact — the ResizeObserver in `measureElement` replaces each with the real height after the
+ * row renders. Their only job is to make the FIRST guess close so `getTotalSize()` barely moves when an
+ * off-screen row scrolls into view, which is what keeps scrolling smooth. Tool groups and Mermaid-bearing
+ * rows are sized separately (see `toolGroupEstimate` / the `flush` sites below).
+ */
+const ROW_ESTIMATE: Record<string, number> = {
+  // compact single-line pills / dividers
+  system_notice: 40,
+  system_reminder: 40,
+  system_event: 44,
+  event: 44,
+  compaction: 48,
+  // short bubbles
+  user: 92,
+  thinking: 92,
+  system_operator: 96,
+  system_shared: 96,
+  untrusted: 112,
+  // assistant prose — usually the tallest ordinary row
+  claude: 168,
+  // interactive cards (button/input surfaces)
+  approval: 240,
+  question: 200,
+  verdict: 160,
+  secret: 184,
+  mcp_proposal: 200,
+  skill_proposal: 200,
+  ticket: 160,
+  file: 152,
+  review_comments: 184,
+  attachments: 132,
+};
+
+/** Fallback guess for a row kind not in {@link ROW_ESTIMATE} — the rough median of an ordinary row, a much
+ *  closer starting point than the old flat 72px. */
+const ROW_ESTIMATE_FALLBACK = 112;
+
+/** Initial height guess for a classified message row. */
+function estimateForKind(kind: string): number {
+  return ROW_ESTIMATE[kind] ?? ROW_ESTIMATE_FALLBACK;
+}
+
+/** Initial height guess for a folded tool-run group — grows with the number of calls (each collapsed tool
+ *  row is short), capped so a huge run doesn't over-reserve. */
+function toolGroupEstimate(toolCount: number): number {
+  return Math.min(56 + toolCount * 40, 320);
+}
+
+/** Message kinds whose height is dominated by free-form text (markdown / code / diagrams), so a flat
+ *  per-kind guess is a poor estimate — a one-line reply and a page of markdown share the same `kind`. For
+ *  these we estimate from the actual content instead (see {@link estimateForMessage}). */
+const TEXT_KINDS = new Set([
+  "claude",
+  "user",
+  "thinking",
+  "untrusted",
+  "system_shared",
+  "compaction",
+  "system_operator",
+]);
+
+const MERMAID_FENCE = /```mermaid\n([\s\S]*?)```/g;
+/** Card chrome (header bar + vertical margins) around a rendered Mermaid diagram body. */
+const MERMAID_CHROME_PX = 64;
+/** Approx chars per line at the ~800px content column, and the rendered height of one wrapped line. */
+const CHARS_PER_LINE = 92;
+const LINE_PX = 22;
+
+/**
+ * Content-aware initial height guess for a free-form text row. A flat per-kind estimate mis-sizes long
+ * markdown and (badly) diagram-bearing bubbles, which is what makes the row after a tall diagram briefly
+ * overlap it before `measureElement` corrects. So estimate from the text: reserve each embedded Mermaid
+ * diagram at the SAME size the diagram itself reserves ({@link mermaidReservePx}), then add wrapped-line
+ * height for the remaining prose. Still only an estimate — the ResizeObserver sets the exact height; this
+ * just makes the first guess close.
+ */
+function estimateForMessage(message: JobMessage, kind: string): number {
+  const base = estimateForKind(kind);
+  const text = typeof message.text === "string" ? message.text : "";
+  if (!TEXT_KINDS.has(kind) || text === "") return base;
+
+  let diagrams = 0;
+  MERMAID_FENCE.lastIndex = 0;
+  for (let m = MERMAID_FENCE.exec(text); m !== null; m = MERMAID_FENCE.exec(text)) {
+    diagrams += mermaidReservePx(m[1]) + MERMAID_CHROME_PX;
+  }
+
+  const prose = text.replace(MERMAID_FENCE, "");
+  let lines = 0;
+  for (const line of prose.split("\n")) lines += Math.max(1, Math.ceil(line.length / CHARS_PER_LINE));
+  const prosePx = 40 + lines * LINE_PX;
+
+  return Math.max(base, Math.round(prosePx + diagrams));
 }
 
 /**
@@ -578,7 +705,11 @@ function buildLogItems(
     if (pending.length === 0) return;
     for (const seg of segmentToolRun(pending.map((p) => p.tool))) {
       const key = `tg-${seg[0].key}`;
-      nodes.push({ key, node: <ToolGroup key={key} tools={seg} /> });
+      nodes.push({
+        key,
+        node: <ToolGroup key={key} tools={seg} />,
+        estimate: toolGroupEstimate(seg.length),
+      });
     }
     pending = [];
   };
@@ -598,6 +729,7 @@ function buildLogItems(
             onOpen={() => onSelectNode?.(subagentNode(lane, summary.parentId))}
           />
         ),
+        estimate: 184,
       });
   };
 
@@ -639,6 +771,7 @@ function buildLogItems(
               defaultOpen={!isMain}
             />
           ),
+          estimate: isMain ? 96 : 200,
         });
       }
       continue;
@@ -667,6 +800,7 @@ function buildLogItems(
               onOpen={() => onSelectNode?.(codexReviewNode(jobRef.jobId))}
             />
           ),
+          estimate: 148,
         });
         continue;
       }
@@ -691,6 +825,7 @@ function buildLogItems(
                 onOpen={() => onSelectNode?.(phaseId)}
               />
             ),
+            estimate: 148,
           });
         continue;
       }
@@ -724,6 +859,7 @@ function buildLogItems(
           nodes.push({
             key: message.ts,
             node: <BuildInstruction key={message.ts} text={anchor.prompt} />,
+            estimate: 200,
           });
         }
         continue;
@@ -758,6 +894,7 @@ function buildLogItems(
       nodes.push({
         key: message.ts,
         node: <TurnMetaDivider key={message.ts} message={message} />,
+        estimate: 52,
       });
       continue;
     }
@@ -781,7 +918,7 @@ function buildLogItems(
     flush();
 
     const push = (node: React.ReactNode) =>
-      nodes.push({ key: message.ts, node });
+      nodes.push({ key: message.ts, node, estimate: estimateForMessage(message, c.kind) });
     // Interactive cards (buttons/inputs the operator clicks) are wrapped in `data-tailpause` so hovering
     // ANYWHERE on the card — not just its controls — suspends tail-follow (see useTailFollow), keeping the
     // target still under the cursor while tokens stream in.

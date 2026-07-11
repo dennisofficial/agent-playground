@@ -8,6 +8,7 @@ import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver, OnboardingService } from '../onboarding';
 import { BrainGateway } from '../brain-gateway';
+import { JobDependencyService } from '../job-deps';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, JobEntity, JobSandboxEntity } from '../persistence/entities';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
@@ -81,7 +82,7 @@ export class ProvisioningNotReadyError extends Error {
  * `thread_sandboxes` row is pure INFRA (worktree path + container + chat session + lifecycle).
  *
  *   1. `createJob` — persist the `threads` row, then provision the sandbox: cut the worktree AND the
- *      thread's feature branch (`atlas/thread-<id>`) at create, attach a thread-keyed container.
+ *      thread's feature branch (`feature/<id>`) at create, attach a thread-keyed container.
  *   2. `ensureContainer` — every turn calls this first: reuse the warm container, or re-attach a cold
  *      one against the durable worktree, returning `wasReset` so a resumed turn knows its runtime is fresh.
  *   3. `reapIdle` — detach idle containers past the TTL (worktree survives).
@@ -125,6 +126,7 @@ export class JobLifecycleService {
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
     private readonly provisioner: WorktreeProvisioner,
     private readonly tickets: TicketService,
+    private readonly jobDeps: JobDependencyService,
     private readonly turnRegistry: TurnRegistry,
     // Kept for the lazy `OnboardingService` lookup (revalidateRepo) that would otherwise close a load
     // cycle with the @Global onboarding module. The brain wake now comes through the neutral gateway.
@@ -556,6 +558,11 @@ export class JobLifecycleService {
       .update({ org_id: orgId, onboarding_job_id: jobId }, { onboarding_job_id: null })
       .catch(() => undefined);
 
+    // 2c. Wake any job blocked on this one BEFORE the delete cascades its dependency edges away.
+    await this.jobDeps
+      .onBlockerResolved(jobId, 'deleted')
+      .catch((err) => this.logger.warn(`deleteJobDeep: wake funnel failed for blocker ${jobId}: ${err}`));
+
     // 3. Delete the thread row; the FK ON DELETE CASCADE removes every child row with it.
     const res = await this.jobs.delete({ id: jobId, org_id: orgId });
     this.logger.log(`deleted thread ${jobId} (org ${orgId}); thread rows removed=${res.affected ?? 0}, children cascaded`);
@@ -599,6 +606,9 @@ export class JobLifecycleService {
     if (state === 'open') return 'noop';
     const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
     await this.jobs.update({ id: job.id }, { pr_state: prState });
+    await this.jobDeps
+      .onBlockerResolved(job.id, prState === 'merged' ? 'merged' : 'closed_unmerged')
+      .catch((err) => this.logger.warn(`applyGithubPrState: wake funnel failed for blocker ${job.id}: ${err}`));
     // DETACH, not close: free the container's RAM but KEEP the worktree + session so a post-merge follow-up
     // resumes the brain with full context (a merged PR should "just free RAM, never delete data"). The
     // worktree is reclaimed for disk later by `reapMergedSandboxes` once it's sat detached past the TTL.
@@ -833,7 +843,7 @@ export class JobLifecycleService {
       // IS a branch from the start (one branch / one PR per thread). The THREAD owns the feature branch
       // (single source of truth the driver builds on).
       // Host-named canonical branch: honors the repo's optional `branch_prefix` (falling back to the
-      // historical `atlas/thread-` default) so a repo can enforce its own convention (e.g. `feat/`).
+      // neutral `feature/` default) so a repo can enforce its own convention (e.g. `feat/`).
       const featureBranch = computeFeatureBranchName(project, thread.id);
       const baseSandboxInput = (await this.git.hasSubmodules(projectRepo))
         ? await this.git.createBaseClone(projectRepo, thread.id)

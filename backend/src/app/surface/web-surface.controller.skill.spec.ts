@@ -46,6 +46,7 @@ function makeController(card: unknown, ctxRoot: string) {
     {} as never, // repos
     {} as never, // threadTitle
     {} as never, // ticketEvents
+    {} as never, // usageBus
     { available: false } as never, // realtime
     {} as never, // election
     {} as never, // dispatcher
@@ -59,6 +60,7 @@ function makeController(card: unknown, ctxRoot: string) {
     { vendorDir: m.vendorDir, removeStaging: m.removeStaging, removeSkillDir: m.removeSkillDir } as never, // skillFiles
     { install: m.install } as never, // skillInstaller
     {} as never, // git (LocalGitService)
+    {} as never, // jobDeps (JobDependencyService)
   );
   return { controller, m };
 }

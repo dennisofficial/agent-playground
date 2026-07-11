@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { qk } from "./query-keys";
 import {
+  addJobDependency,
   answerQuestion,
   provideSecret,
   provideFile,
@@ -13,6 +14,7 @@ import {
   createJobWithFiles,
   deleteThread,
   fetchContextFile,
+  fetchCreatedJobs,
   fetchMessages,
   fetchOrgRepos,
   fetchRepoBranches,
@@ -22,11 +24,13 @@ import {
   fetchServices,
   fetchThreadContext,
   postReviewComments,
+  removeJobDependency,
   renameJob,
   retryJob,
   retryTurn,
   sayMessage,
   sayMessageWithFiles,
+  spinUpPreview,
   stopJob,
   type AnswerQuestionBody,
   type ProvideSecretBody,
@@ -37,7 +41,7 @@ import {
   type JobRef,
   type ReviewCommentItemBody,
 } from "./job-api";
-import type { WebAttachmentsCard, WebReviewCommentsCard } from "./types";
+import type { JobBlocker, WebAttachmentsCard, WebReviewCommentsCard } from "./types";
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
@@ -135,6 +139,16 @@ export function useRepoBranches(orgId: string, repoId: string) {
     queryFn: () => fetchRepoBranches(orgId, repoId),
     enabled: Boolean(orgId && repoId),
     staleTime: 30_000,
+  });
+}
+
+/** Jobs Atlas spawned FROM this one — the job workspace's "Created jobs" panel. */
+export function useJobCreatedJobs(ref: JobRef) {
+  return useQuery({
+    queryKey: qk.jobCreated(ref.orgId, ref.repoId, ref.jobId),
+    queryFn: () => fetchCreatedJobs(ref),
+    enabled: hasRef(ref),
+    staleTime: 10_000,
   });
 }
 
@@ -360,6 +374,47 @@ export function useRetryTurn(ref: JobRef) {
   });
 }
 
+/** Manually block this job on another (the kebab "Block on another job…"). Refreshes the pipeline (the
+ *  status flips to `blocked` + the "Blocked by" row appears) and the inbox. */
+export function useAddJobDependency(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dependsOnJobId: string) => addJobDependency(ref, dependsOnJobId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
+/** Remove one blocker edge (the kebab "Unblock" calls this once per current blocker). Refreshes the
+ *  pipeline + inbox so a fully-cleared job flips back off `blocked`. */
+export function useRemoveJobDependency(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dependsOnJobId: string) => removeJobDependency(ref, dependsOnJobId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
+/** Removes EVERY current blocker edge in one go (the kebab "Unblock" and the conversation-pane blocked
+ *  overlay share this) — the backend has no batch endpoint, so it fires one `DELETE …/dependencies/:id`
+ *  per blocker. Once the last edge is gone the backend flips the job off `blocked` and wakes its brain. */
+export function useUnblockJob(ref: JobRef, blockedBy: JobBlocker[]) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      Promise.all(blockedBy.map((b) => removeJobDependency(ref, b.jobId))),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
 /** Answer a formal `ask_question` card. Refreshes the conversation (the card flips to answered + the
  *  brain's next turn lands). */
 export function useAnswerQuestion(ref: JobRef) {
@@ -368,6 +423,20 @@ export function useAnswerQuestion(ref: JobRef) {
     mutationFn: (body: AnswerQuestionBody) => answerQuestion(ref, body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+    },
+  });
+}
+
+/** "Spin up preview" at the ship gate — POSTs the dedicated seeder endpoint (not the generic `say` path),
+ *  which injects the full preview procedure server-side and stamps the ship card `previewRequestedAt`.
+ *  Refreshes the conversation + pipeline so the stamped card or an off-gate no-op hides stale buttons. */
+export function useSpinUpPreview(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => spinUpPreview(ref),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
     },
   });
 }

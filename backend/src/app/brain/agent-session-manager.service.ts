@@ -45,6 +45,7 @@ import {
   webMcpProposalCard,
   webQuestionCard,
   webSecretInputCard,
+  webShipReviewCard,
   webSkillEditAccessCard,
   webSkillProposalCard,
   wrapSystemNotification,
@@ -76,7 +77,7 @@ import { BuildShipService } from '../driver/build-ship.service';
 import { BrainGateway } from '../brain-gateway';
 import { threadDirName } from '../driver/thread-dir-name';
 import { Agent, PromptService } from '../prompt-kit';
-import { decisionsBlock, shipOpenPrBody } from '../prompt-kit';
+import { shipOpenPrBody } from '../prompt-kit';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -116,6 +117,7 @@ import {
 import { GitIdentityService, LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { TicketService } from '../tickets';
+import { JobDependencyService } from '../job-deps';
 import type {
   TicketKind,
   TicketPriority,
@@ -137,6 +139,10 @@ import {
   BrainTurnAlreadyRunningError,
   TurnRegistry,
 } from '../sandbox/turn-registry.service';
+import {
+  TurnReattachRegistry,
+  type ReattachOutcome,
+} from '../sandbox/turn-reattach.registry';
 import {
   ENGINE_RUNNER,
   isEngineDetachedError,
@@ -313,6 +319,8 @@ export class AgentSessionManager
     private readonly awareness: PipelineAwarenessStore,
     // The internal board/backlog — captured out-of-scope work + promotion to follow-up threads.
     private readonly tickets: TicketService,
+    // Job-to-job "blocked by" edges + the wake funnel (create_job dependsOn, link_job_dependency, manual UI).
+    private readonly jobDeps: JobDependencyService,
     // Per-org engine subscription secret for the in-sandbox brain turn (the SDK harness).
     private readonly creds: CredentialResolver,
     // User-defined MCP servers resolved onto the brain turn (org/repo tiers, `brain` surface).
@@ -382,6 +390,10 @@ export class AgentSessionManager
     // deadlock DI — the brain constructs the driver). @Optional matching this constructor's convention —
     // the @Global BrainGatewayModule supplies it live; unit tests that never boot the seam omit it.
     @Optional() private readonly brainGateway?: BrainGateway,
+    // The kind→owner reattach routing table (from @Global SandboxModule). This service claims the brain-owned
+    // kinds on bootstrap so the leader watchdog can re-attach an orphaned-but-alive brain/compaction turn
+    // continuously, not only at the once-per-boot sweep. @Optional matching this constructor's convention.
+    @Optional() private readonly reattachRegistry?: TurnReattachRegistry,
   ) {}
 
   /**
@@ -464,6 +476,13 @@ export class AgentSessionManager
     });
     // NOTE: the `codex-review` thread-input transport was removed — Codex review is now Atlas-driven only
     // (the synchronous `review_plan` tool), so there is no external "post a rebuttal to Codex" path.
+    // Claim the brain-owned kinds on the reattach routing table so the leader watchdog can re-attach an
+    // orphaned-but-alive brain/compaction turn continuously (see `reattachTurnRow`), not only at the
+    // once-per-boot `reattachOwnedTurns` sweep. Unconditional + idempotent (the watchdog is leader-only).
+    for (const kind of ['brain', 'compaction'] as const) {
+      this.reattachRegistry?.register(kind, (row) => this.reattachTurnRow(row));
+    }
+
     this.leaderBootSub = this.election.onPromote(() =>
       this.runLeaderBootSweeps(),
     );
@@ -747,7 +766,6 @@ export class AgentSessionManager
     branch: string;
     defaultBranch: string;
     title: string;
-    decisions: ReadonlyArray<{ title: string; decisionClass: string; ruling: string }>;
   }): Promise<void> {
     const stimulus = harnessDeliveryStimulus({
       jobId: input.jobId,
@@ -757,7 +775,6 @@ export class AgentSessionManager
         branch: input.branch,
         defaultBranch: input.defaultBranch,
         title: input.title,
-        decisionsBlock: decisionsBlock(input.decisions),
       }),
       seedRow: {
         label: 'Opening the pull request.',
@@ -809,6 +826,7 @@ export class AgentSessionManager
         chunkKey: `seed:halt:${threadId}:${gen}`,
         untrustedSource: `thread-halt:${threadId}`,
         severity: outcome,
+        framing: haltWakeFraming(thread, outcome, term),
       },
     });
     await this.handleChatTurn(stimulus);
@@ -867,6 +885,7 @@ export class AgentSessionManager
         chunkKey: `seed:done:${threadId}`,
         untrustedSource: `thread-done:${threadId}`,
         severity: reason,
+        framing: doneWakeFraming(thread, reason, term, anchor, perThreadGaps),
       },
     });
     await this.handleChatTurn(stimulus);
@@ -899,6 +918,66 @@ export class AgentSessionManager
     await this.handleChatTurn(stimulus);
   }
 
+  /**
+   * WAKE a job whose block just cleared (every blocker reached a terminal state). Born-blocked jobs
+   * (a create_job dependsOn that never started) replay their stored seed as the first turn; a job that
+   * was manually blocked while it already had a session resumes that session with a synthetic wake
+   * stimulus. `note` (d1) names any blocker that did NOT merge so the brain re-checks its assumptions.
+   * Fire-and-forget (the JobUnblockSweep is the retry); concurrency-safe via handleChatTurn/startFollowUpJob.
+   */
+  async wakeUnblockedJob(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+    input: { seed: string | null; note: string | null },
+  ): Promise<void> {
+    if (input.seed != null) {
+      const firstMessage = input.note ? `${input.note}\n\n${input.seed}` : input.seed;
+      await this.startFollowUpJob(jobId, orgId, repoId, firstMessage);
+      return;
+    }
+    const body = input.note
+      ? `${input.note}\n\nAll blocking jobs have now resolved — you are unblocked. Resume the work you had planned.`
+      : 'All blocking jobs have now resolved — you are unblocked. Resume the work you had planned.';
+    const stimulus = harnessDeliveryStimulus({
+      jobId,
+      orgId,
+      repoId,
+      body,
+      seedRow: { label: 'Unblocked — a blocking job resolved.', chunkKey: `seed:unblock:${jobId}` },
+    });
+    await this.handleChatTurn(stimulus);
+  }
+
+  /**
+   * WAKE the job brain because the operator APPROVED its "Amend build?" proposal (the `withdraw_ship`
+   * tool's card). By this point the operator retract path has already run (`awaiting_ship_review →
+   * amending`), so the brain just needs to do the follow-up work it proposed. The brain's session is
+   * resumed, so it recalls WHAT it proposed — the delivery stays generic. The brain re-arms the gate by
+   * calling `report_verification({ passed: true })` once the amend is verified (re-parks directly at
+   * `awaiting_ship_review`, no rebuild). Concurrency-safe via `handleChatTurn`.
+   */
+  async wakeForAmendApproved(jobId: string): Promise<void> {
+    const job = await this.store.loadJob(jobId).catch(() => null);
+    if (!job) return;
+    const stimulus = harnessDeliveryStimulus({
+      jobId,
+      orgId: job.orgId,
+      repoId: job.repoId,
+      body: [
+        'The operator APPROVED your amend proposal — the ship-review gate is retracted and the job is now',
+        '**amending**. Do the follow-up work you proposed, then call `report_verification({ passed: true })`',
+        'with your live evidence — that re-parks the job directly at the ship-review gate (amending →',
+        'ready-to-ship, no rebuild). Do not re-propose unless something material changed.',
+      ].join('\n'),
+      seedRow: {
+        label: 'Amend approved — resuming to make the changes.',
+        chunkKey: `seed:amend-approved:${jobId}`,
+      },
+    });
+    await this.handleChatTurn(stimulus);
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────────────────────────────
 
   /**
@@ -912,6 +991,13 @@ export class AgentSessionManager
     // already rejected with 503 at the surface; this catches internal/boot re-delivery callers so the
     // in-flight set can actually quiesce. A no-op (not a throw) — internal callers are fire-and-forget.
     if (this.election.getState() === 'draining') return;
+
+    // A dependency-blocked job is fully parked: no system wake/re-drive should start its brain until the
+    // dependency service first flips it back to `open`.
+    if (await this.isJobBlocked(stimulus.jobId)) {
+      this.logger.log(`job=${stimulus.jobId} is blocked; dropping system turn until it is unblocked`);
+      return;
+    }
 
     // Render this harness seed as a visible transcript row (the console mirrors the agent's turns — every
     // seed the brain reads must be legible). Runs whether the seed steers into a live turn or spawns a
@@ -1008,7 +1094,10 @@ export class AgentSessionManager
     // Carry the raw payload the engine actually received so the console can reveal it on row-expand — but
     // only when it differs from the short `label` (curated notices whose label already IS the full body
     // don't need a redundant copy). See decision d1/d2.
-    const fullBody = stimulus.body !== row.label ? stimulus.body : undefined;
+    const isUntrusted = (row.kind ?? 'system_notice') === 'untrusted';
+    // Untrusted rows: `label` already IS the clean fenced report and the trusted framing rides in
+    // `row.framing` (its own block) — so DON'T fold the whole engine body (framing+fence) into fullBody.
+    const fullBody = !isUntrusted && stimulus.body !== row.label ? stimulus.body : undefined;
     void this.store
       .recordSystemChunk?.({
         jobId: stimulus.jobId,
@@ -1018,6 +1107,7 @@ export class AgentSessionManager
         ...(row.untrustedSource ? { untrustedSource: row.untrustedSource } : {}),
         ...(row.severity ? { severity: row.severity } : {}),
         ...(fullBody ? { fullBody } : {}),
+        ...(row.framing ? { framing: row.framing } : {}),
       })
       ?.catch((err: unknown) =>
         this.logger.debug(`persistSeedRow failed (best-effort): ${err}`),
@@ -1178,6 +1268,13 @@ export class AgentSessionManager
    */
   async pumpThread(jobId: string, orgId: string, repoId: string): Promise<void> {
     if (this.election.getState() === 'draining') return;
+
+    // Leave pending operator chat undelivered while the job is dependency-blocked. The unblock wake flips the
+    // job open and the delivery sweep/poke will then carry the queued messages into the brain.
+    if (await this.isJobBlocked(jobId)) {
+      this.logger.log(`job=${jobId} is blocked; parking pending chat delivery`);
+      return;
+    }
 
     const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
     if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
@@ -1402,6 +1499,13 @@ export class AgentSessionManager
     return true;
   }
 
+  private async isJobBlocked(jobId: string): Promise<boolean> {
+    const loadJob = this.store.loadJob?.bind(this.store);
+    if (!loadJob) return false;
+    const job = await loadJob(jobId).catch(() => null);
+    return job?.status === 'blocked';
+  }
+
   /**
    * Record a SESSION-scoped skill edit grant for a job — called by the OWNER-gated
    * `…/jobs/:jobId/skill-edit-access/:requestId/approve` endpoint after it resolves the fork-to-custom
@@ -1504,6 +1608,38 @@ export class AgentSessionManager
     await Promise.all(blocking);
   }
 
+  /**
+   * WATCHDOG RE-ATTACH (brain kinds: brain/compaction). The leader watchdog calls this for one
+   * orphaned-but-alive `active_turns` row this service owns — the same recovery as the boot
+   * {@link reattachOwnedTurns} sweep, but for ONE row and triggered continuously (so a turn a restart
+   * orphaned resumes within a watchdog window, without waiting for the next process restart). Idempotent:
+   *   - a kind we don't own → 'deferred';
+   *   - the runner can't reattach, or we're already tailing this turn in-process → we don't double-attach;
+   *   - otherwise dispatch the kind's handler (brain runs fire-and-forget; compaction is short and awaited),
+   *     rebuilding the harness + tool closure and resuming the live engine.
+   * The `reattachOne`/`reattachCompactionOne` handlers self-guard on insufficient registry ctx (they no-op,
+   * leaving the engine live for a later attempt), so we never finalize a live turn here.
+   */
+  async reattachTurnRow(row: ActiveTurnEntity): Promise<ReattachOutcome> {
+    const handler = this.reattachHandlers()[row.kind];
+    if (!handler) return 'deferred';
+    if (!this.engineRunner.reattach) return 'deferred';
+    if (this.engineRunner.isAttached?.(row.turn_id)) {
+      // Already tailing it in THIS process — the live relay is advancing the heartbeat; nothing to do.
+      return 'attached';
+    }
+    if (handler.awaitCompletion) {
+      // Short, ordering-sensitive kinds (compaction): await so the watchdog's heartbeat freshen lands after.
+      await handler.run(row);
+    } else {
+      // Long-running kinds (brain) stream for minutes — fire-and-forget, mirroring the boot sweep.
+      void handler.run(row).catch((err) =>
+        this.logger.warn(`watchdog re-attach turn ${row.turn_id} (${row.kind}) failed: ${err}`),
+      );
+    }
+    return 'attached';
+  }
+
   /** Re-attach one in-flight brain turn: rebuild stimulus → tools → harness, resume the engine, persist. */
   private async reattachOne(row: ActiveTurnEntity): Promise<void> {
     // A mid-day promotion (leader flap between watch respawns) re-fires this sweep while THIS process
@@ -1565,6 +1701,12 @@ export class AgentSessionManager
     const reattachKind =
       (await this.store.loadJob(row.job_id).catch(() => null))?.kind ?? null;
     const tools = this.buildTools(stimulus, reattachKind);
+    // Drop any live-turn state stranded by a prior subscription that died without finish/abort/discard, so
+    // the '0-0' event replay below rebuilds a CLEAN buffer (a fresh turn_start) instead of appending onto a
+    // stale open block — the root cause of persistent multiple-cursor state. Silent (no turn_end) to avoid
+    // racing the client's async reconcile; guarded so the empty boot path is a no-op. Lane defaults to
+    // 'main' — matches create() below (no lane arg).
+    this.turnHarness.resetLane(row.channel, row.job_id);
     const streamer = this.turnHarness.create({
       jobId: row.job_id,
       orgId: row.org_id,
@@ -1731,6 +1873,10 @@ export class AgentSessionManager
     // turn cold-attaches FIRST. If an earlier turn (e.g. a queued operator message) already consumed it,
     // this synthetic wake has nothing to do — drop it rather than run a redundant turn on the warm box.
     if (stimulus.seedResetVerify && !this.pendingResetVerify.has(resetKey)) return;
+
+    // The job may have become blocked after this turn was queued. Do not mark chat delivered here; it should
+    // stay pending and run after the dependency wake reopens the job.
+    if (await this.isJobBlocked(stimulus.jobId)) return;
 
     // A composer message NEVER answers an open `ask_question` card — answers come ONLY through the
     // question-card component (`/answer-question`, which stamps the card directly + includes its own
@@ -1986,6 +2132,20 @@ export class AgentSessionManager
       });
     }
 
+    // AMENDING guidance — persistent while the ship gate is retracted for a follow-up fix. BOTH entry paths
+    // land in `amending`: the brain's own `withdraw_ship` proposal (which wakes the brain) AND the operator's
+    // manual "Amend build" click (which does NOT wake the brain at all). A one-time wake can also be compacted
+    // mid-amend. So re-state the return path EVERY turn while amending, so the brain always knows how to get
+    // back to ready-to-ship. Best-effort; null unless the job is `amending`.
+    const amendingPrefix = await this.buildAmendingPrefix(stimulus.jobId);
+    if (amendingPrefix) {
+      reminderChunks.push({
+        kind: 'system_reminder',
+        body: amendingPrefix,
+        attrs: { reminderKind: 'amending' },
+      });
+    }
+
     // Render the envelope: notice/reminder chunks first (renderTurn keeps `<user>` last), then the body.
     // A seed body is already framed XML — append it after the prefixes rather than re-wrapping it.
     const framedPrefix = renderTurn([...noticeChunks, ...reminderChunks]);
@@ -2008,6 +2168,7 @@ export class AgentSessionManager
     const brainJob = await this.store
       .loadJob(stimulus.jobId)
       .catch(() => null);
+    if (brainJob?.status === 'blocked') return;
 
     // Build the host-side tool dispatch table, scoped to this thread. Curated by kind (onboarding/review
     // get build-free subsets — see buildTools).
@@ -2689,7 +2850,32 @@ export class AgentSessionManager
                 },
               ]
             : [];
-        if (passed) return { ok: true };
+        if (passed) {
+          // AMEND RE-PARK: after an approved `withdraw_ship`, the job sits in `amending` while the brain does
+          // the follow-up work it proposed. A clean verification here re-arms the ship gate DIRECTLY
+          // (`amending → awaiting_ship_review`) and re-posts the "Ship it" card — the amend IS the fix, so
+          // there is no detour back through a `running` build. On any other status this is the normal
+          // direct-build flag-set (finalize_build ships), so leave it untouched.
+          const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+          if (job?.status === 'amending') {
+            const title = job.title ?? 'this build';
+            const summary =
+              'Amend verified. Review the diff, then click **Ship it** to open the PR.';
+            const card = webShipReviewCard({ jobId: job.id, title, summary });
+            const parked = await this.driverStore.parkForShipReview(
+              job.id,
+              card as unknown as Record<string, unknown>,
+              summary,
+            );
+            return {
+              ok: true,
+              message: parked
+                ? 'Amend verified — re-parked at the ship-review gate. The operator can Ship it now.'
+                : 'Amend verified.',
+            };
+          }
+          return { ok: true };
+        }
         const remaining = Array.isArray(args['remaining'])
           ? (args['remaining'] as unknown[]).map((x) => String(x).trim()).filter(Boolean)
           : [];
@@ -2842,29 +3028,37 @@ export class AgentSessionManager
         };
       },
 
-      // Retract the ship-review gate (READY TO SHIP) to `amending` — the tool sibling of the manual
-      // "Amend build" click. Calls the SAME `DriverStoreService.retractShip` CAS transition + card
-      // neutralization the click uses (already injected here as `driverStore` — no ThreadDriver import
-      // needed), so there is one authoritative retract regardless of who triggers it.
+      // PROPOSE amending the ship-review build (READY TO SHIP). This does NOT retract the gate — the ship
+      // gate is a human control, so only the operator can release it. The tool posts an "Amend build?"
+      // proposal card carrying the brain's `reason`; the gate stays parked until the operator approves it
+      // (which runs the operator retract path AND wakes the brain via `wakeForAmendApproved`). The brain
+      // MUST stop and wait after proposing — do not keep building.
       withdraw_ship: async (args) => {
         const reason = String(args['reason'] ?? '').trim();
-        const acted = await this.driverStore.retractShip(stimulus.jobId);
-        if (!acted) {
+        const outcome = await this.driverStore.openAmendProposal(stimulus.jobId, reason);
+        if (outcome === 'not-parked') {
           return {
             ok: false,
             message:
-              'The job is not currently parked at the ship-review gate — nothing to retract.',
+              'The job is not currently parked at the ship-review gate — nothing to propose amending.',
+          };
+        }
+        if (outcome === 'already-open') {
+          return {
+            ok: false,
+            message:
+              'An amend proposal is already awaiting the operator’s decision. Wait for it — do NOT keep building.',
           };
         }
         await this.store.appendAtlasMessage(
           stimulus.jobId,
-          `↩︎ Ship-review retracted — amending the build${reason ? `: ${reason}` : ''}.`,
+          'Proposed amending the build — awaiting the operator’s decision…',
         );
         return {
           ok: true,
           message:
-            'Ship-review retracted — the job is now **amending**. Do the follow-up work; the ship gate ' +
-            're-arms automatically once it completes.',
+            'Amend proposal posted. It is PENDING the operator’s approval — do NOT keep building. The ship ' +
+            'gate stays up until they approve; if approved you’ll be woken to do the follow-up work.',
         };
       },
 
@@ -3571,8 +3765,7 @@ export class AgentSessionManager
           message: shipOpenPrBody({
             branch: sandbox.branch,
             defaultBranch: repo.defaultBranch,
-            title: job.title ?? 'Atlas build',
-            decisionsBlock: decisionsBlock(rec?.decisions ?? []),
+            title: job.title?.trim() || sandbox.branch,
           }),
         };
       },
@@ -3589,6 +3782,22 @@ export class AgentSessionManager
           };
         }
 
+        // Validate every dependsOn blocker (existence + same repo) BEFORE creating the job, so a bad or
+        // cross-repo id rejects cleanly with no residue — otherwise an early edge could park a live
+        // 'blocked' job that later wakes/replays even though this create_job reported failure.
+        const dependsOn = strArray(args['dependsOn']) ?? [];
+        if (dependsOn.length > 0) {
+          try {
+            await this.jobDeps.assertDependenciesValid({
+              orgId: stimulus.orgId,
+              repoId: stimulus.repoId,
+              dependsOnJobIds: dependsOn,
+            });
+          } catch (err) {
+            return { ok: false, reason: errText(err) };
+          }
+        }
+
         // Same org + repo as this thread — derived from the closure, never from tool args (no cross-tenant
         // escape). The follow-up inherits this thread's base branch and starts scoping immediately.
         const current = await this.store.loadJob(stimulus.jobId);
@@ -3597,7 +3806,39 @@ export class AgentSessionManager
           repoId: stimulus.repoId,
           title,
           baseBranch: current.baseBranch,
+          createdByJobId: stimulus.jobId,
+          createdByTitle: current.title,
         });
+
+        let anyBlocked = false;
+        if (dependsOn.length > 0) {
+          try {
+            for (const dependsOnJobId of dependsOn) {
+              const { blocked } = await this.jobDeps.addDependency({
+                orgId: stimulus.orgId,
+                repoId: stimulus.repoId,
+                jobId: newJobId,
+                dependsOnJobId,
+                seed: firstMessage,
+              });
+              anyBlocked ||= blocked;
+            }
+          } catch (err) {
+            return { ok: false, jobId: newJobId, reason: errText(err) };
+          }
+        }
+
+        if (anyBlocked) {
+          this.logger.log(
+            `thread ${stimulus.jobId} created follow-up ${newJobId}, blocked on ${dependsOn.length} job(s)`,
+          );
+          return {
+            ok: true,
+            jobId: newJobId,
+            blocked: true,
+            message: `Created follow-up "${title}" — blocked on ${dependsOn.length} job(s); it will start when they resolve.`,
+          };
+        }
 
         // Kick the new thread's brain with its opening intent. Fire-and-forget — the parent's turn doesn't
         // block on the child's provisioning (~30s); the intent is recorded so it's visible if the start fails.
@@ -3617,6 +3858,7 @@ export class AgentSessionManager
         return {
           ok: true,
           jobId: newJobId,
+          blocked: false,
           message: `Created follow-up "${title}" and started it.`,
         };
       },
@@ -3823,14 +4065,41 @@ export class AgentSessionManager
         }
       },
 
+      link_job_dependency: async (args) => {
+        const jobId = String(args['jobId'] ?? '').trim();
+        const dependsOnJobId = String(args['dependsOnJobId'] ?? '').trim();
+        if (!jobId || !dependsOnJobId)
+          return { ok: false, reason: 'jobId and dependsOnJobId are required' };
+        try {
+          const { blocked } = await this.jobDeps.addDependency({
+            orgId: stimulus.orgId,
+            repoId: stimulus.repoId,
+            jobId,
+            dependsOnJobId,
+          });
+          return {
+            ok: true,
+            blocked,
+            message: blocked
+              ? 'Linked dependency — the job is now blocked until its blocker resolves.'
+              : 'Linked dependency (blocker already resolved — no live block).',
+          };
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+      },
+
       promote_ticket: async (args) => {
         const ticketId = String(args['ticketId'] ?? '').trim();
         if (!ticketId) return { ok: false, reason: 'ticketId is required' };
         try {
+          const current = await this.store.loadJob(stimulus.jobId);
           const result = await this.tickets.promote({
             orgId: stimulus.orgId,
             repoId: stimulus.repoId,
             ticketId,
+            createdByJobId: stimulus.jobId,
+            createdByTitle: current.title,
           });
           if (result.created && result.seedText) {
             // Kick the new thread's brain in-process (same as create_job). Fire-and-forget.
@@ -4126,7 +4395,7 @@ export class AgentSessionManager
           ok: false,
           reason: 'description is required (why the file is needed)',
         };
-      const requestId = `f-${randomUUID()}`;
+      const requestId = await this.store.nextFileRequestId(stimulus.jobId);
       const card = webFileRequestCard({
         jobId: stimulus.jobId,
         requestId,
@@ -5221,8 +5490,12 @@ export class AgentSessionManager
           ok: false,
           reason:
             'finish_onboarding requires `verified`: describe what you actually booted and how you checked it ' +
-            '(the services you brought up via atlas-svc, the health checks/log lines, any dry-run). If the ' +
-            'stack would not boot, do NOT finish — say what is still blocking instead.',
+            '(the services you brought up via atlas-svc, the health checks/log lines, any dry-run). For a repo ' +
+            'with USER-FACING surfaces, `verified` must ALSO include live preview-accessibility proof — each ' +
+            'public preview URL loaded + hydrated as a browser via atlas-probe, AND (where the surface has ' +
+            'auth) the authed-handshake proof via a real dev-login + `atlas-probe --storage-state`; a local ' +
+            'health check is not enough. If the stack would not boot or a surface is not browser-accessible, ' +
+            'do NOT finish — say what is still blocking instead.',
         };
       }
       const sandbox = await this.lifecycle.findSandbox(
@@ -5298,8 +5571,7 @@ export class AgentSessionManager
           message: shipOpenPrBody({
             branch: sandbox.branch,
             defaultBranch: repo.defaultBranch,
-            title: 'Atlas: onboarding environment setup',
-            decisionsBlock: '',
+            title: 'Environment setup',
           }),
         };
       } catch (err) {
@@ -5534,10 +5806,7 @@ export class AgentSessionManager
       }
       if (isDirect) {
         // FAST PATH: the brain implements it ITSELF in an autonomous in-sandbox turn (no driver).
-        await this.store.appendAtlasMessage(
-          stimulus.jobId,
-          'Approved — implementing the change directly.',
-        );
+        await this.saySystemNotice(stimulus, 'Approved — implementing the change directly.');
         // Passive milestone (drained into the NEXT operator turn — the synthetic direct-build turn skips
         // the drain). Recorded AFTER the durable `approve`.
         await this.recordMilestone(
@@ -5548,10 +5817,7 @@ export class AgentSessionManager
         void this.runDirectBuild(stimulus, running);
       } else {
         await this.dispatcher.dispatch(running);
-        await this.store.appendAtlasMessage(
-          stimulus.jobId,
-          'Plan approved — dispatching the build.',
-        );
+        await this.saySystemNotice(stimulus, 'Plan approved — dispatching the build.');
         // Passive milestones — recorded AFTER the durable `approve` + `dispatch`.
         await this.recordMilestone(
           stimulus.jobId,
@@ -5575,17 +5841,38 @@ export class AgentSessionManager
 
     if (resolution.verdict === 'request_changes') {
       await this.store.reopenPlanning(job.id);
-      const note = resolution.note ? ` Noted: ${resolution.note}` : '';
-      await this.say(
+      // The note is the operator telling the brain WHAT to change — deliver it into the resumed engine
+      // session (a real seeded turn), not just an operator-facing ack. Without this the note only lands in
+      // the `messages` mirror and the brain never sees it. Build from `job.*` (reliable on both the live
+      // and durable-fallback callers) rather than the possibly-stale/empty `stimulus`. No note → nothing
+      // actionable to deliver, so keep the ack and wait for the operator's next turn.
+      if (resolution.note) {
+        await this.handleChatTurn(
+          harnessDeliveryStimulus({
+            jobId: job.id,
+            orgId: job.orgId,
+            repoId: job.repoId,
+            body: renderRequestChangesDelivery(resolution.note),
+            seedRow: {
+              label: 'Operator requested changes — revising the plan.',
+              chunkKey: `seed:request-changes:${decisionRecordId}`,
+            },
+          }),
+        );
+        return;
+      }
+      // No note: a calm System-notice ack (never in Atlas's voice), consistent with the other
+      // approval-resolution acks. The brain's next turn resumes from the reopened planning state.
+      await this.saySystemNotice(
         stimulus,
-        `Got it — back to the drawing board.${note} What should change?`,
+        'Got it — back to the drawing board. What should change?',
       );
       return;
     }
 
     // deny
     await this.store.cancel(job.id);
-    await this.say(stimulus, "Understood — I'll drop this one.");
+    await this.saySystemNotice(stimulus, "Understood — I'll drop this one.");
   }
 
   /**
@@ -6067,7 +6354,8 @@ export class AgentSessionManager
       'request any secrets yet. Then present that summary to the operator, note plainly that the full ' +
       'bring-up will take a while and a lot of tokens, and ask for their go-ahead via ask_question before ' +
       'proceeding. STOP and wait for their response. Only after they green-light it: bring up and validate ' +
-      'the fleet, register required secrets via request_secret, record non-secret config with ' +
+      'the fleet, make each user-facing surface browser-accessible through the preview proxy and prove it ' +
+      'with atlas-probe, register required secrets via request_secret, record non-secret config with ' +
       'write_workspace_config, propose any stack-matched MCP servers for the owner to approve via ' +
       'propose_mcp_servers, match the repo against the org house-style profiles (list_convention_profiles → ' +
       'propose_convention_profile with the best-matching slug, or "none" if it follows none), then call ' +
@@ -6297,6 +6585,30 @@ export class AgentSessionManager
   }
 
   /**
+   * Persistent per-turn reminder while a job sits in `amending` (the ship-review gate retracted for a
+   * follow-up fix). This is the durable teacher of the return path: unlike the one-time amend-approved wake,
+   * it fires EVERY turn while amending, so it covers the manual "Amend build" click (which never wakes the
+   * brain) and survives compaction. Returns null unless the job is `amending`. Best-effort.
+   */
+  private async buildAmendingPrefix(jobId: string): Promise<string | null> {
+    try {
+      const job = await this.store.loadJob(jobId).catch(() => null);
+      if (job?.status !== 'amending') return null;
+      return (
+        'This build is AMENDING — the ship-review gate was retracted so you can make a follow-up fix. ' +
+        'Make the change in the sandbox and verify it (typecheck/build/tests, plus a live run of any ' +
+        'runtime surface you touched). When it is done and verified, call ' +
+        '`report_verification({ passed: true })` with your live evidence — that re-parks the job DIRECTLY ' +
+        'at the ship-review gate (amending → ready-to-ship, no rebuild) and re-posts the "Ship it" card for ' +
+        'the operator. Do not re-propose amending unless something material changed.'
+      );
+    } catch (err) {
+      this.logger.debug(`amending prefix failed (continuing): ${err}`);
+      return null;
+    }
+  }
+
+  /**
    * The file-request analog of {@link buildOpenQuestionsPrefix}: an advisory reminder of the file-upload
    * cards still awaiting an upload (posted, not yet provided/withdrawn), so a fresh/compacted brain session
    * doesn't re-post a duplicate `request_file`. Lists each open card's id + destination path. Best-effort.
@@ -6373,6 +6685,30 @@ export class AgentSessionManager
       this.logger.warn(`failed to post brain reply: ${err}`);
     }
     await this.store.appendAtlasMessage(stimulus.jobId, text);
+  }
+
+  /** Post a calm SYSTEM→OPERATOR notice (meta.source='system_notice') in-thread AND append the durable
+   *  row. Mirrors {@link say} but is NOT in Atlas's voice — a benign harness ack the resumed brain
+   *  session never authored, with no error/Resume semantics (contrast {@link saySystemOperator}). */
+  private async saySystemNotice(stimulus: ChatStimulus, text: string): Promise<void> {
+    const route = await this.store.route({
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
+      jobId: stimulus.jobId,
+    });
+    const channel = route.channel ?? stimulus.replyRoute.jobRef;
+    const threadTs = route.threadTs ?? stimulus.replyRoute.jobRef;
+    const meta = { source: 'system_notice' };
+    try {
+      await this.surface.post(channel, text, {
+        threadTs,
+        orgId: stimulus.orgId,
+        meta,
+      });
+    } catch (err) {
+      this.logger.warn(`failed to post system notice: ${err}`);
+    }
+    await this.store.appendSystemNotice(stimulus.jobId, text);
   }
 
   /**
@@ -6688,6 +7024,26 @@ function renderWorkOwedNudge(): string {
   ].join('\n');
 }
 
+/**
+ * The harness framing for a REQUEST-CHANGES note. The operator reviewed a proposed plan/direct-build and
+ * clicked "Request changes" with a note; the job is already back in `planning`. This delivers their note
+ * into the resumed brain session (via `handleChatTurn`) so the engine actually SEES the feedback — the
+ * `messages` table is only an operator-facing mirror, so without this the note would reach the brain only
+ * if the operator re-typed it. The note is the operator's own (trusted) words; it is quoted verbatim so the
+ * brain reads it as their instruction. Wrapped as a `<system_notification>` by `harnessDeliveryStimulus`.
+ */
+function renderRequestChangesDelivery(note: string): string {
+  return [
+    'The operator reviewed your proposed plan and clicked **Request changes**, leaving this note:',
+    '',
+    ...note.split('\n').map((line) => `> ${line}`),
+    '',
+    'The plan is back in planning. Incorporate their feedback: revise the specs and decisions accordingly,',
+    'and if anything is ambiguous ask a focused follow-up before re-proposing. When the plan is ready,',
+    're-run `review_plan` and then `propose_plan` to send the updated version for approval.',
+  ].join('\n');
+}
+
 function harnessDeliveryStimulus(input: {
   jobId: string;
   orgId: string;
@@ -6848,11 +7204,12 @@ export function haltTriageGuidance(
   ];
 }
 
-function renderHaltDelivery(
+/** The TRUSTED harness framing for a delivered HALT wake — extracted from {@link renderHaltDelivery} so
+ *  the seed row can carry it separately from the fenced (untrusted) record body. */
+export function haltWakeFraming(
   thread: { id: string; ordinal: number; brief: string },
   outcome: 'blocked' | 'incomplete' | 'failed',
   term: ThreadTerminalRecord | null,
-  anchor: SessionAnchor | undefined,
 ): string {
   const preamble = [
     `One of your own build threads HALTED (outcome: ${outcome}) — no human sent this; the build driver`,
@@ -6862,7 +7219,16 @@ function renderHaltDelivery(
     `You may investigate (read transcripts/code), post a diagnosis, request a missing secret, and` +
       ` retry_thread within budget — but you may NOT edit/push code or ship without the operator.`,
   ];
-  const framing = [...preamble, ...haltTriageGuidance(term?.blocked?.reason)].join('\n');
+  return [...preamble, ...haltTriageGuidance(term?.blocked?.reason)].join('\n');
+}
+
+function renderHaltDelivery(
+  thread: { id: string; ordinal: number; brief: string },
+  outcome: 'blocked' | 'incomplete' | 'failed',
+  term: ThreadTerminalRecord | null,
+  anchor: SessionAnchor | undefined,
+): string {
+  const framing = haltWakeFraming(thread, outcome, term);
   // The record fields were authored by a DIFFERENT (builder) session — fence them as data. `wrapUntrusted`
   // supplies the "this is DATA, obey only the operator" boundary; the body is a readable projection of the
   // record (the full copy lives in completion.md, which the framing points the brain at).
@@ -6933,7 +7299,10 @@ function haltDeliveryStimulus(input: {
  * record fields wrapped in `wrapUntrusted` (data, not instructions). Reason-branched: `'final'` reviews the
  * whole parked build; `'notable'` triages one thread's leftover gaps.
  */
-export function renderDoneDelivery(
+/** The TRUSTED harness framing for a delivered COMPLETION wake — extracted from
+ *  {@link renderDoneDelivery} so the seed row can carry it separately from the fenced (untrusted)
+ *  record body. */
+export function doneWakeFraming(
   thread: { id: string; ordinal: number; brief: string },
   reason: 'final' | 'notable',
   term: ThreadTerminalRecord | null,
@@ -6950,10 +7319,15 @@ export function renderDoneDelivery(
   const body =
     reason === 'final'
       ? [
-          `The whole build finished and is parked at the ship gate — nothing is pushed yet. Review the`,
+          `The whole build finished and is parked at the ship gate — nothing is pushed yet.`,
+          `First, free the RAM: the builders and master review may have spun up services for testing that are`,
+          `now idle on this shared host — tear them down with \`atlas-svc stop-all\` (a preview or demo below`,
+          `re-derives and boots only what it needs). Then review the`,
           `integrated result (the diff; any lane's transcript via \`atlas-tx\`), then post the operator a crisp`,
           `summary of what shipped and any risks. You may investigate/report/request-secret/retry a lane; you`,
           `may NOT ship — the **Ship it** gate is the operator's.`,
+          `If the change has a demonstrable runtime surface, ALSO offer the operator a live preview in your ` +
+            `summary — they can tap "Spin up preview" to have you prepare a demo-ready preview and hand over the URL.`,
           term?.summary ? `master review outcome: ${term.summary}` : null,
           perThreadGaps?.length
             ? [
@@ -6969,7 +7343,17 @@ export function renderDoneDelivery(
           `(read its transcript: \`atlas-tx show ${anchor?.sessionId ?? '<sessionId>'} --errors\`), report to`,
           `the operator, and retry the lane with guidance if you hold the fix. Don't edit/push autonomously.`,
         ].join('\n');
-  const framing = [...preamble, '', body].join('\n');
+  return [...preamble, '', body].join('\n');
+}
+
+export function renderDoneDelivery(
+  thread: { id: string; ordinal: number; brief: string },
+  reason: 'final' | 'notable',
+  term: ThreadTerminalRecord | null,
+  anchor: SessionAnchor | undefined,
+  perThreadGaps?: { brief: string; gaps: string[] }[],
+): string {
+  const framing = doneWakeFraming(thread, reason, term, anchor, perThreadGaps);
   const fenced = wrapUntrusted({
     source: `thread-done:${thread.id}`,
     severity: reason,

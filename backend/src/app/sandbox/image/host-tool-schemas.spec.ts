@@ -159,6 +159,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     body: 'Paginate the list endpoint.',
   },
   link_ticket_dependency: { ticketId: 't1', dependsOnTicketId: 't2' },
+  link_job_dependency: { jobId: 'j1', dependsOnJobId: 'j2' },
   promote_ticket: { ticketId: 't1' },
   propose_convention_profile_change: {
     slug: 'backend-style',

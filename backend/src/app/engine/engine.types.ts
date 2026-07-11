@@ -140,6 +140,15 @@ export type EngineEvent =
       status: 'started' | 'completed' | 'failed' | 'stopped' | 'capped';
       detail?: string;
       taskType?: string;
+      /**
+       * The spawning `Task` tool_use id (the SDK's `tool_use_id`), set for a backgrounded Task SUBAGENT so
+       * the web can correlate this lifecycle event to that subagent's card (== the child blocks'
+       * `parentToolUseId`). A backgrounded Task returns its `tool_result` immediately (a launch ack, not the
+       * real result), so the card can't use the anchor's own `done` to know the subagent finished — it marks
+       * the anchor settled on the SETTLEMENT status here instead. Absent for a bare Bash bg task / the
+       * `capped` synthetic (no originating tool call to attribute).
+       */
+      parentToolUseId?: string;
     };
 
 /**

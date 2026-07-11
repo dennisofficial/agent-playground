@@ -6,6 +6,7 @@ import { DataSource, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { OrganizationEntity, OrgCredentialsEntity } from '../persistence/entities';
 import { isNewerCodexAuth } from './codex-auth-freshness';
+import { decodeCodexAccountEmail } from './codex-id-token';
 import { decryptSecret, encryptSecret, loadSecretsKey } from './secret-cipher';
 
 /** Decrypted credentials for a (team, scope) — the in-memory shape consumers read. */
@@ -108,6 +109,13 @@ export class TenantCredentialStore {
     };
   }
 
+  /** Owner-gated display value: the Codex account email decoded on-read from the pasted auth.json (no new column). */
+  async codexAccountEmail(orgId: string, scope = '*'): Promise<string | undefined> {
+    const row = await this.repo.findOne({ where: { org_id: orgId, scope } });
+    if (!row?.codex_auth_secret_enc) return undefined;
+    return decodeCodexAccountEmail(decryptSecret(row.codex_auth_secret_enc, this.key()));
+  }
+
   /** Encrypt + persist the provided fields (find-or-create the (team, scope) row). Refuses without a key. */
   async write(orgId: string, patch: TenantCredentialPatch, scope = '*'): Promise<void> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
@@ -187,23 +195,29 @@ export class TenantCredentialStore {
     window: StoredUsageWindow,
     fetchedAt: number,
     scope = '*',
-  ): Promise<void> {
-    await this.dataSource.transaction(async (m) => {
+  ): Promise<boolean> {
+    return await this.dataSource.transaction(async (m) => {
       const row = await m.findOne(OrgCredentialsEntity, {
         where: { org_id: orgId, scope },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!row) return;
+      if (!row) return false;
       const snapshot: ClaudeUsageSnapshot = row.claude_usage_snapshot ?? { windows: {}, fetchedAt: 0 };
       const existing = snapshot.windows[key];
       if (existing && existing.utilization === window.utilization && existing.resetsAt === window.resetsAt) {
-        return; // unchanged — skip the write
+        return false; // unchanged — skip the write
       }
       snapshot.windows = { ...snapshot.windows, [key]: window };
       snapshot.fetchedAt = fetchedAt;
       row.claude_usage_snapshot = snapshot;
       await m.save(row);
+      return true;
     });
+  }
+
+  /** Drop the org's harvested usage snapshot (set the nullable column null) — used on a Claude account switch so the ring re-reads the new account from scratch. */
+  async clearClaudeUsageSnapshot(orgId: string, scope = '*'): Promise<void> {
+    await this.repo.update({ org_id: orgId, scope }, { claude_usage_snapshot: null });
   }
 
   private decryptRow(row: OrgCredentialsEntity): TenantCredentials {

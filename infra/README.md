@@ -20,7 +20,8 @@ Single OVH box (64 GB, SYS-GAME-2). Docker + docker-compose. Caddy for TLS termi
 ├── .env                # compose interpolation store — POSTGRES_USER/PASSWORD/DB for ${..}
 │                       # substitution + pg-backup.sh; mode 600 (see infra/.env.compose.example)
 ├── secrets/
-│   └── atlas.env       # plaintext secrets — mode 600, never committed (see .env.prod.example)
+│   ├── atlas.env       # plaintext secrets — mode 600, never committed (see .env.prod.example)
+│   └── mcp-reader.env  # scoped MCP_READER_* only — mode 600 (see .env.mcp-reader.example)
 ├── caddy/
 │   ├── data/           # Caddy certificate storage
 │   ├── config/         # Caddy runtime config
@@ -213,6 +214,44 @@ Replace `<tag>` with the `sha-<gitsha>` tag `ci.yml` published for the commit yo
 > migrations the normal way (`pnpm db:migration:generate`, never hand-written — see the repo CLAUDE.md);
 > the deploy applies them with `db:migrate:deploy`.
 
+### 7.5. Create the read-only MCP-reader role
+
+The `mcp-reader` service (standalone, read-only prod-diagnostics MCP server) connects with a dedicated
+**SELECT-only** Postgres role — this is what makes its production access read-only *structurally* (it
+physically cannot INSERT/UPDATE/DELETE or run DDL), not just by convention. Create it once, after the
+schema exists (step 7), with the idempotent `infra/mcp-reader-role.sql`:
+
+```bash
+# Set MCP_READER_API_KEY + MCP_READER_PG_PASSWORD + MCP_READER_PG_DB in /srv/atlas/secrets/mcp-reader.env
+# first — the reader's OWN scoped secret file (template: infra/.env.mcp-reader.example), NOT atlas.env, so
+# the untrusted-data-ingesting reader never sees the backend's full secret bundle. Create it once:
+#   cp infra/.env.mcp-reader.example /srv/atlas/secrets/mcp-reader.env  # then fill in + chmod 600
+# MCP_READER_PG_USER stays `mcp_reader`; MCP_READER_PG_DB == POSTGRES_DB.
+set -a; source /srv/atlas/.env; set +a   # POSTGRES_USER / POSTGRES_DB
+PW="$(grep -E '^MCP_READER_PG_PASSWORD=' /srv/atlas/secrets/mcp-reader.env | cut -d= -f2-)"
+docker exec -i atlas-postgres psql -v ON_ERROR_STOP=1 \
+    -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    -v mcp_reader_password="$PW" \
+    -f - < infra/mcp-reader-role.sql
+```
+
+The script is re-runnable — running it again refreshes the grants and resets the password (so it doubles
+as the DB-credential rotation step). The `mcp-reader` service (step 8) picks up the role via the
+`MCP_READER_PG_*` secrets.
+
+**Register the server for the Atlas repo (operator, one-time, in the web UI).** The reader has **no public
+port and no Caddy route** — it's reachable only from Atlas-repo sandboxes over the internal `atlas-mcp`
+network. In the web console's MCP settings, for the **Atlas repo only**, add a server:
+
+- Transport: **Streamable HTTP**
+- URL: `http://mcp-reader:4100/` (internal Docker DNS — resolvable because Atlas-repo sandboxes are
+  attached to `atlas-mcp`; gated on `ATLAS_REPO_SLUG` matching the repo's slug)
+- Header: `X-Api-Key: <MCP_READER_API_KEY>` (the same value stored in `mcp-reader.env`)
+
+Only Atlas-repo jobs then receive both the network route **and** the key. Rotating the key = change
+`MCP_READER_API_KEY` in `mcp-reader.env`, re-save the web-registry value, then `docker compose … up -d
+mcp-reader`.
+
 ### 8. Start all services
 
 ```bash
@@ -270,6 +309,34 @@ base/tool version), remove the image on the box before deploying:
 ```bash
 docker rmi atlas-sandbox:latest && ./infra/deploy.sh sha-<gitsha>
 ```
+
+### Disk / image garbage collection
+
+Docker's image store (`/var/lib/containerd`) accumulates disk three ways: old
+`sha-<gitsha>` deploy images (each deploy pulls ~6.6G of backend + migrator + web),
+orphaned `atlas-sandbox:latest` rebuilds (left as `<none>` ~4.9G each when the sandbox
+build context changes), and their build cache. Left unchecked this fills the root
+filesystem — a real incident (53% of the 878G RAID-1 mirror was ~360G of reclaimable
+images).
+
+`infra/docker-gc.sh` reaps all three **safely**: it removes old deploy tags with
+`docker rmi` *without* `-f`, so the active backend and any rollback image (referenced by
+a container) are skipped, never deleted; dangling-image and build-cache pruning only
+touch untagged, unreferenced content; it never removes containers, networks or volumes.
+
+It runs automatically at the end of every `deploy.sh` (step 8). Because sandbox images
+churn between deploys, also install it as a daily cron so a box that isn't deployed for a
+while still gets reaped:
+
+```bash
+sudo cp infra/docker-gc.sh /srv/atlas/scripts/docker-gc.sh
+sudo chmod +x /srv/atlas/scripts/docker-gc.sh
+# Run as a user in the `docker` group (root works). Keeps the newest 5 deploy tags/repo.
+sudo crontab -l 2>/dev/null | { cat; echo '30 3 * * * /srv/atlas/scripts/docker-gc.sh >> /var/log/atlas-docker-gc.log 2>&1'; } | sudo crontab -
+```
+
+Tune retention with `ATLAS_GC_KEEP` (default 5 newest sha tags per repo). To reclaim on
+demand: `sudo /srv/atlas/scripts/docker-gc.sh`.
 
 ---
 

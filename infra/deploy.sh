@@ -37,8 +37,13 @@ POLL_INTERVAL=5      # seconds between health polls
 # /opt/actions-runner/_work/... — a DIFFERENT project name than a manual run from $SRV, which collides on
 # the fixed `container_name: atlas-postgres` and finds no $SRV/.env for `${POSTGRES_*}` substitution.
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Detect a Caddyfile change so we can hot-reload it below. The Caddyfile is BIND-MOUNTED (not baked),
+# so `docker compose up -d caddy` never notices a content change — without an explicit `caddy reload`
+# a Caddyfile edit would silently never take effect.
+CADDYFILE_CHANGED=0
 if [[ "$SRC_DIR" != "$SRV" ]]; then
     cp "$SRC_DIR/docker-compose.prod.yml" "$SRV/docker-compose.prod.yml"
+    if ! cmp -s "$SRC_DIR/Caddyfile" "$SRV/Caddyfile" 2>/dev/null; then CADDYFILE_CHANGED=1; fi
     cp "$SRC_DIR/Caddyfile" "$SRV/Caddyfile"
 fi
 COMPOSE_FILE="$SRV/docker-compose.prod.yml"
@@ -203,7 +208,7 @@ fi
 check_address_pool
 log "Pulling images for tag $TAG ..."
 ATLAS_IMAGE_TAG="$TAG" DC pull \
-    "backend-${STANDBY}" web
+    "backend-${STANDBY}" web mcp-reader
 
 # ── 2. Run migrator (one-shot, on the atlas network) ────────────────────────────
 # Ensure Postgres + Redis (and thus the `atlas` network) exist before the migrator joins it — on a
@@ -239,6 +244,24 @@ export ATLAS_IMAGE_TAG="$TAG"
 log "Ensuring web + caddy are up (tag: ${TAG}) ..."
 DC up -d web caddy
 
+# Hot-reload Caddy IFF its config changed (it's bind-mounted, so `up -d` alone won't apply an edit).
+# `caddy reload` graceful-swaps the running config, which momentarily drops the per-preview routes the
+# backend injected via the admin API — the leader's ~10s preview reconciler re-adds them, and the prod
+# hosts (atlas./api.atlas.) live in the static Caddyfile so they are never dropped. Skipped when the
+# file is unchanged so a routine backend-only deploy doesn't blip previews.
+if [[ "$CADDYFILE_CHANGED" == "1" ]]; then
+    log "Caddyfile changed — reloading Caddy config ..."
+    docker exec atlas-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \
+        || log "WARN: caddy reload failed — check 'docker exec atlas-caddy caddy validate --config /etc/caddy/Caddyfile'"
+fi
+
+# ── 2.6. Ensure the read-only diagnostics MCP reader is up ──────────────────────
+# A single stateless, read-only instance — NOT part of the blue/green backend dance and NOT
+# health-gated (no leader election, no public route). Recreated on tag change; postgres (its
+# depends_on) was already ensured up in step 2. Internal-only — no port is published.
+log "Ensuring mcp-reader is up (tag: ${TAG}) ..."
+DC up -d mcp-reader
+
 # ── 3. Start standby ────────────────────────────────────────────────────────────
 log "Starting backend-${STANDBY} (tag: ${TAG}) ..."
 
@@ -271,3 +294,16 @@ record_state "$STANDBY" "$TAG"
 
 log "=== Deploy complete. Active: backend-${STANDBY} (${TAG}) ==="
 log "Previous backend-${ACTIVE} is stopped. It will be the standby for the next deploy."
+
+# ── 8. Garbage-collect old images (best-effort) ──────────────────────────────────
+# Every deploy pulls a fresh ~6.6G of sha-tagged images; without this they accumulate
+# indefinitely under /var/lib/containerd. docker-gc.sh trims old deploy tags (keeping
+# the newest few for rollback — the just-deployed + previous colours are always in use
+# and are skipped) and prunes dangling sandbox-image rebuilds + stale build cache. It
+# NEVER touches a running container's image, so it can't affect this live deploy. A
+# failure here must not fail an otherwise-successful deploy, hence `|| true`.
+if [[ -x "$SRC_DIR/docker-gc.sh" ]]; then
+    cp "$SRC_DIR/docker-gc.sh" "$SRV/docker-gc.sh" 2>/dev/null || true
+    log "Running post-deploy image GC ..."
+    "$SRC_DIR/docker-gc.sh" || log "WARN: image GC reported an error (non-fatal)"
+fi

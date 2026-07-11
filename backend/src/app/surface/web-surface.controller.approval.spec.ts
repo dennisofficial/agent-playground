@@ -49,7 +49,8 @@ function makeController(thread: {
     {} as never,
     {} as never,
     {} as never,
-    {} as never,
+    {} as never, // ticketEvents
+    {} as never, // usageBus
     { available: false } as never,
     {} as never,
     {} as never,
@@ -63,6 +64,7 @@ function makeController(thread: {
     {} as never,
     {} as never, // skillInstaller (SkillInstallerService)
     {} as never, // git (LocalGitService)
+    {} as never, // jobDeps (JobDependencyService)
   );
   return { controller, mocks };
 }

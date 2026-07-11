@@ -42,6 +42,8 @@ import { CurrentUser, Public } from '@workspace/auth/server';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
+  AMEND_APPROVE_ACTION_ID,
+  AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
@@ -71,6 +73,7 @@ import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
+import { JobDependencyService } from '../job-deps';
 import { CONTAINER_CONTEXT, type ServiceLivenessProbe } from '../sandbox';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
@@ -102,6 +105,8 @@ import {
   subscriptionToObservable,
 } from '../realtime';
 import { TicketEventBus } from '../tickets';
+import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
+import { UsageEventBus } from '../onboarding/usage-event-bus';
 
 const VALID_ACTION_IDS = new Set([
   APPROVE_ACTION_ID,
@@ -113,6 +118,10 @@ const VALID_ACTION_IDS = new Set([
   // The ship-review gate's "Back to building" button — the sibling retract of SHIP_ACTION_ID, routed to
   // the driver's ship-retract instead of a plan verdict (see WebSurfaceModule).
   RETRACT_SHIP_ACTION_ID,
+  // The brain's "Amend build?" proposal buttons — Approve runs the operator retract + wakes the brain;
+  // Dismiss just neutralizes the card. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule).
+  AMEND_APPROVE_ACTION_ID,
+  AMEND_DISMISS_ACTION_ID,
 ]);
 /** Author fields for an operator-authored web message — the REAL signed-in user (display name falls back
  *  to email), so the brain's `<user name=…>` attribution names the actual person, not a generic "Operator".
@@ -527,6 +536,7 @@ export class WebSurfaceController {
     private readonly repos: Repository<RepoEntity>,
     private readonly threadTitle: JobTitleService,
     private readonly ticketEvents: TicketEventBus,
+    private readonly usageBus: UsageEventBus,
     private readonly realtime: RealtimeService,
     private readonly election: LeaderElectionService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
@@ -558,6 +568,8 @@ export class WebSurfaceController {
     // Repo-file endpoints (`/repo/tree`, `/repo/file`) read the job worktree via `git ls-files`. From the
     // (non-@Global) GitModule, imported into WebSurfaceModule for this injection to resolve.
     private readonly git: LocalGitService,
+    // Job-to-job "blocked by" edges — the manual block/unblock endpoints call addDependency/removeDependency.
+    private readonly jobDeps: JobDependencyService,
     // Sandbox-preview exposure — renders each service's public URL + triggers a per-poll Caddy reconcile.
     // From the @Global ExposureModule (inert unless PREVIEW_BASE_DOMAIN is set). @Optional so the
     // controller's direct-construction unit tests (positional args) compile without a trailing argument.
@@ -590,6 +602,8 @@ export class WebSurfaceController {
       }),
       this.repos.find({ where: { org_id: In(orgIds) } }),
     ]);
+    const blockedIds = threads.filter((t) => t.status === 'blocked').map((t) => t.id);
+    const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
     const orgById = new Map(orgs.map((o) => [o.id, o]));
     const repoName = new Map(repos.map((r) => [`${r.org_id}:${r.id}`, r.name]));
     return threads.map((t) => {
@@ -607,6 +621,8 @@ export class WebSurfaceController {
         // `running` status during shipping, so this distinguishes "opening PR" from "building threads" and
         // keeps the card pinned in "Ready to Ship" instead of "Building".
         shipping: t.status === 'running' && t.ship_review_approved_at != null,
+        createdBy: t.created_by ?? null,
+        blockedBy: blockersByJob.get(t.id) ?? [],
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,
@@ -625,9 +641,10 @@ export class WebSurfaceController {
               url: t.pr_url,
             }
           : null,
-        // The observed CI/CD aggregate (`success|failure|pending|null`) — drives the sidebar row's CI
+        // The observed CI/CD aggregate (`success|failure|pending|skipped|null`) — drives the sidebar row's CI
         // dot on first paint / when realtime is disabled (realtime carries it independently).
         ciStatus: t.ci_status,
+        ciCounts: t.ci_counts,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,
@@ -676,6 +693,8 @@ export class WebSurfaceController {
       where: { org_id: org.id, repo_id: repoId },
       order: { created_at: 'DESC' },
     });
+    const blockedIds = rows.filter((t) => t.status === 'blocked').map((t) => t.id);
+    const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
     return rows.map((t) => ({
       id: t.id,
       title: t.title,
@@ -684,6 +703,8 @@ export class WebSurfaceController {
       halt: t.halt ?? null,
       activity: t.activity,
       halted: t.halted,
+      createdBy: t.created_by ?? null,
+      blockedBy: blockersByJob.get(t.id) ?? [],
       needsYou: deriveNeedsYou({
         status: t.status,
         activity: t.activity,
@@ -855,6 +876,11 @@ export class WebSurfaceController {
       );
     }
     const thread = await this.requireThread(jobId, org.id);
+    if (thread.status === 'blocked') {
+      throw new BadRequestException(
+        'This job is blocked on another job; unblock it (or wait for its blocker to merge) before interacting.',
+      );
+    }
     const attach = files?.length
       ? await this.ingestAttachments(org.id, jobId, files)
       : null;
@@ -978,7 +1004,10 @@ export class WebSurfaceController {
    */
   @Sse('orgs/:orgId/repos/:repoId/events')
   @UseGuards(OrgMembershipGuard)
-  events(@Param('repoId') repoId: string): Observable<MessageEvent> {
+  events(
+    @Param('orgId') orgId: string,
+    @Param('repoId') repoId: string,
+  ): Observable<MessageEvent> {
     const messages$ = this.surface.outbound$.pipe(
       filter((msg: WebOutboundMessage) => msg.channel === repoId),
       map((msg): MessageEvent => ({ data: { type: 'message', ...msg } })),
@@ -1039,7 +1068,13 @@ export class WebSurfaceController {
         }),
       ),
     );
-    return merge(snapshot$, live$, messages$, meta$, tickets$);
+    // Claude-subscription usage ring updates for this org — a harvested-window change during a turn or an
+    // account switch (see `OauthUsageService.invalidate`).
+    const usage$ = this.usageBus.stream$.pipe(
+      filter((e) => e.orgId === orgId),
+      map((e): MessageEvent => ({ data: { type: 'usage', orgId: e.orgId, usage: e.usage } })),
+    );
+    return merge(snapshot$, live$, messages$, meta$, tickets$, usage$);
   }
 
   /** `POST …/threads/:jobId/approve` — submit a plan verdict. */
@@ -1070,7 +1105,12 @@ export class WebSurfaceController {
     }
     // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
     const thread = await this.requireThread(meta.jobId, org.id);
-    if (actionId !== SHIP_ACTION_ID && actionId !== RETRACT_SHIP_ACTION_ID) {
+    if (
+      actionId !== SHIP_ACTION_ID &&
+      actionId !== RETRACT_SHIP_ACTION_ID &&
+      actionId !== AMEND_APPROVE_ACTION_ID &&
+      actionId !== AMEND_DISMISS_ACTION_ID
+    ) {
       const mismatch =
         thread.status !== 'awaiting_approval' ||
         !meta.decisionRecordId ||
@@ -1242,6 +1282,44 @@ export class WebSurfaceController {
       deliveredQuestionId: body.questionId,
       seedRow: { label: notice, chunkKey: `seed:qa:${jobId}:${body.questionId}` },
     });
+    return { ok: true, ts };
+  }
+
+  /**
+   * `POST …/jobs/:jobId/spin-up-preview` — the operator tapped "Spin up preview" on the ship-review card.
+   * Injects the FULL demo-ready preview procedure as a `SYSTEM_SEED_AUTHOR` seed turn (delivered on demand,
+   * NOT standing in the build-brain system prompt) and stamps the ship card "requested" so the button hides.
+   * Gated SERVER-SIDE on `status === 'awaiting_ship_review'` (defense-in-depth against a stale transcript
+   * card) and on the atomic first-click stamp (`markPreviewRequested`) so a double-click seeds exactly once.
+   * Membership-guarded — any org member may request a preview.
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/spin-up-preview')
+  @UseGuards(OrgMembershipGuard)
+  async spinUpPreview(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<{ ok: boolean; ts: string }> {
+    if (!this.election.isLeader()) {
+      throw new ServiceUnavailableException(
+        'Atlas is handing off — retry momentarily.',
+      );
+    }
+    const thread = await this.requireThread(jobId, org.id);
+    if (thread.status !== 'awaiting_ship_review') return { ok: false, ts: '' };
+    const firstRequest = await this.driverStore.markPreviewRequested(jobId);
+    if (!firstRequest) return { ok: true, ts: '' }; // idempotent double-click — already seeded.
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      PREVIEW_PREP_SEED_BODY,
+      {
+        orgId: org.id,
+        seedRow: {
+          label: 'Spin up preview requested',
+          chunkKey: `seed:preview:${jobId}`,
+        },
+      },
+    );
     return { ok: true, ts };
   }
 
@@ -2334,6 +2412,103 @@ export class WebSurfaceController {
       `web deleting thread ${jobId} (org ${org.id}); claimed=${claimed}`,
     );
     return { ok: true };
+  }
+
+  /** `POST …/jobs/:jobId/dependencies` — manually block this job on another job in the same repo. */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/dependencies')
+  @UseGuards(OrgMembershipGuard)
+  async addJobDependency(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Param('jobId') jobId: string,
+    @Body() body: { dependsOnJobId?: string },
+  ): Promise<{ ok: boolean; blocked: boolean; blockers: unknown[] }> {
+    await this.requireThread(jobId, org.id);
+    const dependsOnJobId = String(body?.dependsOnJobId ?? '').trim();
+    if (!dependsOnJobId) throw new BadRequestException('dependsOnJobId is required');
+    const { blocked } = await this.jobDeps.addDependency({
+      orgId: org.id,
+      repoId,
+      jobId,
+      dependsOnJobId,
+    });
+    const blockers = await this.jobDeps.blockersOf(jobId);
+    this.logger.log(`web blocked job ${jobId} on ${dependsOnJobId} (org ${org.id})`);
+    return { ok: true, blocked, blockers };
+  }
+
+  /** `DELETE …/jobs/:jobId/dependencies/:dependsOnJobId` — manually remove a block edge (and wake the job if it's now unblocked). */
+  @Delete('orgs/:orgId/repos/:repoId/jobs/:jobId/dependencies/:dependsOnJobId')
+  @UseGuards(OrgMembershipGuard)
+  async removeJobDependency(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Param('jobId') jobId: string,
+    @Param('dependsOnJobId') dependsOnJobId: string,
+  ): Promise<{ ok: boolean; blockers: unknown[] }> {
+    await this.requireThread(jobId, org.id);
+    await this.jobDeps.removeDependency({ orgId: org.id, repoId, jobId, dependsOnJobId });
+    const blockers = await this.jobDeps.blockersOf(jobId);
+    this.logger.log(`web unblocked job ${jobId} from ${dependsOnJobId} (org ${org.id})`);
+    return { ok: true, blockers };
+  }
+
+  /** `GET …/jobs/:jobId/created` — the jobs this one spawned (newest first), for the "Created jobs" list. */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/created')
+  @UseGuards(OrgMembershipGuard)
+  async createdJobs(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<unknown[]> {
+    await this.requireThread(jobId, org.id);
+    const rows = await this.jobs.find({
+      where: { org_id: org.id, created_by_job_id: jobId },
+      order: { created_at: 'DESC' },
+    });
+    return rows.map((t) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      kind: t.kind,
+      prState: t.pr_state,
+      needsYou: deriveNeedsYou({
+        status: t.status,
+        activity: t.activity,
+        openQuestion: t.open_question_count > 0,
+        awaitingSecret: t.awaiting_secret_id != null,
+        halted: t.halted || t.halt != null,
+      }),
+      createdAt: t.created_at,
+    }));
+  }
+
+  /** `GET …/jobs/:jobId` — a minimal job-DETAIL DTO. The "Created by" click resolves against this;
+   *  a 404 (hard-deleted target) tells the web to show the deleted-job toast instead of navigating. */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId')
+  @UseGuards(OrgMembershipGuard)
+  async jobDetail(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<unknown> {
+    const t = await this.requireThread(jobId, org.id); // 404s a missing/foreign job
+    return {
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      kind: t.kind,
+      createdBy: t.created_by ?? null,
+      pr: t.pr_state
+        ? { state: t.pr_state, number: t.pr_number, mergeable: t.pr_mergeable, url: t.pr_url }
+        : null,
+      needsYou: deriveNeedsYou({
+        status: t.status,
+        activity: t.activity,
+        openQuestion: t.open_question_count > 0,
+        awaitingSecret: t.awaiting_secret_id != null,
+        halted: t.halted || t.halt != null,
+      }),
+      createdAt: t.created_at,
+    };
   }
 
   // ── scoping helpers (cross-tenant isolation: resolve scoped-to-org or 404) ──────────────────────

@@ -32,7 +32,7 @@ function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
         entities: ENTITIES,
         synchronize: false,
         namingStrategy: new CustomNamingStrategy(),
-        applicationName: 'agent-playground (TypeORM)',
+        applicationName: 'atlas (TypeORM)',
         connectTimeoutMS: 10_000,
         ssl: resolveSsl(env),
         extra: { max: 10 },

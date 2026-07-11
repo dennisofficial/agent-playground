@@ -9,6 +9,7 @@ export * from './driver-store.service';
 export * from './job-lifecycle.service';
 export * from './github-pr-state-sync.service';
 export * from './github-ci-state-sync.service';
+export * from './base-move-mergeability-sync.service';
 export {
   GitStateReconciler,
   summarizeChecks,

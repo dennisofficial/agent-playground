@@ -18,6 +18,13 @@ export const SHIP_ACTION_ID = 'atlas_approval:ship';
 /** Retract the ship-review gate back to planning — the manual "Back to building" click, the sibling of
  *  `SHIP_ACTION_ID`. Also carries only `{ jobId }`; routed to `ThreadDriver.retractShipDurably`. */
 export const RETRACT_SHIP_ACTION_ID = 'atlas_approval:retract_ship';
+/** The brain's "Amend build?" PROPOSAL card buttons. The brain's `withdraw_ship` tool can only PROPOSE
+ *  amending (it no longer retracts directly); it posts a card carrying `{ jobId }`. Approving it runs the
+ *  SAME operator retract path (`ThreadDriver.retractShipDurably`) AND wakes the brain to do the work;
+ *  dismissing it just neutralizes the card and leaves the gate parked. Dedicated ids (not reused
+ *  `RETRACT_SHIP_ACTION_ID`) so the plain ship-card "Amend build" click keeps its existing no-wake behavior. */
+export const AMEND_APPROVE_ACTION_ID = 'atlas_approval:amend_approve';
+export const AMEND_DISMISS_ACTION_ID = 'atlas_approval:amend_dismiss';
 
 /** What rides in a button `value` / a verdict payload — the ids needed to resolve the gate. */
 export interface ApprovalActionMeta {

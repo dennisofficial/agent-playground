@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, MoreThan, Not, Repository } from 'typeorm';
 import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../domain';
@@ -15,8 +15,10 @@ import type {
 } from '../surface';
 // Direct leaf import (not the '../surface' barrel): brain-store otherwise only TYPE-imports from surface,
 // and a runtime value import of the whole barrel would add a surface→brain→brain-store→surface cycle.
+import { JobDependencyService } from '../job-deps';
 import { webTicketCard } from '../surface/web-ticket-card';
 import { nextQuestionId } from '../surface/web-question-card';
+import { nextFileRequestId } from '../surface/web-file-request-card';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -64,6 +66,8 @@ const ORDINAL_GAP = 10;
  */
 @Injectable()
 export class BrainStoreService {
+  private readonly logger = new Logger(BrainStoreService.name);
+
   constructor(
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
@@ -82,6 +86,7 @@ export class BrainStoreService {
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly titler: JobTitler,
+    private readonly jobDeps: JobDependencyService,
   ) {}
 
   /**
@@ -143,6 +148,16 @@ export class BrainStoreService {
         meta: { source: 'system_operator', ...extraMeta },
       }),
     );
+  }
+
+  /** Append a calm SYSTEM→OPERATOR notice (meta.source='system_notice'). Benign harness status the
+   *  operator sees but Atlas never authored and never sees (its session is resumed separately). Unlike
+   *  appendSystemOperatorMessage this carries NO error semantics (no halt, no Resume). */
+  async appendSystemNotice(jobId: string, text: string): Promise<void> {
+    await this.messages.save(this.messages.create({
+      job_id: jobId, author: 'System', author_id: 'system', author_bot_id: null,
+      text, kind: 'chat', meta: { source: 'system_notice' },
+    }));
   }
 
   /**
@@ -268,6 +283,9 @@ export class BrainStoreService {
      * operator can inspect the actual context injected into Atlas. Omit when `text` already IS the full body.
      */
     fullBody?: string;
+    /** The TRUSTED harness framing that rode with this chunk (e.g. the wake preamble), carried
+     *  separately from `text` so the web can render it as its own trusted block. */
+    framing?: string;
     createdAt?: Date;
   }): Promise<void> {
     const dup = await this.messages
@@ -295,6 +313,7 @@ export class BrainStoreService {
             : {}),
           ...(input.severity ? { severity: input.severity } : {}),
           ...(input.fullBody ? { fullBody: input.fullBody } : {}),
+          ...(input.framing ? { framing: input.framing } : {}),
         },
         ...(input.createdAt ? { created_at: input.createdAt } : {}),
       }),
@@ -873,6 +892,31 @@ export class BrainStoreService {
   // Like ask_question (PER-CARD, no single-slot thread pointer → several file requests may be open at
   // once), but the value is an UPLOAD stored as a file-valued secret + grant (never on the card / in the
   // transcript). No migration: all state lives on the card in the `messages` jsonb.
+
+  /** Load this job's file-request card rows, newest-first — ALL of them (open, provided, or withdrawn). */
+  private async fileRequestCards(jobId: string): Promise<MessageEntity[]> {
+    const rows = await this.messages.find({
+      where: { job_id: jobId, kind: 'card' },
+      order: { created_at: 'DESC' },
+    });
+    return rows.filter(
+      (m) =>
+        (m.card as Record<string, unknown> | null)?.type ===
+        'file_request_card',
+    );
+  }
+
+  /**
+   * Allocate the next stable file-request id for this job — `f1`, `f2`, … — over the existing file-request
+   * card ids (see {@link nextFileRequestId}). Scans ALL file-request card rows (not just open) so numbering
+   * survives a restart and never reuses a withdrawn/provided id. Race-safe in practice: one brain turn runs
+   * at a time and its `request_file` tool calls are awaited in order, so each `openFileRequest` lands before
+   * the next id is allocated.
+   */
+  async nextFileRequestId(jobId: string): Promise<string> {
+    const cards = await this.fileRequestCards(jobId);
+    return nextFileRequestId(cards.map((m) => m.ts ?? ''));
+  }
 
   /** Post a value-free file-request card. No thread pointer + no one-at-a-time gate (multiple may be open). */
   async openFileRequest(
@@ -1540,10 +1584,29 @@ export class BrainStoreService {
       const threads = m.getRepository(ThreadEntity);
       const steps = m.getRepository(StepEntity);
 
-      // threads MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(job_id, ordinal)
-      // collision); `steps.thread_id ON DELETE CASCADE` clears their step rows too. The prior draft
-      // record is marked `superseded` (audit trail, never an approved one).
-      await threads.delete({ job_id: input.jobId });
+      // PLAN VERSIONING — decide whether this re-propose forms a NEW immutable revision or overwrites the
+      // current (never-built) one. The rule: a revision becomes browsable history ONLY if it has at least
+      // one `done` builder. This keeps the whole feature a no-op for the common planning loop (propose →
+      // request_changes → reopen → propose again over never-built threads) and confines versioning to
+      // exactly the "re-propose/direct-build after work already shipped" case.
+      const currentJob = await jobs.findOne({ where: { id: input.jobId } });
+      const priorRecordId = currentJob?.decision_record_id ?? null;
+      const priorHasDone = priorRecordId
+        ? (await threads.count({
+            where: { job_id: input.jobId, decision_record_id: priorRecordId, status: 'done' },
+          })) > 0
+        : false;
+
+      if (!priorHasDone) {
+        // Common case: no completed work to preserve. Behave exactly as before — clear the current
+        // revision's executable threads (their step rows cascade) so new ones re-use ordinals 10/20/30
+        // without a UNIQUE collision. The job-level singletons (`main`/`plan_review`, NULL record) survive.
+        await threads.delete({ job_id: input.jobId, kind: In(['builder', 'master_review']) });
+      }
+      // else (priorHasDone): DELETE NOTHING. The prior revision's threads keep their `decision_record_id`
+      // and become immutable history the moment `jobs.decision_record_id` is repointed at the tail below.
+      // The new revision's threads get the new record id (set below) so they never collide on ordinal.
+
       await records.update(
         { job_id: input.jobId, status: 'draft' },
         { status: 'superseded' },
@@ -1570,6 +1633,9 @@ export class BrainStoreService {
         return threads.create({
           job_id: input.jobId,
           org_id: input.orgId,
+          // The new revision owns these threads (the versioning key). A prior revision's builders keep
+          // THEIR record id as history, so reusing ordinal 10/20/30 here never collides.
+          decision_record_id: record.id,
           ordinal: (i + 1) * ORDINAL_GAP,
           brief,
           // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
@@ -1593,6 +1659,7 @@ export class BrainStoreService {
           threads.create({
             job_id: input.jobId,
             org_id: input.orgId,
+            decision_record_id: record.id,
             ordinal: (input.threadTitles.length + 1) * ORDINAL_GAP,
             brief: 'Master review — whole-diff review & fix',
             type: 'general',
@@ -1609,23 +1676,30 @@ export class BrainStoreService {
       // operator conversation). The driver never executes it (its `main` kind is render-only); it just gives
       // the brain session a place in the thread tree. Appended LAST (after the master review) with ordinal 0
       // so it never disturbs the `savedSections[i]` ↔ `threadTitles[i]` step-locking alignment below
-      // (indices ≥ threadTitles.length have no authored steps). Recreated on each re-propose (the prior draft
-      // threads were deleted above), which is fine — it carries no durable state (its live state is the
-      // AgentSessionManager session + the job's `main_tasks`).
-      featureThreads.push(
-        threads.create({
-          job_id: input.jobId,
-          org_id: input.orgId,
-          ordinal: 0,
-          brief: 'Main',
-          type: 'general',
-          kind: 'main',
-          plan: null,
-          handoff_in: null,
-          handoff_out: null,
-          status: 'pending',
-        }),
-      );
+      // (indices ≥ threadTitles.length have no authored steps). CREATE-IF-ABSENT (revision-agnostic, NULL
+      // record): the delete above no longer removes it, so recreating would collide on the (job, NULL, NULL,
+      // 0) unique index. It carries no durable state (its live state is the AgentSessionManager session +
+      // the job's `main_tasks`), so keeping the one existing row across re-proposes is correct.
+      const existingMain = await threads.findOne({
+        where: { job_id: input.jobId, kind: 'main' },
+      });
+      if (!existingMain) {
+        featureThreads.push(
+          threads.create({
+            job_id: input.jobId,
+            org_id: input.orgId,
+            decision_record_id: null,
+            ordinal: 0,
+            brief: 'Main',
+            type: 'general',
+            kind: 'main',
+            plan: null,
+            handoff_in: null,
+            handoff_out: null,
+            status: 'pending',
+          }),
+        );
+      }
 
       const savedSections = await threads.save(featureThreads);
 
@@ -1749,6 +1823,9 @@ export class BrainStoreService {
   /** Cancel a thread's build (a denied plan). */
   async cancel(jobId: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { status: 'cancelled' });
+    await this.jobDeps
+      .onBlockerResolved(jobId, 'cancelled')
+      .catch((err) => this.logger.warn(`cancel: wake funnel failed for blocker ${jobId}: ${err}`));
   }
 
   /** The ticket a thread was promoted from / works (`threads.ticket_id`), or null. */
@@ -1778,6 +1855,10 @@ export class BrainStoreService {
     ticketId?: string | null;
     /** Born-with kind — e.g. `'onboarding'` for an Atlas-run repo init thread. Default null. */
     kind?: JobKind | null;
+    /** The job whose brain spawned this follow-up (closure-derived, never tool args). */
+    createdByJobId?: string | null;
+    /** The spawning job's current title, snapshotted immutably. */
+    createdByTitle?: string | null;
   }): Promise<string> {
     // Route a provided title through the shared titler so the new thread is born with a short, scannable
     // sidebar label (fail-soft). A null title (no seed text) stays null. An onboarding thread keeps its
@@ -1796,6 +1877,10 @@ export class BrainStoreService {
         base_branch: input.baseBranch,
         ticket_id: input.ticketId ?? null,
         ...(input.kind ? { kind: input.kind } : {}),
+        created_by_job_id: input.createdByJobId ?? null,
+        created_by: input.createdByJobId
+          ? { jobId: input.createdByJobId, title: input.createdByTitle ?? null }
+          : null,
       }),
     );
     return row.id;
@@ -1822,6 +1907,7 @@ function toThread(row: JobEntity): Job {
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     shipReviewApprovedAt: row.ship_review_approved_at,
+    createdBy: row.created_by ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
