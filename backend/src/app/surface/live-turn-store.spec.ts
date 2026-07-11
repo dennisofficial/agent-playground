@@ -66,6 +66,47 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
   });
 });
 
+describe('LiveTurnStore — background subagent settlement (bg_task marks the anchor, survives reconnect)', () => {
+  // A backgrounded Task subagent's own `tool_result` is an IMMEDIATE launch ack (done=true), not the real
+  // completion — so `done` alone would show the card "done" while it still streams. The subagent's real
+  // completion arrives later as a `bg_task` settlement carrying the spawning Task id (== the anchor toolId);
+  // the store must stamp `bgSettled` on the anchor and carry it in the cumulative snapshot (raw bg_task
+  // frames are NOT replayed on reconnect).
+  it('a bg_task settlement stamps bgSettled on the matching anchor tool block', () => {
+    const store = new LiveTurnStore();
+    store.push(REPO, THREAD, {
+      kind: 'tool_use',
+      id: 'tu-bg',
+      name: 'Task',
+      input: { subagent_type: 'general-purpose', run_in_background: true },
+    });
+    // The immediate launch ack: the anchor flips done=true but is NOT finished.
+    store.push(REPO, THREAD, { kind: 'tool_result', id: 'tu-bg', result: 'launched', isError: false });
+    // The subagent streams its own work under the anchor's id.
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'working', parentToolUseId: 'tu-bg' });
+
+    let anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
+    expect(anchor).toMatchObject({ done: true });
+    expect(anchor.bgSettled).toBeUndefined(); // still running despite done=true
+
+    // Real completion arrives as a bg_task settlement carrying the spawning Task id.
+    store.push(REPO, THREAD, { kind: 'bg_task', status: 'completed', parentToolUseId: 'tu-bg' });
+
+    anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
+    expect(anchor.bgSettled).toBe(true);
+  });
+
+  it('a bg_task "started" (no settlement) leaves the anchor unsettled', () => {
+    const store = new LiveTurnStore();
+    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu-bg', name: 'Task', input: { run_in_background: true } });
+    store.push(REPO, THREAD, { kind: 'tool_result', id: 'tu-bg', result: 'launched', isError: false });
+    store.push(REPO, THREAD, { kind: 'bg_task', status: 'started', parentToolUseId: 'tu-bg' });
+
+    const anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
+    expect(anchor.bgSettled).toBeUndefined();
+  });
+});
+
 describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge live blocks vs durable rows)', () => {
   it('fans a strictly-increasing emittedAt on each block-creating delta, mirrored inside event.emittedAt', () => {
     const store = new LiveTurnStore();
