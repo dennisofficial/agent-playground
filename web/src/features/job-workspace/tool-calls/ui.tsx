@@ -564,6 +564,7 @@ export function CodeListing({
   leftAccent = false,
   activeNos,
   maxHeight = CODE_MAX_HEIGHT,
+  flush = false,
 }: {
   rows: Array<{ no: number | string; code: string }>;
   lang: string | null;
@@ -572,21 +573,25 @@ export function CodeListing({
   activeNos?: ReadonlySet<number>;
   /** Scroll-window cap; pass `"100%"` to fill a taller container (the FilePane). Defaults to CODE_MAX_HEIGHT. */
   maxHeight?: number | string;
+  /** Full-bleed: drop the rounded frame/border/margin and fill the parent's height (the FilePane full-screen viewer). */
+  flush?: boolean;
 }) {
   // Size the gutter to the widest line number so big-file numbers don't wrap or clip.
   const widest = rows.reduce((m, r) => Math.max(m, String(r.no).length), 0);
   const gutter = Math.max(30, widest * 7 + 16);
   return (
     <div
-      className="my-[3px] overflow-hidden rounded-[7px]"
+      className={
+        flush ? "h-full overflow-hidden" : "my-[3px] overflow-hidden rounded-[7px]"
+      }
       style={{
         background: "var(--term)",
-        border: "1px solid var(--term-border)",
+        ...(flush ? {} : { border: "1px solid var(--term-border)" }),
         ...(leftAccent ? { borderLeft: "3px solid var(--term-add)" } : {}),
       }}
     >
       <div
-        className="overflow-auto py-2 font-mono text-[11px]"
+        className={`overflow-auto py-2 font-mono text-[11px]${flush ? " h-full" : ""}`}
         style={{ lineHeight: 1.75, maxHeight }}
       >
         {rows.map((r, i) => {
