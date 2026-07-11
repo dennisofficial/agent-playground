@@ -77,7 +77,7 @@ import { BuildShipService } from '../driver/build-ship.service';
 import { BrainGateway } from '../brain-gateway';
 import { threadDirName } from '../driver/thread-dir-name';
 import { Agent, PromptService } from '../prompt-kit';
-import { decisionsBlock, shipOpenPrBody } from '../prompt-kit';
+import { shipOpenPrBody } from '../prompt-kit';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -728,7 +728,6 @@ export class AgentSessionManager
     branch: string;
     defaultBranch: string;
     title: string;
-    decisions: ReadonlyArray<{ title: string; decisionClass: string; ruling: string }>;
   }): Promise<void> {
     const stimulus = harnessDeliveryStimulus({
       jobId: input.jobId,
@@ -738,7 +737,6 @@ export class AgentSessionManager
         branch: input.branch,
         defaultBranch: input.defaultBranch,
         title: input.title,
-        decisionsBlock: decisionsBlock(input.decisions),
       }),
       seedRow: {
         label: 'Opening the pull request.',
@@ -3628,8 +3626,7 @@ export class AgentSessionManager
           message: shipOpenPrBody({
             branch: sandbox.branch,
             defaultBranch: repo.defaultBranch,
-            title: job.title ?? 'Atlas build',
-            decisionsBlock: decisionsBlock(rec?.decisions ?? []),
+            title: job.title?.trim() || sandbox.branch,
           }),
         };
       },
@@ -5359,8 +5356,7 @@ export class AgentSessionManager
           message: shipOpenPrBody({
             branch: sandbox.branch,
             defaultBranch: repo.defaultBranch,
-            title: 'Atlas: onboarding environment setup',
-            decisionsBlock: '',
+            title: 'Environment setup',
           }),
         };
       } catch (err) {
