@@ -160,17 +160,25 @@ export class RedisEngineRunner implements EngineRunnerPort {
     //    (registered row + a running engine; boot re-attach never re-kicks). Only when the row exists.
     const onKicked =
       args.turnMeta && args.onTurnRegistered ? () => args.onTurnRegistered!(turnId) : undefined;
-    const result = await this.runAttached(
-      turnId,
-      keys,
-      args,
-      target.containerId,
-      target,
-      onKicked,
-      registered,
-    );
-    await this.persistAuthRefresh(args, result);
-    return result;
+    try {
+      const result = await this.runAttached(
+        turnId,
+        keys,
+        args,
+        target.containerId,
+        target,
+        onKicked,
+        registered,
+      );
+      await this.persistAuthRefresh(args, result);
+      return result;
+    } catch (err) {
+      // `run()` callers do not know the generated turn id when the turn throws, so any no-result claim
+      // stored under that id is unreachable. Reattach callers pass the turn id explicitly and still consume
+      // their error-path claim via consumeClaim(turnId).
+      this.lastClaim.delete(turnId);
+      throw err;
+    }
   }
 
   /**

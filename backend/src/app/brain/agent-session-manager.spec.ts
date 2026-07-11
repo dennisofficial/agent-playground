@@ -3073,6 +3073,26 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(resetLane.mock.invocationCallOrder[0]).toBeLessThan(reattach.mock.invocationCallOrder[0]);
   });
 
+  it('reattachOne still runs when the runner lacks Redis-only attach claim helpers', async () => {
+    const { manager, store, dockerRunner } = makeManager({});
+    delete (dockerRunner as { tryClaimAttach?: unknown }).tryClaimAttach;
+    delete (dockerRunner as { releaseAttach?: unknown }).releaseAttach;
+    (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: null });
+    const reattach = vi.fn().mockResolvedValue({ result: 'done', sessionId: 's-re' });
+    (dockerRunner as { reattach?: unknown }).reattach = reattach;
+
+    await (manager as unknown as { reattachOne(row: unknown): Promise<void> }).reattachOne({
+      turn_id: 'turn-re-no-claim-helper',
+      container_id: 'c-re-no-claim-helper',
+      org_id: TEAM_ID,
+      job_id: THREAD_ID,
+      channel: PROJECT_ID,
+      ctx: { repoId: PROJECT_ID, author: { id: 'U-OP', displayName: 'Operator' }, body: 'Keep going' },
+    });
+
+    expect(reattach).toHaveBeenCalledOnce();
+  });
+
   it('boot re-attach of a NORMAL turn rebuilds the full build toolset (no onboarding curation)', async () => {
     const { manager, store, dockerRunner } = makeManager({});
     (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: null });

@@ -1632,7 +1632,8 @@ export class AgentSessionManager
     // and double-persist the transcript at finish. Atomically claim the in-process slot (check-and-add in
     // one synchronous step ⇒ no TOCTOU between two concurrent sweep entries); the outer `finally` releases
     // it on every bail before `reattach()` runs (runAttached's own finally releases once attached).
-    if (!this.engineRunner.tryClaimAttach?.(row.turn_id)) {
+    const claimedAttach = this.engineRunner.tryClaimAttach?.(row.turn_id) ?? true;
+    if (!claimedAttach) {
       this.logger.log(`re-attach turn ${row.turn_id}: already attached in this process — skipping`);
       return;
     }
@@ -1797,7 +1798,7 @@ export class AgentSessionManager
           .catch(() => undefined);
       }
     } finally {
-      this.engineRunner.releaseAttach?.(row.turn_id);
+      if (this.engineRunner.tryClaimAttach) this.engineRunner.releaseAttach?.(row.turn_id);
     }
   }
 
