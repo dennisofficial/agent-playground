@@ -17,6 +17,12 @@ export interface TenantCredentials {
   claudeOauthToken?: string;
   /** Codex subscription secret (auth.json / token) for the SDK harness. */
   codexAuthSecret?: string;
+  /** The org's Atlas GitHub App installation id — plaintext. null = App not connected. */
+  githubAppInstallationId?: string | null;
+  /** The installation's GitHub account login — plaintext, display + audit. */
+  githubAppInstallationAccount?: string | null;
+  /** Which GitHub credential the resolver returns: 'pat' (default) or 'app'. */
+  githubAuthMode?: 'pat' | 'app';
 }
 
 /** A partial update — only provided fields are (re-)encrypted and written. */
@@ -26,6 +32,10 @@ export interface TenantCredentialPatch {
   githubPat?: string;
   claudeOauthToken?: string;
   codexAuthSecret?: string;
+  /** Plaintext — set/read directly on the row, NOT via `encryptSecret`. Explicit `null` clears; `undefined` leaves unchanged. */
+  githubAppInstallationId?: string | null;
+  githubAppInstallationAccount?: string | null;
+  githubAuthMode?: 'pat' | 'app';
 }
 
 /** Cheap existence flags for the onboarding checklist — NO decryption, NO secret values. */
@@ -37,6 +47,10 @@ export interface CredentialPresence {
   engineAuthSet: boolean;
   /** Optional Codex subscription secret is set (a second, optional coding engine). */
   hasCodex: boolean;
+  /** The org has a connected GitHub App installation. */
+  hasGithubApp: boolean;
+  /** Which GitHub credential the resolver returns: 'pat' (default) or 'app'. */
+  githubAuthMode: 'pat' | 'app';
 }
 
 /**
@@ -89,6 +103,8 @@ export class TenantCredentialStore {
       hasGithub: !!row?.github_pat_enc,
       engineAuthSet: !!org?.selected_claude_credential_id,
       hasCodex: !!row?.codex_auth_secret_enc,
+      hasGithubApp: !!row?.github_app_installation_id,
+      githubAuthMode: row?.github_auth_mode ?? 'pat',
     };
   }
 
@@ -107,6 +123,12 @@ export class TenantCredentialStore {
       row.claude_oauth_token_enc = encryptSecret(patch.claudeOauthToken, key);
     if (patch.codexAuthSecret !== undefined)
       row.codex_auth_secret_enc = encryptSecret(patch.codexAuthSecret, key);
+    // Plaintext columns — NOT encrypted. Explicit `null` clears; `undefined` leaves unchanged.
+    if (patch.githubAppInstallationId !== undefined)
+      row.github_app_installation_id = patch.githubAppInstallationId;
+    if (patch.githubAppInstallationAccount !== undefined)
+      row.github_app_installation_account = patch.githubAppInstallationAccount;
+    if (patch.githubAuthMode !== undefined) row.github_auth_mode = patch.githubAuthMode;
     await this.repo.save(row);
     this.cache.delete(this.cacheKey(orgId, scope));
     this.logger.log(`wrote credentials for team=${orgId} scope=${scope} (${describePatch(patch)})`);
@@ -193,6 +215,9 @@ export class TenantCredentialStore {
       githubPat: dec(row.github_pat_enc),
       claudeOauthToken: dec(row.claude_oauth_token_enc),
       codexAuthSecret: dec(row.codex_auth_secret_enc),
+      githubAppInstallationId: row.github_app_installation_id ?? null,
+      githubAppInstallationAccount: row.github_app_installation_account ?? null,
+      githubAuthMode: row.github_auth_mode ?? 'pat',
     };
   }
 }

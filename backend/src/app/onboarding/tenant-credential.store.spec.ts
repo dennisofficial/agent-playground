@@ -127,6 +127,8 @@ describe('TenantCredentialStore', () => {
       hasAnthropic: true,
       hasOpenai: false,
       hasGithub: false,
+      hasGithubApp: false,
+      githubAuthMode: 'pat',
       engineAuthSet: false, // no Claude subscription token → harness auth not satisfied
       hasCodex: false,
     });

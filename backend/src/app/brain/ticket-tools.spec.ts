@@ -61,6 +61,7 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // secretStore
     {} as never, // configStore
     {} as never, // git
+    { resolve: async () => undefined } as never, // identities (GitIdentityService)
     { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
     {} as never, // threadInput
     { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
