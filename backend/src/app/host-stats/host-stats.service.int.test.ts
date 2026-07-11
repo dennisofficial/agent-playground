@@ -8,31 +8,34 @@ import { HostStatsService } from './host-stats.service';
  * this test runs on, not just that the plumbing type-checks. Binds a fake `CONTAINER_ENGINE` since the
  * container counts/df aren't the point here.
  */
-const fakeEngine: ContainerEngine = {
-  ensureNetwork: vi.fn(),
-  connectNetwork: vi.fn(),
-  disconnectNetwork: vi.fn(),
-  imageExists: vi.fn(),
-  imageId: vi.fn(),
-  imageLabels: vi.fn(),
-  buildImage: vi.fn(),
-  createContainer: vi.fn(),
-  start: vi.fn(),
-  exec: vi.fn(),
-  execDetached: vi.fn(),
-  stop: vi.fn(),
-  remove: vi.fn(),
-  removeNetwork: vi.fn(),
-  removeVolume: vi.fn(),
-  list: vi.fn(() => Promise.resolve([])),
-  inspect: vi.fn(),
-  listNetworks: vi.fn(),
-  listVolumes: vi.fn(),
-};
+function fakeEngine(overrides: Partial<ContainerEngine> = {}): ContainerEngine {
+  return {
+    ensureNetwork: vi.fn(),
+    connectNetwork: vi.fn(),
+    disconnectNetwork: vi.fn(),
+    imageExists: vi.fn(),
+    imageId: vi.fn(),
+    imageLabels: vi.fn(),
+    buildImage: vi.fn(),
+    createContainer: vi.fn(),
+    start: vi.fn(),
+    exec: vi.fn(),
+    execDetached: vi.fn(),
+    stop: vi.fn(),
+    remove: vi.fn(),
+    removeNetwork: vi.fn(),
+    removeVolume: vi.fn(),
+    list: vi.fn(() => Promise.resolve([])),
+    inspect: vi.fn(),
+    listNetworks: vi.fn(),
+    listVolumes: vi.fn(),
+    ...overrides,
+  };
+}
 
 describe('HostStatsService (integration, real host numbers)', () => {
   it('collects a plausible snapshot of the actual host', async () => {
-    const service = new HostStatsService(fakeEngine);
+    const service = new HostStatsService(fakeEngine());
     const snapshot = await service.collect();
 
     const totalMem = os.totalmem();
@@ -54,5 +57,28 @@ describe('HostStatsService (integration, real host numbers)', () => {
     expect(snapshot.dockerDisk).toBeNull();
 
     expect(Number.isNaN(Date.parse(snapshot.sampledAt))).toBe(false);
+  }, 10_000);
+
+  it('coalesces concurrent cold-cache collection', async () => {
+    const list = vi.fn(() => Promise.resolve([]));
+    const systemDf = vi.fn(() =>
+      Promise.resolve({
+        imagesBytes: 1,
+        containersBytes: 2,
+        volumesBytes: 3,
+        buildCacheBytes: 4,
+        totalBytes: 10,
+      }),
+    );
+    const service = new HostStatsService(fakeEngine({ list, systemDf }));
+
+    const [first, second] = await Promise.all([
+      service.collect(),
+      service.collect(),
+    ]);
+
+    expect(first).toBe(second);
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(systemDf).toHaveBeenCalledTimes(1);
   }, 10_000);
 });

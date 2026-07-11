@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Boxes, Server } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { useHostStats, type HostStats } from "@/lib/api/host-stats";
+import {
+  useHostStats,
+  type HostStats as HostStatsSnapshot,
+} from "@/lib/api/host-stats";
 
 const FRESHNESS_STALE_MS = 15_000;
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
@@ -25,7 +28,9 @@ function humanizeBytes(bytes: number): string {
   const unit = BYTE_UNITS[unitIndex];
   if (unit === "GB" || unit === "TB") {
     const rounded = Math.round(value * 10) / 10;
-    const display = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+    const display = Number.isInteger(rounded)
+      ? String(rounded)
+      : rounded.toFixed(1);
     return `${display} ${unit}`;
   }
   return `${Math.round(value)} ${unit}`;
@@ -47,7 +52,10 @@ function humanizeUptime(seconds: number): string {
   return `${minutes}m`;
 }
 
-function timeAgo(iso: string | undefined, now: number = Date.now()): string | null {
+function timeAgo(
+  iso: string | undefined,
+  now: number = Date.now(),
+): string | null {
   if (!iso) return null;
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return null;
@@ -71,12 +79,25 @@ function Divider() {
   return <span className="h-4 w-px bg-hair" />;
 }
 
-function Chip({ label, value, color }: { label: string; value: string; color?: string }) {
+function Chip({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
   return (
     <span className="flex flex-col items-start justify-center px-2 leading-tight">
-      <span className="text-[8.5px] font-bold uppercase tracking-[0.07em] text-faint">{label}</span>
+      <span className="text-[8.5px] font-bold uppercase tracking-[0.07em] text-faint">
+        {label}
+      </span>
       <span
-        className={cn("font-mono text-[11px] font-semibold tabular-nums", !color && "text-faint")}
+        className={cn(
+          "font-mono text-[11px] font-semibold tabular-nums",
+          !color && "text-faint",
+        )}
         style={color ? { color } : undefined}
       >
         {value}
@@ -90,7 +111,10 @@ function ContainerChip({ value, color }: { value: string; color?: string }) {
     <span className="flex flex-row items-center gap-[5px] px-2">
       <Boxes className="h-[11px] w-[11px] text-faint" />
       <span
-        className={cn("font-mono text-[11px] font-semibold tabular-nums", color ? undefined : "text-faint")}
+        className={cn(
+          "font-mono text-[11px] font-semibold tabular-nums",
+          color ? undefined : "text-faint",
+        )}
         style={color ? { color } : undefined}
       >
         {value}
@@ -104,7 +128,7 @@ function ChipsTrigger({
   open,
   onToggle,
 }: {
-  data: HostStats | undefined;
+  data: HostStatsSnapshot | undefined;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -154,7 +178,7 @@ function MiniTrigger({
   open,
   onToggle,
 }: {
-  data: HostStats | undefined;
+  data: HostStatsSnapshot | undefined;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -176,7 +200,9 @@ function MiniTrigger({
         className="h-2 w-2 rounded-full"
         style={{
           background: color,
-          boxShadow: data ? `0 0 0 3px color-mix(in srgb, ${color} 22%, transparent)` : undefined,
+          boxShadow: data
+            ? `0 0 0 3px color-mix(in srgb, ${color} 22%, transparent)`
+            : undefined,
         }}
       />
       <span
@@ -208,18 +234,28 @@ function StatRow({
     <div className="flex flex-col gap-[11px]">
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-[7px] text-[11px] text-dim">
-          <span className="h-1.5 w-1.5 rounded-[2px]" style={{ background: color }} />
+          <span
+            className="h-1.5 w-1.5 rounded-[2px]"
+            style={{ background: color }}
+          />
           {label}
         </span>
-        <span className="font-mono text-[10px] tabular-nums text-faint">{value}</span>
+        <span className="font-mono text-[10px] tabular-nums text-faint">
+          {value}
+        </span>
       </div>
       <div className="h-[3px] w-full overflow-hidden rounded-full bg-border">
         <div
           className="h-full rounded-full"
-          style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: color }}
+          style={{
+            width: `${Math.min(100, Math.max(0, pct))}%`,
+            background: color,
+          }}
         />
       </div>
-      {caption ? <div className="mt-1 text-[10px] text-faint">{caption}</div> : null}
+      {caption ? (
+        <div className="mt-1 text-[10px] text-faint">{caption}</div>
+      ) : null}
     </div>
   );
 }
@@ -228,13 +264,18 @@ function SecondaryRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-[11px] text-dim">{label}</span>
-      <span className="font-mono text-[10px] tabular-nums text-faint">{value}</span>
+      <span className="font-mono text-[10px] tabular-nums text-faint">
+        {value}
+      </span>
     </div>
   );
 }
 
-function HostStatsPanel({ data }: { data: HostStats }) {
-  const containerPct = data.containers.total > 0 ? (data.containers.running / data.containers.total) * 100 : 0;
+function HostStatsPanel({ data }: { data: HostStatsSnapshot }) {
+  const containerPct =
+    data.containers.total > 0
+      ? (data.containers.running / data.containers.total) * 100
+      : 0;
   const fresh = isFresh(data.sampledAt);
 
   return (
@@ -279,11 +320,19 @@ function HostStatsPanel({ data }: { data: HostStats }) {
       </div>
 
       <div className="mt-[11px] flex flex-col gap-[7px] border-t border-border pt-2.5">
-        <SecondaryRow label="Load avg" value={data.cpu.loadAvg.map((n) => n.toFixed(2)).join(" / ")} />
-        <SecondaryRow label="Uptime" value={humanizeUptime(data.host.uptimeSeconds)} />
+        <SecondaryRow
+          label="Load avg"
+          value={data.cpu.loadAvg.map((n) => n.toFixed(2)).join(" / ")}
+        />
+        <SecondaryRow
+          label="Uptime"
+          value={humanizeUptime(data.host.uptimeSeconds)}
+        />
         <SecondaryRow
           label="Docker disk"
-          value={data.dockerDisk ? humanizeBytes(data.dockerDisk.usedBytes) : "—"}
+          value={
+            data.dockerDisk ? humanizeBytes(data.dockerDisk.usedBytes) : "—"
+          }
         />
       </div>
 
@@ -292,7 +341,9 @@ function HostStatsPanel({ data }: { data: HostStats }) {
           className="h-1.5 w-1.5 rounded-full"
           style={{ background: fresh ? "var(--green)" : "var(--amber)" }}
         />
-        <span className="font-mono text-[10px] text-faint">Updated {timeAgo(data.sampledAt) ?? "recently"}</span>
+        <span className="font-mono text-[10px] text-faint">
+          Updated {timeAgo(data.sampledAt) ?? "recently"}
+        </span>
       </div>
     </div>
   );

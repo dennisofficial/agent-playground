@@ -13,10 +13,10 @@ const CACHE_MS = 2_000;
 const FIRST_SAMPLE_DELAY_MS = 200;
 
 /** Aggregate idle/total CPU jiffies across every core, for computing a delta-based usage %. */
-interface CpuAggregate {
+type CpuAggregate = {
   idle: number;
   total: number;
-}
+};
 
 /**
  * Collects a live snapshot of the host box (CPU/RAM/disk/containers/Docker disk) for the
@@ -28,6 +28,7 @@ export class HostStatsService {
   private readonly logger = new Logger(HostStatsService.name);
   private readonly diskPath: string;
   private cached?: { at: number; value: HostStatsDto };
+  private inflight?: Promise<HostStatsDto>;
   private prevCpu?: CpuAggregate;
 
   constructor(
@@ -48,6 +49,13 @@ export class HostStatsService {
       return this.cached.value;
     }
 
+    this.inflight ??= this.collectFresh().finally(() => {
+      this.inflight = undefined;
+    });
+    return this.inflight;
+  }
+
+  private async collectFresh(): Promise<HostStatsDto> {
     const [cpu, disk, containers, dockerDisk] = await Promise.all([
       this.sampleCpu(),
       this.sampleDisk(),

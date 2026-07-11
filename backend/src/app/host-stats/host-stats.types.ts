@@ -1,5 +1,5 @@
 /** The `GET /web/host-stats` response — a live snapshot of the host box. */
-export interface HostStatsDto {
+export type HostStatsDto = {
   cpu: { usagePct: number; cores: number; loadAvg: [number, number, number] };
   memory: { usedBytes: number; totalBytes: number; usagePct: number };
   disk: {
@@ -14,4 +14,4 @@ export interface HostStatsDto {
   dockerDisk: { usedBytes: number } | null;
   /** ISO */
   sampledAt: string;
-}
+};

@@ -9,17 +9,22 @@ import { qk } from "./query-keys";
  * The host box's live machine-stats snapshot (`GET /web/host-stats`). Login-gated but NOT org-scoped —
  * every authenticated operator sees the same numbers. Mirrors the backend `HostStatsDto`.
  */
-export interface HostStats {
+export type HostStats = {
   cpu: { usagePct: number; cores: number; loadAvg: [number, number, number] };
   memory: { usedBytes: number; totalBytes: number; usagePct: number };
-  disk: { usedBytes: number; totalBytes: number; usagePct: number; path: string };
+  disk: {
+    usedBytes: number;
+    totalBytes: number;
+    usagePct: number;
+    path: string;
+  };
   host: { uptimeSeconds: number };
   containers: { running: number; total: number };
   /** null when the container engine can't report `docker system df`. */
   dockerDisk: { usedBytes: number } | null;
   /** ISO timestamp of when the snapshot was sampled server-side. */
   sampledAt: string;
-}
+};
 
 const BASE = `${env.NEXT_PUBLIC_HTTP_URL}/web`;
 
