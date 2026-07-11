@@ -586,6 +586,12 @@ export class RedisEngineRunner implements EngineRunnerPort {
       if (e.GIT_CONFIG_COUNT) {
         // Auth was actually injected (https github url) — expose the raw token + fail-fast prompt guard.
         e.GIT_TERMINAL_PROMPT = '0';
+        // NOTE (app mode): GITHUB_TOKEN/GH_TOKEN are baked with the SPAWN-TIME installation token into this
+        // frozen exec env and are NOT refreshed mid-turn. Only `git` survives the ~hourly expiry, via the
+        // host-refreshed credential FILE above; `gh` and any GITHUB_TOKEN-driven API call read this static
+        // value, so they are guaranteed correct only for the token's initial lifetime (normal/short turns).
+        // On a >1h turn app-mode in-sandbox `gh` can hit an expired token while `git` keeps working —
+        // accepted for now (routing `gh` through the refreshed file needs an in-sandbox wrapper; out of scope).
         e.GITHUB_TOKEN = token;
         e.GH_TOKEN = token;
       }

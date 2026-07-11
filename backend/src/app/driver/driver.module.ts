@@ -391,18 +391,25 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   }
 
   /**
-   * The app-mode in-sandbox GitHub token-file refresh sweep (~10 min) — rewrites every ACTIVE app-mode
+   * The app-mode in-sandbox GitHub token-file refresh sweep (~2 min) — rewrites every ACTIVE app-mode
    * sandbox's `/.atlas/github-token` file with the current cached installation token, so a build turn
    * spanning the token's ~hourly expiry keeps pushing/fetching authenticated (see
    * `GithubTokenRefreshService`). Leader-only (it writes host state shared across processes); `unref` so it
    * never keeps the process alive; `tokenRefreshInFlight` guards against overlap when a tick runs long.
+   *
+   * Cadence MUST stay strictly under the token service's 5-min pre-expiry refresh window
+   * (`GitHubAppTokenService.getInstallationToken` returns the cached token until it has <5 min left): the
+   * governing margin is that 5-min window, NOT the ~55-min token lifetime. A ≥5-min sweep could write a
+   * still-cached token 6 min before expiry, then next land 5+ min AFTER it expired — leaving the in-sandbox
+   * credential.helper `cat`ing an expired token mid-turn. At 2 min, at least one sweep always lands inside
+   * the 5-min window and writes a freshly-minted token before the old one expires.
    */
   private startTokenRefreshTimer(): void {
     // Absent only in the module's direct-construction unit test (see the `@Optional` constructor note) —
     // the real app always registers `GithubTokenRefreshService` as a provider.
     if (!this.tokenRefresh) return;
     if (this.scheduler.doesExist('interval', TOKEN_REFRESH_INTERVAL)) return;
-    const everyMs = 10 * 60 * 1000; // 10m
+    const everyMs = 2 * 60 * 1000; // 2m — strictly under the token service's 5-min pre-expiry refresh window.
     const iv = setInterval(() => {
       if (this.tokenRefreshInFlight) return;
       this.tokenRefreshInFlight = true;
