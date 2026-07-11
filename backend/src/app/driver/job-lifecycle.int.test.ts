@@ -40,7 +40,6 @@ import { LocalGitService } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { TenantCredentialStore } from '../onboarding';
 import { GithubPrService } from '../git';
-import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ActiveTurnEntity,
