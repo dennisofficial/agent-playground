@@ -158,6 +158,20 @@ export class JobDependencyService {
     }
   }
 
+  /**
+   * BACKSTOP reconcile for ONE `blocked` job (the {@link JobUnblockSweep} entrypoint): if every remaining
+   * blocker is terminal-or-ABSENT (a deleted blocker row simply doesn't appear in `blockersOf`, so an empty
+   * or all-terminal set unblocks), unpark + wake it. Idempotent — the conditional UPDATE no-ops if the job
+   * already moved off `blocked`. `note` is null: the event path composes the "didn't land" note; the sweep is
+   * a dropped-event backstop and has no live resolution to report. Returns whether it unblocked.
+   */
+  async reconcileBlockedJob(jobId: string): Promise<boolean> {
+    const blockers = await this.blockersOf(jobId);
+    const allTerminal = blockers.every((b) => this.isTerminalState(b.prState, b.status));
+    if (!allTerminal) return false;
+    return this.unblockAndWake(jobId, null);
+  }
+
   /** The blocker jobs of `jobId` (what it depends on), as a compact row per blocker. */
   async blockersOf(jobId: string): Promise<JobBlockerRow[]> {
     const rows: Array<{ jobId: string; title: string | null; prState: string | null; status: string }> =
@@ -263,21 +277,22 @@ export class JobDependencyService {
 
   /** Conditional unblock + wake used by the manual-unblock path (`removeDependency`); `note` is null since
    *  there's no blocker resolution to report. */
-  private async unblockAndWake(jobId: string, note: string | null): Promise<void> {
+  private async unblockAndWake(jobId: string, note: string | null): Promise<boolean> {
     const upd = await this.jobs
       .createQueryBuilder()
       .update()
       .set({ status: 'open' })
       .where('id = :id AND status = :blocked', { id: jobId, blocked: 'blocked' })
       .execute();
-    if (!upd.affected) return;
+    if (!upd.affected) return false;
 
     const job = await this.jobs.findOne({ where: { id: jobId } });
-    if (!job) return;
+    if (!job) return true;
     await this.brainGateway
       .wakeUnblockedJob(jobId, job.org_id, job.repo_id, { seed: job.blocked_seed_message, note })
       .catch((err) => this.logger.warn(`wakeUnblockedJob failed for job=${jobId}: ${err}`));
     await this.jobs.update({ id: jobId }, { blocked_seed_message: null });
+    return true;
   }
 
   /**

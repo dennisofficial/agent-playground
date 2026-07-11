@@ -33,6 +33,7 @@ import { StimulusModule } from '../stimulus';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { GitStateReconciler } from './git-state-reconciler.service';
 import { SessionResumeSweep } from './session-resume-sweep.service';
+import { JobUnblockSweep } from './job-unblock-sweep.service';
 import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
@@ -54,6 +55,7 @@ const REAP_INTERVAL = 'driver:reap';
 const REAP_IDLE_INTERVAL = 'driver:reap-idle';
 const POLL_INTERVAL = 'driver:poll';
 const SESSION_RESUME_INTERVAL = 'driver:session-resume';
+const JOB_UNBLOCK_INTERVAL = 'driver:job-unblock';
 const PREVIEW_INTERVAL = 'driver:preview';
 
 /**
@@ -107,6 +109,7 @@ const PREVIEW_INTERVAL = 'driver:preview';
     GithubCiStateSync,
     GitStateReconciler,
     SessionResumeSweep,
+    JobUnblockSweep,
     WorktreeHydrator,
     WorktreeProvisioner,
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
@@ -139,6 +142,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private demoteSub?: Subscription;
   private pollInFlight = false; // skip a heartbeat if the prior tick is still running (slow GitHub / many PRs)
   private sessionResumeInFlight = false; // skip a tick if the prior session-resume sweep is still running
+  private jobUnblockInFlight = false; // skip a tick if the prior job-unblock sweep is still running
   private previewInFlight = false; // skip a preview reconcile if the prior tick is still converging Caddy
   private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
@@ -150,6 +154,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     private readonly lifecycle: JobLifecycleService,
     private readonly reconciler: GitStateReconciler,
     private readonly sessionResumeSweep: SessionResumeSweep,
+    private readonly jobUnblockSweep: JobUnblockSweep,
     private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly onboarding: OnboardingService,
@@ -217,6 +222,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       this.startReapIdleTimer(); // fast idle-reap sweep (1 min), leader-only
       this.startPollTimer(); // the fast adaptive PR-state heartbeat (leader-only, like the reap timer)
       this.startSessionResumeTimer(); // auto-resume lanes parked on a Claude session limit (leader-only)
+      this.startJobUnblockTimer(); // backstop: wake blocked jobs whose blockers are all terminal (leader-only)
       this.startPreviewTimer(); // the marker → Caddy-route reconciler (leader-only, exposure-gated)
     });
     this.demoteSub = this.election.onDemote(() => {
@@ -224,6 +230,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       this.stopReapIdleTimer();
       this.stopPollTimer();
       this.stopSessionResumeTimer();
+      this.stopJobUnblockTimer();
       this.stopPreviewTimer();
     });
   }
@@ -352,6 +359,36 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   }
 
   /**
+   * The job-unblock backstop heartbeat (~30s) — the leader re-reconciles every `blocked` job, waking any
+   * whose blockers are all terminal-or-absent. The event-driven funnel ({@link JobDependencyService.onBlockerResolved})
+   * handles the normal case; this catches a wake dropped by a crash. Leader-only (it wakes brains, which must
+   * never run in two processes); `unref` so it never keeps the process alive; `jobUnblockInFlight` guards
+   * against overlap when a tick runs long.
+   */
+  private startJobUnblockTimer(): void {
+    if (this.scheduler.doesExist('interval', JOB_UNBLOCK_INTERVAL)) return;
+    const everyMs = 30 * 1000; // 30s — a dropped wake is recovered within one tick.
+    const iv = setInterval(() => {
+      if (this.jobUnblockInFlight) return;
+      this.jobUnblockInFlight = true;
+      void this.jobUnblockSweep
+        .tick()
+        .catch((err) => this.logger.warn(`job-unblock tick failed: ${err}`))
+        .finally(() => {
+          this.jobUnblockInFlight = false;
+        });
+    }, everyMs);
+    iv.unref?.();
+    this.scheduler.addInterval(JOB_UNBLOCK_INTERVAL, iv);
+  }
+
+  private stopJobUnblockTimer(): void {
+    if (this.scheduler.doesExist('interval', JOB_UNBLOCK_INTERVAL)) {
+      this.scheduler.deleteInterval(JOB_UNBLOCK_INTERVAL);
+    }
+  }
+
+  /**
    * The sandbox-preview reconcile heartbeat (~10s) — the leader turns supervised-service markers into live
    * Caddy routes (and prunes stale ones) without relying on an open console tab. Leader-only (it mutates
    * shared Caddy state) and inert unless the ExposureService is enabled (PREVIEW_BASE_DOMAIN set); `unref`
@@ -389,6 +426,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     this.stopReapIdleTimer();
     this.stopPollTimer();
     this.stopSessionResumeTimer();
+    this.stopJobUnblockTimer();
     this.stopPreviewTimer();
   }
 }
