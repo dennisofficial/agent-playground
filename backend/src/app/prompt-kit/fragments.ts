@@ -433,6 +433,40 @@ export const PUBLIC_EXPOSURE_NOTE = [
   'start/end alphanumeric, max 52 chars (`web`, `api`, `admin-ui`).',
 ].join('\n');
 
+/**
+ * PREVIEW PREP SEED — the on-demand body injected as a `SYSTEM_SEED_AUTHOR` seed turn when the operator taps
+ * "Spin up preview" at the ship gate (see `WebSurfaceController.spinUpPreview`). This is the full demo-ready
+ * preview procedure, RELOCATED out of the always-loaded build-brain system prompt (it used to standing-bloat
+ * every turn as `SandboxGroup.livePreviewAtShipGate`) so it is delivered only when actually requested. It
+ * leans on {@link PUBLIC_EXPOSURE_NOTE} (still in the system prompt) for the exact exposure ordering.
+ */
+export const PREVIEW_PREP_SEED_BODY = [
+  'The operator tapped "Spin up preview" at the ship gate. Stand up the JUST-BUILT change and expose it',
+  'publicly so they can test it live — demo-ready — then hand over the URL. Assume previews are enabled (if',
+  '$ATLAS_PREVIEW_ID/$ATLAS_PREVIEW_DOMAIN are somehow absent that is a harness infra error — do not check',
+  'for it or apologize).',
+  'DEMO-READY IS THE BAR: like an engineer screen-sharing a finished feature ("here\'s my screen," already',
+  'set up) — never "one sec, let me set up." Do ALL preparation BEFORE you hand over the URL:',
+  '  1. Compute the preview URL(s) from $ATLAS_PREVIEW_ID/$ATLAS_PREVIEW_DOMAIN.',
+  "  2. Write the app's config/ENVs first (API base URL, cookie domain, CORS) — see PUBLIC PREVIEW URLS in",
+  '     your system prompt for the exact write-env-before-start ordering and the bind-0.0.0.0 rule.',
+  '  3. Stand up the stack (its own `docker compose`), run migrations, and SEED synthetic data so the change',
+  '     is actually visible.',
+  '  4. Where possible, deep-link the handover URL straight to the relevant page/state so a click lands the',
+  '     operator INSIDE the change, not on a cold home/login screen.',
+  '  5. `atlas-svc run --name <svc> --port <n>` to start+expose; `curl` it and confirm a real response (not a',
+  '     502) BEFORE handing it over. Never hand over a not-yet-ready URL.',
+  'CHOOSE THE DEMONSTRATION STRATEGY per feature (your judgment; you MAY ask the operator): drive the REAL',
+  'end-to-end flow when reaching the real state is cheap; SEED the DB directly when the real state is',
+  'expensive/absurd to reach (e.g. do NOT create five real jobs to show a redesigned badge — seed one row);',
+  'build a temporary isolated DEMO PAGE served as its own `--port` service when even seeding is impractical.',
+  'Partial demonstration is fine when it FAITHFULLY shows the diff.',
+  'HAND OVER IN CHAT: the clickable URL, any test credentials the operator needs (create a throwaway login',
+  "via the app's own signup/seed if required), and ONE line on what they'll see / where to look. The live URL",
+  "also appears in the operator's PORTS panel automatically.",
+  'WHEN DONE (or if declined), free the RAM: `atlas-svc stop-all`.',
+].join('\n');
+
 // ── BEHAVIORAL (the three asks) ─────────────────────────────────────────────────────────────────────
 // Spliced in by the brain's `behavioral.group` tail and by the worker group.
 

@@ -2122,15 +2122,15 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(finalBody).toMatch(/may NOT edit\/push code or ship without the operator/);
       expect(finalBody).toMatch(/Ship it/);
       expect(finalBody).toContain('atlas-tx');
-      // final ALSO triggers the ship-gate live-preview offer (see LIVE PREVIEW AT THE SHIP GATE fragment)
-      expect(finalBody).toContain('LIVE PREVIEW AT THE SHIP GATE');
+      // final ALSO triggers the ship-gate live-preview offer (the "Spin up preview" button prep)
       expect(finalBody).toMatch(/offer the operator a live preview/);
+      expect(finalBody).toContain('Spin up preview');
 
       const notableBody = renderDoneDelivery(thread, 'notable', term, anchor);
       expect(notableBody).toMatch(/may NOT edit\/push code or ship without the operator/);
       expect(notableBody).toContain('atlas-tx show sess-final --errors');
       // notable does NOT carry the preview offer — that is a ship-gate concern only
-      expect(notableBody).not.toContain('LIVE PREVIEW AT THE SHIP GATE');
+      expect(notableBody).not.toMatch(/offer the operator a live preview/);
     });
 
     it('renderDoneDelivery (final) surfaces the master-review summary + per-thread gaps', () => {

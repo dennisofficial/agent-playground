@@ -1010,4 +1010,53 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       expect((row.card as Record<string, unknown> | null)?.actions).toBeUndefined();
     }
   });
+
+  // ── markPreviewRequested (the "Spin up preview" ship-card stamp CAS) ──────────────────────────────
+
+  it('markPreviewRequested stamps the active ship card previewRequestedAt (first click wins)', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+
+    const stamped = await store.markPreviewRequested(jobId);
+    expect(stamped).toBe(true);
+
+    const cardRow = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    const card = cardRow?.card as Record<string, unknown> | undefined;
+    expect(card?.type).toBe('approval_card');
+    expect(card?.kind).toBe('ship');
+    expect(typeof card?.previewRequestedAt).toBe('string');
+  });
+
+  it('a second markPreviewRequested is a no-op (idempotent double-click, returns false)', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+
+    expect(await store.markPreviewRequested(jobId)).toBe(true);
+    const cardRow = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    const firstStamp = (cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt;
+
+    expect(await store.markPreviewRequested(jobId)).toBe(false);
+    const cardRow2 = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    // The stamp is unchanged — the losing call did not re-stamp.
+    expect((cardRow2?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBe(firstStamp);
+  });
+
+  it('markPreviewRequested does NOT stamp a retracted (neutralized) ship card', async () => {
+    const { jobId } = await seedShipParkedJob();
+    await seedShipCardRow(jobId);
+    // Retract neutralizes the card to a verdict_card — its type/kind guards must reject the stamp.
+    expect(await store.retractShip(jobId)).toBe(true);
+
+    expect(await store.markPreviewRequested(jobId)).toBe(false);
+    const cardRow = await messages.findOne({
+      where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
+    });
+    expect((cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBeUndefined();
+  });
 });
