@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { JobRef } from "@/lib/api/job-api";
-import { composerStore, useComposerDraft } from "@/lib/api/composer-store";
+import { composerStore, useComposerComments } from "@/lib/api/composer-store";
 
 /**
  * The inline review-comment feature ("Atlas Workspace HiFi" — select text in the detail pane → comment →
@@ -85,7 +85,7 @@ export function ReviewCommentsProvider({
 }) {
   // Queued review-comments are per-Job (store-backed) so they don't bleed between Jobs and their
   // serializable metadata survives reload. The DOM `Range`/highlight machinery below stays per-mount.
-  const comments = useComposerDraft(jobRef).comments;
+  const comments = useComposerComments(jobRef);
   const [pending, setPending] = useState<PendingSelection | null>(null);
   const [activeTarget, setActiveTargetState] = useState<CommentTarget | null>(
     null,

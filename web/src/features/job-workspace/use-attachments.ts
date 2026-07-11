@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { PendingAttachment } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
-import { composerStore, useComposerDraft } from "@/lib/api/composer-store";
+import {
+  composerStore,
+  useComposerAttachments,
+} from "@/lib/api/composer-store";
 
 /** Attachment caps — mirror the backend (`MAX_ATTACHMENTS` / `MAX_ATTACHMENT_BYTES`). */
 export const MAX_ATTACHMENTS = 10;
@@ -29,7 +32,7 @@ export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export function useAttachments(ref?: JobRef) {
   const storeMode = !!ref?.jobId;
   // Always call both hooks (rules of hooks); only one drives the tray. The store hook ignores a blank ref.
-  const storeAttachments = useComposerDraft(ref ?? EMPTY_REF).attachments;
+  const storeAttachments = useComposerAttachments(ref ?? EMPTY_REF);
   const [localAttachments, setLocalAttachments] = useState<PendingAttachment[]>(
     [],
   );

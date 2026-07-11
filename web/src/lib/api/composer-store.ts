@@ -308,3 +308,36 @@ export function useComposerDraft(ref: JobRef): ComposerDraft {
   );
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY);
 }
+
+/**
+ * Slice-aware subscriptions — `attachments` / `comments` only. `replace` spreads the untouched arrays, so a
+ * draft's `attachments` and `comments` refs are PRESERVED across a text edit; a `getSnapshot` that returns
+ * just that array is therefore stable under keystrokes (Object.is holds) and `useSyncExternalStore` skips the
+ * re-render. This keeps the transcript pane (via `useAttachments`) and the review-comments provider off the
+ * per-keystroke render path — only the Composer's own text subscription re-renders while typing.
+ */
+export function useComposerAttachments(ref: JobRef): PendingAttachment[] {
+  composerStore.ensure(ref);
+  const subscribe = useCallback(
+    (cb: () => void) => composerStore.subscribe(ref.jobId, cb),
+    [ref.jobId],
+  );
+  const getSnapshot = useCallback(
+    () => composerStore.getDraft(ref.jobId).attachments,
+    [ref.jobId],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.attachments);
+}
+
+export function useComposerComments(ref: JobRef): ReviewComment[] {
+  composerStore.ensure(ref);
+  const subscribe = useCallback(
+    (cb: () => void) => composerStore.subscribe(ref.jobId, cb),
+    [ref.jobId],
+  );
+  const getSnapshot = useCallback(
+    () => composerStore.getDraft(ref.jobId).comments,
+    [ref.jobId],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.comments);
+}
