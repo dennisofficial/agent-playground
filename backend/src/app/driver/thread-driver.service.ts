@@ -180,6 +180,14 @@ function isTransientDriveError(err: unknown): boolean {
   return TRANSIENT_ERROR_RE.test(msg);
 }
 
+/**
+ * Total in-flight review-lens turns run concurrently in a builder's post-build review fan-out — the size of
+ * the `async-sema` semaphore that `runReviewChildren` bounds ALL lens turns with. A fixed configuration
+ * constant, identical in every environment (no thread composition produces more lenses than this, so it
+ * comfortably covers every real fan-out and the semaphore never serialises them).
+ */
+const REVIEW_LENS_CONCURRENCY = 8;
+
 /** Infra-blip signatures a bounded silent retry papers over (see {@link isTransientDriveError}). */
 const TRANSIENT_ERROR_RE =
   /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
@@ -282,13 +290,6 @@ export class ThreadDriver implements JobDispatcher {
     const raw = Number(this.env.get('PHASE_TIMEOUT_MS'));
     if (Number.isFinite(raw) && raw > 0) return raw;
     return 60 * 60_000;
-  }
-
-  /** Total in-flight review-lens turns cap (d5). I/O-bound LLM calls; bounds nested fanout too. Default 8. */
-  private get reviewLensConcurrency(): number {
-    const raw = Number(this.env.get('REVIEW_LENS_CONCURRENCY'));
-    if (Number.isFinite(raw) && raw > 0) return raw;
-    return 8;
   }
 
   /** Base backoff between transient-error drive retries (ADR 0004). Grows linearly per attempt. Default 2s;
@@ -1516,10 +1517,10 @@ export class ThreadDriver implements JobDispatcher {
       lensIds: lensChildren.map((c) => String((c.config as { lensId?: string }).lensId ?? c.id)),
     });
 
-    // Drive the LENSES concurrently through a semaphore capped at `reviewLensConcurrency` (d5) — each an
+    // Drive the LENSES concurrently through a semaphore capped at `REVIEW_LENS_CONCURRENCY` (d5) — each an
     // independent row (a `done` lens fast-forwards). Unlike a fixed batch loop, the next lens starts the
     // instant a slot frees rather than waiting on a batch barrier.
-    const sema = new Sema(this.reviewLensConcurrency);
+    const sema = new Sema(REVIEW_LENS_CONCURRENCY);
     await Promise.all(
       lensChildren.map(async (c) => {
         await sema.acquire();

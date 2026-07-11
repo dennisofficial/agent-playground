@@ -2176,37 +2176,10 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     expect(lensIds.sort()).toEqual(['best_practices', 'consistency', 'holistic'].sort());
   });
 
-  it('bounds in-flight review-lens turns at the configured REVIEW_LENS_CONCURRENCY cap', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'pending', false, 'none', 'general')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const h = assemble(state, { env: { REVIEW_LENS_CONCURRENCY: '2' } });
-    let inFlight = 0;
-    let peak = 0;
-    h.autofix.runReviewLens.mockImplementation(async () => {
-      inFlight++;
-      peak = Math.max(peak, inFlight);
-      await new Promise((r) => setTimeout(r, 5));
-      inFlight--;
-      return [];
-    });
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    // Never exceeds the cap, but DID run more than one at a time (proves it's a real semaphore, not serial).
-    expect(peak).toBeLessThanOrEqual(2);
-    expect(peak).toBeGreaterThan(1);
-  });
-
   it('with cap >= lens count, ALL lenses start concurrently — the fixed-batch-of-3 barrier is gone', async () => {
-    // 'general' composes the five always-on lenses; the default cap (8) comfortably covers all five, so a
-    // real semaphore (vs. the old `concurrency = 3` batch loop) lets every lens acquire at once.
+    // 'general' composes the five always-on lenses; the REVIEW_LENS_CONCURRENCY constant (8) comfortably
+    // covers all five, so a real semaphore (vs. the old `concurrency = 3` batch loop) lets every lens
+    // acquire at once.
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
