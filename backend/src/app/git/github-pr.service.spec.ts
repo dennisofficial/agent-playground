@@ -141,17 +141,25 @@ describe('GithubPrService.openPullRequest', () => {
 
 describe('GithubPrService.closePullRequest', () => {
   it('PATCHes state=closed with the token only in the Authorization header', async () => {
-    const { impl, calls } = fakeFetch([{ status: 200, body: { number: 9, state: 'closed' } }]);
+    const { impl, calls } = fakeFetch([
+      { status: 200, body: { number: 9, state: 'closed' } },
+    ]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
-    await svc.closePullRequest('TOK123', { owner: 'acme', repo: 'app', number: 9 });
+    await svc.closePullRequest('TOK123', {
+      owner: 'acme',
+      repo: 'app',
+      number: 9,
+    });
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe('https://api.github.com/repos/acme/app/pulls/9');
     expect(calls[0].init?.method).toBe('PATCH');
     const headers = calls[0].init?.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer TOK123');
     expect(String(calls[0].init?.body)).not.toContain('TOK123');
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ state: 'closed' });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      state: 'closed',
+    });
   });
 
   it('throws with GitHub status + detail (never the token) on a non-OK response', async () => {
@@ -450,6 +458,31 @@ describe('GithubPrService conditional GET (ETag + rate-limit)', () => {
     expect(calls.length).toBe(before);
   });
 
+  it('pauses future REST calls when a successful response consumes the last remaining request', async () => {
+    const reset = String(Math.floor(Date.now() / 1000) + 120);
+    const { impl, calls } = fakeFetchWithHeaders([
+      {
+        status: 200,
+        body: pullDetailBody,
+        headers: {
+          etag: 'W/"v1"',
+          'x-ratelimit-remaining': '0',
+          'x-ratelimit-reset': reset,
+        },
+      },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+
+    await svc.getPullDetail('TOK', pd);
+    expect(svc.isRateLimited()).toBe(true);
+
+    const before = calls.length;
+    const cached = await svc.getPullState('TOK', pd);
+    expect(cached).toBe('open');
+    expect(calls.length).toBe(before);
+  });
+
   it('a 403 secondary-rate-limit message (no headers) also trips isRateLimited', async () => {
     const { impl } = fakeFetchWithHeaders([
       {
@@ -468,7 +501,10 @@ describe('GithubPrService conditional GET (ETag + rate-limit)', () => {
 
   it('a 403 permission error does NOT trip isRateLimited and still throws', async () => {
     const { impl } = fakeFetchWithHeaders([
-      { status: 403, body: { message: 'Resource not accessible by integration' } },
+      {
+        status: 403,
+        body: { message: 'Resource not accessible by integration' },
+      },
     ]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
@@ -524,9 +560,24 @@ describe('GithubPrService.listOpenPullMergeability', () => {
     expect(calls).toHaveLength(2);
     expect(calls[0].url).toBe('https://api.github.com/graphql');
     expect(result).toEqual([
-      { number: 1, mergeStateStatus: 'CLEAN', mergeableState: 'clean', headSha: 'sha1' },
-      { number: 2, mergeStateStatus: 'DIRTY', mergeableState: 'dirty', headSha: 'sha2' },
-      { number: 3, mergeStateStatus: 'BLOCKED', mergeableState: 'blocked', headSha: null },
+      {
+        number: 1,
+        mergeStateStatus: 'CLEAN',
+        mergeableState: 'clean',
+        headSha: 'sha1',
+      },
+      {
+        number: 2,
+        mergeStateStatus: 'DIRTY',
+        mergeableState: 'dirty',
+        headSha: 'sha2',
+      },
+      {
+        number: 3,
+        mergeStateStatus: 'BLOCKED',
+        mergeableState: 'blocked',
+        headSha: null,
+      },
     ]);
     // Second request carries the endCursor from page one.
     expect(String(calls[1].init?.body)).toContain('CUR');
@@ -553,6 +604,110 @@ describe('GithubPrService.listOpenPullMergeability', () => {
     ).rejects.toBeInstanceOf(RateLimitedError);
     expect(svc.isGraphqlRateLimited()).toBe(true);
     expect(svc.isRateLimited()).toBe(false);
+  });
+
+  it('returns a successful GraphQL page that consumes the last point, then pauses future GraphQL calls', async () => {
+    const reset = String(Math.floor(Date.now() / 1000) + 120);
+    const { impl, calls } = fakeFetchWithHeaders([
+      {
+        status: 200,
+        body: {
+          data: {
+            repository: {
+              pullRequests: {
+                nodes: [
+                  { number: 1, mergeStateStatus: 'CLEAN', headRefOid: 'sha1' },
+                ],
+                pageInfo: { endCursor: null, hasNextPage: false },
+              },
+            },
+          },
+        },
+        headers: {
+          'x-ratelimit-remaining': '0',
+          'x-ratelimit-reset': reset,
+        },
+      },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+
+    const result = await svc.listOpenPullMergeability('TOK', {
+      owner: 'acme',
+      repo: 'app',
+      base: 'main',
+    });
+    expect(result).toEqual([
+      {
+        number: 1,
+        mergeStateStatus: 'CLEAN',
+        mergeableState: 'clean',
+        headSha: 'sha1',
+      },
+    ]);
+    expect(svc.isGraphqlRateLimited()).toBe(true);
+
+    const before = calls.length;
+    await expect(
+      svc.listOpenPullMergeability('TOK', {
+        owner: 'acme',
+        repo: 'app',
+        base: 'main',
+      }),
+    ).rejects.toBeInstanceOf(RateLimitedError);
+    expect(calls.length).toBe(before);
+  });
+
+  it('does not fetch the next GraphQL page after a successful page consumes the last point', async () => {
+    const reset = String(Math.floor(Date.now() / 1000) + 120);
+    const { impl, calls } = fakeFetchWithHeaders([
+      {
+        status: 200,
+        body: {
+          data: {
+            repository: {
+              pullRequests: {
+                nodes: [
+                  { number: 1, mergeStateStatus: 'CLEAN', headRefOid: 'sha1' },
+                ],
+                pageInfo: { endCursor: 'CUR', hasNextPage: true },
+              },
+            },
+          },
+        },
+        headers: {
+          'x-ratelimit-remaining': '0',
+          'x-ratelimit-reset': reset,
+        },
+      },
+      {
+        status: 200,
+        body: {
+          data: {
+            repository: {
+              pullRequests: {
+                nodes: [
+                  { number: 2, mergeStateStatus: 'DIRTY', headRefOid: 'sha2' },
+                ],
+                pageInfo: { endCursor: null, hasNextPage: false },
+              },
+            },
+          },
+        },
+      },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+
+    await expect(
+      svc.listOpenPullMergeability('TOK', {
+        owner: 'acme',
+        repo: 'app',
+        base: 'main',
+      }),
+    ).rejects.toBeInstanceOf(RateLimitedError);
+    expect(calls).toHaveLength(1);
+    expect(svc.isGraphqlRateLimited()).toBe(true);
   });
 });
 

@@ -126,7 +126,12 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
         {
           provide: GithubPrService,
           useValue: {
-            getPullDetail: async () => ({ state: 'open', headSha: 'sha1' }),
+            isRateLimited: () => false,
+            getPullDetail: async () => ({
+              state: 'open',
+              headSha: 'sha1',
+              mergeableState: 'clean',
+            }),
             listCheckRuns: async () => [
               { status: 'completed', conclusion: 'success' },
               { status: 'completed', conclusion: 'success' },

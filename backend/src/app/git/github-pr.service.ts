@@ -183,7 +183,9 @@ export class GithubPrService {
 
   /** True while the GraphQL client is paused on its own (separate) rate-limit budget. */
   isGraphqlRateLimited(): boolean {
-    return this.graphqlPausedUntil != null && this.graphqlPausedUntil > Date.now();
+    return (
+      this.graphqlPausedUntil != null && this.graphqlPausedUntil > Date.now()
+    );
   }
 
   /** Bump a cache entry's recency (insertion-order Map LRU) after a read hit. */
@@ -208,6 +210,13 @@ export class GithubPrService {
   private header(res: unknown, name: string): string | null {
     const r = res as { headers?: { get?: (n: string) => string | null } };
     return r.headers?.get?.(name) ?? null;
+  }
+
+  private numericHeader(res: unknown, name: string): number | null {
+    const raw = this.header(res, name);
+    if (raw == null) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
   }
 
   /** Classify a rate-limit hit from a 403/429 response — primary (remaining 0), explicit retry, or message. */
@@ -236,14 +245,21 @@ export class GithubPrService {
    */
   private captureRateLimit(res: unknown, body?: { message?: string }): void {
     const now = Date.now();
-    const remainingRaw = this.header(res, 'x-ratelimit-remaining');
-    const resetRaw = this.header(res, 'x-ratelimit-reset');
-    const retryAfterRaw = this.header(res, 'retry-after');
-    const remaining = remainingRaw != null ? Number(remainingRaw) : null;
-    const resetMs = resetRaw != null ? Number(resetRaw) * 1000 : null;
-    const retryAfterMs = retryAfterRaw != null ? Number(retryAfterRaw) * 1000 : null;
+    const remaining = this.numericHeader(res, 'x-ratelimit-remaining');
+    const resetSec = this.numericHeader(res, 'x-ratelimit-reset');
+    const retryAfterSec = this.numericHeader(res, 'retry-after');
+    const resetMs = resetSec != null ? resetSec * 1000 : null;
+    const retryAfterMs = retryAfterSec != null ? retryAfterSec * 1000 : null;
     const status = (res as { status?: number }).status ?? 0;
 
+    if (remaining === 0) {
+      this.pausedUntil = Math.max(
+        resetMs ?? 0,
+        retryAfterMs != null ? now + retryAfterMs : 0,
+        now + this.backoffMs(this.consecutivePauses++),
+      );
+      return;
+    }
     if (status >= 200 && status < 300 && remaining != null) {
       this.consecutivePauses = 0;
       this.pausedUntil = null;
@@ -264,28 +280,43 @@ export class GithubPrService {
     json?: { errors?: Array<{ message?: string }> },
   ): void {
     const now = Date.now();
-    const remainingRaw = this.header(res, 'x-ratelimit-remaining');
-    const resetRaw = this.header(res, 'x-ratelimit-reset');
-    const retryAfterRaw = this.header(res, 'retry-after');
-    const remaining = remainingRaw != null ? Number(remainingRaw) : null;
-    const resetMs = resetRaw != null ? Number(resetRaw) * 1000 : null;
-    const retryAfterMs = retryAfterRaw != null ? Number(retryAfterRaw) * 1000 : null;
+    const remaining = this.numericHeader(res, 'x-ratelimit-remaining');
+    const resetSec = this.numericHeader(res, 'x-ratelimit-reset');
+    const retryAfterSec = this.numericHeader(res, 'retry-after');
+    const resetMs = resetSec != null ? resetSec * 1000 : null;
+    const retryAfterMs = retryAfterSec != null ? retryAfterSec * 1000 : null;
     const status = (res as { status?: number }).status ?? 0;
     const errorMessage = (json?.errors ?? [])
       .map((e) => e.message)
       .filter(Boolean)
       .join('; ');
-    const errorRateLimited =
-      /rate limit|RATE_LIMITED|abuse detection/i.test(errorMessage);
+    const errorRateLimited = /rate limit|RATE_LIMITED|abuse detection/i.test(
+      errorMessage,
+    );
 
-    if (status >= 200 && status < 300 && remaining != null && !errorRateLimited) {
+    if (remaining === 0) {
+      this.graphqlPausedUntil = Math.max(
+        resetMs ?? 0,
+        retryAfterMs != null ? now + retryAfterMs : 0,
+        now + this.backoffMs(this.graphqlConsecutivePauses++),
+      );
+      return;
+    }
+    if (
+      status >= 200 &&
+      status < 300 &&
+      remaining != null &&
+      !errorRateLimited
+    ) {
       this.graphqlConsecutivePauses = 0;
       this.graphqlPausedUntil = null;
       return;
     }
     const httpRateLimited =
       (status === 403 || status === 429) &&
-      this.isRateLimitResponse(remaining, retryAfterMs, { message: errorMessage });
+      this.isRateLimitResponse(remaining, retryAfterMs, {
+        message: errorMessage,
+      });
     if (!httpRateLimited && !errorRateLimited) return;
     this.graphqlPausedUntil = Math.max(
       resetMs ?? 0,
@@ -335,9 +366,15 @@ export class GithubPrService {
   async getAuthenticatedUser(
     token: string,
   ): Promise<{ login: string; id: number; name: string | null } | null> {
-    const res = await this.fetchImpl(`${API}/user`, { headers: this.headers(token) });
+    const res = await this.fetchImpl(`${API}/user`, {
+      headers: this.headers(token),
+    });
     if (!res.ok) return null;
-    const u = (await res.json()) as { login: string; id: number; name: string | null };
+    const u = (await res.json()) as {
+      login: string;
+      id: number;
+      name: string | null;
+    };
     return { login: u.login, id: u.id, name: u.name ?? null };
   }
 
@@ -452,13 +489,18 @@ export class GithubPrService {
     token: string,
     { owner, repo, number }: { owner: string; repo: string; number: number },
   ): Promise<void> {
-    const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
-      method: 'PATCH',
-      headers: this.headers(token),
-      body: JSON.stringify({ state: 'closed' }),
-    });
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls/${number}`,
+      {
+        method: 'PATCH',
+        headers: this.headers(token),
+        body: JSON.stringify({ state: 'closed' }),
+      },
+    );
     if (res.ok) return;
-    const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+    const errBody = (await res.json().catch(() => ({}))) as {
+      message?: string;
+    };
     throw new Error(
       `GitHub refused to close PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`,
     );
@@ -807,17 +849,28 @@ export class GithubPrService {
    */
   async pruneWebhooksExcept(
     token: string,
-    args: { owner: string; repo: string; urlPrefix: string; keepUrls: string[] },
+    args: {
+      owner: string;
+      repo: string;
+      urlPrefix: string;
+      keepUrls: string[];
+    },
   ): Promise<number> {
     const list = await this.fetchImpl(
       `${API}/repos/${args.owner}/${args.repo}/hooks`,
       { headers: this.headers(token) },
     );
     if (!list.ok) return 0;
-    const hooks = (await list.json()) as Array<{ id: number; config?: { url?: string } }>;
+    const hooks = (await list.json()) as Array<{
+      id: number;
+      config?: { url?: string };
+    }>;
     const keep = new Set(args.keepUrls);
     const stale = hooks.filter(
-      (h) => !!h.config?.url && h.config.url.startsWith(args.urlPrefix) && !keep.has(h.config.url),
+      (h) =>
+        !!h.config?.url &&
+        h.config.url.startsWith(args.urlPrefix) &&
+        !keep.has(h.config.url),
     );
     let deleted = 0;
     for (const h of stale) {
@@ -891,7 +944,17 @@ export class GithubPrService {
         errors?: Array<{ message?: string }>;
       };
       this.captureGraphqlRateLimit(res, json);
-      if (this.isGraphqlRateLimited()) {
+      const errorMessage = (json.errors ?? [])
+        .map((e) => e.message)
+        .filter(Boolean)
+        .join('; ');
+      const rateLimitError = /rate limit|RATE_LIMITED|abuse detection/i.test(
+        errorMessage,
+      );
+      if (
+        this.isGraphqlRateLimited() &&
+        (res.status === 403 || res.status === 429 || rateLimitError)
+      ) {
         throw new RateLimitedError(
           `GitHub GraphQL rate-limited until ${new Date(this.graphqlPausedUntil!).toISOString()}`,
         );
@@ -915,8 +978,16 @@ export class GithubPrService {
           headSha: node.headRefOid ?? null,
         });
       }
-      if (!connection?.pageInfo?.hasNextPage || !connection.pageInfo.endCursor) {
+      if (
+        !connection?.pageInfo?.hasNextPage ||
+        !connection.pageInfo.endCursor
+      ) {
         break;
+      }
+      if (this.isGraphqlRateLimited()) {
+        throw new RateLimitedError(
+          `GitHub GraphQL rate-limited until ${new Date(this.graphqlPausedUntil!).toISOString()}`,
+        );
       }
       cursor = connection.pageInfo.endCursor;
     }

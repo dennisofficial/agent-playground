@@ -36,6 +36,7 @@ import { EnvService } from '../../_core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { LocalGitService } from '../git';
+import { BrainGateway } from '../brain-gateway';
 import { CredentialResolver } from '../onboarding';
 import { TenantCredentialStore } from '../onboarding';
 import { GithubPrService } from '../git';
@@ -333,6 +334,15 @@ beforeEach(async () => {
       {
         provide: TurnRegistry,
         useValue: { failRunningForJob: vi.fn().mockResolvedValue(0) },
+      },
+      {
+        provide: BrainGateway,
+        useValue: {
+          openPrAtShip: async () => {},
+          notifyThreadHalted: async () => {},
+          notifyThreadDone: async () => {},
+          wakeForProvisioningFailure: async () => {},
+        },
       },
       JobLifecycleService,
     ],
@@ -831,6 +841,15 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
           provide: TicketService,
           useValue: {
             revertForDeletedThread: vi.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: BrainGateway,
+          useValue: {
+            openPrAtShip: async () => {},
+            notifyThreadHalted: async () => {},
+            notifyThreadDone: async () => {},
+            wakeForProvisioningFailure: async () => {},
           },
         },
         TurnRegistry, // the REAL service — this gate's whole point

@@ -203,6 +203,21 @@ describe('BaseMoveMergeabilitySync.refresh (via schedule)', () => {
     expect(listOpenPullMergeability).toHaveBeenCalledTimes(2);
   });
 
+  it('writes unknown while GitHub is still computing so stale settled badges clear', async () => {
+    const { sync, update } = make({
+      results: [
+        result({ mergeableState: 'unknown', mergeStateStatus: 'UNKNOWN' }),
+      ],
+      job: { pr_mergeable: 'clean' },
+    });
+    sync.schedule('T1', 'repo-1');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(update).toHaveBeenCalledWith(
+      { id: 'job-1' },
+      { pr_mergeable: 'unknown' },
+    );
+  });
+
   it('caps unknown retries so a stuck repo does not retry forever', async () => {
     const { sync, listOpenPullMergeability } = make({
       results: [

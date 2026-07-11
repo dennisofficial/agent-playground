@@ -61,7 +61,11 @@ export class GitStateReconciler {
     const jobs = await this.jobs.find({
       where: [
         { pr_number: Not(IsNull()), next_poll_at: due },
-        { feature_branch: Not(IsNull()), pr_number: IsNull(), next_poll_at: due },
+        {
+          feature_branch: Not(IsNull()),
+          pr_number: IsNull(),
+          next_poll_at: due,
+        },
       ],
     });
     let reconciled = 0;
@@ -73,7 +77,9 @@ export class GitStateReconciler {
         tier = await this.reconcileOne(job);
         reconciled++;
       } catch (err) {
-        this.logger.warn(`git-state reconcile failed for job ${job.id}: ${err}`);
+        this.logger.warn(
+          `git-state reconcile failed for job ${job.id}: ${err}`,
+        );
         // Rate-limited mid-pass (e.g. the job tripped it) — leave THIS job DUE rather than re-stamping it,
         // so it re-polls immediately once the pause clears instead of waiting out the backoff.
         if (this.pr.isRateLimited()) continue;
@@ -98,7 +104,9 @@ export class GitStateReconciler {
     );
     const marked = res.affected ?? 0;
     if (marked > 0) {
-      this.logger.log(`base-branch push on repo ${repoId} — marked ${marked} open PR(s) due for re-poll`);
+      this.logger.log(
+        `base-branch push on repo ${repoId} — marked ${marked} open PR(s) due for re-poll`,
+      );
     }
     return marked;
   }
@@ -108,24 +116,39 @@ export class GitStateReconciler {
    * Routed from mergeability-affecting webhooks that touch exactly one PR (head push / draft↔ready /
    * review submitted-or-dismissed) so the reconciler refreshes `pr_mergeable` within one heartbeat instead
    * of waiting out the slow `active` backup cadence. Targets by `prNumber` when known, else falls back to
-   * `branch` (the PR-open race, where a head push may land before the job's `pr_number` is recorded).
-   * Doesn't force `pr_state='open'` — a branch-only job is a valid re-arm target too, discovery just picks
-   * it back up sooner. Returns the number of jobs marked (0 if neither `prNumber` nor `branch` given).
+   * `branch` when a PR-number update marks nothing (the PR-open race, where a head push may land before
+   * the job's `pr_number` is recorded). Doesn't force `pr_state='open'` — a branch-only job is a valid
+   * re-arm target too, discovery just picks it back up sooner. Returns the number of jobs marked (0 if
+   * neither `prNumber` nor `branch` given).
    */
-  async markJobDue(orgId: string, repoId: string, opts: { prNumber?: number | null; branch?: string | null }): Promise<number> {
-    const where: Record<string, unknown> = { org_id: orgId, repo_id: repoId };
-    let target: string;
+  async markJobDue(
+    orgId: string,
+    repoId: string,
+    opts: { prNumber?: number | null; branch?: string | null },
+  ): Promise<number> {
+    const stamp = { next_poll_at: new Date() };
+    const baseWhere = { org_id: orgId, repo_id: repoId };
+    let target: string | null = null;
+    let marked = 0;
     if (opts.prNumber != null) {
-      where.pr_number = opts.prNumber;
       target = `pr #${opts.prNumber}`;
-    } else if (opts.branch) {
-      where.feature_branch = opts.branch;
+      const res = await this.jobs.update(
+        { ...baseWhere, pr_number: opts.prNumber },
+        stamp,
+      );
+      marked = res.affected ?? 0;
+    }
+    if (marked === 0 && opts.branch) {
       target = `branch ${opts.branch}`;
-    } else {
+      const res = await this.jobs.update(
+        { ...baseWhere, feature_branch: opts.branch },
+        stamp,
+      );
+      marked = res.affected ?? 0;
+    }
+    if (!target) {
       return 0;
     }
-    const res = await this.jobs.update(where, { next_poll_at: new Date() });
-    const marked = res.affected ?? 0;
     if (marked > 0) {
       this.logger.log(`re-armed ${marked} job(s) due for re-poll (${target})`);
     }
@@ -134,7 +157,8 @@ export class GitStateReconciler {
 
   /** Re-stamp a job's durable poll clock: `terminal` clears it (stop polling), else now + adaptive cadence. */
   private async setNextPoll(jobId: string, tier: PollTier): Promise<void> {
-    const next = tier === 'terminal' ? null : new Date(Date.now() + CADENCE_MS[tier]);
+    const next =
+      tier === 'terminal' ? null : new Date(Date.now() + CADENCE_MS[tier]);
     await this.jobs.update({ id: jobId }, { next_poll_at: next });
   }
 
@@ -164,10 +188,17 @@ export class GitStateReconciler {
       // learns of it here, on discovery, so this is where the flip belongs.
       await this.jobs.update(
         { id: job.id },
-        { pr_url: found.url, pr_number: found.number, status: 'done', pr_state: 'open' },
+        {
+          pr_url: found.url,
+          pr_number: found.number,
+          status: 'done',
+          pr_state: 'open',
+        },
       );
       job.pr_state = 'open';
-      this.logger.log(`discovered PR #${found.number} for job ${job.id} on ${job.feature_branch}`);
+      this.logger.log(
+        `discovered PR #${found.number} for job ${job.id} on ${job.feature_branch}`,
+      );
       prNumber = found.number;
     }
 
@@ -203,7 +234,10 @@ export class GitStateReconciler {
 
     // Persist observed columns only when they changed — avoid needless WAL/realtime deltas.
     if (ci !== job.ci_status || detail.mergeableState !== job.pr_mergeable) {
-      await this.jobs.update({ id: job.id }, { ci_status: ci, pr_mergeable: detail.mergeableState });
+      await this.jobs.update(
+        { id: job.id },
+        { ci_status: ci, pr_mergeable: detail.mergeableState },
+      );
     }
 
     // MERGE CONFLICT — `dirty` = the PR no longer merges cleanly into its base. Route to the owning
@@ -223,9 +257,12 @@ export class GitStateReconciler {
       });
     }
 
-    // `null` mergeable_state = GitHub is still computing it — poll fast (`computing`) until it resolves to
-    // clean/dirty. A settled open PR polls at the relaxed `active` cadence (CI / merge / conflict flips).
-    return detail.mergeableState === null ? 'computing' : 'active';
+    // `null` / `unknown` mergeable_state = GitHub is still computing it — poll fast (`computing`) until it
+    // resolves to clean/dirty. A settled open PR polls at the relaxed `active` cadence.
+    return detail.mergeableState == null ||
+      detail.mergeableState.toLowerCase() === 'unknown'
+      ? 'computing'
+      : 'active';
   }
 }
 
@@ -250,8 +287,21 @@ export const CADENCE_MS: Record<Exclude<PollTier, 'terminal'>, number> = {
 /** Roll a PR head's check-runs into a single UI status. null = no checks reported. */
 export function summarizeChecks(runs: CheckRun[]): string | null {
   if (runs.length === 0) return null;
-  const FAILED = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'stale']);
-  if (runs.some((r) => r.status === 'completed' && r.conclusion != null && FAILED.has(r.conclusion))) {
+  const FAILED = new Set([
+    'failure',
+    'timed_out',
+    'cancelled',
+    'action_required',
+    'stale',
+  ]);
+  if (
+    runs.some(
+      (r) =>
+        r.status === 'completed' &&
+        r.conclusion != null &&
+        FAILED.has(r.conclusion),
+    )
+  ) {
     return 'failure';
   }
   if (runs.every((r) => r.status === 'completed')) return 'success';

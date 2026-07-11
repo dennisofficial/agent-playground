@@ -79,10 +79,9 @@ export class BaseMoveMergeabilitySync {
 
     let sawUnknown = false;
     for (const result of results) {
-      if (result.mergeableState === 'unknown') {
-        sawUnknown = true;
-        continue;
-      }
+      const stillComputing = result.mergeableState === 'unknown';
+      if (stillComputing) sawUnknown = true;
+
       const job = await this.jobs.findOne({
         where: { repo_id: repoId, pr_number: result.number },
       });
@@ -94,6 +93,8 @@ export class BaseMoveMergeabilitySync {
           { pr_mergeable: result.mergeableState },
         );
       }
+
+      if (stillComputing) continue;
 
       // MERGE CONFLICT from the base move — same dedupe key + correlation the reconciler uses, so a
       // conflict already caught by the poll (or vice versa) is delivered exactly once.
