@@ -49,6 +49,7 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // repos
     {} as never, // awareness
     ticketsSvc as TicketService,
+    {} as never, // jobDeps
     { engineAuth: async () => undefined } as never, // creds
     { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
     {

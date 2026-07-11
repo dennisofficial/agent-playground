@@ -116,6 +116,7 @@ import {
 import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { TicketService } from '../tickets';
+import { JobDependencyService } from '../job-deps';
 import type {
   TicketKind,
   TicketPriority,
@@ -309,6 +310,8 @@ export class AgentSessionManager
     private readonly awareness: PipelineAwarenessStore,
     // The internal board/backlog — captured out-of-scope work + promotion to follow-up threads.
     private readonly tickets: TicketService,
+    // Job-to-job "blocked by" edges + the wake funnel (create_job dependsOn, link_job_dependency, manual UI).
+    private readonly jobDeps: JobDependencyService,
     // Per-org engine subscription secret for the in-sandbox brain turn (the SDK harness).
     private readonly creds: CredentialResolver,
     // User-defined MCP servers resolved onto the brain turn (org/repo tiers, `brain` surface).
@@ -3647,6 +3650,37 @@ export class AgentSessionManager
           createdByTitle: current.title,
         });
 
+        const dependsOn = strArray(args['dependsOn']) ?? [];
+        let anyBlocked = false;
+        if (dependsOn.length > 0) {
+          try {
+            for (const dependsOnJobId of dependsOn) {
+              const { blocked } = await this.jobDeps.addDependency({
+                orgId: stimulus.orgId,
+                repoId: stimulus.repoId,
+                jobId: newJobId,
+                dependsOnJobId,
+                seed: firstMessage,
+              });
+              anyBlocked ||= blocked;
+            }
+          } catch (err) {
+            return { ok: false, jobId: newJobId, reason: errText(err) };
+          }
+        }
+
+        if (anyBlocked) {
+          this.logger.log(
+            `thread ${stimulus.jobId} created follow-up ${newJobId}, blocked on ${dependsOn.length} job(s)`,
+          );
+          return {
+            ok: true,
+            jobId: newJobId,
+            blocked: true,
+            message: `Created follow-up "${title}" — blocked on ${dependsOn.length} job(s); it will start when they resolve.`,
+          };
+        }
+
         // Kick the new thread's brain with its opening intent. Fire-and-forget — the parent's turn doesn't
         // block on the child's provisioning (~30s); the intent is recorded so it's visible if the start fails.
         void this.startFollowUpJob(
@@ -3665,6 +3699,7 @@ export class AgentSessionManager
         return {
           ok: true,
           jobId: newJobId,
+          blocked: false,
           message: `Created follow-up "${title}" and started it.`,
         };
       },
@@ -3865,6 +3900,30 @@ export class AgentSessionManager
           return {
             ok: true,
             message: 'Recorded advisory dependency (blocked-by).',
+          };
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+      },
+
+      link_job_dependency: async (args) => {
+        const jobId = String(args['jobId'] ?? '').trim();
+        const dependsOnJobId = String(args['dependsOnJobId'] ?? '').trim();
+        if (!jobId || !dependsOnJobId)
+          return { ok: false, reason: 'jobId and dependsOnJobId are required' };
+        try {
+          const { blocked } = await this.jobDeps.addDependency({
+            orgId: stimulus.orgId,
+            repoId: stimulus.repoId,
+            jobId,
+            dependsOnJobId,
+          });
+          return {
+            ok: true,
+            blocked,
+            message: blocked
+              ? 'Linked dependency — the job is now blocked until its blocker resolves.'
+              : 'Linked dependency (blocker already resolved — no live block).',
           };
         } catch (err) {
           return { ok: false, reason: errText(err) };
