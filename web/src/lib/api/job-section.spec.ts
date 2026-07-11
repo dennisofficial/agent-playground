@@ -131,8 +131,8 @@ describe("groupThreadsBySection", () => {
     ];
     const groups = groupThreadsBySection(threads);
     expect(groups.map((g) => g.section)).toEqual([
-      "planning",
       "blocked",
+      "planning",
       "building",
       "merged",
     ]);
