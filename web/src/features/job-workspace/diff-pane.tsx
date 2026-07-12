@@ -32,7 +32,7 @@ const NBSP = "\u00A0";
 const GUTTER = 28;
 const SIGN = 16;
 
-type FileRow = DiffRow & { flatIdx: number };
+type FileRow = DiffRow & { flatIdx: number; hunkIdx: number };
 
 /**
  * Derive a GitHub-style line anchor from a contiguous run of selected diff rows. Each row contributes its
@@ -123,6 +123,7 @@ function DiffFileSection({
       const rows: FileRow[] = rowsFromHunk(hunk, hi * 100_000).map((r) => ({
         ...r,
         flatIdx: flat++,
+        hunkIdx: hi,
       }));
       return { hunk, hi, rows };
     });
@@ -176,11 +177,22 @@ function DiffFileSection({
     document.addEventListener("mouseup", onUp);
   }, []);
 
-  const onRowEnter = useCallback((idx: number) => {
-    setHoveredIdx(idx);
-    if (draggingRef.current)
-      setSelection((prev) => (prev ? { ...prev, headIdx: idx } : prev));
-  }, []);
+  const onRowEnter = useCallback(
+    (idx: number) => {
+      setHoveredIdx(idx);
+      if (draggingRef.current)
+        setSelection((prev) => {
+          if (!prev) return prev;
+          // Keep the drag-selection contiguous: only extend into rows that share the
+          // anchor row's hunk, so a drag that crosses a hunk-header divider doesn't
+          // fabricate a range over the elided region between two hunks.
+          if (flatRows[idx]?.hunkIdx !== flatRows[prev.anchorIdx]?.hunkIdx)
+            return prev;
+          return { ...prev, headIdx: idx };
+        });
+    },
+    [flatRows],
+  );
 
   const selectedRows = range ? flatRows.slice(range.lo, range.hi + 1) : [];
   const anchor = deriveLineAnchor(selectedRows);
