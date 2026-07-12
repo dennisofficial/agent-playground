@@ -6,6 +6,7 @@ export type JobSection =
   | "blocked"
   | "awaiting"
   | "building"
+  | "master_review"
   | "amending"
   | "ready_to_ship"
   | "done"
@@ -18,6 +19,7 @@ export const SECTION_ORDER: JobSection[] = [
   "reviewing",
   "awaiting",
   "building",
+  "master_review",
   "amending",
   "ready_to_ship",
   "done",
@@ -31,6 +33,7 @@ export const SECTION_LABEL: Record<JobSection, string> = {
   blocked: "Blocked",
   awaiting: "Awaiting Approval",
   building: "Building",
+  master_review: "Master Review",
   amending: "Amending",
   ready_to_ship: "Ready to Ship",
   done: "Done",
@@ -57,6 +60,9 @@ export function sectionOf(t: InboxThread): JobSection | null {
     case "awaiting_ship_review":
       return "ready_to_ship";
     case "running":
+      // The ship-time Codex master review (after all builder threads) keeps the `running` status;
+      // surface it as its own section rather than an indistinct "Building" row.
+      if (t.activity === "master_review") return "master_review";
       // A shipping job re-uses the `running` status while its PR opens — keep it in "Ready to Ship"
       // (showing the `running` working spinner) rather than teleporting it to "Building".
       return t.shipping ? "ready_to_ship" : "building";
