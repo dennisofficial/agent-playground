@@ -76,6 +76,7 @@ import { Agent, PromptService } from '../prompt-kit';
 import { shipOpenPrBody } from '../prompt-kit';
 import type { AgentMessage } from '../prompt-kit/message';
 import { agentMessage, fromExternal } from '../prompt-kit/message';
+import { isSubstantiveQuery, renderMemoryRecall } from '../prompt-kit/jit';
 import {
   chunkKey,
   RESET_VERIFY_TEXT,
@@ -306,6 +307,10 @@ export class AgentSessionManager
    * grant that survives a job's ENTIRE life, is more surface than a "for this session" grant should have).
    */
   private readonly skillEditGrantsByJob = new Map<string, Set<string>>();
+
+  // Per-session dedup for memory auto-recall (d2): fact ids already injected into THIS job's live session,
+  // so a re-recalled fact is surfaced once. In-memory/per-process, like skillEditGrantsByJob.
+  private readonly injectedMemoryByJob = new Map<string, Set<string>>();
 
   /**
    * Steer-id → build-completion/halt wake payload, awaiting the engine's `input_ack` (the real consumption
@@ -2231,10 +2236,16 @@ export class AgentSessionManager
       });
     }
 
-    // JIT turn-prefix rail (d18): `operator-message` rules may prepend a `system_reminder` (the reserved
-    // `memory` slot the follow-up recall job fills). Default render is empty → no chunk → byte-identical.
+    // JIT turn-prefix rail (d18): `operator-message` rules may prepend a `system_reminder`. The reserved
+    // `memory` slot now carries auto-recalled facts (d1/d2) via `prependText`; empty → no chunk → byte-identical.
     if (isOperatorAuthored(stimulus)) {
-      reminderChunks.push(...(this.jit?.collectOperatorPrepends({ jobId: stimulus.jobId }) ?? []));
+      const prependText = (await this.buildMemoryRecallPrefix(stimulus)) ?? undefined;
+      reminderChunks.push(
+        ...(this.jit?.collectOperatorPrepends({
+          jobId: stimulus.jobId,
+          ...(prependText ? { prependText } : {}),
+        }) ?? []),
+      );
     }
 
     // Compose the turn through the hub (d18): the operator path frames prefix chunks + chronological `<user>`
@@ -6801,6 +6812,37 @@ export class AgentSessionManager
       );
     } catch (err) {
       this.logger.debug(`amending prefix failed (continuing): ${err}`);
+      return null;
+    }
+  }
+
+  /**
+   * Memory auto-retrieval turn-prefix (d1/d2/d5): on a substantive operator turn, recall project+team facts
+   * and format them for the reserved `system_reminder source="memory"` slot. Best-effort — any recall/embed
+   * failure yields null and never blocks the turn (mirrors the `recall` tool's catch). Two-layer kill-switch:
+   * the runtime `MEMORY_AUTORECALL_DISABLED` env guard here + the declarative `memoryPrependRule.enabled`.
+   * Per-session dedup suppresses a fact already injected earlier in the same live session.
+   */
+  private async buildMemoryRecallPrefix(stimulus: ChatStimulus): Promise<string | null> {
+    if (this.env?.get('MEMORY_AUTORECALL_DISABLED') === 'on') return null;
+    if (!isSubstantiveQuery(stimulus.body)) return null;
+    try {
+      const facts = await this.memory.recall(stimulus.body, {
+        scopes: [`project:${stimulus.repoId}`, `team:${stimulus.orgId}`],
+        orgId: stimulus.orgId,
+        limit: 3,
+        floor: 0.45,
+      });
+      if (facts.length === 0) return null;
+      const seen = this.injectedMemoryByJob.get(stimulus.jobId) ?? new Set<string>();
+      const fresh = facts.filter((f) => !seen.has(f.id));
+      if (fresh.length === 0) return null;
+      for (const f of fresh) seen.add(f.id);
+      this.injectedMemoryByJob.set(stimulus.jobId, seen);
+      const body = renderMemoryRecall(fresh.map((f) => ({ fact: f.fact, scope: f.scope })));
+      return body || null;
+    } catch (err) {
+      this.logger.debug(`memory auto-recall prefix failed (continuing): ${err}`);
       return null;
     }
   }

@@ -1,0 +1,34 @@
+/**
+ * Pure formatting + gating helpers for the memory auto-retrieval turn-prefix (d1/d2). Zero-dep and
+ * container-safe like the rest of the hub — no NestJS, no I/O. The host-side `buildMemoryRecallPrefix`
+ * composes these into the reserved `system_reminder source="memory"` slot.
+ */
+
+export type RecalledForPrefix = { fact: string; scope: string };
+
+// Trivial-message thresholds (d2): below either, we skip the embedding call so "ok"/"thanks" never fire.
+const MIN_QUERY_CHARS = 12;
+const MIN_QUERY_WORDS = 3;
+
+/**
+ * The memory-block body (inner text of the `<system_reminder source="memory">`). Empty input → '' so the
+ * rule renders no chunk (byte-identical to a turn with no recall). No self-wrapping tag — the reserved slot
+ * provides the boundary.
+ */
+export function renderMemoryRecall(facts: RecalledForPrefix[]): string {
+  if (facts.length === 0) return '';
+  const lines = facts.map((f) => `  • ${f.fact.replace(/\s+/g, ' ').trim()}`);
+  return (
+    'Relevant memories recalled for this message (semantic match; may be partial — verify before ' +
+    `relying on them):\n${lines.join('\n')}`
+  );
+}
+
+/** Trivial-message guard (d2): skip acknowledgements so we don't embed "ok"/"thanks". */
+export function isSubstantiveQuery(text: string): boolean {
+  const t = text.trim();
+  return (
+    t.length >= MIN_QUERY_CHARS &&
+    t.split(/\s+/).filter(Boolean).length >= MIN_QUERY_WORDS
+  );
+}

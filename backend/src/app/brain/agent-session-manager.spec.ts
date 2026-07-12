@@ -45,6 +45,7 @@ import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
 import type { JitHostExecutor } from './jit-host-executor';
+import type { EnvService } from '@core/config/env/env.service';
 
 /** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
@@ -4464,5 +4465,142 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     expect(steer).not.toHaveBeenCalled();
     expect(stimulusStore.eligiblePendingChat).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval turn-prefix, d1/d2)', () => {
+  const TEAM_ID = 'T-MEMRECALL';
+  const PROJECT_ID = 'memrecall-proj';
+  const THREAD_ID = 'th-memrecall-001';
+
+  const stimulus: ChatStimulus = {
+    kind: 'chat',
+    trust: 'trusted',
+    id: 'stim-memrecall-001',
+    receivedAt: new Date('2026-07-12T00:00:00Z'),
+    orgId: TEAM_ID,
+    repoId: PROJECT_ID,
+    jobId: THREAD_ID,
+    body: 'what auth library does this project use',
+    author: { id: 'U-OP', displayName: 'Operator' },
+    replyRoute: { surfaceId: 'web', jobRef: 'ts-memrecall-001' },
+  };
+
+  /** Only `memory` + `env` matter here — every other dep is an unused stub (buildMemoryRecallPrefix
+   *  touches neither store, driver, nor surface). */
+  function makeManager(opts: { recall?: ReturnType<typeof vi.fn>; envGet?: ReturnType<typeof vi.fn> }) {
+    const memory = {
+      recall: opts.recall ?? vi.fn().mockResolvedValue([]),
+      remember: vi.fn(),
+    } as unknown as MemoryStore;
+    const env = { get: opts.envGet ?? vi.fn().mockReturnValue(undefined) } as unknown as EnvService;
+
+    const manager = new AgentSessionManager(
+      {} as unknown as BrainStoreService,
+      {} as unknown as DriverStoreService,
+      memory,
+      {} as unknown as DecisionApprovalService,
+      {} as unknown as JobLifecycleService,
+      {} as unknown as EngineRunnerPort,
+      { listRunning: async () => [] } as never, // turnRegistry
+      {} as unknown as PlanReviewService,
+      {} as unknown as JobDispatcher,
+      {} as unknown as ChatSurface,
+      {} as unknown as Repository<JobSandboxEntity>,
+      { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
+      {
+        eligiblePendingChat: async () => [],
+        leaseChatStimuli: async () => undefined,
+        markChatDelivered: async () => undefined,
+        undeliveredChatThreads: async () => [],
+        resetChatLeases: async () => undefined,
+      } as never, // stimulusStore
+      noopTurnHarness,
+      {} as unknown as DecisionClassifier,
+      {} as unknown as BuildShipService,
+      {} as unknown as DriverRepoResolver,
+      {} as unknown as PipelineAwarenessStore,
+      {} as unknown as TicketService,
+      {} as unknown as JobDependencyService,
+      {} as unknown as CredentialResolver,
+      { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
+      {
+        getState: () => 'leader',
+        isLeader: () => true,
+        onPromote: () => ({ unsubscribe() {} }),
+        onDemote: () => ({ unsubscribe() {} }),
+      } as never, // election
+      { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
+      {} as unknown as WorkspaceSecretFileStore,
+      {} as unknown as WorkspaceConfigStore,
+      {} as unknown as LocalGitService,
+      { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
+      { register: () => undefined } as never, // threadInput (ThreadInputService)
+      {} as unknown as LiveVerificationJudge,
+      { getResetAt: () => undefined } as unknown as OauthUsageService,
+      undefined, // usageProjector
+      env,
+    );
+    return manager as unknown as { buildMemoryRecallPrefix(s: ChatStimulus): Promise<string | null> };
+  }
+
+  it('a recall hit renders the fact into the memory-block body', async () => {
+    const recall = vi.fn().mockResolvedValue([
+      { id: 'fact-1', fact: 'uses pnpm for package management', scope: `project:${PROJECT_ID}`, sim: 0.9 },
+    ]);
+    const manager = makeManager({ recall });
+
+    const prefix = await manager.buildMemoryRecallPrefix(stimulus);
+
+    expect(prefix).toContain('uses pnpm for package management');
+    expect(recall).toHaveBeenCalledWith(
+      stimulus.body,
+      expect.objectContaining({
+        scopes: [`project:${PROJECT_ID}`, `team:${TEAM_ID}`],
+        orgId: TEAM_ID,
+      }),
+    );
+  });
+
+  it('per-session dedup: a fact id already injected for this job is suppressed on a later call', async () => {
+    const recall = vi.fn().mockResolvedValue([
+      { id: 'fact-1', fact: 'uses pnpm for package management', scope: `project:${PROJECT_ID}`, sim: 0.9 },
+    ]);
+    const manager = makeManager({ recall });
+
+    const first = await manager.buildMemoryRecallPrefix(stimulus);
+    const second = await manager.buildMemoryRecallPrefix(stimulus);
+
+    expect(first).toContain('uses pnpm for package management');
+    expect(second).toBeNull();
+  });
+
+  it('a trivial operator body skips recall entirely (no embedding call)', async () => {
+    const recall = vi.fn().mockResolvedValue([{ id: 'fact-1', fact: 'x', scope: 'project:p', sim: 0.9 }]);
+    const manager = makeManager({ recall });
+
+    const prefix = await manager.buildMemoryRecallPrefix({ ...stimulus, body: 'ok' });
+
+    expect(prefix).toBeNull();
+    expect(recall).not.toHaveBeenCalled();
+  });
+
+  it('the MEMORY_AUTORECALL_DISABLED kill-switch short-circuits before recall is ever called', async () => {
+    const recall = vi.fn().mockResolvedValue([{ id: 'fact-1', fact: 'x', scope: 'project:p', sim: 0.9 }]);
+    const envGet = vi.fn().mockReturnValue('on');
+    const manager = makeManager({ recall, envGet });
+
+    const prefix = await manager.buildMemoryRecallPrefix(stimulus);
+
+    expect(prefix).toBeNull();
+    expect(recall).not.toHaveBeenCalled();
+    expect(envGet).toHaveBeenCalledWith('MEMORY_AUTORECALL_DISABLED');
+  });
+
+  it('a rejecting recall resolves to null rather than throwing (best-effort, mirrors the recall tool)', async () => {
+    const recall = vi.fn().mockRejectedValue(new Error('embedding provider down'));
+    const manager = makeManager({ recall });
+
+    await expect(manager.buildMemoryRecallPrefix(stimulus)).resolves.toBeNull();
   });
 });
