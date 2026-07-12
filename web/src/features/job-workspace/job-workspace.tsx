@@ -18,6 +18,7 @@ import {
   useJobContext,
   useDeleteJob,
   useRenameJob,
+  useSetAutoApprove,
   useSay,
 } from "@/lib/api/job-queries";
 import { useJobEvents } from "@/lib/api/job-events";
@@ -64,6 +65,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const { data: context, isLoading: contextLoading } = useJobContext(ref);
   const del = useDeleteJob(ref);
   const rename = useRenameJob(ref);
+  const autoApprove = useSetAutoApprove(ref);
   useJobEvents(ref);
 
   // One send-into-this-thread action, shared by every `Markdown` in the workspace (conversation AND the
@@ -292,6 +294,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       onSelectNode={onSelectNode}
       onRename={onRename}
       onDelete={onDelete}
+      onToggleAutoApprove={(next) => autoApprove.mutate(next)}
       deleting={del.isPending}
       hasOpenPr={hasOpenPr}
       deleteReady={prStateKnown}
@@ -400,7 +403,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   return (
     <MarkdownActionsProvider value={markdownActions}>
-      <ReviewCommentsProvider>
+      <ReviewCommentsProvider jobRef={ref}>
         <div className="flex h-full min-h-0">
           {navAsDrawer ? null : navigatorPane(false)}
           {!belowXl ? (

@@ -10,6 +10,7 @@ import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
 import type { TaskItem } from './thread.entity';
 import { TicketEntity } from './ticket.entity';
+import { UserEntity } from './user.entity';
 
 /**
  * One buffered, not-yet-conveyed pipeline milestone (the transient-moment record). `id` is an
@@ -362,4 +363,19 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   build_path!: 'direct' | 'plan' | null;
+
+  /** Per-job AUTO-APPROVE: when true, plan-approval and ship-review gates on this job auto-advance with
+   *  no human click (still posting the card for audit). Strictly per-job (no repo/org default). */
+  @Column({ type: 'boolean', default: false })
+  auto_approve!: boolean;
+
+  /** Who most recently ENABLED auto-approve (FK → users.id, SET NULL) — used as the approver id when a
+   *  gate auto-resolves. Null when never enabled / the enabling user was deleted (gate falls back to the
+   *  org owner). Not cleared on disable (kept for audit). */
+  @Column({ type: 'uuid', nullable: true })
+  auto_approve_by!: string | null;
+
+  @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'auto_approve_by' })
+  autoApproveByUser?: UserEntity | null;
 }

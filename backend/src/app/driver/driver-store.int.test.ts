@@ -27,6 +27,7 @@ import {
   JobEntity,
   MessageEntity,
 } from '../persistence/entities';
+import { JobDependencyService } from '../job-deps';
 import { DriverStoreService } from './driver-store.service';
 import { webShipReviewCard } from '../surface/web-approval-card';
 
@@ -66,7 +67,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         TypeOrmModule.forRoot(dbOpts()),
         TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
       ],
-      providers: [DriverStoreService],
+      providers: [
+        DriverStoreService,
+        { provide: JobDependencyService, useValue: { blockersOf: async () => [] } },
+      ],
     }).compile();
 
     store = mod.get(DriverStoreService);
@@ -502,12 +506,16 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    // `no_job` still carries the brain's own task list + default footer — the navigator's Main row shows it
-    // pre-plan, before the job has entered the build lifecycle.
+    // `no_job` still carries the brain's own task list/default footer plus job-level header controls — the
+    // navigator's Main row and auto-approve toggle work pre-plan, before the job has entered the build lifecycle.
     expect(await store.getPipelineState(job.id, ORG_ID)).toEqual({
       status: 'no_job',
       mainTasks: [],
       mainDefaultFooter: { engine: 'claude', model: 'opus', effort: 'high' },
+      createdBy: null,
+      autoApprove: false,
+      blockedBy: [],
+      blockedSeedMessage: null,
     });
   });
 
