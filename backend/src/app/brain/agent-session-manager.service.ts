@@ -294,7 +294,7 @@ export class AgentSessionManager
    *  installation token expires hourly), so only the stable bits are cached here. See resolveBrainGitAuth. */
   private readonly gitTargetByJob = new Map<
     string,
-    { gitUrl: string; orgId: string }
+    { gitUrl: string; orgId: string; owner: string; repo: string; defaultBranch: string }
   >();
   /**
    * SESSION-scoped `Edit`/`Write` grants for skills (`request_skill_edit_access`), keyed by jobId — in-memory
@@ -452,7 +452,13 @@ export class AgentSessionManager
         const repo = await this.repos.resolve(job);
         const gitUrl = repo.projectRepo.gitUrl;
         if (!gitUrl) return undefined;
-        target = { gitUrl, orgId: job.orgId };
+        target = {
+          gitUrl,
+          orgId: job.orgId,
+          owner: repo.owner,
+          repo: repo.repo,
+          defaultBranch: repo.defaultBranch,
+        };
         this.gitTargetByJob.set(jobId, target);
       }
       const token = await this.creds.githubToken(target.orgId);
@@ -2370,6 +2376,19 @@ export class AgentSessionManager
     // it OWNS git, not the host. Sourced from the resolved repo, never `sandbox` (a row-sourced sandbox
     // has an empty gitUrl/no token). Undefined → remote git ops fail closed (GIT_TERMINAL_PROMPT=0).
     const gitAuth = await this.resolveBrainGitAuth(stimulus.jobId);
+    // Per-job orientation facts for the CURRENT JOB prompt block (identity.group). The STABLE repo bits
+    // ride the cache resolveBrainGitAuth just populated (no second `repos.resolve` — that does a network
+    // GET /user). Every field is optional: a missing target (git disabled) drops the repo/base lines, and
+    // an uncut feature branch drops the branch line — the fragment guards each.
+    const gitTarget = this.gitTargetByJob.get(stimulus.jobId);
+    const branch = brainJob?.featureBranch ?? brainJob?.currentBranch ?? undefined;
+    const baseBranch = brainJob?.baseBranch ?? gitTarget?.defaultBranch ?? undefined;
+    const jobContext = {
+      ...(gitTarget ? { repoName: `${gitTarget.owner}/${gitTarget.repo}` } : {}),
+      cwd: sandbox.worktreePath,
+      ...(branch ? { branch } : {}),
+      ...(baseBranch ? { baseBranch } : {}),
+    };
     const runArgs: RunEngineArgs = {
       engine: 'claude',
       task,
@@ -2379,6 +2398,7 @@ export class AgentSessionManager
       // (see prompt-service.spec — the brain is assembled purely from `@Fragment`s).
       systemPrompt: this.prompts.generate(Agent.ATLAS_MAIN, {
         jobKind: brainJob?.kind ?? null,
+        job: jobContext,
         settings: { repoConventions, workspaceProfile, autoApprove: brainJob?.autoApprove ?? false },
       }),
       sandboxKey,
