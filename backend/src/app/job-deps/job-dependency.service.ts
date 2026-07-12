@@ -10,6 +10,7 @@ import { TurnRegistry } from '../sandbox/turn-registry.service';
 // multi-blocker create_job can add its edges one at a time (the first live blocker parks it; adding
 // the next blocker to an already-blocked job just adds an edge and it stays blocked).
 const BLOCKABLE_STATUSES = new Set(['open', 'planning', 'plan_review', 'awaiting_approval', 'blocked']);
+const TERMINAL_BLOCKER_STATUSES = ['cancelled', 'deleting'];
 
 /** How a resolved blocker actually resolved — fed into {@link JobDependencyService.onBlockerResolved}. */
 export type BlockerResolution = 'merged' | 'closed_unmerged' | 'cancelled' | 'deleted';
@@ -94,7 +95,7 @@ export class JobDependencyService {
   }
 
   private isTerminalState(prState: string | null, status: string): boolean {
-    return prState === 'merged' || prState === 'closed' || status === 'cancelled';
+    return prState === 'merged' || prState === 'closed' || TERMINAL_BLOCKER_STATUSES.includes(status);
   }
 
   /**
@@ -104,7 +105,7 @@ export class JobDependencyService {
    *
    * DEFAULT (no `status`): returns only jobs that are still a LIVE dependency target — it excludes those
    * that are dead as a blocker, mirroring {@link isTerminalState} above (PR merged/closed OR status
-   * cancelled) plus `deleting` (being torn down). This deliberately INCLUDES a `status='done'` job whose
+   * cancelled/deleting). This deliberately INCLUDES a `status='done'` job whose
    * PR is still open (the canonical "depend on this until its PR merges" blocker — `done` is stamped when
    * the PR OPENS) and `amending`. The predicate is NULL-safe (`IS DISTINCT FROM`) so a job with no PR yet
    * (`pr_state` NULL) is kept. Pass `status` for an EXACT-status filter (bypasses the terminal exclusion),
@@ -128,7 +129,9 @@ export class JobDependencyService {
     } else if (!status) {
       qb.andWhere(`j.pr_state IS DISTINCT FROM 'merged'`)
         .andWhere(`j.pr_state IS DISTINCT FROM 'closed'`)
-        .andWhere(`j.status NOT IN ('cancelled', 'deleting')`);
+        .andWhere('j.status NOT IN (:...terminalBlockerStatuses)', {
+          terminalBlockerStatuses: TERMINAL_BLOCKER_STATUSES,
+        });
     } // status === 'all' → no status/terminal filter
 
     const q = args.query?.trim();
@@ -371,11 +374,12 @@ export class JobDependencyService {
     }
   }
 
-  /** How a blocker OTHER than the one resolving right now resolved, from its persisted state. Only
-   *  called for blockers already known terminal, so a non-merged/closed PR state means `status === 'cancelled'`. */
-  private classifyResolvedBlocker(prState: string | null): NonLandedResolution | 'merged' {
+  /** How a blocker OTHER than the one resolving right now resolved, from its persisted state. Only called
+   *  for blockers already known terminal, so a non-merged/closed PR state means a terminal job status. */
+  private classifyResolvedBlocker(prState: string | null, status: string): NonLandedResolution | 'merged' {
     if (prState === 'merged') return 'merged';
     if (prState === 'closed') return 'closed_unmerged';
+    if (status === 'deleting') return 'deleted';
     return 'cancelled';
   }
 
@@ -389,7 +393,7 @@ export class JobDependencyService {
       .map((b) => ({
         title: b.title,
         jobId: b.jobId,
-        how: b.jobId === blockerJobId ? resolution : this.classifyResolvedBlocker(b.prState),
+        how: b.jobId === blockerJobId ? resolution : this.classifyResolvedBlocker(b.prState, b.status),
       }))
       .filter((b): b is { title: string | null; jobId: string; how: NonLandedResolution } => b.how !== 'merged');
 

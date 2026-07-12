@@ -276,6 +276,24 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect(wakes[0].note).toContain('job deleted');
   });
 
+  it('treats an already-deleting sibling blocker as terminal and labels it deleted', async () => {
+    const deleting = await makeJob({ status: 'running', title: 'teardown blocker' });
+    const closing = await makeJob({ status: 'running', title: 'closing blocker' });
+    const dependent = await makeJob();
+    await service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: deleting.id });
+    await service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: closing.id });
+
+    await jobs.update({ id: deleting.id }, { status: 'deleting' });
+    await jobs.update({ id: closing.id }, { pr_state: 'closed', status: 'done' });
+    await service.onBlockerResolved(closing.id, 'closed_unmerged');
+
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
+    expect(wakes).toHaveLength(1);
+    expect(wakes[0].note).toContain('job deleted');
+    expect(wakes[0].note).toContain('PR closed without merging');
+    expect(wakes[0].note).not.toContain('job cancelled');
+  });
+
   // ── (f) JobUnblockSweep unblocks a job whose blocker row is absent ─────────────────────────────
   it('(f) the sweep unblocks a blocked job whose blocker edge has vanished', async () => {
     const blocker = await makeJob({ status: 'running' });
