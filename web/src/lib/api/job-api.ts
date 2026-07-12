@@ -1,5 +1,6 @@
 "use client";
 
+import type { AutoApproveMode } from "@workspace/shared";
 import { env } from "@/lib/env";
 import { fetchWithRefresh } from "./refresh";
 import type {
@@ -446,15 +447,16 @@ export function renameJob(
   });
 }
 
-/** Flip the job's per-job auto-approve flag (`PATCH …/jobs/:jobId/auto-approve`). Enabling also resolves
- *  any gate the job is currently parked on; the flag is read back from the pipeline. */
+/** Flip the job's per-job auto-approve (`PATCH …/jobs/:jobId/auto-approve`). The header pill is a single
+ *  on/off switch, so it maps to the `both` (full autonomy) / `off` ends of the per-job `mode` contract.
+ *  Enabling also resolves any gate the job is currently parked on; the mode is read back from the pipeline. */
 export function setAutoApprove(
   ref: JobRef,
   enabled: boolean,
-): Promise<{ ok: boolean; autoApprove: boolean }> {
+): Promise<{ ok: boolean; autoApproveMode: AutoApproveMode }> {
   return webJson(threadPath(ref, "/auto-approve"), {
     method: "PATCH",
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify({ mode: enabled ? "both" : "off" }),
   });
 }
 

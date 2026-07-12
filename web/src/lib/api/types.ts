@@ -7,7 +7,9 @@
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
+import { isAutoApproveOn } from "@workspace/shared";
 import type {
+  AutoApproveMode,
   JobActivity as WireJobActivity,
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
@@ -519,10 +521,10 @@ export interface PipelineJob {
    * `plan.md`, generated docs) for a direct build, where they never apply. Absent on very old payloads.
    */
   buildPath?: "direct" | "plan" | null;
-  /** Per-job AUTO-APPROVE: when true, this job's plan-approval and ship-review gates auto-advance with no
-   *  operator click (the card is still posted for audit, then immediately resolved). Settable any time
-   *  from job creation onward — so the `no_job` (open) shape carries it too. */
-  autoApprove: boolean;
+  /** Per-job AUTO-APPROVE MODE: which gates auto-advance with no operator click (`off`/`plan`/`ship`/`both`;
+   *  the card is still posted for audit, then immediately resolved). Settable any time from job creation
+   *  onward — so the `no_job` (open) shape carries it too. */
+  autoApproveMode: AutoApproveMode;
   decisionRecordId: string | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
@@ -581,7 +583,7 @@ export type PipelineState =
       mainTasks?: TaskItem[];
       mainDefaultFooter?: LaneDefaultFooter;
       /** Carried on the open/pre-plan shape too, so the auto-approve toggle works from job creation onward. */
-      autoApprove?: boolean;
+      autoApproveMode?: AutoApproveMode;
       blockedSeedMessage?: string | null;
     };
 
@@ -593,12 +595,14 @@ export function pipelineMainTasks(
   return ("mainTasks" in pipeline ? pipeline.mainTasks : undefined) ?? [];
 }
 
-/** The per-job auto-approve flag, from either pipeline shape (`no_job` carries it too). */
+/** Whether ANY gate auto-advances for this job, from either pipeline shape (`no_job` carries the mode too). */
 export function pipelineAutoApprove(
   pipeline: PipelineState | undefined,
 ): boolean {
   if (!pipeline) return false;
-  return ("autoApprove" in pipeline ? pipeline.autoApprove : undefined) ?? false;
+  const mode =
+    "autoApproveMode" in pipeline ? pipeline.autoApproveMode : undefined;
+  return mode ? isAutoApproveOn(mode) : false;
 }
 
 // ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────
