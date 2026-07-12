@@ -207,6 +207,7 @@ export function Navigator({
   jobRef,
   approveValue,
   shipValue,
+  previewRequestedAt,
   onConversation,
   onSelectNode,
   onRename,
@@ -235,6 +236,9 @@ export function Navigator({
   /** The ship card's verbatim `{ jobId }` value, when the job is awaiting ship review (else ''). Drives
    *  the navigator ship button + callout. */
   shipValue: string;
+  /** The ship card's `previewRequestedAt` — gates the header "Spin up preview" button (hidden once a
+   *  preview has been requested). */
+  previewRequestedAt?: string | null;
   /** Clears the detail-pane selection (the Main lane / the state banners' recovery actions). */
   onConversation: () => void;
   onSelectNode: (node: string) => void;
@@ -609,7 +613,11 @@ export function Navigator({
         {/* Ship it — the SECOND human gate, pinned the same way once the build + master review finish. */}
         {st === "awaiting_ship_review" && shipValue ? (
           <div className="mt-2">
-            <NavigatorShipButton jobRef={jobRef} value={shipValue} />
+            <NavigatorShipButton
+              jobRef={jobRef}
+              value={shipValue}
+              previewRequestedAt={previewRequestedAt}
+            />
           </div>
         ) : null}
       </div>

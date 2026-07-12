@@ -287,6 +287,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       jobRef={ref}
       approveValue={awaitingApproval ? approveValue : ""}
       shipValue={awaitingShip ? shipValue : ""}
+      previewRequestedAt={shipCard?.previewRequestedAt ?? null}
       directBuild={isDirectApproval}
       onConversation={onConversation}
       onSelectNode={onSelectNode}
