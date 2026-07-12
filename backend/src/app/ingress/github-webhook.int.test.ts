@@ -192,7 +192,12 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
 
   beforeEach(async () => {
     delivered.length = 0;
-    await ds.query('TRUNCATE stimuli, messages, jobs RESTART IDENTITY CASCADE');
+    await ds.query('DELETE FROM stimuli WHERE org_id = $1', [ORG_ID]);
+    await ds.query(
+      'DELETE FROM messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)',
+      [ORG_ID],
+    );
+    await ds.query('DELETE FROM jobs WHERE org_id = $1', [ORG_ID]);
   });
 
   it('routes a failed CI check on an owned branch to the OWNING job (no new thread seeded)', async () => {
@@ -215,7 +220,7 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
     // Front door accepted + routed to the existing job — NOT a fresh seed.
     expect(res).toMatchObject({ status: 'accepted', jobId: owner.id });
     // No new job row was created (still exactly the one we seeded).
-    expect(await jobs.count()).toBe(1);
+    expect(await jobs.countBy({ org_id: ORG_ID })).toBe(1);
     // The event was attached to the owning job (message + stimulus rows), and delivered to its brain.
     const attachedMsg = await messages.findOne({ where: { job_id: owner.id } });
     expect(attachedMsg?.meta).toMatchObject({
@@ -241,7 +246,7 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
 
     // Route-only: a verified event nothing owns is a deliberate no-op — NOT a new job.
     expect(res).toMatchObject({ status: 'ignored', reason: 'no-owner' });
-    expect(await jobs.count()).toBe(0); // nothing seeded
+    expect(await jobs.countBy({ org_id: ORG_ID })).toBe(0); // nothing seeded
     expect(delivered).toHaveLength(0); // nothing delivered to any brain
   });
 
@@ -257,7 +262,7 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
     await expect(controller.receive(bad)).rejects.toMatchObject({
       status: 401,
     });
-    expect(await jobs.count()).toBe(0);
+    expect(await jobs.countBy({ org_id: ORG_ID })).toBe(0);
   });
 });
 

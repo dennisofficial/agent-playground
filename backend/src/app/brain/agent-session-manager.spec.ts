@@ -1403,7 +1403,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('propose_mcp_servers rejects a reserved system name', async () => {
     const tools = manager.buildTools(fakeStimulus, 'onboarding');
     const result = await tools['propose_mcp_servers']({
-      servers: [{ name: 'context7', transport: 'http', url: 'https://x' }],
+      servers: [{ name: 'atlas-lsp-ts', transport: 'http', url: 'https://x' }],
     });
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain('reserved');
@@ -2211,8 +2211,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
   });
 
-  // ── plan-gate auto-resolve (per-job opt-in): a job with autoApprove ON drives the SAME resolution an
-  //    operator's approve click would, the instant the card is posted — no human ever clicks it.
+  // ── plan-gate auto-resolve (per-job opt-in): a job whose autoApproveMode APPROVES the plan gate
+  //    ('plan' or 'both') drives the SAME resolution an operator's approve click would, the instant the
+  //    card is posted — no human ever clicks it.
   describe('(auto-approve) requestApprovalAndAct — per-job auto-approve resolves the plan gate', () => {
     type ActOnApprovalVerdict = {
       actOnApprovalVerdict(...args: unknown[]): Promise<void>;
@@ -2227,33 +2228,36 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       threads: [],
     } as never;
 
-    it('resolves via the approvals seam with job.autoApproveBy as the approver', async () => {
-      const job = {
-        id: FAKE_JOB_ID,
-        kind: 'feature',
-        title: 'rate limiting',
-        orgId: TEAM_ID,
-        repoId: PROJECT_ID,
-        autoApprove: true,
-        autoApproveBy: 'user-77',
-      };
-      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
-      (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
-        jobId: FAKE_JOB_ID,
-        verdict: Promise.resolve({ verdict: 'approve', ruledBy: 'user-77' }),
-      });
-      vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
+    it.each(['plan', 'both'] as const)(
+      'resolves via the approvals seam with job.autoApproveBy as the approver (mode: %s)',
+      async (mode) => {
+        const job = {
+          id: FAKE_JOB_ID,
+          kind: 'feature',
+          title: 'rate limiting',
+          orgId: TEAM_ID,
+          repoId: PROJECT_ID,
+          autoApproveMode: mode,
+          autoApproveBy: 'user-77',
+        };
+        (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+        (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+          jobId: FAKE_JOB_ID,
+          verdict: Promise.resolve({ verdict: 'approve', ruledBy: 'user-77' }),
+        });
+        vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
 
-      await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
+        await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
 
-      expect(mockApprovals.resolve).toHaveBeenCalledWith(
-        FAKE_JOB_ID,
-        'approve',
-        'user-77',
-        undefined,
-        FAKE_RECORD_ID,
-      );
-    });
+        expect(mockApprovals.resolve).toHaveBeenCalledWith(
+          FAKE_JOB_ID,
+          'approve',
+          'user-77',
+          undefined,
+          FAKE_RECORD_ID,
+        );
+      },
+    );
 
     it('falls back to store.ownerUserId when job.autoApproveBy is null', async () => {
       const job = {
@@ -2262,7 +2266,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         title: 'rate limiting',
         orgId: TEAM_ID,
         repoId: PROJECT_ID,
-        autoApprove: true,
+        autoApproveMode: 'plan',
         autoApproveBy: null,
       };
       (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
@@ -2289,27 +2293,30 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       );
     });
 
-    it('does NOT auto-resolve when job.autoApprove is off', async () => {
-      const job = {
-        id: FAKE_JOB_ID,
-        kind: 'feature',
-        title: 'rate limiting',
-        orgId: TEAM_ID,
-        repoId: PROJECT_ID,
-        autoApprove: false,
-        autoApproveBy: null,
-      };
-      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
-      (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
-        jobId: FAKE_JOB_ID,
-        verdict: Promise.resolve({ verdict: 'deny', ruledBy: 'U-OP' }),
-      });
-      vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
+    it.each(['ship', 'off'] as const)(
+      'does NOT auto-resolve when job.autoApproveMode does not approve the plan gate (mode: %s)',
+      async (mode) => {
+        const job = {
+          id: FAKE_JOB_ID,
+          kind: 'feature',
+          title: 'rate limiting',
+          orgId: TEAM_ID,
+          repoId: PROJECT_ID,
+          autoApproveMode: mode,
+          autoApproveBy: null,
+        };
+        (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+        (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+          jobId: FAKE_JOB_ID,
+          verdict: Promise.resolve({ verdict: 'deny', ruledBy: 'U-OP' }),
+        });
+        vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
 
-      await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
+        await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
 
-      expect(mockApprovals.resolve).not.toHaveBeenCalled();
-    });
+        expect(mockApprovals.resolve).not.toHaveBeenCalled();
+      },
+    );
 
     it('uses the fresh gate-time flag when auto-approve was enabled during the brain turn', async () => {
       const job = {
@@ -2318,13 +2325,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         title: 'rate limiting',
         orgId: TEAM_ID,
         repoId: PROJECT_ID,
-        autoApprove: false,
+        autoApproveMode: 'off',
         autoApproveBy: null,
       };
       (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
       (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
         ...job,
-        autoApprove: true,
+        autoApproveMode: 'plan',
         autoApproveBy: 'user-fresh',
       });
       (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -2351,13 +2358,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         title: 'rate limiting',
         orgId: TEAM_ID,
         repoId: PROJECT_ID,
-        autoApprove: true,
+        autoApproveMode: 'both',
         autoApproveBy: 'user-stale',
       };
       (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
       (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
         ...job,
-        autoApprove: false,
+        autoApproveMode: 'off',
       });
       (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
         jobId: FAKE_JOB_ID,

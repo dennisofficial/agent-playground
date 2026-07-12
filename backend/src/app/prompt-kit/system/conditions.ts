@@ -45,8 +45,8 @@ export const isBuildBrain = (c: PromptCtx): boolean =>
 export const hasOrgInstructions = (c: PromptCtx): boolean =>
   !!c.settings?.userOrgInstructions && c.settings.userOrgInstructions.trim().length > 0;
 
-/** Per-job auto-approve is ON — inject the autonomous-mode fragment. */
-export const hasAutoApprove = (c: PromptCtx): boolean => c.settings?.autoApprove === true;
+/** Per-job auto-approve is ON (any mode but 'off') — inject the autonomous-mode fragment. */
+export const hasAutoApprove = (c: PromptCtx): boolean => (c.settings?.autoApproveMode ?? 'off') !== 'off';
 
 /** The repo has an attached house-style profile (the conditional conventions fragment). */
 export const hasRepoConventions = (c: PromptCtx): boolean =>

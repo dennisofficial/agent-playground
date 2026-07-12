@@ -250,9 +250,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     // inbox row for a job still in `no_job` (pre-build `open`/chat) — the most common time to want the
     // parent link. `job?.createdBy ?? inboxThread?.createdBy` would wrongly fall through to the inbox row
     // whenever the pipeline's own value is null, so gate on `job` existing at all instead.
-    createdBy: job
-      ? (job.createdBy ?? null)
-      : (inboxThread?.createdBy ?? null),
+    createdBy: job ? (job.createdBy ?? null) : (inboxThread?.createdBy ?? null),
     blockedBy: job ? (job.blockedBy ?? []) : (inboxThread?.blockedBy ?? []),
     blockedSeedMessage: job
       ? (job.blockedSeedMessage ?? null)
@@ -289,12 +287,13 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       jobRef={ref}
       approveValue={awaitingApproval ? approveValue : ""}
       shipValue={awaitingShip ? shipValue : ""}
+      previewRequestedAt={shipCard?.previewRequestedAt ?? null}
       directBuild={isDirectApproval}
       onConversation={onConversation}
       onSelectNode={onSelectNode}
       onRename={onRename}
       onDelete={onDelete}
-      onToggleAutoApprove={(next) => autoApprove.mutate(next)}
+      onSetAutoApprove={(mode) => autoApprove.mutate(mode)}
       deleting={del.isPending}
       hasOpenPr={hasOpenPr}
       deleteReady={prStateKnown}
