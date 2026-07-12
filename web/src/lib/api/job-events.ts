@@ -45,7 +45,7 @@ const FILE_WRITE_TOOLS = new Set([
   "MultiEdit",
   "NotebookEdit",
 ]);
-const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts)\//;
+const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts|evidence)\//;
 
 /**
  * Live updates for the open thread. The repo-scoped SSE (`…/repos/:repoId/events`) carries two frame
