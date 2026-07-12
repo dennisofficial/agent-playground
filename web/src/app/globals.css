@@ -35,6 +35,7 @@
   /* Warning amber — the merge-conflict PR glyph. A dedicated hue (not --accent, which is the same orange
      family but already means "attention/running") so a conflicting PR reads as its own distinct signal. */
   --amber: #cc8a2e;
+  --amber-soft: rgba(204, 138, 46, 0.1);
   /* "Needs you" / untrusted-event indigo. Deliberately a muted lavender-slate so it reads DISTINCT
      from --blue (#5d75a2, steel-blue used for planning + mcp rows + links) — the two were identical. */
   --slate: #7a76a0;
@@ -112,6 +113,7 @@
   --color-blue: var(--blue);
   --color-red: var(--red);
   --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
   --color-slate: var(--slate);
   --color-purple: var(--purple);
   --color-rose: var(--rose);

@@ -11,7 +11,6 @@ describe('reserved-mcp-names', () => {
       'workspace-profile',
       'atlasbridge',
       'atlas-lsp-ts',
-      'context7',
     ]) {
       expect(RESERVED_MCP_SERVER_NAMES).toContain(name);
     }

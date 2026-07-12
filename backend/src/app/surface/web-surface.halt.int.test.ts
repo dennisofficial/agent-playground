@@ -10,8 +10,6 @@
  *   - `GET /web/orgs/:orgId/repos/:repoId/jobs` (the per-repo thread list) shows the identical shape.
  *   - A healthy sibling job (`status='running'`, `halt=null`) in both endpoints shows `halt: null` and
  *     `needsYou: false` — proving the new field doesn't leak/default to a false-positive.
- *
- * Mirrors `tickets/ticket.controller.int.test.ts` for HTTP/auth setup.
  */
 
 import { getDataSourceToken } from '@nestjs/typeorm';

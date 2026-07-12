@@ -29,7 +29,6 @@ import type { DriverRepoResolver } from './repo-resolver';
 import { SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { JobLifecycleService } from './job-lifecycle.service';
-import type { TicketService } from '../tickets';
 import type { JobDependencyService } from '../job-deps';
 import type { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -79,7 +78,6 @@ function makeService(
     { resolve: vi.fn() } as unknown as DriverRepoResolver,
     { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
-    { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
     { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
@@ -115,7 +113,6 @@ function makeServiceWithMocks(
     { resolve: vi.fn() } as unknown as DriverRepoResolver,
     { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach } as unknown as WorktreeProvisioner,
-    { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
     { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
@@ -161,7 +158,6 @@ function makeServiceForReset(
     { resolve: vi.fn() } as unknown as DriverRepoResolver,
     { attach: vi.fn(), teardown, teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
-    { revertForDeletedThread: vi.fn() } as unknown as TicketService,
     { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
     { failRunningForJob } as unknown as TurnRegistry,
     { get: vi.fn() } as unknown as ModuleRef,
@@ -415,7 +411,6 @@ describe('JobLifecycleService.applyGithubPrState', () => {
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
-      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
@@ -483,7 +478,6 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
-      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
@@ -594,7 +588,6 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
-      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
@@ -649,7 +642,6 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
-      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
@@ -683,7 +675,6 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
-      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,
@@ -728,7 +719,6 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
       { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
-      { revertForDeletedThread: vi.fn() } as unknown as TicketService,
       { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
       { failRunningForJob: vi.fn().mockResolvedValue(0) } as unknown as TurnRegistry,
       { get: vi.fn() } as unknown as ModuleRef,

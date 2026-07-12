@@ -8,6 +8,7 @@
  */
 
 import type {
+  AutoApproveMode,
   JobActivity as WireJobActivity,
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
@@ -291,11 +292,14 @@ export interface WebMcpProposalServer {
   env?: { name: string; secret?: boolean; value?: string }[];
   /**
    * `"static"` (default when absent) = header/env credential slots. `"oauth"` = interactive OAuth 2.1 the
-   * owner completes after approving by clicking Connect in MCP settings (no secret slot to fill).
+   * owner completes after approving by clicking Connect on the proposal card or in MCP settings (no secret slot to fill).
    */
   authKind?: "static" | "oauth";
   /** Non-secret OAuth knobs; only meaningful when `authKind==="oauth"`. */
-  oauth?: { scope?: string; tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic" };
+  oauth?: {
+    scope?: string;
+    tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+  };
   /** The brain's one-line rationale for why this server suits the repo. */
   reason?: string;
 }
@@ -311,25 +315,13 @@ export interface WebMcpProposalCard {
   jobId: string;
   requestId: string;
   repoId: string;
+  /** Registration scope: `'org'` (every repo) or `'repo'` (this repo only). Absent on legacy cards ⇒ `'repo'`. */
+  scope?: "org" | "repo";
+  /** `register` new servers (default) or `remove` existing ones. Absent on legacy cards ⇒ `register`. */
+  mode?: "register" | "remove";
   servers: WebMcpProposalServer[];
   approved_at?: string;
   committed?: string[];
-}
-
-/**
- * A ticket-captured callout — posted when the brain raises a ticket mid-job via `create_ticket`. Purely
- * informational (no approve/answer lifecycle); the operator clicks through to the ticket on the board.
- * Mirrors the backend `WebTicketCard`.
- */
-export interface WebTicketCard {
-  type: "ticket_card";
-  ticketId: string;
-  number: number;
-  title: string;
-  kind: string | null;
-  priority: string | null;
-  status: string;
-  originDecisionSummary: string | null;
 }
 
 /**
@@ -371,8 +363,7 @@ export type WebCard =
   | WebReviewCommentsCard
   | WebAttachmentsCard
   | WebMcpProposalCard
-  | WebSkillProposalCard
-  | WebTicketCard;
+  | WebSkillProposalCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
 /** One step of a thread's locked plan — the execute folder's leaf (a Claude Code session). */
@@ -506,7 +497,12 @@ export interface PipelineThread {
 export type JobProvenance = { jobId: string; title: string | null };
 
 /** A live blocker of a `blocked` job — one row per job it depends on. */
-export type JobBlocker = { jobId: string; title: string | null; prState: string | null; status: string };
+export type JobBlocker = {
+  jobId: string;
+  title: string | null;
+  prState: string | null;
+  status: string;
+};
 
 export interface PipelineJob {
   /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
@@ -530,10 +526,10 @@ export interface PipelineJob {
    * `plan.md`, generated docs) for a direct build, where they never apply. Absent on very old payloads.
    */
   buildPath?: "direct" | "plan" | null;
-  /** Per-job AUTO-APPROVE: when true, this job's plan-approval and ship-review gates auto-advance with no
-   *  operator click (the card is still posted for audit, then immediately resolved). Settable any time
-   *  from job creation onward — so the `no_job` (open) shape carries it too. */
-  autoApprove: boolean;
+  /** Per-job AUTO-APPROVE MODE: which gates auto-advance with no operator click (`off`/`plan`/`ship`/`both`;
+   *  the card is still posted for audit, then immediately resolved). Settable any time from job creation
+   *  onward — so the `no_job` (open) shape carries it too. */
+  autoApproveMode: AutoApproveMode;
   decisionRecordId: string | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
@@ -592,7 +588,7 @@ export type PipelineState =
       mainTasks?: TaskItem[];
       mainDefaultFooter?: LaneDefaultFooter;
       /** Carried on the open/pre-plan shape too, so the auto-approve toggle works from job creation onward. */
-      autoApprove?: boolean;
+      autoApproveMode?: AutoApproveMode;
       blockedSeedMessage?: string | null;
     };
 
@@ -604,12 +600,14 @@ export function pipelineMainTasks(
   return ("mainTasks" in pipeline ? pipeline.mainTasks : undefined) ?? [];
 }
 
-/** The per-job auto-approve flag, from either pipeline shape (`no_job` carries it too). */
-export function pipelineAutoApprove(
+/** The job's per-job auto-approve mode, from either pipeline shape (`no_job` carries the mode too). */
+export function pipelineAutoApproveMode(
   pipeline: PipelineState | undefined,
-): boolean {
-  if (!pipeline) return false;
-  return ("autoApprove" in pipeline ? pipeline.autoApprove : undefined) ?? false;
+): AutoApproveMode {
+  if (!pipeline) return "off";
+  const mode =
+    "autoApproveMode" in pipeline ? pipeline.autoApproveMode : undefined;
+  return mode ?? "off";
 }
 
 // ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────
@@ -622,14 +620,16 @@ export interface ContextFile {
 }
 
 /**
- * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams) and
- * `artifacts` (outputs — preview HTML, screenshots). A bucket is `[]` before the agent writes anything.
+ * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams),
+ * `artifacts` (human-facing deliverables — preview HTML, mockups, reports), and `evidence` (live-run proof —
+ * logs, screenshots, RESULTS.md). A bucket is `[]` before the agent writes anything.
  */
 export interface JobContext {
   specs: ContextFile[];
   /** System-GENERATED, read-only files (e.g. decision-record.md) — written by tool calls, never by hand. */
   generated: ContextFile[];
   artifacts: ContextFile[];
+  evidence: ContextFile[];
 }
 
 /** One `/context` file's content for the viewer (`…/context/file?path=…`). Mirrors the backend shape. */

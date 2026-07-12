@@ -69,10 +69,7 @@ export class SubagentsGroup {
         "what's actually installed (the version in package.json / the lockfile, how the package is already " +
         "imported) so your answer matches the version in use — do NOT answer the question from this repo's " +
         'source. Synthesize a direct answer, quote the exact API/signature/config, and cite the URL (and ' +
-        'the version it applies to). Flag where the docs lag the installed version or are ambiguous. ' +
-        'If a Context7 documentation tool is available (resolve-library-id → query-docs), prefer it ' +
-        "for a library's own API/config docs — it returns version-pinned, curated snippets — and fall back " +
-        'to WebSearch/WebFetch for release/currency questions and anything Context7 does not cover.',
+        'the version it applies to). Flag where the docs lag the installed version or are ambiguous.',
       VERIFY_CURRENCY,
       REPORT_ONLY_NOTE,
       'Be concise: the answer plus its sources.',
@@ -128,8 +125,8 @@ export class SubagentsGroup {
 
   /** `validate` — build-time LIVE end-to-end validation + evidence-capture subagent. Distinct from `test`
    *  (which runs typecheck/build/unit and returns a diagnosis, no artifacts): this one BOOTS the thing and
-   *  exercises it as a caller would, then leaves the proof in `/context/artifacts/`. Write-capable (for the
-   *  evidence bundle only) — see EVIDENCE_ARTIFACTS_NOTE; keeping to artifacts is prompt discipline. */
+   *  exercises it as a caller would, then leaves the proof under `$ATLAS_EVIDENCE_DIR`. Write-capable (for
+   *  the evidence bundle only) — see EVIDENCE_ARTIFACTS_NOTE; keeping to evidence is prompt discipline. */
   @Fragment({ usedBy: [Agent.VALIDATE], order: 100 })
   validate(): string {
     return [
@@ -149,7 +146,7 @@ export class SubagentsGroup {
         'them, do not fix the code, and do not change git state — if validation FAILS, report the failure (that ' +
         'is a valid, useful result) rather than patching it. WHEN YOU FINISH, return a TIGHT report the ' +
         'orchestrator can act on: (1) the VERDICT and the OBSERVED behavior (what you ran, what happened), and ' +
-        '(2) the EXACT artifact paths you wrote under `/context/artifacts/` — so the orchestrator references ' +
+        '(2) the EXACT evidence paths you wrote under `$ATLAS_EVIDENCE_DIR` — so the orchestrator references ' +
         'your bundle instead of recapturing it. Be concise; conclusions and evidence paths, not a transcript.',
     ].join(' ');
   }

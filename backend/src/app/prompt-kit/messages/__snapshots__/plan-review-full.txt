@@ -3,9 +3,6 @@ What the operator is trying to achieve. Judge the plan against THIS — not your
 
 GOAL: Show each user's last login time on their profile.
 
-ORIGINATING TICKET #42 — Surface last login on the profile page
-Users have asked to see when they last signed in.
-
 OVERVIEW (Atlas's framing of the work):
 Stamp last_login_at on successful login and expose it on GET /users/:id.
 </intent>

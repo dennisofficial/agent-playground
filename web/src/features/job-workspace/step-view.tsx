@@ -49,7 +49,6 @@ import {
   ServiceLogView,
   serviceHeaderSubtitle,
 } from "./service-log-view";
-import { TicketsRaisedPane } from "./tickets-raised-pane";
 import { CreatedJobsPane } from "./created-jobs-pane";
 import { BlockedByPane } from "./blocked-by-pane";
 import { DiffPane } from "./diff-pane";
@@ -162,7 +161,9 @@ export function PhaseView({
       ? `generated/${selectedNode.slice("gen:".length)}`
       : selectedNode.startsWith("artifact:")
         ? `artifacts/${selectedNode.slice("artifact:".length)}`
-        : null;
+        : selectedNode.startsWith("evidence:")
+          ? `evidence/${selectedNode.slice("evidence:".length)}`
+          : null;
   const fileQuery = useContextFile(jobRef, filePath);
   // Cheap even when the node isn't a service — React Query dedupes against the navigator's own useServices
   // call (same query key), and gives ServiceLogView a real name/cmd for its header instead of the bare id.
@@ -221,10 +222,6 @@ export function PhaseView({
     title = "Diff";
     subtitle = "the accumulated change across all threads";
     body = <DiffView jobRef={jobRef} />;
-  } else if (selectedNode === "tickets") {
-    title = "Tickets raised";
-    subtitle = "out-of-scope work Atlas captured from this job";
-    body = <TicketsRaisedPane jobRef={jobRef} />;
   } else if (selectedNode === "created") {
     title = "Created jobs";
     subtitle = "jobs this job spawned";
@@ -902,7 +899,9 @@ function contextNodeForLink(fromPath: string, href: string): string | null {
         ? "gen:"
         : bucket === "artifacts"
           ? "artifact:"
-          : null;
+          : bucket === "evidence"
+            ? "evidence:"
+            : null;
   if (!prefix) return null;
   const stack = parts.slice(1, -1); // dir of the current file, within the bucket
   for (const seg of href.split(/[?#]/)[0].split("/")) {

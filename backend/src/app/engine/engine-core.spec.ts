@@ -12,7 +12,12 @@ import {
   toCodexEffort,
 } from './engine-core';
 import { atlasEngineHomeDir, type EngineHomeKey } from './engine-home';
-import { isUnresumableSessionMessage, UNRESUMABLE_SESSION_MARKER } from './engine.types';
+import {
+  EngineAuthError,
+  isUnresumableSessionMessage,
+  NO_ENGINE_CREDENTIAL_MARKER,
+  UNRESUMABLE_SESSION_MARKER,
+} from './engine.types';
 import type { EngineEvent, ReasoningEffort } from './engine.types';
 import { agentMessage } from '../prompt-kit/message';
 
@@ -276,7 +281,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       const { sdk, captured } = fakeClaudeSdk();
       const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
       await core.run({ engine: 'claude', task: agentMessage('t'), cwd: '/tmp/wt', systemPrompt: agentMessage('p'), sandboxKey: TEST_KEY, mode, auth: { secret: 'tok' } });
-      return captured.options!.agents as Record<string, { tools: string[]; model: string }>;
+      return captured.options!.agents as Record<string, { description: string; tools: string[]; model: string }>;
     };
 
     const execAgents = await run('execute');
@@ -293,9 +298,12 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(execAgents.explore).toBeDefined();
 
     // The build-time `validate` subagent: execute-only, Sonnet, Bash + Write (to author the evidence
-    // bundle) but NO Task (no recursive fan-out). Its "write only under /context/artifacts" contract is
+    // bundle) but NO Task (no recursive fan-out). Its "write only under $ATLAS_EVIDENCE_DIR" contract is
     // prompt discipline, NOT enforced here — the write boundary is per-turn (see the canUseTool test).
     expect(execAgents.validate).toBeDefined();
+    expect(execAgents.validate.description).toContain('$ATLAS_EVIDENCE_DIR');
+    expect(execAgents.validate.description).toContain('EVIDENCE panel');
+    expect(execAgents.validate.description).not.toContain('/context/artifacts/');
     expect(execAgents.validate.model).toBe('claude-sonnet-5');
     expect(execAgents.validate.tools).toEqual(expect.arrayContaining(['Bash', 'Write']));
     expect(execAgents.validate.tools).not.toContain('Task');
@@ -758,11 +766,13 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     }
   });
 
-  it('throws (no API-key or env fallback) when no subscription secret is passed', async () => {
+  it('throws an EngineAuthError with the no-credential marker when no subscription secret is passed', async () => {
     const { sdk } = fakeClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
-    await expect(
-      core.run({
+    // A missing credential is a clean, resumable auth halt (not a plain Error that fails the job opaquely):
+    // it throws EngineAuthError carrying NO_ENGINE_CREDENTIAL_MARKER so the driver renders actionable copy.
+    const err = await core
+      .run({
         engine: 'claude',
         task: agentMessage('x'),
         cwd: '/tmp/wt',
@@ -770,8 +780,15 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
         sandboxKey: TEST_KEY,
         mode: 'execute',
         // no explicit auth → must throw (no env/config fallback exists)
-      }),
-    ).rejects.toThrow(/subscription secret/);
+      })
+      .then(
+        () => {
+          throw new Error('expected resolveAuth to throw');
+        },
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(EngineAuthError);
+    expect((err as Error).message).toContain(NO_ENGINE_CREDENTIAL_MARKER);
   });
 
   it('tool bridge: server registered under options.mcpServers (not a stray top-level key); names auto-approved', async () => {
