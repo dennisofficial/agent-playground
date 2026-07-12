@@ -883,7 +883,7 @@ function isRelativeHref(href: string | undefined): href is string {
  *  rejected by {@link isRelativeHref} (leading `/`) but must still reach the resolver so a conversation link
  *  to a spec/generated/artifact file opens it in the detail pane. */
 function isContextHref(href: string | undefined): href is string {
-  return !!href && /^\/context\/(specs|generated|artifacts)\//.test(href);
+  return !!href && /^\/context\/(specs|generated|artifacts|evidence)\//.test(href);
 }
 
 export const Markdown = memo(function Markdown({

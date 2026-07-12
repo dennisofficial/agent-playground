@@ -144,6 +144,7 @@ import { ConventionProfileResolver } from '../conventions';
 import { SkillFileWriter, SkillInstallerService, SkillResolver, WorkspaceSkillStore } from '../skills';
 import { WorkspaceProfileService, detectRepoManifests } from '../workspace-profile';
 import {
+  CONTAINER_CONTEXT,
   isExternalMountPath,
   isReservedContainerPath,
   isReservedMountPath,
@@ -2432,6 +2433,7 @@ export class AgentSessionManager
               containerId: sandbox.containerId,
               worktreeHost: sandbox.worktreePath,
               ...(gitAuth ? { gitAuth } : {}),
+              evidenceDir: `${CONTAINER_CONTEXT}/evidence`,
             },
           }
         : {}),
